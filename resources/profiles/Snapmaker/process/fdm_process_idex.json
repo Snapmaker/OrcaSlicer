@@ -38,5 +38,17 @@
   "support_interface_pattern": "rectilinear",
   "filename_format": "{input_filename_base}_{layer_height}mm_{print_time}_J1.gcode",
   "small_perimeter_threshold": "0",
-  "support_material_synchronize_layers": "1"
+  "support_material_synchronize_layers": "1",
+
+
+  "enable_prime_tower": "1",
+  "wipe_tower_cone_angle": "25",
+  "wipe_tower_extra_spacing": "150%",
+  "wipe_tower_rotation_angle": "90",
+  "single_extruder_multi_material_priming": "0",
+  "ooze_prevention": "1",
+  "standby_temperature_delta": "-40",
+  "preheat_time": "40",
+  "preheat_steps": "1"
+
 }

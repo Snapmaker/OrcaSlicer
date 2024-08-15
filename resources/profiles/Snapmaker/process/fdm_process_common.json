@@ -151,7 +151,7 @@
   "brim_width": "5",
   "brim_object_gap": "0",
   "enable_prime_tower": "1",
-  "prime_tower_width": "25",
+  "prime_tower_width": "10",
   "prime_volume": "7.3",
   "prime_tower_brim_width": "5",
   "wipe_tower_cone_angle": "40",

@@ -6,7 +6,7 @@
   "filament_id": "3383257822",
   "inherits": "fdm_filament_pla_eco",
   "filament_end_gcode": [
-    "M104 S{temperature_vitrification[current_extruder]} ;standby T{current_extruder}"
+    "M104 S{temperature_vitrification[current_extruder]} ;cooldown T{current_extruder}"
   ],
   "filament_density": [
     "1.26"

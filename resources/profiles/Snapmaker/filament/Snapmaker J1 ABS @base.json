@@ -6,7 +6,7 @@
   "filament_id": "1223824394",
   "inherits": "fdm_filament_abs",
   "filament_end_gcode": [
-    "M104 S{temperature_vitrification[current_extruder]} ;standby T{current_extruder}"
+    "M104 S{temperature_vitrification[current_extruder]} ;cooldown T{current_extruder}"
   ],
   "hot_plate_temp": [
     "110"

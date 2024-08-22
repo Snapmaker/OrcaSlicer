@@ -94,7 +94,7 @@
   "ensure_vertical_shell_thickness": "1",
   "internal_bridge_support_thickness": "0.8",
   "initial_layer_speed": "50",
-  "initial_layer_infill_speed": "50",
+  "initial_layer_infill_speed": "75",
   "initial_layer_travel_speed": "80%",
   "outer_wall_speed": "70",
   "inner_wall_speed": "80",

@@ -9,7 +9,7 @@
   "filament_cost": ["100"],
   "filament_flow_ratio": ["0.98"],
   "filament_retraction_length": ["2"],
-  "filament_retraction_speïed": ["60"],
+  "filament_retraction_speed": ["60"],
   "filament_settings_id": ["Snapmaker_PLA"],
 
   "hot_plate_temp": ["65"],

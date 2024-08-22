@@ -19,37 +19,16 @@
   "parking_pos_retraction": "0",
   "extra_loading_move": "-2",
   "high_current_on_filament_swap": "0",
-  "wipe": [
-    "0"
-  ],
-  "wipe_distance": [
-    "1"
-  ],
-  "retraction_speed": [
-    "45"
-  ],
-  "deretraction_speed": [
-    "45"
-  ],
-  "z_hop": [
-    "0.4"
-  ],
-  "retraction_length": [
-    "0.8"
-  ],
-  "retract_when_changing_layer": [
-    "1"
-  ],
-  "retract_before_wipe": [
-    "0%"
-  ],
-  "retraction_minimum_travel": [
-    "1"
-  ],
-  "fan_speedup_overhangs": [
-    "1"
-  ],
-  "z_hop_types": [
-    "Auto Lift"
-  ]
+  "wipe": ["0"],
+  "wipe_distance": ["1"],
+  "retraction_speed": ["45"],
+  "deretraction_speed": ["45"],
+  "z_hop": ["0.4"],
+  "retract_length_toolchange": ["1.8"],
+  "retraction_length": ["0.8"],
+  "retract_when_changing_layer": ["1"],
+  "retract_before_wipe": ["0%"],
+  "retraction_minimum_travel": ["0"],
+  "fan_speedup_overhangs": ["1"],
+  "z_hop_types": ["Auto Lift"]
 }

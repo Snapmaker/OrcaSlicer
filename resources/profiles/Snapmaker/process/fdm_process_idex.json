@@ -7,17 +7,24 @@
   "inherits": "fdm_process_common",
   "initial_layer_print_height": "0.2",
   "enable_arc_fitting": "1",
-  "initial_layer_infill_speed": "75",
+
+
+
+  "initial_layer_infill_speed": "80",
+  "initial_layer_acceleration": "500",
+  "default_acceleration": "6000",
+
+
 
   "support_speed": "100",
   "overhang_1_4_speed": "60",
   "overhang_2_4_speed": "30",
   "overhang_3_4_speed": "10",
-  "default_acceleration": "10000",
+
   "inner_wall_acceleration": "6000",
   "bridge_acceleration": "2000",
 
-  "top_surface_acceleration": "2000",
+  "top_surface_acceleration": "1000",
   "infill_jerk": "8",
   "initial_layer_jerk": "8",
   "outer_wall_jerk": "4",
@@ -39,11 +46,11 @@
   "preheat_steps": "1",
 
   "gap_infill_speed": "200",
-  "inner_wall_speed": "200",
+  "inner_wall_speed": "160",
   "internal_solid_infill_acceleration": "6000",
   "internal_solid_infill_speed": "200",
   "is_custom_defined": "0",
-  "outer_wall_acceleration": "2000",
+  "outer_wall_acceleration": "1000",
   "outer_wall_speed": "120",
   "print_settings_id": "0.20 Standard @Snapmaker J1 (0.4 nozzle) - J1s",
   "sparse_infill_acceleration": "6000",

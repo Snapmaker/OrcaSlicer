@@ -13,7 +13,9 @@
   "initial_layer_acceleration": "500",
   "outer_wall_acceleration": "1000",
 
-  "preheat_time": "40",
+  "ooze_prevention": "1",
+  "standby_temperature_delta": "-60",
+  "preheat_time": "60",
   "preheat_steps": "1",
 
   

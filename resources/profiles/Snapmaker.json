@@ -933,12 +933,12 @@
       "sub_path": "filament/Snapmaker Dual TPU High-Flow.json"
     },
     {
-      "name": "Snapmaker Breakaway Support",
-      "sub_path": "filament/Snapmaker Breakaway Support.json"
-    },
-    {
       "name": "Snapmaker Breakaway Support @base",
       "sub_path": "filament/Snapmaker Breakaway Support @base.json"
+    },
+    {
+      "name": "Snapmaker Breakaway Support",
+      "sub_path": "filament/Snapmaker Breakaway Support.json"
     },
     {
       "name": "Snapmaker Dual TPE",

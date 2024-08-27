@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker Dual PVA",
+  "name": "Snapmaker Breakaway Support",
   "setting_id": "4146000000",
   "inherits": "Snapmaker Breakaway Support @base",
   "compatible_printers": [

@@ -32,10 +32,10 @@
     <array>
       <dict>
         <key>CFBundleURLName</key>
-        <string>OrcaSlicer Downloads</string>
+        <string>Snapmaker_Orca Downloads</string>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>orcaslicer</string>
+          <string>Snapmaker_Orca</string>
         </array>
       </dict>
     </array>
@@ -65,7 +65,7 @@
 			<string>OBJ</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
-			<string>images/OrcaSlicer.icns</string>
+			<string>images/Snapmaker_Orca.icns</string>
 			<key>CFBundleTypeName</key>
 			<string>STL</string>
 			<key>CFBundleTypeRole</key>
@@ -82,7 +82,7 @@
 			<string>AMF</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
-			<string>images/OrcaSlicer.icns</string>
+			<string>images/Snapmaker_Orca.icns</string>
 			<key>CFBundleTypeName</key>
 			<string>AMF</string>
 			<key>CFBundleTypeRole</key>
@@ -99,7 +99,7 @@
 			<string>3MF</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
-			<string>images/OrcaSlicer.icns</string>
+			<string>images/Snapmaker_Orca.icns</string>
 			<key>CFBundleTypeName</key>
 			<string>3MF</string>
 			<key>CFBundleTypeRole</key>
@@ -133,7 +133,7 @@
 	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
 	<key>NSAppTransportSecurity</key>  
 	<dict>
-		<!-- Disable App Transport Security. Resolves https://github.com/SoftFever/OrcaSlicer/issues/791 -->
+		<!-- Disable App Transport Security. Resolves https://github.com/SoftFever/Snapmaker_Orca/issues/791 -->
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>  
 		<key>NSAllowsArbitraryLoadsInWebContent</key>

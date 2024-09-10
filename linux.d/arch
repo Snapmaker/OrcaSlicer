@@ -1,7 +1,7 @@
 # these are the Arch Linux specific build functions
 FOUND_GTK3=$(pacman -Q gtk3)
 
-# Addtional Dev packages for OrcaSlicer
+# Addtional Dev packages for Snapmaker_Orca
 export REQUIRED_DEV_PACKAGES=(
     cmake
     curl

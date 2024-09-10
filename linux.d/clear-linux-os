@@ -1,7 +1,7 @@
 # these are the Clear Linux specific build functions
 FOUND_GTK3=$(ls /usr/lib64/libgtk-3.so.* 2>/dev/null | tail -n 1 || true)
 
-# Addtional bundles for OrcaSlicer
+# Addtional bundles for Snapmaker_Orca
 export REQUIRED_BUNDLES=(
     c-basic
     dev-utils

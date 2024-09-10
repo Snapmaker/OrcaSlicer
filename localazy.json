@@ -6,72 +6,72 @@
 		"files": [
 			{
 				"type": "po",
-				"pattern": "localization/i18n/en/OrcaSlicer_en.po",
+				"pattern": "localization/i18n/en/Snapmaker_Orca_en.po",
 				"lang": "en"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/fr/OrcaSlicer_fr.po",
+				"pattern": "localization/i18n/fr/Snapmaker_Orca_fr.po",
 				"lang": "fr"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/de/OrcaSlicer_de.po",
+				"pattern": "localization/i18n/de/Snapmaker_Orca_de.po",
 				"lang": "de"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/sv/OrcaSlicer_sv.po",
+				"pattern": "localization/i18n/sv/Snapmaker_Orca_sv.po",
 				"lang": "sv"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/es/OrcaSlicer_es.po",
+				"pattern": "localization/i18n/es/Snapmaker_Orca_es.po",
 				"lang": "es"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/nl/OrcaSlicer_nl.po",
+				"pattern": "localization/i18n/nl/Snapmaker_Orca_nl.po",
 				"lang": "nl"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/hu/OrcaSlicer_hu.po",
+				"pattern": "localization/i18n/hu/Snapmaker_Orca_hu.po",
 				"lang": "hu"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/ja/OrcaSlicer_hu.po",
+				"pattern": "localization/i18n/ja/Snapmaker_Orca_hu.po",
 				"lang": "it"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/ja/OrcaSlicer_ja.po",
+				"pattern": "localization/i18n/ja/Snapmaker_Orca_ja.po",
 				"lang": "ja"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/ko/OrcaSlicer_ko.po",
+				"pattern": "localization/i18n/ko/Snapmaker_Orca_ko.po",
 				"lang": "ko"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/ru/OrcaSlicer_ru.po",
+				"pattern": "localization/i18n/ru/Snapmaker_Orca_ru.po",
 				"lang": "ru"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/zh_TW/OrcaSlicer_zh_TW.po",
+				"pattern": "localization/i18n/zh_TW/Snapmaker_Orca_zh_TW.po",
 				"lang": "zh_TW"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/tr/OrcaSlicer_tr.po",
+				"pattern": "localization/i18n/tr/Snapmaker_Orca_tr.po",
 				"lang": "tr"
 			},
 			{
 				"type": "po",
-				"pattern": "localization/i18n/tr/OrcaSlicer_pl.po",
+				"pattern": "localization/i18n/tr/Snapmaker_Orca_pl.po",
 				"lang": "pl"
 			}
 		]
@@ -80,7 +80,7 @@
 		"folder": "localization/i18n",
 		"includeSourceLang" : "true",
 		"files": {
-			"output": "${lang}/OrcaSlicer_${lang}.po"
+			"output": "${lang}/Snapmaker_Orca_${lang}.po"
 		}
 	}
 }

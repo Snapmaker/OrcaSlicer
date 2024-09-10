@@ -1,4 +1,4 @@
-orcaslicer_add_cmake_project(
+Snapmaker_Orca_add_cmake_project(
     CGAL
     # GIT_REPOSITORY https://github.com/CGAL/cgal.git
     # GIT_TAG        bec70a6d52d8aacb0b3d82a7b4edc3caa899184b # releases/CGAL-5.0

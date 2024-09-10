@@ -8,7 +8,7 @@ set -x
 # would speed up recompile times significantly.  For end users,
 # the simplicity of a single Docker image and a one-time compilation
 # seems better.
-docker build -t orcaslicer \
+docker build -t Snapmaker_Orca \
   --build-arg USER=$USER \
   --build-arg UID=$(id -u) \
   --build-arg GID=$(id -g) \

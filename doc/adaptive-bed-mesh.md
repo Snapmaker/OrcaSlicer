@@ -4,7 +4,7 @@ This feature allows users to seamlessly integrate adaptive bed mesh commands wit
 The implementation is designed to be straightforward, requiring no additional plugins or alterations to firmware settings, thereby enhancing user experience and print quality directly from Snapmaker Orca.
 
 
-![Screenshot 2024-02-24 104601](https://github.com/SoftFever/Snapmaker_Orca/assets/103989404/8ab1f26f-987d-4419-942f-b1384270a164)  
+![Screenshot 2024-02-24 104601](https://github.com/SoftFever/OrcaSlicer/assets/103989404/8ab1f26f-987d-4419-942f-b1384270a164)  
 
 ## Settings in Snapmaker Orca:
 `Bed mesh min`: This option sets the min point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be set appropriately. Snapmaker_Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max points. This information can usually be obtained from your printer manufacturer. The default setting is (-99999, -99999), which means there are no limits, thus allowing probing across the entire bed.
@@ -41,4 +41,4 @@ BED_MESH_CALIBRATE mesh_min={adaptive_bed_mesh_min[0]},{adaptive_bed_mesh_min[1]
 ```
 M557 X{adaptive_bed_mesh_min[0]}:{adaptive_bed_mesh_max[0]} Y{adaptive_bed_mesh_min[1]}:{adaptive_bed_mesh_max[1]} P{bed_mesh_probe_count[0]}:{bed_mesh_probe_count[1]}  
 ```  
-![Screenshot 2024-02-24 104759](https://github.com/SoftFever/Snapmaker_Orca/assets/103989404/ad4a8020-bec6-4361-abb9-4017ca77471f)
+![Screenshot 2024-02-24 104759](https://github.com/SoftFever/OrcaSlicer/assets/103989404/ad4a8020-bec6-4361-abb9-4017ca77471f)

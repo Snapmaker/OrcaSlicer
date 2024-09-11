@@ -23,14 +23,14 @@ echo build type set to %build_type%
 cd deps
 mkdir %build_dir%
 cd %build_dir%
-set DEPS=%CD%/Snapmaker_Orca_dep
+set DEPS=%CD%/OrcaSlicer_dep
 if "%1"=="slicer" (
     GOTO :slicer
 )
 echo "building deps.."
 
-echo cmake ../ -G "Visual Studio 16 2019" -A x64 -DDESTDIR="%CD%/Snapmaker_Orca_dep" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
-cmake ../ -G "Visual Studio 16 2019" -A x64 -DDESTDIR="%CD%/Snapmaker_Orca_dep" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
+echo cmake ../ -G "Visual Studio 16 2019" -A x64 -DDESTDIR="%CD%/OrcaSlicer_dep" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
+cmake ../ -G "Visual Studio 16 2019" -A x64 -DDESTDIR="%CD%/OrcaSlicer_dep" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
 cmake --build . --config %build_type% --target deps -- -m
 
 if "%1"=="deps" exit /b 0

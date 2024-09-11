@@ -6,7 +6,7 @@ This happens by reducing the stresses put on the extrusion system as well as red
 
 This feature is especially helpful when printing at high accelerations and large flow rates as the deviations are larger in these cases.
 
-![Screenshot 2023-09-18 at 22 44 26](https://github.com/SoftFever/Snapmaker_Orca/assets/59056762/281b9c78-9f5c-428e-86b9-509de099a3e7)
+![Screenshot 2023-09-18 at 22 44 26](https://github.com/SoftFever/OrcaSlicera/assets/59056762/281b9c78-9f5c-428e-86b9-509de099a3e7)
 
 <h2>Theory</h2>
 
@@ -17,7 +17,7 @@ This works by breaking down the printed line segments into smaller "chunks", pro
 In summary, **it takes the "edge" off rapid extrusion changes caused by acceleration/deceleration as these are now spread over a longer distance and time.** Therefore, it can reduce wall artefacts that show when the print speeds change suddenly. These artefacts are occuring because the extruder and firmware cannot perfectly adhere to the requested by the slicer flow rates, especially when the extrusion rate is changing rapidly. 
 
 **The example below shows the artefact that is mitigated by ERS.**
-![ERS Disabled](https://github.com/SoftFever/Snapmaker_Orca/assets/59056762/31fdbf91-2067-4286-8bc1-4f7de4a628b6)
+![ERS Disabled](https://github.com/SoftFever/OrcaSlicera/assets/59056762/31fdbf91-2067-4286-8bc1-4f7de4a628b6)
 
 The bulging visible above is due to the extruder not being able to respond fast enough against the required speed change when printing with high accelerations and high speeds and requested to slow down for an overhang. 
 
@@ -45,17 +45,17 @@ When a speed change is requested, the firmware look ahead planner calculates the
 
 This deceleration move would happen over approximately 9.6mm. This is derived from the following equation:
 
-![image](https://github.com/igiannakas/Snapmaker_Orca/assets/59056762/4ba0356b-49ab-428c-ab10-f2c88bcc1bcb)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/4ba0356b-49ab-428c-ab10-f2c88bcc1bcb)
 
-![image](https://github.com/igiannakas/Snapmaker_Orca/assets/59056762/3958deb5-fbc3-4d07-8903-4575033717fd)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/3958deb5-fbc3-4d07-8903-4575033717fd)
 
 The time taken to decelerate to this new speed would be approx. 0.08 seconds, derived from the following equation:
 
-![image](https://github.com/igiannakas/Snapmaker_Orca/assets/59056762/ea9f19b4-defe-4656-9ecc-a6576c87d8e0)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/ea9f19b4-defe-4656-9ecc-a6576c87d8e0)
 
 A printer printing at 200mm/sec with a 0.42 line width and 0.16 layer height would be extruding plastic at approx. 12.16mm3/sec, as can also be seen from the below visual.
 
-![image](https://github.com/igiannakas/Snapmaker_Orca/assets/59056762/83242b26-7174-4da1-b815-d9fcec767bcd)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/83242b26-7174-4da1-b815-d9fcec767bcd)
 
 When the printer is extruding at 40mm/sec with the same line width and layer height as above, the flow rate is 2.43mm3/sec.
 

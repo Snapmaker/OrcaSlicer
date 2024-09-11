@@ -110,7 +110,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_BUILD_DIR="$PROJECT_DIR/build_$ARCH"
 DEPS_DIR="$PROJECT_DIR/deps"
 DEPS_BUILD_DIR="$DEPS_DIR/build_$ARCH"
-DEPS="$DEPS_BUILD_DIR/Snapmaker_Orca_dep_$ARCH"
+DEPS="$DEPS_BUILD_DIR/OrcaSlicer_dep_$ARCH"
 
 # Fix for Multi-config generators
 if [ "$SLICER_CMAKE_GENERATOR" == "Xcode" ]; then
@@ -144,7 +144,7 @@ function pack_deps() {
         set -x
         mkdir -p "$DEPS"
         cd "$DEPS_BUILD_DIR"
-        tar -zcvf "Snapmaker_Orca_dep_mac_${ARCH}_$(date +"%Y%m%d").tar.gz" "Snapmaker_Orca_dep_$ARCH"
+        tar -zcvf "OrcaSlicer_dep_mac_${ARCH}_$(date +"%Y%m%d").tar.gz" "OrcaSlicer_dep_$ARCH"
     )
 }
 

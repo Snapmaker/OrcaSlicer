@@ -148,7 +148,7 @@ elseif(FLATPAK)
     # the only reason this is here is because of the HACK at the bottom for ci
     #
     # note for future devs: shared libs may actually create a size reduction
-    # but Snapmaker_Orca_deps tends to get really funny regarding linking after that (notably boost)
+    # but OrcaSlicer_deps tends to get really funny regarding linking after that (notably boost)
     # so, as much as I would like to use that, it's not happening
     ExternalProject_Add(
         dep_${projectname}

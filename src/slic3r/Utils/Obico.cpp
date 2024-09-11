@@ -51,7 +51,7 @@ void  Obico::set_auth(Http& http) const
 
 bool Obico::get_login_url(wxString& auth_url) const
 {
-    auth_url = make_url("o/authorize?response_type=token&client_id=OrcaSlicer&hide_navbar=true");
+    auth_url = make_url("o/authorize?response_type=token&client_id=Snapmaker_Orca&hide_navbar=true");
     return true;
 }
 

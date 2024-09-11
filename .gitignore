@@ -23,7 +23,7 @@ deps/build*/*
 install_*
 build_*/
 SVG
-src/OrcaSlicer-doc/
+src/Snapmaker_Orca-doc/
 .idea/
 /.cache/
 *.mo

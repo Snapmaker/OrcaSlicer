@@ -741,7 +741,7 @@ class Print;
         enum class EProducer
         {
             Unknown,
-            OrcaSlicer,
+            Snapmaker_Orca,
             Slic3rPE,
             Slic3r,
             SuperSlicer,

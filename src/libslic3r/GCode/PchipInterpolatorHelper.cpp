@@ -1,5 +1,5 @@
 // PchipInterpolatorHelper.cpp
-// OrcaSlicer
+// Snapmaker_Orca
 //
 // Implementation file for the PchipInterpolatorHelper class
 

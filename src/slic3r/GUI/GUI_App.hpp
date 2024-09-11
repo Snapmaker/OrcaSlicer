@@ -123,9 +123,9 @@ enum ConfigMenuIDs {
     ConfigMenuCnt,
 };
 
-enum OrcaSlicerMenuIDs {
-  OrcaSlicerMenuAbout,
-  OrcaSlicerMenuPreferences,
+enum Snapmaker_OrcaMenuIDs {
+  Snapmaker_OrcaMenuAbout,
+  Snapmaker_OrcaMenuPreferences,
 };
 
 enum CameraMenuIDs {
@@ -335,7 +335,7 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
-    std::string logo_name() const { return is_editor() ? "OrcaSlicer" : "OrcaSlicer-gcodeviewer"; }
+    std::string logo_name() const { return is_editor() ? "Snapmaker_Orca" : "Snapmaker_Orca-gcodeviewer"; }
     
     // SoftFever
     bool show_gcode_window() const { return m_show_gcode_window; }

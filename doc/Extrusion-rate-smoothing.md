@@ -6,7 +6,7 @@ This happens by reducing the stresses put on the extrusion system as well as red
 
 This feature is especially helpful when printing at high accelerations and large flow rates as the deviations are larger in these cases.
 
-![Screenshot 2023-09-18 at 22 44 26](https://github.com/SoftFever/OrcaSlicer/assets/59056762/281b9c78-9f5c-428e-86b9-509de099a3e7)
+![Screenshot 2023-09-18 at 22 44 26](https://github.com/SoftFever/OrcaSlicera/assets/59056762/281b9c78-9f5c-428e-86b9-509de099a3e7)
 
 <h2>Theory</h2>
 
@@ -17,7 +17,7 @@ This works by breaking down the printed line segments into smaller "chunks", pro
 In summary, **it takes the "edge" off rapid extrusion changes caused by acceleration/deceleration as these are now spread over a longer distance and time.** Therefore, it can reduce wall artefacts that show when the print speeds change suddenly. These artefacts are occuring because the extruder and firmware cannot perfectly adhere to the requested by the slicer flow rates, especially when the extrusion rate is changing rapidly. 
 
 **The example below shows the artefact that is mitigated by ERS.**
-![ERS Disabled](https://github.com/SoftFever/OrcaSlicer/assets/59056762/31fdbf91-2067-4286-8bc1-4f7de4a628b6)
+![ERS Disabled](https://github.com/SoftFever/OrcaSlicera/assets/59056762/31fdbf91-2067-4286-8bc1-4f7de4a628b6)
 
 The bulging visible above is due to the extruder not being able to respond fast enough against the required speed change when printing with high accelerations and high speeds and requested to slow down for an overhang. 
 
@@ -36,7 +36,7 @@ This parameter interacts with the below printer kinematic settings and physical 
 
 
 <h3>Acceleration vs. Extrusion rate smoothing</h3>
-A printer's motion system does not exactly follow the speed changes seen in the gcode preview screen of Orca slicer. 
+A printer's motion system does not exactly follow the speed changes seen in the gcode preview screen of Snapmaker Orca. 
 
 
 When a speed change is requested, the firmware look ahead planner calculates the slow down needed to achieve the target speed. The rate of slowdown is limited by the move's acceleration value. 
@@ -45,17 +45,17 @@ When a speed change is requested, the firmware look ahead planner calculates the
 
 This deceleration move would happen over approximately 9.6mm. This is derived from the following equation:
 
-![image](https://github.com/igiannakas/OrcaSlicer/assets/59056762/4ba0356b-49ab-428c-ab10-f2c88bcc1bcb)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/4ba0356b-49ab-428c-ab10-f2c88bcc1bcb)
 
-![image](https://github.com/igiannakas/OrcaSlicer/assets/59056762/3958deb5-fbc3-4d07-8903-4575033717fd)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/3958deb5-fbc3-4d07-8903-4575033717fd)
 
 The time taken to decelerate to this new speed would be approx. 0.08 seconds, derived from the following equation:
 
-![image](https://github.com/igiannakas/OrcaSlicer/assets/59056762/ea9f19b4-defe-4656-9ecc-a6576c87d8e0)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/ea9f19b4-defe-4656-9ecc-a6576c87d8e0)
 
 A printer printing at 200mm/sec with a 0.42 line width and 0.16 layer height would be extruding plastic at approx. 12.16mm3/sec, as can also be seen from the below visual.
 
-![image](https://github.com/igiannakas/OrcaSlicer/assets/59056762/83242b26-7174-4da1-b815-d9fcec767bcd)
+![image](https://github.com/igiannakas/OrcaSlicera/assets/59056762/83242b26-7174-4da1-b815-d9fcec767bcd)
 
 When the printer is extruding at 40mm/sec with the same line width and layer height as above, the flow rate is 2.43mm3/sec.
 
@@ -148,7 +148,7 @@ If your printer is not equipped with pressure advance and, especially, if you ar
 In this special case, ERS will be doing all the heavy lifting that pressure advance would typically perform. In this scenario a low value of 8-10mm3/sec is usually recommended, irrespective of your acceleration settings, to smooth out pressure changes in the extrusion system as much as possible without impacting print speed too much. 
 
 <h2>A note on ERS Segment length </h2>
-Ideally you want this value set to 1 to allow for the largest number of steps between each speed transition. However, this may result in a too large of a gcode, with too many commands sent to your MCU per second and it may not be able to keep up. It will also slow down the Orca slicer front end as the sliced model is more complex to render.
+Ideally you want this value set to 1 to allow for the largest number of steps between each speed transition. However, this may result in a too large of a gcode, with too many commands sent to your MCU per second and it may not be able to keep up. It will also slow down the Snapmaker Orca front end as the sliced model is more complex to render.
 
 
 For Klipper printers, a segment length of 1 works OK as the RPI or similar have enough computational power to handle the gcode command volume. 

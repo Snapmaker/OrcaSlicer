@@ -317,6 +317,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     }
     webView->SetRefData(new WebViewRef(webView));
     g_webviews.push_back(webView);
+    webView->EnableAccessToDevTools();
     return webView;
 }
 #if wxUSE_WEBVIEW_EDGE

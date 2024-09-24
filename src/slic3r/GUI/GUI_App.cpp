@@ -2241,6 +2241,10 @@ bool GUI_App::on_init_inner()
         std::string ssl_cert_store = app_config->get("tls_accepted_cert_store_location");
         bool ssl_accept = app_config->get("tls_cert_store_accepted") == "yes" && ssl_cert_store == Slic3r::Http::tls_system_cert_store();
 
+#ifdef SERVER_ENGINE
+        app_config->set("tls_cert_store_accepted", "yes");
+            app_config->set("tls_accepted_cert_store_location", Slic3r::Http::tls_system_cert_store());
+#else
         if (!msg.empty() && !ssl_accept) {
             RichMessageDialog
                 dlg(nullptr,
@@ -2254,6 +2258,7 @@ bool GUI_App::on_init_inner()
             app_config->set("tls_accepted_cert_store_location",
                 dlg.IsCheckBoxChecked() ? Slic3r::Http::tls_system_cert_store() : "");
         }
+#endif
     }
 
     // !!! Initialization of UI settings as a language, application color mode, fonts... have to be done before first UI action.

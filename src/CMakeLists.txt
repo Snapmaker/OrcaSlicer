@@ -121,7 +121,7 @@ if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp BaseException.cpp BaseException.h StackWalker.cpp StackWalker.h)
 else ()
     if (SERVER_ENGINE)
-        add_executable(Snapmaker_Orca_Engine Snapmaker_Orca.cpp Snapmaker_Orca.hpp Engine.cpp Engine.h)
+        add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp Engine.cpp Engine.h)
     else ()
         add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
     endif ()
@@ -134,22 +134,13 @@ endif (MINGW)
 
 if (NOT WIN32 AND NOT APPLE)
     # Binary name on unix like systems (Linux, Unix)
-    if (SERVER_ENGINE)
-        set_target_properties(Snapmaker_Orca_Engine PROPERTIES OUTPUT_NAME "snapmaker-orca-engine")
-        set(SLIC3R_APP_CMD "snapmaker-orca-engine")
-    else ()
-        set_target_properties(Snapmaker_Orca PROPERTIES OUTPUT_NAME "snapmaker-orca")
-        set(SLIC3R_APP_CMD "snapmaker-orca")
-    endif ()
+    set_target_properties(Snapmaker_Orca PROPERTIES OUTPUT_NAME "snapmaker-orca")
+    set(SLIC3R_APP_CMD "snapmaker-orca")
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/unix/BuildLinuxImage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/BuildLinuxImage.sh @ONLY)
 endif ()
 
 
-if (SERVER_ENGINE)
-    target_link_libraries(Snapmaker_Orca_Engine libslic3r cereal::cereal)
-else()
-    target_link_libraries(Snapmaker_Orca libslic3r cereal::cereal)
-endif ()
+target_link_libraries(Snapmaker_Orca libslic3r cereal::cereal)
 
 if (APPLE)
 #    add_compile_options(-stdlib=libc++)
@@ -161,21 +152,13 @@ elseif (MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
 else ()
     # Boost on Raspberry-Pi does not link to pthreads explicitely.
-    if (SERVER_ENGINE)
-        target_link_libraries(Snapmaker_Orca_Engine ${CMAKE_DL_LIBS} -lstdc++ Threads::Threads pangoft2-1.0)
-    else ()
-        target_link_libraries(Snapmaker_Orca ${CMAKE_DL_LIBS} -lstdc++ Threads::Threads pangoft2-1.0)
-    endif ()
+    target_link_libraries(Snapmaker_Orca ${CMAKE_DL_LIBS} -lstdc++ Threads::Threads pangoft2-1.0)
 endif ()
 
 # Add the Slic3r GUI library, libcurl, OpenGL and GLU libraries.
 if (SLIC3R_GUI)
 #    target_link_libraries(Snapmaker_Orca ws2_32 uxtheme setupapi libslic3r_gui ${wxWidgets_LIBRARIES})
-    if (SERVER_ENGINE)
-        target_link_libraries(Snapmaker_Orca_Engine libslic3r_gui)
-    else ()
-        target_link_libraries(Snapmaker_Orca libslic3r_gui)
-    endif ()
+    target_link_libraries(Snapmaker_Orca libslic3r_gui)
 
     if (MSVC)
         # Generate debug symbols even in release mode.
@@ -186,11 +169,7 @@ if (SLIC3R_GUI)
     elseif (APPLE)
         target_link_libraries(Snapmaker_Orca "-framework OpenGL")
     else ()
-        if (SERVER_ENGINE)
-            target_link_libraries(Snapmaker_Orca_Engine -ldl)
-        else ()
-            target_link_libraries(Snapmaker_Orca -ldl)
-        endif ()
+        target_link_libraries(Snapmaker_Orca -ldl)
        
     endif ()
     #if (WIN32)
@@ -265,15 +244,9 @@ else ()
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
             VERBATIM)
     else ()
-        if (SERVER_ENGINE)
-            add_custom_command(TARGET Snapmaker_Orca_Engine POST_BUILD
-            WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca_Engine>"
-            VERBATIM)
-        else ()
-            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-            WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
-            VERBATIM)
-        endif ()
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+        WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
+        VERBATIM)
         
     endif ()
     if (XCODE)
@@ -296,17 +269,10 @@ else ()
         set(MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
     endif()
 
-    if (SERVER_ENGINE)
-        add_custom_command(TARGET Snapmaker_Orca_Engine POST_BUILD
-        COMMAND ln -sfn "${SLIC3R_RESOURCES_DIR}" "${BIN_RESOURCES_DIR}"
-        COMMENT "Symlinking the resources directory into the build tree"
-        VERBATIM)
-    else ()
-        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-        COMMAND ln -sfn "${SLIC3R_RESOURCES_DIR}" "${BIN_RESOURCES_DIR}"
-        COMMENT "Symlinking the resources directory into the build tree"
-        VERBATIM)
-    endif ()
+    add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+    COMMAND ln -sfn "${SLIC3R_RESOURCES_DIR}" "${BIN_RESOURCES_DIR}"
+    COMMENT "Symlinking the resources directory into the build tree"
+    VERBATIM)
     
 endif ()
 
@@ -330,9 +296,5 @@ if (WIN32)
     endif ()
     install(FILES ${output_dlls_${build_type}} DESTINATION ".")
 else ()
-    if (SERVER_ENGINE)
-        install(TARGETS Snapmaker_Orca_Engine RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
-    else ()
-        install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
-    endif ()
+    install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()

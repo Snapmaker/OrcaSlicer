@@ -173,14 +173,8 @@ then
         -DORCA_TOOLS=ON \
         ${BUILD_ARGS}
     echo "done"
-    if [[ -n "${BUILD_ENGINE}" ]]
-    then
-        echo "Building Snapmaker_Orca_Engine ..."
-        cmake --build build --target Snapmaker_Orca_Engine
-    else
-        echo "Building Snapmaker_Orca ..."
-        cmake --build build --target Snapmaker_Orca
-    fi
+    echo "Building Snapmaker_Orca ..."
+    cmake --build build --target Snapmaker_Orca
     
     echo "Building Snapmaker_Orca_profile_validator .."
     cmake --build build --target Snapmaker_Orca_profile_validator

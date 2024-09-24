@@ -157,6 +157,7 @@ then
     fi
     if [[ -n "${BUILD_ENGINE}" ]]
     then
+        echo "BUILD_ENGINE=ON"
         BUILD_ARGS="${BUILD_ARGS} -DSERVER_ENGINE=ON"
     fi
     if [[ -n "${BUILD_DEBUG}" ]]

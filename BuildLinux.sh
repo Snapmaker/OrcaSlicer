@@ -25,7 +25,7 @@ function check_available_memory_and_disk() {
 }
 
 function usage() {
-    echo "Usage: ./BuildLinux.sh [-1][-b][-c][-d][-i][-r][-s][-u]"
+    echo "Usage: ./BuildLinux.sh [-1][-b][-c][-d][-e][-i][-r][-s][-u]"
     echo "   -1: limit builds to 1 core (where possible)"
     echo "   -b: build in debug mode"
     echo "   -c: force a clean build"
@@ -41,7 +41,7 @@ function usage() {
 }
 
 unset name
-while getopts ":1bcdghirsu" opt; do
+while getopts ":1bcdeghirsu" opt; do
   case ${opt} in
     1 )
         export CMAKE_BUILD_PARALLEL_LEVEL=1
@@ -173,8 +173,15 @@ then
         -DORCA_TOOLS=ON \
         ${BUILD_ARGS}
     echo "done"
-    echo "Building Snapmaker_Orca ..."
-    cmake --build build --target Snapmaker_Orca
+    if [[ -n "${BUILD_ENGINE}" ]]
+    then
+        echo "Building Snapmaker_Orca_Engine ..."
+        cmake --build build --target Snapmaker_Orca_Engine
+    else
+        echo "Building Snapmaker_Orca ..."
+        cmake --build build --target Snapmaker_Orca
+    fi
+    
     echo "Building Snapmaker_Orca_profile_validator .."
     cmake --build build --target Snapmaker_Orca_profile_validator
     ./run_gettext.sh

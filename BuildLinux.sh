@@ -155,7 +155,7 @@ then
     then
         BUILD_ARGS="-DSLIC3R_GTK=3"
     fi
-    if [[ -n "${BUILD_ENGINE}"]]
+    if [[ -n "${BUILD_ENGINE}" ]]
     then
         BUILD_ARGS="${BUILD_ARGS} -DSERVER_ENGINE"
     fi

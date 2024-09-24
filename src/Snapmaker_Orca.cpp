@@ -83,10 +83,6 @@ using namespace nlohmann;
 #include "slic3r/GUI/Plater.hpp"
 #include <GLFW/glfw3.h>
 
-#ifdef SERVER_ENGINE
-#include "Engine.h"
-#endif
-
 #ifdef __WXGTK__
 #include <X11/Xlib.h>
 #endif

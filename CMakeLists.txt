@@ -87,7 +87,6 @@ foreach (_cache_var ${_cache_vars})
 endforeach()
 
 if (SERVER_ENGINE)
-    message("liuxiaoye add_definition SERVER_ENGINE")
     add_definitions(-DSERVER_ENGINE)
 endif ()
 

@@ -24,10 +24,6 @@ add_subdirectory(libnest2d)
 
 add_subdirectory(libslic3r)
 
-if (SERVER_ENGINE)
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-endif()
-
 if (SLIC3R_GUI)
     add_subdirectory(imgui)
     add_subdirectory(imguizmo)

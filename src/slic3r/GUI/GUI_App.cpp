@@ -9,10 +9,6 @@
 #include "libslic3r_version.h"
 #include "Downloader.hpp"
 
-#ifdef SERVER_ENGINE
-#include "Engine.h"
-#endif
-
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
 // Also, there is a check that the former is not included from slic3r module.

@@ -86,6 +86,10 @@ foreach (_cache_var ${_cache_vars})
     endif ()
 endforeach()
 
+if (SERVER_ENGINE)
+    add_definitions(-DSERVER_ENGINE)
+endif ()
+
 if (SLIC3R_GUI)
     add_definitions(-DSLIC3R_GUI)
 endif ()

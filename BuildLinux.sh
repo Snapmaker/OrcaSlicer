@@ -157,7 +157,7 @@ then
     fi
     if [[ -n "${BUILD_ENGINE}" ]]
     then
-        BUILD_ARGS="${BUILD_ARGS} -DSERVER_ENGINE"
+        BUILD_ARGS="${BUILD_ARGS} -DSERVER_ENGINE=ON"
     fi
     if [[ -n "${BUILD_DEBUG}" ]]
     then

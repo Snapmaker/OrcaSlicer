@@ -10,7 +10,7 @@
 #include "Downloader.hpp"
 
 #ifdef SERVER_ENGINE
-#include "engine.h"
+#include "Engine.h"
 #endif
 
 // Localization headers: include libslic3r version first so everything in this file

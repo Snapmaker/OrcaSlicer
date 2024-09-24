@@ -6947,8 +6947,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
                 // Don't offer the "Eject" button on ChromeOS, the Linux side has no control over it.
                 platform_flavor() != PlatformFlavor::LinuxOnChromium);
             wxGetApp().removable_drive_manager()->set_exporting_finished(true);
-        }else
-        if (exporting_status == ExportingStatus::EXPORTING_TO_LOCAL && !has_error)
+        }else if (exporting_status == ExportingStatus::EXPORTING_TO_LOCAL && !has_error){
             notification_manager->push_exporting_finished_notification(last_output_path, last_output_dir_path, false);
 
             #ifdef SERVER_ENGINE

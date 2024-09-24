@@ -565,6 +565,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/SimplyPrint.hpp
 )
 
+include_directories(${CMAKE_SOURCE_DIR}/src)
+
 if (WIN32)
     list(APPEND SLIC3R_GUI_SOURCES
             GUI/dark_mode/dark_mode.hpp

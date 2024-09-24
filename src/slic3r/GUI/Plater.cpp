@@ -161,6 +161,12 @@ using namespace nlohmann;
 
 static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 512 };
 
+#ifdef SERVER_ENGINE
+extern std::vector<std::string> 	argv_narrow;
+extern std::vector<char*>			argv_ptrs;
+extern bool                         g_exported;
+#endif
+
 namespace Slic3r {
 namespace GUI {
 
@@ -6945,6 +6951,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (exporting_status == ExportingStatus::EXPORTING_TO_LOCAL && !has_error)
             notification_manager->push_exporting_finished_notification(last_output_path, last_output_dir_path, false);
 
+            #ifdef SERVER_ENGINE
+            extern bool g_exported;
+            g_exported = true;
+            #endif
+        }
+        
+
         // BBS, Generate calibration thumbnail for current plate
         if (!has_error && preview) {
             // generate calibration data
@@ -11027,6 +11040,11 @@ void Plater::reset_with_confirm()
 // BBS: save logic
 int GUI::Plater::close_with_confirm(std::function<bool(bool)> second_check)
 {
+
+    #ifdef SERVER_ENGINE
+    return wxID_NO;
+    #endif
+
     if (up_to_date(false, false)) {
         if (second_check && !second_check(false)) return wxID_CANCEL;
         model().set_backup_path("");

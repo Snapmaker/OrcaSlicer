@@ -30,10 +30,11 @@ function usage() {
     echo "   -b: build in debug mode"
     echo "   -c: force a clean build"
     echo "   -d: build deps (optional)"
+    echo "   -e: build linux orca engine (optional)"
     echo "   -h: this help output"
     echo "   -i: Generate appimage (optional)"
     echo "   -r: skip ram and disk checks (low ram compiling)"
-    echo "   -s: build snapmaker-slicer (optional)"
+    echo "   -s: build snapmaker-orca (optional)"
     echo "   -u: update and build dependencies (optional and need sudo)"
     echo "For a first use, you want to 'sudo ./BuildLinux.sh -u'"
     echo "   and then './BuildLinux.sh -dsi'"
@@ -53,6 +54,9 @@ while getopts ":1bcdghirsu" opt; do
         ;;
     d )
         BUILD_DEPS="1"
+        ;;
+    e )
+        BUILD_ENGINE="1"
         ;;
     h ) usage
         exit 0
@@ -150,6 +154,10 @@ then
     if [[ -n "${FOUND_GTK3_DEV}" ]]
     then
         BUILD_ARGS="-DSLIC3R_GTK=3"
+    fi
+    if [[ -n "${BUILD_ENGINE}"]]
+    then
+        BUILD_ARGS="${BUILD_ARGS} -DSERVER_ENGINE"
     fi
     if [[ -n "${BUILD_DEBUG}" ]]
     then

@@ -83,6 +83,10 @@ using namespace nlohmann;
 #include "slic3r/GUI/Plater.hpp"
 #include <GLFW/glfw3.h>
 
+#ifdef SERVER_ENGINE
+#include "Engine.h"
+#endif
+
 #ifdef __WXGTK__
 #include <X11/Xlib.h>
 #endif
@@ -145,6 +149,12 @@ std::map<int, std::string> cli_errors = {
     {CLI_SLICING_ERROR, "Failed slicing the model. Please verify the slicing of all plates on Snapmaker Orca before uploading."},
     {CLI_GCODE_PATH_CONFLICTS, " G-code conflicts detected after slicing. Please make sure the 3mf file can be successfully sliced in the latest Snapmaker Orca."}
 };
+
+#ifdef SERVER_ENGINE
+std::vector<std::string> argv_narrow;
+std::vector<char*>       argv_ptrs;
+bool                     g_exported = false;
+#endif
 
 typedef struct  _sliced_plate_info{
     int plate_id{0};
@@ -6024,7 +6034,7 @@ void CLI::print_help(bool include_print_options, PrinterTechnology printer_techn
     boost::nowide::cout
         << SLIC3R_APP_KEY <<"-"<< SLIC3R_VERSION << ":"
         << std::endl
-        << "Usage: snapmaker-slicer [ OPTIONS ] [ file.3mf/file.stl ... ]" << std::endl
+        << "Usage: snapmaker-orca [ OPTIONS ] [ file.3mf/file.stl ... ]" << std::endl
         << std::endl
         << "OPTIONS:" << std::endl;
     cli_misc_config_def.print_cli_help(boost::nowide::cout, false);
@@ -6263,9 +6273,14 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
 extern "C" {
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
     {
+#ifndef SERVER_ENGINE
         // Convert wchar_t arguments to UTF8.
-        std::vector<std::string> 	argv_narrow;
-        std::vector<char*>			argv_ptrs(argc + 1, nullptr);
+         std::vector<std::string> 	argv_narrow;
+         std::vector<char*>			argv_ptrs(argc + 1, nullptr);
+#endif
+
+        argv_ptrs.resize(argc + 1, nullptr);
+
         for (size_t i = 0; i < argc; ++ i)
             argv_narrow.emplace_back(boost::nowide::narrow(argv[i]));
         for (size_t i = 0; i < argc; ++ i)
@@ -6289,6 +6304,14 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
+    #ifdef SERVER_ENGINE
+    argv_ptrs.resize(argc + 1, nullptr);
+    for (size_t i = 0; i < argc; ++i)
+        argv_narrow.emplace_back(boost::nowide::narrow(argv[i]));
+    for (size_t i = 0; i < argc; ++i)
+        argv_ptrs[i] = argv_narrow[i].data();
+    #endif
+
     return CLI().run(argc, argv);
 }
 #endif /* _MSC_VER */

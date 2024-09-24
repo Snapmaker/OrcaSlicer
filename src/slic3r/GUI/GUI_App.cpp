@@ -9,6 +9,10 @@
 #include "libslic3r_version.h"
 #include "Downloader.hpp"
 
+#ifdef SERVER_ENGINE
+#include "engine.h"
+#endif
+
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
 // Also, there is a check that the former is not included from slic3r module.
@@ -827,6 +831,11 @@ void GUI_App::post_init()
                 for (auto& file : this->init_params->input_files) {
                     input_files.push_back(wxString::FromUTF8(file));
                 }
+
+                #ifdef SERVER_ENGINE
+                input_files.clear();
+                #endif
+
                 this->plater()->set_project_filename(_L("Untitled"));
                 this->plater()->load_files(input_files);
                 try {
@@ -2083,6 +2092,14 @@ void GUI_App::init_single_instance_checker(const std::string &name, const std::s
 bool GUI_App::OnInit()
 {
     try {
+        
+        #ifdef SERVER_ENGINE
+        extern std::vector<std::string>     argv_narrow;
+        std::vector<std::string>            files  = std::vector<std::string>(argv_narrow.begin() + 1, argv_narrow.end());
+        Slic3r::GUI::Snapmaker_Orca_Engine* engine = new Slic3r::GUI::Snapmaker_Orca_Engine(files);
+        engine->init(); 
+        #endif
+
         return on_init_inner();
     } catch (const std::exception&) {
         generic_exception_handle();
@@ -2379,6 +2396,11 @@ bool GUI_App::on_init_inner()
                         skip_this_version = false;
                     }
                 }
+
+                #ifdef SERVER_ENGINE
+                skip_this_version = true;
+                #endif
+
                 if (!skip_this_version
                     || evt.GetInt() != 0) {
                     UpdateVersionDialog dialog(this->mainframe);

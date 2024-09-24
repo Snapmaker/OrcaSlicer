@@ -245,6 +245,9 @@ void show_error_id(int id, const std::string& message)
 
 void show_info(wxWindow* parent, const wxString& message, const wxString& title)
 {
+	#ifdef SERVER_ENGINE
+    return;
+	#endif
 	//wxMessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	MessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_FULL_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	msg_wingow.ShowModal();

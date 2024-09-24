@@ -813,6 +813,10 @@ private:
 
     friend class SuppressBackgroundProcessingUpdate;
     friend class PlaterDropTarget;
+
+    #ifdef SERVER_ENGINE
+    friend class Snapmaker_Orca_Engine;
+    #endif
 };
 
 class SuppressBackgroundProcessingUpdate

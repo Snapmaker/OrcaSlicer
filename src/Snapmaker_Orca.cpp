@@ -6307,7 +6307,7 @@ int main(int argc, char **argv)
     #ifdef SERVER_ENGINE
     argv_ptrs.resize(argc + 1, nullptr);
     for (size_t i = 0; i < argc; ++i)
-        argv_narrow.emplace_back(boost::nowide::narrow(argv[i]));
+        argv_narrow.emplace_back(argv[i]);
     for (size_t i = 0; i < argc; ++i)
         argv_ptrs[i] = argv_narrow[i].data();
     #endif

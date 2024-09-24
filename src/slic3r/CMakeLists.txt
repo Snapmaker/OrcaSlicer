@@ -567,7 +567,7 @@ set(SLIC3R_GUI_SOURCES
 
 if (SERVER_ENGINE)
     message("SERVER_ENGINE INCULUDE engine.o")
-    list(APPEND SLIC3R_GUI_SOURCES "GUI/engine.cpp" "GUI/engine.h")
+    list(APPEND SLIC3R_GUI_SOURCES "GUI/Engine.cpp" "GUI/Engine.h")
 endif()
 
 if (WIN32)

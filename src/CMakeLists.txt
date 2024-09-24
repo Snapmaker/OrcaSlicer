@@ -120,11 +120,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/osx/Info.plist.in ${CMAKE_CU
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp BaseException.cpp BaseException.h StackWalker.cpp StackWalker.h)
 else ()
-    if (SERVER_ENGINE)
-        add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp Engine.cpp Engine.h)
-    else ()
-        add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
-    endif ()
+    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
     
 endif ()
 

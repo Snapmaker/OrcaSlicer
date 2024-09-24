@@ -565,11 +565,6 @@ set(SLIC3R_GUI_SOURCES
     Utils/SimplyPrint.hpp
 )
 
-if (SERVER_ENGINE)
-    message("SERVER_ENGINE INCULUDE engine.o")
-    list(APPEND SLIC3R_GUI_SOURCES "GUI/Engine.cpp" "GUI/Engine.h")
-endif()
-
 if (WIN32)
     list(APPEND SLIC3R_GUI_SOURCES
             GUI/dark_mode/dark_mode.hpp

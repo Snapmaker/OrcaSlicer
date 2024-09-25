@@ -2091,7 +2091,9 @@ bool GUI_App::OnInit()
         
         #ifdef SERVER_ENGINE
         std::vector<std::string>            files;
-        for (size_t i = 0; i < this->init_params->argc; ++i) {
+        for (size_t i = 1; i < this->init_params->argc; ++i) {
+            wxputs(init_params->argv[i]);
+            wxputs("\n")
             files.push_back(this->init_params->argv[i]);
         }
         Slic3r::GUI::Snapmaker_Orca_Engine* engine = new Slic3r::GUI::Snapmaker_Orca_Engine(files);

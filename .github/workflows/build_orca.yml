@@ -264,7 +264,7 @@ jobs:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
+          name: Snapmaker_Orca_Engine_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
           path: './build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage'
 
       - name: Deploy Ubuntu-Engine release

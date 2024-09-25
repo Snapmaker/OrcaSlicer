@@ -265,7 +265,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Snapmaker_Orca_Engine_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
-          path: './build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage'
+          path: './build/Snapmaker_Orca_Engine_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage'
 
       - name: Deploy Ubuntu-Engine release
         if: ${{ ! env.ACT && github.ref == 'refs/heads/main' && inputs.os == 'ubuntu-20.04' }}

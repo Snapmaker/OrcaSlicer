@@ -161,12 +161,6 @@ using namespace nlohmann;
 
 static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 512 };
 
-#ifdef SERVER_ENGINE
-extern std::vector<std::string> 	argv_narrow;
-extern std::vector<char*>			argv_ptrs;
-extern bool                         g_exported;
-#endif
-
 namespace Slic3r {
 namespace GUI {
 
@@ -6951,8 +6945,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
             notification_manager->push_exporting_finished_notification(last_output_path, last_output_dir_path, false);
 
             #ifdef SERVER_ENGINE
-            extern bool g_exported;
-            g_exported = true;
+            Snapmaker_Orca_Engine::s_exported = true;
             #endif
         }
         
@@ -14421,6 +14414,7 @@ SuppressBackgroundProcessingUpdate::~SuppressBackgroundProcessingUpdate()
 int Snapmaker_Orca_Engine::s_time_gui_load = 500;
 int Snapmaker_Orca_Engine::s_time_check_export = 100;
 int Snapmaker_Orca_Engine::s_time_delay_close  = 500;
+bool Snapmaker_Orca_Engine::s_exported          = false;
 
 Snapmaker_Orca_Engine::Snapmaker_Orca_Engine(std::vector<std::string>& user_inputs) : m_OriFiles(user_inputs) {}
 
@@ -14461,11 +14455,10 @@ void Snapmaker_Orca_Engine::on_gui_loaded()
 }
 
 void Snapmaker_Orca_Engine::on_time_check() {
-    extern bool g_exported;
-    if (g_exported) {
+    if (s_exported) {
         m_check_export_timer->Stop();
 
-        g_exported = false;
+        s_exported = false;
 
         ++m_task_index;
 
@@ -14730,4 +14723,4 @@ void Snapmaker_Orca_Engine::export_gcode_server(bool prefer_removable) {
         } catch (...) {}
     }
 }
-#endif SERVER_ENGINE
+#endif

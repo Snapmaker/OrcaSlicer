@@ -2090,8 +2090,10 @@ bool GUI_App::OnInit()
     try {
         
         #ifdef SERVER_ENGINE
-        extern std::vector<std::string>     argv_narrow;
-        std::vector<std::string>            files  = std::vector<std::string>(argv_narrow.begin() + 1, argv_narrow.end());
+        std::vector<std::string>            files;
+        for (size_t i = 0; i < this->init_params->argc; ++i) {
+            files.push_back(this->init_params->argv[i]);
+        }
         Slic3r::GUI::Snapmaker_Orca_Engine* engine = new Slic3r::GUI::Snapmaker_Orca_Engine(files);
         engine->init(); 
         #endif

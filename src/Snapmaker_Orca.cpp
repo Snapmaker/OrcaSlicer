@@ -146,12 +146,6 @@ std::map<int, std::string> cli_errors = {
     {CLI_GCODE_PATH_CONFLICTS, " G-code conflicts detected after slicing. Please make sure the 3mf file can be successfully sliced in the latest Snapmaker Orca."}
 };
 
-#ifdef SERVER_ENGINE
-std::vector<std::string> argv_narrow;
-std::vector<char*>       argv_ptrs;
-bool                     g_exported = false;
-#endif
-
 typedef struct  _sliced_plate_info{
     int plate_id{0};
     size_t sliced_time {0};
@@ -6269,11 +6263,8 @@ LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
 extern "C" {
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
     {
-#ifndef SERVER_ENGINE
-        // Convert wchar_t arguments to UTF8.
          std::vector<std::string> 	argv_narrow;
          std::vector<char*>			argv_ptrs(argc + 1, nullptr);
-#endif
 
         argv_ptrs.resize(argc + 1, nullptr);
 
@@ -6300,14 +6291,6 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
-    #ifdef SERVER_ENGINE
-    argv_ptrs.resize(argc + 1, nullptr);
-    for (size_t i = 0; i < argc; ++i)
-        argv_narrow.emplace_back(argv[i]);
-    for (size_t i = 0; i < argc; ++i)
-        argv_ptrs[i] = argv_narrow[i].data();
-    #endif
-
     return CLI().run(argc, argv);
 }
 #endif /* _MSC_VER */

@@ -262,7 +262,7 @@ else ()
         endif()
         set(MACOSX_BUNDLE_ICON_FILE Icon.icns)
         set(MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker_Orca")
-        set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${SoftFever_VERSION})
+        set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION})
         set(MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
     endif()
 

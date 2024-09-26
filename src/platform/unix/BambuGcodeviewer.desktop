@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Bambu GCode viewer
-Exec=snapmaker-slicer --gcodeviewer %F
+Exec=snapmaker-orca --gcodeviewer %F
 Icon=Snapmaker_Orca-gcodeviewer
 Terminal=false
 Type=Application

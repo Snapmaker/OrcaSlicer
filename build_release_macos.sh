@@ -194,7 +194,7 @@ function build_slicer() {
     )
 
     # extract version
-    # export ver=$(grep '^#define SoftFever_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
+    # export ver=$(grep '^#define Snapmaker_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
     # ver="_V${ver//\"}"
     # echo $PWD
     # if [ "1." != "$NIGHTLY_BUILD". ];

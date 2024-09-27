@@ -165,9 +165,9 @@
   "brim_width": "5",
   "brim_object_gap": "0",
 
-  "prime_tower_width": "10",
-  "prime_volume": "7.3",
-  "prime_tower_brim_width": "5",
+  "prime_tower_width": "60",
+  "prime_volume": "45",
+  "prime_tower_brim_width": "3",
   "wipe_tower_cone_angle": "40",
   "flush_into_infill": "0",
   "flush_into_support": "1",

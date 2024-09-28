@@ -10,7 +10,7 @@ endif()
 if(NOT DEFINED BBL_INTERNAL_TESTING)
 set(BBL_INTERNAL_TESTING "0")
 endif()
-set(Snapmaker_VERSION "0.0.1")
+set(Snapmaker_VERSION "0.0.2")
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
        Snapmaker_VERSION_MATCH ${Snapmaker_VERSION})
 set(ORCA_VERSION_MAJOR ${CMAKE_MATCH_1})

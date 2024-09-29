@@ -103,7 +103,7 @@ private:
 
     wxString m_SectionName;
 
-    bool bbl_bundle_rsrc;
+    bool sm_bundle_rsrc;
     boost::filesystem::path vendor_dir;
     boost::filesystem::path rsrc_vendor_dir;
 
@@ -123,7 +123,7 @@ private:
     wxString m_javascript;
     wxString m_response_js;
 
-    wxString m_bbl_user_agent;
+    wxString m_sm_user_agent;
     std::string m_editing_filament_id;
 };
 

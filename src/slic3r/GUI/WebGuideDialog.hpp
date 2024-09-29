@@ -124,7 +124,7 @@ private:
     wxString m_javascript;
     wxString m_response_js;
 
-    wxString m_bbl_user_agent;
+    wxString m_sm_user_agent;
     std::string m_editing_filament_id;
 };
 

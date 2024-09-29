@@ -1111,11 +1111,11 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
                             fs::remove_all(path_of_vendor);
                     }
                 }
-                else if ((vendor_name == PresetBundle::BBL_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) {//if vendor has no file, copy it from resource for BBL
+                else if ((vendor_name == PresetBundle::SM_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) {//if vendor has no file, copy it from resource for BBL
                     bundles.push_back(vendor_name);
                 }
             }
-            else if ((vendor_name == PresetBundle::BBL_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) { //always update configs from resource to vendor for BBL
+            else if ((vendor_name == PresetBundle::SM_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) { //always update configs from resource to vendor for BBL
                 bundles.push_back(vendor_name);
             }
         }

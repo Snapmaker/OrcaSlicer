@@ -43,11 +43,17 @@ static std::vector<std::string> s_project_options {
     "flush_multiplier",
 };
 
-//BBS: add BBL as default
-const char *PresetBundle::BBL_BUNDLE = "Custom";
-const char *PresetBundle::BBL_DEFAULT_PRINTER_MODEL = "MyKlipper 0.4 nozzle";
-const char *PresetBundle::BBL_DEFAULT_PRINTER_VARIANT = "0.4";
-const char *PresetBundle::BBL_DEFAULT_FILAMENT = "My Generic PLA";
+////BBS: add BBL as default
+//const char *PresetBundle::BBL_BUNDLE = "Custom";
+//const char *PresetBundle::BBL_DEFAULT_PRINTER_MODEL = "MyKlipper 0.4 nozzle";
+//const char *PresetBundle::BBL_DEFAULT_PRINTER_VARIANT = "0.4";
+//const char *PresetBundle::BBL_DEFAULT_FILAMENT = "My Generic PLA";
+
+// SM_FEATURE: add Snapmaker machine as default
+const char* PresetBundle::SM_BUNDLE = "Snapmaker";
+const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker J1 (0.4 nozzle)";
+const char* PresetBundle::SM_DEFAULT_PRINTER_VARIANT = "0.4";
+const char* PresetBundle::SM_DEFAULT_FILAMENT        = "Snapmaker ABS";
 
 PresetBundle::PresetBundle()
     : prints(Preset::TYPE_PRINT, Preset::print_options(), static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults()))
@@ -1094,7 +1100,7 @@ void PresetBundle::remove_users_preset(AppConfig &config, std::map<std::string, 
     }
 
     if (need_reset_printer_preset) {
-        std::string default_printer_model = BBL_DEFAULT_PRINTER_MODEL;
+        std::string default_printer_model = SM_DEFAULT_PRINTER_MODEL;
         std::string default_printer_name;
         for (auto it = printers.begin(); it != printers.end(); it++) {
             if (it->config.has("printer_model")) {

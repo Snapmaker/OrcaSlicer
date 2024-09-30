@@ -4312,7 +4312,7 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             }
 
             version_info.url           = check_stable_only ? best_release_url : best_pre_url;
-            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string();
+            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string_sf();
             version_info.description   = check_stable_only ? best_release_content : best_pre_content;
             version_info.force_upgrade = false;
 

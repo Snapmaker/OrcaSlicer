@@ -2380,9 +2380,6 @@ bool GUI_App::on_init_inner()
                     }
                 }
 
-                // temporarily ignore version problem
-                skip_this_version = true;
-
                 if (!skip_this_version
                     || evt.GetInt() != 0) {
                     UpdateVersionDialog dialog(this->mainframe);
@@ -4246,8 +4243,8 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
             Semver           current_version = get_version(Snapmaker_VERSION, matcher);
-            Semver best_pre(1, 0, 0);
-            Semver best_release(1, 0, 0);
+            Semver best_pre(0, 0, 0);
+            Semver best_release(0, 0, 0);
             std::string best_pre_url;
             std::string best_release_url;
             std::string best_release_content;
@@ -4312,7 +4309,7 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             }
 
             version_info.url           = check_stable_only ? best_release_url : best_pre_url;
-            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string();
+            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string_sf();
             version_info.description   = check_stable_only ? best_release_content : best_pre_content;
             version_info.force_upgrade = false;
 

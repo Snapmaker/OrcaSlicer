@@ -2378,9 +2378,6 @@ bool GUI_App::on_init_inner()
                     }
                 }
 
-                //// temporarily ignore version problem
-                //skip_this_version = true;
-
                 if (!skip_this_version
                     || evt.GetInt() != 0) {
                     UpdateVersionDialog dialog(this->mainframe);

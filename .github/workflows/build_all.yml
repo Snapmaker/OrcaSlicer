@@ -4,6 +4,7 @@ on:
   push:
     branches:
      - main
+     - orca_engine
      - release/*
     paths:
      - 'deps/**'

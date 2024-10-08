@@ -253,7 +253,7 @@ jobs:
         env:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         run: |
-          ./BuildLinux.sh -ebisr
+          ./BuildLinux.sh -eisr
           mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Engine_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
           chmod +x ./build/Snapmaker_Orca_Engine_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
 

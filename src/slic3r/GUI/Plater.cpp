@@ -14689,9 +14689,13 @@ void Snapmaker_Orca_Engine::export_gcode_server(bool prefer_removable) {
             start_dir = appconfig.get_last_output_dir(default_output_file.parent_path().string(), false);
     }
 
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "start to create ouput_path";
+
     fs::path input_path, output_path;
     input_path = m_OriFiles[m_task_index];
     output_path = input_path.parent_path() / (input_path.stem().string() + ".gcode"); 
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "ouput_path: " << output_path;
 
     if (!output_path.empty()) {
         bool path_on_removable_media = removable_drive_manager.set_and_verify_last_save_path(output_path.string());

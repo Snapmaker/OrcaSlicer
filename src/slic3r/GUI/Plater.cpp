@@ -14497,7 +14497,15 @@ void Snapmaker_Orca_Engine::do_next_task() {
     }
 
     add_file_server(m_OriFiles[m_task_index]);
+
+    // test
+    BOOST_LOG_TRIVIAL(info) << "[lxy-test]" << __FUNCTION__ << ": before slice_all_plates_server, m_task_index: " << m_task_index << "m_OriFile[m_task_index]" << m_OriFiles[m_task_index];
+
     slice_all_plates_server();
+
+    // test
+    BOOST_LOG_TRIVIAL(info) << "[lxy-test]" << __FUNCTION__ << ": before export_gcode_server";
+    
     export_gcode_server(false);
 
     if (!m_check_export_timer) {

@@ -14657,45 +14657,15 @@ void Snapmaker_Orca_Engine::slice_all_plates_server() {
 }
 
 void Snapmaker_Orca_Engine::export_gcode_server(bool prefer_removable) {
+    BOOST_LOG_TRIVIAL(info) << "[lxy-test]" << __FUNCTION__ << "first break";
     if (m_gui_plater->p->model.objects.empty())
         return;
 
     // if (get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true))
     //     return;
-
+    BOOST_LOG_TRIVIAL(info) << "[lxy-test]" << __FUNCTION__ << "second break";
     if (m_gui_plater->p->process_completed_with_error == m_gui_plater->p->partplate_list.get_curr_plate_index())
         return;
-
-    // If possible, remove accents from accented latin characters.
-    // This function is useful for generating file names to be processed by legacy firmwares.
-    fs::path default_output_file;
-    try {
-        // Update the background processing, so that the placeholder parser will get the correct values for the ouput file template.
-        // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
-        unsigned int state = m_gui_plater->p->update_restart_background_process(false, false);
-        if (state & Plater::priv::UPDATE_BACKGROUND_PROCESS_INVALID)
-            return;
-        default_output_file = m_gui_plater->p->background_process.output_filepath_for_project("");
-    } catch (const Slic3r::PlaceholderParserError& ex) {
-        // Show the error with monospaced font.
-        show_error(m_gui_plater, ex.what(), true);
-        return;
-    } catch (const std::exception& ex) {
-        show_error(m_gui_plater, ex.what(), false);
-        return;
-    }
-    default_output_file                            = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
-    AppConfig&             appconfig               = *wxGetApp().app_config;
-    RemovableDriveManager& removable_drive_manager = *wxGetApp().removable_drive_manager();
-    // Get a last save path, either to removable media or to an internal media.
-    std::string start_dir = appconfig.get_last_output_dir(default_output_file.parent_path().string(), prefer_removable);
-    if (prefer_removable) {
-        // Returns a path to a removable media if it exists, prefering start_dir. Update the internal removable drives database.
-        start_dir = removable_drive_manager.get_removable_drive_path(start_dir);
-        if (start_dir.empty())
-            // Direct user to the last internal media.
-            start_dir = appconfig.get_last_output_dir(default_output_file.parent_path().string(), false);
-    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "start to create ouput_path";
 

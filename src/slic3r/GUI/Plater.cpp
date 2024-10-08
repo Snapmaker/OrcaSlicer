@@ -14667,6 +14667,8 @@ void Snapmaker_Orca_Engine::export_gcode_server(bool prefer_removable) {
     if (m_gui_plater->p->process_completed_with_error == m_gui_plater->p->partplate_list.get_curr_plate_index())
         return;
 
+    AppConfig&             appconfig               = *wxGetApp().app_config;
+    RemovableDriveManager& removable_drive_manager = *wxGetApp().removable_drive_manager();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "start to create ouput_path";
 
     fs::path input_path, output_path;

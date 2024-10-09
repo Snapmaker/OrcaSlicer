@@ -2304,6 +2304,8 @@ bool GUI_App::on_init_inner()
         app_config->set("version", SLIC3R_VERSION);
     }
 
+    // temporarily cancel the loading window
+    /*
     SplashScreen * scrn = nullptr;
     if (app_config->get("show_splash_screen") == "true") {
         // make a bitmap with dark grey banner on the left side
@@ -2324,7 +2326,7 @@ bool GUI_App::on_init_inner()
         wxYield();
         scrn->SetText(_L("Loading configuration")+ dots);
     }
-
+    */
     BOOST_LOG_TRIVIAL(info) << "loading systen presets...";
     preset_bundle = new PresetBundle();
 
@@ -6384,6 +6386,8 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
 
 bool GUI_App::config_wizard_startup()
 {
+    // test
+
     if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
         BOOST_LOG_TRIVIAL(info) << "run wizard...";
         run_wizard(ConfigWizard::RR_DATA_EMPTY);
@@ -6399,6 +6403,7 @@ bool GUI_App::config_wizard_startup()
         run_wizard(ConfigWizard::RR_DATA_LEGACY);
         return true;
     }*/
+
     return false;
 }
 

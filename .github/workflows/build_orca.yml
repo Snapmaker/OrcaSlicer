@@ -138,6 +138,8 @@ jobs:
         if: github.ref == 'refs/heads/main' && inputs.os == 'macos-14'
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
           asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
           asset_name: Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
           asset_content_type: application/octet-stream

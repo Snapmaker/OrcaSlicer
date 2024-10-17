@@ -2155,7 +2155,7 @@ static wxMenu* generate_help_menu()
         });
 
     // Report a bug
-    //append_menu_item(helpMenu, wxID_ANY, _L("Report Bug(TODO)"), _L("Report a bug of Snapmaker_Orca"),
+    //append_menu_item(helpMenu, wxID_ANY, _L("Report Bug(TODO)"), _L("Report a bug of Snapmaker Orca"),
     //    [](wxCommandEvent&) {
     //        //TODO
     //    });

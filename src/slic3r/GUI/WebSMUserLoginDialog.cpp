@@ -39,7 +39,7 @@ END_EVENT_TABLE()
 
 int SMUserLogin::web_sequence_id = 20000;
 
-SMUserLogin::SMUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker_Orca")
+SMUserLogin::SMUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker Orca")
 {
     SetBackgroundColour(*wxWHITE);
 

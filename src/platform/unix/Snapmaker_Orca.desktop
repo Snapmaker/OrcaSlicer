@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Snapmaker_Orca
+Name=Snapmaker Orca
 GenericName=3D Printing Software
 Icon=Snapmaker_Orca
 Exec=snapmaker-orca %U

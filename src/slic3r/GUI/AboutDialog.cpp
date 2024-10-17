@@ -277,7 +277,7 @@ AboutDialog::AboutDialog()
     text_sizer_horiz->Add( 0, 0, 0, wxLEFT, FromDIP(20));
 
     std::vector<wxString> text_list;
-    text_list.push_back(_L("Snapmaker_Orca is based on BambuStudio, PrusaSlicer, and SuperSlicer."));
+    text_list.push_back(_L("Snapmaker Orca is based on BambuStudio, PrusaSlicer, and SuperSlicer."));
     text_list.push_back(_L("BambuStudio is originally based on PrusaSlicer by PrusaResearch."));
     text_list.push_back(_L("PrusaSlicer is originally based on Slic3r by Alessandro Ranellucci."));
     text_list.push_back(_L("Slic3r was created by Alessandro Ranellucci with the help of many other contributors."));

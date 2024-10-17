@@ -39,7 +39,7 @@ END_EVENT_TABLE()
 
 int ZUserLogin::web_sequence_id = 20000;
 
-ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker_Orca")
+ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker Orca")
 {
     SetBackgroundColour(*wxWHITE);
     // Url

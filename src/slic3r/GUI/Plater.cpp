@@ -3795,7 +3795,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         // do not reset the model config
                         load_config = false;
                         if(load_type != LoadType::LoadGeometry)
-                            show_info(q, _L("The 3mf is not supported by Snapmaker_Orca, load geometry data only."), _L("Load 3mf"));
+                            show_info(q, _L("The 3mf is not supported by Snapmaker Orca, load geometry data only."), _L("Load 3mf"));
                     }
                     // else if (load_config && (file_version.maj() != app_version.maj())) {
                     //     // version mismatch, only load geometries

@@ -102,7 +102,7 @@ static wxString update_custom_filaments()
 }
 
 GuideFrame::GuideFrame(GUI_App *pGUI, long style)
-    : DPIDialog((wxWindow *) (pGUI->mainframe), wxID_ANY, "Snapmaker_Orca", wxDefaultPosition, wxDefaultSize, style),
+    : DPIDialog((wxWindow *) (pGUI->mainframe), wxID_ANY, "Snapmaker Orca", wxDefaultPosition, wxDefaultSize, style),
 	m_appconfig_new()
 {
     SetBackgroundColour(*wxWHITE);

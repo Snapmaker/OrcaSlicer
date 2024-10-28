@@ -3955,6 +3955,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         Preset::normalize(config);
                         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
 
+                        /*
                         auto choise = wxGetApp().app_config->get("no_warn_when_modified_gcodes");
                         if (choise.empty() || choise != "true") {
                             // BBS: first validate the printer
@@ -3989,7 +3990,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     wxGetApp().app_config->set("no_warn_when_modified_gcodes", "true");
                             }
                         }
+                        */
 
+                        
                         //always load config
                         {
                             // BBS: save the wipe tower pos in file here, will be used later

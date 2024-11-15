@@ -14484,7 +14484,7 @@ void Snapmaker_Orca_Engine::do_next_task() {
     add_file_server(m_OriFiles[m_task_index]);
 
     // save project
-    m_gui_plater->save_project();
+    m_gui_plater->save_project(true);
 
     // test
     BOOST_LOG_TRIVIAL(info) << "[lxy-test]" << __FUNCTION__ << ": before slice_all_plates_server, m_task_index: " << m_task_index << "m_OriFile[m_task_index]" << m_OriFiles[m_task_index];

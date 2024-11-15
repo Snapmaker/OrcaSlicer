@@ -1950,7 +1950,7 @@ void GUI_App::init_app_config()
 #if !BBL_RELEASE_TO_PUBLIC
     set_log_path_and_level(log_filename, 5);
 #else
-    set_log_path_and_level(log_filename, 3);
+    set_log_path_and_level(log_filename, 5);
 #endif
 
     //BBS: remove GCodeViewer as seperate APP logic

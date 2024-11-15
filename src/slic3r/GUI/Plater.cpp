@@ -4736,38 +4736,13 @@ wxString Plater::priv::get_export_file(GUI::FileType file_type)
         }
         default: break;
     }
+    std::string out_dir = (boost::filesystem::path(Snapmaker_Orca_Engine::current_target).parent_path()).string();
+    std::string file_name_without_extension = (boost::filesystem::path(Snapmaker_Orca_Engine::current_target).stem()).string();
+    std::string name_extension = ".gcode.3mf";
 
-    std::string out_dir = (boost::filesystem::path(output_file).parent_path()).string();
+    BOOST_LOG_TRIVIAL(error) << "save project path" << out_dir + "/" + file_name_without_extension + name_extension;
 
-    wxFileDialog dlg(q, dlg_title,
-        is_shapes_dir(out_dir) ? from_u8(wxGetApp().app_config->get_last_dir()) : from_path(output_file.parent_path()), from_path(output_file.filename()),
-        wildcard, wxFD_SAVE | wxFD_OVERWRITE_PROMPT | wxPD_APP_MODAL);
-
-    int result = dlg.ShowModal();
-    if (result == wxID_CANCEL)
-        return "<cancel>";
-    if (result != wxID_OK)
-        return wxEmptyString;
-
-    wxString out_path = dlg.GetPath();
-    fs::path path(into_path(out_path));
-#ifdef __WXMSW__
-    if (path.extension() != output_file.extension()) {
-        out_path += output_file.extension().string();
-        boost::system::error_code ec;
-        if (boost::filesystem::exists(into_u8(out_path), ec)) {
-            auto result = MessageBox(q->GetHandle(),
-                wxString::Format(_L("The file %s already exists\nDo you want to replace it?"), out_path),
-                _L("Confirm Save As"),
-                MB_YESNO | MB_ICONWARNING);
-            if (result != IDYES)
-                return wxEmptyString;
-        }
-    }
-#endif
-    wxGetApp().app_config->update_last_output_dir(path.parent_path().string());
-
-    return out_path;
+    return from_u8(out_dir + "/" + file_name_without_extension + name_extension);
 }
 
 const Selection& Plater::priv::get_selection() const
@@ -14418,6 +14393,7 @@ int Snapmaker_Orca_Engine::s_time_gui_load = 500;
 int Snapmaker_Orca_Engine::s_time_check_export = 100;
 int Snapmaker_Orca_Engine::s_time_delay_close  = 500;
 bool Snapmaker_Orca_Engine::s_exported          = false;
+std::string Snapmaker_Orca_Engine::current_target = "";
 
 Snapmaker_Orca_Engine::Snapmaker_Orca_Engine(std::vector<std::string>& user_inputs) : m_OriFiles(user_inputs) {}
 
@@ -14499,7 +14475,16 @@ void Snapmaker_Orca_Engine::do_next_task() {
         m_gui_plater->new_project();
     }
 
+    current_target = m_OriFiles[m_task_index];
+    boost::filesystem::path oriPath(m_OriFiles[m_task_index]);
+    std::string extension = oriPath.extension().string();
+    if(extension != ".3mf"){
+        m_gui_plater->save_project();
+    }
     add_file_server(m_OriFiles[m_task_index]);
+
+    // save project
+    m_gui_plater->save_project();
 
     // test
     BOOST_LOG_TRIVIAL(info) << "[lxy-test]" << __FUNCTION__ << ": before slice_all_plates_server, m_task_index: " << m_task_index << "m_OriFile[m_task_index]" << m_OriFiles[m_task_index];

@@ -219,6 +219,8 @@ public:
 
     void close_engine();
 
+    static std::string current_target;
+
 private:
     void add_file_server(std::string& filePath);
 

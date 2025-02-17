@@ -82,6 +82,8 @@ public:
 
     virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)>) {}
+
     virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
                                                     std::function<void(const nlohmann::json& response)>                  callback) {}
 

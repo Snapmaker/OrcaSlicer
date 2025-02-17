@@ -649,7 +649,16 @@ std::mutex Moonraker_Mqtt::m_sn_mtx;
 
 Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config) : Moonraker(config) {
     std::string host_info = config->option<ConfigOptionString>("print_host")->value;
-    m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, "orca", true));
+
+    // 生成随机UUID
+    boost::uuids::random_generator gen;
+    boost::uuids::uuid uuid = gen();
+    std::string random_str = boost::uuids::to_string(uuid);
+    
+    // 截取UUID的前8位
+    random_str = random_str.substr(0, 8);
+
+    m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, "orca_" + random_str, true));
 }
 
 // Connect to MQTT broker
@@ -709,6 +718,22 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
 
     m_status_cb = callback;
     callback(json::object());
+}
+
+// Get printer info
+void Moonraker_Mqtt::async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) {
+    std::string method = "printer.info";
+    json        params = json::object();
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback]() {
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        callback(json::value_t::null);
+    }
 }
 
 // Send G-code commands to printer
@@ -975,7 +1000,14 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
         if (!body.count("result")) {
             cb(json::value_t::null);
         } else {
-            cb(body["result"]);
+            json data;
+            data["data"] = body["result"];
+            // test: 如果有method，则进行传递
+            data["method"] = "";
+            if (body.count("method")) {
+                data["method"] = body["method"];
+            }
+            cb(data);
         }
 
     } catch (std::exception& e) {}
@@ -989,9 +1021,15 @@ void Moonraker_Mqtt::on_status_arrived(const std::string& payload)
 
         json data;
         if (body.count("params")) {
-            data = body["params"];
+            data["data"] = body["params"];
         } else {
             return;
+        }
+
+        // test: 如果有method，则进行传递
+        data["method"] = "";
+        if (body.count("method")){
+            data["method"] = body["method"];
         }
 
         if (!m_status_cb) {

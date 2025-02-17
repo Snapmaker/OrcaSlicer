@@ -110,6 +110,7 @@ public:
                                                     std::function<void(const nlohmann::json& response)>                  callback) override;
     virtual void async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)>) override;
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override;
+    virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) override;
 
 public:
     // MQTT message handler

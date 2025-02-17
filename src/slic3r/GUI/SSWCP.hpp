@@ -179,6 +179,7 @@ private:
     // Machine option methods
     void sw_SendGCodes();
     void sw_GetMachineState();
+    void sw_GetPrintInfo();
     void sw_SubscribeMachineState();
     void sw_UnSubscribeMachineState();
     void sw_GetMachineObjects();

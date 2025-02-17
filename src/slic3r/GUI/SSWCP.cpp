@@ -366,6 +366,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_SetMachineSubscribeFilter();
     } else if (m_cmd == "sw_StopMachineStateSubscription") {
         sw_UnSubscribeMachineState();
+    } else if (m_cmd == "sw_GetPrinterInfo") {
+        sw_GetPrintInfo();
     }
 }
 
@@ -440,6 +442,43 @@ void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
         });
 
     } catch (std::exception& e) {}
+}
+
+void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        auto self = shared_from_this();
+        host->async_get_machine_objects([self](const json& response) {
+            if (response.is_null()) {
+                self->m_status = -1;
+                self->m_msg    = "failure";
+                self->send_to_js();
+            } else if (response.count("error")) {
+                if ("error" == response["error"].get<std::string>()) {
+                    self->m_status = -2;
+                    self->m_msg    = "timeout";
+                    self->send_to_js();
+                }
+            } else {
+                self->m_res_data = response;
+                self->send_to_js();
+            }
+            self->finish_job();
+        });
+    }
+    catch (std::exception& e) {
+
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetMachineState() {
@@ -1050,6 +1089,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_GetMachineObjects",
     "sw_SetSubscribeFilter",
     "sw_StopMachineStateSubscription",
+    "sw_GetPrinterInfo"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

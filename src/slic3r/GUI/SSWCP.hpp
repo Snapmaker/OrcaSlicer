@@ -65,10 +65,14 @@ public:
     // Handle timeout event
     virtual void on_timeout();
 
+    static void on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response);
+
 private:
     // Test methods
     void sync_test();
     void async_test();
+
+    void test_mqtt_request();
 
 public:
     std::string m_cmd;           // Command to execute
@@ -184,6 +188,11 @@ private:
     void sw_UnSubscribeMachineState();
     void sw_GetMachineObjects();
     void sw_SetMachineSubscribeFilter();
+    void sw_GetSystemInfo();
+    void sw_MachinePrintStart();
+    void sw_MachinePrintPause();
+    void sw_MachinePrintResume();
+    void sw_MachinePrintCancel();
 
 private:
     std::thread m_work_thread;  // Worker thread

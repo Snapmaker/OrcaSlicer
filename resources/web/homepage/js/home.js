@@ -606,8 +606,8 @@ function showLocalDevices(devices) {
         
         // 添加状态指示器
         const statusDot = document.createElement('div');
-        statusDot.className = `DeviceStatus ${device.connecting ? 'connected' : 'disconnected'}`;
-        statusDot.setAttribute('data-status', device.connecting ? '已连接' : '未连接');
+        statusDot.className = `DeviceStatus ${device.connected ? 'connected' : 'disconnected'}`;
+        statusDot.setAttribute('data-status', device.connected ? '已连接' : '未连接');
         deviceCard.appendChild(statusDot);
         
         // 创建图片容器
@@ -663,7 +663,7 @@ function showLocalDevices(devices) {
         // 连接/断开按钮
         const connectBtn = document.createElement('div');
         connectBtn.className = 'DeviceAction';
-        if (device.connecting) {
+        if (device.connected) {
             connectBtn.innerHTML = '<span>断开</span>';
             connectBtn.onclick = (e) => {
                 e.stopPropagation();
@@ -861,7 +861,7 @@ function showDialog(title, content, onConfirm, onCancel) {
 
 // 修改设备删除处理函数
 function handleDeviceDelete(device) {
-    if (device.connecting) {
+    if (device.connected) {
         showDialog(
             '断开连接确认',
             '该设备当前处于连接状态，需要先断开连接才能删除。是否断开连接？',

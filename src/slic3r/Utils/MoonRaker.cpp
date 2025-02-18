@@ -720,6 +720,120 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
     callback(json::object());
 }
 
+// start print job
+void Moonraker_Mqtt::async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)> cb)
+{
+    std::string method = "printer.print.start";
+    json        params = json::object();
+    params["filename"] = filename;
+
+    if (!send_to_request(method, params, true, cb,
+                         [cb]() {
+                             json res;
+                             res["error"] = "timeout";
+                             cb(res);
+                         }) &&
+        cb) {
+        cb(json::value_t::null);
+    }
+}
+
+void Moonraker_Mqtt::async_pause_print_job(std::function<void(const nlohmann::json&)> cb) {
+    std::string method =  "printer.print.pause";
+    json        params  = json::object();
+
+    if (!send_to_request(method, params, true, cb,
+                         [cb]() {
+                             json res;
+                             res["error"] = "timeout";
+                             cb(res);
+                         }) &&
+        cb) {
+        cb(json::value_t::null);
+    }
+}
+
+void Moonraker_Mqtt::async_resume_print_job(std::function<void(const nlohmann::json&)> cb) {
+    std::string method = "printer.print.resume";
+    json        params = json::object();
+
+    if (!send_to_request(method, params, true, cb,
+                         [cb]() {
+                             json res;
+                             res["error"] = "timeout";
+                             cb(res);
+                         }) &&
+        cb) {
+        cb(json::value_t::null);
+    }
+}
+
+void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)> cb) {
+    std::string id = "";
+
+    if (!mqtt_request_params.count("id")) {
+        cb(json::value_t::null);
+        return;
+    }
+
+    if (mqtt_request_params["id"].is_string()) {
+        id = mqtt_request_params["id"].get<std::string>();
+    } else if (mqtt_request_params["id"].is_number()) {
+        id = std::to_string(mqtt_request_params["id"].get<int>());
+    }
+
+    if (id == "") {
+        cb(json::value_t::null);
+        return;
+    }
+
+    if (!add_response_target(id, cb, [cb]() {
+            json res;
+            res["error"] = "timeout";
+            cb(res);
+        })){
+        cb(json::value_t::null);
+    }
+
+    if (m_mqtt_client) {
+        std::string main_layer = "+";
+
+        if (wait_for_sn()) {
+            m_sn_mtx.lock();
+            main_layer = m_sn;
+            m_sn_mtx.unlock();
+
+            if (main_layer == "+" || main_layer == "") {
+                delete_response_target(id);
+                cb(json::value_t::null);
+                return;
+            }
+
+            bool res = m_mqtt_client->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 2);
+            if (!res) {
+                delete_response_target(id);
+            }
+            return;
+        }
+    }
+}
+
+void Moonraker_Mqtt::async_cancel_print_job(std::function<void(const nlohmann::json&)> cb)
+{
+    std::string method = "printer.print.cancel";
+    json        params = json::object();
+
+    if (!send_to_request(method, params, true, cb,
+                         [cb]() {
+                             json res;
+                             res["error"] = "timeout";
+                             cb(res);
+                         }) &&
+        cb) {
+        cb(json::value_t::null);
+    }
+}
+
 // Get printer info
 void Moonraker_Mqtt::async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) {
     std::string method = "printer.info";
@@ -988,7 +1102,12 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
             return;
         }
 
-        std::string id = body["id"].get<std::string>();
+        std::string id = "";
+        if (body["id"].is_number()) {
+            id = std::to_string(body["id"].get<int>());
+        } else if (body["id"].is_string()) {
+            id = body["id"].get<std::string>();
+        }
 
         auto cb = get_request_callback(id);
         delete_response_target(id);
@@ -997,18 +1116,27 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
             return;
         }
 
-        if (!body.count("result")) {
-            cb(json::value_t::null);
+        json res;
+
+        if (id.find("mqtt") != std::string::npos) {
+            cb(body);
         } else {
-            json data;
-            data["data"] = body["result"];
-            // test: 如果有method，则进行传递
-            data["method"] = "";
-            if (body.count("method")) {
-                data["method"] = body["method"];
+            if (!body.count("result")) {
+                if (body.count("error")) {
+                    json error   = body["error"];
+                    res["error"] = error;
+                }
+            } else {
+                res["data"] = body["result"];
+                // test: 如果有method，则进行传递
             }
-            cb(data);
+            res["method"] = "";
+            if (body.count("method")) {
+                res["method"] = body["method"];
+            }
+            cb(res);
         }
+        
 
     } catch (std::exception& e) {}
 }

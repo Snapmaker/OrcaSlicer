@@ -30,14 +30,14 @@ struct DeviceInfo {
     std::string dev_name;
     std::string model_name;
     std::string preset_name;  // 关联的打印机预设名称
-    bool        connecting;
+    bool        connected;
 	std::string img;
 	std::vector<std::string> nozzle_sizes;
     std::string              sn;
 
     
     // 用于JSON序列化
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connecting, img, nozzle_sizes, sn)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn)
 };
 
 class AppConfig

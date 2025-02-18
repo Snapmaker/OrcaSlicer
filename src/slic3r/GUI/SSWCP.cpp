@@ -37,6 +37,8 @@ void SSWCP_Instance::process() {
         sync_test();
     } else if (m_cmd == "test_async"){
         async_test();
+    } else if (m_cmd == "sw_test_mqtt_moonraker") {
+        test_mqtt_request();
     }
 }
 
@@ -116,6 +118,49 @@ void SSWCP_Instance::sync_test() {
     m_res_data = m_param_data;
     send_to_js();
     finish_job();
+}
+
+void SSWCP_Instance::test_mqtt_request() {
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        auto self = shared_from_this();
+        host->test_async_wcp_mqtt_moonraker(m_param_data, [self](const json& response) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        });
+        // host->async_get_printer_info([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+    } catch (std::exception& e) {}
+}
+
+void SSWCP_Instance::on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response) {
+    if (!obj) {
+        return;
+    }
+    if (response.is_null()) {
+        obj->m_status = -1;
+        obj->m_msg    = "failure";
+        obj->send_to_js();
+    } else if (response.count("error")) {
+        if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
+            obj->on_timeout();
+        } else {
+            obj->m_res_data = response;
+            obj->send_to_js();
+        }
+    } else {
+        obj->m_res_data = response;
+        obj->send_to_js();
+    }
+    obj->finish_job();
 }
 
 // Handle timeout event
@@ -322,7 +367,7 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
         m_res_data[key]["connected"] = false;
 
         DeviceInfo info;
-        if (wxGetApp().app_config->get_device_info(ip, info) && info.connecting) {
+        if (wxGetApp().app_config->get_device_info(ip, info) && info.connected) {
             m_res_data[key]["connected"] = true;
         }
 
@@ -368,6 +413,16 @@ void SSWCP_MachineOption_Instance::process()
         sw_UnSubscribeMachineState();
     } else if (m_cmd == "sw_GetPrinterInfo") {
         sw_GetPrintInfo();
+    } else if (m_cmd == "sw_GetMachineSystemInfo") {
+        sw_GetSystemInfo();
+    } else if (m_cmd == "sw_MachinePrintStart") {
+        sw_MachinePrintStart();
+    } else if (m_cmd == "sw_MachinePrintPause") {
+        sw_MachinePrintPause();
+    } else if (m_cmd == "sw_MachinePrintResume") {
+        sw_MachinePrintResume();
+    } else if (m_cmd == "sw_MachinePrintCancel") {
+        sw_MachinePrintCancel();
     }
 }
 
@@ -385,22 +440,7 @@ void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
 
         auto self  = shared_from_this();
         host->async_unsubscribe_machine_info([self](const json& response) {
-            if (response.is_null()) {
-                self->m_status = -1;
-                self->m_msg    = "failure";
-                self->send_to_js();
-            }else if(response.count("error")){
-                if("error" == response["error"].get<std::string>()){
-                    self->m_status = -2;
-                    self->m_msg    = "timeout";
-                    self->send_to_js();
-                }
-            } 
-            else {
-                self->m_res_data = response;
-                self->send_to_js();
-            }
-            self->finish_job();
+            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
         });
 
         SSWCP::stop_subscribe_machine();
@@ -424,21 +464,7 @@ void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
 
         auto self = shared_from_this();
         host->async_subscribe_machine_info([self](const json& response) {
-            if (response.is_null()) {
-                self->m_status = -1;
-                self->m_msg    = "failure";
-                self->send_to_js();
-            }else if(response.count("error")){
-                if("error" == response["error"].get<std::string>()){
-                    self->m_status = -2;
-                    self->m_msg    = "timeout";
-                    self->send_to_js();
-                }
-            } 
-            else {
-                self->m_res_data = response;
-                self->send_to_js();
-            }
+            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
         });
 
     } catch (std::exception& e) {}
@@ -458,22 +484,8 @@ void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
         }
 
         auto self = shared_from_this();
-        host->async_get_machine_objects([self](const json& response) {
-            if (response.is_null()) {
-                self->m_status = -1;
-                self->m_msg    = "failure";
-                self->send_to_js();
-            } else if (response.count("error")) {
-                if ("error" == response["error"].get<std::string>()) {
-                    self->m_status = -2;
-                    self->m_msg    = "timeout";
-                    self->send_to_js();
-                }
-            } else {
-                self->m_res_data = response;
-                self->send_to_js();
-            }
-            self->finish_job();
+        host->async_get_printer_info([self](const json& response) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
         });
     }
     catch (std::exception& e) {
@@ -515,22 +527,7 @@ void SSWCP_MachineOption_Instance::sw_GetMachineState() {
 
             auto self = shared_from_this();
             host->async_get_machine_info(targets, [self](const json& response) {
-                if (response.is_null()) {
-                    self->m_status = -1;
-                    self->m_msg    = "failure";
-                    self->send_to_js();
-                }else if(response.count("error")){
-                    if("error" == response["error"].get<std::string>()){
-                        self->m_status = -2;
-                        self->m_msg    = "timeout";
-                        self->send_to_js();
-                    }
-                } 
-                else {
-                    self->m_res_data = response;
-                    self->send_to_js();
-                }
-                self->finish_job();
+                SSWCP_Instance::on_mqtt_msg_arrived(self,response);
             });
         } else {
             finish_job();
@@ -566,26 +563,113 @@ void SSWCP_MachineOption_Instance::sw_SendGCodes() {
 
             auto self = shared_from_this();
             host->async_send_gcodes(str_codes, [self](const json& response) {
-                if (response.is_null()) {
-                    self->m_status = -1;
-                    self->m_msg    = "failure";
-                    self->send_to_js();
-                }else if(response.count("error")){
-                    if("error" == response["error"].get<std::string>()){
-                        self->m_status = -2;
-                        self->m_msg    = "timeout";
-                        self->send_to_js();
-                    }
-                } 
-                else {
-                    self->m_res_data = response;
-                    self->send_to_js();
-                }
-                self->finish_job();
+                SSWCP_Instance::on_mqtt_msg_arrived(self,response);
             });
         }
         
     } catch (const std::exception&) {}
+}
+
+void SSWCP_MachineOption_Instance::sw_MachinePrintStart() {
+    try {
+        if (m_param_data.count("filename")) {
+            std::shared_ptr<PrintHost> host = nullptr;
+            wxGetApp().get_connect_host(host);
+
+            std::string filename = m_param_data["filename"].get<std::string>();
+
+            if (!host) {
+                m_status = -1;
+                m_msg    = "failure";
+                send_to_js();
+                finish_job();
+                return;
+            }
+
+            auto self = shared_from_this();
+            host->async_start_print_job(filename, [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+        }
+    }
+    catch(std::exception& e){}
+}
+
+void SSWCP_MachineOption_Instance::sw_MachinePrintPause()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        auto self = shared_from_this();
+        host->async_pause_print_job([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+    } catch (std::exception& e) {}
+}
+
+void SSWCP_MachineOption_Instance::sw_MachinePrintResume()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        auto self = shared_from_this();
+        host->async_resume_print_job([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+    } catch (std::exception& e) {}
+}
+
+void SSWCP_MachineOption_Instance::sw_MachinePrintCancel()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        auto self = shared_from_this();
+        host->async_cancel_print_job([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+    } catch (std::exception& e) {}
+}
+
+void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        auto self = shared_from_this();
+        host->async_get_system_info([self](const json& response) { 
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+        });
+    }
+    catch(std::exception& e){}
 }
 
 void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
@@ -622,22 +706,7 @@ void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
             } else {
                 auto self = shared_from_this();
                 host->async_set_machine_subscribe_filter(targets, [self](const json& response) {
-                    if (response.is_null()) {
-                        self->m_status = -1;
-                        self->m_msg    = "failure";
-                        self->send_to_js();
-                    }else if(response.count("error")){
-                        if("error" == response["error"].get<std::string>()){
-                            self->m_status = -2;
-                            self->m_msg    = "timeout";
-                            self->send_to_js();
-                        }
-                    } 
-                    else {
-                        self->m_res_data = response;
-                        self->send_to_js();
-                    }
-                    self->finish_job();
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
                 });
             }
         } else {
@@ -662,22 +731,7 @@ void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
 
         auto self = shared_from_this();
         host->async_get_machine_objects([self](const json& response) {
-            if (response.is_null()) {
-                self->m_status = -1;
-                self->m_msg    = "failure";
-                self->send_to_js();
-            }else if(response.count("error")){
-                if("error" == response["error"].get<std::string>()){
-                    self->m_status = -2;
-                    self->m_msg    = "timeout";
-                    self->send_to_js();
-                }
-            } 
-            else {
-                self->m_res_data = response;
-                self->send_to_js();
-            }
-            self->finish_job();
+            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
         });
 
     } catch (std::exception& e) {}
@@ -805,8 +859,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                         // 更新其他设备连接状态为断开
                         auto devices = wxGetApp().app_config->get_devices();
                         for (size_t i = 0; i < devices.size(); ++i) {
-                            if (devices[i].connecting) {
-                                devices[i].connecting = false;
+                            if (devices[i].connected) {
+                                devices[i].connected = false;
                                 wxGetApp().app_config->save_device_info(devices[i]);
                                 break;
                             }
@@ -842,7 +896,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 info.ip = ip;
                                 info.dev_id = ip;
                                 info.dev_name = ip;
-                                info.connecting = true;
+                                info.connected = true;
                                 info.model_name = machine_type;
                                 info.nozzle_sizes = nozzle_diameters;
                                 if (connect_params.count("sn") && connect_params["sn"].is_string()) {
@@ -870,7 +924,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 // 是否为连接过的设备
                                 DeviceInfo query_info;
                                 if (wxGetApp().app_config->get_device_info(ip, query_info)) {
-                                    query_info.connecting = true;
+                                    query_info.connected = true;
                                     wxGetApp().app_config->save_device_info(query_info);
                                 } else {
                                     auto machine_ip_type = MachineIPType::getInstance();
@@ -887,7 +941,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                             info.ip          = ip;
                                             info.dev_id      = ip;
                                             info.dev_name    = ip;
-                                            info.connecting  = true;
+                                            info.connected  = true;
                                             info.model_name  = machine_type;
                                             if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                 info.sn = connect_params["sn"].get<std::string>();
@@ -926,7 +980,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                             info.ip           = ip;
                                             info.dev_id       = ip;
                                             info.dev_name     = ip;
-                                            info.connecting   = true;
+                                            info.connected   = true;
                                             if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                 info.sn = connect_params["sn"].get<std::string>();
                                             }
@@ -1004,7 +1058,7 @@ void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
     try {
         auto devices = wxGetApp().app_config->get_devices();
         for (const auto& device : devices) {
-            if (device.connecting) {
+            if (device.connected) {
                 m_res_data = device;
                 break;
             }
@@ -1034,8 +1088,8 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
 
                 auto devices = wxGetApp().app_config->get_devices();
                 for (size_t i = 0; i < devices.size(); ++i) {
-                    if (devices[i].connecting) {
-                        devices[i].connecting = false;
+                    if (devices[i].connected) {
+                        devices[i].connected = false;
                         wxGetApp().app_config->save_device_info(devices[i]);
                         break;
                     }
@@ -1089,7 +1143,11 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_GetMachineObjects",
     "sw_SetSubscribeFilter",
     "sw_StopMachineStateSubscription",
-    "sw_GetPrinterInfo"
+    "sw_GetPrinterInfo",
+    "sw_MachinePrintStart",
+    "sw_MachinePrintPause",
+    "sw_MachinePrintResume",
+    "sw_MachinePrintCancel",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

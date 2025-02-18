@@ -66,6 +66,16 @@ public:
     virtual void async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)>) override {}
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override{}
 
+    virtual void async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)>) override{}
+
+    virtual void async_pause_print_job(std::function<void(const nlohmann::json&)>) override{}
+
+    virtual void async_resume_print_job(std::function<void(const nlohmann::json&)>) override{}
+
+    virtual void async_cancel_print_job(std::function<void(const nlohmann::json&)>) override{}
+
+    virtual void test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)>) override {}
+
 protected:
     // Internal upload implementations
 #ifdef WIN32
@@ -111,6 +121,16 @@ public:
     virtual void async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)>) override;
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override;
     virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) override;
+
+    virtual void async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)> cb) override;
+
+    virtual void async_pause_print_job(std::function<void(const nlohmann::json&)> cb) override;
+
+    virtual void async_resume_print_job(std::function<void(const nlohmann::json&)> cb) override;
+
+    virtual void async_cancel_print_job(std::function<void(const nlohmann::json&)> cb) override;
+
+    virtual void test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)>) override;
 
 public:
     // MQTT message handler

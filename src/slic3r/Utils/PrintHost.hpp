@@ -93,6 +93,16 @@ public:
 
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) {}
 
+    virtual void async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_pause_print_job(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_resume_print_job(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_cancel_print_job(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)>) {}
+
     virtual bool connect(wxString& msg, const nlohmann::json& params) { return false; }
 
     virtual bool disconnect(wxString& msg, const nlohmann::json& params) { return true; }

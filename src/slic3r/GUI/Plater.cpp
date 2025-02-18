@@ -1296,7 +1296,7 @@ void Sidebar::update_all_preset_comboboxes()
             auto devices = wxGetApp().app_config->get_devices();
             std::string preset_name = "";
             for (const auto& device : devices) {
-                if (device.connecting) {
+                if (device.connected) {
                     preset_name = device.preset_name;
                     break;
                 }
@@ -7270,7 +7270,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             if (main_frame->m_printer_view && url.empty()) {
                 // It's missing_connection page, reload so that we can replay the gif image
-                main_frame->m_printer_view->reload();
+                // main_frame->m_printer_view->reload();
             }
         }
     }
@@ -12596,7 +12596,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
     auto devices = wxGetApp().app_config->get_devices();
     std::string connect_preset = "";
     for (const auto device : devices) {
-        if (device.connecting) {
+        if (device.connected) {
             connect_preset = device.preset_name;
         }
     }

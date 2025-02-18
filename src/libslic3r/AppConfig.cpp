@@ -801,7 +801,7 @@ void AppConfig::save()
 
     j["devices"] = m_device_list;
     for (size_t i = 0; i < j["devices"].size(); ++i) {
-        j["devices"][i]["connecting"] = false;
+        j["devices"][i]["connected"] = false;
     }
 
     boost::nowide::ofstream c;

@@ -1559,6 +1559,9 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
                 boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_dir / s2).make_preferred();
                 std::string             sub_file = sub_path.string();
                 LoadFile(sub_file, contents);
+                if (contents == "") {
+                    continue;
+                }
                 json pm = json::parse(contents);
                 
                 std::string strInstant = pm["instantiation"];

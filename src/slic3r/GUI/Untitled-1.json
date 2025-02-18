@@ -1,1 +1,0 @@
-{"header":{"seqid":"7"},"payload":{"code":200,"data":{"error":{"code":400,"message":"Activate extruder must home axis first"},"method":""},"msg":"OK"}}

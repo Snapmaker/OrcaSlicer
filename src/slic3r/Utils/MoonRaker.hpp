@@ -76,6 +76,8 @@ public:
 
     virtual void test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)>) override {}
 
+    virtual bool check_sn_arrived() override { return false; }
+
 protected:
     // Internal upload implementations
 #ifdef WIN32
@@ -132,6 +134,8 @@ public:
 
     virtual void test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)>) override;
 
+    virtual bool check_sn_arrived() override;
+
 public:
     // MQTT message handler
     void on_mqtt_message_arrived(const std::string& topic, const std::string& payload);
@@ -152,7 +156,7 @@ private:
     std::function<void(const nlohmann::json& response)> get_request_callback(const std::string& id);
     void delete_response_target(const std::string& id);
 
-    bool wait_for_sn(int timeout_seconds = 3);
+    bool wait_for_sn(int timeout_seconds = 6);
 
     // MQTT message handlers
     void on_response_arrived(const std::string& payload);

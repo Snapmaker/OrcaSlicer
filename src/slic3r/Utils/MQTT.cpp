@@ -132,7 +132,7 @@ bool MqttClient::Subscribe(const std::string& topic, int qos)
     try {
         BOOST_LOG_TRIVIAL(info) << "Subscribing to MQTT topic '" << topic << "' with QoS " << qos;
         mqtt::token_ptr subtok = client_.subscribe(topic, qos, nullptr, subListener_);
-        subtok->wait();
+        subtok->wait_for(std::chrono::seconds(10));
         return true;
     } catch (const mqtt::exception& exc) {
         BOOST_LOG_TRIVIAL(error) << "Error subscribing to topic '" << topic << "': " << exc.what();
@@ -177,7 +177,7 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
     try {
         BOOST_LOG_TRIVIAL(debug) << "Publishing message to topic '" << topic << "' with QoS " << qos << ": " << payload;
         mqtt::token_ptr pubtok = client_.publish(pubmsg);
-        pubtok->wait();
+        pubtok->wait_for(std::chrono::seconds(10));
         return true;
     } catch (const mqtt::exception& exc) {
         BOOST_LOG_TRIVIAL(error) << "Error publishing to topic '" << topic << "': " << exc.what();

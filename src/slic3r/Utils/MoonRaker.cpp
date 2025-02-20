@@ -666,8 +666,14 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     if (m_mqtt_client->CheckConnected()) {
         disconnect(msg, params);
     }
+    m_sn_mtx.lock();
+    m_sn = "";
+    m_sn_mtx.unlock();
+
 
     bool is_connect = m_mqtt_client->Connect();
+    if (!is_connect)
+        return false;
 
     std::string mainLayer = "";
     if (params.count("sn")) {
@@ -683,12 +689,15 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         mainLayer = "+";
     }
 
-
-    bool notification_subscribed = m_mqtt_client->Subscribe(mainLayer + m_notification_topic, 1);
+    bool notification_subscribed = m_mqtt_client->Subscribe(mainLayer + m_notification_topic, 2);
     bool response_subscribed = m_mqtt_client->Subscribe(mainLayer + m_response_topic, 2);
     m_mqtt_client->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
         this->on_mqtt_message_arrived(topic, payload);
     });
+
+    /*if (!wait_for_sn()) {
+        return false;
+    }*/
 
     return is_connect && notification_subscribed && response_subscribed;
 }
@@ -696,6 +705,9 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
 // Disconnect from MQTT broker
 bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     return m_mqtt_client->Disconnect();
+    m_sn_mtx.lock();
+    m_sn = "";
+    m_sn_mtx.unlock();
 }
 
 // Subscribe to printer status updates
@@ -707,7 +719,7 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client->Subscribe(main_layer + m_status_topic, 0);
+    bool res = m_mqtt_client->Subscribe(main_layer + m_status_topic, 2);
 
     if (!res) {
         if (m_status_cb) {
@@ -1015,22 +1027,20 @@ bool Moonraker_Mqtt::send_to_request(
     if (m_mqtt_client) {
         std::string main_layer = "+";
     
-        if (wait_for_sn()) {
-            m_sn_mtx.lock();
-            main_layer = m_sn;
-            m_sn_mtx.unlock();
+        m_sn_mtx.lock();
+        main_layer = m_sn;
+        m_sn_mtx.unlock();
 
-            if (main_layer == "+" || main_layer == "") {
-                delete_response_target(str_uuid);
-                return false;
-            }
-
-            bool res = m_mqtt_client->Publish(main_layer + m_request_topic, body.dump(), 2);
-            if (!res) {
-                delete_response_target(str_uuid);
-            }
-            return res;
+        if (main_layer == "+" || main_layer == "") {
+            delete_response_target(str_uuid);
+            return false;
         }
+
+        bool res = m_mqtt_client->Publish(main_layer + m_request_topic, body.dump(), 2);
+        if (!res) {
+            delete_response_target(str_uuid);
+        }
+        return res;
 
         
     }
@@ -1054,6 +1064,10 @@ bool Moonraker_Mqtt::add_response_target(
 // Remove registered callback
 void Moonraker_Mqtt::delete_response_target(const std::string& id) {
     m_request_cb_map.remove(id);
+}
+
+bool Moonraker_Mqtt::check_sn_arrived() {
+    return wait_for_sn();
 }
 
 // Get and remove callback for a request
@@ -1150,6 +1164,8 @@ void Moonraker_Mqtt::on_status_arrived(const std::string& payload)
         json data;
         if (body.count("params")) {
             data["data"] = body["params"];
+        } else if (body.count("result") && body["result"].count("status")) {
+            data["data"] = body["result"]["status"];
         } else {
             return;
         }

@@ -866,13 +866,28 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                             }
                         }
 
-                        wxGetApp().CallAfter([ip, connect_params](){
+                        wxGetApp().CallAfter([ip, connect_params, self](){
                             // 查询机器的机型和喷嘴信息
                             std::string machine_type = "";
                             std::vector<std::string> nozzle_diameters;
 
                             std::shared_ptr<PrintHost> host = nullptr;
                             wxGetApp().get_connect_host(host);
+
+                            if (!host->check_sn_arrived()) {
+                                wxGetApp().CallAfter([ip]() {
+                                    MessageDialog msg_window(nullptr, ip + _L(" connected unseccessfully !\n"), L("Failed"),
+                                                             wxICON_QUESTION | wxOK);
+                                    msg_window.ShowModal();
+                                });
+
+                                self->m_status = 1;
+                                self->m_msg    = "sn is not exist";
+
+                                self->send_to_js();
+                                self->finish_job();
+                                return;
+                            }
 
                             if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters) && machine_type != "") {
                                 // 查询成功
@@ -1341,6 +1356,9 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
 
     if (!timeout && !system_info.is_null()) {
         // 成功获取到信息
+        if (system_info.count("data")) {
+            system_info = system_info["data"];
+        }
         if (system_info.contains("system_info")) {
             auto& system_data = system_info["system_info"];
             

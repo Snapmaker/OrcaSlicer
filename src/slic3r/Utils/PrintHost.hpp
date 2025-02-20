@@ -107,6 +107,8 @@ public:
 
     virtual bool disconnect(wxString& msg, const nlohmann::json& params) { return true; }
 
+    virtual bool check_sn_arrived() { return false; };
+
     //Support for cloud webui login
     virtual bool is_cloud() const { return false; }
     virtual bool is_logged_in() const { return false; }

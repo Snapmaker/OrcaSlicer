@@ -4021,10 +4021,13 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 return "";
             } else if (command_str.compare("homepage_test_browser") == 0) {
                 CallAfter([this] {
-                    auto dialog = new WebUrlDialog();
+                    /*auto dialog = new WebUrlDialog();
                     dialog->load_url("http://127.0.0.1:13619/web/flutter_web/index.html");
-                    dialog->ShowModal();
-                    delete dialog;
+                    dialog->Show();
+                    delete dialog;*/
+                    static WebUrlDialog dialog = WebUrlDialog();
+                    dialog.load_url("http://127.0.0.1:13619/web/flutter_web/index.html");
+                    dialog.Show();
                 });
             } else if (command_str.compare("homepage_delete_device") == 0) {
                 if (root.get_child_optional("data") != boost::none) {

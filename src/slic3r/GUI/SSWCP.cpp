@@ -497,12 +497,12 @@ void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
 
 void SSWCP_MachineOption_Instance::sw_GetMachineState() {
     try {
-        if (m_param_data.count("targets")) {
+        if (m_param_data.count("objects")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
             std::vector<std::pair<std::string, std::vector<std::string>>> targets;
 
-            json items = m_param_data["targets"];
+            json items = m_param_data["objects"];
             for (auto& [key, value] : items.items()) {
                 if (value.is_null()) {
                     targets.push_back({key, {}});
@@ -532,6 +532,9 @@ void SSWCP_MachineOption_Instance::sw_GetMachineState() {
                 SSWCP_Instance::on_mqtt_msg_arrived(self,response);
             });
         } else {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
             finish_job();
         }
 
@@ -677,12 +680,12 @@ void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
 void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
 {
     try {
-        if (m_param_data.count("targets")) {
+        if (m_param_data.count("objects")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
             std::vector<std::pair<std::string, std::vector<std::string>>> targets;
 
-            json items = m_param_data["targets"];
+            json items = m_param_data["objects"];
             for (auto& [key, value] : items.items()) {
                 if (value.is_null()) {
                     targets.push_back({key, {}});
@@ -712,6 +715,9 @@ void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
                 });
             }
         } else {
+            m_status = -1;
+            m_msg    = "failure";
+            send_to_js();
             finish_job();
         }
 

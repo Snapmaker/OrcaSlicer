@@ -683,6 +683,8 @@
 
         if(payload['event_id'] != null) {
           // alert(jsonMessage);
+          header['event_id'] = payload['event_id']; 
+          header['cmd'] = null;
           var mokeData={
             "header": header,
             "payload": {

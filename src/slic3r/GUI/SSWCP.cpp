@@ -41,6 +41,11 @@ void SSWCP_Instance::process() {
         async_test();
     } else if (m_cmd == "sw_test_mqtt_moonraker") {
         test_mqtt_request();
+    } else {
+        this->m_status = -1;
+        this->m_msg    = "failure";
+        this->send_to_js();
+        this->finish_job();
     }
 }
 
@@ -191,6 +196,11 @@ void SSWCP_MachineFind_Instance::process() {
         sw_GetMachineFindSupportInfo();
     } else if (m_cmd == "sw_StopMachineFind") {
         sw_StopMachineFind();
+    } else {
+        this->m_status = -1;
+        this->m_msg    = "failure";
+        this->send_to_js();
+        this->finish_job();
     }
 }
 
@@ -425,6 +435,11 @@ void SSWCP_MachineOption_Instance::process()
         sw_MachinePrintResume();
     } else if (m_cmd == "sw_MachinePrintCancel") {
         sw_MachinePrintCancel();
+    } else {
+        this->m_status = -1;
+        this->m_msg    = "failure";
+        this->send_to_js();
+        this->finish_job();
     }
 }
 
@@ -755,8 +770,13 @@ void SSWCP_MachineConnect_Instance::process() {
         sw_disconnect();
     } else if (m_cmd == "sw_GetConnectedMachine") {
         sw_get_connect_machine();
-    } else if (m_cmd == "sw_ConnectOtherDevice"){
+    } else if (m_cmd == "sw_ConnectOtherMachine"){
         sw_connect_other_device();
+    } else {
+        this->m_status = -1;
+        this->m_msg    = "failure";
+        this->send_to_js();
+        this->finish_job();
     }
 }
 
@@ -1244,6 +1264,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_MachinePrintPause",
     "sw_MachinePrintResume",
     "sw_MachinePrintCancel",
+    "sw_GetMachineSystemInfo",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
@@ -1251,7 +1272,7 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_Connect",
     "sw_Disconnect",
     "sw_GetConnectedMachine",
-    "sw_ConnectOtherDevice",
+    "sw_ConnectOtherMachine",
 };
 
 std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)

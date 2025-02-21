@@ -213,6 +213,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GUI_Colors.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/PhysicalPrinterDialog.cpp
+    GUI/SMPhysicalPrinterDialog.hpp
+    GUI/SMPhysicalPrinterDialog.cpp
     GUI/PrintHostDialogs.cpp
     GUI/PrintHostDialogs.hpp
     GUI/GUI_Factories.cpp

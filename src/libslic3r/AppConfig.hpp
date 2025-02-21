@@ -34,10 +34,13 @@ struct DeviceInfo {
 	std::string img;
 	std::vector<std::string> nozzle_sizes;
     std::string              sn;
+    int              protocol;
+    std::string              api_key;
+
 
     
     // 用于JSON序列化
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key)
 };
 
 class AppConfig

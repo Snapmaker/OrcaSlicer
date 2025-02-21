@@ -119,6 +119,8 @@ private:
 
     void sw_get_connect_machine();
 
+    void sw_connect_other_device();
+
 private:
     std::thread m_work_thread;  // Worker thread
 };

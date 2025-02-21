@@ -784,9 +784,11 @@ function OnConnectDevice(device) {
         payload:{
             cmd: "sw_Connect",
             params: {
+                dev_id: device.dev_id,
                 ip: device.ip,
                 port: 1883,
                 sn: device.sn,
+                from_homepage: true,
             }
         }
     }

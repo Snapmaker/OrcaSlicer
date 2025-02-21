@@ -1477,6 +1477,7 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
                 if(product_info.contains("nozzle_diameter")){
                     if(product_info["nozzle_diameter"].is_array()){
                         for(const auto& nozzle : product_info["nozzle_diameter"]){
+                            // todo 不一定是string
                             out_nozzle_diameters.push_back(nozzle.get<std::string>());
                         }
                     }

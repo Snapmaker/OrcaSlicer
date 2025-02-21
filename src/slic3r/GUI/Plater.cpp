@@ -1303,16 +1303,22 @@ void Sidebar::update_all_preset_comboboxes()
             }
 
             if (preset_name != "") {
+                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), '('), preset_name.end());
+                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
+
                 const auto& edit_preset = preset_bundle.printers.get_edited_preset();
+
+                std::string local_name = "";
                 if (edit_preset.is_system) {
-                    if (edit_preset.name == preset_name) {
-                        machine_connecting_btn->Show();
-                    }
+                    local_name = edit_preset.name;
                 } else {
                     const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
-                    if (base_preset->name == preset_name) {
-                        machine_connecting_btn->Show();
-                    }
+                    local_name  = base_preset->name;   
+                }
+                local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+                local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+                if (local_name == preset_name) {
+                    machine_connecting_btn->Show();
                 }
             }
         }
@@ -12611,6 +12617,13 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         auto base_preset = wxGetApp().preset_bundle->printers.get_preset_base(current_preset);
         c_preset         = base_preset->name;
     }
+
+    c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), '('), c_preset.end());
+    c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), ')'), c_preset.end());
+
+    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), '('), connect_preset.end());
+    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), ')'), connect_preset.end());
+
     islegal = (c_preset == connect_preset);
 
     if (!islegal) {

@@ -135,7 +135,7 @@ jobs:
           path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
 
       - name: Deploy Mac release
-        if: github.ref == 'refs/heads/main' && inputs.os == 'macos-14' || github.ref == 'refs/heads/2.0.0' && inputs.os == 'macos-14'
+        if: (github.ref == 'refs/heads/main' && inputs.os == 'macos-14') || (github.ref == 'refs/heads/2.0.0' && inputs.os == 'macos-14')
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}

@@ -99,8 +99,6 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
     txt_filename->SetValue(recent_path);
 
 
-    // SM Beta temporarily cancell the checkbox related to device tab
-    /*
     auto checkbox_sizer = new wxBoxSizer(wxHORIZONTAL);
     auto checkbox       = new ::CheckBox(this, wxID_APPLY);
     checkbox->SetValue(m_switch_to_device_tab);
@@ -116,7 +114,6 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
     checkbox_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
     content_sizer->Add(checkbox_sizer);
     content_sizer->AddSpacer(VERT_SPACING);
-    */
     
     if (size_t extension_start = recent_path.find_last_of('.'); extension_start != std::string::npos)
         m_valid_suffix = recent_path.substr(extension_start);

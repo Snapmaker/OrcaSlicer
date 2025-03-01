@@ -9,6 +9,10 @@
       "sub_path": "machine/Snapmaker Artisan.json"
     },
     {
+      "name": "Snapmaker Artisan",
+      "sub_path": "machine/Snapmaker Artisan.json"
+    },
+    {
       "name": "Snapmaker J1",
       "sub_path": "machine/Snapmaker J1.json"
     },

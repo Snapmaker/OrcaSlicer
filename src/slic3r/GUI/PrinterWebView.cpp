@@ -14,6 +14,7 @@
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include <wx/webview.h>
+#include "slic3r/GUI/SSWCP.hpp"
 
 namespace pt = boost::property_tree;
 
@@ -35,6 +36,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this);
     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
+    m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterWebView::OnScriptMessage, this, m_browser->GetId());
 
     SetSizer(topsizer);
 
@@ -79,6 +81,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     m_apikey_sent = false;
     
     m_browser->LoadURL(url);
+    m_browser->Show();
     //m_browser->SetFocus();
     UpdateState();
 }
@@ -168,6 +171,17 @@ void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
         return;
     SendAPIKey();
 }
+
+void PrinterWebView::OnScriptMessage(wxWebViewEvent& evt) {
+    BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << evt.GetString().ToUTF8().data();
+
+    if (wxGetApp().get_mode() == comDevelop)
+        wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
+
+    // test
+    SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
+}
+
 
 } // GUI
 } // Slic3r

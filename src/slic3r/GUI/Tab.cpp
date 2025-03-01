@@ -5101,6 +5101,8 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         // check if there is something in the cache to move to the new selected preset
         apply_config_from_cache();
 
+        load_current_preset();
+
         // Orca: update presets for the selected printer
         if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
             m_preset_bundle->update_selections(*wxGetApp().app_config);
@@ -5114,7 +5116,6 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
             } 
             wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
         }
-        load_current_preset();
 
         if (delete_third_printer) {
             wxGetApp().CallAfter([filament_presets, process_presets]() {

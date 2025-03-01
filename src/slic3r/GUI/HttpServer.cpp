@@ -237,6 +237,36 @@ std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const 
     }
 }
 
+std::shared_ptr<HttpServer::Response> HttpServer::web_server_handle_request(const std::string& url)
+{
+    BOOST_LOG_TRIVIAL(info) << "Handling file request for URL: " << url;
+
+    std::string file_path = map_url_to_file_path(url);
+
+    BOOST_LOG_TRIVIAL(info) << "Handling file_path request for URL: " << file_path;
+    return std::make_shared<ResponseFile>(file_path);
+}
+
+std::string HttpServer::map_url_to_file_path(const std::string& url) {
+    if (url.find("..") != std::string::npos) {
+        return "";
+    }
+    
+    std::string trimmed_url = url;
+
+    size_t question_mark = trimmed_url.find('?');
+    if (question_mark != std::string::npos) {
+        trimmed_url = trimmed_url.substr(0, question_mark);
+    }
+
+    if (trimmed_url == "/") {
+        trimmed_url = "/index.html"; // 默认首页
+    }
+
+    std::string base_path = resources_dir(); // 根据你的需求定义
+    return base_path + trimmed_url; // 拼接成新的路径
+}
+
 void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
 {
     const std::string sHTML = "<html><body><h1>404 Not Found</h1><p>There's nothing here.</p></body></html>";
@@ -256,6 +286,51 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
     ssOut << "content-length: " << sHTML.length() << std::endl;
     ssOut << std::endl;
     ssOut << sHTML;
+}
+
+void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
+{
+    std::ifstream file(file_path, std::ios::binary);
+    if(!file){
+        ResponseNotFound notFoundResponse;
+        notFoundResponse.write_response(ssOut);
+        return;
+    }
+
+    std::ostringstream fileStream;
+    fileStream  << file.rdbuf();
+    std::string fileContent = fileStream.str();
+
+    std::string content_type = "application/octet-stream"; 
+
+
+    if(ends_with(file_path,".html")){
+        content_type = "text/html";
+    }else if(ends_with(file_path, ".css")){
+        content_type = "text/css";
+    }else if(ends_with(file_path, ".js")){
+        content_type = "text/javascript";
+    }else if(ends_with(file_path, ".png")){
+        content_type = "image/png";
+    }else if(ends_with(file_path, ".jpg")){
+        content_type = "image/jpeg";
+    }else if(ends_with(file_path, ".gif")){
+        content_type = "image/gif";
+    }else if(ends_with(file_path, ".svg")){ 
+        content_type = "image/svg+xml";
+    }else if(ends_with(file_path, ".ttf")){
+        content_type = "application/x-font-ttf";
+    }else if(ends_with(file_path, ".json")){
+        content_type = "application/json";
+    }
+
+    ssOut << "HTTP/1.1 200 OK" << std::endl;
+    ssOut << "Content-Type: " << content_type << std::endl;
+    ssOut << "Content-Length: " << fileContent.length() << std::endl;
+    ssOut << std::endl;
+    ssOut << fileContent;
+
+
 }
 
 } // GUI

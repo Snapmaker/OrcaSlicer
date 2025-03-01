@@ -7,6 +7,7 @@ on:
       - doc/** # This includes all sub folders
     branches:
       - main # This can be changed to any branch of your preference
+      - 2.0.0
 
   workflow_dispatch:
     inputs:

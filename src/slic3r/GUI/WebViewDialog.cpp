@@ -6,6 +6,7 @@
 #include "slic3r/GUI/MainFrame.hpp"
 #include "libslic3r_version.h"
 #include "../Utils/Http.hpp"
+#include "SSWCP.hpp"
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -40,6 +41,9 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     wxString strlang = wxGetApp().current_language_code_safe();
     if (strlang != "")
         url = wxString::Format("file://%s/web/homepage/index.html?lang=%s", from_u8(resources_dir()), strlang);
+
+    // test
+    // url = "http://localhost:13619/web/flutter/index.html";
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
     
@@ -655,6 +659,10 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
 
     if (wxGetApp().get_mode() == comDevelop)
         wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
+
+    // test
+    SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
+
     std::string response = wxGetApp().handle_web_request(evt.GetString().ToUTF8().data());
     if (response.empty()) return;
 

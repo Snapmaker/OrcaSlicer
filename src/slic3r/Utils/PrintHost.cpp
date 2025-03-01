@@ -13,6 +13,7 @@
 
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Channel.hpp"
+#include "MoonRaker.hpp"
 #include "OctoPrint.hpp"
 #include "Duet.hpp"
 #include "FlashAir.hpp"
@@ -36,7 +37,7 @@ namespace Slic3r {
 
 PrintHost::~PrintHost() {}
 
-PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config)
+PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config, bool change_engine)
 {
     PrinterTechnology tech = ptFFF;
 
@@ -49,9 +50,11 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config)
 
     if (tech == ptFFF) {
         const auto opt = config->option<ConfigOptionEnum<PrintHostType>>("host_type");
-        const auto host_type = opt != nullptr ? opt->value : htOctoPrint;
+        const auto host_type = opt != nullptr ? opt->value : htMoonRaker_mqtt;
 
         switch (host_type) {
+            case htMoonRaker_mqtt: return new Moonraker_Mqtt(config, change_engine);
+            case htMoonRaker: return new Moonraker(config);
             case htOctoPrint: return new OctoPrint(config);
             case htDuet:      return new Duet(config);
             case htFlashAir:  return new FlashAir(config);

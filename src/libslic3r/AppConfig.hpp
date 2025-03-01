@@ -24,6 +24,25 @@ using namespace nlohmann;
 
 namespace Slic3r {
 
+struct DeviceInfo {
+    std::string ip;
+    std::string dev_id;
+    std::string dev_name;
+    std::string model_name;
+    std::string preset_name;  // 关联的打印机预设名称
+    bool        connected;
+	std::string img;
+	std::vector<std::string> nozzle_sizes;
+    std::string              sn;
+    int              protocol;
+    std::string              api_key;
+
+
+    
+    // 用于JSON序列化
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key)
+};
+
 class AppConfig
 {
 public:
@@ -299,6 +318,12 @@ public:
     static const std::string SECTION_MATERIALS;
     static const std::string SECTION_EMBOSS_STYLE;
 
+    // 添加设备相关的方法
+    void save_device_info(const DeviceInfo& device);
+    void remove_device_info(const std::string& dev_id);
+    std::vector<DeviceInfo> get_devices() const;
+    bool get_device_info(const std::string& dev_id, DeviceInfo& info) const;
+
 private:
 	template<typename T>
 	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const 
@@ -340,6 +365,9 @@ private:
 
     // 添加耗材名称映射表
     static const std::map<std::string, std::string> filament_name_map;
+
+    // 添加设备信息存储
+    std::vector<DeviceInfo> m_device_list;
 };
 
 } // namespace Slic3r

@@ -21,6 +21,7 @@
 #include "slic3r/GUI/WebViewDialog.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
 #include "slic3r/GUI/WebSMUserLoginDialog.hpp"
+#include "slic3r/GUI/WebDeviceDialog.hpp"
 #include "slic3r/GUI/BindDialog.hpp"
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
@@ -296,6 +297,9 @@ private:
     ZUserLogin*     login_dlg { nullptr };
     SMUserLogin*    sm_login_dlg{ nullptr };
 
+    // device dialog
+    WebDeviceDialog* web_device_dialog{ nullptr };
+
     VersionInfo version_info;
     VersionInfo privacy_version_info;
     static std::string version_display;
@@ -309,9 +313,34 @@ private:
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
     HttpServer       m_http_server;
+    HttpServer       m_page_http_server;
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
+
+    std::shared_ptr<PrintHost> m_connected_host = nullptr;
+    std::mutex                 m_cnt_hst_mtx;
+    DynamicPrintConfig              m_host_config;
+    std::mutex                 m_host_cfg_mtx;
+
   public:
+    DynamicPrintConfig*             get_host_config() {
+        DynamicPrintConfig* res = nullptr;
+        m_host_cfg_mtx.lock();
+        res = &m_host_config;
+        m_host_cfg_mtx.unlock();
+
+        return res;
+    }
+
+    void                       set_host_config(const DynamicPrintConfig& config)
+    {
+        m_host_cfg_mtx.lock();
+        m_host_config = config;
+        m_host_cfg_mtx.unlock();
+    }
+    void      get_connect_host(std::shared_ptr<PrintHost>& output);
+    void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
+    wxDialog* get_web_device_dialog() { return web_device_dialog; }
       //try again when subscription fails
     void            on_start_subscribe_again(std::string dev_id);
     void            check_filaments_in_blacklist(std::string tag_supplier, std::string tag_material, bool& in_blacklist, std::string& action, std::string& info);
@@ -523,6 +552,10 @@ private:
     void            stop_sync_user_preset();
     void            start_http_server();
     void            stop_http_server();
+
+    // page loading http server
+    void            start_page_http_server();
+    void            stop_page_http_server();
     void            switch_staff_pick(bool on);
 
     void            on_show_check_privacy_dlg(int online_login = 0);

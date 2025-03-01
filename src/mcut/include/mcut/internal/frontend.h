@@ -47,6 +47,8 @@
 
 #include "mcut/internal/kernel.h"
 
+#include <chrono>
+
 /*
 std::invalid_argument: related to the input parameters
 std::runtime_error: system runtime error e.g. out of memory

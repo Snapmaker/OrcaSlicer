@@ -9,6 +9,11 @@
 #include "libslic3r_version.h"
 #include "Downloader.hpp"
 
+#include "slic3r/GUI/WebUrlDialog.hpp"
+#include "slic3r/GUI/WebPresetDialog.hpp"
+
+#include "slic3r/GUI/SSWCP.hpp"
+
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
 // Also, there is a check that the former is not included from slic3r module.
@@ -1081,6 +1086,12 @@ GUI_App::GUI_App()
 #endif
 
     reset_to_active();
+
+    // test
+    m_page_http_server.setPort(PAGE_HTTP_PORT);
+    m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
+    m_page_http_server.start();
+    
 }
 
 void GUI_App::shutdown()
@@ -1099,10 +1110,17 @@ void GUI_App::shutdown()
     }
 
     if (sm_login_dlg != nullptr) {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy login dialog");
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy SMlogin dialog");
         delete sm_login_dlg;
         sm_login_dlg = nullptr;
     }
+
+    if (web_device_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
+        delete web_device_dialog;
+        web_device_dialog = nullptr;
+    }
+   
 
     if (m_is_recreating_gui) return;
     m_is_closing = true;
@@ -1823,6 +1841,8 @@ GUI_App::~GUI_App()
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
+
+    stop_page_http_server();
 }
 
 // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
@@ -2055,6 +2075,18 @@ void GUI_App::update_http_extra_header()
     Slic3r::Http::set_extra_headers(extra_headers);
     if (m_agent)
         m_agent->set_extra_http_header(extra_headers);
+}
+
+void GUI_App::get_connect_host(std::shared_ptr<PrintHost>& output) {
+    m_cnt_hst_mtx.lock();
+    output = m_connected_host;
+    m_cnt_hst_mtx.unlock();
+}
+
+void GUI_App::set_connect_host(const std::shared_ptr<PrintHost>& input) {
+    m_cnt_hst_mtx.lock();
+    m_connected_host = input;
+    m_cnt_hst_mtx.unlock();
 }
 
 void GUI_App::on_start_subscribe_again(std::string dev_id)
@@ -3671,7 +3703,7 @@ void GUI_App::sm_ShowUserLogin(bool show)
                 delete sm_login_dlg;
                 sm_login_dlg = new SMUserLogin();
             }
-            sm_login_dlg->run();
+            sm_login_dlg->ShowModal();
         } catch (std::exception&) {
             ;
         }
@@ -3684,7 +3716,7 @@ void GUI_App::sm_ShowUserLogin(bool show)
 void GUI_App::sm_request_user_logout()
 {
     if (m_login_userinfo.is_user_login()) {
-        m_login_userinfo.clear();
+        m_login_userinfo.set_user_login(false);
     }
     try {
         if (!sm_login_dlg) {
@@ -3808,54 +3840,38 @@ std::string GUI_App::handle_web_request(std::string cmd)
             return "";
 
         boost::optional<std::string> sequence_id = root.get_optional<std::string>("sequence_id");
-        boost::optional<std::string> command = root.get_optional<std::string>("command");
+        boost::optional<std::string> command     = root.get_optional<std::string>("command");
         if (command.has_value()) {
             std::string command_str = command.value();
             if (command_str.compare("request_project_download") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
+                    pt::ptree                    data_node  = root.get_child("data");
                     boost::optional<std::string> project_id = data_node.get_optional<std::string>("project_id");
                     if (project_id.has_value()) {
                         this->request_project_download(project_id.value());
                     }
                 }
-            }
-            else if (command_str.compare("open_project") == 0) {
+            } else if (command_str.compare("open_project") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
+                    pt::ptree                    data_node  = root.get_child("data");
                     boost::optional<std::string> project_id = data_node.get_optional<std::string>("project_id");
                     if (project_id.has_value()) {
                         this->request_open_project(project_id.value());
                     }
                 }
-            }
-            else if (command_str.compare("get_login_info") == 0) {
-                CallAfter([this] {
-                        sm_get_login_info();
-                    });
-            }
-            else if (command_str.compare("homepage_login_or_register") == 0) {
-                CallAfter([this] {
-                    this->sm_request_login(true);
-                });
-            }
-            else if (command_str.compare("homepage_logout") == 0) {
-                CallAfter([this] {
-                    wxGetApp().sm_request_user_logout();
-                });
-            }
-            else if (command_str.compare("homepage_modeldepot") == 0) {
-                CallAfter([this] {
-                    wxGetApp().open_mall_page_dialog();
-                });
-            }
-            else if (command_str.compare("homepage_newproject") == 0) {
+            } else if (command_str.compare("get_login_info") == 0) {
+                CallAfter([this] { sm_get_login_info(); });
+            } else if (command_str.compare("homepage_login_or_register") == 0) {
+                CallAfter([this] { this->sm_request_login(true); });
+            } else if (command_str.compare("homepage_logout") == 0) {
+                CallAfter([this] { wxGetApp().sm_request_user_logout(); });
+            } else if (command_str.compare("homepage_modeldepot") == 0) {
+                CallAfter([this] { wxGetApp().open_mall_page_dialog(); });
+            } else if (command_str.compare("homepage_newproject") == 0) {
                 this->request_open_project("<new>");
-            }
-            else if (command_str.compare("homepage_openproject") == 0) {
+            } else if (command_str.compare("homepage_openproject") == 0) {
                 this->request_open_project({});
-            }
-            else if (command_str.compare("get_recent_projects") == 0) {
+            } else if (command_str.compare("get_recent_projects") == 0) {
                 if (mainframe) {
                     if (mainframe->m_webview) {
                         mainframe->m_webview->SendRecentList(INT_MAX);
@@ -3880,14 +3896,13 @@ std::string GUI_App::handle_web_request(std::string cmd)
             // }
             else if (command_str.compare("homepage_open_recentfile") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
-                    boost::optional<std::string> path = data_node.get_optional<std::string>("path");
+                    pt::ptree                    data_node = root.get_child("data");
+                    boost::optional<std::string> path      = data_node.get_optional<std::string>("path");
                     if (path.has_value()) {
                         this->request_open_project(path.value());
                     }
                 }
-            }
-            else if (command_str.compare("homepage_delete_recentfile") == 0) {
+            } else if (command_str.compare("homepage_delete_recentfile") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("path");
@@ -3895,42 +3910,36 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         this->request_remove_project(path.value());
                     }
                 }
-            }
-            else if (command_str.compare("homepage_delete_all_recentfile") == 0) {
+            } else if (command_str.compare("homepage_delete_all_recentfile") == 0) {
                 this->request_remove_project("");
-            }
-            else if (command_str.compare("homepage_explore_recentfile") == 0) {
+            } else if (command_str.compare("homepage_explore_recentfile") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("path");
-                    if (path.has_value())
-                    {
+                    if (path.has_value()) {
                         boost::filesystem::path NowFile(path.value());
 
                         std::string FilePath = NowFile.make_preferred().string();
                         desktop_open_any_folder(FilePath);
                     }
                 }
-            }
-            else if (command_str.compare("homepage_open_hotspot") == 0) {
+            } else if (command_str.compare("homepage_open_hotspot") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
-                    boost::optional<std::string> url = data_node.get_optional<std::string>("url");
+                    pt::ptree                    data_node = root.get_child("data");
+                    boost::optional<std::string> url       = data_node.get_optional<std::string>("url");
                     if (url.has_value()) {
                         this->request_open_project(url.value());
                     }
                 }
-            }
-            else if (command_str.compare("begin_network_plugin_download") == 0) {
+            } else if (command_str.compare("begin_network_plugin_download") == 0) {
                 CallAfter([this] { wxGetApp().ShowDownNetPluginDlg(); });
-            }
-            else if (command_str.compare("get_web_shortcut") == 0) {
+            } else if (command_str.compare("get_web_shortcut") == 0) {
                 if (root.get_child_optional("key_event") != boost::none) {
                     pt::ptree key_event_node = root.get_child("key_event");
-                    auto keyCode = key_event_node.get<int>("key");
-                    auto ctrlKey = key_event_node.get<bool>("ctrl");
-                    auto shiftKey = key_event_node.get<bool>("shift");
-                    auto cmdKey = key_event_node.get<bool>("cmd");
+                    auto      keyCode        = key_event_node.get<int>("key");
+                    auto      ctrlKey        = key_event_node.get<bool>("ctrl");
+                    auto      shiftKey       = key_event_node.get<bool>("shift");
+                    auto      cmdKey         = key_event_node.get<bool>("cmd");
 
                     wxKeyEvent e(wxEVT_CHAR_HOOK);
 #ifdef __APPLE__
@@ -3945,8 +3954,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     e.SetEventObject(mainframe);
                     wxPostEvent(mainframe, e);
                 }
-            }
-            else if (command_str.compare("userguide_wiki_open") == 0) {
+            } else if (command_str.compare("userguide_wiki_open") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("url");
@@ -3954,8 +3962,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         wxLaunchDefaultBrowser(path.value());
                     }
                 }
-            }
-            else if (command_str.compare("homepage_open_ccabin") == 0) {
+            } else if (command_str.compare("homepage_open_ccabin") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("file");
@@ -3965,29 +3972,140 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         this->request_open_project(Fullpath);
                     }
                 }
-            }
-            else if (command_str.compare("common_openurl") == 0) {
-                boost::optional<std::string> path      = root.get_optional<std::string>("url");
+            } else if (command_str.compare("common_openurl") == 0) {
+                boost::optional<std::string> path = root.get_optional<std::string>("url");
                 if (path.has_value()) {
                     wxLaunchDefaultBrowser(path.value());
                 }
-            } 
-            else if (command_str.compare("homepage_makerlab_get") == 0) {
-                //if (mainframe->m_webview) { mainframe->m_webview->SendMakerlabList(); }
-            }
-            else if (command_str.compare("makerworld_model_open") == 0) 
-            {
+            } else if (command_str.compare("homepage_makerlab_get") == 0) {
+                // if (mainframe->m_webview) { mainframe->m_webview->SendMakerlabList(); }
+            } else if (command_str.compare("makerworld_model_open") == 0) {
                 if (root.get_child_optional("model") != boost::none) {
                     pt::ptree                    data_node = root.get_child("model");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("url");
-                    if (path.has_value()) 
-                    { 
+                    if (path.has_value()) {
                         wxString realurl = from_u8(url_decode(path.value()));
                         wxGetApp().request_model_download(realurl);
                     }
                 }
+            } else if (command_str.compare("homepage_add_device") == 0) {
+                CallAfter([this] {
+                    try {
+                        if (web_device_dialog)
+                            delete web_device_dialog;
+
+                        web_device_dialog = new WebDeviceDialog;
+
+                        web_device_dialog->run();
+                    } catch (std::exception&) {
+                        ;
+                    }
+                });
+                return "";
+            } else if (command_str.compare("get_local_devices") == 0) {
+                CallAfter([this] {
+                    try {
+                        auto devices = wxGetApp().app_config->get_devices();
+
+                        json param;
+                        param["command"]       = "local_devices_arrived";
+                        param["sequece_id"]    = "10001";
+                        param["data"]          = devices;
+                        std::string logout_cmd = param.dump();
+                        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                        GUI::wxGetApp().run_script(strJS);
+                    } catch (std::exception&) {
+                        ;
+                    }
+                });
+                return "";
+            } else if (command_str.compare("homepage_test_browser") == 0) {
+                CallAfter([this] {
+                    auto dialog = new WebUrlDialog();
+                    dialog->load_url("http://127.0.0.1:13619/web/flutter_web/index.html");
+                    dialog->ShowModal();
+                    delete dialog;
+                });
+            } else if (command_str.compare("homepage_delete_device") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id")) {
+                        std::string dev_id = data_node.get_optional<std::string>("dev_id").value();
+                        wxGetApp().app_config->remove_device_info(dev_id);
+
+                        CallAfter([this] {
+                            json param;
+                            param["command"]       = "local_devices_arrived";
+                            param["sequece_id"]    = "10001";
+                            param["data"]          = this->app_config->get_devices();
+                            std::string logout_cmd = param.dump();
+                            wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                            GUI::wxGetApp().run_script(strJS);
+                        });
+                    }
+                }
+            } else if (command_str.compare("homepage_rename_device") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id") && data_node.get_child_optional("dev_name")) {
+                        std::string dev_id   = data_node.get_optional<std::string>("dev_id").value();
+                        std::string dev_name = data_node.get_optional<std::string>("dev_name").value();
+
+                        DeviceInfo info;
+                        app_config->get_device_info(dev_id, info);
+                        info.dev_name = dev_name;
+                        app_config->save_device_info(info);
+
+                        CallAfter([this] {
+                            json param;
+                            param["command"]       = "local_devices_arrived";
+                            param["sequece_id"]    = "10001";
+                            param["data"]          = this->app_config->get_devices();
+                            std::string logout_cmd = param.dump();
+                            wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                            GUI::wxGetApp().run_script(strJS);
+                        });
+                    }
+                }
+            } else if (command_str.compare("homepage_switch_model") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id") && data_node.get_child_optional("dev_name")) {
+                        std::string dev_id   = data_node.get_optional<std::string>("dev_id").value();
+                        CallAfter([this, dev_id]() {
+                            WebPresetDialog dialog(this);
+                            dialog.m_device_id = dev_id;
+                            dialog.run();
+                        });
+                    }
+                }
+            } else if (command_str.compare("create_project") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id")) {
+                        std::string dev_id = data_node.get_optional<std::string>("dev_id").value();
+                        CallAfter([this, dev_id]() {
+                            DeviceInfo info;
+                            if (this->app_config->get_device_info(dev_id, info)) {
+                                if (info.preset_name != "") {
+                                    try {
+                                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(info.preset_name);
+                                        this->plater()->new_project();
+                                    } catch (std::exception& e) {
+                                        // 异常处理
+                                    }
+                                }
+                            } else {
+                                // 弹框提示
+                                MessageDialog msg_window(nullptr, _L("Your machine info is not completed, please select the machine type!"), L("Create Failed"), wxICON_QUESTION | wxOK);
+                                msg_window.ShowModal();
+                            }
+                        });
+                    }
+                }
             }
         }
+        
     }
     catch (...) {
         BOOST_LOG_TRIVIAL(trace) << "parse json cmd failed " << cmd;
@@ -4938,6 +5056,16 @@ void GUI_App::start_http_server()
 void GUI_App::stop_http_server()
 {
     m_http_server.stop();
+}
+
+void GUI_App::start_page_http_server() 
+{
+    if (!m_page_http_server.is_started())
+        m_page_http_server;
+}
+void GUI_App::stop_page_http_server()
+{
+    m_page_http_server.stop();
 }
 
 void GUI_App::switch_staff_pick(bool on)

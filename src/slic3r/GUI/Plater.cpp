@@ -771,6 +771,11 @@ Sidebar::Sidebar(Plater *parent)
                 dlg.ShowModal();
             });
 
+        machine_connecting_btn = new ScalableButton(p->m_panel_printer_content, wxID_ANY, "monitor_machine_working");
+        machine_connecting_btn->SetBackgroundColour(wxColour(255, 255, 255));
+        machine_connecting_btn->SetToolTip(_L("The machine has been connected and is currently in working mode."));
+        machine_connecting_btn->Hide();
+
         wxBoxSizer* vsizer_printer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer_printer = new wxBoxSizer(wxHORIZONTAL);
 
@@ -779,7 +784,9 @@ Sidebar::Sidebar(Plater *parent)
         hsizer_printer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
         hsizer_printer->Add(FromDIP(8), 0, 0, 0, 0);
         hsizer_printer->Add(connection_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
+        hsizer_printer->Add(machine_connecting_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
         hsizer_printer->Add(FromDIP(8), 0, 0, 0, 0);
+
         vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);
 
         // Bed type selection
@@ -1241,6 +1248,12 @@ void Sidebar::update_all_preset_comboboxes()
     auto p_mainframe = wxGetApp().mainframe;
     auto cfg = preset_bundle.printers.get_edited_preset().config;
 
+    const auto& appconfig = wxGetApp().app_config;
+
+    bool use_new_connection = appconfig->get("use_new_connect") == "true";
+
+    machine_connecting_btn->Hide();
+
     if (preset_bundle.use_bbl_network()) {
         //only show connection button for not-BBL printer
         connection_btn->Hide();
@@ -1249,26 +1262,66 @@ void Sidebar::update_all_preset_comboboxes()
         //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
-        connection_btn->Show();
+        connection_btn->Hide();
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
-        wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
-        wxString apikey;
-        if(url.empty())
-            url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
-        else {
-            if (!url.Lower().starts_with("http"))
-                url = wxString::Format("http://%s", url);
-            const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
-            if (cfg.has("printhost_apikey") && (host_type != htSimplyPrint))
-                apikey = cfg.opt_string("printhost_apikey");
-            print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate : MainFrame::PrintSelectType::eSendGcode;
+
+        if (!use_new_connection) {
+            connection_btn->Show();
+            wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
+            wxString apikey;
+            if (url.empty()) {
+                // url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
+                std::string base_url = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT);
+                url                  = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
+            }
+            else {
+                if (!url.Lower().starts_with("http"))
+                    url = wxString::Format("http://%s", url);
+                const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
+                if (cfg.has("printhost_apikey") && (host_type != htSimplyPrint))
+                    apikey = cfg.opt_string("printhost_apikey");
+                print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
+                                                                 MainFrame::PrintSelectType::eSendGcode;
+            }
+
+            p_mainframe->load_printer_url(url, apikey);
+
+            p_mainframe->set_print_button_to_default(print_btn_type);
+        } else {
+            print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
+                                                             MainFrame::PrintSelectType::eSendGcode;
+            p_mainframe->set_print_button_to_default(print_btn_type);
+
+            auto devices = wxGetApp().app_config->get_devices();
+            std::string preset_name = "";
+            for (const auto& device : devices) {
+                if (device.connected) {
+                    preset_name = device.preset_name;
+                    break;
+                }
+            }
+
+            if (preset_name != "") {
+                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), '('), preset_name.end());
+                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
+
+                const auto& edit_preset = preset_bundle.printers.get_edited_preset();
+
+                std::string local_name = "";
+                if (edit_preset.is_system) {
+                    local_name = edit_preset.name;
+                } else {
+                    const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
+                    local_name  = base_preset->name;   
+                }
+                local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+                local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+                if (local_name == preset_name) {
+                    machine_connecting_btn->Show();
+                }
+            }
         }
-
-        p_mainframe->load_printer_url(url, apikey);
-
-
-        p_mainframe->set_print_button_to_default(print_btn_type);
 
     }
 
@@ -1323,8 +1376,7 @@ void Sidebar::update_all_preset_comboboxes()
 
     // Orca:: show device tab based on vendor type
     
-    // SM Beta temporarily cancel the device page
-    // p_mainframe->show_device(preset_bundle.use_bbl_device_tab());
+    p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !use_new_connection);
     p_mainframe->m_tabpanel->SetSelection(p_mainframe->m_tabpanel->GetSelection());
 }
 
@@ -7208,7 +7260,8 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
     sidebar_layout.show = new_sel == MainFrame::tp3DEditor || new_sel == MainFrame::tpPreview;
     update_sidebar();
     int old_sel = e.GetOldSelection();
-    if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor) {
+    if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor &&
+        wxGetApp().app_config->get("use_new_connect") != "true") {
         if (!wxGetApp().getAgent()) {
             e.Veto();
             BOOST_LOG_TRIVIAL(info) << boost::format("skipped tab switch from %1% to %2%, lack of network plugins") % old_sel % new_sel;
@@ -7223,7 +7276,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             if (main_frame->m_printer_view && url.empty()) {
                 // It's missing_connection page, reload so that we can replay the gif image
-                main_frame->m_printer_view->reload();
+                // main_frame->m_printer_view->reload();
             }
         }
     }
@@ -12544,11 +12597,64 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 {
     // if physical_printer is selected, send gcode for this printer
     // DynamicPrintConfig* physical_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
+
+    // 校验机型
+    auto devices = wxGetApp().app_config->get_devices();
+    std::string connect_preset = "";
+    for (const auto device : devices) {
+        if (device.connected) {
+            connect_preset = device.preset_name;
+        }
+    }
+
+    auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+
+    bool islegal = true;
+    std::string c_preset = "";
+    if (current_preset.is_system) {
+        c_preset = current_preset.name;
+    } else {
+        auto base_preset = wxGetApp().preset_bundle->printers.get_preset_base(current_preset);
+        c_preset         = base_preset->name;
+    }
+
+    c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), '('), c_preset.end());
+    c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), ')'), c_preset.end());
+
+    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), '('), connect_preset.end());
+    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), ')'), connect_preset.end());
+
+    islegal = (c_preset == connect_preset);
+
+    if (!islegal) {
+        MessageDialog msg_window(nullptr,
+                                 _L(" Your connected machine is ") + connect_preset + _L("\nYour model's preset is ") + c_preset + _L("\nDo you want to continue?"),
+                                 L("machine check"),
+                                 wxICON_QUESTION | wxOK);
+        int res = msg_window.ShowModal();
+        if (res != wxID_OK) {
+            return;
+        }
+    }
+
+
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
     if (! physical_printer_config || p->model.objects.empty())
         return;
 
-    PrintHostJob upload_job(physical_printer_config);
+    PrintHostJob upload_job;
+    if (wxGetApp().app_config->get("use_new_connect") == "true") {
+        upload_job = PrintHostJob(wxGetApp().get_host_config());
+    }
+    else {
+        upload_job = PrintHostJob(physical_printer_config);
+    }
+    /*if (wxGetApp().app_config->get("use_new_connect") == "true") {
+        std::shared_ptr<PrintHost> temp;
+        wxGetApp().get_connect_host(temp);
+        upload_job.printhost = std::unique_ptr<PrintHost>(temp.get());
+    }*/
+
     if (upload_job.empty())
         return;
 

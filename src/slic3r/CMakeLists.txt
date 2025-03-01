@@ -213,6 +213,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GUI_Colors.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/PhysicalPrinterDialog.cpp
+    GUI/SMPhysicalPrinterDialog.hpp
+    GUI/SMPhysicalPrinterDialog.cpp
     GUI/PrintHostDialogs.cpp
     GUI/PrintHostDialogs.hpp
     GUI/GUI_Factories.cpp
@@ -259,6 +261,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/MonitorPage.hpp
     GUI/StatusPanel.cpp
     GUI/StatusPanel.hpp
+    GUI/SSWCP.cpp
+    GUI/SSWCP.hpp
     GUI/HMS.hpp
     GUI/HMS.cpp
     GUI/SliceInfoPanel.cpp
@@ -275,10 +279,16 @@ set(SLIC3R_GUI_SOURCES
     GUI/WebDownPluginDlg.cpp
     GUI/WebGuideDialog.hpp
     GUI/WebGuideDialog.cpp
+    GUI/WebPresetDialog.hpp
+    GUI/WebPresetDialog.cpp
     GUI/WebUserLoginDialog.cpp
     GUI/WebUserLoginDialog.hpp
     GUI/WebSMUserLoginDialog.cpp
     GUI/WebSMUserLoginDialog.hpp
+    GUI/WebDeviceDialog.cpp
+    GUI/WebDeviceDialog.hpp
+    GUI/WebUrlDialog.cpp
+    GUI/WebUrlDialog.hpp
     GUI/ConfigManipulation.cpp
     GUI/ConfigManipulation.hpp
     GUI/Field.cpp
@@ -492,6 +502,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/TaskManager.hpp
     Utils/Http.cpp
     Utils/Http.hpp
+    Utils/MQTT.hpp
+    Utils/MQTT.cpp
     Utils/FixModelByWin10.cpp
     Utils/FixModelByWin10.hpp
     Utils/EmbossStyleManager.cpp
@@ -525,8 +537,9 @@ set(SLIC3R_GUI_SOURCES
     Utils/PrintHost.cpp
     Utils/NetworkAgent.cpp
     Utils/NetworkAgent.hpp
-    Utils/OctoPrint.cpp
-    Utils/OctoPrint.hpp
+    Utils/MoonRaker.cpp
+    Utils/MoonRaker.hpp
+    Utils/TimeoutMap.hpp
     Utils/PrintHost.cpp
     Utils/PrintHost.hpp
     Utils/Serial.cpp
@@ -605,8 +618,15 @@ if (UNIX AND NOT APPLE)
     )
 endif ()
 
+
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
 target_include_directories(libslic3r_gui PRIVATE Utils)
+
+target_link_libraries(libslic3r_gui paho-mqttpp3-static)
+
+target_include_directories(libslic3r_gui PRIVATE ${PAHO_MQTT_CPP_PATH}/include)
+
+target_include_directories(libslic3r_gui PRIVATE ${PAHO_MQTT_C_PATH}/src)
 
 if (WIN32)
     target_include_directories(libslic3r_gui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/WebView2/include)
@@ -681,3 +701,5 @@ endif ()
 
 # Add a definition so that we can tell we are compiling slic3r.
 target_compile_definitions(libslic3r_gui PRIVATE SLIC3R_CURRENTLY_COMPILING_GUI_MODULE)
+
+

@@ -1559,8 +1559,7 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
                 boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_dir / s2).make_preferred();
                 std::string             sub_file = sub_path.string();
                 LoadFile(sub_file, contents);
-                
-                if(contents == ""){
+                if (contents == "") {
                     continue;
                 }
                 json pm = json::parse(contents);
@@ -1569,7 +1568,7 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "Load Filament:" << s1 << ",Path:" << sub_file << ",instantiation?" << strInstant;
 
                 if (strInstant == "true") {
-                    std::string sV;
+                    std::string sV;     
                     std::string sT;
 
                     int nRet = GetFilamentInfo(vendor_dir.string(),tFilaList, sub_file, sV, sT);

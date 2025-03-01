@@ -772,3 +772,404 @@ body
 	cursor: pointer!important;
 	pointer-events: auto!important;
 }
+
+/* 设备管理样式 */
+#DeviceList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 20px 0;
+}
+
+.DeviceAddIcon {
+    width: 184px;
+    height: 184px;
+    background-color: #E4E4E4;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    padding: 0;
+    object-fit: cover;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.DeviceAddIcon:hover {
+    background-color: #D0D0D0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.DeviceCard {
+    width: 184px;
+    height: 184px;
+    background: #FFFFFF;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+}
+
+.DeviceImgContainer {
+    width: 144px;
+    height: 134px;  /* 稍微减小高度,为底部绿条留空间 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 10px;
+}
+
+.DeviceImg {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.DeviceName {
+    width: 100%;
+    text-align: center;
+    padding: 0 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 14px;
+    position: relative;
+}
+
+/* hover时显示完整名称的提示框 */
+.DeviceName:hover::after {
+    content: attr(title); /* 使用title属性的内容 */
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: normal; /* 允许文字换行 */
+    max-width: 200px; /* 设置最大宽度 */
+    z-index: 100;
+    pointer-events: none; /* 防止tooltip影响hover */
+}
+
+/* 状态指示器 */
+.DeviceStatus {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    cursor: pointer; /* 改为普通指针 */
+}
+
+/* 状态指示器的tooltip */
+.DeviceStatus::after {
+    content: attr(data-status);
+    position: absolute; /* 改回absolute */
+    top: 100%;
+    left: 0;
+    transform: translateY(4px);
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    font-size: 12px;
+    border-radius: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease; /* 只对opacity做过渡 */
+    pointer-events: none;
+    z-index: 1000;
+}
+
+/* hover时显示tooltip */
+.DeviceStatus:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+
+.DeviceStatus.connected {
+    background-color: #4CAF50;
+}
+
+.DeviceStatus.disconnected {
+    background-color: #FFC107;
+}
+
+/* 底部操作栏 */
+.DeviceActions {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 8px; /* 增加绿条高度从6px到8px */
+    background: #009688;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.3s ease;
+    gap: 8px;
+    padding: 0 10px;
+    cursor: pointer;
+}
+
+/* 操作按钮 */
+.DeviceAction {
+    opacity: 0;
+    color: white;
+    height: 24px;
+    width: 52px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #009688; /* 改为实心绿色背景 */
+    transform: translateY(20px);
+}
+
+/* 操作按钮文字 */
+.DeviceAction span {
+    text-align: center;
+}
+
+/* hover效果 - 改为只在hover绿条时触发 */
+.DeviceActions:hover {
+    height: 32px;
+    background: transparent;
+}
+
+.DeviceActions:hover .DeviceAction {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.DeviceAction:hover {
+    background-color: #00b09b; /* 稍微亮一点的绿色 */
+}
+
+/* 删除按钮 */
+.DeviceDeleteBtn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.2s;
+}
+
+.DeviceDeleteBtn::before,
+.DeviceDeleteBtn::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 2px;
+    background: white;
+    transform: rotate(45deg);
+}
+
+.DeviceDeleteBtn::after {
+    transform: rotate(-45deg);
+}
+
+.DeviceCard:hover .DeviceDeleteBtn {
+    opacity: 1;
+}
+
+.DeviceDeleteBtn:hover {
+    background: rgba(255, 59, 48, 0.8);  /* 红色背景 */
+}
+
+/* 模态对话框背景 */
+.ModalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+/* 对话框样式 */
+.DialogBox {
+    background: white;
+    border-radius: 8px;
+    padding: 24px;
+    width: 360px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* 对话框标题 */
+.DialogTitle {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #333;
+}
+
+/* 对话框内容 */
+.DialogContent {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+/* 按钮容器 */
+.DialogButtons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+/* 按钮样式 */
+.DialogButton {
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.DialogButton.cancel {
+    background: #f5f5f5;
+    color: #666;
+}
+
+.DialogButton.confirm {
+    background: #009688;
+    color: white;
+}
+
+.DialogButton:hover {
+    opacity: 0.8;
+}
+
+/* 加载动画容器 */
+.LoadingSpinner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.8);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    z-index: 10; /* 确保在其他元素之上 */
+}
+
+/* 旋转动画 */
+.LoadingSpinner::after {
+    content: '';
+    width: 30px;
+    height: 30px;
+    border: 3px solid #009688;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* 显示加载动画的状态 */
+.DeviceCard.connecting .LoadingSpinner {
+    display: flex;
+}
+
+/* 重命名输入框容器 */
+.RenameInput {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 20;
+}
+
+/* 重命名输入框 */
+.RenameInput textarea {
+    width: 100%;
+    height: 60px;
+    padding: 8px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    text-align: center;
+    outline: none;
+    background: transparent;
+    color: #333;
+    resize: none;
+    line-height: 1.4;
+}
+
+/* 重命名状态下显示输入框 */
+.DeviceCard.renaming .RenameInput {
+    display: flex;
+}
+
+/* 重命名状态下隐藏其他元素 */
+.DeviceCard.renaming .DeviceImgContainer,
+.DeviceCard.renaming .DeviceName,
+.DeviceCard.renaming .DeviceActions,
+.DeviceCard.renaming .DeviceStatus,
+.DeviceCard.renaming .DeviceDeleteBtn {
+    opacity: 0.1;
+}
+
+/* 添加创建工程按钮样式 */
+.create-project-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #009688;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: none;
+    z-index: 999;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+/* hover时显示按钮并降低图片透明度 */
+.DeviceImgContainer:hover .create-project-btn {
+    display: block;
+}
+
+.DeviceImgContainer:hover .DeviceImg {
+    opacity: 0.3;
+    transition: opacity 0.3s;
+}

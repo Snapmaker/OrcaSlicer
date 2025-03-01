@@ -17,6 +17,9 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Poedit 3.2.2\n"
 
+msgid "Add Device"
+msgstr "添加设备"
+
 msgid "Supports Painting"
 msgstr "支撑绘制"
 

@@ -139,3 +139,17 @@ body
 	background: rgba(54, 54, 60, 0.88);
     border: 1px solid rgba(129, 129, 131, 0.64);
 }
+
+/* 设备管理暗色主题 */
+.DeviceAddIcon {
+    background-color: #36363C;
+    filter: brightness(0.8);
+}
+
+.DeviceAddIcon:hover {
+    background-color: #404046;
+}
+
+.DeviceItem {
+    background-color: #36363C;
+}

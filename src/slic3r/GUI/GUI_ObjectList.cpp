@@ -933,7 +933,6 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
     } else {
         m_config->set_key_value("wall_filament", new ConfigOptionInt(m_config->option("extruder")->getInt()));
     }
-
     // BBS
     if (item_type & itObject) {
         const int obj_idx = m_objects_model->GetIdByItem(item);

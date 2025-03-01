@@ -1028,10 +1028,9 @@ void MainFrame::init_tabpanel() {
 
         //BBS add pages
 
-    // SM Beta temporarily cancel the device page
-    // m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-    // m_monitor->SetBackgroundColour(*wxWHITE);
-    // m_tabpanel->AddPage(m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
+    m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    m_monitor->SetBackgroundColour(*wxWHITE);
+    m_tabpanel->AddPage(m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
 
     m_printer_view = new PrinterWebView(m_tabpanel);
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
@@ -1409,9 +1408,14 @@ bool MainFrame::can_send_gcode() const
 {
     if (m_plater && !m_plater->model().objects.empty())
     {
-        auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-        if (const auto *print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
-            return !print_host_opt->value.empty();
+        if (wxGetApp().app_config->get("use_new_connect") == "true") {
+            return true;
+        } else {
+            auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            if (const auto* print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
+                return !print_host_opt->value.empty();
+        }
+        
     }
     return true;
 }

@@ -2899,6 +2899,10 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
                 out.solid_infill_filament.value  = extruder;
             if (out.wall_filament.value == 0)
                 out.wall_filament.value          = extruder;
+
+            /*out.sparse_infill_filament.value = extruder;
+            out.solid_infill_filament.value  = extruder;
+            out.wall_filament.value          = extruder;*/
         }
     // 2) Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)

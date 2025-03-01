@@ -542,17 +542,26 @@ static char* read_json_file(const std::string &preset_path)
 }
 
 static std::string get_printer_nozzle_diameter(std::string printer_name) {
-
-    size_t index = printer_name.find(" nozzle");
+    size_t index = printer_name.find(" nozzle)");
     if (std::string::npos == index) {
-        return "";
+        size_t index = printer_name.find(" nozzle");
+        if (std::string::npos == index) {
+            return "";
+        }
+        std::string nozzle           = printer_name.substr(0, index);
+        size_t      last_space_index = nozzle.find_last_of(" ");
+        if (std::string::npos == index) {
+            return "";
+        }
+        return nozzle.substr(last_space_index + 1);
+    } else {
+        std::string nozzle = printer_name.substr(0, index);
+        size_t      last_bracket_index = nozzle.find_last_of("(");
+        if (std::string::npos == index) {
+            return "";
+        }
+        return nozzle.substr(last_bracket_index + 1);
     }
-    std::string nozzle           = printer_name.substr(0, index);
-    size_t      last_space_index = nozzle.find_last_of(" ");
-    if (std::string::npos == index) {
-        return "";
-    }
-    return nozzle.substr(last_space_index + 1);
 }
 
 static void adjust_dialog_in_screen(DPIDialog* dialog) {
@@ -711,8 +720,17 @@ wxBoxSizer *CreateFilamentPresetDialog::create_vendor_item()
     std::sort(string_vendors.begin(), string_vendors.end(), caseInsensitiveCompare);
 
     wxArrayString choices;
+    bool          hasSnapmaker = false;
     for (const std::string &vendor : string_vendors) {
+        if (vendor == "Snapmaker") {
+            hasSnapmaker = true;
+            continue;
+        }
         choices.push_back(wxString(vendor)); // Convert std::string to wxString before adding
+    }
+
+    if (hasSnapmaker) {
+        choices.Insert(wxString("Snapmaker"), 0);
     }
 
     wxBoxSizer *vendor_sizer   = new wxBoxSizer(wxHORIZONTAL);
@@ -1179,10 +1197,11 @@ wxArrayString CreateFilamentPresetDialog::get_filament_preset_choices()
             std::string preset_name = filament_preset->name;
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " filament_id: " << filament_preset->filament_id << " preset name: " << filament_preset->name;
             size_t      index_at    = preset_name.find(" @");
+            std::string cur_preset_name = preset_name;
             if (std::string::npos != index_at) {
-                std::string cur_preset_name = preset_name.substr(0, index_at);
-                preset_name_set.insert(from_u8(cur_preset_name));
+                cur_preset_name = preset_name.substr(0, index_at);
             }
+            preset_name_set.insert(from_u8(cur_preset_name));
         }
         assert(1 == preset_name_set.size());
         if (preset_name_set.size() > 1) {
@@ -1192,11 +1211,20 @@ wxArrayString CreateFilamentPresetDialog::get_filament_preset_choices()
             if (m_public_name_to_filament_id_map.find(public_name) != m_public_name_to_filament_id_map.end()) {
                 suffix++;
                 m_public_name_to_filament_id_map[public_name + "_" + std::to_string(suffix)] = preset.first;
-                choices.Add(public_name + "_" + std::to_string(suffix));
+                if (public_name.find("Snapmaker") != std::string::npos) {
+                    choices.Insert(public_name + "_" + std::to_string(suffix), 0);
+                } else {
+                    choices.Add(public_name + "_" + std::to_string(suffix));
+                }
+                
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " add filament choice: " << choices.back();
             } else {
                 m_public_name_to_filament_id_map[public_name] = preset.first;
-                choices.Add(public_name);
+                if (public_name.find("Snapmaker") != std::string::npos) {
+                    choices.Insert(public_name, 0);
+                } else {
+                    choices.Add(public_name);
+                }
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " add filament choice: " << choices.back();
             }
         }

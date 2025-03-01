@@ -186,6 +186,8 @@ void DailyTipsDataRenderer::render_text(const ImVec2& start_pos, const ImVec2& s
     }
 
     // wiki
+    // SM Beta
+    /*
     if (!m_data.wiki_url.empty()) {
         std::string tips_line = _u8L("For more information, please check out Wiki");
         std::string wiki_part_text = _u8L("Wiki");
@@ -220,6 +222,7 @@ void DailyTipsDataRenderer::render_text(const ImVec2& start_pos, const ImVec2& s
                 open_wiki();
         }
     }
+    */
     ImGui::PopStyleColor();
 }
 

@@ -9,6 +9,11 @@
 #include "libslic3r_version.h"
 #include "Downloader.hpp"
 
+#include "slic3r/GUI/WebUrlDialog.hpp"
+#include "slic3r/GUI/WebPresetDialog.hpp"
+
+#include "slic3r/GUI/SSWCP.hpp"
+
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
 // Also, there is a check that the former is not included from slic3r module.
@@ -347,7 +352,7 @@ public:
 
 		// Based on Text
         memDc.SetFont(m_constant_text.based_on_font);
-        auto bs_version = wxString::Format("Based on PrusaSlicer and BambuStudio").ToStdString();
+        auto bs_version = wxString::Format("Based on Orca Slicer").ToStdString();
         wxSize based_on_ext = memDc.GetTextExtent(bs_version);
         wxRect based_on_rect(
 			wxPoint(0, height - based_on_ext.GetHeight() * 2),
@@ -736,7 +741,7 @@ static void generic_exception_handle()
         // and terminate the app so it is at least certain to happen now.
         BOOST_LOG_TRIVIAL(error) << boost::format("std::bad_alloc exception: %1%") % ex.what();
         flush_logs();
-        wxString errmsg = wxString::Format(_L("Snapmaker_Orca will terminate because of running out of memory."
+        wxString errmsg = wxString::Format(_L("Snapmaker Orca will terminate because of running out of memory."
                                               "It may be a bug. It will be appreciated if you report the issue to our team."));
         wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Fatal error"), wxOK | wxICON_ERROR);
 
@@ -745,13 +750,13 @@ static void generic_exception_handle()
      } catch (const boost::io::bad_format_string& ex) {
      	BOOST_LOG_TRIVIAL(error) << boost::format("Uncaught exception: %1%") % ex.what();
         	flush_logs();
-        wxString errmsg = _L("Snapmaker_Orca will terminate because of a localization error. "
+        wxString errmsg = _L("Snapmaker Orca will terminate because of a localization error. "
                              "It will be appreciated if you report the specific scenario this issue happened.");
         wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Critical error"), wxOK | wxICON_ERROR);
         std::terminate();
         //throw;
     } catch (const std::exception& ex) {
-        wxLogError(format_wxstr(_L("Snapmaker_Orca got an unhandled exception: %1%"), ex.what()));
+        wxLogError(format_wxstr(_L("Snapmaker Orca got an unhandled exception: %1%"), ex.what()));
         BOOST_LOG_TRIVIAL(error) << boost::format("Uncaught exception: %1%") % ex.what();
         flush_logs();
         throw;
@@ -1081,6 +1086,12 @@ GUI_App::GUI_App()
 #endif
 
     reset_to_active();
+
+    // test
+    m_page_http_server.setPort(PAGE_HTTP_PORT);
+    m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
+    m_page_http_server.start();
+    
 }
 
 void GUI_App::shutdown()
@@ -1097,6 +1108,19 @@ void GUI_App::shutdown()
         delete login_dlg;
         login_dlg = nullptr;
     }
+
+    if (sm_login_dlg != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy SMlogin dialog");
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
+    }
+
+    if (web_device_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
+        delete web_device_dialog;
+        web_device_dialog = nullptr;
+    }
+   
 
     if (m_is_recreating_gui) return;
     m_is_closing = true;
@@ -1817,6 +1841,8 @@ GUI_App::~GUI_App()
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
+
+    stop_page_http_server();
 }
 
 // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
@@ -2051,6 +2077,18 @@ void GUI_App::update_http_extra_header()
         m_agent->set_extra_http_header(extra_headers);
 }
 
+void GUI_App::get_connect_host(std::shared_ptr<PrintHost>& output) {
+    m_cnt_hst_mtx.lock();
+    output = m_connected_host;
+    m_cnt_hst_mtx.unlock();
+}
+
+void GUI_App::set_connect_host(const std::shared_ptr<PrintHost>& input) {
+    m_cnt_hst_mtx.lock();
+    m_connected_host = input;
+    m_cnt_hst_mtx.unlock();
+}
+
 void GUI_App::on_start_subscribe_again(std::string dev_id)
 {
     auto start_subscribe_timer = new wxTimer(this, wxID_ANY);
@@ -2226,7 +2264,7 @@ bool GUI_App::on_init_inner()
     }
 #endif
 
-    BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current Snapmaker_Orca Version %1%")%SoftFever_VERSION;
+    BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current Snapmaker_Orca Version %1%")%Snapmaker_VERSION;
     // Enable this to get the default Win32 COMCTRL32 behavior of static boxes.
 //    wxSystemOptions::SetOption("msw.staticbox.optimized-paint", 0);
     // Enable this to disable Windows Vista themes for all wxNotebooks. The themes seem to lead to terrible
@@ -2243,7 +2281,7 @@ bool GUI_App::on_init_inner()
             RichMessageDialog
                 dlg(nullptr,
                     wxString::Format(_L("%s\nDo you want to continue?"), msg),
-                    "Snapmaker_Orca", wxICON_QUESTION | wxYES_NO);
+                    "Snapmaker Orca", wxICON_QUESTION | wxYES_NO);
             dlg.ShowCheckBox(_L("Remember my choice"));
             if (dlg.ShowModal() != wxID_YES) return false;
 
@@ -2321,6 +2359,8 @@ bool GUI_App::on_init_inner()
         app_config->set("version", SLIC3R_VERSION);
     }
 
+    // temporarily cancel the loading window
+    /*
     SplashScreen * scrn = nullptr;
     if (app_config->get("show_splash_screen") == "true") {
         // make a bitmap with dark grey banner on the left side
@@ -2341,7 +2381,7 @@ bool GUI_App::on_init_inner()
         wxYield();
         scrn->SetText(_L("Loading configuration")+ dots);
     }
-
+    */
     BOOST_LOG_TRIVIAL(info) << "loading systen presets...";
     preset_bundle = new PresetBundle();
 
@@ -2394,6 +2434,7 @@ bool GUI_App::on_init_inner()
                         skip_this_version = false;
                     }
                 }
+
                 if (!skip_this_version
                     || evt.GetInt() != 0) {
                     UpdateVersionDialog dialog(this->mainframe);
@@ -2643,7 +2684,7 @@ bool GUI_App::on_init_inner()
         m_config_corrupted = false;
         show_error(nullptr,
                    _u8L(
-                       "The Snapmaker_Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker_Orca has attempted to recreate the "
+                       "The Snapmaker Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker Orca has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
     return true;
@@ -3616,6 +3657,80 @@ wxString GUI_App::transition_tridid(int trid_id)
     return wxString::Format("%s%d", maping_dict[id_index], id_suffix);
 }
 
+// SM
+void GUI_App::sm_get_login_info() {
+    if (!m_login_userinfo.is_user_login() || m_login_userinfo.get_user_name().empty()) {
+        // default
+        json param;
+        param["command"] = "studio_useroffline";
+        param["sequece_id"] = "10001";
+        std::string logout_cmd = param.dump();
+        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+        GUI::wxGetApp().run_script(strJS);
+    } else {
+        json param;
+        param["command"]    = "studio_userlogin";
+        param["sequece_id"] = "10001";
+        json data;
+        data["avatar"] = m_login_userinfo.get_user_icon_url();
+        data["name"]   = m_login_userinfo.get_user_name();
+        param["data"]  = data;
+        std::string login_cmd = param.dump();
+        wxString    strJS      = wxString::Format("window.postMessage(%s)", login_cmd);
+        GUI::wxGetApp().run_script(strJS);
+    }
+    mainframe->m_webview->SetLoginPanelVisibility(true);
+}
+
+void GUI_App::sm_request_login(bool show_user_info)
+{
+    sm_ShowUserLogin();
+
+    if (show_user_info) {
+        sm_get_login_info();
+    }
+
+}
+
+void GUI_App::sm_ShowUserLogin(bool show)
+{
+    // BBS: User Login Dialog
+    if (show) {
+        try {
+            if (!sm_login_dlg)
+                sm_login_dlg = new SMUserLogin();
+            else {
+                delete sm_login_dlg;
+                sm_login_dlg = new SMUserLogin();
+            }
+            sm_login_dlg->ShowModal();
+        } catch (std::exception&) {
+            ;
+        }
+    } else {
+        if (sm_login_dlg)
+            sm_login_dlg->EndModal(wxID_OK);
+    }
+}
+
+void GUI_App::sm_request_user_logout()
+{
+    if (m_login_userinfo.is_user_login()) {
+        m_login_userinfo.set_user_login(false);
+    }
+    try {
+        if (!sm_login_dlg) {
+            sm_login_dlg = new SMUserLogin(true);
+        } else {
+            delete sm_login_dlg;
+            sm_login_dlg = new SMUserLogin(true);
+        }
+        // sm_login_dlg->ShowModal();
+    } catch (std::exception&) {
+        ;
+    }
+}
+
 //BBS
 void GUI_App::request_login(bool show_user_info)
 {
@@ -3725,54 +3840,38 @@ std::string GUI_App::handle_web_request(std::string cmd)
             return "";
 
         boost::optional<std::string> sequence_id = root.get_optional<std::string>("sequence_id");
-        boost::optional<std::string> command = root.get_optional<std::string>("command");
+        boost::optional<std::string> command     = root.get_optional<std::string>("command");
         if (command.has_value()) {
             std::string command_str = command.value();
             if (command_str.compare("request_project_download") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
+                    pt::ptree                    data_node  = root.get_child("data");
                     boost::optional<std::string> project_id = data_node.get_optional<std::string>("project_id");
                     if (project_id.has_value()) {
                         this->request_project_download(project_id.value());
                     }
                 }
-            }
-            else if (command_str.compare("open_project") == 0) {
+            } else if (command_str.compare("open_project") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
+                    pt::ptree                    data_node  = root.get_child("data");
                     boost::optional<std::string> project_id = data_node.get_optional<std::string>("project_id");
                     if (project_id.has_value()) {
                         this->request_open_project(project_id.value());
                     }
                 }
-            }
-            else if (command_str.compare("get_login_info") == 0) {
-                CallAfter([this] {
-                        get_login_info();
-                    });
-            }
-            else if (command_str.compare("homepage_login_or_register") == 0) {
-                CallAfter([this] {
-                    this->request_login(true);
-                });
-            }
-            else if (command_str.compare("homepage_logout") == 0) {
-                CallAfter([this] {
-                    wxGetApp().request_user_logout();
-                });
-            }
-            else if (command_str.compare("homepage_modeldepot") == 0) {
-                CallAfter([this] {
-                    wxGetApp().open_mall_page_dialog();
-                });
-            }
-            else if (command_str.compare("homepage_newproject") == 0) {
+            } else if (command_str.compare("get_login_info") == 0) {
+                CallAfter([this] { sm_get_login_info(); });
+            } else if (command_str.compare("homepage_login_or_register") == 0) {
+                CallAfter([this] { this->sm_request_login(true); });
+            } else if (command_str.compare("homepage_logout") == 0) {
+                CallAfter([this] { wxGetApp().sm_request_user_logout(); });
+            } else if (command_str.compare("homepage_modeldepot") == 0) {
+                CallAfter([this] { wxGetApp().open_mall_page_dialog(); });
+            } else if (command_str.compare("homepage_newproject") == 0) {
                 this->request_open_project("<new>");
-            }
-            else if (command_str.compare("homepage_openproject") == 0) {
+            } else if (command_str.compare("homepage_openproject") == 0) {
                 this->request_open_project({});
-            }
-            else if (command_str.compare("get_recent_projects") == 0) {
+            } else if (command_str.compare("get_recent_projects") == 0) {
                 if (mainframe) {
                     if (mainframe->m_webview) {
                         mainframe->m_webview->SendRecentList(INT_MAX);
@@ -3797,14 +3896,13 @@ std::string GUI_App::handle_web_request(std::string cmd)
             // }
             else if (command_str.compare("homepage_open_recentfile") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
-                    boost::optional<std::string> path = data_node.get_optional<std::string>("path");
+                    pt::ptree                    data_node = root.get_child("data");
+                    boost::optional<std::string> path      = data_node.get_optional<std::string>("path");
                     if (path.has_value()) {
                         this->request_open_project(path.value());
                     }
                 }
-            }
-            else if (command_str.compare("homepage_delete_recentfile") == 0) {
+            } else if (command_str.compare("homepage_delete_recentfile") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("path");
@@ -3812,42 +3910,36 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         this->request_remove_project(path.value());
                     }
                 }
-            }
-            else if (command_str.compare("homepage_delete_all_recentfile") == 0) {
+            } else if (command_str.compare("homepage_delete_all_recentfile") == 0) {
                 this->request_remove_project("");
-            }
-            else if (command_str.compare("homepage_explore_recentfile") == 0) {
+            } else if (command_str.compare("homepage_explore_recentfile") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("path");
-                    if (path.has_value())
-                    {
+                    if (path.has_value()) {
                         boost::filesystem::path NowFile(path.value());
 
                         std::string FilePath = NowFile.make_preferred().string();
                         desktop_open_any_folder(FilePath);
                     }
                 }
-            }
-            else if (command_str.compare("homepage_open_hotspot") == 0) {
+            } else if (command_str.compare("homepage_open_hotspot") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
-                    pt::ptree data_node = root.get_child("data");
-                    boost::optional<std::string> url = data_node.get_optional<std::string>("url");
+                    pt::ptree                    data_node = root.get_child("data");
+                    boost::optional<std::string> url       = data_node.get_optional<std::string>("url");
                     if (url.has_value()) {
                         this->request_open_project(url.value());
                     }
                 }
-            }
-            else if (command_str.compare("begin_network_plugin_download") == 0) {
+            } else if (command_str.compare("begin_network_plugin_download") == 0) {
                 CallAfter([this] { wxGetApp().ShowDownNetPluginDlg(); });
-            }
-            else if (command_str.compare("get_web_shortcut") == 0) {
+            } else if (command_str.compare("get_web_shortcut") == 0) {
                 if (root.get_child_optional("key_event") != boost::none) {
                     pt::ptree key_event_node = root.get_child("key_event");
-                    auto keyCode = key_event_node.get<int>("key");
-                    auto ctrlKey = key_event_node.get<bool>("ctrl");
-                    auto shiftKey = key_event_node.get<bool>("shift");
-                    auto cmdKey = key_event_node.get<bool>("cmd");
+                    auto      keyCode        = key_event_node.get<int>("key");
+                    auto      ctrlKey        = key_event_node.get<bool>("ctrl");
+                    auto      shiftKey       = key_event_node.get<bool>("shift");
+                    auto      cmdKey         = key_event_node.get<bool>("cmd");
 
                     wxKeyEvent e(wxEVT_CHAR_HOOK);
 #ifdef __APPLE__
@@ -3862,8 +3954,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     e.SetEventObject(mainframe);
                     wxPostEvent(mainframe, e);
                 }
-            }
-            else if (command_str.compare("userguide_wiki_open") == 0) {
+            } else if (command_str.compare("userguide_wiki_open") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("url");
@@ -3871,8 +3962,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         wxLaunchDefaultBrowser(path.value());
                     }
                 }
-            }
-            else if (command_str.compare("homepage_open_ccabin") == 0) {
+            } else if (command_str.compare("homepage_open_ccabin") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("file");
@@ -3882,29 +3972,140 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         this->request_open_project(Fullpath);
                     }
                 }
-            }
-            else if (command_str.compare("common_openurl") == 0) {
-                boost::optional<std::string> path      = root.get_optional<std::string>("url");
+            } else if (command_str.compare("common_openurl") == 0) {
+                boost::optional<std::string> path = root.get_optional<std::string>("url");
                 if (path.has_value()) {
                     wxLaunchDefaultBrowser(path.value());
                 }
-            } 
-            else if (command_str.compare("homepage_makerlab_get") == 0) {
-                //if (mainframe->m_webview) { mainframe->m_webview->SendMakerlabList(); }
-            }
-            else if (command_str.compare("makerworld_model_open") == 0) 
-            {
+            } else if (command_str.compare("homepage_makerlab_get") == 0) {
+                // if (mainframe->m_webview) { mainframe->m_webview->SendMakerlabList(); }
+            } else if (command_str.compare("makerworld_model_open") == 0) {
                 if (root.get_child_optional("model") != boost::none) {
                     pt::ptree                    data_node = root.get_child("model");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("url");
-                    if (path.has_value()) 
-                    { 
+                    if (path.has_value()) {
                         wxString realurl = from_u8(url_decode(path.value()));
                         wxGetApp().request_model_download(realurl);
                     }
                 }
+            } else if (command_str.compare("homepage_add_device") == 0) {
+                CallAfter([this] {
+                    try {
+                        if (web_device_dialog)
+                            delete web_device_dialog;
+
+                        web_device_dialog = new WebDeviceDialog;
+
+                        web_device_dialog->run();
+                    } catch (std::exception&) {
+                        ;
+                    }
+                });
+                return "";
+            } else if (command_str.compare("get_local_devices") == 0) {
+                CallAfter([this] {
+                    try {
+                        auto devices = wxGetApp().app_config->get_devices();
+
+                        json param;
+                        param["command"]       = "local_devices_arrived";
+                        param["sequece_id"]    = "10001";
+                        param["data"]          = devices;
+                        std::string logout_cmd = param.dump();
+                        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                        GUI::wxGetApp().run_script(strJS);
+                    } catch (std::exception&) {
+                        ;
+                    }
+                });
+                return "";
+            } else if (command_str.compare("homepage_test_browser") == 0) {
+                CallAfter([this] {
+                    auto dialog = new WebUrlDialog();
+                    dialog->load_url("http://127.0.0.1:13619/web/flutter_web/index.html");
+                    dialog->ShowModal();
+                    delete dialog;
+                });
+            } else if (command_str.compare("homepage_delete_device") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id")) {
+                        std::string dev_id = data_node.get_optional<std::string>("dev_id").value();
+                        wxGetApp().app_config->remove_device_info(dev_id);
+
+                        CallAfter([this] {
+                            json param;
+                            param["command"]       = "local_devices_arrived";
+                            param["sequece_id"]    = "10001";
+                            param["data"]          = this->app_config->get_devices();
+                            std::string logout_cmd = param.dump();
+                            wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                            GUI::wxGetApp().run_script(strJS);
+                        });
+                    }
+                }
+            } else if (command_str.compare("homepage_rename_device") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id") && data_node.get_child_optional("dev_name")) {
+                        std::string dev_id   = data_node.get_optional<std::string>("dev_id").value();
+                        std::string dev_name = data_node.get_optional<std::string>("dev_name").value();
+
+                        DeviceInfo info;
+                        app_config->get_device_info(dev_id, info);
+                        info.dev_name = dev_name;
+                        app_config->save_device_info(info);
+
+                        CallAfter([this] {
+                            json param;
+                            param["command"]       = "local_devices_arrived";
+                            param["sequece_id"]    = "10001";
+                            param["data"]          = this->app_config->get_devices();
+                            std::string logout_cmd = param.dump();
+                            wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                            GUI::wxGetApp().run_script(strJS);
+                        });
+                    }
+                }
+            } else if (command_str.compare("homepage_switch_model") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id") && data_node.get_child_optional("dev_name")) {
+                        std::string dev_id   = data_node.get_optional<std::string>("dev_id").value();
+                        CallAfter([this, dev_id]() {
+                            WebPresetDialog dialog(this);
+                            dialog.m_device_id = dev_id;
+                            dialog.run();
+                        });
+                    }
+                }
+            } else if (command_str.compare("create_project") == 0) {
+                if (root.get_child_optional("data") != boost::none) {
+                    pt::ptree data_node = root.get_child("data");
+                    if (data_node.get_child_optional("dev_id")) {
+                        std::string dev_id = data_node.get_optional<std::string>("dev_id").value();
+                        CallAfter([this, dev_id]() {
+                            DeviceInfo info;
+                            if (this->app_config->get_device_info(dev_id, info)) {
+                                if (info.preset_name != "") {
+                                    try {
+                                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(info.preset_name);
+                                        this->plater()->new_project();
+                                    } catch (std::exception& e) {
+                                        // 异常处理
+                                    }
+                                }
+                            } else {
+                                // 弹框提示
+                                MessageDialog msg_window(nullptr, _L("Your machine info is not completed, please select the machine type!"), L("Create Failed"), wxICON_QUESTION | wxOK);
+                                msg_window.ShowModal();
+                            }
+                        });
+                    }
+                }
             }
         }
+        
     }
     catch (...) {
         BOOST_LOG_TRIVIAL(trace) << "parse json cmd failed " << cmd;
@@ -4261,9 +4462,9 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             // metadata
             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
-            Semver           current_version = get_version(SoftFever_VERSION, matcher);
-            Semver best_pre(1, 0, 0);
-            Semver best_release(1, 0, 0);
+            Semver           current_version = get_version(Snapmaker_VERSION, matcher);
+            Semver best_pre(0, 0, 0);
+            Semver best_release(0, 0, 0);
             std::string best_pre_url;
             std::string best_release_url;
             std::string best_release_content;
@@ -4328,7 +4529,7 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             }
 
             version_info.url           = check_stable_only ? best_release_url : best_pre_url;
-            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string();
+            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string_sf();
             version_info.description   = check_stable_only ? best_release_content : best_pre_content;
             version_info.force_upgrade = false;
 
@@ -4481,7 +4682,7 @@ std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
 
-    version_display = SoftFever_VERSION;
+    version_display = Snapmaker_VERSION;
     return version_display;
 }
 
@@ -4738,7 +4939,7 @@ void GUI_App::start_sync_user_preset(bool with_progress_dlg)
     m_sync_update_thread = Slic3r::create_thread(
         [this, progressFn, cancelFn, finishFn, t = std::weak_ptr<int>(m_user_sync_token)] {
             // get setting list, update setting list
-            std::string version = preset_bundle->get_vendor_profile_version(PresetBundle::BBL_BUNDLE).to_string();
+            std::string version = preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE).to_string();
             int ret = m_agent->get_setting_list2(version, [this](auto info) {
                 auto type = info[BBL_JSON_KEY_TYPE];
                 auto name = info[BBL_JSON_KEY_NAME];
@@ -4855,6 +5056,16 @@ void GUI_App::start_http_server()
 void GUI_App::stop_http_server()
 {
     m_http_server.stop();
+}
+
+void GUI_App::start_page_http_server() 
+{
+    if (!m_page_http_server.is_started())
+        m_page_http_server;
+}
+void GUI_App::stop_page_http_server()
+{
+    m_page_http_server.stop();
 }
 
 void GUI_App::switch_staff_pick(bool on)
@@ -5599,7 +5810,8 @@ bool GUI_App::check_and_save_current_preset_changes(const wxString& caption, con
         if (remember_choice)
             act_buttons |= ActionButtons::REMEMBER_CHOISE;
         UnsavedChangesDialog dlg(caption, header, "", act_buttons);
-        if (dlg.ShowModal() == wxID_CANCEL)
+        bool no_need_change = dlg.getUpdateItemCount() == 0 ? true : false;
+        if (!no_need_change &&dlg.ShowModal() == wxID_CANCEL)
             return false;
 
         if (dlg.save_preset())  // save selected changes
@@ -5647,7 +5859,8 @@ bool GUI_App::check_and_keep_current_preset_changes(const wxString& caption, con
         bool is_called_from_configwizard = postponed_apply_of_keeped_changes != nullptr;
 
         UnsavedChangesDialog dlg(caption, header, "", action_buttons);
-        if (dlg.ShowModal() == wxID_CANCEL)
+        bool no_need_change = dlg.getUpdateItemCount() == 0 ? true : false;
+        if (!no_need_change && dlg.ShowModal() == wxID_CANCEL)
             return false;
 
         auto reset_modifications = [this, is_called_from_configwizard]() {
@@ -5662,7 +5875,7 @@ bool GUI_App::check_and_keep_current_preset_changes(const wxString& caption, con
             load_current_presets(false);
         };
 
-        if (dlg.discard())
+        if (dlg.discard() || no_need_change)
             reset_modifications();
         else  // save selected changes
         {
@@ -6400,6 +6613,8 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
 
 bool GUI_App::config_wizard_startup()
 {
+    // test
+
     if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
         BOOST_LOG_TRIVIAL(info) << "run wizard...";
         run_wizard(ConfigWizard::RR_DATA_EMPTY);
@@ -6415,6 +6630,7 @@ bool GUI_App::config_wizard_startup()
         run_wizard(ConfigWizard::RR_DATA_LEGACY);
         return true;
     }*/
+
     return false;
 }
 

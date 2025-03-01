@@ -11,6 +11,7 @@
 
 #include <libslic3r/enum_bitmask.hpp>
 #include "Http.hpp"
+#include "nlohmann/json.hpp"
 
 class wxArrayString;
 
@@ -69,7 +70,57 @@ public:
     // Returns false if not supported or fail.
     virtual bool get_storage(wxArrayString& /*storage_path*/, wxArrayString& /*storage_name*/) const { return false; }
 
-    static PrintHost* get_print_host(DynamicPrintConfig *config);
+    static PrintHost* get_print_host(DynamicPrintConfig *config, bool change_engine = true);
+
+    virtual bool send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo) { return false; }
+
+    virtual bool get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, nlohmann::json& response) { return false; }
+
+    virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback){}
+
+    virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
+                                                    std::function<void(const nlohmann::json& response)>                  callback) {}
+
+    virtual void async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_subscribe_machine_info(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_pause_print_job(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_resume_print_job(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void async_cancel_print_job(std::function<void(const nlohmann::json&)>) {}
+
+    virtual void test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)>) {}
+
+    virtual bool connect(wxString& msg, const nlohmann::json& params) { return false; }
+
+    virtual bool disconnect(wxString& msg, const nlohmann::json& params) { return true; }
+
+    virtual bool check_sn_arrived() { return false; };
+
+    // system 
+    virtual void async_machine_files_roots(std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_machine_files_metadata(const std::string& filename, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_camera_start(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
 
     //Support for cloud webui login
     virtual bool is_cloud() const { return false; }
@@ -99,7 +150,7 @@ struct PrintHostJob
     {}
 
     PrintHostJob(DynamicPrintConfig *config)
-        : printhost(PrintHost::get_print_host(config))
+        : printhost(PrintHost::get_print_host(config, false))
     {}
 
     PrintHostJob& operator=(const PrintHostJob&) = delete;

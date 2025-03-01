@@ -917,7 +917,22 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
 
     const int extruder = m_objects_model->GetExtruderNumber(item);
     m_config->set_key_value("extruder", new ConfigOptionInt(extruder));
-
+    if (m_config->has("sparse_infill_filament")) {
+        m_config->set("sparse_infill_filament", m_config->option("extruder")->getInt());
+    }
+    else {
+        m_config->set_key_value("sparse_infill_filament", new ConfigOptionInt(m_config->option("extruder")->getInt()));
+    }
+    if (m_config->has("solid_infill_filament")) {
+        m_config->set("solid_infill_filament", m_config->option("extruder")->getInt());
+    } else {
+        m_config->set_key_value("solid_infill_filament", new ConfigOptionInt(m_config->option("extruder")->getInt()));
+    }
+    if (m_config->has("wall_filament")) {
+        m_config->set("wall_filament", m_config->option("extruder")->getInt());
+    } else {
+        m_config->set_key_value("wall_filament", new ConfigOptionInt(m_config->option("extruder")->getInt()));
+    }
     // BBS
     if (item_type & itObject) {
         const int obj_idx = m_objects_model->GetIdByItem(item);
@@ -5672,6 +5687,19 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
             config.set("extruder", new_extruder);
         else
             config.set_key_value("extruder", new ConfigOptionInt(new_extruder));
+        
+        config.set("sparse_infill_filament", new_extruder);
+        config.set("solid_infill_filament", new_extruder);
+        config.set("wall_filament", new_extruder);
+
+        wxGetApp().obj_list()->update_selections();
+
+        config.set("sparse_infill_filament", new_extruder);
+        config.set("solid_infill_filament", new_extruder);
+        config.set("wall_filament", new_extruder);
+
+        // wxGetApp().params_panel()->notify_object_config_changed();
+        wxGetApp().obj_list()->update_selections();
 
         // for object, clear all its part volume's extruder config
         if (type & itObject) {

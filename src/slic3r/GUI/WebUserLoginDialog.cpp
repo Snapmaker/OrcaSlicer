@@ -39,7 +39,7 @@ END_EVENT_TABLE()
 
 int ZUserLogin::web_sequence_id = 20000;
 
-ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker_Orca")
+ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker Orca")
 {
     SetBackgroundColour(*wxWHITE);
     // Url
@@ -87,7 +87,7 @@ ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_AN
 
         BOOST_LOG_TRIVIAL(info) << "login url = " << TargetUrl.ToStdString();
 
-        m_bbl_user_agent = wxString::Format("BBL-Slicer/v%s", SLIC3R_VERSION);
+        m_sm_user_agent = wxString::Format("SM-Slicer/v%s", SLIC3R_VERSION);
 
         // set the frame icon
 

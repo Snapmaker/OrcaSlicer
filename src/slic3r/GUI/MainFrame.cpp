@@ -250,7 +250,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     default:
     case GUI_App::EAppMode::Editor:
         m_taskbar_icon = std::make_unique<Snapmaker_OrcaTaskBarIcon>(wxTBI_DOCK);
-        m_taskbar_icon->SetIcon(wxIcon(Slic3r::var("Snapmaker_Orca-mac_256px.ico"), wxBITMAP_TYPE_ICO), "Snapmaker_Orca");
+        m_taskbar_icon->SetIcon(wxIcon(Slic3r::var("Snapmaker_Orca-mac_256px.ico"), wxBITMAP_TYPE_ICO), "Snapmaker Orca");
         break;
     case GUI_App::EAppMode::GCodeViewer:
         break;
@@ -1027,6 +1027,7 @@ void MainFrame::init_tabpanel() {
     create_preset_tabs();
 
         //BBS add pages
+
     m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
     m_monitor->SetBackgroundColour(*wxWHITE);
     m_tabpanel->AddPage(m_monitor, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"), false);
@@ -1051,9 +1052,10 @@ void MainFrame::init_tabpanel() {
     m_project->SetBackgroundColour(*wxWHITE);
     m_tabpanel->AddPage(m_project, _L("Project"), std::string("tab_auxiliary_active"), std::string("tab_auxiliary_active"), false);
 
-    m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-    m_calibration->SetBackgroundColour(*wxWHITE);
-    m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
+    // SM Beta temporarily cancel the calibration page
+    // m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+    // m_calibration->SetBackgroundColour(*wxWHITE);
+    // m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
 
     if (m_plater) {
         // load initial config
@@ -1406,9 +1408,14 @@ bool MainFrame::can_send_gcode() const
 {
     if (m_plater && !m_plater->model().objects.empty())
     {
-        auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-        if (const auto *print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
-            return !print_host_opt->value.empty();
+        if (wxGetApp().app_config->get("use_new_connect") == "true") {
+            return true;
+        } else {
+            auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            if (const auto* print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
+                return !print_host_opt->value.empty();
+        }
+        
     }
     return true;
 }
@@ -2152,7 +2159,7 @@ static wxMenu* generate_help_menu()
         });
 
     // Report a bug
-    //append_menu_item(helpMenu, wxID_ANY, _L("Report Bug(TODO)"), _L("Report a bug of Snapmaker_Orca"),
+    //append_menu_item(helpMenu, wxID_ANY, _L("Report Bug(TODO)"), _L("Report a bug of Snapmaker Orca"),
     //    [](wxCommandEvent&) {
     //        //TODO
     //    });
@@ -2908,7 +2915,7 @@ void MainFrame::init_menubar_as_editor()
     // help 
     append_menu_item(m_topbar->GetCalibMenu(), wxID_ANY, _L("Tutorial"), _L("Calibration help"),
         [this](wxCommandEvent&) {
-            std::string url = "https://github.com/SoftFever/Snapmaker_Orca/wiki/Calibration";
+            std::string url = "https://github.com/SoftFever/OrcaSlicer/wiki/Calibration";
             if (const std::string country_code = wxGetApp().app_config->get_country_code(); country_code == "CN") {
                 // Use gitee mirror for China users
                 url = "https://gitee.com/n0isyfox/orca-slicer-docs/wikis/%E6%A0%A1%E5%87%86/%E6%89%93%E5%8D%B0%E5%8F%82%E6%95%B0%E6%A0%A1%E5%87%86";
@@ -3005,7 +3012,7 @@ void MainFrame::init_menubar_as_editor()
         [this]() {return m_plater->is_view3D_shown();; });
     // help
     append_menu_item(calib_menu, wxID_ANY, _L("Tutorial"), _L("Calibration help"),
-        [this](wxCommandEvent&) { wxLaunchDefaultBrowser("https://github.com/SoftFever/Snapmaker_Orca/wiki/Calibration", wxBROWSER_NEW_WINDOW); }, "", nullptr,
+        [this](wxCommandEvent&) { wxLaunchDefaultBrowser("https://github.com/SoftFever/OrcaSlicer/wiki/Calibration", wxBROWSER_NEW_WINDOW); }, "", nullptr,
         [this]() {return m_plater->is_view3D_shown();; }, this);
     
     m_menubar->Append(calib_menu,wxString::Format("&%s", _L("Calibration")));

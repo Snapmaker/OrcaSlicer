@@ -112,6 +112,7 @@ public:
 
     // BBS
     void            set_num_filaments(unsigned int n, std::string new_col = "");
+    void            set_num_filaments(unsigned int n, std::vector<std::string> new_colors);
     unsigned int sync_ams_list(unsigned int & unknowns);
     //BBS: check whether this is the only edited filament
     bool is_the_only_edited_filament(unsigned int filament_index);
@@ -260,11 +261,11 @@ public:
     std::pair<PresetsConfigSubstitutions, std::string> load_system_filaments_json(ForwardCompatibilitySubstitutionRule compatibility_rule);
     VendorProfile                                      get_custom_vendor_models() const;
 
-    //BBS: add BBL as default
-    static const char *BBL_BUNDLE;
-	static const char *BBL_DEFAULT_PRINTER_MODEL;
-	static const char *BBL_DEFAULT_PRINTER_VARIANT;
-	static const char *BBL_DEFAULT_FILAMENT;
+    // SM_FEATURE: add Snapmaker machine as default
+    static const char *SM_BUNDLE;
+    static const char* SM_DEFAULT_PRINTER_MODEL;
+    static const char* SM_DEFAULT_PRINTER_VARIANT;
+    static const char* SM_DEFAULT_FILAMENT;
 
     static std::array<Preset::Type, 3>  types_list(PrinterTechnology pt) {
         if (pt == ptFFF)

@@ -34,11 +34,5 @@
   ],
   "filament_cooling_final_speed": [
     "60"
-  ],
-  "nozzle_temperature_initial_layer": [
-    "240"
-  ],
-  "nozzle_temperature": [
-    "240"
   ]
 }

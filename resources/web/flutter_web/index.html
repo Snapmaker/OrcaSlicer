@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/web/flutter_web/">
+  <!-- <base href="/web/device-control/"> --> <!-- --base-href=/knowledge.io/ -->
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="web">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>web</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+
+  <script>
+    function test_mqtt_unsubscribe() {
+      body = {
+        header:{
+          sequenceId: 202519,
+        },
+        payload:{
+          cmd: "sw_StopMachineStateSubscription",
+          params: {},
+        }
+      };
+
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_subscribe() {
+      body = {
+        header:{
+          sequenceId: 202503,
+        },
+        payload:{
+          cmd: "sw_SubscribeMachineState",
+          params: {},
+          event_id: "subscribe1",
+        }
+      };
+
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_subscribe_filter(){
+      body  = {
+        header:{
+          sequenceId: 202510,
+        },
+        payload:{
+          cmd: "sw_SetSubscribeFilter",
+          params: {
+            "targets":{
+              "gcode_move": null,
+              "toolhead": ["position", "status"]
+            }
+          }
+        }
+      };
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_send_gcodes(){
+      body  = {
+        header:{
+          sequenceId: 202592,
+        },
+        payload:{
+          cmd: "sw_SendGCodes",
+          params: {
+            "script":[
+              "T0",
+              "T1",
+              "T2",
+              "T3",
+            ]
+          }
+        }
+      };
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_machine_info(){
+      body  = {
+        header:{
+          sequenceId: 202502,
+        },
+        payload:{
+          cmd: "sw_GetMachineState",
+          params: {
+            "targets":{
+              "gcode_move": null,
+              "toolhead": ["position", "status"]
+            }
+          }
+        }
+      };
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_machine_objects(){
+      body = {
+        header:{
+          sequenceId: 202504,
+        },
+        payload:{
+          cmd: "sw_GetMachineObjects",
+        }
+      };
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_disconnect() {
+      body = {
+        header:{
+          sequenceId: 202500,
+        },
+        payload:{
+          cmd: "sw_DisConnect",
+        }
+      }
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    function test_mqtt_connect() {
+      body = {
+        header:{
+          sequenceId: 202501,
+        },
+        payload:{
+          cmd: "sw_Connect",
+          params: {
+            ip: "172.18.1.66",
+            port: 1883,
+            sn: "BE667E5F8A060BDF",
+          }
+        }
+      }
+      window.wx.postMessage(JSON.stringify(body));
+    }
+
+    var testtime = 1.0;
+    function test_mqtt_subscribe_response_message_timer() {
+      var timer = setInterval(function() {
+        testtime += 1.0;
+        test_mqtt_subscribe_response(testtime);
+      }, 2000);
+      // setTimeout(function() {
+      //   clearInterval(timer);
+      // }, 10000);
+    }
+
+    function test_mqtt_subscribe_response(time) {
+      var body =  {
+                    "header": {
+                        "event_id": "subscribe_machine_state"
+                    },
+                    "payload": {
+                        "code": 200,
+                        "data": {
+                          "data": [
+                              {
+                                  "display_status": {
+                                      "message": null,
+                                      "progress": 0.45
+                                  },
+                                  "extruder": {
+                                      "can_extrude": true,
+                                      "power": 0.4824050874358382,
+                                      "pressure_advance": 0.015,
+                                      "smooth_time": 0.04,
+                                      "target": 230,
+                                      "temperature": time
+                                  },
+                                  "extruder1": {
+                                      "can_extrude": false,
+                                      "power": 0,
+                                      "pressure_advance": 0.015,
+                                      "smooth_time": 0.04,
+                                      "target": 0,
+                                      "temperature": 29.82
+                                  },
+                                  "extruder2": {
+                                      "can_extrude": false,
+                                      "power": 0,
+                                      "pressure_advance": 0.015,
+                                      "smooth_time": 0.04,
+                                      "target": 0,
+                                      "temperature": 29.96
+                                  },
+                                  "extruder3": {
+                                      "can_extrude": false,
+                                      "power": 0,
+                                      "pressure_advance": 0.015,
+                                      "smooth_time": 0.04,
+                                      "target": 0,
+                                      "temperature": 30.71
+                                  },
+                                  "fan": {
+                                      "rpm": null,
+                                      "speed": 1
+                                  },
+                                  "fan_generic cavity_fan": {
+                                      "rpm": 2293.8530734755464,
+                                      "speed": 0.7
+                                  },
+                                  "gcode_move": {
+                                      "absolute_coordinates": true,
+                                      "absolute_extrude": false,
+                                      "extrude_factor": 1,
+                                      "gcode_position": [
+                                          128.125,
+                                          144.559,
+                                          6.8,
+                                          4179.2542500048585
+                                      ],
+                                      "homing_origin": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                      ],
+                                      "position": [
+                                          128.125,
+                                          144.559,
+                                          6.8,
+                                          169664.43720992337
+                                      ],
+                                      "speed": 11054.348,
+                                      "speed_factor": 1
+                                  },
+                                  "heater_bed": {
+                                      "can_extrude": null,
+                                      "power": 0.07280463005309298,
+                                      "pressure_advance": null,
+                                      "smooth_time": null,
+                                      "target": 55,
+                                      "temperature": 54.97
+                                  },
+                                  "led cavity_led": {
+                                      "color_data": [
+                                          [
+                                              0,
+                                              0,
+                                              0,
+                                              1
+                                          ]
+                                      ]
+                                  },
+                                  "print_stats": {
+                                      "filament_used": 4079.2542500048585,
+                                      "filename": "1/1指尖陀螺_PLA_1h17m.gcode",
+                                      "info": {
+                                          "current_layer": null,
+                                          "total_layer": null
+                                      },
+                                      "message": "",
+                                      "print_duration": 2296.5128470530035,
+                                      "state": "printing",
+                                      "total_duration": 2305.2522525569657
+                                  },
+                                  "print_task_config": {
+                                      "auto_bed_leveling": true,
+                                      "extruder_map_table": [
+                                          0,
+                                          1,
+                                          2,
+                                          3
+                                      ],
+                                      "filament_color": [
+                                          16711680,
+                                          65280,
+                                          255,
+                                          16777215
+                                      ],
+                                      "filament_type": [
+                                          "NONE",
+                                          "NONE",
+                                          "NONE",
+                                          "NONE"
+                                      ],
+                                      "time_lapse_camera": false
+                                  },
+                                  "temperature_sensor cavity": {
+                                      "measured_max_temp": 0,
+                                      "measured_min_temp": -109.28,
+                                      "temperature": -40.4
+                                  },
+                                  "toolhead": {
+                                      "axis_maximum": [
+                                          270,
+                                          335,
+                                          280,
+                                          0
+                                      ],
+                                      "axis_minimum": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                      ],
+                                      "estimated_print_time": 189077.40531407812,
+                                      "extruder": "extruder",
+                                      "homed_axes": "xyz",
+                                      "max_accel": 10000,
+                                      "max_velocity": 500,
+                                      "minimum_cruise_ratio": 0.5,
+                                      "position": [
+                                          128.125,
+                                          144.559,
+                                          10.52774598675305,
+                                          169664.43720992337
+                                      ],
+                                      "print_time": 189079.63617631845,
+                                      "square_corner_velocity": 5,
+                                      "stalls": 1
+                                  },
+                                  "virtual_sdcard": {
+                                      "file_path": "/userdata/printer_data/gcodes/1/1指尖陀螺_PLA_1h17m.gcode",
+                                      "file_position": 3584284,
+                                      "file_size": 8457526,
+                                      "is_active": true,
+                                      "progress": 0.4237981650898856
+                                  },
+                                  "webhooks": {
+                                      "state": "ready",
+                                      "state_message": "Printer is ready"
+                                  }
+                              },
+                              // 541096.928877337, //获取当前的时间 代码获取  new Date().getTime()
+                              new Date().getTime(), //获取当前的时间 代码获取  541096.928877337, 
+                            ],
+                          "method": "html.test.subscribe_machine_state",
+                        },
+                        "msg": "OK"
+                    }
+                };
+      console.log("subscribe_machine_state response message: " + JSON.stringify(body) );
+      !window.wx && window.postMessage(JSON.stringify(body), '*'); // 调用 window.postMessage 传递消息给 flutter
+    }
+
+    function getDeviceData() {
+      var devices = { 
+          '90F3A2F30063C233': {
+            'ip': '172.18.1.34',
+            'port': 1883,
+            'name': 'lava-90F-233',
+            'sn': '90F3A2F30063C233',
+            'connected': false,
+          },
+          'A4C0111397B11BBB': {
+            'ip': '172.18.1.31',
+            'port': 1883,
+            'name': 'lava-A4C-BBB',
+            'sn': 'A4C0111397B11BBB',
+            'connected': false,
+          },
+          'A4C0111397B11dddd': {
+            'ip': '172.18.1.9',
+            'port': 1883,
+            'name': 'lava-A4C-BBB',
+            'sn': 'A4C0111397B11BBB',
+            'connected': true,
+          }
+      };
+      return devices;
+    }
+
+    function simulateResponse(jsonMessage) {
+      try {
+        // 反序列化 header 和 payload
+        const data = JSON.parse(jsonMessage);
+        var header = data.header;
+        var payload = data.payload;
+
+        // 反序列化 header 和 payload
+        header['event_id'] = payload['event_id']; 
+        header['cmd'] = payload['cmd']
+
+        // 开始机器发现
+        var result;
+        
+        if(header['cmd'] =='sw_StartMachineFind'){
+          if(header['event_id'] != null) {
+            header['cmd'] = null;
+          }
+          result = getDeviceData();
+          var mokeData={
+            "header": header,
+            "payload": {
+              'code': 200,
+              'method': 'html.test',
+              'data': result,
+              'msg': 'ok',
+            }
+          };
+          window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+          return;
+        } else if(header['cmd'] =='sw_GetMachineState'){
+          result = {
+                      "eventtime": 578243.57824499,
+                      "status": {
+                          "gcode_move": {
+                              "absolute_coordinates": true,
+                              "absolute_extrude": true,
+                              "extrude_factor": 1,
+                              "gcode_position": [0, 0, 0, 0],
+                              "homing_origin": [0, 0, 0, 0],
+                              "position": [0, 0, 0, 0],
+                              "speed": 1500,
+                              "speed_factor": 1
+                          },
+                          "toolhead": {
+                              "position": [0, 0, 0, 0],
+                              "status": "Ready"
+                          },
+                          "print_stats": {
+                            "filename": "1.gocde"
+                          }
+                      }
+                  };
+        } else if(header['cmd'] =='sw_GetConnectedMachine'){
+          result = {
+            "dev_id":"172.18.1.43",
+            "dev_name":"172.18.1.43",
+            "img":"http://localhost:13619/profiles/Snapmaker/Snapmaker A250 BKit_cover.png",
+            "ip":"172.18.1.34",
+            "model_name":"Snapmaker A250 BKit",
+            "nozzle_sizes":["0.4"],
+            "preset_name":"Snapmaker A250 BKit (0.4 nozzle)",
+            "sn":"172.18.1.34",
+            "port": 1883,
+            "name": "Snapmaker A250 BKit",
+            "connected":true,
+          } 
+          var mokeData={
+          "header": header,
+          "payload": {
+              'code': 200,
+              'method': 'html.test.sw_GetConnectedMachine',
+              'data': result,
+              'msg': 'ok',
+            }
+          };
+          window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+          return;
+        } else if (header['cmd'] =='sw_MachineFilesMetadata') {
+          result = {
+                "chamber_temp": 0,
+                "estimated_time": 868,
+                "filament_colour": "#0000FF;#FF0000;#FFFFFF;#804000",
+                "filament_name": "彩色打印;\"My Generic PLA @MyToolChanger\";\"My Generic PLA @MyToolChanger\";\"My Generic PLA @MyToolChanger",
+                "filament_total": 4656.38,
+                "filament_type": "PLA;PLA;PLA;PLA",
+                "filament_weight": [
+                    13.89,
+                    0,
+                    0,
+                    0
+                ],
+                "filename": "1.gcode",
+                "first_layer_bed_temp": 60,
+                "first_layer_extr_temp": 220,
+                "first_layer_height": 0.2,
+                "gcode_end_byte": 326713,
+                "gcode_start_byte": 5203,
+                "job_id": null,
+                "layer_count": 250,
+                "layer_height": 0.2,
+                "modified": 1736475230.27094,
+                "nozzle_diameter": 0.4,
+                "object_height": 50,
+                "print_start_time": null,
+                "size": 344795,
+                "slicer": "OrcaSlicer",
+                "slicer_version": "2.1.1",
+                "thumbnails": [
+                    {
+                        "height": 32,
+                        "relative_path": ".thumbs/S200-5K_14m28s-32x32.png",
+                        "size": 811,
+                        "width": 32
+                    },
+                    {
+                        "height": 48,
+                        "relative_path": ".thumbs/S200-5K_14m28s-48x48.png",
+                        "size": 385,
+                        "width": 48
+                    },
+                    {
+                        "height": 300,
+                        "relative_path": ".thumbs/S200-5K_14m28s-300x300.png",
+                        "size": 2792,
+                        "width": 300
+                    }
+                ],
+                "uuid": "c255b47f-62b8-495b-ac94-1a68675d393f"
+            };
+        } else if (header['cmd'] == 'sw_GetPrinterInfo') {
+          result = {
+            "state": "ready", 
+            "state_message": "Printer is ready", 
+            "hostname": "lava, klipper_path: /oem/klipper", 
+            "python_path": "/oem/klippy-env/bin/python",
+            "process_id": 826, 
+            "user_id": 1000, 
+            "group_id": 1000, 
+            "log_file": "/userdata/printer_data/logs/klippy.log", 
+            "config_file": "/userdata/printer_data/config/printer.cfg", 
+            "software_version": "e60ce92d-dirty", 
+            "cpu_info": "4 core ?"
+          };
+        } else if(header['cmd'] == 'sw_GetMachineObjects') {
+          result = {
+            "objects": [
+                          "gcode",
+                          "webhooks",
+                          "configfile",
+                          "mcu",
+                          "mcu linux",
+                          "heaters",
+                          "bme280 chamber",
+                          "temperature_sensor chamber",
+                          "filament_switch_sensor extruder_sensor",
+                          "output_pin sensor_toggle",
+                          "gcode_move",
+                          "bed_mesh",
+                          "exclude_object",
+                          "temperature_host RPi",
+                          "temperature_sensor RPi",
+                          "gcode_macro TURN_OFF_MOTORS",
+                          "gcode_macro SET_HOMING_CURRENT",
+                          "temperature_sensor ambient",
+                          "gcode_macro query_bme280",
+                          "pause_resume",
+                          "print_stats",
+                          "virtual_sdcard",
+                          "probe",
+                          "stepper_enable",
+                          "tmc2130 stepper_x",
+                          "tmc2130 stepper_y",
+                          "tmc2130 stepper_z",
+                          "tmc2130 extruder",
+                          "heater_bed",
+                          "heater_fan nozzle_cooling_fan",
+                          "fan",
+                          "menu",
+                          "display_status",
+                          "output_pin BEEPER_pin",
+                          "idle_timeout",
+                          "motion_report",
+                          "query_endstops",
+                          "system_stats",
+                          "manual_probe",
+                          "toolhead",
+                          "extruder"
+                      ]
+          };
+        } else if (header['cmd'] == 'sw_GetMachineSystemInfo') {
+          result = {
+                    "system_info": {
+                        "provider": "systemd_dbus",
+                        "cpu_info": {
+                            "cpu_count": 4,
+                            "bits": "32bit",
+                            "processor": "armv7l",
+                            "cpu_desc": "ARMv7 Processor rev 4 (v7l)",
+                            "serial_number": "b898bdb4",
+                            "hardware_desc": "BCM2835",
+                            "model": "Raspberry Pi 3 Model B Rev 1.2",
+                            "total_memory": 945364,
+                            "memory_units": "kB"
+                        },
+                        "sd_info": {
+                            "manufacturer_id": "03",
+                            "manufacturer": "Sandisk",
+                            "oem_id": "5344",
+                            "product_name": "SU32G",
+                            "product_revision": "8.0",
+                            "serial_number": "46ba46",
+                            "manufacturer_date": "4/2018",
+                            "capacity": "29.7 GiB",
+                            "total_bytes": 31914983424
+                        },
+                        "distribution": {
+                            "name": "Raspbian GNU/Linux 10 (buster)",
+                            "id": "raspbian",
+                            "version": "10",
+                            "version_parts": {
+                                "major": "10",
+                                "minor": "",
+                                "build_number": ""
+                            },
+                            "like": "debian",
+                            "codename": "buster"
+                        },
+                        "available_services": [
+                            "klipper",
+                            "klipper_mcu",
+                            "moonraker"
+                        ],
+                        "instance_ids": {
+                            "moonraker": "moonraker",
+                            "klipper": "klipper"
+                        },
+                        "service_state": {
+                            "klipper": {
+                                "active_state": "active",
+                                "sub_state": "running"
+                            },
+                            "klipper_mcu": {
+                                "active_state": "active",
+                                "sub_state": "running"
+                            },
+                            "moonraker": {
+                                "active_state": "active",
+                                "sub_state": "running"
+                            }
+                        },
+                        "virtualization": {
+                            "virt_type": "none",
+                            "virt_identifier": "none"
+                        },
+                        "python": {
+                            "version": [
+                                3,
+                                9,
+                                2,
+                                "final",
+                                0
+                            ],
+                            "version_string": "3.9.2 (default, Feb 28 2021, 17:03:44)  [GCC 10.2.1 20210110]"
+                        },
+                        "network": {
+                            "wlan0": {
+                                "mac_address": "<redacted_mac>",
+                                "ip_addresses": [
+                                    {
+                                        "family": "ipv4",
+                                        "address": "192.168.1.127",
+                                        "is_link_local": false
+                                    },
+                                    {
+                                        "family": "ipv6",
+                                        "address": "<redacted_ipv6>",
+                                        "is_link_local": false
+                                    },
+                                    {
+                                        "family": "ipv6",
+                                        "address": "fe80::<redacted>",
+                                        "is_link_local": true
+                                    }
+                                ]
+                            }
+                        },
+                        "canbus": {
+                            "can0": {
+                                "tx_queue_len": 128,
+                                "bitrate": 500000,
+                                "driver": "mcp251x"
+                            },
+                            "can1": {
+                                "tx_queue_len": 128,
+                                "bitrate": 500000,
+                                "driver": "gs_usb"
+                            }
+                        }
+                    }
+                };
+        } else if (header['cmd'] == 'server.camera.start_monitor') {
+          result = {
+            'code': -1,
+            'data': null,
+            'msg': 'failure to start monitor'
+          };
+          var mokeData={
+                "header": {
+                  "seqid": header['seqid']
+                },
+                "payload": result
+              };
+          // console.log("simulateResponse message: " + JSON.stringify(mokeData) );
+          window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+          return;
+        }  else if (header['cmd'] == 'server.camera.stop_monitor') {
+          result = {
+            'code': -1,
+            'data': null,
+            'msg': 'failure to stop monitor'
+          };
+          var mokeData={
+                "header": {
+                  "seqid": header['seqid']
+                },
+                "payload": result
+              };
+          // console.log("simulateResponse message: " + JSON.stringify(mokeData) );
+          window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+          return;
+        } else if (header['cmd'].startsWith('server.')) {
+          result = {
+            'code': -1,
+            'data': null,
+            'msg': 'failure to ' + header['cmd']
+          };
+          var mokeData={
+                "header": {
+                  "seqid": header['seqid']
+                },
+                "payload": result
+              };
+          // console.log("simulateResponse message: " + JSON.stringify(mokeData) );
+          window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+          return;
+        }
+        
+        var mokeData={
+          "header": {
+            "seqid": header['seqid']
+          },
+          "payload": {
+            'code': 200,
+            'data': {
+                'data': result,
+                'method': 'html.test.' + header['cmd'],
+            },
+            'msg': 'ok',
+          }
+        };
+        window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+      } catch (error) {
+        console.error("Error parsing JSON:", error);
+      }
+    }
+
+    function ackResponse(jsonMessage) {
+      try {
+        // 反序列化 header 和 payload
+        const data = JSON.parse(jsonMessage);
+        var header = data.header;
+        var payload = data.payload;
+        // 反序列化 header 和 payload
+        // header['event_id'] = payload['event_id']; 
+
+        if(payload['event_id'] != null) {
+          // alert(jsonMessage);
+          // header['event_id'] = payload['event_id']; 
+          header['event_id'] = null; 
+          header['cmd'] = null;
+          var mokeData={
+            "header": header,
+            "payload": {
+              'code': 200,
+              'data': null,
+              'msg': 'ok',
+            }
+          };
+          window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
+        }
+        
+      } catch (error) {
+        console.error("Error parsing JSON:", error);
+      }
+    }
+
+    window.sendMessage = function (message) {
+      console.log("I am proxy in html to send message to container: " + message);
+      
+      // 调用 window.postMessage 传递消息给 flutter
+      window.wx &&  window.wx.postMessage(message); // 调用 window.postMessage 传递消息给 原生系统
+      ///模拟收到响应结果5000
+      if(!window.wx) {
+        // 我不能发现 window.wx 
+        console.log('i dont find window.wx, so i simulate a return by postMessage')
+        //收到请求后，模拟收到响应结果
+        ackResponse(message);
+        setTimeout(simulateResponse(message), 5000)
+      }
+    }
+
+  </script>
+  <!-- <img src="http://127.0.0.1:13619/profiles/Snapmaker/Snapmaker Artisan_cover.png" alt="Snapmaker Orca" style="width: 100px; height: 100px;"> -->
+</body>
+</html>

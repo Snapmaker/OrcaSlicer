@@ -1,80 +1,80 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.00.04",
+  "version": "02.02.03.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
     {
+      "name": "Snapmaker Artisan",
+      "sub_path": "machine/Snapmaker Artisan.json"
+    },
+    {
       "name": "Snapmaker J1",
       "sub_path": "machine/Snapmaker J1.json"
-    },
-    {
-      "name": "Snapmaker A250",
-      "sub_path": "machine/Snapmaker A250.json"
-    },
-    {
-      "name": "Snapmaker A350",
-      "sub_path": "machine/Snapmaker A350.json"
-    },
-    {
-      "name": "Snapmaker A250 Dual",
-      "sub_path": "machine/Snapmaker A250 Dual.json"
     },
     {
       "name": "Snapmaker A350 Dual",
       "sub_path": "machine/Snapmaker A350 Dual.json"
     },
     {
-      "name": "Snapmaker A250 QSKit",
-      "sub_path": "machine/Snapmaker A250 QSKit.json"
-    },
-    {
-      "name": "Snapmaker A350 QSKit",
-      "sub_path": "machine/Snapmaker A350 QSKit.json"
-    },
-    {
-      "name": "Snapmaker A250 BKit",
-      "sub_path": "machine/Snapmaker A250 BKit.json"
-    },
-    {
-      "name": "Snapmaker A350 BKit",
-      "sub_path": "machine/Snapmaker A350 BKit.json"
-    },
-    {
-      "name": "Snapmaker A250 QS+B Kit",
-      "sub_path": "machine/Snapmaker A250 QS+B Kit.json"
-    },
-    {
-      "name": "Snapmaker A350 QS+B Kit",
-      "sub_path": "machine/Snapmaker A350 QS+B Kit.json"
-    },
-    {
-      "name": "Snapmaker A250 Dual QSKit",
-      "sub_path": "machine/Snapmaker A250 Dual QSKit.json"
+      "name": "Snapmaker A250 Dual",
+      "sub_path": "machine/Snapmaker A250 Dual.json"
     },
     {
       "name": "Snapmaker A350 Dual QSKit",
       "sub_path": "machine/Snapmaker A350 Dual QSKit.json"
     },
     {
-      "name": "Snapmaker A250 Dual BKit",
-      "sub_path": "machine/Snapmaker A250 Dual BKit.json"
+      "name": "Snapmaker A250 Dual QSKit",
+      "sub_path": "machine/Snapmaker A250 Dual QSKit.json"
     },
     {
       "name": "Snapmaker A350 Dual BKit",
       "sub_path": "machine/Snapmaker A350 Dual BKit.json"
     },
     {
-      "name": "Snapmaker A250 Dual QS+B Kit",
-      "sub_path": "machine/Snapmaker A250 Dual QS+B Kit.json"
+      "name": "Snapmaker A250 Dual BKit",
+      "sub_path": "machine/Snapmaker A250 Dual BKit.json"
     },
     {
       "name": "Snapmaker A350 Dual QS+B Kit",
       "sub_path": "machine/Snapmaker A350 Dual QS+B Kit.json"
     },
     {
-      "name": "Snapmaker Artisan",
-      "sub_path": "machine/Snapmaker Artisan.json"
+      "name": "Snapmaker A250 Dual QS+B Kit",
+      "sub_path": "machine/Snapmaker A250 Dual QS+B Kit.json"
+    },
+    {
+      "name": "Snapmaker A350 QSKit",
+      "sub_path": "machine/Snapmaker A350 QSKit.json"
+    },
+    {
+      "name": "Snapmaker A250 QSKit",
+      "sub_path": "machine/Snapmaker A250 QSKit.json"
+    },
+    {
+      "name": "Snapmaker A350",
+      "sub_path": "machine/Snapmaker A350.json"
+    },
+    {
+      "name": "Snapmaker A250",
+      "sub_path": "machine/Snapmaker A250.json"
+    },
+    {
+      "name": "Snapmaker A350 BKit",
+      "sub_path": "machine/Snapmaker A350 BKit.json"
+    },
+    {
+      "name": "Snapmaker A250 BKit",
+      "sub_path": "machine/Snapmaker A250 BKit.json"
+    },
+    {
+      "name": "Snapmaker A350 QS+B Kit",
+      "sub_path": "machine/Snapmaker A350 QS+B Kit.json"
+    },
+    {
+      "name": "Snapmaker A250 QS+B Kit",
+      "sub_path": "machine/Snapmaker A250 QS+B Kit.json"
     }
   ],
   "process_list": [
@@ -401,10 +401,6 @@
       "sub_path": "filament/fdm_filament_pva.json"
     },
     {
-      "name": "fdm_filament_breakaway",
-      "sub_path": "filament/fdm_filament_breakaway.json"
-    },
-    {
       "name": "fdm_filament_tpu",
       "sub_path": "filament/fdm_filament_tpu.json"
     },
@@ -729,18 +725,6 @@
       "sub_path": "filament/Snapmaker J1 PVA @0.2 nozzle.json"
     },
     {
-      "name": "Snapmaker J1 Breakaway @base",
-      "sub_path": "filament/Snapmaker J1 Breakaway @base.json"
-    },
-    {
-      "name": "Snapmaker J1 Breakaway",
-      "sub_path": "filament/Snapmaker J1 Breakaway.json"
-    },
-    {
-      "name": "Snapmaker J1 Breakaway @0.2 nozzle",
-      "sub_path": "filament/Snapmaker J1 Breakaway @0.2 nozzle.json"
-    },
-    {
       "name": "Snapmaker J1 TPU @base",
       "sub_path": "filament/Snapmaker J1 TPU @base.json"
     },
@@ -937,18 +921,6 @@
       "sub_path": "filament/Snapmaker Dual PVA @0.2 nozzle.json"
     },
     {
-      "name": "Snapmaker Dual Breakaway @base",
-      "sub_path": "filament/Snapmaker Dual Breakaway @base.json"
-    },
-    {
-      "name": "Snapmaker Dual Breakaway",
-      "sub_path": "filament/Snapmaker Dual Breakaway.json"
-    },
-    {
-      "name": "Snapmaker Dual Breakaway @0.2 nozzle",
-      "sub_path": "filament/Snapmaker Dual Breakaway @0.2 nozzle.json"
-    },
-    {
       "name": "Snapmaker Dual TPU @base",
       "sub_path": "filament/Snapmaker Dual TPU @base.json"
     },
@@ -961,24 +933,20 @@
       "sub_path": "filament/Snapmaker Dual TPU High-Flow.json"
     },
     {
-      "name": "Snapmaker Breakaway Support @base",
-      "sub_path": "filament/Snapmaker Breakaway Support @base.json"
-    },
-    {
-      "name": "Snapmaker Breakaway Support",
-      "sub_path": "filament/Snapmaker Breakaway Support.json"
-    },
-    {
-      "name": "Snapmaker Breakaway Support @base",
-      "sub_path": "filament/Snapmaker Breakaway Support @base.json"
-    },
-    {
-      "name": "Snapmaker Breakaway Support",
-      "sub_path": "filament/Snapmaker Breakaway Support.json"
-    },
-    {
       "name": "Snapmaker Dual TPE",
       "sub_path": "filament/Snapmaker Dual TPE.json"
+    },
+    {
+      "name": "Snapmaker Breakaway Support @base",
+      "sub_path": "filament/Snapmaker Breakaway Support @base.json"
+    },
+    {
+      "name": "Snapmaker Breakaway Support",
+      "sub_path": "filament/Snapmaker Breakaway Support.json"
+    },
+    {
+      "name": "Snapmaker J1 Breakaway Support",
+      "sub_path": "filament/Snapmaker J1 Breakaway Support.json"
     }
   ],
   "machine_list": [

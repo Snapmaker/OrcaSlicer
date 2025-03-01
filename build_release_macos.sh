@@ -182,19 +182,19 @@ function build_slicer() {
         mkdir -p Snapmaker_Orca
         cd Snapmaker_Orca
         # remove previously built app
-        rm -rf ./Snapmaker_Orca.app
+        rm -rf "./Snapmaker Orca.app"
         # fully copy newly built app
-        cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca.app" ./Snapmaker_Orca.app
+        cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker Orca.app" "./Snapmaker Orca.app"
         # fix resources
-        resources_path=$(readlink ./Snapmaker_Orca.app/Contents/Resources)
-        rm ./Snapmaker_Orca.app/Contents/Resources
-        cp -R "$resources_path" ./Snapmaker_Orca.app/Contents/Resources
+        resources_path=$(readlink "./Snapmaker Orca.app/Contents/Resources")
+        rm "./Snapmaker Orca.app/Contents/Resources"
+        cp -R "$resources_path" "./Snapmaker Orca.app/Contents/Resources"
         # delete .DS_Store file
-        find ./Snapmaker_Orca.app/ -name '.DS_Store' -delete
+        find "./Snapmaker Orca.app/" -name '.DS_Store' -delete
     )
 
     # extract version
-    # export ver=$(grep '^#define SoftFever_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
+    # export ver=$(grep '^#define Snapmaker_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
     # ver="_V${ver//\"}"
     # echo $PWD
     # if [ "1." != "$NIGHTLY_BUILD". ];
@@ -202,7 +202,7 @@ function build_slicer() {
     #     ver=${ver}_dev
     # fi
 
-    # zip -FSr Snapmaker_Orca${ver}_Mac_${ARCH}.zip Snapmaker_Orca.app
+    # zip -FSr Snapmaker_Orca${ver}_Mac_${ARCH}.zip Snapmaker Orca.app
 }
 
 case "${BUILD_TARGET}" in

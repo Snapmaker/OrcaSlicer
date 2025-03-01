@@ -20,6 +20,8 @@
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/GUI/WebViewDialog.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
+#include "slic3r/GUI/WebSMUserLoginDialog.hpp"
+#include "slic3r/GUI/WebDeviceDialog.hpp"
 #include "slic3r/GUI/BindDialog.hpp"
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
@@ -293,6 +295,10 @@ private:
 
     // login widget
     ZUserLogin*     login_dlg { nullptr };
+    SMUserLogin*    sm_login_dlg{ nullptr };
+
+    // device dialog
+    WebDeviceDialog* web_device_dialog{ nullptr };
 
     VersionInfo version_info;
     VersionInfo privacy_version_info;
@@ -307,9 +313,34 @@ private:
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
     HttpServer       m_http_server;
+    HttpServer       m_page_http_server;
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
+
+    std::shared_ptr<PrintHost> m_connected_host = nullptr;
+    std::mutex                 m_cnt_hst_mtx;
+    DynamicPrintConfig              m_host_config;
+    std::mutex                 m_host_cfg_mtx;
+
   public:
+    DynamicPrintConfig*             get_host_config() {
+        DynamicPrintConfig* res = nullptr;
+        m_host_cfg_mtx.lock();
+        res = &m_host_config;
+        m_host_cfg_mtx.unlock();
+
+        return res;
+    }
+
+    void                       set_host_config(const DynamicPrintConfig& config)
+    {
+        m_host_cfg_mtx.lock();
+        m_host_config = config;
+        m_host_cfg_mtx.unlock();
+    }
+    void      get_connect_host(std::shared_ptr<PrintHost>& output);
+    void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
+    wxDialog* get_web_device_dialog() { return web_device_dialog; }
       //try again when subscription fails
     void            on_start_subscribe_again(std::string dev_id);
     void            check_filaments_in_blacklist(std::string tag_supplier, std::string tag_material, bool& in_blacklist, std::string& action, std::string& info);
@@ -443,6 +474,33 @@ private:
     void            get_login_info();
     bool            is_user_login();
 
+    // SM
+    struct SMUserInfo
+    {
+    public:
+        bool is_user_login() { return m_login; }
+        void set_user_login(bool login) { m_login = login; }
+
+        std::string get_user_name() { return m_login_user_name; }
+        void     set_user_name(const std::string& name) { m_login_user_name = name; }
+
+        std::string get_user_token() { return m_login_user_token; }
+        void     set_user_token(const std::string& token) { m_login_user_token = token; }
+
+        std::string get_user_icon_url() { return m_login_user_icon_url; }
+        void     set_user_icon_url(const std::string& url) { m_login_user_icon_url = url; }
+    private:
+        std::string m_login_user_name = "";
+        std::string m_login_user_token = "";
+        std::string m_login_user_icon_url = "";
+        bool     m_login = false;
+    };
+    SMUserInfo*     sm_get_userinfo() { return &m_login_userinfo; }
+    void            sm_get_login_info();
+    void            sm_request_login(bool show_user_info = false);
+    void            sm_ShowUserLogin(bool show  =  true);
+    void            sm_request_user_logout();
+
     void            request_user_login(int online_login = 0);
     void            request_user_handle(int online_login = 0);
     void            request_user_logout();
@@ -487,6 +545,10 @@ private:
     void            stop_sync_user_preset();
     void            start_http_server();
     void            stop_http_server();
+
+    // page loading http server
+    void            start_page_http_server();
+    void            stop_page_http_server();
     void            switch_staff_pick(bool on);
 
     void            on_show_check_privacy_dlg(int online_login = 0);
@@ -698,6 +760,8 @@ private:
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
     std::string             m_open_method;
+
+    SMUserInfo m_login_userinfo;
 };
 
 DECLARE_APP(GUI_App)

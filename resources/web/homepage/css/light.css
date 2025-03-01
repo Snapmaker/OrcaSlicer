@@ -1,0 +1,12 @@
+/* 设备管理亮色主题 */
+.DeviceAddIcon {
+    background-color: #E4E4E4;
+}
+
+.DeviceAddIcon:hover {
+    background-color: #D0D0D0;
+}
+
+.DeviceItem {
+    background-color: #E4E4E4;
+}

@@ -41,6 +41,7 @@ public:
     void OnClose(wxCloseEvent& evt);
     void OnError(wxWebViewEvent& evt);
     void OnLoaded(wxWebViewEvent& evt);
+    void OnScriptMessage(wxWebViewEvent& evt);
     void reload();
     void update_mode();
 private:

@@ -21,6 +21,7 @@
         "Breakaway Support"
     ],
     "from": "User",
+    "instantiation": "false",
     "hot_plate_temp": [
         "65"
     ],

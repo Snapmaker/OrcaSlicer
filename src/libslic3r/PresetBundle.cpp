@@ -43,11 +43,11 @@ static std::vector<std::string> s_project_options {
     "flush_multiplier",
 };
 
-//BBS: add BBL as default
-const char *PresetBundle::BBL_BUNDLE = "Custom";
-const char *PresetBundle::BBL_DEFAULT_PRINTER_MODEL = "MyKlipper 0.4 nozzle";
-const char *PresetBundle::BBL_DEFAULT_PRINTER_VARIANT = "0.4";
-const char *PresetBundle::BBL_DEFAULT_FILAMENT = "My Generic PLA";
+// SM_FEATURE: add Snapmaker machine as default
+const char* PresetBundle::SM_BUNDLE = "Snapmaker";
+const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker Artisan(0.4 nozzle)";
+const char* PresetBundle::SM_DEFAULT_PRINTER_VARIANT = "0.4";
+const char* PresetBundle::SM_DEFAULT_FILAMENT        = "PolyLite Dual PLA";
 
 PresetBundle::PresetBundle()
     : prints(Preset::TYPE_PRINT, Preset::print_options(), static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults()))
@@ -1094,7 +1094,7 @@ void PresetBundle::remove_users_preset(AppConfig &config, std::map<std::string, 
     }
 
     if (need_reset_printer_preset) {
-        std::string default_printer_model = BBL_DEFAULT_PRINTER_MODEL;
+        std::string default_printer_model = SM_DEFAULT_PRINTER_MODEL;
         std::string default_printer_name;
         for (auto it = printers.begin(); it != printers.end(); it++) {
             if (it->config.has("printer_model")) {
@@ -1851,6 +1851,30 @@ void PresetBundle::export_selections(AppConfig &config)
 }
 
 // BBS
+void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> new_colors) {
+    int old_filament_count = this->filament_presets.size();
+    if (n > old_filament_count && old_filament_count != 0)
+        filament_presets.resize(n, filament_presets.back());
+    else {
+        filament_presets.resize(n);
+    }
+
+    ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
+    filament_color->resize(n);
+    ams_multi_color_filment.resize(n);
+
+    // BBS set new filament color to new_color
+    if (old_filament_count < n) {
+        if (!new_colors.empty()) {
+            for (int i = old_filament_count; i < n; i++) {
+                filament_color->values[i] = new_colors[i - old_filament_count];
+            }
+        }
+    }
+
+    update_multi_material_filament_presets();
+}
+
 void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
 {
     int old_filament_count = this->filament_presets.size();

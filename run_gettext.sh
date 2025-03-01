@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #  Snapmaker_Orca gettext
-#  Created by SoftFever on 27/5/23.
+#  Created by Snapmaker on 04/11/24.
 #
 
 # Check for --full argument

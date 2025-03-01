@@ -402,7 +402,7 @@ bool OctoPrint::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
     // https://www.rfc-editor.org/rfc/rfc7230#section-5.4
     http.header("Host", host);
     set_auth(http);
-    http.form_add("print", upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "true" : "false")
+    http .form_add("print", upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "true" : "false")
         .form_add("path", upload_parent_path.string())      // XXX: slashes on windows ???
         .form_add_file("file", upload_data.source_path.string(), upload_filename.string())
   

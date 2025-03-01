@@ -573,7 +573,7 @@ function GotoNetPluginPage()
 	let bRet=ResponseFilamentResult();
 	
 	if(bRet)
-		window.location.href="../4orca/index.html";
+		window.location.href="../5/index.html";
 }
 
 function FinishGuide()
@@ -593,6 +593,24 @@ function FinishGuide()
 	//window.location.href="../6/index.html";
 }
 
+// SM Beta temporarily cancell the network page and setting stealth mode and plugin state
+function SMBetaFinishGuide()
+{
+	// set the stealth mode to true
+	let nVal="no";
+	if( $('#StealthMode').is(':checked') ) 
+		nVal="yes";
+	
+	var tSend={};
+	tSend['sequence_id']=Math.round(new Date() / 1000);
+	tSend['command']="save_stealth_mode";
+	tSend['data']={};
+	tSend['data']['action']=nVal;
+	
+	SendWXMessage( JSON.stringify(tSend) );
+
+	FinishGuide();
+}
 
 
 

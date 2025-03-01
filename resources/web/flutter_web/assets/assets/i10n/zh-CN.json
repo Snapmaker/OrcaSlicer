@@ -1,0 +1,15 @@
+{
+    "title": "发现设备",
+    "description": "发现设备",
+    "add device": "添加设备",
+    "input_ip_address": "输入IP地址",
+    "ok": "确定",
+    "cancel": "取消",
+    "discovery_tip1": "1. 仅能发现同一局域网内的打印机",
+    "discovery_tip2": "2. 设备只支持使用2.4GHz Wi-Fi连接使用",
+    "Nearby machine": "附近机器",
+    "Manual connect": "手动连接",
+    "Connect": "连接",
+    "Connecting": "连接中...",
+    "Connected": "已连接"
+}

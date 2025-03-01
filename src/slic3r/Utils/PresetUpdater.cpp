@@ -664,7 +664,7 @@ void PresetUpdater::priv::sync_config()
     }
     AppConfig *app_config = GUI::wxGetApp().app_config;
 
-    auto profile_update_url = app_config->profile_update_url() + "/" + SoftFever_VERSION;
+    auto profile_update_url = app_config->profile_update_url() + "/" + Snapmaker_VERSION;
     // parse the assets section and get the latest asset by comparing the name
 
     Http::get(profile_update_url)
@@ -1111,11 +1111,11 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
                             fs::remove_all(path_of_vendor);
                     }
                 }
-                else if ((vendor_name == PresetBundle::BBL_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) {//if vendor has no file, copy it from resource for BBL
+                else if ((vendor_name == PresetBundle::SM_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) {//if vendor has no file, copy it from resource for BBL
                     bundles.push_back(vendor_name);
                 }
             }
-            else if ((vendor_name == PresetBundle::BBL_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) { //always update configs from resource to vendor for BBL
+            else if ((vendor_name == PresetBundle::SM_BUNDLE) || (enabled_vendors.find(vendor_name) != enabled_vendors.end())) { //always update configs from resource to vendor for BBL
                 bundles.push_back(vendor_name);
             }
         }

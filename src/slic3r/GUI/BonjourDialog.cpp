@@ -121,9 +121,9 @@ bool BonjourDialog::show_and_lookup()
 	auto dguard = std::make_shared<LifetimeGuard>(this);
 
 	// Note: More can be done here when we support discovery of hosts other than Octoprint and SL1
-	Bonjour::TxtKeys txt_keys { "version", "model" };
+	Bonjour::TxtKeys txt_keys { "version", "sn" };
 
-    bonjour = Bonjour("octoprint")
+    bonjour = Bonjour("snapmaker")
 		.set_txt_keys(std::move(txt_keys))
 		.set_retries(3)
 		.set_timeout(4)

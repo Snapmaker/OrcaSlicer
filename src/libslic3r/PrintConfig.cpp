@@ -75,6 +75,8 @@ static t_config_enum_values s_keys_map_PrinterTechnology {
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrinterTechnology)
 
 static t_config_enum_values s_keys_map_PrintHostType {
+    { "moonraker_mqtt", htMoonRaker_mqtt},
+    { "moonraker",      htMoonRaker},
     { "prusalink",      htPrusaLink },
     { "prusaconnect",   htPrusaConnect },
     { "octoprint",      htOctoPrint },
@@ -1654,7 +1656,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L(
         "This option sets the min point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the "
         "entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be "
-        "set appropriately. Snapmaker_Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
+        "set appropriately. Snapmaker Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
         "points. This information can usually be obtained from your printer manufacturer. The default setting is (-99999, -99999), which "
         "means there are no limits, thus allowing probing across the entire bed.");
     def->sidetext = L("mm");
@@ -1666,7 +1668,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L(
         "This option sets the max point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the "
         "entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be "
-        "set appropriately. Snapmaker_Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
+        "set appropriately. Snapmaker Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
         "points. This information can usually be obtained from your printer manufacturer. The default setting is (99999, 99999), which "
         "means there are no limits, thus allowing probing across the entire bed.");
     def->sidetext = L("mm");
@@ -3393,6 +3395,8 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Snapmaker Orca can upload G-code files to a printer host. This field must contain "
                    "the kind of the host.");
     def->enum_keys_map = &ConfigOptionEnum<PrintHostType>::get_enum_values();
+    def->enum_values.push_back("moonraker_mqtt");
+    def->enum_values.push_back("moonraker");
     def->enum_values.push_back("prusalink");
     def->enum_values.push_back("prusaconnect");
     def->enum_values.push_back("octoprint");
@@ -3406,6 +3410,8 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("obico");
     def->enum_values.push_back("flashforge");
     def->enum_values.push_back("simplyprint");
+    def->enum_labels.push_back("MoonRaker On MQTT");
+    def->enum_labels.push_back("MoonRaker");
     def->enum_labels.push_back("PrusaLink");
     def->enum_labels.push_back("PrusaConnect");
     def->enum_labels.push_back("Octo/Klipper");
@@ -3421,7 +3427,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back("SimplyPrint");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
-    def->set_default_value(new ConfigOptionEnum<PrintHostType>(htOctoPrint));
+    def->set_default_value(new ConfigOptionEnum<PrintHostType>(htMoonRaker));
     
 
     def = this->add("nozzle_volume", coFloat);
@@ -7723,7 +7729,7 @@ static std::map<t_custom_gcode_key, t_config_option_keys> s_CustomGcodeSpecificP
                                "new_retract_length_toolchange", "old_filament_e_feedrate", "old_filament_temp", "old_retract_length",
                                "old_retract_length_toolchange", "relative_e_axis", "second_flush_volume", "toolchange_count", "toolchange_z",
                                "travel_point_1_x", "travel_point_1_y", "travel_point_2_x", "travel_point_2_y", "travel_point_3_x",
-                               "travel_point_3_y", "x_after_toolchange", "y_after_toolchange", "z_after_toolchange"}},
+                               "travel_point_3_y", "x_after_toolchange", "y_after_toolchange", "z_after_toolchange", "next_wipe_x", "next_wipe_y"}},
     {"change_extrusion_role_gcode", {"layer_num", "layer_z", "extrusion_role", "last_extrusion_role"}},
     {"printing_by_object_gcode",    {}},
     {"machine_pause_gcode",         {}},
@@ -7788,7 +7794,8 @@ CustomGcodeSpecificConfigDef::CustomGcodeSpecificConfigDef()
     new_def("flush_length_2", coFloat, "Flush Length 2", "The second flush length");
     new_def("flush_length_3", coFloat, "Flush Length 3", "The third flush length");
     new_def("flush_length_4", coFloat, "Flush Length 4", "The fourth flush length");
-
+    new_def("next_wipe_x", coFloat, "Next Wipe X", "For Snapmaker Artision, next x after toolchange");
+    new_def("next_wipe_y", coFloat, "Next Wipe Y", "For Snapmaker Artision, next y after toolchange");
 // change_extrusion_role_gcode
     std::string extrusion_role_types = "Possible Values:\n[\"Perimeter\", \"ExternalPerimeter\", "
                                                      "\"OverhangPerimeter\", \"InternalInfill\", \"SolidInfill\", \"TopSolidInfill\", \"BottomSurface\", \"BridgeInfill\", \"GapFill\", \"Ironing\", "

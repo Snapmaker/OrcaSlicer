@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.13)
 project(Snapmaker_Orca-native)
 
+# mqtt
+set(PAHO_MQTT_C_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mqtt/externals/paho-mqtt-c)
+set(PAHO_MQTT_CPP_PATH ${CMAKE_CURRENT_SOURCE_DIR}/mqtt)
+
+set(PAHO_BUILD_STATIC ON)
+set(PAHO_WITH_MQTT_C ON)
+
+add_subdirectory(${PAHO_MQTT_CPP_PATH})
+
 add_subdirectory(build-utils)
 add_subdirectory(admesh)
 # add_subdirectory(avrdude)
@@ -121,6 +130,10 @@ if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp BaseException.cpp BaseException.h StackWalker.cpp StackWalker.h)
 else ()
     add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
+    if (APPLE)
+        set_target_properties(Snapmaker_Orca PROPERTIES BUNDLE_NAME "Snapmaker Orca" OUTPUT_NAME "Snapmaker Orca")
+        
+    endif()
 endif ()
 
 if (MINGW)
@@ -130,8 +143,8 @@ endif (MINGW)
 
 if (NOT WIN32 AND NOT APPLE)
     # Binary name on unix like systems (Linux, Unix)
-    set_target_properties(Snapmaker_Orca PROPERTIES OUTPUT_NAME "orca-slicer")
-    set(SLIC3R_APP_CMD "orca-slicer")
+    set_target_properties(Snapmaker_Orca PROPERTIES OUTPUT_NAME "snapmaker-orca")
+    set(SLIC3R_APP_CMD "snapmaker-orca")
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/unix/BuildLinuxImage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/BuildLinuxImage.sh @ONLY)
 endif ()
 
@@ -184,7 +197,7 @@ if (WIN32)
     endif()
     target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
-    set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "orca-slicer")
+    set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
     target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly)
 endif ()
 
@@ -232,7 +245,7 @@ else ()
     if (APPLE AND NOT CMAKE_MACOSX_BUNDLE)
         # On OSX, the name of the binary matches the name of the Application.
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-            COMMAND ln -sf Snapmaker_Orca orca-slicer
+            COMMAND ln -sf Snapmaker_Orca snapmaker-orca
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
             VERBATIM)
     else ()
@@ -249,13 +262,13 @@ else ()
     endif ()
     if (CMAKE_MACOSX_BUNDLE)
         if (CMAKE_CONFIGURATION_TYPES)
-            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Snapmaker_Orca.app/Contents/Resources")
+            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Snapmaker Orca.app/Contents/Resources")
         else()
-            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.app/Contents/Resources")
+            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/Snapmaker Orca.app/Contents/Resources")
         endif()
         set(MACOSX_BUNDLE_ICON_FILE Icon.icns)
-        set(MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker_Orca")
-        set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${SoftFever_VERSION})
+        set(MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca")
+        set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION})
         set(MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
     endif()
     add_custom_command(TARGET Snapmaker_Orca POST_BUILD

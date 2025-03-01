@@ -8,6 +8,9 @@
   "compatible_printers": [
     "Snapmaker J1 (0.2 nozzle)"
   ],
+  "filament_end_gcode": [
+    ""
+  ],
   "hot_plate_temp": [
     "90"
   ],

@@ -340,7 +340,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
                 "Categories=Graphics;3DGraphics;Engineering;\n"
                 "Keywords=3D;Printing;Slicer;slice;3D;printer;convert;gcode;stl;obj;amf;SLA\n"
                 "StartupNotify=false\n"
-                "StartupWMClass=orca-slicer\n", name_suffix, version_suffix, excutable_path);
+                "StartupWMClass=snapmaker-orca\n", name_suffix, version_suffix, excutable_path);
 
             std::string path = GUI::format("%1%/applications/Snapmaker_Orca%2%.desktop", target_dir_desktop, version_suffix);
             if (create_desktop_file(path, desktop_file)){
@@ -416,7 +416,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
             app_config->set("desktop_integration_app_viewer_path", desktop_path);
         else {
             BOOST_LOG_TRIVIAL(error) << "Performing desktop integration failed - could not create Gcodeviewer desktop file";
-            show_error(nullptr, _L("Performing desktop integration failed - could not create Gcodeviewer desktop file. Snapmaker_Orca desktop file was probably created successfully."));
+            show_error(nullptr, _L("Performing desktop integration failed - could not create Gcodeviewer desktop file. Snapmaker Orca desktop file was probably created successfully."));
         }
     }
     

@@ -1,0 +1,183 @@
+#Content
+{
+	overflow-y:auto;
+}
+
+.BlockBanner
+{
+	padding: 0px;
+	border-bottom:#009688 1px solid;
+	width: 100%;
+}
+
+.BlockBanner a
+{
+	display: inline-block;
+	background-color:#009688;
+	line-height: 40px;
+	height: 40px;
+	padding: 0px 24px;
+	color: #fff;
+}
+
+.PrinterArea
+{
+	padding: 10px;
+	display: flex;
+	flex-wrap: wrap;
+}
+
+.PrinterBlock
+{
+	width: 160px;
+	text-align: center;
+	padding: 10px;
+}
+
+.PrinterBlock img
+{
+	width:160px;
+	height: 160px;
+}
+
+.PName
+{
+	font-weight: 700;
+	text-align:left;
+}
+
+.pNozzel
+{
+	display: flex;
+	align-items: center;
+	justify-content:flex-start;
+	color: #5A5A5A;	
+	padding-left: 10px;
+}
+
+.pNozzel input[type="radio"] {
+    vertical-align: middle;
+    margin-right: 5px;
+    cursor: pointer;
+}
+
+.pNozzel input[type="radio"] {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #009688;
+    border-radius: 50%;
+    outline: none;
+    margin-right: 8px;
+    position: relative;
+}
+
+.pNozzel input[type="radio"]:checked {
+    background-color: #009688;
+    border-color: #009688;
+}
+
+.pNozzel input[type="radio"]:checked:after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    background: white;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+}
+
+/*-----Notice-----*/
+#NoticeMask
+{
+	background-color: #000;
+	position: absolute;
+	top: 0px;
+	left: 0px;
+	right: 0px;
+	bottom: 0px;
+	opacity: 0.05;
+	display: none;
+}
+
+#NoticeBody
+{
+	display: none;
+	width: 400px;
+	border-width: 1px;
+	border-style: solid;
+	border-radius: 4px;
+	background-color: inherit;	
+	position: absolute;
+	left: 50%;
+	top: 200px;
+	margin-left: -200px;
+}
+
+#NoticeBar
+{
+	background-color:#00f0d8;
+	height: 40px;
+	line-height: 40px;
+	color: #fff;
+	text-align: center;
+}
+
+#NoticeContent
+{
+	padding: 4mm 10mm;	
+}
+
+
+#NoticeBtns
+{
+	margin-top: 4mm;
+	display: flex;
+	justify-content:space-around;
+}
+
+.search {
+	width: 100%;
+	position: relative;
+	display: flex;
+  }
+  
+  .searchTerm {
+	width: 100%;
+	border: 3px solid #009688;
+	/*border-right: none;*/
+	padding: 5px;
+	height: 20px;
+	border-radius: 5px 5px 5px 5px;
+	outline: none;
+	color: #9DBFAF;
+  }
+  
+  .searchTerm:focus{
+	color: #009688;
+  }
+  
+  /*Resize the wrap to see the search bar change!*/
+  .wrap{
+	width: 30%;
+	padding-bottom: 5px;
+	padding-left: 42px;
+  }
+
+/* 修改确定按钮的样式和位置 */
+#AcceptArea {
+    display: flex;
+    justify-content: flex-end; /* 改为右对齐 */
+    padding: 20px 40px; /* 增加右边距，让按钮不贴边 */
+}
+
+.NormalBtn {
+    min-width: 80px; /* 设置最小宽度 */
+    text-align: center;
+}
+
+/* 移除GrayBtn样式 */

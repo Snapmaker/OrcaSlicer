@@ -1,6 +1,6 @@
 @echo off
 REM Snapmaker_Orca gettext
-REM Created by SoftFever on 27/5/23.
+REM Created by Snapmaker on 04/11/24.
 
 REM Check for --full argument
 set FULL_MODE=0

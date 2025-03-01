@@ -151,7 +151,7 @@ wxString CopyrightsDialog::get_html_text()
         _L("License"),
         _L("Snapmaker Orca is licensed under "),
         "https://www.gnu.org/licenses/agpl-3.0.html",_L("GNU Affero General Public License, version 3"),
-        _L("Snapmaker Orca is based on PrusaSlicer and BambuStudio"),
+        _L("Snapmaker Orca is Based on Orca Slicer"),
         _L("Libraries"),
         _L("This software uses open source components whose copyright and other proprietary rights belong to their respective owners"));
 
@@ -242,9 +242,9 @@ AboutDialog::AboutDialog()
     // version
     {
         vesizer->Add(0, FromDIP(165), 1, wxEXPAND, FromDIP(5));
-        auto version_string = _L("Snapmaker Orca ") + " " + std::string(SoftFever_VERSION);
+        auto version_string = _L("Snapmaker Orca ") + " " + std::string(Snapmaker_VERSION);
         wxStaticText* version = new wxStaticText(this, wxID_ANY, version_string.c_str(), wxDefaultPosition, wxDefaultSize);
-        wxStaticText* bs_version = new wxStaticText(this, wxID_ANY, wxString::Format("Based on PrusaSlicer and BambuStudio"), wxDefaultPosition, wxDefaultSize);
+        wxStaticText* bs_version = new wxStaticText(this, wxID_ANY, wxString::Format("Based on Orca Slicer"), wxDefaultPosition, wxDefaultSize);
         bs_version->SetFont(Label::Body_12);
         wxFont version_font = GetFont();
         #ifdef __WXMSW__
@@ -277,11 +277,21 @@ AboutDialog::AboutDialog()
     text_sizer_horiz->Add( 0, 0, 0, wxLEFT, FromDIP(20));
 
     std::vector<wxString> text_list;
-    text_list.push_back(_L("Snapmaker_Orca is based on BambuStudio, PrusaSlicer, and SuperSlicer."));
+    
+    /*text_list.push_back(_L("Snapmaker Orca is based on BambuStudio, PrusaSlicer, and SuperSlicer."));
     text_list.push_back(_L("BambuStudio is originally based on PrusaSlicer by PrusaResearch."));
     text_list.push_back(_L("PrusaSlicer is originally based on Slic3r by Alessandro Ranellucci."));
-    text_list.push_back(_L("Slic3r was created by Alessandro Ranellucci with the help of many other contributors."));
+    text_list.push_back(_L("Slic3r was created by Alessandro Ranellucci with the help of many other contributors."));*/
+    
 
+    // SM Beta
+    text_list.push_back(_L("Snapmaker Orca beta is forked from Orca Slicer by SoftFever."));
+    text_list.push_back(_L("OrcaSlicer is forked from Bambu Studio by Bambu Lab."));
+    text_list.push_back(_L("Bambu Studio is forked from PrusaSlicer by Prusa Research, which is from Slic3r by Alessandro Ranellucci and the RepRap community. Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill."));
+    text_list.push_back(_L("Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."));
+    text_list.push_back(_L(""));
+    text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero Generall Public License, version 3."));
+    
     text_sizer->Add( 0, 0, 0, wxTOP, FromDIP(33));
     bool is_zh = wxGetApp().app_config->get("language") == "zh_CN";
     for (int i = 0; i < text_list.size(); i++)
@@ -322,7 +332,7 @@ AboutDialog::AboutDialog()
 
     copyright_hor_sizer->Add(copyright_ver_sizer, 0, wxLEFT, FromDIP(20));
 
-    wxStaticText *html_text = new wxStaticText(this, wxID_ANY, "Copyright(C) 2022-2024 Li Jiang All Rights Reserved", wxDefaultPosition, wxDefaultSize);
+    wxStaticText *html_text = new wxStaticText(this, wxID_ANY, "Copyright (C) 2024 Snapmaker All Rights Reserved", wxDefaultPosition, wxDefaultSize);
     html_text->SetForegroundColour(wxColour(107, 107, 107));
 
     copyright_ver_sizer->Add(html_text, 0, wxALL , 0);
@@ -339,7 +349,7 @@ AboutDialog::AboutDialog()
               (boost::format(
               "<html>"
               "<body>"
-              "<p style=\"text-align:left\"><a style=\"color:#009789\" href=\"https://github.com/SoftFever/Snapmaker_Orca\">https://github.com/SoftFever/Snapmaker_Orca</ a></p>"
+              "<p style=\"text-align:left\"><a style=\"color:#009789\" href=\"www.snapmaker.com\">www.snapmaker.com</ a></p>"
               "</body>"
               "</html>")
             ).str());

@@ -46,132 +46,56 @@
 			<div class="trans" tid="t28">recent</div> 
 		</div>	
 
+		<div menu="device" class="BtnItem" onClick="GotoMenu('device')">
+			<div class="BtnIcon"><img class="LeftIcon" src="img/device.png" /></div>
+			<div class="trans" tid="t114">Device Management</div>
+		</div>
 	</div>
 </div>
 
 <div id="RightBoard">
-<div id="ContentBoard" class="ZScrol" board="recent">
+<div id="ContentBoard" class="ZScrol">
     <div style="height: 14px;"></div>	
-	<div id="MenuArea">
-<!--		<div class="MenuItem" onClick="OnClickModelDepot()">
-			<div class="MenuIcon"><img src="img/i6.png"></div>
-			<div>
-				<div class="trans TextS1" tid="t90">3D Model</div>
-				<div class="MenuDesc trans"  tid="t91">Download 3D Models</div>
-			</div>
-		</div>	-->	
-		<div class="MenuItem" onClick="OnClickNewProject()">
-			<div class="MenuIcon"><img src="img/i4.png"></div>
-			<div>
-				<div class="trans TextS1" tid="t31">new project</div>
-				<div class="MenuDesc trans"  tid="t32">create new project</div>
-			</div>
-		</div>
-		<div class="MenuItem" onClick="OnClickOpenProject()">
-			<div class="MenuIcon"><img src="img/i5.png"></div>
-			<div>
-				<div class="trans TextS1" tid="t33">open project</div>
-				<div class="MenuDesc">3mf</div>
-			</div>
-		</div>		
-	</div>
-	
-	<div id="DebugText"></div>	
-	<div id="RecentFileArea">
-		<div id="RecentTitleBlock">
-		    <div id="RecentTitle" class="Content-Title trans TextS1" tid="t35">recent open</div>
-			<div id="RecentClearAllBtn" class="trans TextS1" tid="t12" onClick="OnDeleteAllRecentFiles()">Clear all</div>
-		</div>
-		<div id="FileList">
-<!--		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>
-		    <div class="FileItem" onClick="OnOpenRecentFile('aaaa')" fpath='d:\model\11.3mf'>
-				<a class="FileTip" title="d:\model\11.3mf"></a>
-				<div class="FileImg"><img src="img/d.png"/></div>
-				<div class="FileName TextS1">abcd12334abcd12334abcd12334.3mf</div>
-				<div class="FileDate">2021/12/27 09:22</div>
-			</div>	-->		
-		</div>
-	</div>
-	
-    <div style="height: 14px;"></div>	
-	
-	<div id="recnet_context_menu">
-		<div id="CT_Delete_Bar" class="CT_Item" onClick="OnDeleteRecentFile()">
-			<div class="CT_Icon CT_Delete"></div>
-			<div class="CT_Text trans" tid="t88">clear</div>
-		</div>
-		<div id="CT_Folder_Bar" class="CT_Item " onClick="OnExploreRecentFile()" >
-			<div class="CT_Icon CT_Explore"></div>
-			<div class="CT_Text trans" tid="t89">open in explorer </div>
-		</div>				
+    <div id="MenuArea">
+        <div class="MenuItem" onClick="OnClickNewProject()">
+            <div class="MenuIcon"><img src="img/i4.png"></div>
+            <div>
+                <div class="trans TextS1" tid="t31">new project</div>
+                <div class="MenuDesc trans" tid="t32">create new project</div>
+            </div>
+        </div>
+        <div class="MenuItem" onClick="OnClickOpenProject()">
+            <div class="MenuIcon"><img src="img/i5.png"></div>
+            <div>
+                <div class="trans TextS1" tid="t33">open project</div>
+                <div class="MenuDesc">3mf</div>
+            </div>
+        </div>		
     </div>
-	
-	
+    
+    <div id="DebugText"></div>	
+    
+    <div board="recent">
+        <div id="RecentTitleBlock">
+            <div id="RecentTitle" class="Content-Title trans TextS1" tid="t35">recent open</div>
+            <div id="RecentClearAllBtn" class="trans TextS1" tid="t12" onClick="OnDeleteAllRecentFiles()">Clear all</div>
+        </div>
+        <div id="FileList">
+            <!-- 文件列表内容 -->
+        </div>
+    </div>
+
+    <div board="device" style="display:none">
+        <div id="DeviceTitleBlock">
+            <div id="DeviceTitle" class="Content-Title trans TextS1" tid="t114" onClick="onDeviceManagementClick(event)">Device Management</div>
+        </div>
+        <div id="DeviceList">
+            <img class="DeviceAddIcon" src="img/plus.png" alt="添加设备" onClick="OnAddDevice()"/>
+            <div id="DeviceGrid">
+                <!-- 设备列表将通过JavaScript动态添加 -->
+            </div>
+        </div>
+    </div>
 </div>
 
 </div>	

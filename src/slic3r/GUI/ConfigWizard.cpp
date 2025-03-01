@@ -65,12 +65,12 @@ using Config::SnapshotDB;
 
 
 // Configuration data structures extensions needed for the wizard
-//BBS: set BBL as default
-bool Bundle::load(fs::path source_path, bool ais_in_resources, bool ais_bbl_bundle)
+// SM_FEATURE: set sm machine as default
+bool Bundle::load(fs::path source_path, bool ais_in_resources, bool ais_sm_bundle)
 {
     this->preset_bundle = std::make_unique<PresetBundle>();
     this->is_in_resources = ais_in_resources;
-    this->is_bbl_bundle = ais_bbl_bundle;
+    this->is_sm_bundle = ais_sm_bundle;
 
     std::string path_string = source_path.string();
     std::string parent_path = source_path.parent_path().string();
@@ -110,7 +110,7 @@ Bundle::Bundle(Bundle &&other)
     : preset_bundle(std::move(other.preset_bundle))
     , vendor_profile(other.vendor_profile)
     , is_in_resources(other.is_in_resources)
-    , is_bbl_bundle(other.is_bbl_bundle)
+    , is_sm_bundle(other.is_sm_bundle)
 {
     other.vendor_profile = nullptr;
 }
@@ -123,18 +123,18 @@ BundleMap BundleMap::load()
     const auto vendor_dir = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
     const auto rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
 
-    //BBS: add BBL as default
-    //BBS: add json logic for vendor bundle
-    auto bbl_bundle_path = (vendor_dir / PresetBundle::BBL_BUNDLE).replace_extension(".json");
-    auto bbl_bundle_rsrc = false;
-    if (!boost::filesystem::exists(bbl_bundle_path)) {
-        bbl_bundle_path = (rsrc_vendor_dir / PresetBundle::BBL_BUNDLE).replace_extension(".json");
-        bbl_bundle_rsrc = true;
+    // SM_FEATURE
+    auto sm_bundle_path = (vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");
+    auto sm_bundle_rsrc = false;
+
+    if (!boost::filesystem::exists(sm_bundle_path)) {
+        sm_bundle_path = (rsrc_vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");
+        sm_bundle_rsrc = true;
     }
     {
-        Bundle bbl_bundle;
-        if (bbl_bundle.load(std::move(bbl_bundle_path), bbl_bundle_rsrc, true))
-            res.emplace(PresetBundle::BBL_BUNDLE, std::move(bbl_bundle));
+        Bundle sm_bundle;
+        if (sm_bundle.load(std::move(sm_bundle_path), sm_bundle_rsrc, true))
+            res.emplace(PresetBundle::SM_BUNDLE, std::move(sm_bundle));
     }
 
     // Load the other bundles in the datadir/vendor directory
@@ -161,22 +161,21 @@ BundleMap BundleMap::load()
     return res;
 }
 
-Bundle& BundleMap::bbl_bundle()
+Bundle& BundleMap::sm_bundle()
 {
-    //BBS: add BBL as default
-    auto it = find(PresetBundle::BBL_BUNDLE);
+    // SM_FEATURE: add sm machine as default
+    auto it = find(PresetBundle::SM_BUNDLE);
     if (it == end()) {
-        throw Slic3r::RuntimeError("ConfigWizard: Internal error in BundleMap: BBL_BUNDLE not loaded");
+        throw Slic3r::RuntimeError("ConfigWizard: Internal error in BundleMap: SM_BUNDLE not loaded");
     }
 
     return it->second;
 }
 
-const Bundle& BundleMap::bbl_bundle() const
+const Bundle& BundleMap::sm_bundle() const
 {
-    return const_cast<BundleMap*>(this)->bbl_bundle();
+    return const_cast<BundleMap*>(this)->sm_bundle();
 }
-
 
 // Printer model picker GUI control
 
@@ -629,7 +628,7 @@ void PagePrinters::set_run_reason(ConfigWizard::RunReason run_reason)
     if (is_primary_printer_page
         && (run_reason == ConfigWizard::RR_DATA_EMPTY || run_reason == ConfigWizard::RR_DATA_LEGACY)
         && printer_pickers.size() > 0 
-        && printer_pickers[0]->vendor_id == PresetBundle::BBL_BUNDLE) {
+        && printer_pickers[0]->vendor_id == PresetBundle::SM_BUNDLE) {
         //BBS: select alll bbs machine by default
         //printer_pickers[0]->select_one(0, true);
         printer_pickers[0]->select_all(true);
@@ -1942,7 +1941,7 @@ void ConfigWizard::priv::create_3rdparty_pages()
     for (const auto &pair : bundles) {
         const VendorProfile *vendor = pair.second.vendor_profile;
         //BBS: add BBL as default
-        if (vendor->id == PresetBundle::BBL_BUNDLE) { continue; }
+        if (vendor->id == PresetBundle::SM_BUNDLE) { continue; }
 
         bool is_fff_technology = false;
         bool is_sla_technology = false;
@@ -2385,11 +2384,11 @@ bool ConfigWizard::priv::apply_config(AppConfig *app_config, PresetBundle *prese
         return pt;
     };
     // Prusa printers are considered first, then 3rd party.
-    if (preferred_pt = get_preferred_printer_technology("BBL", bundles.bbl_bundle());
+    if (preferred_pt = get_preferred_printer_technology("BBL", bundles.sm_bundle());
         preferred_pt == ptAny || (preferred_pt == ptSLA && suppress_sla_printer)) {
         for (const auto& bundle : bundles) {
             //BBS: set BBL as default
-            if (bundle.second.is_bbl_bundle) { continue; }
+            if (bundle.second.is_sm_bundle) { continue; }
             if (PrinterTechnology pt = get_preferred_printer_technology(bundle.first, bundle.second); pt == ptAny)
                 continue;
             else if (preferred_pt == ptAny)
@@ -2415,7 +2414,7 @@ bool ConfigWizard::priv::apply_config(AppConfig *app_config, PresetBundle *prese
         if (! pair.second.is_in_resources) { continue; }
 
         //BBS: set BBL as default
-        if (pair.second.is_bbl_bundle) {
+        if (pair.second.is_sm_bundle) {
             // Always install Prusa bundle, because it has a lot of filaments/materials
             // likely to be referenced by other profiles.
             install_bundles.emplace_back(pair.first);
@@ -2507,10 +2506,10 @@ bool ConfigWizard::priv::apply_config(AppConfig *app_config, PresetBundle *prese
         return std::string();
     };
     // Prusa printers are considered first, then 3rd party.
-    if (preferred_model = get_preferred_printer_model("BBL", bundles.bbl_bundle(), preferred_variant);
+    if (preferred_model = get_preferred_printer_model("BBL", bundles.sm_bundle(), preferred_variant);
         preferred_model.empty()) {
         for (const auto& bundle : bundles) {
-            if (bundle.second.is_bbl_bundle) { continue; }
+            if (bundle.second.is_sm_bundle) { continue; }
             if (preferred_model = get_preferred_printer_model(bundle.first, bundle.second, preferred_variant);
                 !preferred_model.empty())
                     break;

@@ -21,9 +21,5 @@
   "default_filament_profile": [
     "Snapmaker PLA",
     "Snapmaker PETG"
-  ],
-  "extruder_offset": [
-    "0x0",
-    "0x0"
   ]
 }

@@ -128,8 +128,13 @@ public:
     virtual void log_out() const {}
     virtual bool get_login_url(wxString& auth_url) const { return false; }
 
+    virtual void set_connection_lost(std::function<void()> callback) { m_connection_lost_cb = callback; }
+
 protected:
     virtual wxString format_error(const std::string &body, const std::string &error, unsigned status) const;
+
+private:
+    std::function<void()> m_connection_lost_cb = nullptr;
 };
 
 

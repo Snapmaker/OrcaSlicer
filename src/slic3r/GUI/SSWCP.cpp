@@ -1126,9 +1126,41 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                     finish_job();
                 } else {
                     auto self     = shared_from_this();
+                    //设置断联回调
                     m_work_thread = std::thread([self, host, connect_params] {
                         wxString msg = "";
                         json     params;
+                        host->set_connection_lost([]() {
+                            wxGetApp().CallAfter([]() {
+                                wxGetApp().app_config->set("use_new_connect", "false");
+                                auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
+                                p_config->set("print_host", "");
+
+                                auto devices = wxGetApp().app_config->get_devices();
+                                for (size_t i = 0; i < devices.size(); ++i) {
+                                    if (devices[i].connected) {
+                                        devices[i].connected = false;
+                                        wxGetApp().app_config->save_device_info(devices[i]);
+                                        break;
+                                    }
+                                }
+
+                                json param;
+                                param["command"]       = "local_devices_arrived";
+                                param["sequece_id"]    = "10001";
+                                param["data"]          = devices;
+                                std::string logout_cmd = param.dump();
+                                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                                GUI::wxGetApp().run_script(strJS);
+
+                                MessageDialog msg_window(nullptr, _L(" Connection Lost !\n"), L("Machine Disconnected"),
+                                                         wxICON_QUESTION | wxOK);
+                                msg_window.ShowModal();
+
+                                wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+                                wxGetApp().set_connect_host(nullptr);
+                            });
+                        });
                         bool     res = host->connect(msg, connect_params);
 
                         std::string ip_port = host->get_host();
@@ -1174,26 +1206,12 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
                                 if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters) && machine_type != "") {
                                     // 查询成功
-                                    if (nozzle_diameters.empty()) {
-                                        MessageDialog msg_window(nullptr,
-                                                                 ip + _L(" The target machine model has been detected as ") + machine_type +
-                                                                     "\n" + _L("Please bind the nozzle information\n"),
-                                                                 L("Nozzle Bind"), wxICON_QUESTION | wxOK);
-                                        msg_window.ShowModal();
-
-                                        auto dialog          = WebPresetDialog(&wxGetApp());
-                                        dialog.m_bind_nozzle = true;
-                                        dialog.m_device_id   = ip;
-                                        dialog.run();
-                                    }
-
                                     DeviceInfo info;
                                     info.ip           = ip;
                                     info.dev_id       = ip;
                                     info.dev_name     = ip;
                                     info.connected    = true;
                                     info.model_name   = machine_type;
-                                    info.nozzle_sizes = nozzle_diameters;
                                     info.protocol     = int(PrintHostType::htMoonRaker_mqtt);
                                     if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                         info.sn = connect_params["sn"].get<std::string>();
@@ -1207,14 +1225,35 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         info.img = machine_cover;
                                     }
 
-                                    // 设置预设名称（使用第一个喷嘴尺寸）
-                                    if (!nozzle_diameters.empty()) {
-                                        info.preset_name = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
+
+                                    DeviceInfo query_info;
+                                    bool exist = wxGetApp().app_config->get_device_info(ip, query_info);
+                                    if (nozzle_diameters.empty()) {
+                                        if (exist) {
+                                            query_info.connected = true;
+                                            wxGetApp().app_config->save_device_info(query_info);
+                                        } else {
+                                            wxGetApp().app_config->save_device_info(info);
+                                            MessageDialog msg_window(nullptr,
+                                                                     ip + _L(" The target machine model has been detected as ") +
+                                                                         machine_type + "\n" + _L("Please bind the nozzle information\n"),
+                                                                     L("Nozzle Bind"), wxICON_QUESTION | wxOK);
+                                            msg_window.ShowModal();
+
+                                            auto dialog          = WebPresetDialog(&wxGetApp());
+                                            dialog.m_bind_nozzle = true;
+                                            dialog.m_device_id   = ip;
+                                            dialog.run();
+                                        }
+                                        
                                     } else {
-                                        info.preset_name = machine_type + " (0.4 nozzle)"; // 默认值
+                                        info.nozzle_sizes = nozzle_diameters;
+                                        info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
+                                        wxGetApp().app_config->save_device_info(info);
                                     }
 
-                                    wxGetApp().app_config->save_device_info(info);
+                                   
+                                   
                                 } else {
                                     // 是否为连接过的设备
                                     DeviceInfo query_info;
@@ -1666,16 +1705,54 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
 
                 // 获取喷嘴信息
                 if(product_info.contains("nozzle_diameter")){
-                    if(product_info["nozzle_diameter"].is_array()){
-                        for(const auto& nozzle : product_info["nozzle_diameter"]){
-                            // todo 不一定是string
-                            out_nozzle_diameters.push_back(nozzle.get<std::string>());
+                    try {
+                        if (product_info["nozzle_diameter"].is_array()) {
+                            for (const auto& nozzle : product_info["nozzle_diameter"]) {
+                                // todo 不一定是string
+                                if (nozzle.is_number()) {
+                                    double temp = nozzle.get<double>();
+                                    if (fabs(temp - 0.2) < 1e-6) {
+                                        out_nozzle_diameters.push_back("0.2");
+                                    } else if (fabs(temp - 0.4) < 1e-6) {
+                                        out_nozzle_diameters.push_back("0.2");
+                                    } else if (fabs(temp - 0.6) < 1e-6) {
+                                        out_nozzle_diameters.push_back("0.2");
+                                    } else if (fabs(temp - 0.8) < 1e-6) {
+                                        out_nozzle_diameters.push_back("0.2");
+                                    }
+                                    
+                                } else {
+                                    std::string temp = nozzle.get<std::string>();
+                                    if (temp == "0.2" || temp == "0.4" || temp == "0.6" || temp == "0.8") {
+                                        out_nozzle_diameters.push_back(temp);
+                                    }
+                                }
+                                
+                            }
+                        } else {
+                            // 如果是单个值
+                            if (product_info["nozzle_diameter"].is_number()) {
+                                double temp = product_info["nozzle_diameter"].get<double>();
+                                if (fabs(temp - 0.2) < 1e-6) {
+                                    out_nozzle_diameters.push_back("0.2");
+                                } else if (fabs(temp - 0.4) < 1e-6) {
+                                    out_nozzle_diameters.push_back("0.2");
+                                } else if (fabs(temp - 0.6) < 1e-6) {
+                                    out_nozzle_diameters.push_back("0.2");
+                                } else if (fabs(temp - 0.8) < 1e-6) {
+                                    out_nozzle_diameters.push_back("0.2");
+                                }
+
+                            } else {
+                                std::string temp = product_info["nozzle_diameter"].get<std::string>();
+                                if (temp == "0.2" || temp == "0.4" || temp == "0.6" || temp == "0.8") {
+                                    out_nozzle_diameters.push_back(temp);
+                                }
+                            }
                         }
                     }
-                    else {
-                        // 如果是单个值
-                        out_nozzle_diameters.push_back(
-                        product_info["nozzle_diameter"].get<std::string>());
+                    catch (std::exception& e) {
+                        return false;
                     }
                 }
             }

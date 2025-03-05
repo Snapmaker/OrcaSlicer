@@ -163,6 +163,8 @@ public:
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) override;
 
+    void set_connection_lost(std::function<void()> callback) override;
+
 public:
     // MQTT message handler
     void on_mqtt_message_arrived(const std::string& topic, const std::string& payload);

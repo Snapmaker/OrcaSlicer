@@ -1404,4 +1404,8 @@ bool Moonraker_Mqtt::wait_for_sn(int timeout_seconds)
     }
 }
 
+void Moonraker_Mqtt::set_connection_lost(std::function<void()> callback) {
+    m_mqtt_client->SetConnectionFailureCallback(callback);
+}
+
 } // namespace Slic3r

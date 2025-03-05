@@ -38,7 +38,8 @@ bool MqttClient::Connect()
         BOOST_LOG_TRIVIAL(info) << "Connecting to the MQTT server: " << server_address_;
         
         // 添加用户上下文来标识这是连接操作
-        mqtt::token_ptr conntok = client_->connect(connOpts_, "connection", *this);
+        const char* context             = "connection";
+        mqtt::token_ptr conntok = client_->connect(connOpts_, (void*) (context), *this);
         if (!conntok->wait_for(std::chrono::seconds(6))) {
             BOOST_LOG_TRIVIAL(error) << "Connection timeout";
             connected_.store(false, std::memory_order_release);

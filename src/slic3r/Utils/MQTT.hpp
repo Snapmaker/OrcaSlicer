@@ -6,6 +6,8 @@
 #include <map>
 #include <mqtt/async_client.h>
 #include <boost/log/trivial.hpp>
+#include <memory>
+#include <atomic>
 
 // Number of retries for connection and subscription attempts
 #define CONNECT_RETRY_TIME 3
@@ -45,7 +47,9 @@ public:
 };
 
 // Main MQTT client class implementing both callback and action listener interfaces
-class MqttClient : public virtual mqtt::callback, public virtual mqtt::iaction_listener
+class MqttClient : public virtual mqtt::callback, 
+                  public virtual mqtt::iaction_listener,
+                  public std::enable_shared_from_this<MqttClient>
 {
 public:
     // Constructor initializes the MQTT client with server details
@@ -69,10 +73,16 @@ public:
     // Set callback for handling incoming messages
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback);
 
+    // 添加设置连接失败回调的方法
+    void SetConnectionFailureCallback(std::function<void()> callback) {
+        connection_failure_callback_ = callback;
+    }
+
     // Callback interface implementations
     void connection_lost(const std::string& cause) override;
     void message_arrived(mqtt::const_message_ptr msg) override;
     void delivery_complete(mqtt::delivery_token_ptr token) override;
+    void connected(const std::string& cause) override;
 
     // Action listener interface implementations
     void on_failure(const mqtt::token& tok) override;
@@ -84,14 +94,20 @@ public:
 private:
     std::string server_address_;     // MQTT broker address
     std::string client_id_;          // Unique client identifier
-    mqtt::async_client client_;      // Async MQTT client instance
+    std::unique_ptr<mqtt::async_client> client_;      // Async MQTT client instance
     std::function<void(const std::string& topic, const std::string& payload)> message_callback_;  // Message handler
     mqtt::connect_options connOpts_; // Connection options
-    bool connected_;                 // Connection status flag
+    std::atomic<bool> connected_;    // Connection status flag
     std::map<std::string, int> topics_to_resubscribe_;  // Topics to resubscribe after reconnection
     action_listener subListener_;    // Subscription listener
     int connect_retry_time_;         // Connection retry counter
     int subscribe_retry_time_;       // Subscription retry counter
+    std::function<void()> connection_failure_callback_;  // 连接失败的回调函数
+
+    // 添加新的私有方法来处理重新订阅
+    void resubscribe_topics();
+    void add_topic_to_resubscribe(const std::string& topic, int qos);
+    void remove_topic_from_resubscribe(const std::string& topic);
 };
 
 #endif // MQTT_H

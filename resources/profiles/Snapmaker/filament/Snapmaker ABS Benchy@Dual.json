@@ -6,10 +6,12 @@
   "setting_id": "3540754477",
   "inherits": "Snapmaker ABS @Dual base",
   "compatible_printers": [
-    "Snapmaker Artisan (0.4 nozzle)"
+    "Snapmaker Artisan (0.4 nozzle)",
+    "Snapmaker test (0.4 nozzle)"
   ],
   "compatible_prints": [
-    "0.25 Benchy @Snapmaker Artisan (0.4 nozzle)"
+    "0.25 Benchy @Snapmaker Artisan (0.4 nozzle)",
+    "0.25 Benchy @Snapmaker test (0.4 nozzle)"
   ],
   "overhang_fan_speed": [
     "35"

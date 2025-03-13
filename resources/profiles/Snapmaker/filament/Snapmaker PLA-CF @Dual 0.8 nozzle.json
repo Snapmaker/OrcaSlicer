@@ -14,7 +14,8 @@
     "Snapmaker A350 Dual BKit (0.8 nozzle)",
     "Snapmaker A350 Dual QS+B Kit (0.8 nozzle)",
     "Snapmaker A350 Dual QSKit (0.8 nozzle)",
-    "Snapmaker Artisan (0.8 nozzle)"
+    "Snapmaker Artisan (0.8 nozzle)",
+    "Snapmaker test (0.8 nozzle)"
   ],
   "filament_max_volumetric_speed": [
     "12.8"

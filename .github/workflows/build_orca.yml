@@ -95,7 +95,7 @@ jobs:
 
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/2.0.0') && inputs.os == 'macos-14'
+        if: 1==0
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -121,7 +121,7 @@ jobs:
           xcrun stapler staple Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
 
       - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/2.0.0' && inputs.os == 'macos-14'
+        if: inputs.os == 'macos-14'
         working-directory: ${{ github.workspace }}
         run: |
           ln -s /Applications ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca/Applications
@@ -138,8 +138,8 @@ jobs:
         if: (github.ref == 'refs/heads/main' && inputs.os == 'macos-14') || (github.ref == 'refs/heads/2.0.0' && inputs.os == 'macos-14')
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/202021208/assets{?name,label}
-          release_id: 202021208
+          upload_url: https://uploads.github.com/repos/womendoushihaoyin/OrcaSlicer/releases/205248704/assets{?name,label}
+          release_id: 205248704
           asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
           asset_name: Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
           asset_content_type: application/octet-stream
@@ -207,8 +207,8 @@ jobs:
         if: (github.ref == 'refs/heads/main' && inputs.os == 'windows-latest') || (github.ref == 'refs/heads/2.0.0' && inputs.os == 'windows-latest')
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/202021208/assets{?name,label}
-          release_id: 202021208
+          upload_url: https://uploads.github.com/repos/womendoushihaoyin/OrcaSlicer/releases/205248704/assets{?name,label}
+          release_id: 205248704
           asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
           asset_name: Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
           asset_content_type: application/x-zip-compressed
@@ -218,8 +218,8 @@ jobs:
         if: (github.ref == 'refs/heads/main' && inputs.os == 'windows-latest') || (github.ref == 'refs/heads/2.0.0' && inputs.os == 'windows-latest')
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/202021208/assets{?name,label}
-          release_id: 202021208
+          upload_url: https://uploads.github.com/repos/womendoushihaoyin/OrcaSlicer/releases/205248704/assets{?name,label}
+          release_id: 205248704
           asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
           asset_name: Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
           asset_content_type: application/x-msdownload
@@ -291,8 +291,8 @@ jobs:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/202021208/assets{?name,label}
-          release_id: 202021208
+          upload_url: https://uploads.github.com/repos/womendoushihaoyin/OrcaSlicer/releases/205248704/assets{?name,label}
+          release_id: 205248704
           asset_path: ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
           asset_name: Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
           asset_content_type: application/octet-stream
@@ -302,8 +302,8 @@ jobs:
         if: ${{ ! env.ACT && github.ref == 'refs/heads/main' && inputs.os == 'ubuntu-22.04' }}
         uses: WebFreak001/deploy-nightly@v3.1.0
         with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/202021208/assets{?name,label}
-          release_id: 202021208
+          upload_url: https://uploads.github.com/repos/womendoushihaoyin/OrcaSlicer/releases/205248704/assets{?name,label}
+          release_id: 205248704
           asset_path: ${{ github.workspace }}/resources/profiles/orca_custom_preset_tests.zip
           asset_name: orca_custom_preset_tests.zip
           asset_content_type: application/octet-stream

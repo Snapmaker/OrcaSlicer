@@ -1,0 +1,17 @@
+{
+  "name": "Snapmaker test (0.4 nozzle)",
+  "setting_id": "1591507869",
+  "type": "machine",
+  "from": "system",
+  "instantiation": "true",
+  "inherits": "fdm_test",
+  "printer_model": "Snapmaker test",
+  "default_print_profile": "0.16 Optimal @Snapmaker test (0.4 nozzle)",
+  "printer_variant": "0.4",
+  "nozzle_diameter": [
+    "0.4",
+    "0.4",
+    "0.4",
+    "0.4"
+  ]
+}

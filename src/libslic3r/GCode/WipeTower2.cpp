@@ -617,7 +617,8 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar.push_back(FilamentParameters());
 
     m_filpar[idx].material = config.filament_type.get_at(idx);
-    m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
+    // m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
+    m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
     m_filpar[idx].temperature = config.nozzle_temperature.get_at(idx);
     m_filpar[idx].first_layer_temperature = config.nozzle_temperature_initial_layer.get_at(idx);
     m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(idx);
@@ -1622,9 +1623,11 @@ void WipeTower2::save_on_last_wipe()
 int WipeTower2::first_toolchange_to_nonsoluble(
         const std::vector<WipeTowerInfo::ToolChange>& tool_changes) const
 {
-    for (size_t idx=0; idx<tool_changes.size(); ++idx)
-        if (! m_filpar[tool_changes[idx].new_tool].is_soluble)
+    // 使用 wipe_tower_filament 配置来决定哪个挤出机用于 wipe tower
+    for (size_t idx=0; idx<tool_changes.size(); ++idx) {
+        if (!m_filpar[tool_changes[idx].new_tool].is_soluble)
             return idx;
+    }
     return -1;
 }
 

@@ -245,6 +245,24 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
     this->mark_skirt_layers(object.print()->config(), max_layer_height);
 }
 
+bool ToolOrdering::insert_wipe_tower_extruder()
+{
+    if(!m_print_config_ptr->enable_prime_tower)
+        return false;
+    // In case that wipe_tower_extruder is set to non-zero, we must make sure that the extruder will be in the list.
+    bool changed = false;
+    if (m_print_config_ptr->wipe_tower_filament != 0) {
+        for (LayerTools& lt : m_layer_tools) {
+            if (lt.wipe_tower_partitions > 0) {
+                lt.extruders.emplace_back(m_print_config_ptr->wipe_tower_filament - 1);
+                sort_remove_duplicates(lt.extruders);
+                changed = true;
+            }
+        }  
+    }
+    return changed;
+}
+
 // For the use case when all objects are printed at once.
 // (print->config().print_sequence == PrintSequence::ByObject is false).
 ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool prime_multi_material)
@@ -303,12 +321,21 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 
     if (!first_layer_tool_order.empty()) {
         this->reorder_extruders(first_layer_tool_order);
-    }
-    else {
+    } else {
         this->reorder_extruders(first_extruder);
     }
 
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
+
+    if (this->insert_wipe_tower_extruder()) {
+        // Now convert the 0-based list to 1-based again, because that is what reorder_extruder expects.
+        for (LayerTools& lt : m_layer_tools) {
+            for (auto& extruder : lt.extruders)
+                ++extruder;
+        }
+        this->reorder_extruders(first_extruder);
+        this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
+    }
 
     this->collect_extruder_statistics(prime_multi_material);
 

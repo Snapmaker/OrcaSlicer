@@ -415,7 +415,7 @@
               'code': 200,
               'method': 'html.test',
               'data': result,
-              'msg': 'ok',
+              'message': 'ok',
             }
           };
           window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
@@ -463,7 +463,7 @@
               'code': 200,
               'method': 'html.test.sw_GetConnectedMachine',
               'data': result,
-              'msg': 'ok',
+              'message': 'ok',
             }
           };
           window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
@@ -695,7 +695,7 @@
           result = {
             'code': -1,
             'data': null,
-            'msg': 'failure to start monitor'
+            'message': 'failure to start monitor'
           };
           var mokeData={
                 "header": {
@@ -710,7 +710,7 @@
           result = {
             'code': -1,
             'data': null,
-            'msg': 'failure to stop monitor'
+            'message': 'failure to stop monitor'
           };
           var mokeData={
                 "header": {
@@ -725,7 +725,7 @@
           result = {
             'code': -1,
             'data': null,
-            'msg': 'failure to ' + header['cmd']
+            'message': 'failure to ' + header['cmd']
           };
           var mokeData={
                 "header": {
@@ -748,7 +748,7 @@
                 'data': result,
                 'method': 'html.test.' + header['cmd'],
             },
-            'msg': 'ok',
+            'message': 'ok',
           }
         };
         window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
@@ -776,7 +776,7 @@
             "payload": {
               'code': 200,
               'data': null,
-              'msg': 'ok',
+              'message': 'ok',
             }
           };
           window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter

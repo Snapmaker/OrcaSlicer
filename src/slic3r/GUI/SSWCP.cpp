@@ -1292,6 +1292,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
 
                                         dialog.SaveProfile();
+                                        bool flag = false;
+                                        dialog.apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater, flag);
+                                        wxGetApp().update_mode();
                                         
                                     }
 

@@ -33,6 +33,8 @@ using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
 
+extern json m_ProfileJson;
+
 // Base SSWCP_Instance implementation
 void SSWCP_Instance::process() {
     if (m_cmd == "test") {
@@ -315,10 +317,10 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              }
                                          } else {
                                              // test
-                                             auto machine_ip_type = MachineIPType::getInstance();
+                                             /*auto machine_ip_type = MachineIPType::getInstance();
                                              if (machine_ip_type) {
-                                                 machine_ip_type->add_instance(reply.ip.to_string(), "lava");
-                                             }
+                                                 machine_ip_type->add_instance(reply.ip.to_string(), "unknown");
+                                             }*/
                                          }
                                          json machine_object;
                                          if (machine_data.count("unique_value")) {
@@ -1153,7 +1155,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                 GUI::wxGetApp().run_script(strJS);
 
-                                MessageDialog msg_window(nullptr, _L(" Connection Lost !\n"), L("Machine Disconnected"),
+                                MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
                                                          wxICON_QUESTION | wxOK);
                                 msg_window.ShowModal();
 
@@ -1191,7 +1193,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
                                 if (!host->check_sn_arrived()) {
                                     wxGetApp().CallAfter([ip]() {
-                                        MessageDialog msg_window(nullptr, ip + _L(" connected unseccessfully !\n"), L("Failed"),
+                                        MessageDialog msg_window(nullptr, ip + " " + _L("connected unseccessfully !") + "\n", _L("Failed"),
                                                                  wxICON_QUESTION | wxOK);
                                         msg_window.ShowModal();
                                     });
@@ -1211,6 +1213,11 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     info.dev_id       = ip;
                                     info.dev_name     = ip;
                                     info.connected    = true;
+
+                                    // test 内部测试
+                                    if (machine_type.find("lava") != std::string::npos) {
+                                        machine_type = "Snapmaker test";
+                                    }
                                     info.model_name   = machine_type;
                                     info.protocol     = int(PrintHostType::htMoonRaker_mqtt);
                                     if (connect_params.count("sn") && connect_params["sn"].is_string()) {
@@ -1235,9 +1242,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         } else {
                                             wxGetApp().app_config->save_device_info(info);
                                             MessageDialog msg_window(nullptr,
-                                                                     ip + _L(" The target machine model has been detected as ") +
-                                                                         machine_type + "\n" + _L("Please bind the nozzle information\n"),
-                                                                     L("Nozzle Bind"), wxICON_QUESTION | wxOK);
+                                                                     ip + " " + _L("The target machine model has been detected as") + "" +
+                                                                         machine_type + "\n" + _L("Please bind the nozzle information") + "\n",
+                                                                     _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
                                             msg_window.ShowModal();
 
                                             auto dialog          = WebPresetDialog(&wxGetApp());
@@ -1250,6 +1257,35 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         info.nozzle_sizes = nozzle_diameters;
                                         info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
                                         wxGetApp().app_config->save_device_info(info);
+
+
+                                        // 检查是否该预设已经选入系统
+                                        int         nModel = m_ProfileJson["model"].size();
+                                        bool        isFind = false;
+                                        for (int m = 0; m < nModel; m++) {
+                                            if (m_ProfileJson["model"][m]["model"].get<std::string>() ==
+                                                info.model_name) {
+                                                // 绑定的预设已被选入系统
+                                                isFind = true;
+                                                std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"].get<std::string>();
+                                                std::string se_nozz_selected = nozzle_diameters[0];
+                                                if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
+                                                    nozzle_selected += ";" + se_nozz_selected;
+                                                    m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
+                                                }
+
+                                                break;
+                                            }
+                                        }
+
+                                        if (!isFind) {
+                                            json new_item;
+                                            new_item["model"]           = info.model_name;
+                                            new_item["nozzle_selected"] = nozzle_diameters[0];
+                                            m_ProfileJson["model"].push_back(new_item);
+                                        }
+
+                                        wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
                                     }
 
                                    
@@ -1266,10 +1302,10 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                             std::string machine_type = "";
                                             if (machine_ip_type->get_machine_type(ip, machine_type)) {
                                                 // 已经发现过的机型信息
-                                                //// test
-                                                // if (machine_type == "lava") {
-                                                //     machine_type = "Snapmaker A250 BKit";
-                                                // }
+                                                // test
+                                                 if (machine_type == "lava") {
+                                                     machine_type = "Snapmaker test";
+                                                 }
 
                                                 DeviceInfo info;
                                                 info.ip         = ip;
@@ -1294,10 +1330,10 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 // todo 绑定喷嘴
 
                                                 MessageDialog msg_window(nullptr,
-                                                                         ip + _L(" The target machine model has been detected as ") +
+                                                                         ip + " " + _L("The target machine model has been detected as") + " "  +
                                                                              machine_type + "\n" +
-                                                                             _L("Please bind the nozzle information\n"),
-                                                                         L("Nozzle Bind"), wxICON_QUESTION | wxOK);
+                                                                             _L("Please bind the nozzle information") + "\n",
+                                                                         _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
                                                 msg_window.ShowModal();
                                                 auto dialog          = WebPresetDialog(&wxGetApp());
                                                 dialog.m_bind_nozzle = true;
@@ -1323,8 +1359,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 wxGetApp().app_config->save_device_info(info);
                                                 MessageDialog msg_window(
                                                     nullptr,
-                                                    ip + _L(" The target machine model has not been detected. Please bind manually. "),
-                                                    L("Machine Bind"), wxICON_QUESTION | wxOK);
+                                                    ip + " " + _L("The target machine model has not been detected. Please bind manually."),
+                                                    _L("Machine Bind"), wxICON_QUESTION | wxOK);
                                                 msg_window.ShowModal();
                                                 auto dialog        = WebPresetDialog(&wxGetApp());
                                                 dialog.m_device_id = ip;
@@ -1345,7 +1381,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                 GUI::wxGetApp().run_script(strJS);
 
-                                MessageDialog msg_window(nullptr, ip + _L(" connected sucessfully !\n"), L("Machine Connected"),
+                                MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine Connected"),
                                                          wxICON_QUESTION | wxOK);
                                 msg_window.ShowModal();
 
@@ -1365,7 +1401,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
                         } else {
                             wxGetApp().CallAfter([ip_port]() {
-                                MessageDialog msg_window(nullptr, ip_port + _L(" connected unseccessfully !\n"), L("Failed"),
+                                MessageDialog msg_window(nullptr, ip_port + " " + _L("connected unseccessfully !") + "\n", _L("Failed"),
                                                          wxICON_QUESTION | wxOK);
                                 msg_window.ShowModal();
                             });
@@ -1443,7 +1479,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
                 wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                 GUI::wxGetApp().run_script(strJS);
 
-                MessageDialog msg_window(nullptr, _L(" Disconnected sucessfully !\n"), L("Machine Disconnected"), wxICON_QUESTION | wxOK);
+                MessageDialog msg_window(nullptr, " " + _L("Disconnected sucessfully !") + "\n", _L("Machine Disconnected"), wxICON_QUESTION | wxOK);
                 msg_window.ShowModal();
 
                 wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
@@ -1452,7 +1488,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
 
         } else {
             wxGetApp().CallAfter([]() {
-                MessageDialog msg_window(nullptr, _L(" Disconnect Failed !\n"), L("Machine Disconnected"), wxICON_QUESTION | wxOK);
+                MessageDialog msg_window(nullptr, " " + _L("Disconnect Failed !") + "\n", _L("Machine Disconnected"), wxICON_QUESTION | wxOK);
                 msg_window.ShowModal(); 
             });
             

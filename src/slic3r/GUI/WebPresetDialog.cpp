@@ -432,9 +432,9 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
                     if (info.model_name != "") {
                         // test
-                        /*if (info.model_name == "lava") {
-                            info.model_name = "Snapmaker A250 BKit";
-                        }*/
+                        if (info.model_name == "lava") {
+                            info.model_name = "Snapmaker test";
+                        }
                         model_name = info.model_name;
                         nozzle_sizes = info.nozzle_sizes;
                     }

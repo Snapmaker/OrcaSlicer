@@ -1258,6 +1258,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
                                         wxGetApp().app_config->save_device_info(info);
 
+                                        auto dialog          = WebPresetDialog(&wxGetApp());
+                                        dialog.m_device_id   = ip;
+                                        
 
                                         // 检查是否该预设已经选入系统
                                         int         nModel = m_ProfileJson["model"].size();
@@ -1280,12 +1283,16 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
                                         if (!isFind) {
                                             json new_item;
+                                            new_item["vendor"]          = "Snapmaker";
                                             new_item["model"]           = info.model_name;
                                             new_item["nozzle_selected"] = nozzle_diameters[0];
                                             m_ProfileJson["model"].push_back(new_item);
                                         }
 
                                         wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+
+                                        dialog.SaveProfile();
+                                        
                                     }
 
                                    

@@ -749,6 +749,9 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
 
 // Connect to MQTT broker
 bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
+    if (!m_mqtt_client) {
+        return false;
+    }
     if (m_mqtt_client->CheckConnected()) {
         disconnect(msg, params);
     }
@@ -790,10 +793,18 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
 
 // Disconnect from MQTT broker
 bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
-    return m_mqtt_client->Disconnect();
+    if (!m_mqtt_client)
+        return false;
+
+
+    bool flag = m_mqtt_client->Disconnect();
     m_sn_mtx.lock();
     m_sn = "";
     m_sn_mtx.unlock();
+
+    m_mqtt_client.reset();
+
+    return flag;
 }
 
 // Subscribe to printer status updates
@@ -805,7 +816,7 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client->Subscribe(main_layer + m_status_topic, 2);
+    bool res = m_mqtt_client ? m_mqtt_client->Subscribe(main_layer + m_status_topic, 2) : false;
 
     if (!res) {
         if (m_status_cb) {
@@ -982,7 +993,7 @@ void Moonraker_Mqtt::async_unsubscribe_machine_info(std::function<void(const nlo
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client->Unsubscribe(main_layer + m_status_topic);
+    bool res = m_mqtt_client ? m_mqtt_client->Unsubscribe(main_layer + m_status_topic) : false;
 
     if (!res) {
         if (callback) {
@@ -1405,7 +1416,8 @@ bool Moonraker_Mqtt::wait_for_sn(int timeout_seconds)
 }
 
 void Moonraker_Mqtt::set_connection_lost(std::function<void()> callback) {
-    m_mqtt_client->SetConnectionFailureCallback(callback);
+    if (m_mqtt_client)
+        m_mqtt_client->SetConnectionFailureCallback(callback);
 }
 
 } // namespace Slic3r

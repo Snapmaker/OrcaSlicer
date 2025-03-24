@@ -13,12 +13,13 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     , connOpts_()
     , subListener_("Subscription")
     , connected_(false)              // std::atomic<bool> 可以从 bool 直接构造
+    , is_reconnecting(false)
     , connection_failure_callback_(nullptr)
 {
     // Configure connection options
     // 写死false
     connOpts_.set_clean_session(false);
-    connOpts_.set_keep_alive_interval(5);
+    connOpts_.set_keep_alive_interval(30);
     connOpts_.set_connect_timeout(10);
     // 设置自动重连参数
     connOpts_.set_automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));
@@ -29,6 +30,7 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
 // @return: true if connection successful, false otherwise
 bool MqttClient::Connect()
 {
+    is_reconnecting.store(false, std::memory_order_release);
     if (connected_.load(std::memory_order_acquire)) {
         BOOST_LOG_TRIVIAL(warning) << "Already connected to MQTT server";
         return true;
@@ -232,32 +234,37 @@ void MqttClient::connection_lost(const std::string& cause)
 
     connected_.store(false, std::memory_order_release);
     
-    // 获取weak_ptr用于后续检查
-    std::weak_ptr<MqttClient> weak_self = shared_from_this();
-    
-    // 启动异步检查任务，并忽略返回值
-    std::thread([weak_self]() {
-        // 等待10秒
-        std::this_thread::sleep_for(std::chrono::seconds(10));
-        
-        // 尝试获取shared_ptr，检查对象是否还存在
-        if (auto self = weak_self.lock()) {
-            // 对象仍然存在，检查连接状态
-            if (!self->connected_.load(std::memory_order_acquire)) {
-                BOOST_LOG_TRIVIAL(error) << "MQTT connection not restored after 10 seconds";
-                // 如果设置了失败回调，则调用
-                if (self->connection_failure_callback_) {
-                    self->connection_failure_callback_();
+    if (!is_reconnecting.load(std::memory_order_acquire)) {
+        is_reconnecting.store(true, std::memory_order_release);
+        // 获取weak_ptr用于后续检查
+        std::weak_ptr<MqttClient> weak_self = shared_from_this();
+
+        // 启动异步检查任务，并忽略返回值
+        std::thread([weak_self]() {
+            // 等待10秒
+            std::this_thread::sleep_for(std::chrono::seconds(20));
+
+            // 尝试获取shared_ptr，检查对象是否还存在
+            if (auto self = weak_self.lock()) {
+                // 对象仍然存在，检查连接状态
+                if (!self->connected_.load(std::memory_order_acquire)) {
+                    BOOST_LOG_TRIVIAL(error) << "MQTT connection not restored after 10 seconds";
+                    // 如果设置了失败回调，则调用
+                    if (self->connection_failure_callback_) {
+                        self->connection_failure_callback_();
+                    }
+                } else {
+                    BOOST_LOG_TRIVIAL(info) << "MQTT connection successfully restored";
                 }
             } else {
-                BOOST_LOG_TRIVIAL(info) << "MQTT connection successfully restored";
+                BOOST_LOG_TRIVIAL(info) << "MQTT client object no longer exists";
             }
-        } else {
-            BOOST_LOG_TRIVIAL(info) << "MQTT client object no longer exists";
-        }
-    }).detach();  // 分离线程，让它在后台运行
+        }).detach(); // 分离线程，让它在后台运行
+
+        BOOST_LOG_TRIVIAL(info) << "Waiting for automatic reconnection...";
+    }
+
     
-    BOOST_LOG_TRIVIAL(info) << "Waiting for automatic reconnection...";
 }
 
 // Callback when a message arrives
@@ -319,6 +326,7 @@ void MqttClient::connected(const std::string& cause)
 {
     BOOST_LOG_TRIVIAL(info) << "MQTT connection established";
     connected_.store(true, std::memory_order_release);
+    is_reconnecting.store(false, std::memory_order_release);
     
     // 连接成功后重新订阅之前的主题
     /*resubscribe_topics();*/

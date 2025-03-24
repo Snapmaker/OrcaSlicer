@@ -104,6 +104,8 @@ private:
     int subscribe_retry_time_;       // Subscription retry counter
     std::function<void()> connection_failure_callback_;  // 连接失败的回调函数
 
+    std::atomic<bool> is_reconnecting; // 是否正在调试重连
+
     // 添加新的私有方法来处理重新订阅
     void resubscribe_topics();
     void add_topic_to_resubscribe(const std::string& topic, int qos);

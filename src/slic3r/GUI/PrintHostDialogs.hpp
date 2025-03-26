@@ -33,6 +33,8 @@ public:
     std::string storage() const;
     bool switch_to_device_tab() const {return m_switch_to_device_tab;}
 
+    const boost::filesystem::path origin_path() { return m_ori_file_path; }
+
     virtual void EndModal(int ret) override;
 private:
     wxTextCtrl *txt_filename;
@@ -43,6 +45,7 @@ private:
     wxString    m_preselected_storage;
     wxArrayString m_paths;
     bool m_switch_to_device_tab;
+    boost::filesystem::path  m_ori_file_path;
 };
 
 

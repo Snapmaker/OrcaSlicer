@@ -30,7 +30,6 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
 // @return: true if connection successful, false otherwise
 bool MqttClient::Connect()
 {
-    is_reconnecting.store(false, std::memory_order_release);
     if (connected_.load(std::memory_order_acquire)) {
         BOOST_LOG_TRIVIAL(warning) << "Already connected to MQTT server";
         return true;

@@ -152,6 +152,8 @@
 #include "CreatePresetsDialog.hpp"
 #include "FileArchiveDialog.hpp"
 
+#include "WebPreprintDialog.hpp"
+
 using boost::optional;
 namespace fs = boost::filesystem;
 using Slic3r::_3DScene;
@@ -12704,6 +12706,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     auto config = get_app_config();
     PrintHostSendDialog dlg(default_output_file, upload_job.printhost->get_post_upload_actions(), groups, storage_paths, storage_names, config->get_bool("open_device_tab_post_upload"));
+
     if (dlg.ShowModal() == wxID_OK) {
         config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());
         upload_job.switch_to_device_tab    = dlg.switch_to_device_tab();
@@ -12730,6 +12733,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             }
 
             upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
+
         }
 
         p->export_gcode(fs::path(), false, std::move(upload_job));

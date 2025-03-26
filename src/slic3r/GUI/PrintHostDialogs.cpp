@@ -28,6 +28,7 @@
 #include "NotificationManager.hpp"
 #include "ExtraRenderers.hpp"
 #include "format.hpp"
+#include "WebPreprintDialog.hpp"
 
 namespace fs = boost::filesystem;
 
@@ -47,6 +48,7 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
     , post_upload_action(PrintHostPostUploadAction::None)
     , m_paths(storage_paths)
     , m_switch_to_device_tab(switch_to_device_tab)
+    , m_ori_file_path(path)
 {
 #ifdef __APPLE__
     txt_filename->OSXDisableAllSmartSubstitutions();
@@ -386,7 +388,8 @@ void PrintHostQueueDialog::append_job(const PrintHostJob &job)
     fields.push_back(wxVariant(_L("Enqueued")));
     fields.push_back(wxVariant(job.printhost->get_host()));
     boost::system::error_code ec;
-    boost::uintmax_t size_i = boost::filesystem::file_size(job.upload_data.source_path, ec);
+    boost::uintmax_t size_i = boost::filesystem::file_size(job.upload_data.source_path, ec);    
+
     std::stringstream stream;
     if (ec) {
         stream << "unknown";

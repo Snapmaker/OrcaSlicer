@@ -300,6 +300,7 @@ bool PresetUpdater::priv::get_file(const std::string &url, const fs::path &targe
             fs::rename(tmp_path, target_path);
             res = true;
         })
+        .timeout_max(30)
         .perform_sync();
 
     return res;

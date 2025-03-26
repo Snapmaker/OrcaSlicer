@@ -25,6 +25,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "Bonjour.hpp"
 #include "slic3r/GUI/BonjourDialog.hpp"
+#include "slic3r/GUI/WebPreprintDialog.hpp"
 
 namespace fs = boost::filesystem;
 namespace pt = boost::property_tree;
@@ -374,6 +375,26 @@ wxString Moonraker::get_test_failed_msg(wxString& msg) const
 // Upload a file to the printer
 bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, ErrorFn error_fn, InfoFn info_fn) const
 {
+    if (upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
+        // 创建 promise 和 future 用于线程同步
+        std::promise<bool> promise;
+        auto               future = promise.get_future();
+
+        // 使用 CallAfter 切换到主线程
+        wxTheApp->CallAfter([this, &promise, upload_data]() {
+            GUI::WebPreprintDialog dialog;
+
+            dialog.set_gcode_file_name(upload_data.source_path.string());
+            dialog.run();
+
+            // 设置结果
+            promise.set_value(true);
+        });
+
+        // 等待主线程完成
+        bool flag = future.get();
+    }
+
 #ifndef WIN32
     return upload_inner_with_host(std::move(upload_data), prorgess_fn, error_fn, info_fn);
 #else

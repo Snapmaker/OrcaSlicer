@@ -1120,6 +1120,12 @@ void GUI_App::shutdown()
         delete web_device_dialog;
         web_device_dialog = nullptr;
     }
+
+    if (web_preprint_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web preprint dialog");
+        delete web_preprint_dialog;
+        web_preprint_dialog = nullptr;
+    }
    
 
     if (m_is_recreating_gui) return;

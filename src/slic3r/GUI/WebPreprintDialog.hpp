@@ -21,6 +21,8 @@ public:
 
     void set_gcode_file_name(const std::string& filename);
 
+    void set_display_file_name(const std::string& filename);
+
 private:
     void OnClose(wxCloseEvent& evt);
     void OnNavigationRequest(wxWebViewEvent &evt);
@@ -31,8 +33,9 @@ private:
 
     wxWebView *m_browser;
     wxString m_javascript;
-    wxString m_device_url = "http://localhost:13619/web/flutter_web/index.html?path=discovery";
+    wxString m_prePrint_url = "http://localhost:13619/web/flutter_web/index.html?path=filament_extruder_mapping";
     std::string m_gcode_file_name = "";
+    std::string m_display_file_name = "";
 
     DECLARE_EVENT_TABLE()
 };

@@ -385,6 +385,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
             GUI::WebPreprintDialog dialog;
 
             dialog.set_gcode_file_name(upload_data.source_path.string());
+            dialog.set_display_file_name(upload_data.upload_path.string());
             dialog.run();
 
             // 设置结果

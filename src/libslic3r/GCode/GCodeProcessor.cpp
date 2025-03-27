@@ -1162,6 +1162,8 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
 
 void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
 {
+    m_current_config = config;
+
     m_parser.apply_config(config);
 
     //BBS

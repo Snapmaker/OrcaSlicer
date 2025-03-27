@@ -22,6 +22,7 @@
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
 #include "slic3r/GUI/WebSMUserLoginDialog.hpp"
 #include "slic3r/GUI/WebDeviceDialog.hpp"
+#include "slic3r/GUI/WebPreprintDialog.hpp"
 #include "slic3r/GUI/BindDialog.hpp"
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
@@ -299,6 +300,7 @@ private:
 
     // device dialog
     WebDeviceDialog* web_device_dialog{ nullptr };
+    WebPreprintDialog* web_preprint_dialog{ nullptr };
 
     VersionInfo version_info;
     VersionInfo privacy_version_info;
@@ -313,7 +315,11 @@ private:
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
     HttpServer       m_http_server;
+
+public:
     HttpServer       m_page_http_server;
+    
+private:
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
 
@@ -341,6 +347,8 @@ private:
     void      get_connect_host(std::shared_ptr<PrintHost>& output);
     void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
     wxDialog* get_web_device_dialog() { return web_device_dialog; }
+    void                       set_web_preprint_dialog(WebPreprintDialog* obj) { web_preprint_dialog = obj; }
+    wxDialog*                  get_web_preprint_dialog() { return web_preprint_dialog; }
       //try again when subscription fails
     void            on_start_subscribe_again(std::string dev_id);
     void            check_filaments_in_blacklist(std::string tag_supplier, std::string tag_material, bool& in_blacklist, std::string& action, std::string& info);

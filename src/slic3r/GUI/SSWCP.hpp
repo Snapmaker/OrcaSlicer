@@ -47,6 +47,9 @@ public:
     // Clean up after job completion
     virtual void finish_job();
 
+    // General failure
+    void handle_general_fail();
+
     // Get instance type
     virtual INSTANCE_TYPE getType() { return m_type; }
 
@@ -182,6 +185,7 @@ public:
     void process() override;
 
 private:
+
     // Machine option methods
     void sw_SendGCodes();
     void sw_GetMachineState();
@@ -203,6 +207,11 @@ private:
     void sw_MachineFilesGetDirectory();
     void sw_CameraStartMonitor();
     void sw_CameraStopMonitor();
+
+    // PrePrint
+    void sw_GetFileFilamentMapping();
+    void sw_SetFilamentMappingComplete();
+
 
 private:
     std::thread m_work_thread;  // Worker thread
@@ -233,6 +242,15 @@ public:
 
     // query the info of the machine
     static bool query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, int timeout_second = 5);
+
+    // update the active file name
+    static void update_active_filename(const std::string& filename);
+
+    // update the display name
+    static void update_display_filename(const std::string& display_name);
+
+    // get the active file name
+    static std::string get_active_filename();
     
 private:
     static std::unordered_set<std::string> m_machine_find_cmd_list;     // Machine find commands
@@ -240,6 +258,9 @@ private:
     static std::unordered_set<std::string> m_machine_connect_cmd_list;  // Machine connect commands
     static TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> m_instance_list;  // Active instances
     static constexpr std::chrono::milliseconds DEFAULT_INSTANCE_TIMEOUT{80000}; // Default timeout (8s)
+
+    static std::string m_active_gcode_filename; // name of the file which is pretend to be upload and print
+    static std::string m_display_gcode_filename; // name for display
 }; 
 
 class MachineIPType

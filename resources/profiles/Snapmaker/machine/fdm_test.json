@@ -89,7 +89,6 @@
     "machine_max_speed_z": [
         "20"
     ],
-    "machine_start_gcode": ";===== noozle load line ===============================\nG90\nM83\nSHAPER_Z\nM109 S{nozzle_temperature_initial_layer[initial_extruder]}\nG1 X18.0 Y1.0 Z0.8 F18000;Move to start position\nG1 Z0.2\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y11 E0.700 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y1.5 E0.700\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nM400\nM106 S0 ; turn off fan",
     "machine_unload_filament_time": "28",
     "max_layer_height": [
         "0.28",
@@ -217,5 +216,6 @@
         "270x0",
         "270x268",
         "0x268"
-    ]
+    ],
+    "machine_start_gcode": ";===== noozle load line ===============================\nM140 S{first_layer_bed_temperature[initial_extruder]}\n{if (is_extruder_used[0])}M104 T0 S140{endif}\n{if (is_extruder_used[1])}M104 T1 S140{endif}\n{if (is_extruder_used[2])}M104 T2 S140{endif}\n{if (is_extruder_used[3])}M104 T3 S140{endif}\n\nG28\nT{initial_extruder}\nG90\nM83\nM190 S{first_layer_bed_temperature[initial_extruder]}\nBED_MESH_CALIBRATE\n\n;clean nozzle0\n{if (is_extruder_used[0])}\nT0\nG1 X18.0 Y1.0 Z0.8 F18000;Move to start position\nM109 T0 S{nozzle_temperature_initial_layer[0]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y7.5 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y1.5 E0.700\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n;clean nozzle1\n{if (is_extruder_used[1])}\nT1\nG1 X18.0 Y7.5 Z0.8 F18000;Move to start position\nM109 T1 S{nozzle_temperature_initial_layer[1]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y14 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y8 E0.350\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n;clean nozzle2\n{if (is_extruder_used[2])}\nT2\nG1 X18.0 Y14 Z0.8 F18000;Move to start position\nM109 T2 S{nozzle_temperature_initial_layer[2]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y20.5 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y14.5 E0.350\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n;clean nozzle3\n{if (is_extruder_used[3])}\nT3\nG1 X18.0 Y20.5 Z0.8 F18000;Move to start position\nM109 T3 S{nozzle_temperature_initial_layer[3]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y27 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y21 E0.350\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n\nM400\nM106 S0 ; turn off fan"
 }

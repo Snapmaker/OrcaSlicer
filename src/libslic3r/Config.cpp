@@ -1368,11 +1368,12 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
                     }
                 }
 
-                if (thumbnail_id == 2)
-                    break;
+                /*if (thumbnail_id == 2)
+                    break;*/
             }
         }
 
+        ifs.clear(); // 清除可能的 EOF 标志
         ifs.seekg(0);
 
         while (std::getline(ifs, line)) {

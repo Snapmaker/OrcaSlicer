@@ -1851,17 +1851,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "#F2754E" });
 
-    def           = this->add("thumb0", coFloats);
+    def           = this->add("thumb0", coStrings);
     def->label    = L("small thumb");
     def->tooltip  = L("first small thumb");
     def->mode     = comSimple;
-    def->set_default_value(new ConfigOptionStrings{""});
+    def->set_default_value(new ConfigOptionString{""});
 
-    def          = this->add("thumb1", coFloats);
+    def          = this->add("thumb1", coStrings);
     def->label   = L("big thumb");
     def->tooltip = L("first big thumb");
     def->mode    = comSimple;
-    def->set_default_value(new ConfigOptionStrings{""});
+    def->set_default_value(new ConfigOptionString{""});
 
     // PS
     def = this->add("filament_notes", coStrings);

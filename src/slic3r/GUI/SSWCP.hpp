@@ -251,6 +251,8 @@ public:
 
     // get the active file name
     static std::string get_active_filename();
+
+    static std::string get_display_filename();
     
 private:
     static std::unordered_set<std::string> m_machine_find_cmd_list;     // Machine find commands

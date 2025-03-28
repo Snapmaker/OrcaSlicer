@@ -875,17 +875,45 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             filename = SSWCP::get_active_filename();
         }
 
+        if (filename == "") {
+            handle_general_fail();
+            return;
+        }
+
         json response = json::object();
 
         GCodeProcessor processor;
         processor.process_file(filename.data());
-        auto& result = processor.extract_result();
+        auto& result = processor.result();
         auto& config = processor.current_dynamic_config();
+
+        auto color_to_int = [](const std::string& oriclr) -> int {
+
+            int res = 0;
+            if (oriclr.size() != 7 || oriclr[0] != '#') {
+                return -1;
+            }
+            for (int i = 1; i <= 6; ++i) {
+                if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
+                    res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
+                } else {
+                    res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
+                }
+            }
+
+            return res;
+        };
 
         // filament colour
         if (config.has("filament_colour")) {
             auto filament_color        = config.option<ConfigOptionStrings>("filament_colour")->values;
-            response["filament_color"] = filament_color;
+
+            std::vector<int> number_res(filament_color.size(), 0);
+            for (int i = 0; i < filament_color.size(); ++i) {
+                number_res[i] = color_to_int(filament_color[i]);
+            }
+
+            response["filament_color"] = number_res;
         }
         
 
@@ -910,14 +938,20 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         
 
         // file cover
-        if (config.has("thumb1")) {
-            json file_cover        = json::object();
-            auto file_cover_string = config.option<ConfigOptionString>("thumb1")->value;
-            file_cover["url"]      = "";
-            file_cover["base64"]   = file_cover_string;
+        for (int i = 0; i < 4; ++i) {
+            if (config.has("thumb"+std::to_string(i))) {
+                json file_cover        = json::object();
+                auto file_cover_string = config.option<ConfigOptionString>("thumb" + std::to_string(i))->value;
+                file_cover["url"]      = "";
+                file_cover["base64"]   = file_cover_string;
 
-            response["file_cover"] = file_cover;
+                response["file_cover"] = file_cover;
+            }
         }
+        
+        // file name
+        response["filename"] = SSWCP::get_display_filename();
+
         
 
         m_res_data = response;
@@ -1763,6 +1797,11 @@ void SSWCP::on_webview_delete(wxWebView* view)
     }
 }
 
+std::string SSWCP::get_display_filename()
+{
+    return m_display_gcode_filename;
+}
+
 // get the active filename
 std::string SSWCP::get_active_filename()
 {
@@ -1842,11 +1881,11 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
                                     if (fabs(temp - 0.2) < 1e-6) {
                                         out_nozzle_diameters.push_back("0.2");
                                     } else if (fabs(temp - 0.4) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.2");
+                                        out_nozzle_diameters.push_back("0.4");
                                     } else if (fabs(temp - 0.6) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.2");
+                                        out_nozzle_diameters.push_back("0.6");
                                     } else if (fabs(temp - 0.8) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.2");
+                                        out_nozzle_diameters.push_back("0.8");
                                     }
                                     
                                 } else {

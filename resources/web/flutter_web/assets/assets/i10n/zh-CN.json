@@ -15,5 +15,14 @@
     "Other Machine connect": "其他设备连接",
     "The current device is connected": "当前设备已连接",
     "No Data": "当前无数据",
-    "No device found": "未发现设备"
+    "No device found": "未发现设备",
+    "BED_LEVEL": "热床调平",
+    "FLOW_CALIBRATE": "流量校准",
+    "SHAPER_CALIBRATE": "整形校验",
+    "TIME_LAPSE_CAMERA": "延时摄影",
+    "Print job sent success": "打印任务已发送",
+    "Send": "发送",
+    "Jump": "跳过",
+    "No filament or machine found": "未发现文件或设备",
+    "Sending print job": "正在发送打印任务"
 }

@@ -380,10 +380,10 @@
             'connected': false,
           },
           'A4C0111397B11dddd': {
-            'ip': '172.18.1.9',
+            'ip': '172.18.0.61',
             'port': 1883,
-            'name': 'lava-A4C-BBB',
-            'sn': 'A4C0111397B11BBB',
+            'name': 'lava-12C5C804F3DAB37B-12C',
+            'sn': '12C5C804F3DAB37B',
             'connected': true,
           }
       };
@@ -392,30 +392,28 @@
 
     function getFileFilamentMapping() {
       return {
-        // "filament_color": [0,"#FF000000",16711680,3329433,16711680, "#FFFF3333",16711680,3329433],
-        "filament_color":  [16777088,3684151,8388672,16711680], 
-        "filament_type": ["PLA","PAL","PAL","PLA"],
-        "filament_used": [1.002, 1.150, 0, 1.2],
+        "filament_color":  [16777088,'#808080',0,16711680,'#808080', '#FF0000', '#00FF00', '#808080'], 
+        "filament_type": ["PLA","PLET","PAL","PLA","PLET","PLA","PLA","PLA"],
+        "filament_used": [1.002, 1.150, 0, 1.2, 1.002, 1.002, 11.1, 11.05],
         "file_cover": {
           "url": null,
           "base64": "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id3BFStGOX+VV91D32a7hSI9efvtldnYsaaDufbcc/NMC0W68+ij0+wO5t3kyVe2/frX9yZ1YYlUOsePt2UTJ15hdzDv4v1Yr712R1IXl0il853vLMjOO+9DQwvkX1vbjZ2/+93apC4wkUolFttbW8fuK5CGyy4bNPL73zfKksZMjK6uuOK8cQXSsW7djZ3WsqTREmtXRlcJMsqSRszzz88zukpVjLKcy5JGyS9/ucboKmUxytqzZ3725z87/S71n+3bZ2SXXPLPIwuka8mS67e89daKpC48kTPN668vzZYtG9lZIH07d87usgAv9ZpYaP/c58Y71V4vbr75spbvfneRqaHUZb7+9dmeGaw3d989psPUUOotL720OFu1ykJ73YlHdnbsmNl19Og9SV2QIqdK7Ao+9NAkj+DUq2uvvXBcnFPx2I6knnj8ZuvWqdmwYc5c1bXYNbSeJakn1q1aWuwKNoQ4ULpv37KkLlCRUjo7F1q3aiSxnvXEEzO73nzTIryklR/9aHnxCIMDog0mTsFHaf3853cndcFK4+add1qLi+zWrRpULMJ/85vzMs8bSt5T2hFUVg0uXqkcpXXkiOMOks+UymrWrI9sKUAcKlVakseUysqOIH0oLclbSmVlR5CTKpWWNS2pdXrKaqKyon933TWmY9eu2zK7h1KrxNEFZUXZFi++fsuuXXOyN99cnvnqe6lmXnzx9uzLX56YLVhwna+Yp3xjxgxujtKKC0hpSTUSz7lGWd1006VtBThT11xz4bjt22d0xaMQ77+/LqmLX9JJvIDvqadmFcvKF0hwTi69dNDIzZsnH3/uubnZoUMW46WyicX1KKrPfvaWLmVFRcSzh7EY//TTc4oLoqaIUonE19BFWcU33XinFRUXi/FRWt/73u3Zb3/rnVpydonvFyhNAZ1eZ0DFutbjj0/v2r37tuxnP7srqRtFap833lheLCrrVVRNrGutXDm6o6OjOXvhhUXZH/5gQV76T7whNHYBv/QlU0BqZNKkYW2PPTa969lne0Zb1rbkZIlRVRRV5NZbr2gvQK3EaOveez/eWRptWduSUt57797sySdnnRhVeekeuVEabUVxvfzyYtPEBk5M//bsWZB98Yu3FsvKQVByKUZbd945umPnztnZM8/MyX76U9PERssbb7QUiypyxx0jOq1VkXtRXBs3jjsU32wSj/f0FNf9Sd14cmbZt68le/TRacWiuu++jx+yA0hympoubemeEhyP4oqT8j/5yUrFVYdFtW3btOwLX+gZVY0ZM7ilACmbOHFY21e/OrUrDgsqrvorqojdP+pO90VdLK7YOfrGN5qzt95aobgSL6oJExQVdS6Ka+vWnuKKXcVXX12SHTt2X1I3biPlvff+O/v2t+dnn//8hGIUFQ0piuuBB/7z0I4dM7MnnphZ3Ap/+23Txbzkxz++s/gDpVRU69c3HW9qGuKIAo1tyJB/Gbl69Q2dW7ZM6Yri2rnTqKtW+cUvVmff+tb87MEHJ5woqnnzPtpx+eV2/aCPCy748NDuqUZb901yPIor8vzz/1V8pc1vfqO8BrKkXnllSbZ165RiUZUyYcLl7eed949DC0D/YtTV0jKyI0ZdX/vazCwSD8+Wysu08dxy+PDq4ii2exMk27Rp/InMnWs0BefkE58Y0rJq1Q2djzwS5TUji8TZrnh28cCBu5VXmYlvQorP7OGHJ/UZSc2de23HqFHOT0HFjRjxb83Llo3oeOSRyX3Ka8+e+cXR169+dY8C+2sOHGjNXnvtjuIRktjZK61JRWIkNXq0koKqufrqC8aNH39526c//clDpfIqFVhMH3/wg6XFEVgjrH/FFzm8805r8bXD8VbY0utcSuel2tvHdcVRhMGDvTEBciFGXzNmXN3eu8C2b+/JU0/NLp4lihLbv39l0utg8cUNcfzj9deXZs88c9uJN3iWEkW1ceMtXXH6vKnJmxIgCVFgpRFYTCFL5dU7MRqJIoubf//+O4tTyiiz3/9+Xc0KLUZLR46syQ4ebC0W7MsvL8mefXZusYBj/Sny0EMfJEpq/vzrOiZOvKL9uusuai4A6bvggg8NLZXY0qUjOnoX2eOPT/+7xEn8p59uznbvnpvt3bswe+mlxcUpVyQOVUbiTavvvrsqO3r0npMmvhqtlHhrRSQeSfrhD5cVd+liETyer4zs2DEr6/79nMjmzX0TRfWpT918fMGC4R2TJg1rHzv2kpYC0Fh6iuziYpFNn35Ve5RZdzEc2rx5UlcU12OPfZB4hcqpEs/YlRLHBXpn69YP8pWvTOmTLVs+SBTV/ff/x6FFi4Z3TJ48rD2Kafjwi5rPP997pYAzEKV2/fUXN99yy9C2yLRpV7X/baZO7Z0rT2TKlL752Mf+vSVy5ZXnj1NGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAbv0/PiKpXulmiAgAAAAASUVORK5CYII=",
         },
         "filename": "test.gocde",
         "preferences": {
-          "bed_level": 0,
+          "bed_level": 1,
           "flow_calibrate":0,
           "shaper_calibrate":0,
           "time_lapse_camera":0,
-          "save":1,
         }
       }
     }
     //sw_GetMachineFilamentMapping
     function getMachineFilamentMapping() {
       return {
-        "filament_color": [16777088,3684151,8388672,16711680,16777088,3684151,8388672,16711680],
-        "filament_type": ["PLA","PAL","PLA","PLA","NONE","NONE","NONE","PLA"],
-        "extruder_map_table": [0, 1, 2, 3,4,5,6,7],
+        "filament_color": [16777088,8388672,'#FF808080','#FF0000',16777084,16777088,'#838867',16711680],
+        "filament_type": ["PLA","PLA","PLET","PLA","PLA","PLET","NONE","PLA"],
+        "extruder_map_table": [0, 1, 2, 3, 4, 5, 6, 7],
       }
     }
     function simulateResponse(jsonMessage) {
@@ -474,16 +472,16 @@
                   };
         } else if(header['cmd'] =='sw_GetConnectedMachine'){
           result = {
-            "dev_id":"172.18.1.43",
-            "dev_name":"172.18.1.43",
+            "dev_id":"172.18.0.61",
+            "dev_name":"172.18.0.61",
             "img":"http://localhost:13619/profiles/Snapmaker/Snapmaker A250 BKit_cover.png",
-            "ip":"172.18.1.34",
+            "ip":"172.18.0.61",
             "model_name":"Snapmaker A250 BKit",
             "nozzle_sizes":["0.4"],
             "preset_name":"Snapmaker A250 BKit (0.4 nozzle)",
-            "sn":"172.18.1.34",
+            "sn":"12C5C804F3DAB37B",
             "port": 1883,
-            "name": "Snapmaker A250 BKit",
+            "name": "Snapmaker 0.61",
             "connected":true,
           } 
           var mokeData={

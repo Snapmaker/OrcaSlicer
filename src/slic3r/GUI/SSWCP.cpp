@@ -283,7 +283,14 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                             return;
                                          }
                                          json machine_data;
-                                         machine_data["name"] = reply.service_name;
+
+                                         std::string hostname = reply.hostname;
+                                         size_t      pos      = hostname.find(".local");
+                                         if (pos != std::string::npos) {
+                                             hostname = hostname.substr(0, pos);
+                                         }
+
+                                         machine_data["name"] = hostname != "" ? hostname : reply.service_name;
                                          // machine_data["hostname"] = reply.hostname;
                                          machine_data["ip"]       = reply.ip.to_string();
                                          machine_data["port"]     = reply.port;
@@ -369,34 +376,53 @@ void SSWCP_MachineFind_Instance::sw_StopMachineFind()
 
 void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
 {
-    for (const auto& [key, value] : machine_info.items()) {
-        std::string ip        = value["ip"].get<std::string>();
-        bool        need_send = false;
-        m_machine_list_mtx.lock();
-        if (!m_machine_list.count(ip)) {
-            m_machine_list[ip] = machine_info;
-            m_machine_list_mtx.unlock();
+    try {
+        for (const auto& [key, value] : machine_info.items()) {
+            std::string sn        = value["sn"].get<std::string>();
+            bool        need_send = false;
+            m_machine_list_mtx.lock();
+            if (!m_machine_list.count(sn)) {
+                m_machine_list[sn] = machine_info;
+                m_machine_list_mtx.unlock();
 
-            m_res_data[key] = value;
-            need_send = true;
-        } else {
-            m_machine_list_mtx.unlock();
-        }
-        
+                m_res_data[key] = value;
+                need_send       = true;
+            } else {
+                m_machine_list_mtx.unlock();
+            }
 
-        m_res_data[key]["connected"] = false;
+            m_res_data[key]["connected"] = false;
 
-        DeviceInfo info;
-        if (wxGetApp().app_config->get_device_info(ip, info) && info.connected) {
-            m_res_data[key]["connected"] = true;
-        }
+            DeviceInfo info;
+            if (wxGetApp().app_config->get_device_info(sn, info)) {
+                if (info.connected) {
+                    m_res_data[key]["connected"] = true;
+                }
+                std::string ip = value["ip"].get<std::string>();
+                if (info.ip != ip) {
+                    info.ip = ip;
+                    wxGetApp().app_config->save_device_info(info);
 
-        if (need_send) {
-            send_to_js();
+                    auto devices = wxGetApp().app_config->get_devices();
+
+                    json param;
+                    param["command"]       = "local_devices_arrived";
+                    param["sequece_id"]    = "10001";
+                    param["data"]          = devices;
+                    std::string logout_cmd = param.dump();
+                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                    GUI::wxGetApp().run_script(strJS);
+                }
+            }
+
+            if (need_send) {
+                send_to_js();
+            }
         }
     }
-    
-    
+    catch (std::exception& e) {
+
+    }
 }
 
 void SSWCP_MachineFind_Instance::onOneEngineEnd()
@@ -1315,6 +1341,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     info.protocol     = int(PrintHostType::htMoonRaker_mqtt);
                                     if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                         info.sn = connect_params["sn"].get<std::string>();
+                                        info.dev_name = info.sn != "" ? info.sn : info.dev_name;
+                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
                                     }
 
                                     size_t vendor_pos = machine_type.find_first_of(" ");
@@ -1419,6 +1447,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
                                                 if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                     info.sn = connect_params["sn"].get<std::string>();
+                                                    info.dev_name = info.sn != "" ? info.sn : info.dev_name;
+                                                    info.dev_id = info.sn != "" ? info.sn : info.dev_name;
                                                 }
 
                                                 size_t vendor_pos = machine_type.find_first_of(" ");
@@ -1458,6 +1488,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
                                                 if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                     info.sn = connect_params["sn"].get<std::string>();
+                                                    info.dev_name = info.sn != "" ? info.sn : info.dev_name;
+                                                    info.dev_id = info.sn != "" ? info.sn : info.dev_name;
                                                 }
                                                 wxGetApp().app_config->save_device_info(info);
                                                 MessageDialog msg_window(

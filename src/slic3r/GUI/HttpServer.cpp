@@ -142,22 +142,86 @@ void HttpServer::IOServer::stop_all()
     sessions.clear();
 }
 
+HttpServer::IOServer::IOServer(HttpServer& server) 
+    : server(server)
+    , acceptor(io_service)
+{
+    boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
+    acceptor.open(endpoint.protocol());
+    acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+    acceptor.bind(endpoint);
+}
 
 HttpServer::HttpServer(boost::asio::ip::port_type port) : port(port) {}
+
+bool HttpServer::is_port_available(boost::asio::ip::port_type port) {
+    try {
+        boost::asio::io_service io_service;
+        boost::asio::ip::tcp::acceptor acceptor(io_service);
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), port);
+        
+        acceptor.open(endpoint.protocol());
+        acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        acceptor.bind(endpoint);
+        acceptor.close();
+        return true;
+    }
+    catch (const boost::system::system_error&) {
+        return false;
+    }
+}
+
+boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port_type start_port) {
+    // 尝试从起始端口开始查找可用端口
+    for (boost::asio::ip::port_type p = start_port; p < start_port + 1000; ++p) {
+        if (is_port_available(p)) {
+            return p;
+        }
+    }
+    throw std::runtime_error("No available ports found");
+}
 
 void HttpServer::start()
 {
     BOOST_LOG_TRIVIAL(info) << "start_http_service...";
-    start_http_server    = true;
-    m_http_server_thread = create_thread([this] {
-        set_current_thread_name("http_server");
-        server_ = std::make_unique<IOServer>(*this);
-        server_->acceptor.listen();
+    
+    try {
+        // 如果指定端口不可用，查找下一个可用端口
+        if (!is_port_available(port)) {
+            auto new_port = find_available_port(port + 1);
+            BOOST_LOG_TRIVIAL(info) << "Original port " << port << " is in use, switching to port " << new_port;
+            port = new_port;
+        }
 
-        server_->do_accept();
+        start_http_server = true;
+        m_http_server_thread = create_thread([this] {
+            try {
+                set_current_thread_name("http_server");
+                server_ = std::make_unique<IOServer>(*this);
+                server_->acceptor.listen();
+                server_->do_accept();
+                server_->io_service.run();
+            }
+            catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "HTTP server error: " << e.what();
+                start_http_server = false;
+            }
+        });
 
-        server_->io_service.run();
-    });
+        // 等待服务器启动
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        if (!start_http_server) {
+            throw std::runtime_error("Failed to start HTTP server");
+        }
+        
+        BOOST_LOG_TRIVIAL(info) << "HTTP server started successfully on port " << port;
+    }
+    catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
+        start_http_server = false;
+        throw;
+    }
 }
 
 void HttpServer::stop()

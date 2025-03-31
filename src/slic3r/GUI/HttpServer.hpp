@@ -74,6 +74,10 @@ class HttpServer
 {
     boost::asio::ip::port_type port;
 
+    // 添加辅助函数声明
+    static bool is_port_available(boost::asio::ip::port_type port);
+    boost::asio::ip::port_type find_available_port(boost::asio::ip::port_type start_port);
+
 public:
     class Response
     {
@@ -127,7 +131,13 @@ public:
     void start();
     void stop();
     void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& m_request_handler);
-    void setPort(boost::asio::ip::port_type new_port) { port = new_port; }
+    void setPort(boost::asio::ip::port_type new_port) { 
+        if (!start_http_server) {  // 只有在服务器未启动时才允许修改端口
+            port = new_port; 
+        }
+    }
+
+    boost::asio::ip::port_type get_port() const { return port; }
 
     static std::string map_url_to_file_path(const std::string& url);
 
@@ -140,14 +150,14 @@ private:
     {
     public:
         HttpServer&                        server;
-        boost::asio::io_service            io_service;
-        boost::asio::ip::tcp::acceptor     acceptor;
+        boost::asio::io_service           io_service;
+        boost::asio::ip::tcp::acceptor    acceptor;
         std::set<std::shared_ptr<session>> sessions;
 
-        IOServer(HttpServer& server) : server(server), acceptor(io_service, {boost::asio::ip::tcp::v4(), server.port}) {}
+        // 只声明构造函数，不在头文件中定义
+        IOServer(HttpServer& server);
 
         void do_accept();
-
         void start(std::shared_ptr<session> session);
         void stop(std::shared_ptr<session> session);
         void stop_all();

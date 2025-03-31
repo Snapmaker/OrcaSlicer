@@ -386,14 +386,18 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
 
             dialog.set_gcode_file_name(upload_data.source_path.string());
             dialog.set_display_file_name(upload_data.upload_path.string());
-            dialog.run();
+            bool res = dialog.run();
 
             // 设置结果
-            promise.set_value(true);
+            promise.set_value(res);
         });
 
         // 等待主线程完成
         bool flag = future.get();
+
+        if (!flag) {
+            return false;
+        }
     }
 
 #ifndef WIN32

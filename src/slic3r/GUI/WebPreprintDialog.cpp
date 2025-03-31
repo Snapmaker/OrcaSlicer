@@ -5,6 +5,7 @@
 #include "SSWCP.hpp"
 #include <wx/sizer.h>
 #include <slic3r/GUI/Widgets/WebView.hpp>
+#include "NotificationManager.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -13,7 +14,7 @@ BEGIN_EVENT_TABLE(WebPreprintDialog, wxDialog)
 END_EVENT_TABLE()
 
 WebPreprintDialog::WebPreprintDialog()
-    : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Add Device"))
+    : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Print preset"))
 {
     SetBackgroundColour(*wxWHITE);
 
@@ -140,6 +141,8 @@ void WebPreprintDialog::OnScriptMessage(wxWebViewEvent &evt)
 
 void WebPreprintDialog::OnClose(wxCloseEvent& evt)
 {
+    auto noti_manager = wxGetApp().mainframe->plater()->get_notification_manager();
+    noti_manager->close_notification_of_type(NotificationType::PrintHostUpload);
     evt.Skip();
 }
 

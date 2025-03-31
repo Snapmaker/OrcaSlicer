@@ -105,6 +105,7 @@ private:
     std::function<void()> connection_failure_callback_;  // 连接失败的回调函数
 
     std::atomic<bool> is_reconnecting; // 是否正在调试重连
+    std::atomic<int> pending_reconnect_checks;  // 添加重连检查计数器
 
     // 添加新的私有方法来处理重新订阅
     void resubscribe_topics();

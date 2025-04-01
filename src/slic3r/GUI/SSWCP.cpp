@@ -403,15 +403,19 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
                     info.ip = ip;
                     wxGetApp().app_config->save_device_info(info);
 
-                    auto devices = wxGetApp().app_config->get_devices();
+                    
 
-                    json param;
-                    param["command"]       = "local_devices_arrived";
-                    param["sequece_id"]    = "10001";
-                    param["data"]          = devices;
-                    std::string logout_cmd = param.dump();
-                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                    GUI::wxGetApp().run_script(strJS);
+                    wxGetApp().CallAfter([]() {
+                        auto devices = wxGetApp().app_config->get_devices();
+                        json param;
+                        param["command"]       = "local_devices_arrived";
+                        param["sequece_id"]    = "10001";
+                        param["data"]          = devices;
+                        std::string logout_cmd = param.dump();
+                        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                        GUI::wxGetApp().run_script(strJS);
+                    });
+                    
                 }
             }
 

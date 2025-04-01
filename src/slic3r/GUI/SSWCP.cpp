@@ -485,6 +485,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_SetFilamentMappingComplete();
     } else if (m_cmd == "sw_GetFileFilamentMapping") {
         sw_GetFileFilamentMapping();
+    } else if(m_cmd == "sw_DownloadMachineFile"){
+        sw_DownloadMachineFile();
     }
     
     else {
@@ -887,6 +889,108 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
             handle_general_fail();
         }
 
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
+    try {
+        if (!m_param_data.count("url")) {
+            handle_general_fail();
+            return;
+        }
+
+        std::string download_url = wxString(m_param_data["url"].get<std::string>()).ToUTF8();
+        if (!m_param_data.count("url")) {
+            handle_general_fail();
+            return;
+        }
+
+        // 从 URL 获取默认文件名（如果没有提供）
+        std::string filename   = "";
+        if (!m_param_data.count("filename")) {
+            size_t last_slash = download_url.find_last_of("/");
+            if (last_slash != std::string::npos) {
+                filename = wxString(download_url.substr(last_slash + 1)).ToUTF8();
+            }
+        } else {
+            filename = wxString(m_param_data["filename"].get<std::string>()).ToUTF8();
+        }
+        
+
+        // 获取文件扩展名
+        std::string extension;
+        size_t      dot_pos = filename.find_last_of(".");
+        if (dot_pos != std::string::npos) {
+            extension = filename.substr(dot_pos + 1);
+        }
+
+        // 构建文件类型过滤器
+        wxString wildcard;
+        if (!extension.empty()) {
+            // 例如: "PNG files (*.png)|*.png|All files (*.*)|*.*"
+            wildcard = wxString::Format("%s files (*.%s)|*.%s|All files (*.*)|*.*", extension, extension, extension);
+        } else {
+            wildcard = "All files (*.*)|*.*";
+        }
+
+        wxGetApp().CallAfter([filename, extension, wildcard, this, download_url]() {
+            // 创建保存文件对话框
+            wxFileDialog saveFileDialog(nullptr,
+                                        L("Save file"),                     // 标题
+                                        "",                                 // 默认路径
+                                        filename,                           // 默认文件名
+                                        wildcard,                           // 文件类型过滤器
+                                        wxFD_SAVE | wxFD_OVERWRITE_PROMPT); // 样式
+
+            if (saveFileDialog.ShowModal() == wxID_CANCEL) {
+                // 用户取消下载
+                handle_general_fail();
+                return;
+            }
+
+            // 获取选择的保存路径
+            wxString path = saveFileDialog.GetPath();
+
+            auto   final_url    = Http::encode_url_path(download_url);
+            
+
+            Http http_object = Http::get(final_url);
+            http_object
+                .on_error([=](std::string body, std::string error, unsigned status) {
+                    handle_general_fail();
+                    wxGetApp().CallAfter([filename]() {
+                        MessageDialog msg_window(nullptr, " " + filename + _L(" download failed") + "\n", _L("DownLoad Failed"),
+                                                 wxICON_QUESTION | wxOK);
+                        msg_window.ShowModal();
+                    });
+                })
+                .on_complete([=](std::string body, unsigned) {
+                    try {
+                        boost::nowide::ofstream file(path.c_str(), std::ios::binary);
+                        if (!file.is_open()) {
+                            BOOST_LOG_TRIVIAL(error) << "Failed to open file for writing: " << path;
+                            return false;
+                        }
+
+                        file.write(body.c_str(), body.size());
+                        file.close();
+
+                        wxGetApp().CallAfter([=]() {
+                            MessageDialog msg_window(nullptr, " " + filename + _L(" has already been downloaded") + "\n",
+                                                     _L("DownLoad Successfully"), wxICON_QUESTION | wxOK);
+                            msg_window.ShowModal();
+                        });
+                    } catch (std::exception& e) {
+                        handle_general_fail();
+                    }
+                })
+                .on_progress([&](Http::Progress progress, bool& cancel) {
+
+                })
+                .perform();
+        });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -1672,7 +1776,8 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_CameraStartMonitor",
     "sw_CameraStopMonitor",
     "sw_GetFileFilamentMapping",
-    "sw_SetFilamentMappingComplete"
+    "sw_SetFilamentMappingComplete",
+    "sw_DownloadMachineFile"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

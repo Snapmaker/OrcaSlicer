@@ -212,6 +212,9 @@ private:
     void sw_GetFileFilamentMapping();
     void sw_SetFilamentMappingComplete();
 
+    // Download machine file
+    void sw_DownloadMachineFile();
+
 
 private:
     std::thread m_work_thread;  // Worker thread

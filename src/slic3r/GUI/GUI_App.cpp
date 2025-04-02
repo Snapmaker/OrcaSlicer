@@ -764,6 +764,8 @@ static void generic_exception_handle()
 //#endif
 }
 
+std::atomic<bool> GUI_App::m_app_alive{true};
+
 void GUI_App::toggle_show_gcode_window()
 {
     m_show_gcode_window = !m_show_gcode_window;
@@ -1830,6 +1832,8 @@ void GUI_App::init_networking_callbacks()
 
 GUI_App::~GUI_App()
 {
+    GUI_App::m_app_alive.store(false);
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy app_config");
@@ -2693,7 +2697,70 @@ bool GUI_App::on_init_inner()
                        "The Snapmaker Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker Orca has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
+
+
+    //启动定时器，轮询进行机器发现
+    m_machine_find_timer = new wxTimer(this, m_machine_find_id);
+    
+    Bind(wxEVT_TIMER, [this](wxTimerEvent& event) {
+            if (!m_machine_find_engine  && GUI_App::m_app_alive.load()) {
+            machine_find();
+        }
+    }, m_machine_find_timer->GetId());
+    m_machine_find_timer->Start(5000);
+
     return true;
+}
+
+void GUI_App::machine_find()
+{
+    std::vector<std::string> mdns_service_names;
+
+    mdns_service_names.push_back("snapmaker");
+
+    Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type"};
+    std::string      unique_key = "sn";
+
+    m_machine_find_engine = Bonjour("snapmaker")
+                                .set_txt_keys(std::move(txt_keys))
+                                .set_retries(3)
+                                .set_timeout(10)
+                                .on_reply([this](BonjourReply&& reply) {
+                                    if (!GUI_App::m_app_alive.load())
+                                        return;
+                                    std::string hostname = reply.hostname;
+                                    size_t      pos      = hostname.find(".local");
+                                    if (pos != std::string::npos) {
+                                        hostname = hostname.substr(0, pos);
+                                    }
+                                    std::string ip = reply.ip.to_string();
+
+                                    if (reply.txt_data.count("sn")) {
+                                        std::string sn = reply.txt_data["sn"];
+                                        DeviceInfo  info;
+                                        if (app_config->get_device_info(sn, info)) {
+                                            info.ip = ip;
+                                            app_config->save_device_info(info);
+
+                                            this->CallAfter([this]() {
+                                                auto devices = app_config->get_devices();
+                                                json param;
+                                                param["command"]       = "local_devices_arrived";
+                                                param["sequece_id"]    = "10001";
+                                                param["data"]          = devices;
+                                                std::string logout_cmd = param.dump();
+                                                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                                                GUI::wxGetApp().run_script(strJS);
+                                            });
+                                        }
+                                    }
+                                })
+                                .on_complete([this]() {
+                                    if (!GUI_App::m_app_alive.load())
+                                        return;
+                                    reset_machine_find_engine();
+                                })
+                                .lookup();
 }
 
 void GUI_App::copy_network_if_available()

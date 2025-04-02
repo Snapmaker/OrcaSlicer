@@ -28,6 +28,7 @@
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "slic3r/Utils/Bonjour.hpp"
 
 #include <mutex>
 #include <stack>
@@ -230,12 +231,16 @@ public:
         GCodeViewer
     };
 
+    static std::atomic<bool> m_app_alive; // 标记应用是否存活
+
 private:
     bool            m_initialized { false };
     bool            m_post_initialized { false };
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
+
+    
 #ifdef __linux__
     bool            m_opengl_initialized{ false };
 #endif
@@ -328,6 +333,10 @@ private:
     DynamicPrintConfig              m_host_config;
     std::mutex                 m_host_cfg_mtx;
 
+    wxTimer* m_machine_find_timer = nullptr;
+    std::shared_ptr<Bonjour> m_machine_find_engine = nullptr;
+    const int                m_machine_find_id     = 10086;
+
   public:
     DynamicPrintConfig*             get_host_config() {
         DynamicPrintConfig* res = nullptr;
@@ -337,6 +346,8 @@ private:
 
         return res;
     }
+
+    void reset_machine_find_engine() { m_machine_find_engine = nullptr; }
 
     void                       set_host_config(const DynamicPrintConfig& config)
     {
@@ -365,6 +376,7 @@ private:
     //explicit GUI_App(EAppMode mode = EAppMode::Editor);
     ~GUI_App() override;
 
+    void                   machine_find();
     void show_message_box(std::string msg) { wxMessageBox(msg); }
     EAppMode get_app_mode() const { return m_app_mode; }
     Slic3r::DeviceManager* getDeviceManager() { return m_device_manager; }

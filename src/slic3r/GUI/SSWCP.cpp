@@ -1016,6 +1016,12 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
         json response = json::object();
 
+        // 检查文件是否存在且可读
+        if (!boost::filesystem::exists(filename) || !boost::filesystem::is_regular_file(filename)) {
+            handle_general_fail();
+            return;
+        }
+
         GCodeProcessor processor;
         processor.process_file(filename.data());
         auto& result = processor.result();
@@ -1067,21 +1073,62 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 filament_used_g[pr.first] = filament_density[pr.first] * pr.second * 0.001;
             }
 
-            response["filament_used"] = filament_used_g;
+            response["filament_weight"] = filament_used_g;
         }
         
 
         // file cover
-        for (int i = 0; i < 4; ++i) {
-            if (config.has("thumb"+std::to_string(i))) {
-                json file_cover        = json::object();
-                auto file_cover_string = config.option<ConfigOptionString>("thumb" + std::to_string(i))->value;
-                file_cover["url"]      = "";
-                file_cover["base64"]   = file_cover_string;
+        json thumbnails = json::array();
+        int         thumbnail_count     = 0;
+        if (config.has("thumbnails")) {
+            std::string thumbnails_describe = config.option<ConfigOptionString>("thumbnails")->value;
+            std::vector<std::pair<double, double>> thumbnails_size;
 
-                response["file_cover"] = file_cover;
+            std::vector<std::string> temp;
+            do{
+                size_t pos = thumbnails_describe.find(", ");
+                std::string tmp = "";
+                if (pos != std::string::npos) {
+                    tmp     = thumbnails_describe.substr(0, pos);
+                    thumbnails_describe = thumbnails_describe.substr(pos + 2);
+                } else {
+                    tmp = thumbnails_describe;
+                    thumbnails_describe = "";
+                }
+                size_t end_tail_pos = tmp.find("/");
+                if (end_tail_pos == std::string::npos) {
+                    break;
+                }
+
+                tmp                    = tmp.substr(0, end_tail_pos);
+                std::string str_width  = tmp.substr(0, tmp.find("x"));
+                std::string str_height = tmp.substr(tmp.find("x") + 1);
+                thumbnails_size.push_back({atof(str_width.c_str()), atof(str_height.c_str())});
+                
+
+            } while (thumbnails_describe != "");
+
+            thumbnail_count = thumbnails_size.size();
+
+            for (int i = 0; i < thumbnail_count; ++i) {
+                if (config.has("thumb" + std::to_string(i))) {
+                    json thumbnail        = json::object();
+                    auto thumbnail_string = "data:image/png;base64" + config.option<ConfigOptionString>("thumb" + std::to_string(i))->value;
+                    thumbnail["url"]      = thumbnail_string;
+                    thumbnail["width"]    = thumbnails_size[i].first;
+                    thumbnail["height"]   = thumbnails_size[i].second;
+
+                    thumbnails.push_back(thumbnail);
+
+                } else {
+                    break;
+                }
             }
         }
+        
+        response["thumbnails"] = thumbnails;
+
+        
         
         // file name
         response["filename"] = SSWCP::get_display_filename();
@@ -1423,6 +1470,10 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         MessageDialog msg_window(nullptr, ip + " " + _L("connected unseccessfully !") + "\n", _L("Failed"),
                                                                  wxICON_QUESTION | wxOK);
                                         msg_window.ShowModal();
+                                        std::shared_ptr<PrintHost> host = nullptr;
+                                        wxGetApp().get_connect_host(host);
+                                        wxString msg = "";
+                                        host->disconnect(msg, {});
                                     });
 
                                     self->m_status = 1;

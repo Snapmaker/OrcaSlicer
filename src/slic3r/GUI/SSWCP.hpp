@@ -215,6 +215,9 @@ private:
     // Download machine file
     void sw_DownloadMachineFile();
 
+    // upload file to machine
+    void sw_UploadFiletoMachine();
+
 
 private:
     std::thread m_work_thread;  // Worker thread

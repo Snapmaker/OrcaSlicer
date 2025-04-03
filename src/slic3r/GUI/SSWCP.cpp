@@ -491,6 +491,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_GetFileFilamentMapping();
     } else if(m_cmd == "sw_DownloadMachineFile"){
         sw_DownloadMachineFile();
+    } else if (m_cmd == "sw_UploadFiletoMachine") {
+        sw_UploadFiletoMachine();
     }
     
     else {
@@ -898,6 +900,80 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
     }
 }
 
+void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
+    try {
+        if (!m_param_data.count("url")) {
+            handle_general_fail();
+            return;
+        }
+
+        std::string upload_url = wxString(m_param_data["url"].get<std::string>()).ToUTF8();
+
+        wxString wildcard = "All files (*.*)|*.*";
+
+        wxGetApp().CallAfter([wildcard, this, upload_url]() {
+            // 创建选择文件对话框
+            wxFileDialog picFileDialog(nullptr,
+                                        L("select file"),                     // 标题
+                                        "",                                 // 默认路径
+                                        "",                                  // 默认文件名
+                                        wildcard,                           // 文件类型过滤器
+                                        wxFD_OPEN | wxFD_OVERWRITE_PROMPT); // 样式
+
+            if (picFileDialog.ShowModal() == wxID_CANCEL) {
+                // 用户取消上传
+                handle_general_fail();
+                return;
+            }
+
+            // 获取选择的保存路径
+            wxString filepath     = picFileDialog.GetPath();
+            wxString filename = picFileDialog.GetFilename();
+            std::string tmp_url  = upload_url;
+
+            auto final_url = Http::encode_url_path(tmp_url);
+
+            Http http_object = Http::post(final_url);
+            http_object
+                .form_add("print", "false")
+                .form_add_file("file", std::string(filepath.ToUTF8()), std::string(filename.ToUTF8()))
+                .on_error([=](std::string body, std::string error, unsigned status) {
+                    handle_general_fail();
+                    wxGetApp().CallAfter([filename]() {
+                        MessageDialog msg_window(nullptr, " " + filename + _L(" upload failed") + "\n", _L("UpLoad Failed"),
+                                                 wxICON_QUESTION | wxOK);
+                        msg_window.ShowModal();
+                    });
+                })
+                .on_complete([=](std::string body, unsigned) {
+                    try {
+                        wxGetApp().CallAfter([=]() {
+                            json response;
+                            response["filename"] = std::string(filename.ToUTF8());
+                            m_res_data           = response;
+                            send_to_js();
+                            
+
+                            MessageDialog msg_window(nullptr, " " + filename + _L(" has already been uploaded") + "\n",
+                                                     _L("UpLoad Successfully"), wxICON_QUESTION | wxOK);
+                            msg_window.ShowModal();
+                            finish_job();
+                        });
+                    } catch (std::exception& e) {
+                        handle_general_fail();
+                    }
+                })
+                .on_progress([&](Http::Progress progress, bool& cancel) {
+
+                })
+                .perform();
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
     try {
         if (!m_param_data.count("url")) {
@@ -906,10 +982,6 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
         }
 
         std::string download_url = wxString(m_param_data["url"].get<std::string>()).ToUTF8();
-        if (!m_param_data.count("url")) {
-            handle_general_fail();
-            return;
-        }
 
         // 从 URL 获取默认文件名（如果没有提供）
         std::string filename   = "";
@@ -1113,7 +1185,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             for (int i = 0; i < thumbnail_count; ++i) {
                 if (config.has("thumb" + std::to_string(i))) {
                     json thumbnail        = json::object();
-                    auto thumbnail_string = "data:image/png;base64" + config.option<ConfigOptionString>("thumb" + std::to_string(i))->value;
+                    auto thumbnail_string = "data:image/png;base64," + config.option<ConfigOptionString>("thumb" + std::to_string(i))->value;
                     thumbnail["url"]      = thumbnail_string;
                     thumbnail["width"]    = thumbnails_size[i].first;
                     thumbnail["height"]   = thumbnails_size[i].second;
@@ -1832,7 +1904,8 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_CameraStopMonitor",
     "sw_GetFileFilamentMapping",
     "sw_SetFilamentMappingComplete",
-    "sw_DownloadMachineFile"
+    "sw_DownloadMachineFile",
+    "sw_UploadFiletoMachine"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

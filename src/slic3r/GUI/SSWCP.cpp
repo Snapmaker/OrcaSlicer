@@ -1047,7 +1047,7 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
                         boost::nowide::ofstream file(path.c_str(), std::ios::binary);
                         if (!file.is_open()) {
                             BOOST_LOG_TRIVIAL(error) << "Failed to open file for writing: " << path;
-                            return false;
+                            return;
                         }
 
                         file.write(body.c_str(), body.size());

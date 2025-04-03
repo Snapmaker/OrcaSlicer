@@ -907,7 +907,7 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
             return;
         }
 
-        std::string upload_url = wxString(m_param_data["url"].get<std::string>()).ToUTF8();
+        std::string upload_url = std::string(wxString(m_param_data["url"].get<std::string>()).ToUTF8());
 
         wxString wildcard = "All files (*.*)|*.*";
 
@@ -981,7 +981,7 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
             return;
         }
 
-        std::string download_url = wxString(m_param_data["url"].get<std::string>()).ToUTF8();
+        std::string download_url = std::string(wxString(m_param_data["url"].get<std::string>()).ToUTF8());
 
         // 从 URL 获取默认文件名（如果没有提供）
         std::string filename   = "";

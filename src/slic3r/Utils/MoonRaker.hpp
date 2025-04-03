@@ -165,6 +165,8 @@ public:
 
     void set_connection_lost(std::function<void()> callback) override;
 
+    std::string get_sn() override;
+
 public:
     // MQTT message handler
     void on_mqtt_message_arrived(const std::string& topic, const std::string& payload);

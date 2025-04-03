@@ -109,6 +109,8 @@ public:
 
     virtual bool check_sn_arrived() { return false; };
 
+    virtual std::string get_sn() { return ""; }
+
     // system 
     virtual void async_machine_files_roots(std::function<void(const nlohmann::json& response)>) {}
 

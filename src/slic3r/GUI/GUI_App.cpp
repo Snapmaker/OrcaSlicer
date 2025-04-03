@@ -2739,19 +2739,21 @@ void GUI_App::machine_find()
                                         std::string sn = reply.txt_data["sn"];
                                         DeviceInfo  info;
                                         if (app_config->get_device_info(sn, info)) {
-                                            info.ip = ip;
-                                            app_config->save_device_info(info);
+                                            if (info.ip != ip) {
+                                                info.ip = ip;
+                                                app_config->save_device_info(info);
 
-                                            this->CallAfter([this]() {
-                                                auto devices = app_config->get_devices();
-                                                json param;
-                                                param["command"]       = "local_devices_arrived";
-                                                param["sequece_id"]    = "10001";
-                                                param["data"]          = devices;
-                                                std::string logout_cmd = param.dump();
-                                                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                                                GUI::wxGetApp().run_script(strJS);
-                                            });
+                                                this->CallAfter([this]() {
+                                                    auto devices = app_config->get_devices();
+                                                    json param;
+                                                    param["command"]       = "local_devices_arrived";
+                                                    param["sequece_id"]    = "10001";
+                                                    param["data"]          = devices;
+                                                    std::string logout_cmd = param.dump();
+                                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                                                    GUI::wxGetApp().run_script(strJS);
+                                                });
+                                            }
                                         }
                                     }
                                 })

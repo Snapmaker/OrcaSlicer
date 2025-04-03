@@ -629,7 +629,7 @@ function showLocalDevices(devices) {
         createProjectBtn.textContent = '创建工程';
         createProjectBtn.onclick = (e) => {
             e.stopPropagation();
-            createProject(device.ip);
+            createProject(device.dev_id);
         };
         
         // 创建设备名称元素

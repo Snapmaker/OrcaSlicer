@@ -1571,7 +1571,11 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     info.model_name   = machine_type;
                                     info.protocol     = int(PrintHostType::htMoonRaker_mqtt);
                                     if (connect_params.count("sn") && connect_params["sn"].is_string()) {
+                                        std::string sn = host->get_sn();
                                         info.sn = connect_params["sn"].get<std::string>();
+                                        if (sn != "" && sn != info.sn) {
+                                            info.sn = sn;
+                                        }
                                         info.dev_name = info.sn != "" ? info.sn : info.dev_name;
                                         info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
                                     }

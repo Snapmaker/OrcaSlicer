@@ -1308,8 +1308,28 @@ void Moonraker_Mqtt::on_mqtt_message_arrived(const std::string& topic, const std
 {
     try {
         if (topic.find(m_response_topic) != std::string::npos) {
+            size_t pos = topic.find("/response");
+
+            if (pos != std::string::npos) {
+                std::string sn = topic.substr(0, pos);
+
+                m_sn_mtx.lock();
+                m_sn = sn;
+                m_sn_mtx.unlock();
+            }
+
             on_response_arrived(payload);
         } else if (topic.find(m_status_topic) != std::string::npos) {
+            size_t pos = topic.find("/status");
+
+            if (pos != std::string::npos) {
+                std::string sn = topic.substr(0, pos);
+
+                m_sn_mtx.lock();
+                m_sn = sn;
+                m_sn_mtx.unlock();
+            }
+
             on_status_arrived(payload);
         } else if (topic.find(m_notification_topic) != std::string::npos) {
             
@@ -1444,6 +1464,15 @@ bool Moonraker_Mqtt::wait_for_sn(int timeout_seconds)
 void Moonraker_Mqtt::set_connection_lost(std::function<void()> callback) {
     if (m_mqtt_client)
         m_mqtt_client->SetConnectionFailureCallback(callback);
+}
+
+std::string Moonraker_Mqtt::get_sn() {
+    std::string res = "";
+    m_sn_mtx.lock();
+    res = m_sn;
+    m_sn_mtx.unlock();
+
+    return res;
 }
 
 } // namespace Slic3r

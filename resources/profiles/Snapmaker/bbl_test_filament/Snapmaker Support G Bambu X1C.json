@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Snapmaker Support G Bambu X1C",
+    "inherits": "Snapmaker Support G Bambu @base",
+    "from": "system",
+    "setting_id": "GFSS01",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

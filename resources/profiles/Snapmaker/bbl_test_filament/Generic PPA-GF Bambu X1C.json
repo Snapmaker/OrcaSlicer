@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic PPA-GF Bambu X1C",
+    "inherits": "Generic PPA-GF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSN96_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

@@ -1622,7 +1622,7 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
             LoadFile(sub_file, contents);
             json pm = json::parse(contents);
 
-            std::string bInstall = pm["instantiation"];
+            std::string bInstall = pm.count("instantiation") ? pm["instantiation"] : "false";
             if (bInstall == "true") { m_ProfileJson["process"].push_back(OneProcess); }
         }
 

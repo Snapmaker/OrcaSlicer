@@ -1,0 +1,14 @@
+{
+    "type": "filament",
+    "name": "Snapmaker ASA Bambu X1E @0.4 nozzle",
+    "inherits": "Snapmaker ASA Bambu X1C @0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSB01_07",
+    "instantiation": "true",
+    "chamber_temperatures": [
+        "0"
+    ],
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

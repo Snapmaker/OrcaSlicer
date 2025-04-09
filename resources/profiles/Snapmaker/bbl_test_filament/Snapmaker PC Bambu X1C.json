@@ -1,0 +1,17 @@
+{
+    "type": "filament",
+    "name": "Snapmaker PC Bambu X1C",
+    "inherits": "Snapmaker PC Bambu @base",
+    "from": "system",
+    "setting_id": "GFSC00",
+    "instantiation": "true",
+    "fan_max_speed": [
+        "40"
+    ],
+    "slow_down_layer_time": [
+        "12"
+    ],
+    "compatible_printers": [
+        "Snapmaker Artisan (0.4 nozzle)"
+    ]
+}

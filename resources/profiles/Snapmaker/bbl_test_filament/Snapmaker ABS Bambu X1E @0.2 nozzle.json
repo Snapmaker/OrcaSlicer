@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Snapmaker ABS Bambu X1E @0.2 nozzle",
+    "inherits": "Snapmaker ABS Bambu X1C @0.2 nozzle",
+    "from": "system",
+    "setting_id": "GFSB00_05",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.2 nozzle)"
+    ]
+}

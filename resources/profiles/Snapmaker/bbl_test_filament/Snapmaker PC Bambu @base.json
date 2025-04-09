@@ -1,0 +1,17 @@
+{
+    "type": "filament",
+    "name": "Snapmaker PC Bambu @base",
+    "inherits": "fdm_filament_pc_bambu",
+    "from": "system",
+    "filament_id": "GFC00",
+    "instantiation": "false",
+    "filament_vendor": [
+        "Snapmaker"
+    ],
+    "filament_cost": [
+        "39.99"
+    ],
+    "filament_flow_ratio": [
+        "0.94"
+    ]
+}

@@ -1,0 +1,17 @@
+{
+    "type": "filament",
+    "name": "Generic PPA-GF Bambu @base",
+    "inherits": "fdm_filament_ppa_bambu",
+    "from": "system",
+    "filament_id": "GFN96",
+    "instantiation": "false",
+    "filament_max_volumetric_speed": [
+        "6"
+    ],
+    "filament_type": [
+        "PPA-GF"
+    ],
+    "filament_vendor": [
+        "Generic"
+    ]
+}

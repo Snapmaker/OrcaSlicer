@@ -1,0 +1,17 @@
+{
+    "type": "filament",
+    "name": "Snapmaker PET-CF Bambu X1C",
+    "inherits": "Snapmaker PET-CF Bambu @base",
+    "from": "system",
+    "setting_id": "GFST01",
+    "instantiation": "true",
+    "reduce_fan_stop_start_freq": [
+        "0"
+    ],
+    "slow_down_min_speed": [
+        "20"
+    ],
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

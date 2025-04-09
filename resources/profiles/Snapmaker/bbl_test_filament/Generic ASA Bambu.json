@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic ASA Bambu",
+    "inherits": "Generic ASA Bambu @base",
+    "from": "system",
+    "setting_id": "GFSB98",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

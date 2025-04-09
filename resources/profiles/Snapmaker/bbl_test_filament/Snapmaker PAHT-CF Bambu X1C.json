@@ -1,0 +1,14 @@
+{
+    "type": "filament",
+    "name": "Snapmaker PAHT-CF Bambu X1C",
+    "inherits": "Snapmaker PAHT-CF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSN04",
+    "instantiation": "true",
+    "chamber_temperatures": [
+        "60"
+    ],
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

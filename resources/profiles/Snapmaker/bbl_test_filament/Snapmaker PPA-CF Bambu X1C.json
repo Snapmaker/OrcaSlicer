@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "setting_id": "GFSN06_00",
+    "name": "Snapmaker PPA-CF Bambu X1C",
+    "from": "system",
+    "instantiation": "true",
+    "inherits": "Snapmaker PPA-CF Bambu @base",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

@@ -1,0 +1,12 @@
+{
+    "type": "filament",
+    "name": "Generic EVA Bambu X1C",
+    "inherits": "Generic EVA Bambu @base",
+    "from": "system",
+    "setting_id": "GFSR99_00",
+    "instantiation": "true",
+    "description": "This is neither a commonly used filament, nor one of Bambu filaments, and it varies a lot from brand to brand. So, it's highly recommended to ask its vendor for suitable profile before printing and adjust some parameters according to its performances.",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Snapmaker Support For PLA Bambu X1C",
+    "inherits": "Snapmaker Support For PLA Bambu @base",
+    "from": "system",
+    "setting_id": "GFSS02_02",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

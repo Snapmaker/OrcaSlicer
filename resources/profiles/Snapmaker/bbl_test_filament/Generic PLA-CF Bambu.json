@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic PLA-CF Bambu",
+    "inherits": "Generic PLA-CF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSL98",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

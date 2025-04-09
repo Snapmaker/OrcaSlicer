@@ -1,0 +1,10 @@
+{
+    "type": "filament",
+    "name": "fdm_filament_eva_bambu",
+    "inherits": "fdm_filament_common_bambu",
+    "from": "system",
+    "instantiation": "false",
+    "filament_type": [
+        "EVA"
+    ]
+}

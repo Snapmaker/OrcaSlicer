@@ -1,0 +1,14 @@
+{
+    "type": "filament",
+    "name": "Snapmaker ASA Bambu A1 @0.2 nozzle",
+    "inherits": "Snapmaker ASA Bambu @base",
+    "from": "system",
+    "setting_id": "GFSB01_10",
+    "instantiation": "true",
+    "filament_max_volumetric_speed": [
+        "2"
+    ],
+    "compatible_printers": [
+        "Snapmaker test (0.2 nozzle)"
+    ]
+}

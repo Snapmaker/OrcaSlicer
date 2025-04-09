@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic BVOH Bambu X1C",
+    "inherits": "Generic BVOH Bambu @base",
+    "from": "system",
+    "setting_id": "GFSS97_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

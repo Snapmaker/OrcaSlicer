@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic HIPS Bambu X1C",
+    "inherits": "Generic HIPS Bambu @base",
+    "from": "system",
+    "setting_id": "GFSS98_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

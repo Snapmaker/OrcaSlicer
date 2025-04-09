@@ -1,0 +1,13 @@
+{
+    "type": "filament",
+    "name": "Snapmaker ASA-Aero Bambu P1P",
+    "inherits": "Snapmaker ASA-Aero Bambu @base",
+    "from": "system",
+    "setting_id": "GFSB02_01",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)",
+        "Snapmaker test (0.6 nozzle)",
+        "Snapmaker test (0.8 nozzle)"
+    ]
+}

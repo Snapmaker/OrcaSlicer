@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Snapmaker TPU 95A HF Bambu X1C",
+    "inherits": "Snapmaker TPU 95A HF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSU00_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

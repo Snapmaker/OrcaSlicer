@@ -1,0 +1,13 @@
+{
+    "type": "filament",
+    "name": "Snapmaker PA6-CF Bambu A1",
+    "inherits": "Snapmaker PA6-CF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSN05_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)",
+        "Snapmaker test (0.6 nozzle)",
+        "Snapmaker test (0.8 nozzle)"
+    ]
+}

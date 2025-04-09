@@ -1,0 +1,13 @@
+{
+    "type": "filament",
+    "name": "Snapmaker ABS-GF Bambu P1P",
+    "inherits": "Snapmaker ABS-GF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSB50_01",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)",
+        "Snapmaker test (0.6 nozzle)",
+        "Snapmaker test (0.8 nozzle)"
+    ]
+}

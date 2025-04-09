@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "PolyLite ASA Bambu X1C",
+    "inherits": "PolyLite ASA Bambu @base",
+    "from": "system",
+    "setting_id": "GFSB61_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

@@ -1,0 +1,16 @@
+{
+    "type": "filament",
+    "name": "Snapmaker PA6-CF Bambu X1E",
+    "inherits": "Snapmaker PA6-CF Bambu @base",
+    "from": "system",
+    "setting_id": "GFSN05_03",
+    "instantiation": "true",
+    "chamber_temperatures": [
+        "60"
+    ],
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)",
+        "Snapmaker test (0.6 nozzle)",
+        "Snapmaker test (0.8 nozzle)"
+    ]
+}

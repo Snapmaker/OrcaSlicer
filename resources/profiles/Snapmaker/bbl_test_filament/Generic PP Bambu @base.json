@@ -1,0 +1,8 @@
+{
+    "type": "filament",
+    "name": "Generic PP Bambu @base",
+    "inherits": "fdm_filament_pp_bambu",
+    "from": "system",
+    "filament_id": "GFP97",
+    "instantiation": "false"
+}

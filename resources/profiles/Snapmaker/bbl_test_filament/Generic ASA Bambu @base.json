@@ -1,0 +1,14 @@
+{
+    "type": "filament",
+    "name": "Generic ASA Bambu @base",
+    "inherits": "fdm_filament_asa_bambu",
+    "from": "system",
+    "filament_id": "GFB98",
+    "instantiation": "false",
+    "filament_flow_ratio": [
+        "0.95"
+    ],
+    "filament_max_volumetric_speed": [
+        "12"
+    ]
+}

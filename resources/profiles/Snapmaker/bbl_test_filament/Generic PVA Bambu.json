@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic PVA Bambu",
+    "inherits": "Generic PVA Bambu @base",
+    "from": "system",
+    "setting_id": "GFSS99",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker test (0.4 nozzle)"
+    ]
+}

@@ -13,6 +13,8 @@
 #include "slic3r/GUI/WebPresetDialog.hpp"
 
 #include "slic3r/GUI/SSWCP.hpp"
+#include "slic3r/Utils/PresetUpdater.hpp"
+#include "slic3r/Config/Version.hpp"
 
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
@@ -3730,6 +3732,17 @@ wxString GUI_App::transition_tridid(int trid_id)
     int id_index = ceil(trid_id / 4);
     int id_suffix = (trid_id + 1) % 4 == 0 ? 4 : (trid_id + 1) % 4;
     return wxString::Format("%s%d", maping_dict[id_index], id_suffix);
+}
+
+void GUI_App::import_presets()
+{
+    if (preset_updater) {
+        preset_updater->import_system_profile();
+    }
+    else {
+        MessageDialog(nullptr, _L("import failed!")).ShowModal();
+    }
+
 }
 
 // SM

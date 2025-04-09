@@ -61,7 +61,9 @@ public:
 
 	bool version_check_enabled() const;
 
-private:
+	void import_system_profile();
+
+public:
 	struct priv;
 	std::unique_ptr<priv> p;
 };

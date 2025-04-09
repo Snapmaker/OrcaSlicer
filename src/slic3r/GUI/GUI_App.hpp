@@ -347,6 +347,8 @@ private:
         return res;
     }
 
+    void import_presets();
+
     void reset_machine_find_engine() { m_machine_find_engine = nullptr; }
 
     void                       set_host_config(const DynamicPrintConfig& config)

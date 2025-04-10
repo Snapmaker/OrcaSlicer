@@ -33,7 +33,7 @@ private:
 
     wxWebView *m_browser;
     wxString m_javascript;
-    wxString m_prePrint_url = "http://localhost:13619/web/flutter_web/index.html?path=filament_extruder_mapping";
+    wxString    m_prePrint_url;
     std::string m_gcode_file_name = "";
     std::string m_display_file_name = "";
 

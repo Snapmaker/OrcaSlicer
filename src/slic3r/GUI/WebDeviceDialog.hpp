@@ -29,7 +29,7 @@ private:
 
     wxWebView *m_browser;
     wxString m_javascript;
-    wxString m_device_url = "http://localhost:13619/web/flutter_web/index.html?path=discovery";
+    wxString   m_device_url;
 
     DECLARE_EVENT_TABLE()
 };

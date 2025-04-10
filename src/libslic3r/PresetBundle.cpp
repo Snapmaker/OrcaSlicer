@@ -171,6 +171,7 @@ void PresetBundle::setup_directories()
         data_dir / "ota",
 		data_dir / PRESET_SYSTEM_DIR,
         data_dir / PRESET_USER_DIR,
+        data_dir / PRESET_WEB_DIR,
         // Store the print/filament/printer presets at the same location as the upstream Slic3r.
         //data_dir / PRESET_SYSTEM_DIR / PRESET_PRINT_NAME,
         //data_dir / PRESET_SYSTEM_DIR / PRESET_FILAMENT_NAME,

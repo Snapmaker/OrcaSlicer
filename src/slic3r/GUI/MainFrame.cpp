@@ -2175,6 +2175,10 @@ static wxMenu* generate_help_menu()
         wxGetApp().import_presets();
     });
 
+    append_menu_item(helpMenu, wxID_ANY, _L("import flutter web"), _L("import flutter web"), [](wxCommandEvent&) {
+        wxGetApp().import_flutter_web();
+    });
+
     append_menu_item(helpMenu, wxID_ANY, _L("Open Network Test"), _L("Open Network Test"), [](wxCommandEvent&) {
             NetworkTestDialog dlg(wxGetApp().mainframe);
             dlg.ShowModal();

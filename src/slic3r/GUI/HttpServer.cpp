@@ -324,11 +324,21 @@ std::string HttpServer::map_url_to_file_path(const std::string& url) {
     }
 
     if (trimmed_url == "/") {
-        trimmed_url = "/index.html"; // 默认首页
+        trimmed_url = "/flutter_web/index.html"; // 默认首页
     }
 
-    std::string base_path = resources_dir(); // 根据你的需求定义
-    return base_path + trimmed_url; // 拼接成新的路径
+    auto data_web_path = boost::filesystem::path(data_dir()) / "web";
+    if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
+        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+        auto target_path = data_web_path / "flutter_web";
+        copy_directory_recursively(source_path, target_path);
+    }
+
+    if (trimmed_url.find("flutter_web") == std::string::npos) {
+        return std::string(wxString(resources_dir() + trimmed_url).ToUTF8());
+    } else {
+        return std::string(wxString(data_dir() + trimmed_url).ToUTF8());
+    }
 }
 
 void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)

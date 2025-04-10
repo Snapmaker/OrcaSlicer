@@ -63,6 +63,8 @@ public:
 
 	void import_system_profile();
 
+	void import_flutter_web();
+
 public:
 	struct priv;
 	std::unique_ptr<priv> p;

@@ -520,7 +520,7 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 size_t vendor_pos = info.model_name.find_first_of(" ");
                 if (vendor_pos != std::string::npos) {
                     std::string vendor        = info.model_name.substr(0, vendor_pos);
-                    std::string machine_cover = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/profiles/" + vendor + "/" +
+                    std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor + "/" +
                                                 info.model_name + "_cover.png";
 
                     info.img = machine_cover;

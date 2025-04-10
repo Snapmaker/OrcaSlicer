@@ -97,6 +97,7 @@ void SSWCP_Instance::send_to_js() {
         response["payload"] = payload;
 
         std::string str_res = "window.postMessage(JSON.stringify(" + response.dump() + "), '*');";
+        str_res             = std::string(wxString(str_res).ToUTF8());
 
         if (m_webview && m_webview->GetRefData()) {
             auto self = shared_from_this();
@@ -321,7 +322,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              size_t      vendor_pos    = machine_type.find_first_of(" ");
                                              if (vendor_pos != std::string::npos) {
                                                  std::string vendor = machine_type.substr(0, vendor_pos);
-                                                 std::string machine_cover = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/profiles/" +
+                                                 std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" +
                                                                              vendor + "/" + machine_type + "_cover.png";
 
                                                  machine_data["cover"] = machine_cover;
@@ -1583,7 +1584,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     size_t vendor_pos = machine_type.find_first_of(" ");
                                     if (vendor_pos != std::string::npos) {
                                         std::string vendor        = machine_type.substr(0, vendor_pos);
-                                        std::string machine_cover = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/profiles/" + vendor +
+                                        std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor +
                                                                     "/" + machine_type + "_cover.png";
                                         info.img = machine_cover;
                                     }
@@ -1689,7 +1690,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 size_t vendor_pos = machine_type.find_first_of(" ");
                                                 if (vendor_pos != std::string::npos) {
                                                     std::string vendor        = machine_type.substr(0, vendor_pos);
-                                                    std::string machine_cover = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                                    std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) +
                                                                                 "/profiles/" + vendor + "/" + machine_type + "_cover.png";
                                                     info.img = machine_cover;
                                                 }
@@ -1766,7 +1767,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
                                 // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
                                 wxGetApp().mainframe->load_printer_url(
-                                    "http://localhost:13619/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+                                    "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
+                                    "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
                             });
 
                         } else {

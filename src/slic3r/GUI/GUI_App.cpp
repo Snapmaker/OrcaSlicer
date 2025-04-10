@@ -2044,6 +2044,35 @@ bool GUI_App::check_older_app_config(Semver current_version, bool backup)
     return false;
 }
 
+void GUI_App::copy_web_resources() {
+    auto data_web_path = boost::filesystem::path(data_dir()) / "web";
+    if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
+        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+        auto target_path = data_web_path / "flutter_web";
+        copy_directory_recursively(source_path, target_path);
+    } else {
+        auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
+        auto target_version_file = data_web_path / "flutter_web" / "version.json";
+
+        try {
+            boost::property_tree::ptree source_config, target_config;
+            boost::property_tree::read_json(source_version_file.string(), source_config);
+            boost::property_tree::read_json(target_version_file.string(), target_config);
+            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
+            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
+
+            if (source_build_number_str > target_build_number_str) {
+                auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+                auto target_path = data_web_path / "flutter_web";
+                copy_directory_recursively(source_path, target_path);
+            }
+        }
+        catch (std::exception& e) {
+
+        }
+    }
+}
+
 void GUI_App::copy_older_config()
 {
     preset_bundle->copy_files(m_older_data_dir_path);
@@ -2401,6 +2430,7 @@ bool GUI_App::on_init_inner()
     // supplied as argument to --datadir; in that case we should still run the wizard
     preset_bundle->setup_directories();
 
+    copy_web_resources();
 
     if (m_init_app_config_from_older)
         copy_older_config();
@@ -3742,7 +3772,14 @@ void GUI_App::import_presets()
     else {
         MessageDialog(nullptr, _L("import failed!")).ShowModal();
     }
+}
 
+void GUI_App::import_flutter_web() {
+    if (preset_updater) {
+        preset_updater->import_flutter_web();
+    } else {
+        MessageDialog(nullptr, _L("import failed!")).ShowModal();
+    }
 }
 
 // SM
@@ -4110,7 +4147,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
             } else if (command_str.compare("homepage_test_browser") == 0) {
                 CallAfter([this] {
                     auto dialog = new WebUrlDialog();
-                    dialog->load_url("http://127.0.0.1:13619/web/flutter_web/index.html");
+                    dialog->load_url("http://127.0.0.1:" + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/web/flutter_web/index.html");
                     dialog->ShowModal();
                     delete dialog;
                 });

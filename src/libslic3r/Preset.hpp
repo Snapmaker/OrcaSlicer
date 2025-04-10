@@ -15,6 +15,7 @@
 #include "ProjectTask.hpp"
 
 //BBS: change system directories
+#define PRESET_WEB_DIR         "web"
 #define PRESET_SYSTEM_DIR      "system"
 #define PRESET_USER_DIR        "user"
 #define PRESET_FILAMENT_NAME    "filament"

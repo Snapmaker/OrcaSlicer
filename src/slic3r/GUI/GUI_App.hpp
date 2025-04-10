@@ -349,6 +349,8 @@ private:
 
     void import_presets();
 
+    void import_flutter_web();
+
     void reset_machine_find_engine() { m_machine_find_engine = nullptr; }
 
     void                       set_host_config(const DynamicPrintConfig& config)
@@ -774,6 +776,7 @@ private:
     void            update_http_extra_header();
     bool            check_older_app_config(Semver current_version, bool backup);
     void            copy_older_config();
+    void                               copy_web_resources();
     void            window_pos_save(wxTopLevelWindow* window, const std::string &name);
     bool            window_pos_restore(wxTopLevelWindow* window, const std::string &name, bool default_maximized = false);
     void            window_pos_sanitize(wxTopLevelWindow* window);

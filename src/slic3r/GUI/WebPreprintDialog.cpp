@@ -16,6 +16,8 @@ END_EVENT_TABLE()
 WebPreprintDialog::WebPreprintDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Print preset"))
 {
+    m_prePrint_url = "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
+                     "/web/flutter_web/index.html?path=filament_extruder_mapping";
     SetBackgroundColour(*wxWHITE);
 
     // Create the webview

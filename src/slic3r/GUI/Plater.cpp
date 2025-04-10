@@ -1274,7 +1274,7 @@ void Sidebar::update_all_preset_comboboxes()
             wxString apikey;
             if (url.empty()) {
                 // url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
-                std::string base_url = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT);
+                std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
                 url                  = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
             }
             else {

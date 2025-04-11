@@ -2331,7 +2331,7 @@ void MainFrame::init_menubar_as_editor()
 #ifndef __APPLE__
         append_menu_item(import_menu, wxID_ANY, _L("Import 3MF/STL/STEP/SVG/OBJ/AMF") + dots + "\t" + ctrl + "I", _L("Load a model"),
             [this](wxCommandEvent&) { if (m_plater) {
-            m_plater->add_file();
+            m_plater->add_model();
         } }, "menu_import", nullptr,
             [this](){return can_add_models(); }, this);
 #else

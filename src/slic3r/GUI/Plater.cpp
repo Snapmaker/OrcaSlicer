@@ -7105,7 +7105,7 @@ void Plater::priv::on_action_add(SimpleEvent&)
     if (q != nullptr) {
         //q->add_model();
         //BBS open file in toolbar add
-        q->add_file();
+        q->add_model();
     }
 }
 

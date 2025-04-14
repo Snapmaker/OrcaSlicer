@@ -23,6 +23,7 @@
   "wipe_distance": ["1"],
   "retraction_speed": ["45"],
   "deretraction_speed": ["45"],
+  "z_hop": ["0"],
   "retract_length_toolchange": ["1.8"],
   "retraction_length": ["0.8"],
   "retract_when_changing_layer": ["1"],

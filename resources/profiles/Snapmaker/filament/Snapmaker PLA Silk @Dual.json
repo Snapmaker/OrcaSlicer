@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker PLA Silk@Dual",
+  "name": "Snapmaker PLA Silk @Dual",
   "setting_id": "1328250686",
   "inherits": "Snapmaker PLA Silk @Dual base",
   "compatible_printers": [
@@ -32,9 +32,6 @@
     "Snapmaker A350 Dual QSKit (0.8 nozzle)",
     "Snapmaker Artisan (0.4 nozzle)",
     "Snapmaker Artisan (0.6 nozzle)",
-    "Snapmaker Artisan (0.8 nozzle)",
-    "Snapmaker test (0.4 nozzle)",
-    "Snapmaker test (0.6 nozzle)",
-    "Snapmaker test (0.8 nozzle)"
+    "Snapmaker Artisan (0.8 nozzle)"
   ]
 }

@@ -1,0 +1,14 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PLA-CF @test 0.8 nozzle",
+  "setting_id": "1540566420",
+  "inherits": "Snapmaker PLA-CF @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.8 nozzle)"
+  ],
+  "filament_max_volumetric_speed": [
+    "12.8"
+  ]
+}

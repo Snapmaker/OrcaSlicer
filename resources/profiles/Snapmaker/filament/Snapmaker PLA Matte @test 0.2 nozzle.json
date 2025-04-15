@@ -1,0 +1,14 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PLA Matte @test 0.2 nozzle",
+  "setting_id": "22697921710",
+  "inherits": "Snapmaker PLA Matte @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.2 nozzle)"
+  ],
+  "filament_max_volumetric_speed": [
+    "2"
+  ]
+}

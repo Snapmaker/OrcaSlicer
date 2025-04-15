@@ -1,0 +1,13 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PLA Silk @test",
+  "setting_id": "13282506860",
+  "inherits": "Snapmaker PLA Silk @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.4 nozzle)",
+    "Snapmaker test (0.6 nozzle)",
+    "Snapmaker test (0.8 nozzle)"
+  ]
+}

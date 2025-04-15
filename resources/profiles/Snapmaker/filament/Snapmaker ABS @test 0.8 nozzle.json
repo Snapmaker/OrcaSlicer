@@ -1,0 +1,17 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker ABS @test 0.8 nozzle",
+  "setting_id": "519475561",
+  "inherits": "Snapmaker ABS @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.8 nozzle)"
+  ],
+  "filament_max_volumetric_speed": [
+    "16"
+  ],
+  "slow_down_min_speed": [
+    "10"
+  ]
+}

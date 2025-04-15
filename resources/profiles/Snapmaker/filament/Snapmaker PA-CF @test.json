@@ -1,0 +1,13 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PA-CF @test",
+  "setting_id": "27996657890",
+  "inherits": "Snapmaker PA-CF @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.4 nozzle)",
+    "Snapmaker test (0.4 nozzle)",
+    "Snapmaker test (0.4 nozzle)"
+  ]
+}

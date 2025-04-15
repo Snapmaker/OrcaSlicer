@@ -1,0 +1,14 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "PolyLite PLA @test 0.2 nozzle",
+  "setting_id": "49099192000",
+  "inherits": "PolyLite PLA @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.2 nozzle)"
+  ],
+  "filament_max_volumetric_speed": [
+    "1.6"
+  ]
+}

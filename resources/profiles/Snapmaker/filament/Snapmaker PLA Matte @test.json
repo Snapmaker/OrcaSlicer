@@ -1,0 +1,12 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PLA Matte @test",
+  "setting_id": "39594029640",
+  "inherits": "Snapmaker PLA Matte @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.4 nozzle)",
+    "Snapmaker test (0.6 nozzle)"
+  ]
+}

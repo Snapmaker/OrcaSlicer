@@ -2,15 +2,13 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker ABS Benchy@Dual",
-  "setting_id": "3540754477",
-  "inherits": "Snapmaker ABS @Dual base",
+  "name": "Snapmaker ABS Benchy @test",
+  "setting_id": "35407544770",
+  "inherits": "Snapmaker ABS @test base",
   "compatible_printers": [
-    "Snapmaker Artisan (0.4 nozzle)",
     "Snapmaker test (0.4 nozzle)"
   ],
   "compatible_prints": [
-    "0.25 Benchy @Snapmaker Artisan (0.4 nozzle)",
     "0.25 Benchy @Snapmaker test (0.4 nozzle)"
   ],
   "overhang_fan_speed": [

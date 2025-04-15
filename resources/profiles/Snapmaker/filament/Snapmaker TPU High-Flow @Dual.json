@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker TPU High-Flow@Dual",
+  "name": "Snapmaker TPU High-Flow @Dual",
   "setting_id": "1072918854",
   "inherits": "Snapmaker TPU @Dual base",
   "compatible_printers": [
@@ -32,10 +32,7 @@
     "Snapmaker A350 Dual QSKit (0.8 nozzle)",
     "Snapmaker Artisan (0.4 nozzle)",
     "Snapmaker Artisan (0.6 nozzle)",
-    "Snapmaker Artisan (0.8 nozzle)",
-    "Snapmaker test (0.4 nozzle)",
-    "Snapmaker test (0.6 nozzle)",
-    "Snapmaker test (0.8 nozzle)"
+    "Snapmaker Artisan (0.8 nozzle)"
   ],
   "filament_flow_ratio": [
     "0.983"

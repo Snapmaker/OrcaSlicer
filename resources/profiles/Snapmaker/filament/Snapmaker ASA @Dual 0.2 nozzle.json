@@ -14,8 +14,7 @@
     "Snapmaker A350 Dual BKit (0.2 nozzle)",
     "Snapmaker A350 Dual QS+B Kit (0.2 nozzle)",
     "Snapmaker A350 Dual QSKit (0.2 nozzle)",
-    "Snapmaker Artisan (0.2 nozzle)",
-    "Snapmaker test (0.2 nozzle)"
+    "Snapmaker Artisan (0.2 nozzle)"
   ],
   "filament_end_gcode": [
     ""

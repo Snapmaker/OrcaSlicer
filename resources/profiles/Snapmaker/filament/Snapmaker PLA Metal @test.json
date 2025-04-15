@@ -1,0 +1,13 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PLA Metal @test",
+  "setting_id": "7206646270",
+  "inherits": "Snapmaker PLA Metal @test base",
+  "compatible_printers": [
+    "Snapmaker test (0.4 nozzle)",
+    "Snapmaker test (0.6 nozzle)",
+    "Snapmaker test (0.8 nozzle)"
+  ]
+}

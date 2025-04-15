@@ -1,45 +1,39 @@
 {
   "type": "filament",
   "from": "system",
-  "instantiation": "true",
-  "name": "Snapmaker ABS Benchy@J1",
-  "setting_id": "356879727",
-  "inherits": "Snapmaker ABS @J1 base",
-  "compatible_printers": [
-    "Snapmaker J1 (0.4 nozzle)"
+  "instantiation": "false",
+  "name": "Snapmaker PETG-CF @test base",
+  "filament_id": "10425112260",
+  "inherits": "fdm_filament_petg",
+  "filament_end_gcode": [
+    ""
   ],
-  "compatible_prints": [
-    "0.25 Benchy @Snapmaker J1 (0.4 nozzle)"
+  "required_nozzle_HRC": [
+    "40"
+  ],
+  "overhang_fan_threshold": [
+    "10%"
   ],
   "overhang_fan_speed": [
-    "35"
-  ],
-  "slow_down_for_layer_cooling": [
-    "0"
+    "55"
   ],
   "fan_cooling_layer_time": [
-    "2"
+    "10"
   ],
-  "filament_deretraction_speed": [
-    "55"
+  "filament_cost": [
+    "40"
+  ],
+  "filament_density": [
+    "1.25"
   ],
   "filament_max_volumetric_speed": [
-    "31"
+    "6.4"
   ],
-  "filament_retract_when_changing_layer": [
-    "0"
+  "filament_retraction_minimum_travel": [
+    "nil"
   ],
   "filament_retraction_length": [
-    "0.5"
-  ],
-  "filament_z_hop": [
-    "0"
-  ],
-  "filament_retraction_speed": [
-    "55"
-  ],
-  "filament_wipe": [
-    "0"
+    "nil"
   ],
   "filament_loading_speed_start": [
     "35"
@@ -68,22 +62,34 @@
   "filament_cooling_final_speed": [
     "60"
   ],
-  "nozzle_temperature": [
+  "nozzle_temperature_initial_layer": [
     "250"
   ],
+  "temperature_vitrification": [
+    "178"
+  ],
   "fan_max_speed": [
-    "80"
+    "20"
   ],
   "fan_min_speed": [
-    "65"
+    "0"
   ],
   "slow_down_min_speed": [
-    "0"
+    "10"
   ],
   "slow_down_layer_time": [
+    "6"
+  ],
+  "enable_pressure_advance": [
     "0"
   ],
+  "filament_type": [
+    "PETG-CF"
+  ],
   "default_filament_colour": [
-    "#335BBB"
+    "#3D3C39"
+  ],
+  "nozzle_temperature_range_high": [
+    "255"
   ]
 }

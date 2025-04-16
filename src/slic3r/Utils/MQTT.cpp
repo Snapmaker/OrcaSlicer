@@ -372,3 +372,45 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
         BOOST_LOG_TRIVIAL(debug) << "Removed topic from resubscribe list: " << topic;
     }
 }
+
+// 添加析构函数实现
+MqttClient::~MqttClient()
+{
+    try {
+        BOOST_LOG_TRIVIAL(info) << "释放MQTT客户端资源...";
+        
+        // 如果客户端仍然连接，先断开连接
+        if (connected_.load(std::memory_order_acquire)) {
+            try {
+                BOOST_LOG_TRIVIAL(info) << "在析构函数中断开MQTT连接";
+                
+                // 使用非阻塞方式断开，避免在析构函数中长时间等待
+                client_->disconnect(0);
+                
+                // 不等待断开完成，直接继续
+                connected_.store(false, std::memory_order_release);
+            } 
+            catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "MQTT断开连接时出错: " << e.what();
+            }
+        }
+        
+        // 清除所有订阅主题
+        topics_to_resubscribe_.clear();
+        
+        // 确保回调不被调用
+        message_callback_ = nullptr;
+        connection_failure_callback_ = nullptr;
+        
+        // 重置客户端指针前，确保没有正在进行的操作
+        client_.reset();
+        
+        BOOST_LOG_TRIVIAL(info) << "MQTT客户端资源已释放";
+    }
+    catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "MQTT客户端析构时发生异常: " << e.what();
+    }
+    catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "MQTT客户端析构时发生未知异常";
+    }
+}

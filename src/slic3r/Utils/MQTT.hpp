@@ -55,6 +55,9 @@ public:
     // Constructor initializes the MQTT client with server details
     MqttClient(const std::string& server_address, const std::string& client_id, bool clean_session);
 
+    // Destructor
+    ~MqttClient();
+
     // Connect to the MQTT broker
     bool Connect();
 

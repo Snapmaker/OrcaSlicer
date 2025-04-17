@@ -2739,7 +2739,14 @@ bool GUI_App::on_init_inner()
             machine_find();
         }
     }, m_machine_find_timer->GetId());
+
+#ifdef __APPLE__
+    m_machine_find_timer->Start(1000 * 60 * 2);
+#elif defined(__linux__)
+    m_machine_find_timer->Start(1000 * 60 * 2);
+#else
     m_machine_find_timer->Start(5000);
+#endif
 
     return true;
 }

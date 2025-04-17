@@ -11,7 +11,7 @@
   "inner_wall_speed": "160",
   "top_surface_acceleration": "1000",
   "initial_layer_acceleration": "500",
-  "outer_wall_acceleration": "1000",
+  "outer_wall_acceleration": "5000",
 
   "ooze_prevention": "1",
   "standby_temperature_delta": "-60",
@@ -55,5 +55,6 @@
   "top_surface_jerk": "4",
   "travel_jerk": "10",
   "small_perimeter_threshold": "0",
-  "support_material_synchronize_layers": "1"
+  "support_material_synchronize_layers": "1",
+  "brim_object_gap": "0.1"
 }

@@ -9,6 +9,43 @@
     "Snapmaker test (0.4 nozzle)"
   ],
 
+
+  "adaptive_layer_height": "0",
+  "reduce_crossing_wall": "0",
+  "brim_width": "5",
+  "print_sequence": "by layer",
+  "default_acceleration": "10000",
+  "bridge_no_support": "0",
+  "outer_wall_line_width": "0.42",
+  "infill_direction": "45",
+  "sparse_infill_density": "15%",
+  "sparse_infill_pattern": "grid",
+  "infill_combination": "0",
+  "sparse_infill_line_width": "0.45",
+  "infill_wall_overlap": "15%",
+  "interface_shells": "0",
+  "wall_loops": "2",
+  "inner_wall_line_width": "0.45",
+  "print_settings_id": "",
+  "raft_layers": "0",
+  "skirt_distance": "2",
+  "spiral_mode": "0",
+  "standby_temperature_delta": "-5",
+  "enable_support": "0",
+  "support_filament": "0",
+  "support_line_width": "0.42",
+  "support_interface_filament": "0",
+  "support_on_build_plate_only": "0",
+  "support_interface_loop_pattern": "0",
+  "support_interface_top_layers": "2",
+  "support_interface_speed": "80",
+  "support_interface_pattern": "auto",
+  "support_base_pattern": "default",
+  "detect_thin_wall": "0",
+  "top_surface_line_width": "0.42",
+  "xy_hole_compensation": "0",
+  "xy_contour_compensation": "0",
+
   "max_travel_detour_distance": "0",
   "bottom_surface_pattern": "monotonic",
   "bottom_shell_layers": "3",
@@ -66,7 +103,6 @@
   "prime_tower_width": "35",
   "wall_generator": "classic",
 
-
   "elefant_foot_compensation": "0.15",
   "top_shell_thickness": "1.0",
   "bridge_flow": "1",
@@ -80,5 +116,5 @@
   "top_shell_layers": "5",
 
   "smooth_coefficient": "150",
-  "overhang_totally_speed": "50"
+  "overhang_totally_speed": "50",
 }

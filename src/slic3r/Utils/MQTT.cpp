@@ -253,6 +253,7 @@ void MqttClient::connection_lost(const std::string& cause)
                 if (remaining == 1) {
                     if (!self->connected_.load(std::memory_order_acquire)) {
                         BOOST_LOG_TRIVIAL(error) << "MQTT connection not restored after 20 seconds";
+                        self->Disconnect();
                         if (self->connection_failure_callback_) {
                             self->connection_failure_callback_();
                         }

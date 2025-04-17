@@ -1496,6 +1496,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxGetApp().app_config->set("use_new_connect", "false");
                                 auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
                                 p_config->set("print_host", "");
+                                wxGetApp().set_connect_host(nullptr);
 
                                 auto devices = wxGetApp().app_config->get_devices();
                                 for (size_t i = 0; i < devices.size(); ++i) {
@@ -1519,7 +1520,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 msg_window.ShowModal();
 
                                 wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-                                wxGetApp().set_connect_host(nullptr);
+                                
                             });
                         });
                         bool     res = host->connect(msg, connect_params);

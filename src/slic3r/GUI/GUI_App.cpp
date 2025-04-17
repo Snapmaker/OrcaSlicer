@@ -2740,6 +2740,10 @@ bool GUI_App::on_init_inner()
         }
     }, m_machine_find_timer->GetId());
 
+    if (!m_machine_find_engine && GUI_App::m_app_alive.load()) {
+        machine_find();
+    }
+
 #ifdef __APPLE__
     m_machine_find_timer->Start(1000 * 60 * 2);
 #elif defined(__linux__)

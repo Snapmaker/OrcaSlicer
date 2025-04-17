@@ -396,6 +396,9 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
         bool flag = future.get();
 
         if (!flag) {
+            Http::Progress progress(0, 0, 0, 0, "");
+            bool           cancel = true;
+            prorgess_fn(progress, cancel);
             return false;
         }
     }

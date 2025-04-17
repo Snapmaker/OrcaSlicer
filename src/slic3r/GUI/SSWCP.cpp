@@ -1226,13 +1226,25 @@ void SSWCP_MachineOption_Instance::sw_SetFilamentMappingComplete()
 
         std::string status = m_param_data["status"].get<std::string>();
         if (status == "success" || status == "canceled") {
+            int flag = -1;
             // 耗材绑定成功
-            MessageDialog msg_window(nullptr, " " + _L("alreeady setting successfully") + "\n", _L("Print Job Setting"), wxICON_QUESTION | wxOK);
-            msg_window.ShowModal();
-
-            if (wxGetApp().get_web_preprint_dialog()) {
-                wxGetApp().get_web_preprint_dialog()->EndModal(wxID_OK);
+            if (status == "success") {
+                MessageDialog msg_window(nullptr, " " + _L("setting successfully, continue to print?") + "\n", _L("Print Job Setting"),
+                                         wxICON_QUESTION | wxOK | wxCANCEL);
+                flag = msg_window.ShowModal();
+            } else {
+                MessageDialog msg_window(nullptr, " " + _L("cancel the setting, continue to print?") + "\n", _L("Print Job Setting"),
+                                         wxICON_QUESTION | wxOK | wxCANCEL);
+                flag = msg_window.ShowModal();
             }
+            
+
+            if (flag == wxID_OK) {
+                if (wxGetApp().get_web_preprint_dialog()) {
+                    wxGetApp().get_web_preprint_dialog()->EndModal(wxID_OK);
+                }
+            }
+            
         } else {
             MessageDialog msg_window(nullptr, " " + _L("setting failed") + "\n", _L("Print Job Setting"),
                                      wxICON_QUESTION | wxOK);

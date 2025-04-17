@@ -1878,12 +1878,17 @@ void PresetUpdater::import_system_profile()
         }
 
         // 5. 执行更新并提示结果
+        bool need_restart = false;
         if (!updates.updates.empty()) {
             std::vector<GUI::MsgUpdateConfig::Update> updates_msg;
             for (const auto& update : updates.updates) {
                 // BBS: skip directory
                 if (update.is_directory)
                     continue;
+
+                if (update.can_install) {
+                    need_restart = true;
+                }
                 std::string changelog = update.change_log;
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
@@ -1906,6 +1911,18 @@ void PresetUpdater::import_system_profile()
                 message += "• " + preset + "\n";
             }
             GUI::MessageDialog(nullptr, message).ShowModal();
+        }
+
+        if (need_restart) {
+            GUI::MessageDialog msg_wingow(nullptr,
+                                          _L("Updating the system resources requires application restart.\n") + "\n" +
+                                              _L("Do you want to continue?"),
+                                          L("System resource update"), wxICON_QUESTION | wxOK | wxCANCEL);
+            if (msg_wingow.ShowModal() == wxID_CANCEL) {
+                return;
+            }
+
+            app->recreate_GUI(_L("Update web resources"));
         }
 
     } catch (std::exception& e) {

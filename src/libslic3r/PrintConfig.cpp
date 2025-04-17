@@ -1615,6 +1615,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back("4");
     def->enum_labels.push_back("5");
     def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt{0});
 
     def = this->add("extruder_clearance_height_to_rod", coFloat);
     def->label = L("Height to rod");

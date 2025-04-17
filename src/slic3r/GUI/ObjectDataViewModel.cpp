@@ -66,6 +66,7 @@ struct InfoItemAtributes {
 };
 
 const std::map<InfoItemType, InfoItemAtributes> INFO_ITEMS{
+            // { InfoItemType::Default,             {L("Default"),                ""              },     },
 //           info_item Type                         info_item Name              info_item BitmapName
             { InfoItemType::CustomSupports,      {L("Support painting"),       "toolbar_support" },     },
             //{ InfoItemType::CustomSeam,          {L("Paint-on seam"),           "seam_" },             },
@@ -406,6 +407,11 @@ void ObjectDataViewModelNode::UpdateExtruderAndColorIcon(wxString extruder /*= "
         }
     }
 
+    if (extruder_idx == 0) {
+        m_extruder_bmp = *get_default_extruder_color_icon();
+        return;
+    }
+
     if (extruder_idx > 0) --extruder_idx;
     // Create the bitmap with color bars.
     std::vector<wxBitmap*> bmps = get_extruder_color_icons(false);// use wide icons
@@ -583,7 +589,7 @@ wxDataViewItem ObjectDataViewModel::AddObject(ModelObject *model_object, std::st
 {
     // get object node params
     wxString name = from_u8(model_object->name);
-    int extruder = model_object->config.has("extruder") ? model_object->config.extruder() : 1;
+    int extruder = model_object->config.has("extruder") ? model_object->config.extruder() : 0;
     int plate_idx = -1;
     ObjectDataViewModelNode* plate_node = nullptr;
     for (auto plate : m_plates) {

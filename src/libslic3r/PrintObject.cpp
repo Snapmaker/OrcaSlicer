@@ -2893,16 +2893,10 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
     if (opt_extruder)
         if (int extruder = opt_extruder->value; extruder != 0) {
             // Not a default extruder.
-            if (out.sparse_infill_filament.value == 0) 
-                out.sparse_infill_filament.value = extruder;
-            if (out.solid_infill_filament.value == 0)
-                out.solid_infill_filament.value  = extruder;
-            if (out.wall_filament.value == 0)
-                out.wall_filament.value          = extruder;
 
-            /*out.sparse_infill_filament.value = extruder;
+            out.sparse_infill_filament.value = extruder;
             out.solid_infill_filament.value  = extruder;
-            out.wall_filament.value          = extruder;*/
+            out.wall_filament.value          = extruder;
         }
     // 2) Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)

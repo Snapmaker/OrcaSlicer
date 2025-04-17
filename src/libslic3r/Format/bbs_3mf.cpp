@@ -2076,7 +2076,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 extruder_id = extruder_opt->getInt();
 
             if (extruder_id == 0 || extruder_id > max_filament_id)
-                mo->config.set_key_value("extruder", new ConfigOptionInt(1));
+                mo->config.set_key_value("extruder", new ConfigOptionInt(0));
 
             if (mo->volumes.size() == 1) {
                 mo->volumes[0]->config.erase("extruder");
@@ -2090,7 +2090,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     if (vol_extruder_opt->getInt() == 0)
                         mv->config.erase("extruder");
                     else if (vol_extruder_opt->getInt() > max_filament_id)
-                        mv->config.set_key_value("extruder", new ConfigOptionInt(1));
+                        mv->config.set_key_value("extruder", new ConfigOptionInt(0));
                 }
             }
         }

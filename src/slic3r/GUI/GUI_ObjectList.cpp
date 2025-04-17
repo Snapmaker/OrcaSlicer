@@ -402,6 +402,7 @@ void ObjectList::create_objects_ctrl()
         return m_objects_model->GetDefaultExtruderIdx(GetSelection());
     });
     bmp_choice_renderer->set_has_default_extruder([this]() {
+        return true;
         return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
                m_objects_model->GetItemType(GetSelection()) == itLayer;
     });
@@ -653,8 +654,8 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
         auto object = (*m_objects)[i];
         wxString extruder;
         if (!object->config.has("extruder") || size_t(object->config.extruder()) > filaments_count) {
-            extruder = "1";
-            object->config.set_key_value("extruder", new ConfigOptionInt(1));
+            extruder = "0";
+            object->config.set_key_value("extruder", new ConfigOptionInt(0));
         }
         else {
             extruder = wxString::Format("%d", object->config.extruder());
@@ -917,7 +918,7 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
 
     const int extruder = m_objects_model->GetExtruderNumber(item);
     m_config->set_key_value("extruder", new ConfigOptionInt(extruder));
-    if (m_config->has("sparse_infill_filament")) {
+    /*if (m_config->has("sparse_infill_filament")) {
         m_config->set("sparse_infill_filament", m_config->option("extruder")->getInt());
     }
     else {
@@ -932,7 +933,7 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
         m_config->set("wall_filament", m_config->option("extruder")->getInt());
     } else {
         m_config->set_key_value("wall_filament", new ConfigOptionInt(m_config->option("extruder")->getInt()));
-    }
+    }*/
     // BBS
     if (item_type & itObject) {
         const int obj_idx = m_objects_model->GetIdByItem(item);
@@ -2257,7 +2258,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
     new_volume->name = into_u8(name);
     // set a default extruder value, since user can't add it manually
     // BBS
-    new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
+    new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
     new_object->invalidate_bounding_box();
     new_object->translate(-bb.center());
 
@@ -2382,7 +2383,7 @@ void ObjectList::del_settings_from_config(const wxDataViewItem& parent_item)
 
     take_snapshot("Delete Settings");
 
-    int extruder = m_config->has("extruder") ? m_config->extruder() : -1;
+    int extruder = m_config->has("extruder") ? m_config->extruder() : 0;
 
     coordf_t layer_height = 0.0;
     if (is_layer_settings)
@@ -2515,7 +2516,7 @@ bool ObjectList::del_subobject_from_object(const int obj_idx, const int idx, con
                         int extruder_id = last_volume->config.opt_int("extruder");
                         object->config.set("extruder", extruder_id);
                     }
-                    wxString extruder = object->config.has("extruder") ? wxString::Format("%d", object->config.extruder()) : _devL("1");
+                    wxString extruder = object->config.has("extruder") ? wxString::Format("%d", object->config.extruder()) : _devL("0");
                     m_objects_model->SetExtruder(extruder, obj_item);
                 }
                 // add settings to the object, if it has them
@@ -5675,7 +5676,8 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
         int new_extruder = extruder;
         if (extruder == 0) {
             if (type & itObject) {
-                new_extruder = 1;
+                // 跟全局保持一致
+                new_extruder = 0;
             }
             else if ((type & itVolume) && (m_objects_model->GetVolumeType(sel_item) == ModelVolumeType::MODEL_PART)) {
                 new_extruder = m_objects_model->GetExtruderNumber(m_objects_model->GetParent(sel_item));
@@ -5688,9 +5690,9 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
         else
             config.set_key_value("extruder", new ConfigOptionInt(new_extruder));
         
-        config.set("sparse_infill_filament", new_extruder);
-        config.set("solid_infill_filament", new_extruder);
-        config.set("wall_filament", new_extruder);
+        // config.set("sparse_infill_filament", new_extruder);
+        // config.set("solid_infill_filament", new_extruder);
+        // config.set("wall_filament", new_extruder);
 
         wxGetApp().obj_list()->update_selections();
 

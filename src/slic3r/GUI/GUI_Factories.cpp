@@ -891,7 +891,7 @@ void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
     if (sels.Count() == 1) {
         const ModelConfig& config = obj_list()->get_item_config(sels[0]);
         // BBS: set default extruder to 1
-        initial_extruder = config.has("extruder") ? config.extruder() : 1;
+        initial_extruder = config.has("extruder") ? config.extruder() : 0;
     }
 
     for (int i = 0; i <= filaments_cnt; i++)
@@ -1920,7 +1920,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
         if (sel_vol && sel_vol->type() == ModelVolumeType::PARAMETER_MODIFIER)
             initial_extruder = config.has("extruder") ? config.extruder() : 0;
         else
-            initial_extruder = config.has("extruder") ? config.extruder() : 1;
+            initial_extruder = config.has("extruder") ? config.extruder() : 0;
     }
 
     // BBS
@@ -1932,7 +1932,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
         }
     }
 
-    for (int i = has_modifier ? 0 : 1; i <= filaments_cnt; i++)
+    for (/*int i = has_modifier ? 0 : 1*/int i  = 0; i <= filaments_cnt; i++)
     {
         // BBS
         //bool is_active_extruder = i == initial_extruder;

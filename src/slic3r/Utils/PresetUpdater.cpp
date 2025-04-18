@@ -1712,6 +1712,9 @@ void PresetUpdater::import_flutter_web()
 
             if (res == wxID_OK) {
                 p->perform_updates(std::move(updates));
+            } else {
+                boost::filesystem::remove_all(temp_path);
+                return;
             }
         }
 
@@ -1899,6 +1902,9 @@ void PresetUpdater::import_system_profile()
 
             if (res == wxID_OK) {
                 p->perform_updates(std::move(updates));
+            } else {
+                boost::filesystem::remove_all(temp_path);
+                return;
             }
 
             

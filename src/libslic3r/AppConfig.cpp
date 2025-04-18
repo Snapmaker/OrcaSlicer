@@ -1420,7 +1420,7 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker J1 ABS @0.2 nozzle", "Snapmaker ABS @J1 0.2 nozzle"},
     {"Snapmaker J1 ABS @0.8 nozzle", "Snapmaker ABS @J1 0.8 nozzle"},
     {"Snapmaker J1 ABS", "Snapmaker ABS @J1"},
-    {"Snapmaker J1 ABS Benchy", "Snapmaker ABS Benchy@J1"},
+    {"Snapmaker J1 ABS Benchy", "Snapmaker ABS Benchy @J1"},
     {"Snapmaker J1 ASA @0.2 nozzle", "Snapmaker ASA @J1 0.2 nozzle"},
     {"Snapmaker J1 ASA", "Snapmaker ASA @J1"},
     {"Snapmaker J1 Breakaway Support", "Snapmaker Breakaway Support @J1"},
@@ -1446,7 +1446,7 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker J1 PVA", "Snapmaker PVA @J1"},
     {"Snapmaker J1 TPE", "Snapmaker TPE @J1"},
     {"Snapmaker J1 TPU", "Snapmaker TPU @J1"},
-    {"Snapmaker J1 TPU High-Flow", "Snapmaker TPU High-Flow@J1"},
+    {"Snapmaker J1 TPU High-Flow", "Snapmaker TPU High-Flow @J1"},
 
     // Dual相关映射
     {"PolyLite Dual PLA @0.2 nozzle", "PolyLite PLA @Dual 0.2 nozzle"},
@@ -1456,7 +1456,7 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker Dual ABS @0.2 nozzle", "Snapmaker ABS @Dual 0.2 nozzle"},
     {"Snapmaker Dual ABS @0.8 nozzle", "Snapmaker ABS @Dual 0.8 nozzle"},
     {"Snapmaker Dual ABS", "Snapmaker ABS @Dual"},
-    {"Snapmaker Dual ABS Benchy", "Snapmaker ABS Benchy@Dual"},
+    {"Snapmaker Dual ABS Benchy", "Snapmaker ABS Benchy @Dual"},
     {"Snapmaker Dual ASA @0.2 nozzle", "Snapmaker ASA @Dual 0.2 nozzle"},
     {"Snapmaker Dual ASA", "Snapmaker ASA @Dual"},
     {"Snapmaker Dual PA-CF", "Snapmaker PA-CF @Dual"},
@@ -1476,14 +1476,14 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker Dual PLA Metal @0.2 nozzle", "Snapmaker PLA Metal @Dual 0.2 nozzle"},
     {"Snapmaker Dual PLA Metal", "Snapmaker PLA Metal @Dual"},
     {"Snapmaker Dual PLA Silk @0.2 nozzle", "Snapmaker PLA Silk @Dual 0.2 nozzle"},
-    {"Snapmaker Dual PLA Silk", "Snapmaker PLA Silk@Dual"},
+    {"Snapmaker Dual PLA Silk", "Snapmaker PLA Silk @Dual"},
     {"Snapmaker Dual PLA-CF @0.8 nozzle", "Snapmaker PLA-CF @Dual 0.8 nozzle"},
     {"Snapmaker Dual PLA-CF", "Snapmaker PLA-CF @Dual"},
     {"Snapmaker Dual PVA @0.2 nozzle", "Snapmaker PVA @Dual 0.2 nozzle"},
     {"Snapmaker Dual PVA", "Snapmaker PVA @Dual"},
     {"Snapmaker Dual TPE", "Snapmaker TPE @Dual"},
     {"Snapmaker Dual TPU", "Snapmaker TPU @Dual"},
-    {"Snapmaker Dual TPU High-Flow", "Snapmaker TPU High-Flow@Dual"}};
+    {"Snapmaker Dual TPU High-Flow", "Snapmaker TPU High-Flow @Dual"}};
 
 void AppConfig::update_filament_names(json& j)
 {

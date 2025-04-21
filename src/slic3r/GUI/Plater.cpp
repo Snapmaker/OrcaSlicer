@@ -199,6 +199,13 @@ wxDEFINE_EVENT(EVT_MODIFY_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_DEL_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
+
+#define PRINTER_THUMBNAIL_SIZE (wxSize(FromDIP(48), FromDIP(48)))
+#define PRINTER_THUMBNAIL_SIZE_SMALL (wxSize(FromDIP(32), FromDIP(32)))
+#define PRINTER_PANEL_SIZE_SMALL (wxSize(FromDIP(98), FromDIP(68)))
+#define PRINTER_PANEL_SIZE_WIDEN (wxSize(FromDIP(136), FromDIP(68)))
+#define PRINTER_PANEL_SIZE (wxSize(FromDIP(98), FromDIP(98)))
+
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
 {
     std::string name = into_u8(wxs_name);
@@ -328,6 +335,11 @@ struct Sidebar::priv
     PlaterPresetComboBox *combo_sla_material;
     PlaterPresetComboBox* combo_printer = nullptr;
     wxBoxSizer *sizer_params;
+
+    // test
+    wxStaticBitmap * image_printer = nullptr;
+    StaticBox*      panel_printer_preset = nullptr;
+    
 
     //BBS Sidebar widgets
     wxPanel* m_panel_print_title;
@@ -752,8 +764,24 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_content = new wxPanel(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
         p->m_panel_printer_content->SetBackgroundColour(wxColour(255, 255, 255));
 
-        PlaterPresetComboBox* combo_printer = new PlaterPresetComboBox(p->m_panel_printer_content, Preset::TYPE_PRINTER);
-        ScalableButton* edit_btn = new ScalableButton(p->m_panel_printer_content, wxID_ANY, "edit");
+        StateColor panel_bd_col(std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Pressed),
+                                std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Hovered),
+                                std::pair<wxColour, int>(wxColour(0xEEEEEE), StateColor::Normal));
+
+        p->panel_printer_preset = new StaticBox(p->m_panel_printer_content);
+        p->panel_printer_preset->SetCornerRadius(8);
+        p->panel_printer_preset->SetBorderColor(panel_bd_col);
+        p->panel_printer_preset->SetMinSize(PRINTER_PANEL_SIZE_SMALL);
+        p->panel_printer_preset->Bind(wxEVT_LEFT_DOWN, [this](auto& evt) { p->combo_printer->wxEvtHandler::ProcessEvent(evt); });
+
+        PlaterPresetComboBox* combo_printer = new PlaterPresetComboBox(p->panel_printer_preset, Preset::TYPE_PRINTER);
+        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_CENTER_HORIZONTAL);
+        combo_printer->SetBorderWidth(0);
+        ScalableButton* edit_btn = new ScalableButton(p->panel_printer_preset, wxID_ANY, "edit");
+        ScalableBitmap        bitmap_printer(p->panel_printer_preset, "printer_placeholder", 48);
+        p->image_printer                    = new wxStaticBitmap(p->panel_printer_preset, wxID_ANY, bitmap_printer.bmp(), wxDefaultPosition,
+                                                                 PRINTER_THUMBNAIL_SIZE, 0);
+        p->image_printer->Bind(wxEVT_LEFT_DOWN, [this](auto& evt) { p->combo_printer->wxEvtHandler::ProcessEvent(evt); });
         edit_btn->SetToolTip(_L("Click to edit preset"));
         edit_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
             {
@@ -764,7 +792,7 @@ Sidebar::Sidebar(Plater *parent)
         combo_printer->edit_btn = edit_btn;
         p->combo_printer = combo_printer;
 
-        connection_btn = new ScalableButton(p->m_panel_printer_content, wxID_ANY, "monitor_signal_strong");
+        connection_btn = new ScalableButton(p->panel_printer_preset, wxID_ANY, "monitor_signal_strong");
         connection_btn->SetBackgroundColour(wxColour(255, 255, 255));
         connection_btn->SetToolTip(_L("Connection"));
         connection_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
@@ -773,15 +801,49 @@ Sidebar::Sidebar(Plater *parent)
                 dlg.ShowModal();
             });
 
-        machine_connecting_btn = new ScalableButton(p->m_panel_printer_content, wxID_ANY, "monitor_machine_working");
+        machine_connecting_btn = new ScalableButton(p->panel_printer_preset, wxID_ANY, "monitor_machine_working");
         machine_connecting_btn->SetBackgroundColour(wxColour(255, 255, 255));
         machine_connecting_btn->SetToolTip(_L("The machine has been connected and is currently in working mode."));
         machine_connecting_btn->Hide();
 
+        auto hovered = std::make_shared<wxWindow*>();
+        for (wxWindow* w : std::initializer_list<wxWindow*>{p->panel_printer_preset, edit_btn, p->image_printer, combo_printer}) {
+            w->Bind(wxEVT_ENTER_WINDOW, [w, hovered, edit_btn](wxMouseEvent& evt) {
+                *hovered = w;
+                edit_btn->SetBitmap_("edit");
+            });
+            w->Bind(wxEVT_LEAVE_WINDOW, [w, hovered, edit_btn](wxMouseEvent& evt) {
+                if (*hovered == w) {
+                    edit_btn->SetBitmap_("dot");
+                    *hovered = nullptr;
+                }
+            });
+        }
+
         wxBoxSizer* vsizer_printer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer_printer = new wxBoxSizer(wxHORIZONTAL);
 
-        vsizer_printer->AddSpacer(FromDIP(16));
+        wxBoxSizer* vsizer = new wxBoxSizer(wxVERTICAL);
+        wxBoxSizer* hsizer = new wxBoxSizer(wxHORIZONTAL);
+
+        wxBoxSizer* hsizer_printer_btn = new wxBoxSizer(wxHORIZONTAL);
+        hsizer_printer_btn->Add(edit_btn, 0);
+        hsizer_printer_btn->Add(connection_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(4));
+        hsizer_printer_btn->Add(machine_connecting_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(4));
+        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_RIGHT);
+
+        hsizer->Add(p->image_printer, 0, wxLEFT | wxALIGN_CENTER, FromDIP(4));
+        hsizer->Add(combo_printer, 1, wxALIGN_CENTRE | wxLEFT | wxRIGHT, FromDIP(6));
+        hsizer->Add(hsizer_printer_btn, 0, wxALIGN_TOP | wxTOP | wxRIGHT, FromDIP(4));
+        hsizer->AddSpacer(FromDIP(10));
+        p->panel_printer_preset->SetSizer(hsizer);
+
+        hsizer_printer->Add(p->panel_printer_preset, 1, wxEXPAND, 0);
+        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+        vsizer_printer->AddSpacer(FromDIP(4));
+
+        /*vsizer_printer->AddSpacer(FromDIP(16));
+        hsizer_printer->Add(p->image_printer, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
         hsizer_printer->Add(combo_printer, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
         hsizer_printer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
         hsizer_printer->Add(FromDIP(8), 0, 0, 0, 0);
@@ -789,7 +851,7 @@ Sidebar::Sidebar(Plater *parent)
         hsizer_printer->Add(machine_connecting_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
         hsizer_printer->Add(FromDIP(8), 0, 0, 0, 0);
 
-        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);
+        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);*/
 
         // Bed type selection
         wxBoxSizer* bed_type_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -1373,8 +1435,11 @@ void Sidebar::update_all_preset_comboboxes()
             cb->update();
     }
 
-    if (p->combo_printer)
+    if (p->combo_printer){
         p->combo_printer->update();
+        update_printer_thumbnail();
+    }
+        
 
     // Orca:: show device tab based on vendor type
     
@@ -2081,6 +2146,39 @@ Search::OptionsSearcher& Sidebar::get_searcher()
 std::string& Sidebar::get_search_line()
 {
     return p->searcher.search_string();
+}
+
+void Sidebar::update_printer_thumbnail()
+{
+    auto& preset_bundle = wxGetApp().preset_bundle;
+    Preset & selected_preset = preset_bundle->printers.get_edited_preset();
+
+    auto        inherit    = selected_preset.inherits();
+    std::string model_name = inherit == "" ? selected_preset.name : inherit;
+    std::string png_name   = "";
+    std::string vendor     = model_name.substr(0, model_name.find_first_of(" "));
+    if (model_name.find("Snapmaker") != std::string::npos) {
+        png_name = model_name.substr(0, model_name.find_last_of("(") - 1);
+    } else {
+        png_name = "printer_placeholder";
+    }
+    png_name += "_cover.png";
+
+    boost::filesystem::path(resources_dir()) / "profile" / vendor / png_name;
+    std::string printer_type    = selected_preset.get_current_printer_type(preset_bundle);
+
+    try {
+        p->image_printer->SetBitmap(create_scaled_bitmap(png_name, this, 48));
+    }
+    catch (std::exception& e) {
+        p->image_printer->SetBitmap(create_scaled_bitmap("printer_placeholder", this, 48));
+    }
+    
+
+    /*if (printer_thumbnails.find(printer_type) != printer_thumbnails.end())
+        p->image_printer->SetBitmap(create_scaled_bitmap(, this, 48));
+    else
+        p->image_printer->SetBitmap(create_scaled_bitmap("printer_placeholder", this, 48));*/
 }
 
 void Sidebar::auto_calc_flushing_volumes(const int modify_id)
@@ -6502,6 +6600,7 @@ void Plater::priv::on_combobox_select(wxCommandEvent &evt)
     PlaterPresetComboBox* preset_combo_box = dynamic_cast<PlaterPresetComboBox*>(evt.GetEventObject());
     if (preset_combo_box) {
         this->on_select_preset(evt);
+        sidebar->update_printer_thumbnail();
     }
     else {
         this->on_select_bed_type(evt);

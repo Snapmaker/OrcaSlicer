@@ -77,8 +77,25 @@
     
     <div board="recent">
         <div id="RecentTitleBlock">
-            <div id="RecentTitle" class="Content-Title trans TextS1" tid="t35">recent open</div>
-            <div id="RecentClearAllBtn" class="trans TextS1" tid="t12" onClick="OnDeleteAllRecentFiles()">Clear all</div>
+            <div id="Recent_LEFT_Title">
+				<img class="TitleSmallIcon" src="./img/t2.svg" />
+		    	<div id="RecentTitle" class="Content-Title trans TextS1" tid="t35">Recently opened</div>
+			</div>
+			<div id="Right_Title_Block">
+				<div id="Menu_Batch" class="Right_Title_Btn Btn_White" onClick="OnBatchDelete()">
+					<img class="Right_Title_Btn_Icon" src="img/batch.svg" /><span class="trans" tid="t115">Batch</span>
+				</div>
+				<div id="Menu_Clear" class="Right_Title_Btn Btn_White" onClick="OnDeleteAllRecentFiles()">
+					<img class="Right_Title_Btn_Icon" src="img/clear.svg" /><span class="trans" tid="t12">Clear</span>
+				</div>
+				<div id="Menu_Delete" class="Right_Title_Btn Btn_Green" onClick="OnMultiDelete()">
+					<img class="Right_Title_Btn_Icon" src="img/delete2.svg" /><span class="trans" tid="t88">Remove</span>
+				</div>	
+				<div id="Menu_Cancel" class="Right_Title_Btn Btn_White" onClick="OnCancelDelete()">
+					<img class="Right_Title_Btn_Icon" src="img/cancel.svg" /><span class="trans" tid="t38">Cancel</span>
+				</div>
+			</div>
+            	
         </div>
         <div id="FileList">
             <!-- 文件列表内容 -->

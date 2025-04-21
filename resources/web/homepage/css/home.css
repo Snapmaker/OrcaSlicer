@@ -1173,3 +1173,98 @@ body
     opacity: 0.3;
     transition: opacity 0.3s;
 }
+
+.Right_Title_Btn
+{
+	display:flex;
+	align-items: center;
+	margin-right: 16px;
+}
+
+.Right_Title_Btn_Icon
+{
+	width:16px;
+	height: 16px;
+	margin-right: 6px;
+}
+
+.Btn_White
+{
+	background-color:#E5E5E5;
+	border: 1px solid #BABABA;
+	border-radius: 8px;
+	padding: 4px 20px;
+	color: black;
+	cursor: pointer;
+}
+
+.Btn_White:hover
+{
+	background-color:#EBEBEB;
+	border: 1px solid #C2C2C2;
+}
+
+.Btn_Green
+{
+	background-color:#00AE42;
+	border: 1px solid #009438;
+	border-radius: 8px;
+	color: white;
+	padding: 4px 20px;
+	cursor: pointer;
+}
+
+.Btn_Green:hover
+{
+	background-color:#00A03D;
+	border: 1px solid #009438;
+}
+
+#Recent_LEFT_Title
+{
+	display:flex;
+	align-items: center;
+	padding: 0px 0px;
+}
+
+#Right_Title_Block
+{
+	display:flex;
+	align-items: center;
+}
+
+.FileCheckBox
+{
+	position:absolute;
+	top: 14px;
+	left: 14px;
+	width: 26px;
+	height: 26px;
+	border:1px solid grey;
+	border-radius: 4px;
+	background-color: white;
+	display: none;
+}
+
+.FileCheckBox_checked
+{
+	background-image: url("../img/checkbox.svg");
+	background-size: contain;
+}
+
+.FileCheckBox_checked:hover
+{
+	background-image: url("../img/checkbox_hover.svg");
+}
+
+.FileMask
+{
+	position:absolute;
+	top: 0px;
+	left: 0px;
+	right: 0px;
+	bottom: 0px;
+	background-color: darkgrey;
+	opacity: 0.3;
+	display: none;
+}

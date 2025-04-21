@@ -4,6 +4,12 @@ var m_HotModelList=null;
 var deviceClickCount = 0;
 var deviceClickTimer = null;
 
+//Recent详情页面的状态
+var Recent_Normal=1;
+var Recent_BatchDelete=2;
+
+var RecentPage_Mode=Recent_Normal;
+
 function OnInit()
 {
 	//-----Official-----
@@ -13,6 +19,19 @@ function OnInit()
 	SendMsg_GetRecentFile();
 	SendMsg_GetStaffPick();
 	SendMsg_GetLocalDevices();
+
+    Set_RecentFile_Delete_Checkbox_Event();
+
+    $('#Menu_Batch').css('display','flex');
+	$('#Menu_Clear').css('display','flex');
+	
+	$('#Menu_Delete').hide();
+	$('#Menu_Cancel').hide();
+	
+	
+	$('.FileCheckBox.FileCheckBox_checked').removeClass('FileCheckBox_checked');
+	$('.FileCheckBox').hide();
+	$('.FileMask').hide();
 }
 
 //------最佳打开文件的右键菜单功能----------
@@ -37,6 +56,7 @@ function Set_RecentFile_MouseRightBtn_Event()
 				//鼠标点击了中键
 			}else if(e.which == 1){
 				//鼠标点击了左键
+                if(RecentPage_Mode !== Recent_BatchDelete)
 				OnOpenRecentFile( encodeURI(RightBtnFilePath) );
 			}
 		});
@@ -227,6 +247,8 @@ function ShowRecentFileList( pList )
 				'<div class="FileImg" ><img src="'+sImg+'" onerror="this.onerror=null;this.src=\'img/d.png\';"  alt="No Image"  /></div>'+
 				'<div class="FileName TextS1">'+sName+'</div>'+
 				'<div class="FileDate">'+sTime+'</div>'+
+                '<div class="FileMask"></div>'+
+				'<div class="FileCheckBox"></div>'+
 			    '</div>';
 		
 		strHtml+=TmpHtml;
@@ -236,6 +258,7 @@ function ShowRecentFileList( pList )
 	
     Set_RecentFile_MouseRightBtn_Event();
 	UpdateRecentClearBtnDisplay();
+    Set_RecentFile_Delete_Checkbox_Event();
 }
 
 function ShowRecnetFileContextMenu()
@@ -378,9 +401,15 @@ function UpdateRecentClearBtnDisplay()
     let AllFile=$(".FileItem");
 	let nFile=AllFile.length;	
 	if( nFile>0 )
-		$("#RecentClearAllBtn").show();
-	else
-		$("#RecentClearAllBtn").hide();
+    {
+        $("#Menu_Clear").show();
+        $('#Menu_Batch').show();
+    }
+    else
+    {
+        $("#Menu_Clear").hide();
+        $('#Menu_Batch').hide();
+    }
 }
 
 
@@ -900,3 +929,92 @@ function createProject(deviceId) {
     SendWXMessage(JSON.stringify(tSend));
 }
 
+function OnBatchDelete()
+{
+	//切换页面工作模式
+	RecentPage_Mode=Recent_BatchDelete;
+	
+	$('#Menu_Batch').hide();
+	$('#Menu_Clear').hide();
+	
+	$('#Menu_Delete').css('display','flex');
+	$('#Menu_Cancel').css('display','flex');
+
+	$('.FileCheckBox.FileCheckBox_checked').removeClass('FileCheckBox_checked');
+	$('.FileCheckBox').show();	
+}
+
+function OnCancelDelete()
+{
+	//切换页面工作模式
+	RecentPage_Mode=Recent_Normal;
+	
+	$('#Menu_Batch').css('display','flex');
+	$('#Menu_Clear').css('display','flex');
+	
+	$('#Menu_Delete').hide();
+	$('#Menu_Cancel').hide();
+	
+	
+	$('.FileCheckBox.FileCheckBox_checked').removeClass('FileCheckBox_checked');
+	$('.FileCheckBox').hide();
+	$('.FileMask').hide();
+}
+
+function OnMultiDelete()
+{
+	let ChooseFiles=$('.FileCheckBox.FileCheckBox_checked');
+	let nChoose=ChooseFiles.length;
+
+	var tBatchDel={};
+	tBatchDel['sequence_id']=Math.round(new Date() / 1000);
+	tBatchDel['command']="homepage_delete_recentfile";
+	tBatchDel['data']={};	
+	
+	for(let n=0;n<nChoose;n++)
+	{
+		let OneItem=ChooseFiles[n];
+		let ParentItem=$(OneItem).parent();
+		
+		let fPath=$(ParentItem).attr("fpath");
+
+		//删除文件对象
+		$(ParentItem).remove();
+		
+		//发送WX消息
+	    tBatchDel['data']['path']=fPath;	
+   	    SendWXMessage( JSON.stringify(tBatchDel) );		
+	}
+	
+	//更新按钮状态
+	OnCancelDelete();	
+	UpdateRecentClearBtnDisplay();	
+}
+
+function Set_RecentFile_Delete_Checkbox_Event()
+{
+	$(".FileCheckBox").mousedown(
+		function(e)
+		{			
+			//FilePath		
+			if(e.which == 3){
+				//鼠标点击了右键+$(this).attr('ff') );
+			}else if(e.which == 2){
+				//鼠标点击了中键
+			}else if(e.which == 1){
+				//鼠标点击了左键
+				if( $(this).hasClass('FileCheckBox_checked') )
+				{
+					$(this).removeClass('FileCheckBox_checked');
+					$(this).prev('.FileMask').hide();
+				}
+				else
+				{
+					$(this).addClass('FileCheckBox_checked');
+					$(this).prev('.FileMask').show();					
+				}
+
+                e.stopPropagation();
+			}
+		});	
+}

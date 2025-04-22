@@ -152,6 +152,8 @@ public:
     void show_SEMM_buttons(bool bshow);
     void update_dynamic_filament_list();
 
+    void update_nozzle_settings();
+
     ObjectList*             obj_list();
     ObjectSettings*         obj_settings();
     ObjectLayers*           obj_layers();
@@ -258,6 +260,8 @@ public:
     void load_gcode(const wxString& filename);
     void reload_gcode_from_disk();
     void refresh_print();
+
+    void update_nozzle_settings();
 
     // SoftFever
     void calib_pa(const Calib_Params& params);

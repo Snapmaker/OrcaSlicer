@@ -356,6 +356,13 @@ void PresetComboBox::update(std::string select_preset_name)
     Thaw();
 }
 
+bool PresetComboBox::is_selected_printer_model()
+{
+    auto selected_item = this->GetSelection();
+    auto marker = reinterpret_cast<Marker>(this->GetClientData(selected_item));
+    return marker == LABEL_ITEM_PRINTER_MODELS;
+}
+
 void PresetComboBox::show_all(bool show_all)
 {
     m_show_all = show_all;
@@ -961,6 +968,7 @@ void PlaterPresetComboBox::update()
     //BBS: add project embedded presets logic
     std::map<wxString, wxBitmap*>  project_embedded_presets;
     std::map<wxString, wxBitmap *> system_presets;
+    std::unordered_set<std::string> system_printer_models;
     std::map<wxString, wxString>   preset_descriptions;
 
     //BBS:  move system to the end
@@ -1002,12 +1010,21 @@ void PlaterPresetComboBox::update()
         wxBitmap* bmp = get_bmp(preset);
         assert(bmp);
 
-        const wxString name = get_preset_name(preset);
+        wxString name = get_preset_name(preset);
         preset_descriptions.emplace(name, from_u8(preset.description));
 
         if (preset.is_default || preset.is_system) {
             //BBS: move system to the end
-            system_presets.emplace(name, bmp);
+            if (m_type == Preset::TYPE_PRINTER) {
+                auto printer_model = preset.config.opt_string("printer_model");
+                name = from_u8(printer_model);
+                if (system_printer_models.count(printer_model) == 0) {
+                    system_presets.emplace(name, bmp);
+                    system_printer_models.insert(printer_model);
+                }
+            } else {
+                system_presets.emplace(name, bmp);
+            }
             if (is_selected) {
                 tooltip = get_tooltip(preset);
                 selected_system_preset = name;
@@ -1066,6 +1083,9 @@ void PlaterPresetComboBox::update()
         set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
         for (std::map<wxString, wxBitmap*>::iterator it = system_presets.begin(); it != system_presets.end(); ++it) {
             SetItemTooltip(Append(it->first, *it->second), preset_descriptions[it->first]);
+            if (m_type != Preset::TYPE_FILAMENT) {
+                set_label_marker(GetCount() - 1, LABEL_ITEM_PRINTER_MODELS);
+            }
             validate_selection(it->first == selected_system_preset);
         }
     }

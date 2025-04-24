@@ -630,6 +630,8 @@ public:
             // Compatible preset found.
             i_compatible;
     }
+    std::vector<std::string> diameters_of_selected_printer();
+    
     // Return index of the first compatible preset. Certainly at least the '- default -' preset shall be compatible.
     size_t          first_compatible_idx() const { return this->first_compatible_idx([](const Preset&) -> int { return 0; }); }
 

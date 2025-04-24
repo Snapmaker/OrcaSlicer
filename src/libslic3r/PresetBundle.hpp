@@ -133,6 +133,8 @@ public:
                                                                                                std::string &      nozzle_temp_max,
                                                                                                std::string &      preset_setting_id);
 
+    Preset *                    get_similar_printer_preset(std::string printer_model, std::string printer_variant);
+    
     PresetCollection            prints;
     PresetCollection            sla_prints;
     PresetCollection            filaments;

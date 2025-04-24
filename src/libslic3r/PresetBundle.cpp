@@ -2076,6 +2076,37 @@ bool PresetBundle::check_filament_temp_equation_by_printer_type_and_nozzle_for_m
     return is_equation;
 }
 
+Preset *PresetBundle::get_similar_printer_preset(std::string printer_model, std::string printer_variant)
+{
+    if (printer_model.empty())
+        printer_model = printers.get_selected_preset().config.opt_string("printer_model");
+    auto printer_variant_old = printers.get_selected_preset().config.opt_string("printer_variant");
+    std::map<std::string, Preset*> printer_presets;
+    for (auto &preset : printers.m_presets) {
+        if (printer_variant.empty() && !preset.is_system)
+            continue;
+        if (preset.config.opt_string("printer_model") == printer_model)
+            printer_presets.insert({preset.name, &preset});
+    }
+    if (printer_presets.empty())
+        return nullptr;
+    auto prefer_printer = printers.get_selected_preset().name;
+    if (!printer_variant.empty())
+        boost::replace_all(prefer_printer, printer_variant_old, printer_variant);
+    else if (auto n = prefer_printer.find(printer_variant_old); n != std::string::npos)
+        prefer_printer = printer_model + " " + printer_variant_old + prefer_printer.substr(n + printer_variant_old.length());
+    if (auto iter = printer_presets.find(prefer_printer); iter != printer_presets.end()) {
+        return iter->second;
+    }
+    if (printer_variant.empty())
+        printer_variant = printer_variant_old;
+    for (auto& preset : printer_presets) {
+        if (preset.second->config.opt_string("printer_variant") == printer_variant)
+            return preset.second;
+    }
+    return printer_presets.begin()->second;
+}
+
 //BBS: check whether this is the only edited filament
 bool PresetBundle::is_the_only_edited_filament(unsigned int filament_index)
 {

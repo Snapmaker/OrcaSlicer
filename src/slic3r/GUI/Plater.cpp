@@ -2015,7 +2015,7 @@ void Sidebar::update_dynamic_filament_list()
     dynamic_filament_list_1_based.update();
 }
 
-void Sidebar::update_nozzle_settings()
+void Sidebar::update_nozzle_settings(bool switch_machine)
 {
     if (!p->m_nozzle_notebook)
         return;
@@ -2045,14 +2045,37 @@ void Sidebar::update_nozzle_settings()
 
         ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {FromDIP(80), FromDIP(30)}, 0,
                                                 nullptr, wxCB_READONLY);
-        diameter_combo->AppendString("0.2");
-        diameter_combo->AppendString("0.4");
-        diameter_combo->AppendString("0.6");
-        diameter_combo->AppendString("0.8");
+        
 
-        // Set current diameter
-        float    curr_diameter = nozzle_diameter->values[i];
-        wxString diam_str      = wxString::Format("%.1f", curr_diameter);
+        if (!wxGetApp().preset_bundle->printers.get_edited_preset().is_system) {
+            auto diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
+            diameter_combo->AppendString(diameter);
+            diameter_combo->Enable(false);
+        } else {
+            auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
+            if (diameters.size() < 2) {
+                diameter_combo->Enable(false);
+
+            }
+            for (auto& diameter : diameters) {
+                diameter_combo->AppendString(diameter);
+            }
+        }
+        
+        
+        diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
+            auto diameter = diameter_combo->GetValue();
+            auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
+            if (preset == nullptr) {
+                MessageDialog dlg(nullptr, _L(""), _L(""));
+                dlg.ShowModal();
+                return false;
+            }
+            preset->is_visible = true; // force visible
+            return wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+        });
+        
+        auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
         diameter_combo->SetValue(diam_str);
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
@@ -2105,6 +2128,10 @@ void Sidebar::update_nozzle_settings()
     }
 
     p->m_nozzle_notebook->Layout();
+
+    if (switch_machine) {
+        p->combo_printer->SetFocus();
+    }
 }
 
 ObjectList* Sidebar::obj_list()
@@ -6723,7 +6750,11 @@ void Plater::priv::on_combobox_select(wxCommandEvent &evt)
     if (preset_combo_box) {
         this->on_select_preset(evt);
         sidebar->update_printer_thumbnail();
-        sidebar->update_nozzle_settings();
+
+        Preset::Type preset_type = preset_combo_box->get_type();
+        if (preset_type == Preset::TYPE_PRINTER) {
+            sidebar->update_nozzle_settings(true);
+        }
     }
     else {
         this->on_select_bed_type(evt);
@@ -6851,6 +6882,16 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
                 preset_name = physical_printers.get_selected_printer_preset_name();
             else
                 physical_printers.unselect_printer();
+
+            if (marker == PresetComboBox::LABEL_ITEM_PRINTER_MODELS) {
+                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset(preset_name, {});
+                if (preset == nullptr) {
+                    MessageDialog dlg(this->sidebar, _L(""), _L(""));
+                    dlg.ShowModal();
+                }
+                preset->is_visible = true; // force visible
+                preset_name = preset->name;
+            }
         }
         //BBS
         //wxWindowUpdateLocker noUpdates1(sidebar->print_panel());

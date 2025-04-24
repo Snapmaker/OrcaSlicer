@@ -40,6 +40,7 @@ public:
 
 	enum LabelItemType {
 		LABEL_ITEM_PHYSICAL_PRINTER = 0xffffff01,
+        LABEL_ITEM_PRINTER_MODELS,
 		LABEL_ITEM_DISABLED,
 		LABEL_ITEM_MARKER,
 		LABEL_ITEM_PHYSICAL_PRINTERS,
@@ -57,6 +58,8 @@ public:
     void set_selection_changed_function(std::function<void(int)> sel_changed) { on_selection_changed = sel_changed; }
 
     bool is_selected_physical_printer();
+
+    bool is_selected_printer_model();
 
     // Return true, if physical printer was selected 
     // and next internal selection was accomplished

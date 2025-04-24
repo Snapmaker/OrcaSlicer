@@ -2113,11 +2113,6 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             p->editing_filament = -1;
             wxGetApp().params_dialog()->Show();
             wxGetApp().get_tab(Preset::TYPE_PRINTER)->activate_option("", "Extruder " + std::to_string(i + 1));
-            /*if (p->combo_printer->switch_to_tab()) {
-                
-            }else{
-                p->combo_printer->switch_to_tab();
-            }*/
         });
 
         p->m_nozzle_edit_btns.push_back(edit_btn);
@@ -2138,6 +2133,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
     if (switch_machine) {
         p->combo_printer->SetFocus();
+    } else {
+        p->combo_printer->GetParent()->SetFocus();
     }
 }
 

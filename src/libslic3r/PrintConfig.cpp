@@ -3392,6 +3392,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->max = 100;
     def->set_default_value(new ConfigOptionFloats { 0.4 });
+    def->readonly = true;
 
     def = this->add("notes", coString);
     def->label = L("Configuration notes");

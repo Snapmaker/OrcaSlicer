@@ -2072,10 +2072,17 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                 return false;
             }
             preset->is_visible = true; // force visible
+            
+            for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
+                // 当前原则上不支持两个头使用不同的喷嘴型号
+                p->m_nozzle_diameter_lists[i]->SetValue(diameter);
+            }
+
             return wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
         });
         
         auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
+        
         diameter_combo->SetValue(diam_str);
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);

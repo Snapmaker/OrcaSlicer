@@ -6,7 +6,6 @@
   "setting_id": "21586560280",
   "inherits": "Snapmaker PLA Eco @test base",
   "compatible_printers": [
-    "Snapmaker test (0.4 nozzle)",
-    "Snapmaker test (0.6 nozzle)"
+    "Snapmaker test (0.4 nozzle)"
   ]
 }

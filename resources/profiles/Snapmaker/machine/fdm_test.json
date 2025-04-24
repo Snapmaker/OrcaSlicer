@@ -1,118 +1,71 @@
 {
-  "type": "machine",
-  "from": "system",
-  "instantiation": "false",
-  "name": "fdm_test",
-  "inherits": "fdm_linear2_dual",
-  "machine_max_acceleration_travel": ["9000"],
-  "machine_max_jerk_z": ["3"],
-  "bed_model": "Snapmaker test_bed.stl",
-  "bed_texture": "Snapmaker test_bed.svg",
-  "printer_notes": "PRINTER_MODEL_SNAPMAKER_TEST\nPRINTER_MODEL_SNAPMAKER_TEST\n",
-  "change_filament_gcode": ";***** Update: 20230923\n{if current_extruder != next_extruder}\n; {if (next_wipe_x > 0) || (next_wipe_y > 0)}\n; use wipeTower\n; move to wipeTower before changing tool\nG0 X[next_wipe_x] Y[next_wipe_y]\n{endif}\n Change T[current_extruder] -> T[next_extruder] (layer [layer_num]\n; layer\nT{next_extruder}\n\nM107 P[current_extruder] ;fan off T[current_extruder]\n\n{if layer_num == 1 &&\n ((filament_type[current_extruder] == \"PLA\" || filament_type[current_extruder] == \"TPU\")\n  || (filament_type[next_extruder] == \"PLA\" || filament_type[next_extruder] == \"TPU\"))\n}\n  ; set bed temp: {filament_type[current_extruder]}({bed_temperature[current_extruder]}) -> {filament_type[next_extruder]}({bed_temperature[next_extruder]})\n  M140 S{min(bed_temperature[current_extruder], bed_temperature[next_extruder])}\n{endif}\n\nM109 T[next_extruder] S{if layer_num < 1}[nozzle_temperature_initial_layer]{else}[nozzle_temperature]{endif} C3 W1 ;wait T[next_extruder]\n{if layer_num == 1}\n  G1 E{retraction_length[next_extruder]} F200;deretract\n{endif}\n\n{if layer_z > first_layer_height && layer_num >= close_fan_the_first_x_layers[next_extruder]}\n;  M106 P[next_extruder] S{fan_min_speed[next_extruder] * 255.0 / 100.0} ;restore fan speed for T[next_extruder]\n{endif}\n; End Toolchange\n{endif}",
-
-  "bed_exclude_area": [
-        "0x0",
-        "18x0",
-        "18x28",
-        "0x28"
-  ],
-  "before_layer_change_gcode": "",
-    "cooling_tube_length": "5",
-    "cooling_tube_retraction": "91.5",
-    "deretraction_speed": [
-        "30",
-        "30",
-        "30",
-        "30"
-    ],
-    "extruder_clearance_height_to_lid": "90",
-    "extruder_clearance_height_to_rod": "34",
-    "extruder_clearance_radius": "57",
-    "extruder_colour": [
-        "",
-        "",
-        "",
-        ""
-    ],
-    "extruder_offset": [
-        "0x2",
-        "0x2",
-        "0x2",
-        "0x2"
-    ],
+    "type": "machine",
+    "name": "fdm_test",
+    "from": "system",
+    "instantiation": "false",
+    "inherits": "fdm_toolchanger",
     "gcode_flavor": "klipper",
-    "long_retractions_when_cut": [
-        "0",
-        "0",
-        "0",
-        "0"
-    ],
-    "machine_load_filament_time": "29",
-    "machine_max_acceleration_e": [
-        "5000"
-    ],
-    "machine_max_acceleration_extruding": [
-        "20000"
-    ],
-    "machine_max_acceleration_retracting": [
-        "5000"
-    ],
-    "machine_max_acceleration_x": [
-        "20000"
-    ],
-    "machine_max_acceleration_y": [
-        "20000"
-    ],
-    "machine_max_acceleration_z": [
-        "500"
-    ],
-    "machine_max_jerk_e": [
-        "2.5"
-    ],
-    "machine_max_jerk_x": [
-        "9"
-    ],
-    "machine_max_jerk_y": [
-        "9"
-    ],
-    "machine_max_speed_e": [
-        "30"
-    ],
-    "machine_max_speed_x": [
-        "500"
-    ],
-    "machine_max_speed_y": [
-        "500"
-    ],
-    "machine_max_speed_z": [
-        "20"
-    ],
-    "machine_unload_filament_time": "28",
+    "single_extruder_multi_material": "0",
+    "bed_model": "Snapmaker test_bed.stl",
+    "bed_texture": "Snapmaker test_bed.svg",
     "max_layer_height": [
-        "0.28",
-        "0.28",
-        "0.28",
-        "0.28"
+        "0.32",
+        "0.32",
+        "0.32",
+        "0.32",
+        "0.32"
     ],
     "min_layer_height": [
         "0.08",
         "0.08",
         "0.08",
+        "0.08",
         "0.08"
     ],
-    "nozzle_type": "stainless_steel",
-    "nozzle_volume": "107",
-    "parking_pos_retraction": "92",
-    "printable_height": "270",
-    "printer_settings_id": "test",
+    "deretraction_speed": [
+        "30",
+        "30",
+        "30",
+        "30",
+        "30"
+    ],
+    "extruder_colour": [
+        "#FCE94F",
+        "#FCE94F",
+        "#FCE94F",
+        "#FCE94F",
+        "#FCE94F"
+    ],
+    "extruder_offset": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+    ],
+    "long_retractions_when_cut": [
+        "0",
+        "0",
+        "0",
+        "0",
+        "0"
+    ],
+    "nozzle_diameter": [
+        "0.4",
+        "0.4",
+        "0.4",
+        "0.4",
+        "0.4"
+    ],
     "retract_before_wipe": [
-        "0%",
-        "0%",
-        "0%",
-        "0%"
+        "70%",
+        "70%",
+        "70%",
+        "70%",
+        "70%"
     ],
     "retract_length_toolchange": [
+        "2",
         "2",
         "2",
         "2",
@@ -122,15 +75,18 @@
         "0",
         "0",
         "0",
+        "0",
         "0"
     ],
     "retract_lift_below": [
-        "249",
-        "249",
-        "249",
-        "249"
+        "0",
+        "0",
+        "0",
+        "0",
+        "0"
     ],
     "retract_lift_enforce": [
+        "All Surfaces",
         "All Surfaces",
         "All Surfaces",
         "All Surfaces",
@@ -140,9 +96,11 @@
         "0",
         "0",
         "0",
+        "0",
         "0"
     ],
     "retract_restart_extra_toolchange": [
+        "0",
         "0",
         "0",
         "0",
@@ -152,23 +110,27 @@
         "1",
         "1",
         "1",
+        "1",
         "1"
     ],
     "retraction_distances_when_cut": [
         "18",
         "18",
         "18",
+        "18",
         "18"
     ],
     "retraction_length": [
-        "1",
-        "1",
-        "1",
-        "1"
+        "0.8",
+        "0.8",
+        "0.8",
+        "0.8",
+        "0.8"
     ],
     "retraction_minimum_travel": [
         "1",
-        "0",
+        "1",
+        "1",
         "1",
         "1"
     ],
@@ -176,17 +138,19 @@
         "30",
         "30",
         "30",
+        "30",
         "30"
     ],
-    "thumbnails": "48x48/PNG, 300x300/PNG",
     "travel_slope": [
+        "3",
         "3",
         "3",
         "3",
         "3"
     ],
-    "version": "2.2.4.2",
+    "version": "2.1.1.1",
     "wipe": [
+        "1",
         "1",
         "1",
         "1",
@@ -196,28 +160,28 @@
         "1",
         "1",
         "1",
+        "1",
         "1"
     ],
     "z_hop": [
         "0.4",
         "0.4",
         "0.4",
+        "0.4",
         "0.4"
     ],
     "z_hop_types": [
-        "Auto Lift",
-        "Auto Lift",
-        "Auto Lift",
-        "Auto Lift"
+        "Normal Lift",
+        "Normal Lift",
+        "Normal Lift",
+        "Normal Lift",
+        "Normal Lift"
     ],
-    "printable_area": [
-        "0x0",
-        "270x0",
-        "270x268",
-        "0x268"
-    ],
-    "layer_change_gcode": "{if layer_num == 1}\nSET_FAN_SPEED FAN=cavity_fan SPEED=0.75\n{endif}",
-    "machine_end_gcode": "PRINT_END",
-    "machine_pause_gcode": "PAUSE",
-    "machine_start_gcode": ";===== noozle load line ===============================\nM140 S{first_layer_bed_temperature[initial_extruder]}\n{if (is_extruder_used[0])}M104 T0 S140{endif}\n{if (is_extruder_used[1])}M104 T1 S140{endif}\n{if (is_extruder_used[2])}M104 T2 S140{endif}\n{if (is_extruder_used[3])}M104 T3 S140{endif}\n\nG28\nT{initial_extruder}\nG90\nM83\nM190 S{first_layer_bed_temperature[initial_extruder]}\nBED_MESH_CALIBRATE\n\n;clean nozzle0\n{if (is_extruder_used[0])}\nT0\nG1 X18.0 Y1.0 Z0.8 F18000;Move to start position\nM109 T0 S{nozzle_temperature_initial_layer[0]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y7.5 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y1.5 E0.700\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n;clean nozzle1\n{if (is_extruder_used[1])}\nG1 Z4\nT1\nG1 X18.0 Y7.5 Z0.8 F18000;Move to start position\nM109 T1 S{nozzle_temperature_initial_layer[1]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y14 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y8 E0.350\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n;clean nozzle2\n{if (is_extruder_used[2])}\nG1 Z4\nT2\nG1 X18.0 Y14 Z0.8 F18000;Move to start position\nM109 T2 S{nozzle_temperature_initial_layer[2]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y20.5 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y14.5 E0.350\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n;clean nozzle3\n{if (is_extruder_used[3])}\nG1 Z4\nT3\nG1 X18.0 Y20.5 Z0.8 F18000;Move to start position\nM109 T3 S{nozzle_temperature_initial_layer[3]}\nG1 Z0.3\nG0 E2 F300\nG0 X240 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\nG0 Y27 E0.350 F{outer_wall_volumetric_speed/(0.3*0.5)/ 4 * 60}\nG0 X239.5\nG0 E0.2\nG0 Y21 E0.350\nG0 X18 E15 F{outer_wall_volumetric_speed/(0.3*0.5)     * 60}\n{endif}\n\n\nM400\nM106 S0 ; turn off fan"
+    "purge_in_prime_tower": "0",
+    "machine_pause_gcode": "M601",
+    "change_filament_gcode": "",    
+    "machine_start_gcode": "PRINT_START  TOOL_TEMP={first_layer_temperature[initial_tool]} {if is_extruder_used[0]}T0_TEMP={first_layer_temperature[0]}{endif} {if is_extruder_used[1]}T1_TEMP={first_layer_temperature[1]}{endif} {if is_extruder_used[2]}T2_TEMP={first_layer_temperature[2]}{endif} {if is_extruder_used[3]}T3_TEMP={first_layer_temperature[3]}{endif} {if is_extruder_used[4]}T4_TEMP={first_layer_temperature[4]}{endif} {if is_extruder_used[5]}T5_TEMP={first_layer_temperature[5]}{endif}  BED_TEMP=[first_layer_bed_temperature] TOOL=[initial_tool]\n\nM83\n; set extruder temp\n{if first_layer_temperature[0] > 0 and (is_extruder_used[0])}M104 T0 S{first_layer_temperature[0]}{endif}\n{if first_layer_temperature[1] > 0 and (is_extruder_used[1])}M104 T1 S{first_layer_temperature[1]}{endif}\n{if first_layer_temperature[2] > 0 and (is_extruder_used[2])}M104 T2 S{first_layer_temperature[2]}{endif}\n{if first_layer_temperature[3] > 0 and (is_extruder_used[3])}M104 T3 S{first_layer_temperature[3]}{endif}\n{if first_layer_temperature[4] > 0 and (is_extruder_used[4])}M104 T4 S{first_layer_temperature[4]}{endif}\n{if (is_extruder_used[0]) and initial_tool != 0}\n;\n; purge first tool\n;\nG1 F{travel_speed * 60}\nM109 T0 S{first_layer_temperature[0]}\nT0; pick the tool\nG92 E0 ; reset extruder position\n\nG0 X{(0 == 0 ? 0 : (0 == 1 ? 120 : (0 == 2 ? 180 : 300)))} Y{(0 < 4 ? 0 : 3)} Z10 F{(travel_speed * 60)} ; move close to the sheet's edge\nG0 E{if filament_multitool_ramming[0]}10{else}30{endif} X40 Z0.2 F{if filament_multitool_ramming[0]}500{else}170{endif} ; purge while moving towards the sheet\nG0 X40 E9 F800 ; continue purging and wipe the nozzle\nG0 X{40 + 3} Z{0.05} F{8000} ; wipe, move close to the bed\nG0 X{40 + 3 * 2} Z0.2 F{8000} ; wipe, move quickly away from the bed\nG1 E{- 1.5 * retract_length[0]} F2400 ; retract\n{e_retracted[0] = 1.5 * retract_length[0]} ; update slicer internal retract variable\nG92 E0 ; reset extruder position\n\nM104 S{(idle_temperature[0] == 0 ? (first_layer_temperature[0] + standby_temperature_delta) : (idle_temperature[0]))} T0\n{endif}\n{if (is_extruder_used[1]) and initial_tool != 1}\n;\n; purge second tool\n;\nG1 F{travel_speed * 60}\nM109 T1 S{first_layer_temperature[1]}\nT1; pick the tool\nG92 E0 ; reset extruder position\n\nG0 X{(1 == 0 ? 0 : (1 == 1 ? 120 : (1 == 2 ? 180 : 300)))} Y{(1 < 4 ? 0 : 3)} Z10 F{(travel_speed * 60)} ; move close to the sheet's edge\nG0 E{if filament_multitool_ramming[1]}10{else}30{endif} X120 Z0.2 F{if filament_multitool_ramming[1]}500{else}170{endif} ; purge while moving towards the sheet\nG0 X80 E9 F800 ; continue purging and wipe the nozzle\nG0 X{80 - 3} Z{0.05} F{8000} ; wipe, move close to the bed\nG0 X{80 - 3 * 2} Z0.2 F{8000} ; wipe, move quickly away from the bed\nG1 E{- 1.5 * retract_length[1]} F2400 ; retract\n{e_retracted[1] = 1.5 * retract_length[1]} ; update slicer internal retract variable\nG92 E0 ; reset extruder position\n\nM104 S{(idle_temperature[1] == 0 ? (first_layer_temperature[1] + standby_temperature_delta) : (idle_temperature[1]))} T1\n{endif}\n{if (is_extruder_used[2]) and initial_tool != 2}\n;\n; purge third tool\n;\nG1 F{travel_speed * 60}\nM109 T2 S{first_layer_temperature[2]}\nT2; pick the tool\nG92 E0 ; reset extruder position\n\nG0 X{(2 == 0 ? 0 : (2 == 1 ? 120 : (2 == 2 ? 180 : 300)))} Y{(2 < 4 ? 0 : 3)} Z10 F{(travel_speed * 60)} ; move close to the sheet's edge\nG0 E{if filament_multitool_ramming[2]}10{else}30{endif} X220 Z0.2 F{if filament_multitool_ramming[2]}500{else}170{endif} ; purge while moving towards the sheet\nG0 X220 E9 F800 ; continue purging and wipe the nozzle\nG0 X{220 + 3} Z{0.05} F{8000} ; wipe, move close to the bed\nG0 X{220 + 3 * 2} Z0.2 F{8000} ; wipe, move quickly away from the bed\nG1 E{- 1.5 * retract_length[2]} F2400 ; retract\n{e_retracted[2] = 1.5 * retract_length[2]} ; update slicer internal retract variable\nG92 E0 ; reset extruder position\n\nM104 S{(idle_temperature[2] == 0 ? (first_layer_temperature[2] + standby_temperature_delta) : (idle_temperature[2]))} T2\n{endif}\n{if (is_extruder_used[3]) and initial_tool != 3}\n;\n; purge fourth tool\n;\nG1 F{travel_speed * 60}\nM109 T3 S{first_layer_temperature[3]}\nT3; pick the tool\nG92 E0 ; reset extruder position\n\nG0 X{(3 == 0 ? 0 : (3 == 1 ? 120 : (3 == 2 ? 180 : 300)))} Y{(3 < 4 ? 0 : 3)} Z10 F{(travel_speed * 60)} ; move close to the sheet's edge\nG0 E{if filament_multitool_ramming[3]}10{else}30{endif} X290 Z0.2 F{if filament_multitool_ramming[3]}500{else}170{endif} ; purge while moving towards the sheet\nG0 X260 E9 F800 ; continue purging and wipe the nozzle\nG0 X{260 - 3} Z{0.05} F{8000} ; wipe, move close to the bed\nG0 X{260 - 3 * 2} Z0.2 F{8000} ; wipe, move quickly away from the bed\nG1 E{- 1.5 * retract_length[3]} F2400 ; retract\n{e_retracted[3] = 1.5 * retract_length[3]} ; update slicer internal retract variable\nG92 E0 ; reset extruder position\n\nM104 S{(idle_temperature[3] == 0 ? (first_layer_temperature[3] + standby_temperature_delta) : (idle_temperature[3]))} T3\n{endif}\n{if (is_extruder_used[4]) and initial_tool != 4}\n;\n; purge fifth tool\n;\nG1 F{travel_speed * 60}\nM109 T4 S{first_layer_temperature[4]}\nT4; pick the tool\nG92 E0 ; reset extruder position\n\nG0 X{(4 == 0 ? 0 : (4 == 1 ? 120 : (4 == 2 ? 180 : 300)))} Y{(4 < 4 ? 0 : 3)} Z10 F{(travel_speed * 60)} ; move close to the sheet's edge\nG0 E{if filament_multitool_ramming[4]}10{else}30{endif} X290 Z0.2 F{if filament_multitool_ramming[4]}500{else}170{endif} ; purge while moving towards the sheet\nG0 X260 E9 F800 ; continue purging and wipe the nozzle\nG0 X{260 - 3} Z{0.05} F{8000} ; wipe, move close to the bed\nG0 X{260 - 3 * 2} Z0.2 F{8000} ; wipe, move quickly away from the bed\nG1 E{- 1.5 * retract_length[4]} F2400 ; retract\n{e_retracted[4] = 1.5 * retract_length[4]} ; update slicer internal retract variable\nG92 E0 ; reset extruder position\n\nM104 S{(idle_temperature[4] == 0 ? (first_layer_temperature[4] + standby_temperature_delta) : (idle_temperature[4]))} T4\n{endif}\n;\n; purge initial tool\n;\nG1 F{travel_speed * 60}\nM109 T{initial_tool} S{first_layer_temperature[initial_tool]}\nT{initial_tool}; pick the tool\nG92 E0 ; reset extruder position\n\nG0 X{(initial_tool == 0 ? 0 : (initial_tool == 1 ? 120 : (initial_tool == 2 ? 180 : 300)))} Y{(initial_tool < 4 ? 0 : 3)} Z10 F{(travel_speed * 60)} ; move close to the sheet's edge\nG0 E{if filament_multitool_ramming[initial_tool]}10{else}30{endif} X{(initial_tool == 0 ? 0 : (initial_tool == 1 ? 120 : (initial_tool == 2 ? 180 : 300))) + ((initial_tool == 0 or initial_tool == 2 ? 1 : -1) * 10)} Z0.2 F{if filament_multitool_ramming[initial_tool]}500{else}170{endif} ; purge while moving towards the sheet\nG0 X{(initial_tool == 0 ? 0 : (initial_tool == 1 ? 120 : (initial_tool == 2 ? 180 : 300))) + ((initial_tool == 0 or initial_tool == 2 ? 1 : -1) * 40)} E9 F800 ; continue purging and wipe the nozzle\nG0 X{(initial_tool == 0 ? 0 : (initial_tool == 1 ? 120 : (initial_tool == 2 ? 180 : 300))) + ((initial_tool == 0 or initial_tool == 2 ? 1 : -1) * 40) + ((initial_tool == 0 or initial_tool == 2 ? 1 : -1) * 3)} Z{0.05} F{8000} ; wipe, move close to the bed\nG0 X{(initial_tool == 0 ? 0 : (initial_tool == 1 ? 120 : (initial_tool == 2 ? 180 : 300))) + ((initial_tool == 0 or initial_tool == 2 ? 1 : -1) * 40) + ((initial_tool == 0 or initial_tool == 2 ? 1 : -1) * 3 * 2)} Z0.2 F{8000} ; wipe, move quickly away from the bed\nG1 E{- 1.5 * retract_length[initial_tool]} F2400 ; retract\n{e_retracted[initial_tool] = 1.5 * retract_length[initial_tool]}\nG92 E0 ; reset extruder position\n",
+    "scan_first_layer": "0",
+    "nozzle_type": "undefine",
+    "auxiliary_fan": "0"
 }

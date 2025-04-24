@@ -7,7 +7,7 @@
   "model_id": "797581801",
   "bed_model": "Snapmaker test_bed.stl",
   "bed_texture": "Snapmaker test_texture.svg",
-  "nozzle_diameter": "0.2;0.4;0.6;0.8"
+  "nozzle_diameter": "0.4"
 }
 
 

@@ -768,6 +768,13 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
         wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
         GUI::wxGetApp().run_script(strJS);
 
+        // wcp订阅
+        auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+        if (ptr) {
+            ptr->m_res_data = devices;
+            ptr->send_to_js();
+        }
+
         MessageDialog msg_window_connected(nullptr, host->get_host() + _L(" connected sucessfully !\n"), L("Machine Connected"),
                                            wxICON_QUESTION | wxOK);
         msg_window_connected.ShowModal();

@@ -2795,6 +2795,13 @@ void GUI_App::machine_find()
                                                     std::string logout_cmd = param.dump();
                                                     wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                                     GUI::wxGetApp().run_script(strJS);
+
+                                                    // wcp订阅
+                                                    auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                                                    if (ptr) {
+                                                        ptr->m_res_data = this->app_config->get_devices();
+                                                        ptr->send_to_js();
+                                                    }
                                                 });
                                             }
                                         }
@@ -3855,13 +3862,15 @@ void GUI_App::sm_request_user_logout()
         m_login_userinfo.set_user_login(false);
     }
     try {
-        if (!sm_login_dlg) {
-            sm_login_dlg = new SMUserLogin(true);
-        } else {
-            delete sm_login_dlg;
-            sm_login_dlg = new SMUserLogin(true);
-        }
-        // sm_login_dlg->ShowModal();
+        //if (!sm_login_dlg) {
+        //    sm_login_dlg = new SMUserLogin(true);
+        //} else {
+        //    delete sm_login_dlg;
+        //    sm_login_dlg = new SMUserLogin(true);
+        //}
+        //// sm_login_dlg->ShowModal();
+        Http http = Http::post("https://id.snapmaker.com/api/oauth2/revoke");
+        http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
     }
@@ -4159,8 +4168,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 CallAfter([this] {
                     auto dialog = new WebUrlDialog();
                     dialog->load_url("http://127.0.0.1:" + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/web/flutter_web/index.html");
-                    dialog->ShowModal();
-                    delete dialog;
+                    dialog->Show();
+                    // delete dialog;
                 });
             } else if (command_str.compare("homepage_delete_device") == 0) {
                 if (root.get_child_optional("data") != boost::none) {
@@ -4200,6 +4209,13 @@ std::string GUI_App::handle_web_request(std::string cmd)
                             std::string logout_cmd = param.dump();
                             wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                             GUI::wxGetApp().run_script(strJS);
+
+                            // wcp订阅
+                            auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                            if (ptr) {
+                                ptr->m_res_data = this->app_config->get_devices();
+                                ptr->send_to_js();
+                            }
                         });
                     }
                 }
@@ -4311,6 +4327,11 @@ void GUI_App::request_open_project(std::string project_id)
         ;
     else
         CallAfter([this, project_id] { mainframe->open_recent_project(-1, wxString::FromUTF8(project_id)); });
+}
+
+void GUI_App::sm_request_remove_project(std::string project_id) 
+{
+    mainframe->sm_remove_recent_project(project_id);
 }
 
 void GUI_App::request_remove_project(std::string project_id)
@@ -7020,6 +7041,22 @@ void GUI_App::start_download(std::string url)
 
 }
 
+void GUI_App::SMUserInfo::notify() {
+    auto ptr = wxGetApp().m_user_login_subscriber.lock();
+    if (ptr) {
+        json data;
+        if (m_login) {
+            data["status"]   = "online";
+            data["nickname"] = m_login_user_name;
+            data["icon"]     = m_login_user_icon_url;
+            data["token"]    = m_login_user_token;
+        } else {
+            data["stauts"] = "offline";
+        }
+        ptr->m_res_data = data;
+        ptr->send_to_js();
+    }
+}
 bool is_support_filament(int extruder_id)
 {
     auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;

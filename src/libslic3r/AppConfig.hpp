@@ -323,6 +323,7 @@ public:
     void remove_device_info(const std::string& dev_id);
     std::vector<DeviceInfo> get_devices() const;
     bool get_device_info(const std::string& dev_id, DeviceInfo& info) const;
+    void                    clear_device_info();
 
 private:
 	template<typename T>

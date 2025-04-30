@@ -28,7 +28,9 @@
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/Utils/Bonjour.hpp"
+
 
 #include <mutex>
 #include <stack>
@@ -303,10 +305,13 @@ private:
     ZUserLogin*     login_dlg { nullptr };
     SMUserLogin*    sm_login_dlg{ nullptr };
 
+
+public:
     // device dialog
     WebDeviceDialog* web_device_dialog{ nullptr };
     WebPreprintDialog* web_preprint_dialog{ nullptr };
 
+private:
     VersionInfo version_info;
     VersionInfo privacy_version_info;
     static std::string version_display;
@@ -503,7 +508,11 @@ private:
     {
     public:
         bool is_user_login() { return m_login; }
-        void set_user_login(bool login) { m_login = login; }
+        void set_user_login(bool login)
+        {
+            m_login = login;
+            notify();
+        }
 
         std::string get_user_name() { return m_login_user_name; }
         void     set_user_name(const std::string& name) { m_login_user_name = name; }
@@ -520,12 +529,15 @@ private:
             m_login_user_icon_url = "";
             m_login               = false;
         }
+
+        void notify();
     private:
         std::string m_login_user_name = "";
         std::string m_login_user_token = "";
         std::string m_login_user_icon_url = "";
         bool     m_login = false;
     };
+
     SMUserInfo*     sm_get_userinfo() { return &m_login_userinfo; }
     void            sm_get_login_info();
     void            sm_request_login(bool show_user_info = false);
@@ -543,6 +555,7 @@ private:
     void            request_project_download(std::string project_id);
     void            request_open_project(std::string project_id);
     void            request_remove_project(std::string project_id);
+    void            sm_request_remove_project(std::string project_id);
 
     void            handle_http_error(unsigned int status, std::string body);
     void            on_http_error(wxCommandEvent &evt);
@@ -794,6 +807,11 @@ private:
     std::string             m_open_method;
 
     SMUserInfo m_login_userinfo;
+
+public:
+    std::weak_ptr<SSWCP_Instance> m_recent_file_subscriber;
+    std::weak_ptr<SSWCP_Instance> m_user_login_subscriber;
+    std::weak_ptr<SSWCP_Instance> m_device_card_subscriber;
 };
 
 DECLARE_APP(GUI_App)

@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include "nlohmann/json.hpp"
-#include "Bonjour.hpp"
+#include "slic3r/Utils/Bonjour.hpp"
 #include "slic3r/Utils/TimeoutMap.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
@@ -28,6 +28,9 @@ public:
         MACHINE_FIND,       // For machine discovery
         MACHINE_CONNECT,    // For machine connection
         MACHINE_OPTION,     // For machine options/settings
+        SLICE_PROJECT,      // For homepage project business
+        USER_LOGIN,         // For user login
+        MACHINE_MANAGE,     // For homepage machine card
     };
 
 public:
@@ -70,12 +73,21 @@ public:
 
     static void on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response);
 
+    static void on_mqtt_status_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response);
+
 private:
     // Test methods
     void sync_test();
     void async_test();
 
     void test_mqtt_request();
+
+    // Cache methods
+    void sw_SetCache();
+    void sw_GetCache();
+    void sw_RemoveCache();
+
+    static std::unordered_map<std::string, json> m_wcp_cache;
 
 public:
     std::string m_cmd;           // Command to execute
@@ -223,6 +235,90 @@ private:
     std::thread m_work_thread;  // Worker thread
 };
 
+// Instance class for Snapmaker machine manage
+class SSWCP_MachineManage_Instance : public SSWCP_Instance
+{
+public:
+    SSWCP_MachineManage_Instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
+        : SSWCP_Instance(cmd, header, data, event_id, webview)
+    {
+        m_type = MACHINE_MANAGE;
+    }
+
+    ~SSWCP_MachineManage_Instance() {}
+
+    void process() override;
+
+private:
+    void sw_GetLocalDevices();
+    
+    void sw_AddDevice();
+
+    void sw_SubscribeLocalDevices();
+
+    void sw_RenameDevice();
+
+    void sw_SwitchModel();
+
+    void sw_DeleteDevices();
+};
+
+// Instance class for Snapmaker user login
+class SSWCP_UserLogin_Instance : public SSWCP_Instance
+{
+public:
+    SSWCP_UserLogin_Instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
+        : SSWCP_Instance(cmd, header, data, event_id, webview)
+    {
+        m_type = USER_LOGIN;
+    }
+
+    ~SSWCP_UserLogin_Instance() {}
+
+    void process() override;
+
+private:
+    void sw_UserLogin();
+
+    void sw_UserLogout();
+
+    void sw_GetUserLoginState();
+
+    void sw_SubscribeUserLoginState();
+
+};
+
+// Instance class for homepage business
+class SSWCP_SliceProject_Instance : public SSWCP_Instance
+{
+public:
+    SSWCP_SliceProject_Instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
+        : SSWCP_Instance(cmd, header, data, event_id, webview)
+    {
+        m_type = SLICE_PROJECT;
+    }
+
+    ~SSWCP_SliceProject_Instance()
+    {
+
+    }
+
+    void process() override;
+
+private:
+    void sw_NewProject();
+
+    void sw_OpenProject();
+
+    void sw_GetRecentProjects(); 
+
+    void sw_OpenRecentFile();
+
+    void sw_DeleteRecentFiles();
+
+    void sw_SubscribeRecentFiles();
+};
+
 // Main SSWCP class for managing communication instances
 class SSWCP
 {
@@ -264,6 +360,10 @@ private:
     static std::unordered_set<std::string> m_machine_find_cmd_list;     // Machine find commands
     static std::unordered_set<std::string> m_machine_option_cmd_list;   // Machine option commands
     static std::unordered_set<std::string> m_machine_connect_cmd_list;  // Machine connect commands
+    static std::unordered_set<std::string> m_project_cmd_list; // homepage project commands
+    static std::unordered_set<std::string> m_login_cmd_list; // homepage login commands
+    static std::unordered_set<std::string> m_machine_manage_cmd_list; // homepage machine manage commands;
+
     static TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> m_instance_list;  // Active instances
     static constexpr std::chrono::milliseconds DEFAULT_INSTANCE_TIMEOUT{80000}; // Default timeout (8s)
 

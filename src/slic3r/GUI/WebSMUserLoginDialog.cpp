@@ -172,40 +172,34 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
             token = tmpUrl.substr(start).ToStdString();
         }
 
-        auto info = wxGetApp().sm_get_userinfo();
-        info->set_user_login(true);
-        info->set_user_token(token);
-
         this->EndModal(wxID_OK);
 
-        wxGetApp().CallAfter([info, this]() {
+        wxGetApp().CallAfter([token, this]() {
             std::string url  = m_userInfoUrl.ToStdString();
             auto http = Http::get(url);
-            std::string token = info->get_user_token();
             http.header("Authorization",token);
             http.on_complete([&](std::string body, unsigned status) {
                     if (status == 200) {
                         json response = json::parse(body);
-                        wxGetApp().CallAfter([this, response]() {
-                            if (response.count("data")) {
-                                json data = response["data"];
-                                if (data.count("nickname")) {
-                                    wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
-                                }
-                                if (data.count("icon")) {
-                                    wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
-                                }
+                        if (response.count("data")) {
+                            json data = response["data"];
+                            if (data.count("nickname")) {
+                                wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
                             }
-                        });
+                            if (data.count("icon")) {
+                                wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
+                            }
+                        }
+
+                        wxGetApp().sm_get_userinfo()->set_user_token(token);
+                        wxGetApp().sm_get_userinfo()->set_user_login(true);
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
                    
                 })
-                .perform(); 
+                .perform_sync(); 
         });
-        this->RunScript("document.cookie = '';");
-        // load_url(m_home_url);
     }
     UpdateState();
 }

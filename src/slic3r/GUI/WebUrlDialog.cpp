@@ -14,7 +14,12 @@ BEGIN_EVENT_TABLE(WebUrlDialog, wxDialog)
 END_EVENT_TABLE()
 
 WebUrlDialog::WebUrlDialog()
-    : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Web View"))
+    : wxDialog((wxWindow*) (wxGetApp().mainframe),
+               wxID_ANY,
+               _L("Web View"),
+               wxDefaultPosition,
+               wxDefaultSize,
+               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMAXIMIZE_BOX)
 {
     SetBackgroundColour(*wxWHITE);
 
@@ -50,6 +55,8 @@ WebUrlDialog::WebUrlDialog()
     
     SetSizer(main_sizer);
     SetSize(FromDIP(wxSize(800, 600)));
+    // 设置最小和最大大小
+    // SetMinSize(wxSize(800, 600));
     CenterOnParent();
 
     wxGetApp().UpdateDlgDarkUI(this);

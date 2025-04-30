@@ -68,7 +68,7 @@ private:
 
 private:
     wxString   TargetUrl     = "https://id.snapmaker.com?from=orca";
-    wxString   LogoutUrl     = "https://id.snapmaker.com/logout";
+    wxString   LogoutUrl     = "https://id.snapmaker.com/logout?from=orca";
     wxString   m_hostUrl     = "https://id.snapmaker.com";
     wxString   m_accountUrl  = "https://account.snapmaker.com";
     wxString   m_userInfoUrl = "https://account.snapmaker.com/api/common/accounts/current";

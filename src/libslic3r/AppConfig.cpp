@@ -1383,6 +1383,12 @@ void AppConfig::save_device_info(const DeviceInfo& device)
     m_dirty = true;
 }
 
+void AppConfig::clear_device_info()
+{
+    m_device_list.clear();
+    m_dirty = true;
+}
+
 void AppConfig::remove_device_info(const std::string& dev_id)
 {
     auto it = std::find_if(m_device_list.begin(), m_device_list.end(),

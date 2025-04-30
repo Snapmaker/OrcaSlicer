@@ -37,13 +37,27 @@ extern json m_ProfileJson;
 
 // Base SSWCP_Instance implementation
 void SSWCP_Instance::process() {
+    if (m_event_id != "") {
+        json header;
+        send_to_js();
+
+        m_header.clear();
+        m_header["event_id"] = m_event_id;
+    }
     if (m_cmd == "test") {
         sync_test();
     } else if (m_cmd == "test_async"){
         async_test();
     } else if (m_cmd == "sw_test_mqtt_moonraker") {
         test_mqtt_request();
-    } else {
+    } else if (m_cmd == "sw_SetCache") {
+        sw_SetCache();
+    } else if (m_cmd == "sw_GetCache") {
+        sw_GetCache();
+    } else if (m_cmd == "sw_RemoveCache") {
+        sw_RemoveCache();
+    }
+    else {
         handle_general_fail();
     }
 }
@@ -100,10 +114,13 @@ void SSWCP_Instance::send_to_js() {
         str_res             = std::string(wxString(str_res).ToUTF8());
 
         if (m_webview && m_webview->GetRefData()) {
-            auto self = shared_from_this();
-            wxGetApp().CallAfter([self, str_res]() {
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            wxGetApp().CallAfter([weak_self, str_res]() {
                 try {
-                    WebView::RunScript(self->m_webview, str_res);
+                    auto self = weak_self.lock();
+                    if (self) {
+                        WebView::RunScript(self->m_webview, str_res);
+                    }
                 } catch (std::exception& e) {}
             });
         }
@@ -132,6 +149,8 @@ void SSWCP_Instance::async_test() {
 }
 
 // Synchronous test implementation
+std::unordered_map<std::string, json> SSWCP_Instance::m_wcp_cache;
+
 void SSWCP_Instance::sync_test() {
     m_res_data = m_param_data;
     send_to_js();
@@ -148,13 +167,111 @@ void SSWCP_Instance::test_mqtt_request() {
             return;
         }
 
-        auto self = shared_from_this();
-        host->test_async_wcp_mqtt_moonraker(m_param_data, [self](const json& response) {
-            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->test_async_wcp_mqtt_moonraker(m_param_data, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
         });
         // host->async_get_printer_info([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
     } catch (std::exception& e) {
         handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_SetCache() {
+    try {
+        if (m_param_data.count("objects") && m_param_data["objects"].is_array() &&
+            m_param_data["objects"].size() > 0) {
+            json objects = m_param_data["objects"];
+            for (size_t i = 0; i < objects.size(); ++i) {
+                m_wcp_cache.insert({objects[i]["key"].get<std::string>(), objects[i]["value"]});
+            }
+
+            send_to_js();
+            finish_job();
+        } else {
+            handle_general_fail();
+        }
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+    
+}
+
+void SSWCP_Instance::sw_GetCache()
+{
+    try {
+        if (m_param_data.count("keys") && m_param_data["keys"].is_array() && m_param_data["keys"].size() > 0) {
+            json res_data;
+            json keys = m_param_data["keys"];
+            for (size_t i = 0; i < keys.size(); ++i) {
+                std::string key = keys[i].get<std::string>();
+                if (m_wcp_cache.count(key)) {
+                    res_data.push_back(m_wcp_cache[key]);
+                } else {
+                    res_data.push_back(json::object());
+                }
+            }
+            m_res_data = res_data;
+            send_to_js();
+            finish_job();
+        } else {
+            handle_general_fail();
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+
+void SSWCP_Instance::sw_RemoveCache()
+{
+    try {
+        if (m_param_data.count("keys") && m_param_data["keys"].is_array()) {
+            json keys = m_param_data["keys"];
+            if (keys.size() == 0) {
+                m_wcp_cache.clear();
+            } else {
+                for (size_t i = 0; i < keys.size(); ++i) {
+                    std::string key = keys[i].get<std::string>();
+                    if (m_wcp_cache.count(key)) {
+                        m_wcp_cache.erase(key);
+                    }
+                }
+                
+            }
+            send_to_js();
+            finish_job();
+        } else {
+            handle_general_fail();
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::on_mqtt_status_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response)
+{
+    if (!obj) {
+        return;
+    }
+    if (response.is_null()) {
+        obj->m_status = -1;
+        obj->m_msg    = "failure";
+        obj->send_to_js();
+    } else if (response.count("error")) {
+        if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
+            obj->on_timeout();
+        } else {
+            obj->m_res_data = response;
+            obj->send_to_js();
+        }
+    } else {
+        obj->m_res_data = response;
+        obj->send_to_js();
     }
 }
 
@@ -275,12 +392,14 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     if(!self){
                         continue;
                     }
+                    std::weak_ptr<SSWCP_MachineFind_Instance> weak_self(self);
                     m_engines[i] = Bonjour(mdns_service_names[i])
                                      .set_txt_keys(std::move(txt_keys))
                                      .set_retries(3)
                                      .set_timeout(last_time >= 0.0 ? last_time/1000 : 20)
-                                     .on_reply([self, unique_key](BonjourReply&& reply) {
-                                         if(self->is_stop()){
+                                     .on_reply([weak_self, unique_key](BonjourReply&& reply) {
+                                         auto self = weak_self.lock();
+                                         if(!self || self->is_stop()){
                                             return;
                                          }
                                          json machine_data;
@@ -344,9 +463,13 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                          self->add_machine_to_list(machine_object);
                                          
                                      })
-                                     .on_complete([self]() {
-                                         wxGetApp().CallAfter([self]() {
-                                             self->onOneEngineEnd();
+                                     .on_complete([weak_self]() {
+                                         wxGetApp().CallAfter([weak_self]() {
+                                             auto self = weak_self.lock();
+                                             if (self) {
+                                                 self->onOneEngineEnd();
+                                             }
+                                             
                                          });
                                      })
                                      .lookup();
@@ -415,6 +538,13 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
                         std::string logout_cmd = param.dump();
                         wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                         GUI::wxGetApp().run_script(strJS);
+
+                        // wcp订阅
+                        auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                        if (ptr) {
+                            ptr->m_res_data = devices;
+                            ptr->send_to_js();
+                        }
                     });
                     
                 }
@@ -513,9 +643,12 @@ void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
             finish_job();
         }
 
-        auto self  = shared_from_this();
-        host->async_unsubscribe_machine_info([self](const json& response) {
-            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        auto weak_self  = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_unsubscribe_machine_info([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
         });
 
         SSWCP::stop_subscribe_machine();
@@ -539,9 +672,12 @@ void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_subscribe_machine_info([self](const json& response) {
-            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_subscribe_machine_info([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_status_msg_arrived(self, response);
+            }
         });
 
     } catch (std::exception& e) {
@@ -559,9 +695,12 @@ void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_get_printer_info([self](const json& response) {
-            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_get_printer_info([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
         });
     }
     catch (std::exception& e) {
@@ -598,9 +737,12 @@ void SSWCP_MachineOption_Instance::sw_GetMachineState() {
                 return;
             }
 
-            auto self = shared_from_this();
-            host->async_get_machine_info(targets, [self](const json& response) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_get_machine_info(targets, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+                }
             });
         } else {
             handle_general_fail();
@@ -634,9 +776,12 @@ void SSWCP_MachineOption_Instance::sw_SendGCodes() {
                 return;
             }
 
-            auto self = shared_from_this();
-            host->async_send_gcodes(str_codes, [self](const json& response) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_send_gcodes(str_codes, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+                }
             });
         }
         
@@ -658,8 +803,13 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintStart() {
                 return;
             }
 
-            auto self = shared_from_this();
-            host->async_start_print_job(filename, [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_start_print_job(filename, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+                }
+            });
         }
     }
     catch(std::exception& e){
@@ -678,8 +828,13 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintPause()
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_pause_print_job([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_pause_print_job([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+            }
+        });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -696,8 +851,13 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintResume()
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_resume_print_job([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_resume_print_job([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+            }
+        });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -714,8 +874,13 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintCancel()
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_cancel_print_job([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_cancel_print_job([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+            }
+        });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -732,9 +897,12 @@ void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_get_system_info([self](const json& response) { 
-            SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_get_system_info([weak_self](const json& response) { 
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+            }
         });
     }
     catch(std::exception& e){
@@ -771,9 +939,12 @@ void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
                 // 错误处理
                 handle_general_fail();
             } else {
-                auto self = shared_from_this();
-                host->async_set_machine_subscribe_filter(targets, [self](const json& response) {
-                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+                auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+                host->async_set_machine_subscribe_filter(targets, [weak_self](const json& response) {
+                    auto self = weak_self.lock();
+                    if (self) {
+                        SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+                    }
                 });
             }
         } else {
@@ -795,9 +966,12 @@ void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_get_machine_objects([self](const json& response) {
-            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_get_machine_objects([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
         });
 
     } catch (std::exception& e) {
@@ -816,9 +990,12 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesRoots()
             return;
         }
 
-        auto self = shared_from_this();
-        host->async_machine_files_roots([self](const json& response) {
-            SSWCP_Instance::on_mqtt_msg_arrived(self,response);
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_machine_files_roots([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
         });
     } catch (std::exception& e) {
         handle_general_fail();
@@ -838,8 +1015,13 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesMetadata() {
 
             std::string filename = m_param_data["filename"].get<std::string>();
 
-            auto self = shared_from_this();
-            host->async_machine_files_metadata(filename, [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_machine_files_metadata(filename, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+                }
+            });
         } else {
             handle_general_fail();
         }
@@ -863,9 +1045,14 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesThumbnails()
 
             std::string filename = m_param_data["filename"].get<std::string>();
 
-            auto self = shared_from_this();
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
             host->async_machine_files_thumbnails(filename,
-                                               [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+                                               [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+                }
+            });
         } else {
             handle_general_fail();
         }
@@ -890,8 +1077,13 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
             std::string path = m_param_data["path"].get<std::string>();
             bool        extend = m_param_data["extended"].get<bool>();
 
-            auto self = shared_from_this();
-            host->async_machine_files_directory(path, extend, [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_machine_files_directory(path, extend, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+                }
+            });
         } else {
             handle_general_fail();
         }
@@ -1272,8 +1464,13 @@ void SSWCP_MachineOption_Instance::sw_CameraStartMonitor() {
 
             std::string domain = m_param_data["domain"].get<std::string>();
 
-            auto self = shared_from_this();
-            host->async_camera_start(domain, [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_camera_start(domain, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+                }
+            });
         } else {
             handle_general_fail();
         }
@@ -1296,8 +1493,13 @@ void SSWCP_MachineOption_Instance::sw_CameraStopMonitor() {
 
             std::string domain = m_param_data["domain"].get<std::string>();
 
-            auto self = shared_from_this();
-            host->async_canmera_stop(domain, [self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_canmera_stop(domain, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+                }
+            });
         } else {
             handle_general_fail();
         }
@@ -1309,6 +1511,13 @@ void SSWCP_MachineOption_Instance::sw_CameraStopMonitor() {
 
 // SSWCP_MachineConnect_Instance
 void SSWCP_MachineConnect_Instance::process() {
+    if (m_event_id != "") {
+        json header;
+        send_to_js();
+
+        m_header.clear();
+        m_header["event_id"] = m_event_id;
+    }
     if (m_cmd == "sw_Test_connect") {
         sw_test_connect();
     } else if (m_cmd == "sw_Connect") {
@@ -1326,8 +1535,8 @@ void SSWCP_MachineConnect_Instance::process() {
 
 void SSWCP_MachineConnect_Instance::sw_connect_other_device() {
     try {
-        auto self = shared_from_this();
-        wxGetApp().CallAfter([self](){
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        wxGetApp().CallAfter([weak_self](){
             
             auto config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
             config->set("print_host", "");
@@ -1344,7 +1553,10 @@ void SSWCP_MachineConnect_Instance::sw_connect_other_device() {
                     device_dialog->EndModal(1);
                 }
             } else {
-                self->handle_general_fail();
+                auto self = weak_self.lock();
+                if (self) {
+                    self->handle_general_fail();
+                }
             }
             
             
@@ -1419,11 +1631,14 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
         if (m_param_data.count("from_homepage") && m_param_data["from_homepage"].get<bool>() && m_param_data.count("sn") &&
             m_param_data["sn"].get<std::string>() == "-1") {
 
-            auto self = shared_from_this();
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
 
-            wxGetApp().CallAfter([self]() {
+            wxGetApp().CallAfter([weak_self]() {
                 // 从首页触发的请求，没有sn的一律认为是第三方机器
-
+                auto        self   = weak_self.lock();
+                if (!self) {
+                    return;
+                }
                 std::string dev_id = self->m_param_data.count("dev_id") ? self->m_param_data["dev_id"].get<std::string>() : "";
                 if (dev_id == "") {
                     // 失败
@@ -1486,9 +1701,10 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                     // 错误处理
                     finish_job();
                 } else {
-                    auto self     = shared_from_this();
+                    auto weak_self     = std::weak_ptr<SSWCP_Instance>(shared_from_this());
                     //设置断联回调
-                    m_work_thread = std::thread([self, host, connect_params] {
+                    m_work_thread = std::thread([weak_self, host, connect_params] {
+                        auto     self = weak_self.lock();
                         wxString msg = "";
                         json     params;
                         host->set_connection_lost([]() {
@@ -1507,6 +1723,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     }
                                 }
 
+                                // 更新卡片
                                 json param;
                                 param["command"]       = "local_devices_arrived";
                                 param["sequece_id"]    = "10001";
@@ -1514,6 +1731,13 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 std::string logout_cmd = param.dump();
                                 wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                 GUI::wxGetApp().run_script(strJS);
+
+                                // wcp订阅
+                                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                                if (ptr) {
+                                    ptr->m_res_data = devices;
+                                    ptr->send_to_js();
+                                }
 
                                 MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
                                                          wxICON_QUESTION | wxOK);
@@ -1543,7 +1767,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 }
                             }
 
-                            wxGetApp().CallAfter([ip, connect_params, self]() {
+                            wxGetApp().CallAfter([ip, connect_params, weak_self]() {
                                 // 查询机器的机型和喷嘴信息
                                 std::string              machine_type = "";
                                 std::vector<std::string> nozzle_diameters;
@@ -1562,6 +1786,10 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         host->disconnect(msg, {});
                                     });
 
+                                    auto self      = weak_self.lock();
+                                    if (!self) {
+                                        return;
+                                    }
                                     self->m_status = 1;
                                     self->m_msg    = "sn is not exist";
 
@@ -1765,6 +1993,13 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                 GUI::wxGetApp().run_script(strJS);
 
+                                // wcp订阅
+                                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                                if (ptr) {
+                                    ptr->m_res_data = devices;
+                                    ptr->send_to_js();
+                                }
+
                                 MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine Connected"),
                                                          wxICON_QUESTION | wxOK);
                                 msg_window.ShowModal();
@@ -1790,13 +2025,15 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                          wxICON_QUESTION | wxOK);
                                 msg_window.ShowModal();
                             });
-
-                            self->m_status = 1;
-                            self->m_msg    = msg.c_str();
+                            if (self) {
+                                self->m_status = 1;
+                                self->m_msg    = msg.c_str();
+                            }
                         }
-
-                        self->send_to_js();
-                        self->finish_job();
+                        if (self) {
+                            self->send_to_js();
+                            self->finish_job();
+                        }
                     });
                 }
 
@@ -1830,8 +2067,9 @@ void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
 }
 
 void SSWCP_MachineConnect_Instance::sw_disconnect() {
-    auto self = shared_from_this();
-    m_work_thread = std::thread([self](){
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    m_work_thread = std::thread([weak_self](){
+        auto                       self = weak_self.lock();
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
         wxString msg = "";
@@ -1858,6 +2096,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
                     }
                 }
 
+                // 同步卡片
                 json param;
                 param["command"]       = "local_devices_arrived";
                 param["sequece_id"]    = "10001";
@@ -1865,6 +2104,13 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
                 std::string logout_cmd = param.dump();
                 wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                 GUI::wxGetApp().run_script(strJS);
+
+                // wcp订阅
+                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                if (ptr) {
+                    ptr->m_res_data = devices;
+                    ptr->send_to_js();
+                }
 
                 MessageDialog msg_window(nullptr, " " + _L("Disconnected sucessfully !") + "\n", _L("Machine Disconnected"), wxICON_QUESTION | wxOK);
                 msg_window.ShowModal();
@@ -1879,17 +2125,391 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
                 msg_window.ShowModal(); 
             });
             
-
-            self->m_status = 1;
-            self->m_msg    = msg.c_str();
+            if (self) {
+                self->m_status = 1;
+                self->m_msg    = msg.c_str();
+            }
         }
-
-        self->send_to_js();
-        self->finish_job();
+        if (self) {
+            self->send_to_js();
+            self->finish_job();
+        }
     });
 }
 
+// SSWCP_SliceProject_Instance
+// Process machine find commands
+void SSWCP_SliceProject_Instance::process()
+{
+    if (m_event_id != "") {
+        json header;
+        send_to_js();
 
+        m_header.clear();
+        m_header["event_id"] = m_event_id;
+    }
+
+    if (m_cmd == "sw_NewProject") {
+        sw_NewProject();
+    } else if (m_cmd == "sw_OpenProject") {
+        sw_OpenProject();
+    } else if (m_cmd == "sw_GetRecentProjects") {
+        sw_GetRecentProjects();
+    } else if (m_cmd == "sw_OpenRecentFile") {
+        sw_OpenRecentFile();
+    } else if (m_cmd == "sw_DeleteRecentFiles") {
+        sw_DeleteRecentFiles();
+    } else if (m_cmd == "sw_SubscribeRecentFiles") {
+        sw_SubscribeRecentFiles();
+    } else {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_SliceProject_Instance::sw_NewProject()
+{
+    try { 
+        wxGetApp().request_open_project("<new>");
+        send_to_js();
+        finish_job();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }  
+}
+
+void SSWCP_SliceProject_Instance::sw_OpenProject()
+{
+    try {
+        wxGetApp().request_open_project({});
+        send_to_js();
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_SliceProject_Instance::sw_GetRecentProjects()
+{
+    try {
+        
+        json data;
+        wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
+
+        m_res_data = data;
+
+        send_to_js();
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_SliceProject_Instance::sw_OpenRecentFile()
+{
+    try {
+        if (m_param_data.count("path")) {
+            std::string path = m_param_data["path"].get<std::string>();
+            if (path != "") {
+                wxGetApp().request_open_project(path);
+            } else {
+                handle_general_fail();
+                return;
+            }
+        } else {
+            handle_general_fail();
+            return;
+        }
+        send_to_js();
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_SliceProject_Instance::sw_DeleteRecentFiles()
+{
+    try {
+        if (m_param_data.count("paths") && m_param_data["paths"].is_array()) {
+            auto paths = m_param_data["paths"];
+            send_to_js();
+            if (paths.size() == 0) {
+                wxGetApp().sm_request_remove_project("");
+            } else {
+                for (size_t i = 0; i < paths.size(); ++i) {
+                    wxGetApp().sm_request_remove_project(paths[i].get<std::string>());
+                }
+            }
+            
+        } else {
+            handle_general_fail();
+            return;
+        }
+        
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_SliceProject_Instance::sw_SubscribeRecentFiles()
+{
+    try {
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        wxGetApp().m_recent_file_subscriber = weak_self;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// SSWCP_UserLogin_Instance
+void SSWCP_UserLogin_Instance::process()
+{
+    if (m_event_id != "") {
+        json header;
+        send_to_js();
+
+        m_header.clear();
+        m_header["event_id"] = m_event_id;
+    }
+
+    if (m_cmd == "sw_UserLogin") {
+        sw_UserLogin();
+    } else if (m_cmd == "sw_UserLogout") {
+        sw_UserLogout();
+    } else if (m_cmd == "sw_GetUserLoginState") {
+        sw_GetUserLoginState();
+    } else if (m_cmd == "sw_SubscribeUserLoginState") {
+        sw_SubscribeUserLoginState();
+    } else {
+        handle_general_fail();
+    }
+}
+void SSWCP_UserLogin_Instance::sw_UserLogin()
+{
+    try {
+        send_to_js();
+
+        finish_job();
+        wxGetApp().CallAfter([]() {
+            wxGetApp().sm_request_login();
+        });
+        
+        
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_UserLogout()
+{
+    try {
+        send_to_js();
+        wxGetApp().sm_request_user_logout();
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
+{
+    try {
+        json data;
+        auto pInfo = wxGetApp().sm_get_userinfo();
+        if (pInfo) {
+            bool islogin = pInfo->is_user_login();
+            if (islogin) {
+                data["status"] = "online";
+                data["nickname"] = pInfo->get_user_name();
+                data["icon"]     = pInfo->get_user_icon_url();
+                data["token"]    = pInfo->get_user_token();
+            } else {
+                data["status"] = "offline";
+            }
+
+            m_res_data = data;
+            send_to_js();
+            finish_job();
+        } else {
+            handle_general_fail();
+        }
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_SubscribeUserLoginState()
+{
+    try {
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        wxGetApp().m_user_login_subscriber     = weak_ptr;
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// SSWCP_MachineManage_Instance
+void SSWCP_MachineManage_Instance::process()
+{
+    if (m_event_id != "") {
+        json header;
+        send_to_js();
+
+        m_header.clear();
+        m_header["event_id"] = m_event_id;
+    }
+
+    if (m_cmd == "sw_GetLocalDevices") {
+        sw_GetLocalDevices();
+    } else if (m_cmd == "sw_AddDevice") {
+        sw_AddDevice();
+    } else if (m_cmd == "sw_SubscribeLocalDevices") {
+        sw_SubscribeLocalDevices();
+    } else if (m_cmd == "sw_RenameDevice") {
+        sw_RenameDevice();  
+    } else if (m_cmd == "sw_SwitchModel") {
+        sw_SwitchModel();
+    } else if (m_cmd == "sw_DeleteDevices") {
+        sw_DeleteDevices();
+    } else {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineManage_Instance::sw_GetLocalDevices()
+{
+    try {
+        auto devices = wxGetApp().app_config->get_devices();
+        m_res_data = devices;
+
+        send_to_js();
+        finish_job();
+    }
+    catch (std::exception& e)
+    {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineManage_Instance::sw_SubscribeLocalDevices()
+{
+    try {
+        auto self = shared_from_this();
+        wxGetApp().m_device_card_subscriber = self;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineManage_Instance::sw_AddDevice()
+{
+    try {
+        wxGetApp().CallAfter([] {
+            if (wxGetApp().web_device_dialog)
+                delete wxGetApp().web_device_dialog;
+
+            wxGetApp().web_device_dialog = new WebDeviceDialog;
+            wxGetApp().web_device_dialog->run();
+        });
+        send_to_js();
+        
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineManage_Instance::sw_RenameDevice()
+{
+    try {
+        if (m_param_data.count("dev_id") && m_param_data.count("dev_name")) {
+            std::string dev_id = m_param_data["dev_id"].get<std::string>();
+            std::string dev_name = m_param_data["dev_name"].get<std::string>();
+
+            DeviceInfo info;
+            wxGetApp().app_config->get_device_info(dev_id, info);
+            info.dev_name = dev_name;
+            wxGetApp().app_config->save_device_info(info);
+
+            wxGetApp().CallAfter([] {
+
+                // wcp订阅
+                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                if (ptr) {
+                    ptr->m_res_data = wxGetApp().app_config->get_devices();
+                    ptr->send_to_js();
+                }
+            });
+
+            send_to_js();
+            finish_job();
+        } else {
+            handle_general_fail();
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineManage_Instance::sw_DeleteDevices()
+{
+    try {
+        if (m_param_data.count("dev_ids") && m_param_data["dev_ids"].is_array()) {
+            auto ids = m_param_data["dev_ids"];
+            if (ids.size() == 0) {
+                wxGetApp().app_config->clear_device_info();
+            } else {
+                for (size_t i = 0; i < ids.size(); ++i) {
+                    std::string dev_id = ids[i].get<std::string>();
+                    wxGetApp().app_config->remove_device_info(dev_id);
+                }
+            }
+
+            wxGetApp().CallAfter([] {
+                // wcp订阅
+                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+                if (ptr) {
+                    ptr->m_res_data = wxGetApp().app_config->get_devices();
+                    ptr->send_to_js();
+                }
+            });
+
+            send_to_js();
+            finish_job();
+        } else {
+            handle_general_fail();
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineManage_Instance::sw_SwitchModel()
+{
+    try {
+        if (m_param_data.count("dev_id")) {
+            std::string dev_id = m_param_data["dev_id"].get<std::string>();
+            send_to_js();
+            wxGetApp().CallAfter([dev_id]() {
+                WebPresetDialog dialog(&wxGetApp());
+                dialog.m_device_id = dev_id;
+                dialog.run();
+            });
+            finish_job();
+            
+        } else {
+            handle_general_fail();
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// SSWCP
 TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> SSWCP::m_instance_list;
 constexpr std::chrono::milliseconds SSWCP::DEFAULT_INSTANCE_TIMEOUT;
 
@@ -1935,6 +2555,18 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_ConnectOtherMachine",
 };
 
+std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
+    "sw_NewProject", "sw_OpenProject", "sw_GetRecentProjects", "sw_OpenRecentFile", "sw_DeleteRecentFiles", "sw_SubscribeRecentFiles",
+};
+
+std::unordered_set<std::string> SSWCP::m_login_cmd_list = {
+    "sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState"
+};
+
+std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
+    "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"
+};
+
 std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
 {
     std::shared_ptr<SSWCP_Instance> instance;
@@ -1945,7 +2577,14 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
         instance = std::make_shared<SSWCP_MachineConnect_Instance>(cmd, header, data, event_id, webview);
     } else if (m_machine_option_cmd_list.find(cmd) != m_machine_option_cmd_list.end()) {
         instance = std::make_shared<SSWCP_MachineOption_Instance>(cmd, header, data, event_id, webview);
-    } else {
+    } else if (m_project_cmd_list.find(cmd) != m_project_cmd_list.end()) {
+        instance = std::make_shared<SSWCP_SliceProject_Instance>(cmd, header, data, event_id, webview);
+    } else if (m_login_cmd_list.find(cmd) != m_login_cmd_list.end()) {
+        instance = std::make_shared<SSWCP_UserLogin_Instance>(cmd, header, data, event_id, webview);
+    } else if (m_machine_manage_cmd_list.find(cmd) != m_machine_manage_cmd_list.end()) {
+        instance = std::make_shared<SSWCP_MachineManage_Instance>(cmd, header, data, event_id, webview);
+    } 
+    else {
         instance = std::make_shared<SSWCP_Instance>(cmd, header, data, event_id, webview);
     }
     

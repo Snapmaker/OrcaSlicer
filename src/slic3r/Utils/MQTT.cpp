@@ -1,6 +1,8 @@
 #include "MQTT.hpp"
 #include <thread>
 #include <boost/log/trivial.hpp>
+#include <boost/filesystem.hpp>
+#include <fstream>
 
 // Constructor: Initialize MQTT client with server address and client ID
 // @param server_address: Address of the MQTT broker
@@ -27,6 +29,92 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     client_->set_callback(*this);
 }
 
+// SSL/TLS构造函数实现
+MqttClient::MqttClient(const std::string& server_address, 
+                      const std::string& client_id,
+                      const std::string& ca_content,        
+                      const std::string& cert_content,
+                      const std::string& key_content,
+                      const std::string& username,
+                      const std::string& password,
+                      bool clean_session)
+    : MqttClient(server_address, client_id, clean_session)
+{
+    BOOST_LOG_TRIVIAL(info) << "初始化MQTT SSL连接";
+    
+    try {
+        // 创建临时文件
+        boost::filesystem::path temp_dir = boost::filesystem::temp_directory_path();
+        
+        // CA证书临时文件
+        boost::filesystem::path ca_path = temp_dir / ("ca_" + client_id + ".pem");
+        if (!ca_content.empty()) {
+            std::ofstream ca_file(ca_path.string());
+            ca_file << ca_content;
+            ca_file.close();
+            BOOST_LOG_TRIVIAL(info) << "CA证书已写入临时文件: " << ca_path;
+        }
+
+        // 客户端证书临时文件
+        boost::filesystem::path cert_path = temp_dir / ("cert_" + client_id + ".pem");
+        if (!cert_content.empty()) {
+            std::ofstream cert_file(cert_path.string());
+            cert_file << cert_content;
+            cert_file.close();
+            BOOST_LOG_TRIVIAL(info) << "客户端证书已写入临时文件: " << cert_path;
+        }
+
+        // 私钥临时文件
+        boost::filesystem::path key_path = temp_dir / ("key_" + client_id + ".pem");
+        if (!key_content.empty()) {
+            std::ofstream key_file(key_path.string());
+            key_file << key_content;
+            key_file.close();
+            BOOST_LOG_TRIVIAL(info) << "私钥已写入临时文件: " << key_path;
+        }
+
+        // 配置SSL/TLS
+        mqtt::ssl_options ssl_opts;
+        
+        // 设置SSL验证选项
+        ssl_opts.set_verify(false);
+        ssl_opts.set_enable_server_cert_auth(true);
+        
+        // 设置证书文件路径
+        if (!ca_content.empty()) {
+            ssl_opts.set_trust_store(ca_path.string());
+        }
+        if (!cert_content.empty() && !key_content.empty()) {
+            ssl_opts.set_key_store(cert_path.string());
+            ssl_opts.set_private_key(key_path.string());
+        }
+
+        ssl_opts.set_ssl_version(MQTT_SSL_VERSION_TLS_1_2);
+        
+        // 设置SSL选项
+        connOpts_.set_ssl(ssl_opts);
+        
+        // 保存临时文件路径以便后续清理
+        temp_ca_path_ = ca_path;
+        temp_cert_path_ = cert_path;
+        temp_key_path_ = key_path;
+
+        // 设置认证信息
+        if (!username.empty()) {
+            connOpts_.set_user_name(username);
+            if (!password.empty()) {
+                connOpts_.set_password(password);
+            }
+        }
+
+    } catch (const std::exception& e) {
+        // 清理临时文件
+        cleanup_temp_files();
+        BOOST_LOG_TRIVIAL(error) << "MQTT SSL初始化失败: " << e.what();
+        throw;
+    }
+}
+
 // Establish connection to the MQTT broker
 // @return: true if connection successful, false otherwise
 bool MqttClient::Connect()
@@ -37,20 +125,51 @@ bool MqttClient::Connect()
     }
 
     try {
-        BOOST_LOG_TRIVIAL(info) << "Connecting to the MQTT server: " << server_address_;
+        // 添加详细的连接参数日志
+        BOOST_LOG_TRIVIAL(info) << "正在连接MQTT服务器: " << server_address_;
         
-        // 添加用户上下文来标识这是连接操作
-        const char* context             = "connection";
-        mqtt::token_ptr conntok = client_->connect(connOpts_, (void*) (context), *this);
-        if (!conntok->wait_for(std::chrono::seconds(6))) {
-            BOOST_LOG_TRIVIAL(error) << "Connection timeout";
+        // 如果是SSL连接，添加SSL配置信息日志
+        try {
+            auto ssl_opts = connOpts_.get_ssl_options();
+            BOOST_LOG_TRIVIAL(info) << "SSL配置信息:"
+                << "\n - 服务器地址: " << server_address_
+                << "\n - 客户端ID: " << client_id_
+                << "\n - CA证书长度: " << (ssl_opts.get_trust_store().empty() ? 0 : ssl_opts.get_trust_store().length())
+                << "\n - 客户端证书长度: " << (ssl_opts.get_key_store().empty() ? 0 : ssl_opts.get_key_store().length())
+                << "\n - 私钥长度: " << (ssl_opts.get_private_key().empty() ? 0 : ssl_opts.get_private_key().length());
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(info) << "非SSL连接";
+        }
+
+        const char* context = "connection";
+        mqtt::token_ptr conntok = client_->connect(connOpts_, (void*)(context), *this);
+        
+        if (!conntok->wait_for(std::chrono::seconds(20))) {
+            auto rc = conntok->get_return_code();
+            auto reason = conntok->get_reason_code();
+            
+            BOOST_LOG_TRIVIAL(error) << "Connection timeout. Return code: " << rc 
+                                    << ", Reason code: " << static_cast<int>(reason)
+                                    << ", Server: " << server_address_;
+                                    
+            if (rc == MQTTASYNC_FAILURE) {
+                BOOST_LOG_TRIVIAL(error) << "Connection failed - MQTTASYNC_FAILURE";
+            } else if (rc == MQTTASYNC_DISCONNECTED) {
+                BOOST_LOG_TRIVIAL(error) << "Connection failed - MQTTASYNC_DISCONNECTED";
+            }
+            
             connected_.store(false, std::memory_order_release);
             return false;
         }
 
-        // 简单检查连接状态
         if (!client_->is_connected()) {
-            BOOST_LOG_TRIVIAL(error) << "Connection failed - client not connected";
+            auto rc = conntok->get_return_code();
+            auto reason = conntok->get_reason_code();
+            
+            BOOST_LOG_TRIVIAL(error) << "Connection failed. Return code: " << rc 
+                                    << ", Reason code: " << static_cast<int>(reason)
+                                    << ", Server: " << server_address_;
+            
             connected_.store(false, std::memory_order_release);
             return false;
         }
@@ -61,7 +180,14 @@ bool MqttClient::Connect()
     }
     catch (const mqtt::exception& exc) {
         connected_.store(false, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(error) << "Failed to connect to MQTT server: " << exc.what();
+        BOOST_LOG_TRIVIAL(error) << "MQTT exception during connect: " << exc.what()
+                                << ", Return code: " << exc.get_return_code()
+                                << ", Message: " << exc.get_message();
+        return false;
+    }
+    catch (const std::exception& e) {
+        connected_.store(false, std::memory_order_release);
+        BOOST_LOG_TRIVIAL(error) << "General exception during connect: " << e.what();
         return false;
     }
 }
@@ -377,6 +503,7 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
 // 添加析构函数实现
 MqttClient::~MqttClient()
 {
+    cleanup_temp_files();
     try {
         BOOST_LOG_TRIVIAL(info) << "释放MQTT客户端资源...";
         
@@ -413,5 +540,23 @@ MqttClient::~MqttClient()
     }
     catch (...) {
         BOOST_LOG_TRIVIAL(error) << "MQTT客户端析构时发生未知异常";
+    }
+}
+
+// 添加清理临时文件的方法
+void MqttClient::cleanup_temp_files()
+{
+    try {
+        if (!temp_ca_path_.empty() && boost::filesystem::exists(temp_ca_path_)) {
+            boost::filesystem::remove(temp_ca_path_);
+        }
+        if (!temp_cert_path_.empty() && boost::filesystem::exists(temp_cert_path_)) {
+            boost::filesystem::remove(temp_cert_path_);
+        }
+        if (!temp_key_path_.empty() && boost::filesystem::exists(temp_key_path_)) {
+            boost::filesystem::remove(temp_key_path_);
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "清理临时证书文件失败: " << e.what();
     }
 }

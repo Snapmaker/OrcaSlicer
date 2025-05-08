@@ -8,6 +8,7 @@
 #include <boost/log/trivial.hpp>
 #include <memory>
 #include <atomic>
+#include <boost/filesystem.hpp>
 
 // Number of retries for connection and subscription attempts
 #define CONNECT_RETRY_TIME 3
@@ -47,13 +48,25 @@ public:
 };
 
 // Main MQTT client class implementing both callback and action listener interfaces
-class MqttClient : public virtual mqtt::callback, 
+class MqttClient : public mqtt::callback, 
                   public virtual mqtt::iaction_listener,
                   public std::enable_shared_from_this<MqttClient>
 {
 public:
-    // Constructor initializes the MQTT client with server details
-    MqttClient(const std::string& server_address, const std::string& client_id, bool clean_session);
+    // 基础构造函数 - 用于普通MQTT连接
+    MqttClient(const std::string& server_address, 
+               const std::string& client_id,
+               bool clean_session = false);
+               
+    // SSL/TLS构造函数 - 使用证书内容
+    MqttClient(const std::string& server_address, 
+               const std::string& client_id,
+               const std::string& ca_content,
+               const std::string& cert_content = "",
+               const std::string& key_content = "",
+               const std::string& username = "",
+               const std::string& password = "",
+               bool clean_session = false);
 
     // Destructor
     ~MqttClient();
@@ -109,6 +122,14 @@ private:
 
     std::atomic<bool> is_reconnecting; // 是否正在调试重连
     std::atomic<int> pending_reconnect_checks;  // 添加重连检查计数器
+
+    // 临时文件路径
+    boost::filesystem::path temp_ca_path_;
+    boost::filesystem::path temp_cert_path_;
+    boost::filesystem::path temp_key_path_;
+    
+    // 清理临时文件的方法
+    void cleanup_temp_files();
 
     // 添加新的私有方法来处理重新订阅
     void resubscribe_topics();

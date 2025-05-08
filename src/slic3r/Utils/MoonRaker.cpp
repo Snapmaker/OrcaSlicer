@@ -726,8 +726,8 @@ std::string Moonraker::make_url(const std::string& path) const
             return (boost::format("%1%/%2%") % m_host % path).str();
         }
     } else {
-        if (m_host.find(":1883") != std::string::npos) {
-            std::string http_host = m_host.substr(0, m_host.find(":1883"));
+        if (m_host.find(":1884") != std::string::npos) {
+            std::string http_host = m_host.substr(0, m_host.find(":1884"));
             return (boost::format("http://%1%/%2%") % http_host % path).str();
         }
         return (boost::format("http://%1%/%2%") % m_host % path).str();
@@ -749,7 +749,8 @@ bool Moonraker::connect(wxString& msg, const nlohmann::json& params) {
 // Moonraker_mqtt
 
 std::shared_ptr<MqttClient> Moonraker_Mqtt::m_mqtt_client = nullptr;
-TimeoutMap<std::string, Moonraker_Mqtt::RequestCallback> Moonraker_Mqtt::m_request_cb_map;
+std::shared_ptr<MqttClient> Moonraker_Mqtt::m_mqtt_client_tls = nullptr;
+TimeoutMap<int64_t, Moonraker_Mqtt::RequestCallback> Moonraker_Mqtt::m_request_cb_map;
 std::function<void(const nlohmann::json&)> Moonraker_Mqtt::m_status_cb = nullptr;
 std::string Moonraker_Mqtt::m_response_topic = "/response";
 std::string Moonraker_Mqtt::m_status_topic = "/status";
@@ -757,81 +758,296 @@ std::string Moonraker_Mqtt::m_notification_topic = "/notification";
 std::string Moonraker_Mqtt::m_request_topic = "/request";
 std::string Moonraker_Mqtt::m_sn = "";
 std::mutex Moonraker_Mqtt::m_sn_mtx;
+std::string Moonraker_Mqtt::m_auth_topic = "/config/response";
+std::string Moonraker_Mqtt::m_auth_req_topic = "/config/request";
+nlohmann::json Moonraker_Mqtt::m_auth_info = nlohmann::json::object();
 
 
 Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) : Moonraker(config) {
     std::string host_info = config->option<ConfigOptionString>("print_host")->value;
 
     if (change_engine) {
-        // 生成随机UUID
-        boost::uuids::random_generator gen;
-        boost::uuids::uuid             uuid       = gen();
-        std::string                    random_str = boost::uuids::to_string(uuid);
+        // 获取本地IP
+        std::string local_ip;
+        try {
+            boost::asio::io_service                  io_service;
+            boost::asio::ip::tcp::resolver           resolver(io_service);
+            boost::asio::ip::tcp::resolver::query    query(boost::asio::ip::host_name(), "");
+            boost::asio::ip::tcp::resolver::iterator iter = resolver.resolve(query);
+            boost::asio::ip::tcp::resolver::iterator end;
 
-        // 截取UUID的前8位
-        random_str = random_str.substr(0, 8);
-
-        m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, "orca_" + random_str, true));
+            while (iter != end) {
+                boost::asio::ip::tcp::endpoint ep = *iter++;
+                if (ep.address().is_v4()) { // 只获取IPv4地址
+                    local_ip = ep.address().to_string();
+                    break;
+                }
+            }
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
+            local_ip = "0.0.0.0"; // 失败时使用默认IP
+        }
+        m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, true));
+        m_mqtt_client_tls.reset();
     }
     
 }
 
-// Connect to MQTT broker
-bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
+// set auth info
+void Moonraker_Mqtt::set_auth_info(const nlohmann::json& info) {
+    m_auth_info = info;
+}
+
+// Ask for TLS info
+bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
+{
     if (!m_mqtt_client) {
         return false;
     }
-    if (m_mqtt_client->CheckConnected()) {
-        disconnect(msg, params);
+
+    if(m_mqtt_client->CheckConnected()) {
+        m_mqtt_client->Disconnect();
     }
+
     m_sn_mtx.lock();
     m_sn = "";
     m_sn_mtx.unlock();
 
-
     bool is_connect = m_mqtt_client->Connect();
-    if (!is_connect)
+    if(!is_connect || !cn_params.count("code") || cn_params["code"].get<std::string>() == "") {
         return false;
-
-    std::string mainLayer = "";
-    if (params.count("sn")) {
-        mainLayer = params["sn"].get<std::string>();
-        if (mainLayer != "") {
-            m_sn_mtx.lock();
-            m_sn = mainLayer;
-            m_sn_mtx.unlock();
-        } else {
-            mainLayer = "+";
-        }
-    } else {
-        mainLayer = "+";
     }
 
-    bool notification_subscribed = m_mqtt_client->Subscribe(mainLayer + m_notification_topic, 2);
-    bool response_subscribed = m_mqtt_client->Subscribe(mainLayer + m_response_topic, 2);
+    std::string auth_code  = cn_params["code"].get<std::string>();
+
+    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 2);
     m_mqtt_client->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
         this->on_mqtt_message_arrived(topic, payload);
     });
 
-    /*if (!wait_for_sn()) {
+    json body;
+    body["jsonrpc"] = "2.0";
+    body["method"] = "server.request_key";
+    json params;
+    // 获取本地IP
+    std::string local_ip;
+    try {
+        boost::asio::io_service io_service;
+        boost::asio::ip::tcp::resolver resolver(io_service);
+        boost::asio::ip::tcp::resolver::query query(boost::asio::ip::host_name(), "");
+        boost::asio::ip::tcp::resolver::iterator iter = resolver.resolve(query);
+        boost::asio::ip::tcp::resolver::iterator end;
+
+        while (iter != end) {
+            boost::asio::ip::tcp::endpoint ep = *iter++;
+            if (ep.address().is_v4()) {  // 只获取IPv4地址
+                local_ip = ep.address().to_string();
+                break;
+            }
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
+        local_ip = "0.0.0.0";  // 失败时使用默认IP
+    }
+    if(local_ip == "0.0.0.0") {
         return false;
-    }*/
+    }
+
+    params["clientid"] = local_ip;
+    body["params"] = params;
+
+    int64_t seq_id = m_seq_generator.generate_seq_id();
+
+    // 同步等待
+    std::promise<bool> auth_promise;
+    std::future<bool> auth_future = auth_promise.get_future();
+
+    auto callback = [this, &auth_promise](const nlohmann::json& res) {
+        try{
+            json result = res;
+            std::string state = result["state"].get<std::string>();
+            if (state != "success") {
+                auth_promise.set_value(false);
+                return;
+            }
+
+            // sn
+            m_sn_mtx.lock();
+            m_sn = result["sn"].get<std::string>();
+            m_sn_mtx.unlock();
+
+            
+            m_client_id = result["clientid"].get<std::string>();
+            m_user_name = result["username"].get<std::string>();
+            m_password = result["password"].get<std::string>();
+            m_ca = result["ca"].get<std::string>();
+            m_cert = result["cert"].get<std::string>();
+            m_key = result["key"].get<std::string>();
+            m_port = result["port"].get<int>();
+
+            auth_promise.set_value(true);
+        }
+        catch(std::exception& e){
+            auth_promise.set_value(false);
+        }
+    };
+
+    auto timeout_callback = [this, &auth_promise]() {
+        // 待调整
+        auth_promise.set_value(false);
+    };
+
+    if (!add_response_target(seq_id, callback, timeout_callback, std::chrono::seconds(60))) {
+            return false;
+    }
+    body["id"] = seq_id;
+
+    if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 2)){
+        return false;
+    }
+
+    // 等待response
+    auto status = auth_future.wait_for(std::chrono::seconds(60));
+    if(status == std::future_status::timeout){
+        return false;
+    }
+
+    return auth_future.get();
+}
+
+// Connect to MQTT broker
+bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
+    BOOST_LOG_TRIVIAL(info) << "开始MQTT连接流程";
+    
+    // 在创建新连接前检查参数
+    if(!params.count("user") || !params.count("password") || !params.count("ca") || !params.count("cert") 
+    || !params.count("key") || !params.count("port") || !params.count("clientid") || !params.count("sn")){
+        BOOST_LOG_TRIVIAL(info) << "缺少TLS参数，尝试获取认证信息";
+        bool flag = ask_for_tls_info(params);
+        if (!flag) {
+            BOOST_LOG_TRIVIAL(error) << "获取TLS认证信息失败";
+            return false;
+        }
+    }else{
+        m_user_name = params["user"].get<std::string>();
+        m_password = params["password"].get<std::string>();
+        m_ca = params["ca"].get<std::string>();
+        m_cert = params["cert"].get<std::string>();
+        m_key = params["key"].get<std::string>();
+        m_port = params["port"].get<int>();
+        m_client_id = params["clientid"].get<std::string>();
+
+        m_sn_mtx.lock();
+        m_sn = params["sn"].get<std::string>();
+        m_sn_mtx.unlock();
+    }
+
+    // 验证证书格式
+    if (!m_ca.empty()) {
+        if (m_ca.find("-----BEGIN CERTIFICATE-----") == std::string::npos) {
+            BOOST_LOG_TRIVIAL(error) << "CA证书格式不正确";
+            return false;
+        }
+        BOOST_LOG_TRIVIAL(info) << "CA证书格式验证通过";
+    }
+
+    if (!m_cert.empty()) {
+        if (m_cert.find("-----BEGIN CERTIFICATE-----") == std::string::npos) {
+            BOOST_LOG_TRIVIAL(error) << "客户端证书格式不正确";
+            return false;
+        }
+        BOOST_LOG_TRIVIAL(info) << "客户端证书格式验证通过";
+    }
+
+    if (!m_key.empty()) {
+        if (m_key.find("-----BEGIN PRIVATE KEY-----") == std::string::npos 
+            && m_key.find("-----BEGIN RSA PRIVATE KEY-----") == std::string::npos) {
+            BOOST_LOG_TRIVIAL(error) << "私钥格式不正确";
+            return false;
+        }
+        BOOST_LOG_TRIVIAL(info) << "私钥格式验证通过";
+    }
+
+    // 检查端口号
+    if (m_port <= 0 || m_port > 65535) {
+        BOOST_LOG_TRIVIAL(error) << "无效的端口号: " << m_port;
+        return false;
+    }
+
+    // 记录连接参数（不记录敏感信息的具体内容）
+    BOOST_LOG_TRIVIAL(info) << "MQTTS连接参数:"
+        << "\n - 主机: " << m_host
+        << "\n - 端口: " << m_port
+        << "\n - 客户端ID: " << m_client_id
+        << "\n - 用户名是否存在: " << (!m_user_name.empty() ? "是" : "否")
+        << "\n - 密码是否存在: " << (!m_password.empty() ? "是" : "否")
+        << "\n - CA证书是否存在: " << (!m_ca.empty() ? "是" : "否")
+        << "\n - 客户端证书是否存在: " << (!m_cert.empty() ? "是" : "否")
+        << "\n - 私钥是否存在: " << (!m_key.empty() ? "是" : "否");
+
+    // 在创建新连接前，确保旧连接已断开
+    if (m_mqtt_client) {
+        m_mqtt_client->Disconnect();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        m_mqtt_client.reset();
+    }
+
+    if (m_mqtt_client_tls) {
+        m_mqtt_client_tls->Disconnect();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        m_mqtt_client_tls.reset();
+    }
+
+    // 创建新的 MQTTS 连接
+    std::string host_ip = m_host;
+    size_t      pos     = host_ip.find(":");
+    if (pos != std::string::npos) {
+        host_ip = host_ip.substr(0, pos);
+    }
+    m_mqtt_client_tls.reset(new MqttClient("mqtts://" + host_ip + ":" + std::to_string(m_port), 
+                                         m_client_id, m_ca, m_cert, m_key, 
+                                         m_user_name, m_password));
+
+    if (!m_mqtt_client_tls) {
+        BOOST_LOG_TRIVIAL(error) << "MQTT客户端创建失败";
+        return false;
+    }
+
+    bool is_connect = m_mqtt_client_tls->Connect();
+    if (!is_connect) {
+        BOOST_LOG_TRIVIAL(error) << "MQTT连接失败";
+        return false;
+    }
+
+    m_sn_mtx.lock();
+    std::string tmp_sn = m_sn;
+    m_sn_mtx.unlock();
+
+    if(tmp_sn == ""){
+        return false;
+    }
+
+    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 2);
+    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 2);
+    m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
+        this->on_mqtt_tls_message_arrived(topic, payload);
+    });
 
     return is_connect && notification_subscribed && response_subscribed;
 }
 
 // Disconnect from MQTT broker
 bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
-    if (!m_mqtt_client)
+    if (!m_mqtt_client_tls)
         return false;
 
 
-    bool flag = m_mqtt_client->Disconnect();
+    bool flag = m_mqtt_client_tls->Disconnect();
     m_sn_mtx.lock();
     m_sn = "";
     m_sn_mtx.unlock();
 
-    m_mqtt_client.reset();
+    m_mqtt_client_tls.reset();
 
     return flag;
 }
@@ -845,7 +1061,7 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client ? m_mqtt_client->Subscribe(main_layer + m_status_topic, 2) : false;
+    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 2) : false;
 
     if (!res) {
         if (m_status_cb) {
@@ -907,20 +1123,16 @@ void Moonraker_Mqtt::async_resume_print_job(std::function<void(const nlohmann::j
 }
 
 void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_request_params, std::function<void(const nlohmann::json&)> cb) {
-    std::string id = "";
+    int64_t id = -1;
 
-    if (!mqtt_request_params.count("id")) {
+    if (!mqtt_request_params.count("id") || !mqtt_request_params[id].is_number()) {
         cb(json::value_t::null);
         return;
     }
 
-    if (mqtt_request_params["id"].is_string()) {
-        id = mqtt_request_params["id"].get<std::string>();
-    } else if (mqtt_request_params["id"].is_number()) {
-        id = std::to_string(mqtt_request_params["id"].get<int>());
-    }
+    id = mqtt_request_params["id"].get<int64_t>();
 
-    if (id == "") {
+    if (id == -1) {
         cb(json::value_t::null);
         return;
     }
@@ -933,7 +1145,7 @@ void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_re
         cb(json::value_t::null);
     }
 
-    if (m_mqtt_client) {
+    if (m_mqtt_client_tls) {
         std::string main_layer = "+";
 
         if (wait_for_sn()) {
@@ -947,7 +1159,7 @@ void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_re
                 return;
             }
 
-            bool res = m_mqtt_client->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 2);
+            bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 2);
             if (!res) {
                 delete_response_target(id);
             }
@@ -1022,7 +1234,7 @@ void Moonraker_Mqtt::async_unsubscribe_machine_info(std::function<void(const nlo
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client ? m_mqtt_client->Unsubscribe(main_layer + m_status_topic) : false;
+    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Unsubscribe(main_layer + m_status_topic) : false;
 
     if (!res) {
         if (callback) {
@@ -1243,17 +1455,16 @@ bool Moonraker_Mqtt::send_to_request(
     body["method"] = method;
     body["params"] = params;
 
-    boost::uuids::uuid uuid = m_generator();
-    std::string str_uuid = boost::uuids::to_string(uuid);
+    int64_t seq_id = m_seq_generator.generate_seq_id();
 
     if (need_response) {
-        if (!add_response_target(str_uuid, callback, timeout_callback)) {
+        if (!add_response_target(seq_id, callback, timeout_callback)) {
             return false;
         }
-        body["id"] = str_uuid;
+        body["id"] = seq_id;
     }
 
-    if (m_mqtt_client) {
+    if (m_mqtt_client_tls) {
         std::string main_layer = "+";
     
         m_sn_mtx.lock();
@@ -1261,13 +1472,13 @@ bool Moonraker_Mqtt::send_to_request(
         m_sn_mtx.unlock();
 
         if (main_layer == "+" || main_layer == "") {
-            delete_response_target(str_uuid);
+            delete_response_target(seq_id);
             return false;
         }
 
-        bool res = m_mqtt_client->Publish(main_layer + m_request_topic, body.dump(), 2);
+        bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, body.dump(), 2);
         if (!res) {
-            delete_response_target(str_uuid);
+            delete_response_target(seq_id);
         }
         return res;
 
@@ -1278,7 +1489,7 @@ bool Moonraker_Mqtt::send_to_request(
 
 // Register callback for response to a request
 bool Moonraker_Mqtt::add_response_target(
-    const std::string& id,
+    int64_t id,
     std::function<void(const nlohmann::json&)> callback,
     std::function<void()> timeout_callback,
     std::chrono::milliseconds timeout)
@@ -1291,7 +1502,7 @@ bool Moonraker_Mqtt::add_response_target(
 }
 
 // Remove registered callback
-void Moonraker_Mqtt::delete_response_target(const std::string& id) {
+void Moonraker_Mqtt::delete_response_target(int64_t id) {
     m_request_cb_map.remove(id);
 }
 
@@ -1300,15 +1511,14 @@ bool Moonraker_Mqtt::check_sn_arrived() {
 }
 
 // Get and remove callback for a request
-std::function<void(const json&)> Moonraker_Mqtt::get_request_callback(const std::string& id)
+std::function<void(const json&)> Moonraker_Mqtt::get_request_callback(int64_t id)
 {
     auto request_cb = m_request_cb_map.get_and_remove(id);
     return request_cb ? request_cb->success_cb : nullptr;
 }
 
-// Handle incoming MQTT messages
-void Moonraker_Mqtt::on_mqtt_message_arrived(const std::string& topic, const std::string& payload)
-{
+// Handle incoming MQTTs messages
+void Moonraker_Mqtt::on_mqtt_tls_message_arrived(const std::string& topic, const std::string& payload) {
     try {
         if (topic.find(m_response_topic) != std::string::npos) {
             size_t pos = topic.find("/response");
@@ -1355,6 +1565,44 @@ void Moonraker_Mqtt::on_mqtt_message_arrived(const std::string& topic, const std
     } catch (std::exception& e) {}
 }
 
+// Handle incoming MQTT messages
+void Moonraker_Mqtt::on_mqtt_message_arrived(const std::string& topic, const std::string& payload)
+{
+    try {
+        if (topic.find(m_auth_topic) != std::string::npos) {
+            on_auth_arrived(payload);
+        } else {
+            return;
+        }
+    } catch (std::exception& e) {}
+}
+
+// Handle auth messages
+void Moonraker_Mqtt::on_auth_arrived(const std::string& payload) {
+    try {
+        json body = json::parse(payload);
+
+        if(!body.count("id")){
+            return;
+        }
+
+        int64_t id = body["id"].get<int64_t>();
+
+
+        auto cb = get_request_callback(id);
+        delete_response_target(id);
+
+        if (!cb) {
+            return;
+        }
+
+        json res = body["result"];
+
+        cb(res);
+
+    } catch (std::exception& e) {}
+}
+
 // Handle response messages
 void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
 {
@@ -1365,12 +1613,8 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
             return;
         }
 
-        std::string id = "";
-        if (body["id"].is_number()) {
-            id = std::to_string(body["id"].get<int>());
-        } else if (body["id"].is_string()) {
-            id = body["id"].get<std::string>();
-        }
+        int64_t id = -1;
+        id         = body["id"].get<int64_t>();
 
         auto cb = get_request_callback(id);
         delete_response_target(id);
@@ -1381,7 +1625,7 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
 
         json res;
 
-        if (id.find("mqtt") != std::string::npos) {
+        if (/*id.find("mqtt") != std::string::npos*/ id == 20252025) {
             cb(body);
         } else {
             if (!body.count("result")) {
@@ -1465,8 +1709,8 @@ bool Moonraker_Mqtt::wait_for_sn(int timeout_seconds)
 }
 
 void Moonraker_Mqtt::set_connection_lost(std::function<void()> callback) {
-    if (m_mqtt_client)
-        m_mqtt_client->SetConnectionFailureCallback(callback);
+    if (m_mqtt_client_tls)
+        m_mqtt_client_tls->SetConnectionFailureCallback(callback);
 }
 
 std::string Moonraker_Mqtt::get_sn() {

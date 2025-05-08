@@ -43,7 +43,7 @@ ELSEIF(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
 ENDIF()
 
 ## build options
-SET(PAHO_WITH_SSL FALSE CACHE BOOL "Flag that defines whether to build ssl-enabled binaries too. ")
+SET(PAHO_WITH_SSL ON CACHE BOOL "Flag that defines whether to build ssl-enabled binaries too. " FORCE)
 SET(PAHO_WITH_LIBUUID FALSE CACHE BOOL "Flag that defines whether libuuid or a custom uuid implementation should be used")
 SET(PAHO_BUILD_SHARED TRUE CACHE BOOL "Build shared library")
 SET(PAHO_BUILD_STATIC FALSE CACHE BOOL "Build static library")
@@ -126,3 +126,6 @@ IF(PAHO_ENABLE_TESTING)
 ELSE()
     INCLUDE_DIRECTORIES(src)
 ENDIF()
+
+# 添加调试输出
+MESSAGE(STATUS "Root CMake PAHO_WITH_SSL is set to: ${PAHO_WITH_SSL}")

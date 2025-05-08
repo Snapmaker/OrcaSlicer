@@ -1674,6 +1674,10 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                     port = m_param_data["port"].get<int>();
                 }
 
+                // test_safe
+                port = 1884;
+
+
                 std::string protocol = "moonraker";
                 if (m_param_data.count("protocol") && m_param_data["protocol"].is_string()) {
                     protocol = m_param_data["protocol"].get<std::string>();
@@ -1696,6 +1700,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                 if (m_param_data.count("sn") && m_param_data["sn"].is_string()) {
                     connect_params["sn"] = m_param_data["sn"].get<std::string>();
                 }
+
+                // test_safe 82
+                connect_params["code"] = "654214";
 
                 if (!host) {
                     // 错误处理

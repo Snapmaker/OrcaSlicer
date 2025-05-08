@@ -52,6 +52,9 @@ public:
     const std::string& get_apikey() const { return m_apikey; }
     const std::string& get_cafile() const { return m_cafile; }
 
+    // set auth info
+    virtual void set_auth_info(const nlohmann::json& info) override {};
+
     // Connect/disconnect from printer
     virtual bool connect(wxString& msg, const nlohmann::json& params) override;
     virtual bool disconnect(wxString& msg, const nlohmann::json& params) override { return true; }
@@ -121,8 +124,46 @@ private:
 class Moonraker_Mqtt : public Moonraker
 {
 public:
+    class SequenceGenerator {
+    private:
+        int64_t connection_id_;
+        uint32_t seq_id_low_bits_;
+        static const uint32_t MAX_SEQ_ID_INCREASED_LIMIT = 0xFFFFFFFF; // 32位掩码
+
+        void init_connection_id() {
+            seq_id_low_bits_ = 0;
+            // 获取当前时间戳并取低31位
+            auto now = std::chrono::system_clock::now();
+            auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()
+            ).count();
+            connection_id_ = millis & 0x7FFFFFFF;
+        }
+
+    public:
+        SequenceGenerator() : seq_id_low_bits_(0), connection_id_(-1) {
+            init_connection_id();
+        }
+
+        void set_connection_id(int64_t connection_id) {
+            connection_id_ = connection_id;
+        }
+
+        int64_t generate_seq_id() {
+            if (connection_id_ == -1) {
+                throw std::runtime_error("Connection not initialized.");
+            }
+            // 递增并限制在32位
+            seq_id_low_bits_ = (seq_id_low_bits_ + 1) & MAX_SEQ_ID_INCREASED_LIMIT;
+            // 组合高31位和低32位，确保符号位为0
+            return (connection_id_ << 32) | seq_id_low_bits_;
+        }
+    };
     // Constructor
     Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine =  true);
+
+    // set auth info
+    virtual void set_auth_info(const nlohmann::json& info) override;
 
     // Override connection methods
     virtual bool connect(wxString& msg, const nlohmann::json& params) override;
@@ -171,6 +212,9 @@ public:
     // MQTT message handler
     void on_mqtt_message_arrived(const std::string& topic, const std::string& payload);
 
+    // MQTTS message handler
+    void on_mqtt_tls_message_arrived(const std::string& topic, const std::string& payload);
+
 private:
     // Helper methods for MQTT communication
     bool send_to_request(const std::string& method,
@@ -179,20 +223,26 @@ private:
                         std::function<void(const nlohmann::json& response)> callback,
                         std::function<void()> timeout_callback);
 
-    bool add_response_target(const std::string& id,
+    bool add_response_target(int64_t id,
                            std::function<void(const nlohmann::json&)> callback,
                            std::function<void()> timeout_callback = nullptr,
                            std::chrono::milliseconds timeout = std::chrono::milliseconds(80000));
 
-    std::function<void(const nlohmann::json& response)> get_request_callback(const std::string& id);
-    void delete_response_target(const std::string& id);
+    std::function<void(const nlohmann::json& response)> get_request_callback(int64_t id);
+    void delete_response_target(int64_t id);
 
     bool wait_for_sn(int timeout_seconds = 6);
 
-    // MQTT message handlers
+    // MQTTs message handlers
     void on_response_arrived(const std::string& payload);
     void on_status_arrived(const std::string& payload);
     void on_notification_arrived(const std::string& payload);
+
+    // MQTT message handlers
+    void on_auth_arrived(const std::string& payload);
+
+    // Ask for TLS info
+    bool ask_for_tls_info(const nlohmann::json& params);
 
 public:
     // Callback structure for MQTT requests
@@ -211,10 +261,15 @@ public:
 private:
     // Static MQTT client and related variables
     static std::shared_ptr<MqttClient> m_mqtt_client;
-    static TimeoutMap<std::string, RequestCallback> m_request_cb_map;
+    static std::shared_ptr<MqttClient> m_mqtt_client_tls;
+    static TimeoutMap<int64_t, RequestCallback> m_request_cb_map;
     static std::function<void(const nlohmann::json&)> m_status_cb;
 
     // MQTT topics
+    static std::string m_auth_topic;
+    static std::string m_auth_req_topic;
+
+    // MQTTs topics
     static std::string m_response_topic;
     static std::string m_status_topic;
     static std::string m_notification_topic;
@@ -224,8 +279,19 @@ private:
     static std::string m_sn;
     static std::mutex m_sn_mtx;
 
+    // Auth info
+    static nlohmann::json m_auth_info;
+
 private:
-    boost::uuids::random_generator m_generator; // UUID generator for request IDs
+    std::string m_user_name = "";
+    std::string m_password = "";
+    std::string m_ca = "";
+    std::string m_cert = "";
+    std::string m_key = "";
+    std::string m_client_id = "";
+    int m_port = 8883;
+
+    SequenceGenerator m_seq_generator;
 };
 
 }

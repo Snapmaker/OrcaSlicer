@@ -165,6 +165,9 @@ public:
     // set auth info
     virtual void set_auth_info(const nlohmann::json& info) override;
 
+    // get auth info
+    virtual nlohmann::json get_auth_info() override;
+
     // Override connection methods
     virtual bool connect(wxString& msg, const nlohmann::json& params) override;
     virtual bool disconnect(wxString& msg, const nlohmann::json& params) override;

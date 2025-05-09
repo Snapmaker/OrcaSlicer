@@ -815,8 +815,14 @@ function OnConnectDevice(device) {
             params: {
                 dev_id: device.dev_id,
                 ip: device.ip,
-                port: 1883,
                 sn: device.sn,
+                user: device.user,
+                password: device.password,
+                ca: device.ca,
+                cert: device.cert,
+                key: device.key,
+                clientid: device.clientid,
+                port: device.port,
                 from_homepage: true,
             }
         }

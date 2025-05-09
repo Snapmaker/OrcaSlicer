@@ -1674,9 +1674,11 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                     port = m_param_data["port"].get<int>();
                 }
 
-                // test_safe
-                port = 1884;
-
+                // test
+                if (port == -1 || port == 1883) {
+                    port = 1884;
+                }
+                
 
                 std::string protocol = "moonraker";
                 if (m_param_data.count("protocol") && m_param_data["protocol"].is_string()) {
@@ -1703,6 +1705,31 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
                 // test_safe 82
                 connect_params["code"] = "654214";
+
+                // 序列化参数
+                if (m_param_data.count("code"))
+                    connect_params["code"] = m_param_data["code"];
+
+                if (m_param_data.count("ca"))
+                    connect_params["ca"] = m_param_data["ca"];
+
+                if (m_param_data.count("cert"))
+                    connect_params["cert"] = m_param_data["cert"];
+
+                if (m_param_data.count("key"))
+                    connect_params["key"] = m_param_data["key"];
+
+                if (m_param_data.count("user"))
+                    connect_params["user"] = m_param_data["user"];
+
+                if (m_param_data.count("password"))
+                    connect_params["password"] = m_param_data["password"];
+
+                if (m_param_data.count("port"))
+                    connect_params["port"] = m_param_data["port"];
+
+                if (m_param_data.count("clientid"))
+                    connect_params["clientid"] = m_param_data["clientid"];
 
                 if (!host) {
                     // 错误处理
@@ -1837,7 +1864,20 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         info.img = machine_cover;
                                     }
 
+                                    auto auth_info = host->get_auth_info();
+                                    try {
+                                        info.ca       = auth_info["ca"];
+                                        info.cert     = auth_info["cert"];
+                                        info.key      = auth_info["key"];
+                                        info.user     = auth_info["user"];
+                                        info.password = auth_info["password"];
+                                        info.port     = auth_info["port"];
+                                        info.clientid = auth_info["clientid"];
+                                    }
+                                    catch (std::exception& e) {
 
+                                    }
+                                    
                                     DeviceInfo query_info;
                                     bool exist = wxGetApp().app_config->get_device_info(ip, query_info);
                                     if (nozzle_diameters.empty()) {
@@ -1923,6 +1963,17 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                  }
 
                                                 DeviceInfo info;
+                                                host->get_auth_info();
+                                                auto auth_info = host->get_auth_info();
+                                                try {
+                                                    info.ca       = auth_info["ca"];
+                                                    info.cert     = auth_info["cert"];
+                                                    info.key      = auth_info["key"];
+                                                    info.user     = auth_info["user"];
+                                                    info.password = auth_info["password"];
+                                                    info.port     = auth_info["port"];
+                                                    info.clientid = auth_info["clientid"];
+                                                } catch (std::exception& e) {}
                                                 info.ip         = ip;
                                                 info.dev_id     = ip;
                                                 info.dev_name   = ip;
@@ -1965,6 +2016,16 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 wxGetApp().app_config->save_device_info(info);
                                             } else {
                                                 DeviceInfo info;
+                                                auto auth_info = host->get_auth_info();
+                                                try {
+                                                    info.ca       = auth_info["ca"];
+                                                    info.cert     = auth_info["cert"];
+                                                    info.key      = auth_info["key"];
+                                                    info.user     = auth_info["user"];
+                                                    info.password = auth_info["password"];
+                                                    info.port     = auth_info["port"];
+                                                    info.clientid = auth_info["clientid"];
+                                                } catch (std::exception& e) {}
                                                 info.ip        = ip;
                                                 info.dev_id    = ip;
                                                 info.dev_name  = ip;

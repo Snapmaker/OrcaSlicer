@@ -135,6 +135,8 @@ public:
     // set auth info
     virtual void set_auth_info(const nlohmann::json& info){}
 
+    virtual nlohmann::json get_auth_info() { return nlohmann::json::object(); }
+
 protected:
     virtual wxString format_error(const std::string &body, const std::string &error, unsigned status) const;
 

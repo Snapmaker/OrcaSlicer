@@ -798,6 +798,19 @@ void Moonraker_Mqtt::set_auth_info(const nlohmann::json& info) {
     m_auth_info = info;
 }
 
+nlohmann::json Moonraker_Mqtt::get_auth_info() {
+    json authinfo;
+    authinfo["user"] = m_user_name;
+    authinfo["password"] = m_password;
+    authinfo["ca"]       = m_ca;
+    authinfo["cert"]     = m_cert;
+    authinfo["key"]      = m_key;
+    authinfo["clientid"] = m_client_id;
+    authinfo["port"]     = m_port;
+
+    return authinfo;
+}
+
 // Ask for TLS info
 bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
 {
@@ -907,7 +920,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     }
 
     // 等待response
-    auto status = auth_future.wait_for(std::chrono::seconds(60));
+    auto status = auth_future.wait_for(std::chrono::seconds(70));
     if(status == std::future_status::timeout){
         return false;
     }

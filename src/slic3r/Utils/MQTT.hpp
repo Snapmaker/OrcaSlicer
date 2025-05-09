@@ -107,6 +107,7 @@ public:
     // Check if client is currently connected
     bool CheckConnected();
 
+    std::string get_client_id() {return client_id_;}
 private:
     std::string server_address_;     // MQTT broker address
     std::string client_id_;          // Unique client identifier

@@ -770,19 +770,38 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
         // 获取本地IP
         std::string local_ip;
         try {
-            boost::asio::io_service                  io_service;
-            boost::asio::ip::tcp::resolver           resolver(io_service);
-            boost::asio::ip::tcp::resolver::query    query(boost::asio::ip::host_name(), "");
-            boost::asio::ip::tcp::resolver::iterator iter = resolver.resolve(query);
-            boost::asio::ip::tcp::resolver::iterator end;
-
-            while (iter != end) {
-                boost::asio::ip::tcp::endpoint ep = *iter++;
-                if (ep.address().is_v4()) { // 只获取IPv4地址
-                    local_ip = ep.address().to_string();
-                    break;
-                }
+            // 创建一个socket来获取本地IP
+            int sock = socket(AF_INET, SOCK_DGRAM, 0);
+            if (sock < 0) {
+                throw std::runtime_error("Failed to create socket");
             }
+            
+            // 连接到一个外部地址（这里使用Google的DNS服务器）
+            struct sockaddr_in addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(53);
+            inet_pton(AF_INET, "8.8.8.8", &addr.sin_addr);
+            
+            if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+                close(sock);
+                throw std::runtime_error("Failed to connect");
+            }
+            
+            // 获取本地地址
+            struct sockaddr_in local_addr;
+            socklen_t len = sizeof(local_addr);
+            if (getsockname(sock, (struct sockaddr*)&local_addr, &len) < 0) {
+                close(sock);
+                throw std::runtime_error("Failed to get local address");
+            }
+            
+            // 转换为字符串
+            char ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
+            local_ip = ip_str;
+            
+            close(sock);
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
             local_ip = "0.0.0.0"; // 失败时使用默认IP
@@ -842,31 +861,18 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     body["jsonrpc"] = "2.0";
     body["method"] = "server.request_key";
     json params;
-    // 获取本地IP
-    std::string local_ip;
+    std::string clientid;
     try {
-        boost::asio::io_service io_service;
-        boost::asio::ip::tcp::resolver resolver(io_service);
-        boost::asio::ip::tcp::resolver::query query(boost::asio::ip::host_name(), "");
-        boost::asio::ip::tcp::resolver::iterator iter = resolver.resolve(query);
-        boost::asio::ip::tcp::resolver::iterator end;
-
-        while (iter != end) {
-            boost::asio::ip::tcp::endpoint ep = *iter++;
-            if (ep.address().is_v4()) {  // 只获取IPv4地址
-                local_ip = ep.address().to_string();
-                break;
-            }
-        }
+        clientid = m_mqtt_client->get_client_id();
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
-        local_ip = "0.0.0.0";  // 失败时使用默认IP
+        clientid = "0.0.0.0"; // 失败时使用默认IP
     }
-    if(local_ip == "0.0.0.0") {
+    if(clientid == "0.0.0.0") {
         return false;
     }
 
-    params["clientid"] = local_ip;
+    params["clientid"] = clientid;
     body["params"] = params;
 
     int64_t seq_id = m_seq_generator.generate_seq_id();

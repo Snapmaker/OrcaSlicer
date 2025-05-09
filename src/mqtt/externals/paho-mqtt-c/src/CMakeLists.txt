@@ -174,6 +174,12 @@ IF (PAHO_BUILD_STATIC)
                 ${CMAKE_BINARY_DIR})
     ENDFOREACH()
 
+    message("PAHO_WITH_SSL: ${PAHO_WITH_SSL}")
+    if(PAHO_WITH_SSL)
+        target_compile_definitions(paho-mqtt3a-static PRIVATE OPENSSL=1)
+        message("paho-mqtt3a-static is compiled with SSL")
+    endif()
+
     IF (NOT PAHO_BUILD_SHARED)
         INSTALL(TARGETS paho-mqtt3c-static paho-mqtt3a-static
             EXPORT eclipse-paho-mqtt-cTargets
@@ -184,20 +190,17 @@ IF (PAHO_BUILD_STATIC)
         INSTALL(TARGETS paho-mqtt3c-static paho-mqtt3a-static
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
     ENDIF()
-
-    message("PAHO_WITH_SSL: ${PAHO_WITH_SSL}")
-    if(PAHO_WITH_SSL)
-        target_compile_definitions(paho-mqtt3a-static PRIVATE OPENSSL=1)
-        message("paho-mqtt3a-static is compiled with SSL")
-    endif()
 ENDIF()
 
 INSTALL(FILES MQTTAsync.h MQTTClient.h MQTTClientPersistence.h MQTTProperties.h MQTTReasonCodes.h MQTTSubscribeOpts.h MQTTExportDeclarations.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 IF (PAHO_WITH_SSL)
-    SET(OPENSSL_ROOT_DIR "" CACHE PATH "Directory containing OpenSSL libraries and includes")
     find_package(OpenSSL REQUIRED)
+    if(NOT OPENSSL_FOUND)
+        message(FATAL_ERROR "OpenSSL not found")
+    endif()
+    message(STATUS "OpenSSL found: ${OPENSSL_INCLUDE_DIR}")
 
     IF (PAHO_BUILD_SHARED)
         ## common compilation for libpaho-mqtt3cs and libpaho-mqtt3as
@@ -315,15 +318,15 @@ IF (PAHO_WITH_SSL)
         IF (PAHO_BUILD_STATIC)
             # 已有的 paho-mqtt3a-static
             target_include_directories(paho-mqtt3a-static 
-                PUBLIC ${OPENSSL_INCLUDE_DIR})
+                PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
             
             # 为 paho-mqtt3cs-static 添加
             target_include_directories(paho-mqtt3cs-static 
-                PUBLIC ${OPENSSL_INCLUDE_DIR})
+                PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
             
             # 为 paho-mqtt3c-static 添加
             target_include_directories(paho-mqtt3c-static 
-                PUBLIC ${OPENSSL_INCLUDE_DIR})
+                PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
             
             # 确保所有静态库都定义了 OPENSSL 宏
             foreach(target paho-mqtt3a-static paho-mqtt3cs-static paho-mqtt3c-static)
@@ -364,3 +367,14 @@ IF (PAHO_WITH_SSL)
 	TARGET_LINK_LIBRARIES( Sha1TestOpenSSL OpenSSL::SSL OpenSSL::Crypto)
 	TARGET_COMPILE_DEFINITIONS( Sha1TestOpenSSL PUBLIC "-DSHA1_TEST -DOPENSSL=1" )
 ENDIF (PAHO_WITH_SSL)
+
+if(WIN32)
+    option(PAHO_BUILD_STATIC "Build static library" TRUE)
+    option(PAHO_BUILD_SHARED "Build shared library (DLL)" FALSE)
+    option(PAHO_WITH_SSL "Build SSL-enabled library" FALSE)
+else()
+    option(PAHO_BUILD_STATIC "Build static library" TRUE)
+    option(PAHO_BUILD_SHARED "Build shared library" FALSE)
+    option(PAHO_WITH_SSL "Build SSL-enabled library" TRUE)
+    option(PAHO_BUILD_DEB_PACKAGE "Build debian package" FALSE)
+endif()

@@ -4255,6 +4255,10 @@ std::string GUI_App::handle_web_request(std::string cmd)
                         });
                     }
                 }
+            } else if (command_str.compare("GotoTestHomepage") == 0) {
+                CallAfter([this]() {
+                    // this->mainframe->m_webview->load_url(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/homepage.html");
+                });
             }
         }
         

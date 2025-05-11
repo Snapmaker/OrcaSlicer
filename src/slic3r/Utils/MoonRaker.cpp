@@ -783,7 +783,7 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             addr.sin_port = htons(53);
             inet_pton(AF_INET, "8.8.8.8", &addr.sin_addr);
             
-            if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            if (::connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
                 close(sock);
                 throw std::runtime_error("Failed to connect");
             }

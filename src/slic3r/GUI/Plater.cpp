@@ -859,12 +859,20 @@ Sidebar::Sidebar(Plater *parent)
         vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);*/
 
         // Bed type selection
+        // 创建一个像打印机选择那样的容器
+        p->panel_printer_preset = new StaticBox(p->m_panel_printer_content);
+        p->panel_printer_preset->SetCornerRadius(8);
+        StateColor panel_bd_col1(std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Pressed),
+                            std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Hovered),
+                            std::pair<wxColour, int>(wxColour(0xEEEEEE), StateColor::Normal));
+        p->panel_printer_preset->SetBorderColor(panel_bd_col1);
+
+        // 创建Bed type选择控件
         wxBoxSizer* bed_type_sizer = new wxBoxSizer(wxHORIZONTAL);
-        wxStaticText* bed_type_title = new wxStaticText(p->m_panel_printer_content, wxID_ANY, _L("Bed type"));
-        //bed_type_title->SetBackgroundColour();
+        wxStaticText* bed_type_title = new wxStaticText(p->panel_printer_preset, wxID_ANY, _L("Bed type"));
         bed_type_title->Wrap(-1);
         bed_type_title->SetFont(Label::Body_14);
-        m_bed_type_list = new ComboBox(p->m_panel_printer_content, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
+        m_bed_type_list = new ComboBox(p->panel_printer_preset, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
         const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
         if (bed_type_def && bed_type_def->enum_keys_map) {
             for (auto item : bed_type_def->enum_labels) {
@@ -872,6 +880,7 @@ Sidebar::Sidebar(Plater *parent)
             }
         }
 
+        // 添加链接事件等
         bed_type_title->Bind(wxEVT_ENTER_WINDOW, [bed_type_title, this](wxMouseEvent &e) {
             e.Skip();
             auto font = bed_type_title->GetFont();
@@ -901,18 +910,17 @@ Sidebar::Sidebar(Plater *parent)
 
         int bed_type_idx = bed_type_value - 1;
         m_bed_type_list->Select(bed_type_idx);
+
+        // 布局Bed type控件
         bed_type_sizer->Add(bed_type_title, 0, wxLEFT | wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
         bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(10));
-        vsizer_printer->Add(bed_type_sizer, 0, wxEXPAND | wxTOP, FromDIP(5));
+        p->panel_printer_preset->SetSizer(bed_type_sizer);
+
+        // 添加到垂直布局
+        vsizer_printer->Add(p->panel_printer_preset, 0, wxEXPAND | wxALL, FromDIP(4));
         vsizer_printer->AddSpacer(FromDIP(8));
 
         auto& project_config = wxGetApp().preset_bundle->project_config;
-        /*const t_config_enum_values* keys_map = print_config_def.get("curr_bed_type")->enum_keys_map;
-        BedType bed_type = btCount;
-        for (auto item : *keys_map) {
-            if (item.first == str_bed_type)
-                bed_type = (BedType)item.second;
-        }*/
         BedType bed_type = (BedType)bed_type_value;
         project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type));
 
@@ -920,27 +928,27 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_content->Layout();
         scrolled_sizer->Add(p->m_panel_printer_content, 0, wxEXPAND, 0);
 
-        // nozzle
-        // Add nozzle settings section
-        // Add separator line
-        auto m_line = new wxPanel(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxSize(-1, 1), wxTAB_TRAVERSAL);
-        m_line->SetBackgroundColour(wxColour(166, 169, 170));  // 浅灰色分割线
-        vsizer_printer->Add(m_line, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(8));  // 上下各留8的间距
+        // 移除旧的分割线代码
+        // auto m_line = new wxPanel(...);
+        // vsizer_printer->Add(m_line, ...); 
 
-        wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
+        // 创建Nozzle notebook的容器
+        StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content);
+        nozzle_container->SetCornerRadius(8);
+        nozzle_container->SetBorderColor(panel_bd_col);
 
-        // Add title
-        wxStaticText* nozzle_title = new wxStaticText(p->m_panel_printer_content, wxID_ANY, _L("Nozzle Settings"));
-        nozzle_title->SetFont(Label::Body_14);
-        nozzle_sizer->Add(nozzle_title, 0, wxLEFT | wxRIGHT, FromDIP(10));
-
-        // Create notebook for nozzle tabs
-        p->m_nozzle_notebook = new wxNotebook(p->m_panel_printer_content, wxID_ANY, 
+        // 创建notebook
+        p->m_nozzle_notebook = new wxNotebook(nozzle_container, wxID_ANY, 
                                             wxDefaultPosition, wxDefaultSize, wxNB_TOP);
         p->m_nozzle_notebook->SetBackgroundColour(wxColour(255, 255, 255));
 
+        // 创建nozzle_sizer并添加notebook
+        wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
         nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(5));
-        vsizer_printer->Add(nozzle_sizer, 0, wxEXPAND, 0);
+        nozzle_container->SetSizer(nozzle_sizer);
+
+        // 添加到主布局
+        vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
 
         // Initialize nozzle settings
         update_nozzle_settings();
@@ -2036,14 +2044,14 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         wxPanel* nozzle_panel = new wxPanel(p->m_nozzle_notebook);
         nozzle_panel->SetBackgroundColour(wxColour(255, 255, 255));
 
-        wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);
+         wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);
 
         // Add diameter label and combobox
         wxBoxSizer*   diameter_sizer = new wxBoxSizer(wxHORIZONTAL);
         wxStaticText* diameter_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Nozzle Diameter"));
         diameter_label->SetFont(Label::Body_14);
 
-        ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {FromDIP(80), FromDIP(30)}, 0,
+        ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {FromDIP(140), FromDIP(30)}, 0,
                                                 nullptr, wxCB_READONLY);
         
 
@@ -2088,21 +2096,9 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 
         diameter_sizer->Add(diameter_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
-        diameter_sizer->Add(diameter_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
+        diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxEXPAND | wxRIGHT, FromDIP(15));
 
-        // Add flow label and combobox
-        wxBoxSizer*   flow_sizer = new wxBoxSizer(wxHORIZONTAL);
-        wxStaticText* flow_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Flow"));
-        flow_label->SetFont(Label::Body_14);
-
-        ComboBox* flow_combo = new ComboBox(nozzle_panel, wxID_ANY, "Standard", wxDefaultPosition, {FromDIP(100), FromDIP(30)}, 0, nullptr,
-                                            wxCB_READONLY);
-        flow_combo->AppendString("Standard");
-        flow_combo->SetValue("Standard");
-        flow_combo->Enable(false);
-
-        flow_sizer->Add(flow_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
-        flow_sizer->Add(flow_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
+        // 删除Flow相关控件
 
         // Add edit button
         ScalableButton* edit_btn = new ScalableButton(nozzle_panel, wxID_ANY, "edit");
@@ -2117,9 +2113,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         p->m_nozzle_edit_btns.push_back(edit_btn);
 
-        tab_sizer->Add(diameter_sizer);
-        tab_sizer->Add(flow_sizer);
-        tab_sizer->AddStretchSpacer();                                               // 添加弹性空间
+        tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
         tab_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10)); // 添加右边距
 
         nozzle_panel->SetSizer(tab_sizer);

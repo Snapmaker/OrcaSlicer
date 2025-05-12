@@ -3,6 +3,7 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "nlohmann/json.hpp"
+#include "slic3r/GUI/Tab.hpp"
 #include <algorithm>
 #include <iterator>
 #include <exception>
@@ -2237,7 +2238,19 @@ void SSWCP_SliceProject_Instance::process()
 void SSWCP_SliceProject_Instance::sw_NewProject()
 {
     try { 
-        wxGetApp().request_open_project("<new>");
+        if (!m_param_data.count("preset_name") || m_param_data["preset_name"].get<std::string>() == "")
+            wxGetApp().request_open_project("<new>");
+        else {
+            std::string preset_name = m_param_data["preset_name"].get<std::string>();
+            wxGetApp().CallAfter([this, preset_name]() {
+                try {
+                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset_name);
+                    wxGetApp().plater()->new_project();
+                } catch (std::exception& e) {
+                    // 异常处理
+                }
+            });
+        }
         send_to_js();
         finish_job();
     }

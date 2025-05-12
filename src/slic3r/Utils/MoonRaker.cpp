@@ -27,6 +27,16 @@
 #include "slic3r/GUI/BonjourDialog.hpp"
 #include "slic3r/GUI/WebPreprintDialog.hpp"
 
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+#endif
+
 namespace fs = boost::filesystem;
 namespace pt = boost::property_tree;
 
@@ -770,11 +780,17 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
         // 获取本地IP
         std::string local_ip;
         try {
-            // 创建一个socket来获取本地IP
-            int sock = socket(AF_INET, SOCK_DGRAM, 0);
-            if (sock < 0) {
-                throw std::runtime_error("Failed to create socket");
-            }
+            #ifdef _WIN32
+                SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
+                if (sock == INVALID_SOCKET) {
+                    throw std::runtime_error("Failed to create socket");
+                }
+            #else
+                int sock = socket(AF_INET, SOCK_DGRAM, 0);
+                if (sock < 0) {
+                    throw std::runtime_error("Failed to create socket");
+                }
+            #endif
             
             // 连接到一个外部地址（这里使用Google的DNS服务器）
             struct sockaddr_in addr;
@@ -784,7 +800,11 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             inet_pton(AF_INET, "8.8.8.8", &addr.sin_addr);
             
             if (::connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-                close(sock);
+                #ifdef _WIN32
+                    closesocket(sock);
+                #else
+                    close(sock);
+                #endif
                 throw std::runtime_error("Failed to connect");
             }
             
@@ -792,7 +812,11 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             struct sockaddr_in local_addr;
             socklen_t len = sizeof(local_addr);
             if (getsockname(sock, (struct sockaddr*)&local_addr, &len) < 0) {
-                close(sock);
+                #ifdef _WIN32
+                    closesocket(sock);
+                #else
+                    close(sock);
+                #endif
                 throw std::runtime_error("Failed to get local address");
             }
             
@@ -801,13 +825,19 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
             local_ip = ip_str;
             
-            close(sock);
+            #ifdef _WIN32
+                closesocket(sock);
+            #else
+                close(sock);
+            #endif
+
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
             local_ip = "0.0.0.0"; // 失败时使用默认IP
         }
         m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, true));
         m_mqtt_client_tls.reset();
+        BOOST_LOG_TRIVIAL(error) << "本地ip" << local_ip;
     }
     
 }

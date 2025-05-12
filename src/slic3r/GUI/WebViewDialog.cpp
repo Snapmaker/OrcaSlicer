@@ -245,10 +245,10 @@ void WebViewPanel::load_url(wxString& url)
 {
     this->Show();
     this->Raise();
-    m_url->SetLabelText(url);
+    /*m_url->SetLabelText(url);
 
     if (wxGetApp().get_mode() == comDevelop)
-        wxLogMessage(m_url->GetValue());
+        wxLogMessage(m_url->GetValue());*/
     m_browser->LoadURL(url);
     m_browser->SetFocus();
     UpdateState();

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <button id="btn_newproject">New Project</button>
+    <button id="btn_openproject">Open Project</button>
+    <button id="btn_getrecentprojects">Get Recent Projects</button>
+    <button id="btn_openrecentfile">Open Recent File</button>
+    <button id="btn_deleterecentfiles">Delete Recent Files</button>
+    <button id="btn_subscriberecentfiles">Subscribe Recent Files</button>
+    
+    <br />
+    
+    <button id="btn_setcache">Set Cache</button>
+    <button id="btn_getcache">Get Cache</button>
+    <button id="btn_deletecache">Delete Cache</button>
+
+    <br />
+    <button id="btn_login">Login</button>
+    <button id="btn_logout">logout</button>
+    <button id="btn_getloginstate">get login state</button>
+    <button id="btn_subscribeloginstate">subscribe login state</button>
+
+    <br />
+    <button id="btn_getlocaldevices">get local devices</button>
+    <button id="btn_addDevice">add Device</button>
+    <button id="btn_subscribelocaldevices">subscribe local devices</button>
+    <button id="btn_renamedevice">rename device</button>
+    <button id="btn_switchmodel">switch model</button>
+    <button id="btn_deletedevices">delete devices</button>
+
+</body>
+<script>
+    function Get_WCP_Body(seqid, cmd, params, eventid){
+        let wcp_body = {
+            header: {
+                seqId: seqid,
+            },
+            payload: {
+                cmd: cmd,
+                params: params,
+                event_id: eventid,
+            }
+        }
+        // return JSON.stringify(wcp_body);
+        return wcp_body;
+    }
+
+    function Send_to_WCP(wcp_body){
+        window.wx.postMessage(JSON.stringify(wcp_body));
+    }
+
+    window.addEventListener("message", function(event){
+        console.log(event.data);
+    });
+
+    document.getElementById("btn_newproject").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(1, "sw_NewProject", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_openproject").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(2, "sw_OpenProject", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_getrecentprojects").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(3, "sw_GetRecentProjects", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_openrecentfile").addEventListener("click", function() {
+        let path = "C:\\Users\\Administrator\\Downloads\\matte耗材参数包.3mf";
+        let wcp_body = Get_WCP_Body(4, "sw_OpenRecentFile", {path: path}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_deleterecentfiles").addEventListener("click", function() {
+        let paths = ["C:\\Users\\Administrator\\Downloads\\111.3mf"];
+        let wcp_body = Get_WCP_Body(5, "sw_DeleteRecentFiles", {paths: paths}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_subscriberecentfiles").addEventListener("click", function() {
+        let event_id = "2025";
+        let wcp_body = Get_WCP_Body(6, "sw_SubscribeRecentFiles", {}, event_id);
+        Send_to_WCP(wcp_body);
+    });
+    
+    document.getElementById("btn_setcache").addEventListener("click", function() {
+        // 弹出输入框，输入key和value
+        let key = prompt("请输入key");
+        let value = prompt("请输入value");
+        let objects = [
+            {
+                key: key,
+                value: value,
+            },
+        ]
+        let wcp_body = Get_WCP_Body(7, "sw_SetCache", {objects: objects}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_getcache").addEventListener("click", function() {
+        // 弹出输入框 输入key
+        let key = prompt("请输入key");
+        let keys = [key];
+        let wcp_body = Get_WCP_Body(8, "sw_GetCache", {keys: keys}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_deletecache").addEventListener("click", function() {
+        // 弹出输入框 输入key
+        let key = prompt("请输入key");
+        let keys = [key];
+        let wcp_body = Get_WCP_Body(9, "sw_RemoveCache", {keys: keys}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_login").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(10, "sw_UserLogin", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_logout").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(11, "sw_UserLogout", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_getloginstate").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(12, "sw_GetUserLoginState", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_subscribeloginstate").addEventListener("click", function() {
+        let event_id = "2026";
+        let wcp_body = Get_WCP_Body(13, "sw_SubscribeUserLoginState", {}, event_id);
+        Send_to_WCP(wcp_body);
+    });
+    
+    document.getElementById("btn_getlocaldevices").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(14, "sw_GetLocalDevices", {}, "");
+        Send_to_WCP(wcp_body);
+    }); 
+
+    document.getElementById("btn_addDevice").addEventListener("click", function() {
+        let wcp_body = Get_WCP_Body(15, "sw_AddDevice", {}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_subscribelocaldevices").addEventListener("click", function() {
+        let event_id = "2027";
+        let wcp_body = Get_WCP_Body(16, "sw_SubscribeLocalDevices", {}, event_id);
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_renamedevice").addEventListener("click", function() {
+        let dev_id = "58317961E7DBEF34";
+        let wcp_body = Get_WCP_Body(17, "sw_RenameDevice", {dev_id: dev_id, dev_name: "test"}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_switchmodel").addEventListener("click", function() {
+        let dev_id = "58317961E7DBEF34";
+        let wcp_body = Get_WCP_Body(18, "sw_SwitchModel", {dev_id: dev_id}, "");
+        Send_to_WCP(wcp_body);
+    });
+
+    document.getElementById("btn_deletedevices").addEventListener("click", function() {
+        let dev_ids = ["58317961E7DBEF34"];
+        let wcp_body = Get_WCP_Body(19, "sw_DeleteDevices", {dev_ids: dev_ids}, "");
+        Send_to_WCP(wcp_body);
+    });
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+</script>
+</html>

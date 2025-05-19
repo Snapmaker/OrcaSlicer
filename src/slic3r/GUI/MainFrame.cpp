@@ -1408,6 +1408,23 @@ bool MainFrame::can_send_gcode() const
 {
     if (m_plater && !m_plater->model().objects.empty())
     {
+        auto        devices     = wxGetApp().app_config->get_devices();
+        std::string preset_name = "Snapmaker test 0.4 nozzle";
+        const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+
+        std::string local_name = "";
+        if (edit_preset.is_system) {
+            local_name = edit_preset.name;
+        } else {
+            const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(edit_preset);
+            local_name              = base_preset->name;
+        }
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+        if (local_name == preset_name) {
+            return true;
+        }
+
         if (wxGetApp().app_config->get("use_new_connect") == "true") {
             return true;
         } else {

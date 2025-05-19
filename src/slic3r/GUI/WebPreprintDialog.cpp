@@ -18,6 +18,9 @@ WebPreprintDialog::WebPreprintDialog()
 {
     m_prePrint_url = "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
                      "/web/flutter_web/index.html?path=filament_extruder_mapping";
+
+    m_preSend_url = "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
+                     "/web/flutter_web/index.html?path=pre_send";
     SetBackgroundColour(*wxWHITE);
 
     // Create the webview
@@ -70,6 +73,21 @@ WebPreprintDialog::~WebPreprintDialog()
     wxGetApp().set_web_preprint_dialog(nullptr);
 }
 
+bool WebPreprintDialog::is_send_page()
+{
+    return m_send_page;
+}
+
+void WebPreprintDialog::set_send_page(bool flag)
+{
+    m_send_page = flag;
+}
+
+void WebPreprintDialog::set_swtich_to_device(bool flag)
+{
+    m_switch_to_device = flag;
+}
+
 void WebPreprintDialog::set_display_file_name(const std::string& filename) {
     m_display_file_name = filename;
 }
@@ -94,7 +112,7 @@ bool WebPreprintDialog::run()
     SSWCP::update_active_filename(m_gcode_file_name);
     SSWCP::update_display_filename(m_display_file_name);
 
-    this->load_url(m_prePrint_url);
+    this->load_url(m_send_page ? m_preSend_url : m_prePrint_url);
     if (this->ShowModal() == wxID_OK) {
         return true;
     }

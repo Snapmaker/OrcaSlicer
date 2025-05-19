@@ -37,10 +37,11 @@ namespace GUI {
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
  {
-    wxString url = wxString::Format("file://%s/web/homepage/index.html", from_u8(resources_dir()));
+    wxString url = wxString(LOCALHOST_URL) + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=homepage");
+    // wxString url = wxString::Format("http://" + "file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
     wxString strlang = wxGetApp().current_language_code_safe();
     if (strlang != "")
-        url = wxString::Format("file://%s/web/homepage/index.html?lang=%s", from_u8(resources_dir()), strlang);
+        url = url + wxString::Format("&lang=%s", strlang);
 
     // test
     // url = "http://localhost:13619/web/flutter_web/1.html";
@@ -420,9 +421,9 @@ void WebViewPanel::OnClose(wxCloseEvent& evt)
 
 void WebViewPanel::OnFreshLoginStatus(wxTimerEvent &event)
 {
-    auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
+    /*auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
     if (mainframe && mainframe->m_webview == this)
-        Slic3r::GUI::wxGetApp().sm_get_login_info();
+        Slic3r::GUI::wxGetApp().sm_get_login_info();*/
 }
 
 void WebViewPanel::SetLoginPanelVisibility(bool bshow)

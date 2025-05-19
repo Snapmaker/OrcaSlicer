@@ -14,6 +14,7 @@
 #include "slic3r/Utils/TimeoutMap.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
+
 using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
@@ -86,6 +87,9 @@ private:
     void sw_SetCache();
     void sw_GetCache();
     void sw_RemoveCache();
+
+    // select tab
+    void sw_SwitchTab();
 
     static std::unordered_map<std::string, json> m_wcp_cache;
 
@@ -230,6 +234,14 @@ private:
     // upload file to machine
     void sw_UploadFiletoMachine();
 
+    // get is legal to send & print
+    void sw_GetPrintLegal();
+
+    // get 打印任务zip流
+    void sw_GetPrintZip();
+
+    // 结束预打印流程
+    void sw_FinishPreprint();
 
 private:
     std::thread m_work_thread;  // Worker thread
@@ -356,6 +368,9 @@ public:
 
     static std::string get_display_filename();
     
+    
+    static std::unordered_map<std::string, int> m_tab_map; // for switching tab
+
 private:
     static std::unordered_set<std::string> m_machine_find_cmd_list;     // Machine find commands
     static std::unordered_set<std::string> m_machine_option_cmd_list;   // Machine option commands

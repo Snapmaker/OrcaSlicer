@@ -812,6 +812,10 @@ public:
     std::weak_ptr<SSWCP_Instance> m_recent_file_subscriber;
     std::weak_ptr<SSWCP_Instance> m_user_login_subscriber;
     std::weak_ptr<SSWCP_Instance> m_device_card_subscriber;
+
+
+public:
+    bool sm_disconnect_current_machine();
 };
 
 DECLARE_APP(GUI_App)

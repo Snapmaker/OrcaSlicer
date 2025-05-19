@@ -802,6 +802,7 @@ Sidebar::Sidebar(Plater *parent)
         connection_btn->SetToolTip(_L("Connection"));
         connection_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
             {
+                wxGetApp().sm_disconnect_current_machine();
                 PhysicalPrinterDialog dlg(this->GetParent());
                 dlg.ShowModal();
             });
@@ -1368,7 +1369,25 @@ void Sidebar::update_all_preset_comboboxes()
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
 
-        if (!use_new_connection) {
+        const auto& edit_preset = preset_bundle.printers.get_edited_preset();
+
+        std::string local_name = "";
+        if (edit_preset.is_system) {
+            local_name = edit_preset.name;
+        } else {
+            const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
+            local_name              = base_preset->name;
+        }
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+
+        // Snapmaker test
+        std::string test_preset_name = "Snapmaker test 0.4 nozzle";
+        bool        is_test          = (test_preset_name == local_name);
+
+
+        if (!use_new_connection && !is_test) {
+
             connection_btn->Show();
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             wxString apikey;
@@ -1408,20 +1427,18 @@ void Sidebar::update_all_preset_comboboxes()
                 preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), '('), preset_name.end());
                 preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
 
-                const auto& edit_preset = preset_bundle.printers.get_edited_preset();
-
-                std::string local_name = "";
-                if (edit_preset.is_system) {
-                    local_name = edit_preset.name;
-                } else {
-                    const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
-                    local_name  = base_preset->name;   
-                }
-                local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-                local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
                 if (local_name == preset_name) {
                     machine_connecting_btn->Show();
                 }
+            }
+            else {
+                // 未连接机器
+                wxGetApp().mainframe->load_printer_url("http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
+                                                       "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+            }
+
+            if (!machine_connecting_btn->IsShown() && !is_test) {
+                connection_btn->Show();
             }
         }
 
@@ -12889,16 +12906,16 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     islegal = (c_preset == connect_preset);
 
-    if (!islegal) {
+   /* if (!islegal) {
         MessageDialog msg_window(nullptr,
-                                 _L(" Your connected machine is ") + connect_preset + _L("\nYour model's preset is ") + c_preset + _L("\nDo you want to continue?"),
+                                 _L(" Your connected machine is ") + (connect_preset == "" ? "Unknown" : connect_preset) + _L("\nYour model's preset is ") + c_preset + _L("\nDo you want to continue?"),
                                  L("machine check"),
                                  wxICON_QUESTION | wxOK);
         int res = msg_window.ShowModal();
         if (res != wxID_OK) {
             return;
         }
-    }
+    }*/
 
 
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -12906,8 +12923,83 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         return;
 
     PrintHostJob upload_job;
-    if (wxGetApp().app_config->get("use_new_connect") == "true") {
+
+    // Snapmaker test
+    const auto preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+    std::string local_name = "";
+    if (preset.is_system) {
+        local_name = preset.name;
+    } else {
+        const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(preset);
+        local_name              = base_preset->name;
+    }
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+
+
+    /*if (wxGetApp().app_config->get("use_new_connect") == "true") {
         upload_job = PrintHostJob(wxGetApp().get_host_config());
+    } */
+    
+    
+    if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker test 0.4 nozzle") {
+        // 先不创建job，直接创建上传 / 上传下载对话框
+        // 获取默认文件名
+        // Obtain default output path
+        fs::path default_output_file;
+        try {
+            // Update the background processing, so that the placeholder parser will get the correct values for the ouput file template.
+            // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
+            unsigned int state = this->p->update_restart_background_process(false, false);
+            if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
+                return;
+            default_output_file = this->p->background_process.output_filepath_for_project("");
+        } catch (const Slic3r::PlaceholderParserError& ex) {
+            // Show the error with monospaced font.
+            show_error(this, ex.what(), true);
+            return;
+        } catch (const std::exception& ex) {
+            show_error(this, ex.what(), false);
+            return;
+        }
+        default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
+        if (use_3mf) {
+            default_output_file.replace_extension("3mf");
+        }
+
+        // 获取文件路径
+        auto file_path = get_partplate_list().get_curr_plate()->get_tmp_gcode_path();
+        upload_job.upload_data.source_path = file_path;
+        upload_job.upload_data.upload_path = default_output_file;
+
+        // 选择上传 or 打印
+        // Repetier specific: Query the server for the list of file groups.
+        wxArrayString groups;
+
+        // PrusaLink specific: Query the server for the list of file groups.
+        wxArrayString storage_paths;
+        wxArrayString storage_names;
+
+        auto                config = get_app_config();
+        PrintHostSendDialog dlg(default_output_file, PrintHostPostUploadAction::StartPrint, groups, storage_paths, storage_names,
+                                config->get_bool("open_device_tab_post_upload"));
+        if (dlg.ShowModal() == wxID_CANCEL) {
+            // 如果用户取消操作，直接返回
+            return;
+        }
+
+        WebPreprintDialog dialog;
+        dialog.set_swtich_to_device(dlg.switch_to_device_tab());
+        dialog.set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
+        dialog.set_gcode_file_name(upload_job.upload_data.source_path.string());
+        dialog.set_display_file_name(upload_job.upload_data.upload_path.string());
+        bool res = dialog.run();
+
+        if (dialog.need_switch_to_device()) {
+            wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
+        }
+
+        return;
     }
     else {
         upload_job = PrintHostJob(physical_printer_config);

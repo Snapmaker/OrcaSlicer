@@ -28,6 +28,8 @@
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 
+#include "miniz/miniz.h"
+
 namespace pt = boost::property_tree;
 
 using namespace nlohmann;
@@ -35,6 +37,157 @@ using namespace nlohmann;
 namespace Slic3r { namespace GUI {
 
 extern json m_ProfileJson;
+
+// Util
+std::vector<char> create_zip_with_miniz(const std::string& name1, // 原文件路径（如 "c:/xxx/1.gcode"）
+                                        const std::string& name2  // ZIP 内文件名（如 "target.gcode"）
+)
+{
+    // 1. 读取原文件内容
+    std::ifstream file(name1, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open source file: " + name1);
+    }
+
+    std::vector<char> file_content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    // 2. 初始化 ZIP 写入器（内存模式）
+    mz_zip_archive zip_archive;
+    memset(&zip_archive, 0, sizeof(zip_archive));
+
+    // 初始化 ZIP 写入到堆内存
+    if (!mz_zip_writer_init_heap(&zip_archive, 0, 0)) {
+        throw std::runtime_error("Failed to initialize ZIP writer");
+    }
+
+    // 3. 将文件内容添加到 ZIP（使用 name2 作为内部文件名）
+    if (!mz_zip_writer_add_mem(&zip_archive,
+                               name2.c_str(),         // ZIP 内文件名
+                               file_content.data(),   // 文件内容指针
+                               file_content.size(),   // 文件内容大小
+                               MZ_DEFAULT_COMPRESSION // 压缩级别
+                               )) {
+        mz_zip_writer_end(&zip_archive);
+        throw std::runtime_error("Failed to add file to ZIP");
+    }
+
+    // 4. 完成 ZIP 写入并获取内存数据
+    void*  zip_data = nullptr;
+    size_t zip_size = 0;
+    if (!mz_zip_writer_finalize_heap_archive(&zip_archive, &zip_data, &zip_size)) {
+        mz_zip_writer_end(&zip_archive);
+        throw std::runtime_error("Failed to finalize ZIP archive");
+    }
+
+    // 将 ZIP 数据复制到 vector（方便后续操作）
+    std::vector<char> zip_stream(static_cast<char*>(zip_data), static_cast<char*>(zip_data) + zip_size);
+
+    // 5. 清理资源
+    mz_zip_writer_end(&zip_archive);
+    mz_free(zip_data);
+
+    return zip_stream;
+}
+
+static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                        "abcdefghijklmnopqrstuvwxyz"
+                                        "0123456789+/";
+
+std::string base64_encode(const char* data, size_t len)
+{
+    std::string encoded;
+    int         i = 0, j = 0;
+    uint8_t     byte3[3], byte4[4];
+    while (len--) {
+        byte3[i++] = *(data++);
+        if (i == 3) {
+            byte4[0] = (byte3[0] & 0xfc) >> 2;
+            byte4[1] = ((byte3[0] & 0x03) << 4) | ((byte3[1] & 0xf0) >> 4);
+            byte4[2] = ((byte3[1] & 0x0f) << 2) | ((byte3[2] & 0xc0) >> 6);
+            byte4[3] = byte3[2] & 0x3f;
+            for (i = 0; i < 4; i++)
+                encoded += base64_chars[byte4[i]];
+            i = 0;
+        }
+    }
+    if (i) {
+        for (j = i; j < 3; j++)
+            byte3[j] = 0;
+        byte4[0] = (byte3[0] & 0xfc) >> 2;
+        byte4[1] = ((byte3[0] & 0x03) << 4) | ((byte3[1] & 0xf0) >> 4);
+        byte4[2] = ((byte3[1] & 0x0f) << 2) | ((byte3[2] & 0xc0) >> 6);
+        byte4[3] = byte3[2] & 0x3f;
+        for (j = 0; j < i + 1; j++)
+            encoded += base64_chars[byte4[j]];
+        while (i++ < 3)
+            encoded += '=';
+    }
+    return encoded;
+}
+
+std::string generate_zip_path(const std::string& oriname, const std::string& targetname)
+{
+    // 解析 name1 的路径
+    fs::path path1 = oriname;
+
+    // 获取父目录（例如 "c:/xxx/xxx/xxx"）
+    fs::path parent_dir = path1.parent_path();
+
+    // 将 name2 作为基础文件名，追加 ".zip"（例如 "target.gcode" -> "target.gcode.zip"）
+    fs::path new_filename = fs::path(targetname);
+    new_filename += ".zip"; // 直接追加扩展名
+
+    // 组合完整路径
+    fs::path zip_path = parent_dir / new_filename;
+    return zip_path.string();
+}
+
+// 检查文件是否存在并读取内容
+bool read_existing_zip(const std::string& zip_path, std::vector<char>& out_data)
+{
+    if (!fs::exists(zip_path)) {
+        return false;
+    }
+    std::ifstream file(zip_path, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open existing ZIP file: " + zip_path);
+    }
+    out_data.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    return true;
+}
+
+// 主逻辑函数
+json get_or_create_zip_json(const std::string& name1,   // 原文件路径（如 "1.gcode"）
+                            const std::string& name2,   // 目标 ZIP 文件名（如 "target.gcode"）
+                            const std::string& zip_path // 要检查的 ZIP 文件路径（如 "output.zip"）
+)
+{
+    std::vector<char> zip_stream;
+
+    // 1. 检查同名 ZIP 是否存在
+    if (read_existing_zip(zip_path, zip_stream)) {
+        std::cout << "Reusing existing ZIP file: " << zip_path << std::endl;
+    } else {
+        // 2. 若不存在，创建新 ZIP 并写入文件
+        std::cout << "Creating new ZIP file: " << zip_path << std::endl;
+        zip_stream = create_zip_with_miniz(name1, name2);
+
+        // 将新生成的 ZIP 写入文件（可选持久化）
+        std::ofstream out_file(zip_path, std::ios::binary);
+        out_file.write(zip_stream.data(), zip_stream.size());
+        if (!out_file.good()) {
+            throw std::runtime_error("Failed to write ZIP to: " + zip_path);
+        }
+    }
+
+    // 3. 编码为 Base64 并存入 JSON
+    std::string base64_str = base64_encode(zip_stream.data(), zip_stream.size());
+
+    json j;
+    j["zip_data"] = base64_str;
+    j["zip_name"] = name2 + ".zip";
+    return j;
+}
 
 // Base SSWCP_Instance implementation
 void SSWCP_Instance::process() {
@@ -57,6 +210,8 @@ void SSWCP_Instance::process() {
         sw_GetCache();
     } else if (m_cmd == "sw_RemoveCache") {
         sw_RemoveCache();
+    } else if (m_cmd == "sw_SwitchTab") {
+        sw_SwitchTab();
     }
     else {
         handle_general_fail();
@@ -177,6 +332,26 @@ void SSWCP_Instance::test_mqtt_request() {
         });
         // host->async_get_printer_info([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
     } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_SwitchTab() {
+    try {
+        
+        if (m_param_data.count("target")) {
+            std::string target_tab = m_param_data["target"].get<std::string>();
+            if (SSWCP::m_tab_map.count(target_tab)) {
+                wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition(SSWCP::m_tab_map[target_tab]));
+                send_to_js();
+                finish_job();
+                return;
+            }
+        }
+        
+        handle_general_fail();
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -625,6 +800,12 @@ void SSWCP_MachineOption_Instance::process()
         sw_DownloadMachineFile();
     } else if (m_cmd == "sw_UploadFiletoMachine") {
         sw_UploadFiletoMachine();
+    } else if (m_cmd == "sw_GetPrintLegal") {
+        sw_GetPrintLegal();
+    } else if (m_cmd == "sw_GetPrintZip") {
+        sw_GetPrintZip();
+    } else if (m_cmd == "sw_FinishPreprint") {
+        sw_FinishPreprint();
     }
     
     else {
@@ -1094,6 +1275,84 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
     }
 }
 
+void SSWCP_MachineOption_Instance::sw_FinishPreprint()
+{
+    try {
+        if (m_param_data.count("status")) {
+            std::string status = m_param_data["status"].get<std::string>();
+
+            auto p_dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
+            if (p_dialog) {
+                if (status != "success") {
+                    p_dialog->set_swtich_to_device(false);
+                }
+            }
+
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        handle_general_fail();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_GetPrintZip()
+{
+    try {
+        auto oriname = SSWCP::get_active_filename();
+        auto targetname = SSWCP::get_display_filename();
+
+        std::string zipname = generate_zip_path(oriname, targetname);
+        json res = get_or_create_zip_json(oriname, targetname, zipname);
+
+        m_res_data["name"] = res["zip_name"];
+        m_res_data["content"] = res["zip_data"];
+
+        send_to_js();
+        finish_job();
+
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_GetPrintLegal()
+{
+    try {
+        if (m_param_data.count("connected_model")) {
+            std::string connected_model = m_param_data["connected_model"].get<std::string>();
+            const auto& edit_preset     = wxGetApp().preset_bundle->printers.get_edited_preset();
+
+            std::string local_name = "";
+            if (edit_preset.is_system) {
+                local_name = edit_preset.name;
+            } else {
+                const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(edit_preset);
+                local_name              = base_preset->name;
+            }
+            local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+            local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+            
+            m_res_data["preset_model"] = local_name;
+            m_res_data["legal"] = (local_name == connected_model);
+
+            send_to_js();
+            finish_job();
+            return;
+        }
+
+        handle_general_fail();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
     try {
         if (!m_param_data.count("url")) {
@@ -1292,6 +1551,15 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         processor.process_file(filename.data());
         auto& result = processor.result();
         auto& config = processor.current_dynamic_config();
+
+        auto time = wxGetApp()
+            .mainframe->plater()
+            ->get_partplate_list()
+            .get_curr_plate()
+            ->get_slice_result()
+            ->print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)]
+            .time;
+        response["estimated_time"] = time;
 
         auto color_to_int = [](const std::string& oriclr) -> int {
 
@@ -1704,8 +1972,6 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                     connect_params["sn"] = m_param_data["sn"].get<std::string>();
                 }
 
-                // test_safe 82
-                connect_params["code"] = "654214";
 
                 // 序列化参数
                 if (m_param_data.count("code"))
@@ -1774,9 +2040,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     ptr->send_to_js();
                                 }
 
-                                MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
+                                /*MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
                                                          wxICON_QUESTION | wxOK);
-                                msg_window.ShowModal();
+                                msg_window.ShowModal();*/
 
                                 wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
                                 
@@ -1880,7 +2146,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     }
                                     
                                     DeviceInfo query_info;
-                                    bool exist = wxGetApp().app_config->get_device_info(ip, query_info);
+                                    bool exist = wxGetApp().app_config->get_device_info(info.dev_id, query_info);
                                     if (nozzle_diameters.empty()) {
                                         if (exist) {
                                             query_info.connected = true;
@@ -2069,9 +2335,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     ptr->send_to_js();
                                 }
 
-                                MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine Connected"),
+                                /*MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine Connected"),
                                                          wxICON_QUESTION | wxOK);
-                                msg_window.ShowModal();
+                                msg_window.ShowModal();*/
 
                                 auto dialog = wxGetApp().get_web_device_dialog();
                                 if (dialog) {
@@ -2086,6 +2352,13 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxGetApp().mainframe->load_printer_url(
                                     "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
                                     "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+
+                                auto self = weak_self.lock();
+                                if (!self) {
+                                    return;
+                                }
+                                self->send_to_js();
+                                self->finish_job();
                             });
 
                         } else {
@@ -2139,66 +2412,15 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
     auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
     m_work_thread = std::thread([weak_self](){
         auto                       self = weak_self.lock();
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-        wxString msg = "";
 
-        bool res = false;
-        if (host == nullptr) {
-            res = true;
-        } else {
-            res = host->disconnect(msg, {});
-        }
-        
-        if (res) {
-            wxGetApp().CallAfter([]() {
-                wxGetApp().app_config->set("use_new_connect", "false");
-                auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
-                p_config->set("print_host", "");
-
-                auto devices = wxGetApp().app_config->get_devices();
-                for (size_t i = 0; i < devices.size(); ++i) {
-                    if (devices[i].connected) {
-                        devices[i].connected = false;
-                        wxGetApp().app_config->save_device_info(devices[i]);
-                        break;
-                    }
-                }
-
-                // 同步卡片
-                json param;
-                param["command"]       = "local_devices_arrived";
-                param["sequece_id"]    = "10001";
-                param["data"]          = devices;
-                std::string logout_cmd = param.dump();
-                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                GUI::wxGetApp().run_script(strJS);
-
-                // wcp订阅
-                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
-                if (ptr) {
-                    ptr->m_res_data = devices;
-                    ptr->send_to_js();
-                }
-
-                MessageDialog msg_window(nullptr, " " + _L("Disconnected sucessfully !") + "\n", _L("Machine Disconnected"), wxICON_QUESTION | wxOK);
-                msg_window.ShowModal();
-
-                wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-                wxGetApp().set_connect_host(nullptr);
-            });
-
-        } else {
-            wxGetApp().CallAfter([]() {
-                MessageDialog msg_window(nullptr, " " + _L("Disconnect Failed !") + "\n", _L("Machine Disconnected"), wxICON_QUESTION | wxOK);
-                msg_window.ShowModal(); 
-            });
-            
+        bool res = wxGetApp().sm_disconnect_current_machine();
+        if (!res) {
             if (self) {
                 self->m_status = 1;
-                self->m_msg    = msg.c_str();
+                self->m_msg    = "connected failed";
             }
         }
+
         if (self) {
             self->send_to_js();
             self->finish_job();
@@ -2244,8 +2466,14 @@ void SSWCP_SliceProject_Instance::sw_NewProject()
             std::string preset_name = m_param_data["preset_name"].get<std::string>();
             wxGetApp().CallAfter([this, preset_name]() {
                 try {
-                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset_name);
-                    wxGetApp().plater()->new_project();
+                    if (wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset_name)) {
+                        wxGetApp().plater()->new_project();
+                    } else {
+                        MessageDialog msg_window(nullptr, "The machine model has not been installed!", _L("Create Failed"),
+                                                 wxICON_QUESTION | wxOK);
+                        msg_window.ShowModal();
+                    }
+                    
                 } catch (std::exception& e) {
                     // 异常处理
                 }
@@ -2597,6 +2825,18 @@ constexpr std::chrono::milliseconds SSWCP::DEFAULT_INSTANCE_TIMEOUT;
 std::string SSWCP::m_active_gcode_filename = "";
 std::string SSWCP::m_display_gcode_filename = "";
 
+std::unordered_map<std::string, int> SSWCP::m_tab_map = {
+    {"Home", MainFrame::TabPosition::tpHome},
+    {"3DEditor", MainFrame::TabPosition::tp3DEditor},
+    {"Preview", MainFrame::TabPosition::tpPreview},
+    {"Monitor", MainFrame::TabPosition::tpMonitor},
+    {"MultiDevice", MainFrame::TabPosition::tpMultiDevice},
+    {"Project", MainFrame::TabPosition::tpProject},
+    {"Calibration", MainFrame::TabPosition::tpCalibration},
+    {"Auxiliary", MainFrame::TabPosition::tpAuxiliary},
+    {"DebugTool", MainFrame::TabPosition::toDebugTool}
+};
+
 std::unordered_set<std::string> SSWCP::m_machine_find_cmd_list = {
     "sw_GetMachineFindSupportInfo",
     "sw_StartMachineFind",
@@ -2625,7 +2865,10 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_GetFileFilamentMapping",
     "sw_SetFilamentMappingComplete",
     "sw_DownloadMachineFile",
-    "sw_UploadFiletoMachine"
+    "sw_UploadFiletoMachine",
+    "sw_GetPrintLegal",
+    "sw_GetPrintZip",
+    "sw_FinishPreprint",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

@@ -23,6 +23,14 @@ public:
 
     void set_display_file_name(const std::string& filename);
 
+    bool is_send_page();
+
+    void set_send_page(bool flag);
+
+    bool need_switch_to_device() { return m_switch_to_device; }
+
+    void set_swtich_to_device(bool flag);
+
 private:
     void OnClose(wxCloseEvent& evt);
     void OnNavigationRequest(wxWebViewEvent &evt);
@@ -34,9 +42,11 @@ private:
     wxWebView *m_browser;
     wxString m_javascript;
     wxString    m_prePrint_url;
+    wxString    m_preSend_url;
     std::string m_gcode_file_name = "";
     std::string m_display_file_name = "";
-
+    bool        m_send_page         = false;
+    bool        m_switch_to_device  = false;
     DECLARE_EVENT_TABLE()
 };
 

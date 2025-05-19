@@ -4257,7 +4257,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 }
             } else if (command_str.compare("GotoTestHomepage") == 0) {
                 CallAfter([this]() {
-                    wxString wxurl = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/homepage.html";
+                    wxString wxurl = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=homepage";
                     this->mainframe->m_webview->load_url(wxurl);
                 });
             }
@@ -7027,6 +7027,56 @@ void GUI_App::disassociate_url(std::wstring url_prefix)
 }
 
 
+bool GUI_App::sm_disconnect_current_machine()
+{
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+    wxString msg = "";
+
+    bool res = false;
+    if (host == nullptr) {
+        return true;
+    } else {
+        res = host->disconnect(msg, {});
+    }
+
+    if (res) {
+        wxGetApp().app_config->set("use_new_connect", "false");
+        /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
+        p_config->set("print_host", "");*/
+
+        auto devices = wxGetApp().app_config->get_devices();
+        for (size_t i = 0; i < devices.size(); ++i) {
+            if (devices[i].connected) {
+                devices[i].connected = false;
+                wxGetApp().app_config->save_device_info(devices[i]);
+                break;
+            }
+        }
+
+        // 同步卡片
+        json param;
+        param["command"]       = "local_devices_arrived";
+        param["sequece_id"]    = "10001";
+        param["data"]          = devices;
+        std::string logout_cmd = param.dump();
+        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+        GUI::wxGetApp().run_script(strJS);
+
+        // wcp订阅
+        auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
+        if (ptr) {
+            ptr->m_res_data = devices;
+            ptr->send_to_js();
+        }
+
+        wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+        wxGetApp().set_connect_host(nullptr);
+    }
+
+    return res;
+}
+
 void GUI_App::start_download(std::string url)
 {
     if (!plater_) {
@@ -7056,7 +7106,7 @@ void GUI_App::SMUserInfo::notify() {
             data["icon"]     = m_login_user_icon_url;
             data["token"]    = m_login_user_token;
         } else {
-            data["stauts"] = "offline";
+            data["status"] = "offline";
         }
         ptr->m_res_data = data;
         ptr->send_to_js();

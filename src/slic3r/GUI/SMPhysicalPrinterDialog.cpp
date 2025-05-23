@@ -738,7 +738,7 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
             // 绑定预设
             DeviceInfo info;
             info.ip        = host->get_host();
-            info.dev_id    = host->get_host();
+            info.dev_id    = host->get_sn() != "" ? host->get_sn() : info.ip;
             info.dev_name  = host->get_host();
             info.connected = true;
             info.protocol  = (int) (m_config->option<ConfigOptionEnum<PrintHostType>>("host_type")->value);

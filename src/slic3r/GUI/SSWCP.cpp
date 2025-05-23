@@ -2180,7 +2180,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     // 查询成功
                                     DeviceInfo info;
                                     info.ip           = ip;
-                                    info.dev_id       = ip;
+                                    info.dev_id       = host->get_sn() != "" ? host->get_sn() : ip;
                                     info.dev_name     = ip;
                                     info.connected    = true;
                                     info.link_mode    = link_mode;
@@ -2198,7 +2198,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                             info.sn = sn;
                                         }
                                         info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
+                                        info.dev_id   = info.sn != "" ? info.sn : info.ip;
                                     }
 
                                     size_t vendor_pos = machine_type.find_first_of(" ");
@@ -2293,7 +2293,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 } else {
                                     // 是否为连接过的设备
                                     DeviceInfo query_info;
-                                    if (wxGetApp().app_config->get_device_info(ip, query_info)) {
+                                    std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
+                                    if (wxGetApp().app_config->get_device_info(dev_id,
+                                                                               query_info)) {
                                         query_info.connected = true;
                                         wxGetApp().app_config->save_device_info(query_info);
                                     } else {
@@ -2320,7 +2322,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                     info.clientid = auth_info["clientid"];
                                                 } catch (std::exception& e) {}
                                                 info.ip         = ip;
-                                                info.dev_id     = ip;
+                                                info.dev_id     = dev_id;
                                                 info.dev_name   = ip;
                                                 info.connected  = true;
                                                 info.model_name = machine_type;
@@ -2372,7 +2374,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                     info.clientid = auth_info["clientid"];
                                                 } catch (std::exception& e) {}
                                                 info.ip        = ip;
-                                                info.dev_id    = ip;
+                                                info.dev_id    = dev_id;
                                                 info.dev_name  = ip;
                                                 info.connected = true;
                                                 info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
@@ -2388,7 +2390,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                     _L("Machine Bind"), wxICON_QUESTION | wxOK);
                                                 msg_window.ShowModal();
                                                 auto dialog        = WebPresetDialog(&wxGetApp());
-                                                dialog.m_device_id = ip;
+                                                dialog.m_device_id = info.dev_id;
                                                 dialog.run();
                                             }
                                         }

@@ -29,6 +29,7 @@
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 
 #include "miniz/miniz.h"
+#include "slic3r/Utils/MQTT.hpp"
 
 namespace pt = boost::property_tree;
 
@@ -600,6 +601,12 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              machine_data["unique_key"]   = unique_key;
                                              machine_data["unique_value"] = reply.txt_data[unique_key];
                                              machine_data[unique_key]     = machine_data["unique_value"];
+                                         }
+                                         if (reply.txt_data.count("link_mode")) {
+                                             machine_data["link_mode"] = reply.txt_data["link_mode"];
+                                         }
+                                         if (reply.txt_data.count("userid")) {
+                                             machine_data["userid"] = reply.txt_data["userid"];
                                          }
 
                                          // 模拟一下
@@ -1802,6 +1809,73 @@ void SSWCP_MachineConnect_Instance::process() {
     }
 }
 
+void SSWCP_MachineConnect_Instance::sw_get_pin_code()
+{
+    try {
+        if (m_param_data.count("ip") && m_param_data.count("userid") && m_param_data.count("nickname")) {
+            std::string ip = m_param_data["ip"].get<std::string>();
+            std::string userid    = m_param_data["userid"].get<std::string>();
+            std::string nickname  = m_param_data["nickname"].get<std::string>();
+            int  port      = m_param_data.count("port") ? m_param_data["port"].get<int>() : 1884;
+
+            auto        weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            wxGetApp().CallAfter([=]() {
+                MqttClient* mqtt_client = new MqttClient("mqtts" + ip + std::to_string(port), "Snapmaker Orca");
+                if (mqtt_client->Connect()) {
+                    if (mqtt_client->Subscribe("cloud/config/response", 2)) {
+                        mqtt_client->SetMessageCallback([weak_self, mqtt_client](const std::string& topic, const std::string& message) {
+                            auto self = weak_self.lock();
+                            if (self) {
+                                if (topic == "cloud/config/response") {
+                                    json response = json::parse(message);
+                                    if (response.count("result")) {
+                                        self->m_res_data = response["result"];
+                                        self->send_to_js();
+                                        self->finish_job();
+
+                                        mqtt_client->Disconnect();
+                                        wxGetApp().CallAfter([mqtt_client]() { delete mqtt_client; });
+                                        return;
+                                    }
+
+                                    self->handle_general_fail();
+                                }
+
+
+                            }
+                        });
+
+                        // 构建请求消息
+                        json req_body;
+                        req_body["jsonrpc"] = "2.0",
+                        req_body["method"]  = "server.client_manager.request_pin_code";
+                        req_body["params"] = json::object();
+                        req_body["params"]["userid"] = userid;
+                        req_body["params"]["nickname"] = nickname;
+                        Moonraker_Mqtt::SequenceGenerator generator;
+                        req_body["id"]                 = generator.generate_seq_id();
+
+                        // 发送请求
+                        if (mqtt_client->Publish("cloud/config/request", req_body, 2)) {
+                            return;
+                        }
+                    }
+                    return;
+                }
+                auto self = weak_self.lock();
+                if (self) {
+                    self->handle_general_fail();
+                }
+            });
+        } else {
+            handle_general_fail();
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+
 void SSWCP_MachineConnect_Instance::sw_connect_other_device() {
     try {
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
@@ -1998,13 +2072,16 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                 if (m_param_data.count("clientid"))
                     connect_params["clientid"] = m_param_data["clientid"];
 
+                std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
+                connect_params["link_mode"] = link_mode;
+
                 if (!host) {
                     // 错误处理
                     finish_job();
                 } else {
                     auto weak_self     = std::weak_ptr<SSWCP_Instance>(shared_from_this());
                     //设置断联回调
-                    m_work_thread = std::thread([weak_self, host, connect_params] {
+                    m_work_thread = std::thread([weak_self, host, connect_params, link_mode] {
                         auto     self = weak_self.lock();
                         wxString msg = "";
                         json     params;
@@ -2068,7 +2145,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 }
                             }
 
-                            wxGetApp().CallAfter([ip, connect_params, weak_self]() {
+                            wxGetApp().CallAfter([ip, connect_params, weak_self, link_mode]() {
                                 // 查询机器的机型和喷嘴信息
                                 std::string              machine_type = "";
                                 std::vector<std::string> nozzle_diameters;
@@ -2106,6 +2183,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     info.dev_id       = ip;
                                     info.dev_name     = ip;
                                     info.connected    = true;
+                                    info.link_mode    = link_mode;
 
                                     // test 内部测试
                                     if (machine_type.find("lava") != std::string::npos) {

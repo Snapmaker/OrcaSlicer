@@ -140,6 +140,8 @@ private:
 
     void sw_connect_other_device();
 
+    void sw_get_pin_code();
+
 private:
     std::thread m_work_thread;  // Worker thread
 };

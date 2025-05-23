@@ -887,7 +887,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
 
     std::string auth_code  = cn_params["code"].get<std::string>();
 
-    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 2);
+    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 1);
     m_mqtt_client->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
         this->on_mqtt_message_arrived(topic, payload);
     });
@@ -956,7 +956,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     }
     body["id"] = seq_id;
 
-    if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 2)){
+    if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 1)){
         return false;
     }
 
@@ -974,7 +974,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     BOOST_LOG_TRIVIAL(info) << "开始MQTT连接流程";
     
     // 在创建新连接前检查参数
-    if(!params.count("user") || !params.count("password") || !params.count("ca") || !params.count("cert") 
+    if(!params.count("ca") || !params.count("cert") 
     || !params.count("key") || !params.count("port") || !params.count("clientid") || !params.count("sn")){
         BOOST_LOG_TRIVIAL(info) << "缺少TLS参数，尝试获取认证信息";
         bool flag = ask_for_tls_info(params);
@@ -983,8 +983,8 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
             return false;
         }
     }else{
-        m_user_name = params["user"].get<std::string>();
-        m_password = params["password"].get<std::string>();
+        m_user_name = params.count("user")     ? params["user"].get<std::string>() : "";
+        m_password = params.count("password") ? params["password"].get<std::string>() : "";
         m_ca = params["ca"].get<std::string>();
         m_cert = params["cert"].get<std::string>();
         m_key = params["key"].get<std::string>();
@@ -1033,8 +1033,6 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         << "\n - 主机: " << m_host
         << "\n - 端口: " << m_port
         << "\n - 客户端ID: " << m_client_id
-        << "\n - 用户名是否存在: " << (!m_user_name.empty() ? "是" : "否")
-        << "\n - 密码是否存在: " << (!m_password.empty() ? "是" : "否")
         << "\n - CA证书是否存在: " << (!m_ca.empty() ? "是" : "否")
         << "\n - 客户端证书是否存在: " << (!m_cert.empty() ? "是" : "否")
         << "\n - 私钥是否存在: " << (!m_key.empty() ? "是" : "否");
@@ -1081,8 +1079,8 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         return false;
     }
 
-    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 2);
-    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 2);
+    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 1);
+    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 1);
     m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
         this->on_mqtt_tls_message_arrived(topic, payload);
     });
@@ -1115,7 +1113,7 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 2) : false;
+    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1) : false;
 
     if (!res) {
         if (m_status_cb) {
@@ -1213,7 +1211,7 @@ void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_re
                 return;
             }
 
-            bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 2);
+            bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 1);
             if (!res) {
                 delete_response_target(id);
             }
@@ -1530,7 +1528,7 @@ bool Moonraker_Mqtt::send_to_request(
             return false;
         }
 
-        bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, body.dump(), 2);
+        bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, body.dump(), 1);
         if (!res) {
             delete_response_target(seq_id);
         }

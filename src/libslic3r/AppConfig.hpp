@@ -44,12 +44,13 @@ struct DeviceInfo {
     std::string              clientid;
     int              port;
     std::string              link_mode;
+    std::string              userid;
 
 
     
     // 用于JSON序列化
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key,
-		user, password, ca, cert, key, clientid, port, link_mode)
+		user, password, ca, cert, key, clientid, port, link_mode, userid)
 };
 
 class AppConfig

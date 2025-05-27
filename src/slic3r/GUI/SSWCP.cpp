@@ -561,7 +561,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     m_engines.push_back(nullptr);
                 }
 
-                Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type"};
+                Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid"};
                 std::string      unique_key = "sn";
 
                 for (size_t i = 0; i < m_engines.size(); ++i) {

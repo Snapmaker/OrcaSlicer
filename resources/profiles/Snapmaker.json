@@ -645,22 +645,6 @@
       "sub_path": "filament/Snapmaker PLA @J1.json"
     },
     {
-      "name": "Snapmaker PLA Matte @J1 base",
-      "sub_path": "filament/Snapmaker PLA Matte @J1 base.json"
-    },
-    {
-      "name": "Snapmaker PLA Matte @J1",
-      "sub_path": "filament/Snapmaker PLA Matte @J1.json"
-    },
-    {
-      "name": "Snapmaker PLA Matte @J1 0.2 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @J1 0.2 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Matte @J1 0.8 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @J1 0.8 nozzle.json"
-    },
-    {
       "name": "Snapmaker PLA Metal @J1 base",
       "sub_path": "filament/Snapmaker PLA Metal @J1 base.json"
     },
@@ -841,20 +825,36 @@
       "sub_path": "filament/Snapmaker PLA @Dual.json"
     },
     {
-      "name": "Snapmaker PLA Matte @Dual base",
-      "sub_path": "filament/Snapmaker PLA Matte @Dual base.json"
+      "name": "Snapmaker PLA Matte @base",
+      "sub_path": "filament/Snapmaker PLA Matte @base.json"
+    },
+    {
+      "name": "Snapmaker PLA Matte",
+      "sub_path": "filament/Snapmaker PLA Matte.json"
     },
     {
       "name": "Snapmaker PLA Matte @Dual",
       "sub_path": "filament/Snapmaker PLA Matte @Dual.json"
     },
     {
-      "name": "Snapmaker PLA Matte @Dual 0.2 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @Dual 0.2 nozzle.json"
+      "name": "Snapmaker PLA Matte @J1",
+      "sub_path": "filament/Snapmaker PLA Matte @J1.json"
     },
     {
-      "name": "Snapmaker PLA Matte @Dual 0.8 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @Dual 0.8 nozzle.json"
+      "name": "Snapmaker PLA SnapSpeed @base",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed @base.json"
+    },
+    {
+      "name": "Snapmaker PLA SnapSpeed",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed.json"
+    },
+    {
+      "name": "Snapmaker PLA SnapSpeed @J1",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed @J1.json"
+    },
+    {
+      "name": "Snapmaker PLA SnapSpeed @Dual",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed @Dual.json"
     },
     {
       "name": "Snapmaker PLA Metal @Dual base",

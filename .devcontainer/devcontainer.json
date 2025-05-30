@@ -1,6 +1,6 @@
 {
 	"name": "Snapmaker_Orca",
-	"image": "mcr.microsoft.com/devcontainers/cpp:ubuntu-20.04",
+	"image": "mcr.microsoft.com/devcontainers/cpp:ubuntu-22.04",
 	"runArgs": ["--env-file", "/tmp/devcontainer.env"],
     "features": {
         "ghcr.io/devcontainers/features/desktop-lite:1": {

@@ -229,7 +229,7 @@ jobs:
       - name: Install dependencies
         if: inputs.os == 'ubuntu-22.04' || inputs.os == 'ubuntu-24.04'
         env:
-          apt-cmd: ${{ (inputs.os == 'ubuntu-22.04' && 'apt-fast') || (inputs.os == 'ubuntu-24.04' && 'sudo apt-get') || '' }}
+          apt-cmd: ${{ (inputs.os == 'ubuntu-22.04' && 'sudo apt-get') || (inputs.os == 'ubuntu-24.04' && 'sudo apt-get') || '' }}
           webkit-ver: ${{ (inputs.os == 'ubuntu-22.04' && '4.0') || (inputs.os == 'ubuntu-24.04' && '4.1') || '' }}
           libfuse2-pkg: ${{ (inputs.os == 'ubuntu-22.04' && 'libfuse2') || (inputs.os == 'ubuntu-24.04' && 'libfuse2t64') || '' }}
         run: |

@@ -1079,6 +1079,8 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         return false;
     }
 
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
     bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 1);
     bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 1);
     m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {

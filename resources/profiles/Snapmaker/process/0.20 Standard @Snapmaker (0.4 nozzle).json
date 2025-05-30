@@ -35,6 +35,5 @@
   "overhang_2_4_speed": "20",
   "overhang_3_4_speed": "10",
   "slowdown_for_curled_perimeters": "0",
-  "sparse_infill_pattern": "grid",
-  "wall_generator": "classic"
+  "sparse_infill_pattern": "grid"
 }

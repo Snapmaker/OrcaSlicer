@@ -44,6 +44,8 @@ public:
     void OnScriptMessage(wxWebViewEvent& evt);
     void reload();
     void update_mode();
+    bool isSnapmakerPage();
+
 private:
     void SendAPIKey();
 

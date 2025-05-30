@@ -91,9 +91,16 @@ void PrinterWebView::reload()
     m_browser->Reload();
 }
 
+bool PrinterWebView::isSnapmakerPage()
+{
+    auto url = m_browser->GetCurrentURL();
+    return (url.find("flutter_web") != std::string::npos);
+}
+
 void PrinterWebView::update_mode()
 {
-    m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
+    // m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
+    m_browser->EnableAccessToDevTools(true);
 }
 
 /**

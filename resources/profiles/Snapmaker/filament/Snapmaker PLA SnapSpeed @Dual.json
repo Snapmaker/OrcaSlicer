@@ -6,42 +6,42 @@
     "setting_id": "39594029641",
     "inherits": "Snapmaker PLA SnapSpeed @base",
     "compatible_printers": [
-        "Snapmaker A250 Dual (0.2 nozzle)",
-        "Snapmaker A250 Dual (0.4 nozzle)",
-        "Snapmaker A250 Dual (0.6 nozzle)",
-        "Snapmaker A250 Dual (0.8 nozzle)",
-        "Snapmaker A250 Dual BKit (0.2 nozzle)",
-        "Snapmaker A250 Dual BKit (0.4 nozzle)",
-        "Snapmaker A250 Dual BKit (0.6 nozzle)",
-        "Snapmaker A250 Dual BKit (0.8 nozzle)",
-        "Snapmaker A250 Dual QS+B Kit (0.2 nozzle)",
-        "Snapmaker A250 Dual QS+B Kit (0.4 nozzle)",
-        "Snapmaker A250 Dual QS+B Kit (0.6 nozzle)",
-        "Snapmaker A250 Dual QS+B Kit (0.8 nozzle)",
-        "Snapmaker A250 Dual QSKit (0.2 nozzle)",
-        "Snapmaker A250 Dual QSKit (0.4 nozzle)",
-        "Snapmaker A250 Dual QSKit (0.6 nozzle)",
-        "Snapmaker A250 Dual QSKit (0.8 nozzle)",
-        "Snapmaker A350 Dual (0.2 nozzle)",
-        "Snapmaker A350 Dual (0.4 nozzle)",
-        "Snapmaker A350 Dual (0.6 nozzle)",
-        "Snapmaker A350 Dual (0.8 nozzle)",
-        "Snapmaker A350 Dual BKit (0.2 nozzle)",
-        "Snapmaker A350 Dual BKit (0.4 nozzle)",
-        "Snapmaker A350 Dual BKit (0.6 nozzle)",
-        "Snapmaker A350 Dual BKit (0.8 nozzle)",
-        "Snapmaker A350 Dual QS+B Kit (0.2 nozzle)",
-        "Snapmaker A350 Dual QS+B Kit (0.4 nozzle)",
-        "Snapmaker A350 Dual QS+B Kit (0.6 nozzle)",
-        "Snapmaker A350 Dual QS+B Kit (0.8 nozzle)",
-        "Snapmaker A350 Dual QSKit (0.2 nozzle)",
-        "Snapmaker A350 Dual QSKit (0.4 nozzle)",
-        "Snapmaker A350 Dual QSKit (0.6 nozzle)",
-        "Snapmaker A350 Dual QSKit (0.8 nozzle)",
-        "Snapmaker Artisan (0.2 nozzle)",
-        "Snapmaker Artisan (0.4 nozzle)",
-        "Snapmaker Artisan (0.6 nozzle)",
-        "Snapmaker Artisan (0.8 nozzle)"
+      "Snapmaker A250 Dual (0.2 nozzle)",
+      "Snapmaker A250 Dual (0.4 nozzle)",
+      "Snapmaker A250 Dual (0.6 nozzle)", 
+      "Snapmaker A250 Dual (0.8 nozzle)",
+      "Snapmaker A250 Dual BKit (0.2 nozzle)",
+      "Snapmaker A250 Dual BKit (0.4 nozzle)",
+      "Snapmaker A250 Dual BKit (0.6 nozzle)",
+      "Snapmaker A250 Dual BKit (0.8 nozzle)",
+      "Snapmaker A250 Dual QS+B Kit (0.2 nozzle)",
+      "Snapmaker A250 Dual QS+B Kit (0.4 nozzle)",
+      "Snapmaker A250 Dual QS+B Kit (0.6 nozzle)",
+      "Snapmaker A250 Dual QS+B Kit (0.8 nozzle)",
+      "Snapmaker A250 Dual QSKit (0.2 nozzle)",
+      "Snapmaker A250 Dual QSKit (0.4 nozzle)",
+      "Snapmaker A250 Dual QSKit (0.6 nozzle)",
+      "Snapmaker A250 Dual QSKit (0.8 nozzle)",
+      "Snapmaker A350 Dual (0.2 nozzle)",
+      "Snapmaker A350 Dual (0.4 nozzle)",
+      "Snapmaker A350 Dual (0.6 nozzle)",
+      "Snapmaker A350 Dual (0.8 nozzle)",
+      "Snapmaker A350 Dual BKit (0.2 nozzle)",
+      "Snapmaker A350 Dual BKit (0.4 nozzle)",
+      "Snapmaker A350 Dual BKit (0.6 nozzle)",
+      "Snapmaker A350 Dual BKit (0.8 nozzle)",
+      "Snapmaker A350 Dual QS+B Kit (0.2 nozzle)",
+      "Snapmaker A350 Dual QS+B Kit (0.4 nozzle)",
+      "Snapmaker A350 Dual QS+B Kit (0.6 nozzle)",
+      "Snapmaker A350 Dual QS+B Kit (0.8 nozzle)",
+      "Snapmaker A350 Dual QSKit (0.2 nozzle)",
+      "Snapmaker A350 Dual QSKit (0.4 nozzle)",
+      "Snapmaker A350 Dual QSKit (0.6 nozzle)",
+      "Snapmaker A350 Dual QSKit (0.8 nozzle)",
+      "Snapmaker Artisan (0.2 nozzle)",
+      "Snapmaker Artisan (0.4 nozzle)",
+      "Snapmaker Artisan (0.6 nozzle)",
+      "Snapmaker Artisan (0.8 nozzle)"
     ],
     "activate_air_filtration": [
         "0"
@@ -278,7 +278,7 @@
         "0.04"
     ],
     "reduce_fan_stop_start_freq": [
-        "1"
+        "0"
     ],
     "required_nozzle_HRC": [
         "0"
@@ -287,7 +287,7 @@
         "1"
     ],
     "slow_down_layer_time": [
-        "16"
+        "5"
     ],
     "slow_down_min_speed": [
         "10"
@@ -310,4 +310,5 @@
     "textured_plate_temp_initial_layer": [
         "45"
     ]
-}
+
+  }

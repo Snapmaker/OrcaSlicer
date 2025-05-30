@@ -2423,9 +2423,14 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 wxGetApp().mainframe->m_print_enable = true;
                                 wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
                                 // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
-                                wxGetApp().mainframe->load_printer_url(
-                                    "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                                    "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+
+                                if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
+                                    wxGetApp().mainframe->load_printer_url(
+                                        "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
+                                        "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+                                } else {
+                                    wxGetApp().mainframe->m_printer_view->reload();
+                                }
 
                                 auto self = weak_self.lock();
                                 if (!self) {

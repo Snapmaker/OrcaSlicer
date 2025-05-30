@@ -11,6 +11,5 @@
   "elefant_foot_compensation": "0.15",
   "outer_wall_jerk": "10",
   "slowdown_for_curled_perimeters": "0",
-  "sparse_infill_pattern": "grid",
-  "wall_generator": "classic"
+  "sparse_infill_pattern": "grid"
 }

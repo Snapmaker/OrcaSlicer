@@ -1,6 +1,6 @@
 {
     "title": "Discovery Device",
-    "add device": "add device",
+    "add device": "Add Device",
     "input_ip_address": "Enter IP address",
     "discovery_tip1": "1. Only printers within the same LAN can be found",
     "discovery_tip2": "2. The device only supports a 2.4GHz Wi-Fi connection",

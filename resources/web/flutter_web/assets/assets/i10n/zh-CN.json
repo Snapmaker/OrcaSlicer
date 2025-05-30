@@ -24,5 +24,12 @@
     "Send": "发送",
     "Jump": "跳过",
     "No filament or machine found": "未发现文件或设备",
-    "Sending print job": "正在发送打印任务"
+    "Sending print job": "正在发送打印任务",
+
+    "Please make sure the device is turned on and nearby":"请确保设备已打开并在附近",
+
+    "idle": "空闲",
+    "working": "工作中",
+    "error": "异常",
+    "offline": "离线"
 }

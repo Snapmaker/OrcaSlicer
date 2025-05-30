@@ -37,8 +37,8 @@ namespace GUI {
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
  {
-    // wxString url = wxString(LOCALHOST_URL) + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=homepage");
-    wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
+    wxString url = wxString(LOCALHOST_URL) + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=homepage");
+    // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
     wxString strlang = wxGetApp().current_language_code_safe();
     if (strlang != "")
         url = url + wxString::Format("&lang=%s", strlang);

@@ -888,6 +888,9 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     std::string auth_code  = cn_params["code"].get<std::string>();
 
     bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 1);
+    if (!response_subscribed) {
+        return false;
+    }
     m_mqtt_client->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
         this->on_mqtt_message_arrived(topic, payload);
     });

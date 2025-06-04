@@ -2782,7 +2782,7 @@ void GUI_App::machine_find()
                                         std::string sn = reply.txt_data["sn"];
                                         DeviceInfo  info;
                                         if (app_config->get_device_info(sn, info)) {
-                                            if (info.ip != ip) {
+                                            if (info.ip != ip && info.link_mode != "wan") {
                                                 info.ip = ip;
                                                 app_config->save_device_info(info);
 

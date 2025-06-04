@@ -706,7 +706,7 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
                     m_res_data[key]["connected"] = true;
                 }
                 std::string ip = value["ip"].get<std::string>();
-                if (info.ip != ip) {
+                if (info.ip != ip && info.link_mode != "wan") {
                     info.ip = ip;
                     wxGetApp().app_config->save_device_info(info);
 

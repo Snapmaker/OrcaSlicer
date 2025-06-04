@@ -7105,6 +7105,8 @@ void GUI_App::SMUserInfo::notify() {
             data["nickname"] = m_login_user_name;
             data["icon"]     = m_login_user_icon_url;
             data["token"]    = m_login_user_token;
+            data["userid"]   = m_login_user_id;
+            data["account"]  = m_login_user_account;
         } else {
             data["status"] = "offline";
         }

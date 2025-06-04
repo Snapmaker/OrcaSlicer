@@ -1804,7 +1804,10 @@ void SSWCP_MachineConnect_Instance::process() {
         sw_get_connect_machine();
     } else if (m_cmd == "sw_ConnectOtherMachine"){
         sw_connect_other_device();
-    } else {
+    } else if (m_cmd == "sw_GetPincode") {
+        sw_get_pin_code();
+    }
+    else {
         handle_general_fail();
     }
 }
@@ -1820,7 +1823,7 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
 
             auto        weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
             wxGetApp().CallAfter([=]() {
-                MqttClient* mqtt_client = new MqttClient("mqtts" + ip + std::to_string(port), "Snapmaker Orca");
+                MqttClient* mqtt_client = new MqttClient("mqtt://" + ip + ":" + std::to_string(port), "Snapmaker Orca");
                 if (mqtt_client->Connect()) {
                     if (mqtt_client->Subscribe("cloud/config/response", 2)) {
                         mqtt_client->SetMessageCallback([weak_self, mqtt_client](const std::string& topic, const std::string& message) {
@@ -1856,7 +1859,7 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                         req_body["id"]                 = generator.generate_seq_id();
 
                         // 发送请求
-                        if (mqtt_client->Publish("cloud/config/request", req_body, 2)) {
+                        if (mqtt_client->Publish("cloud/config/request", req_body.dump(), 2)) {
                             return;
                         }
                     }
@@ -2282,7 +2285,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     }
                                 });
                             } else {
-                                wxGetApp().CallAfter([connect_params, ip, host]() {
+                                wxGetApp().CallAfter([connect_params, ip, host, link_mode]() {
                                     // 是否为连接过的设备
                                     DeviceInfo  query_info;
                                     std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
@@ -2318,6 +2321,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 info.connected  = true;
                                                 info.model_name = machine_type;
                                                 info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
+                                                info.link_mode  = link_mode;
                                                 if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                     info.sn       = connect_params["sn"].get<std::string>();
                                                     info.dev_name = info.sn != "" ? info.sn : info.dev_name;
@@ -2713,6 +2717,8 @@ void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
                 data["nickname"] = pInfo->get_user_name();
                 data["icon"]     = pInfo->get_user_icon_url();
                 data["token"]    = pInfo->get_user_token();
+                data["userid"]   = pInfo->get_user_id();
+                data["account"]  = pInfo->get_user_account();
             } else {
                 data["status"] = "offline";
             }
@@ -2956,6 +2962,7 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_Disconnect",
     "sw_GetConnectedMachine",
     "sw_ConnectOtherMachine",
+    "sw_GetPincode"
 };
 
 std::unordered_set<std::string> SSWCP::m_project_cmd_list = {

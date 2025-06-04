@@ -523,10 +523,18 @@ private:
         std::string get_user_icon_url() { return m_login_user_icon_url; }
         void     set_user_icon_url(const std::string& url) { m_login_user_icon_url = url; }
 
+        std::string get_user_id() { return m_login_user_id; }
+        void        set_user_id(const std::string& id) { m_login_user_id = id; }
+
+        std::string get_user_account() { return m_login_user_account; }
+        void        set_user_account(const std::string& account) { m_login_user_account = account; }
+
         void clear() {
             m_login_user_name = "";
             m_login_user_token = "";
             m_login_user_icon_url = "";
+            m_login_user_id       = "";
+            m_login_user_account  = "";
             m_login               = false;
         }
 
@@ -535,6 +543,8 @@ private:
         std::string m_login_user_name = "";
         std::string m_login_user_token = "";
         std::string m_login_user_icon_url = "";
+        std::string m_login_user_id       = "";
+        std::string m_login_user_account  = "";
         bool     m_login = false;
     };
 

@@ -365,32 +365,38 @@ void MqttClient::connection_lost(const std::string& cause)
         pending_reconnect_checks.fetch_add(1, std::memory_order_release);
         
         // 获取weak_ptr用于后续检查
-        std::weak_ptr<MqttClient> weak_self = shared_from_this();
+        try {
+            std::weak_ptr<MqttClient> weak_self = shared_from_this();
 
-        // 启动异步检查任务
-        std::thread([weak_self]() {
-            // 等待20秒
-            std::this_thread::sleep_for(std::chrono::seconds(20));
+            // 启动异步检查任务
+            std::thread([weak_self]() {
+                // 等待20秒
+                std::this_thread::sleep_for(std::chrono::seconds(20));
 
-            if (auto self = weak_self.lock()) {
-                int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
-                
-                // 只有当这是最后一个检查线程时才执行检查
-                if (remaining == 1) {
-                    if (!self->connected_.load(std::memory_order_acquire)) {
-                        BOOST_LOG_TRIVIAL(error) << "MQTT connection not restored after 20 seconds";
-                        self->Disconnect();
-                        if (self->connection_failure_callback_) {
-                            self->connection_failure_callback_();
+                if (auto self = weak_self.lock()) {
+                    int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
+
+                    // 只有当这是最后一个检查线程时才执行检查
+                    if (remaining == 1) {
+                        if (!self->connected_.load(std::memory_order_acquire)) {
+                            BOOST_LOG_TRIVIAL(error) << "MQTT connection not restored after 20 seconds";
+                            self->Disconnect();
+                            if (self->connection_failure_callback_) {
+                                self->connection_failure_callback_();
+                            }
                         }
+                        // 重置重连标志
+                        self->is_reconnecting.store(false, std::memory_order_release);
                     }
-                    // 重置重连标志
-                    self->is_reconnecting.store(false, std::memory_order_release);
                 }
-            }
-        }).detach();
+            }).detach();
 
-        BOOST_LOG_TRIVIAL(info) << "Waiting for automatic reconnection...";
+            BOOST_LOG_TRIVIAL(info) << "Waiting for automatic reconnection...";
+        }
+        catch (std::exception& e) {
+
+        }
+       
     } else {
         // 如果已经在重连中，只增加计数
         pending_reconnect_checks.fetch_add(1, std::memory_order_release);

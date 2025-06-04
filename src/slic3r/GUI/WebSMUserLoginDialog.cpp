@@ -183,11 +183,17 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         json response = json::parse(body);
                         if (response.count("data")) {
                             json data = response["data"];
+                            if (data.count("id")) {
+                                wxGetApp().sm_get_userinfo()->set_user_id(std::to_string(data["id"].get<int>()));
+                            }
                             if (data.count("nickname")) {
                                 wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
                             }
                             if (data.count("icon")) {
                                 wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
+                            }
+                            if (data.count("account")) {
+                                wxGetApp().sm_get_userinfo()->set_user_account(data["account"].get<std::string>());
                             }
                         }
 

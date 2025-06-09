@@ -8,5 +8,12 @@
   "compatible_printers": [
     "Snapmaker J1 (0.4 nozzle)"
   ],
-  "elefant_foot_compensation": "0.15"
+  "elefant_foot_compensation": "0.15",
+  "default_jerk": "10",
+  "inner_wall_speed": "120",
+  "outer_wall_jerk": "10",
+  "outer_wall_speed": "100",
+  "slowdown_for_curled_perimeters": "0",
+  "sparse_infill_pattern": "grid",
+  "wall_generator": "classic"
 }

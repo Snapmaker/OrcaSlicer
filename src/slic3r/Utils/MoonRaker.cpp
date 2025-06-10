@@ -1060,8 +1060,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         host_ip = host_ip.substr(0, pos);
     }
     m_mqtt_client_tls.reset(new MqttClient("mqtts://" + host_ip + ":" + std::to_string(m_port), 
-                                         m_client_id, m_ca, m_cert, m_key, 
-                                         m_user_name, m_password));
+                                         m_client_id, m_ca, m_cert, m_key));
 
     if (!m_mqtt_client_tls) {
         BOOST_LOG_TRIVIAL(error) << "MQTT客户端创建失败";

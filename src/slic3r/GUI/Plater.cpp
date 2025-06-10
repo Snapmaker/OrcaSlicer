@@ -322,6 +322,212 @@ enum class ActionButtonType : int {
     abSendGCode
 };
 
+
+class TableStyleNotebook : public wxNotebook
+{
+public:
+    TableStyleNotebook(wxWindow* parent, wxWindowID id = wxID_ANY) : wxNotebook(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+    {
+        // 禁用所有原生绘制
+        SetThemeEnabled(false);
+
+        // 设置默认颜色
+        m_bgColor           = wxColour(255, 255, 255);
+        m_borderColor       = wxColour(240, 240, 240);
+        m_selectedTabColor  = wxColour(255, 255, 255);
+        m_textColor         = wxColour(194, 194, 193);
+        m_dividerColor      = wxColour(240, 240, 240);
+        m_selectedTextColor = wxColour(0, 0, 0);
+
+        // 绑定绘制事件
+        Bind(wxEVT_PAINT, &TableStyleNotebook::OnPaint, this);
+        Bind(wxEVT_ERASE_BACKGROUND, &TableStyleNotebook::OnEraseBackground, this);
+        Bind(wxEVT_LEFT_DOWN, &TableStyleNotebook::OnMouseClick, this);
+        Bind(wxEVT_SIZE, &TableStyleNotebook::OnSize, this);
+    }
+
+    void AddTablePage(wxWindow* page, const wxString& label)
+    {
+        AddPage(page, label, false);
+        page->SetBackgroundColour(m_selectedTabColor);
+        // 确保新页面位置正确
+        wxSize size = GetClientSize();
+        page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+    }
+
+private:
+    wxColour m_bgColor;
+    wxColour m_borderColor;
+    wxColour m_selectedTabColor;
+    wxColour m_textColor;
+    wxColour m_selectedTextColor;
+    wxColour m_dividerColor;
+    int      m_tabHeight  = 24;
+    int      m_tabPadding = 10;
+    int      m_round_radius = 5;
+
+    // 拦截所有布局请求
+    virtual void DoSetSize(int x, int y, 
+                          int width, int height,
+                          int sizeFlags = wxSIZE_AUTO) override {
+        wxNotebook::DoSetSize(x, y, width, height, sizeFlags);
+        updateLayout(); // 强制应用自定义布局
+    }
+
+    virtual void DoSetClientSize(int width, int height) override {
+        wxNotebook::DoSetClientSize(width, height);
+        updateLayout();
+    }
+
+    void updateColor(bool is_dark) {
+        if (!is_dark) {
+            m_bgColor          = wxColour(255, 255, 255);
+            m_borderColor      = wxColour(240, 240, 240);
+            m_selectedTabColor = wxColour(255, 255, 255);
+            m_textColor        = wxColour(194, 194, 193);
+            m_dividerColor     = wxColour(240, 240, 240);
+            m_selectedTextColor = wxColour(0, 0, 0);
+        }
+        else {
+            m_bgColor = wxColour(45, 45, 49);
+            m_borderColor = wxColour(76, 76, 85);
+            m_selectedTabColor = wxColour(45, 45, 49);
+            m_textColor        = wxColour(104, 105, 107);
+            m_dividerColor     = wxColour(51, 51, 55);
+            m_selectedTextColor = wxColour(255, 255, 255);
+        }
+    }
+
+    void OnPaint(wxPaintEvent& event)
+    {
+        // 获取当前明暗模式
+        bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
+        updateColor(is_dark);
+
+        wxPaintDC dc(this);
+        PrepareDC(dc);
+
+        // 获取控件尺寸
+        wxSize size = GetClientSize();
+
+        // 1. 绘制背景
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(m_bgColor));
+        dc.DrawRectangle(0, 0, size.x, size.y);
+
+        // 3. 绘制标签背景区域
+        dc.SetPen(wxPen(m_dividerColor, 1));
+        dc.SetBrush(wxBrush(m_dividerColor));
+        wxRect label_rect = {0, 0, size.x, m_tabHeight};
+        dc.DrawRoundedRectangle(label_rect, m_round_radius);
+        dc.DrawRectangle(0, m_tabHeight - 2, size.x, 4);
+
+        // 4. 绘制所有标签
+        // 使用系统默认字体并调整大小
+        wxFont tabFont = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        tabFont.SetPointSize(FromDIP(8)); // 跨DPI适配
+        SetFont(tabFont);
+
+        int xPos = 0; // 起始位置
+        int selectedTab = GetSelection();
+        for (size_t i = 0; i < GetPageCount(); ++i) {
+            wxString label      = GetPageText(i);
+            bool     isSelected = (int) i == selectedTab;
+
+            // 计算标签宽度
+            int textWidth, textHeight;
+            dc.GetTextExtent(label, &textWidth, &textHeight);
+            int tabWidth = textWidth + 2 * m_tabPadding;
+
+            
+            if (isSelected) {
+                dc.SetPen(wxPen(m_dividerColor, 1));
+                dc.SetBrush(wxBrush(m_bgColor));
+                wxRect selectedRect = wxRect(xPos, 0, tabWidth, m_tabHeight + 2);
+                dc.DrawRectangle(selectedRect);
+                dc.DrawRoundedRectangle(selectedRect, m_round_radius);
+
+                dc.SetPen(wxPen(m_bgColor, 1));
+                dc.SetBrush(wxBrush(m_bgColor));
+                dc.DrawRectangle(xPos, m_tabHeight, tabWidth, 4);
+            }
+
+            // 绘制标签文本
+            dc.SetTextForeground(isSelected ? m_selectedTextColor : m_textColor);
+            dc.DrawText(label, xPos + m_tabPadding, (m_tabHeight - textHeight) / 2);
+
+            xPos += tabWidth; // 移动到下一个标签位置
+        }
+
+        // 2. 绘制外边框
+        dc.SetPen(wxPen(m_borderColor, 1));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        wxRect rect = {0, 0, size.x, size.y};
+        dc.DrawRoundedRectangle(rect, m_round_radius);
+    }
+
+    void OnEraseBackground(wxEraseEvent& event)
+    {
+        // 阻止默认背景擦除
+    }
+
+    void OnMouseClick(wxMouseEvent& event)
+    {
+        wxPoint pos = event.GetPosition();
+        if (pos.y > m_tabHeight) {
+            event.Skip();
+            return;
+        }
+
+        // 计算点击了哪个标签
+        int        xPos        = 0;
+        int        selectedTab = -1;
+        wxClientDC dc(this);
+
+        for (size_t i = 0; i < GetPageCount(); ++i) {
+            wxString label = GetPageText(i);
+
+            // 计算标签宽度
+            int textWidth, textHeight;
+            dc.GetTextExtent(label, &textWidth, &textHeight);
+            int tabWidth = textWidth + 2 * m_tabPadding;
+
+            if (pos.x >= xPos && pos.x <= xPos + tabWidth) {
+                selectedTab = i;
+                break;
+            }
+
+            xPos += tabWidth + 1;
+        }
+
+        if (selectedTab != -1 && selectedTab != GetSelection()) {
+            SetSelection(selectedTab);
+            Refresh(); // 触发重绘
+        }
+
+        // event.Skip();
+    }
+
+    void updateLayout() {
+        wxSize size = GetClientSize();
+
+        // 移动所有页面到正确位置
+        for (size_t i = 0; i < GetPageCount(); ++i) {
+            wxWindow* page = GetPage(i);
+            page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+        }
+
+        Refresh();
+    }
+
+    // 实现调整逻辑
+    void OnSize(wxSizeEvent& event)
+    {
+        wxGetApp().CallAfter([this] { updateLayout(); }); // 异步确保在父类布局后执行
+        event.Skip();
+    }
+};
+
 struct Sidebar::priv
 {
     Plater *plater;
@@ -370,7 +576,7 @@ struct Sidebar::priv
     wxPanel* m_panel_printer_content = nullptr;
 
     // nozzle notebook  and related controls
-    wxNotebook*                  m_nozzle_notebook{nullptr};
+    TableStyleNotebook*                  m_nozzle_notebook{nullptr};
     std::vector<ComboBox*>       m_nozzle_diameter_lists;
     std::vector<ScalableButton*> m_nozzle_edit_btns;
 
@@ -845,8 +1051,9 @@ Sidebar::Sidebar(Plater *parent)
         p->panel_printer_preset->SetSizer(hsizer);
 
         hsizer_printer->Add(p->panel_printer_preset, 1, wxEXPAND, 0);
-        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
         vsizer_printer->AddSpacer(FromDIP(4));
+        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+        vsizer_printer->AddSpacer(FromDIP(10));
 
         /*vsizer_printer->AddSpacer(FromDIP(16));
         hsizer_printer->Add(p->image_printer, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
@@ -861,12 +1068,14 @@ Sidebar::Sidebar(Plater *parent)
 
         // Bed type selection
         // 创建一个像打印机选择那样的容器
-        p->panel_printer_preset = new StaticBox(p->m_panel_printer_content);
+        p->panel_printer_preset = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                                wxTAB_TRAVERSAL | wxBORDER_NONE);
         p->panel_printer_preset->SetCornerRadius(8);
         StateColor panel_bd_col1(std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Pressed),
                             std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Hovered),
                             std::pair<wxColour, int>(wxColour(0xEEEEEE), StateColor::Normal));
-        p->panel_printer_preset->SetBorderColor(panel_bd_col1);
+        // p->panel_printer_preset->SetBorderColor(panel_bd_col1);
+        // p->panel_printer_preset->SetMinSize(PRINTER_PANEL_SIZE_SMALL);
 
         // 创建Bed type选择控件
         wxBoxSizer* bed_type_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -914,7 +1123,7 @@ Sidebar::Sidebar(Plater *parent)
 
         // 布局Bed type控件
         bed_type_sizer->Add(bed_type_title, 0, wxLEFT | wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
-        bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(10));
+        bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(0));
         p->panel_printer_preset->SetSizer(bed_type_sizer);
 
         // 添加到垂直布局
@@ -929,24 +1138,20 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_content->Layout();
         scrolled_sizer->Add(p->m_panel_printer_content, 0, wxEXPAND, 0);
 
-        // 移除旧的分割线代码
-        // auto m_line = new wxPanel(...);
-        // vsizer_printer->Add(m_line, ...); 
-
         // 创建Nozzle notebook的容器
-        StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content);
+        StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                                    wxTAB_TRAVERSAL | wxBORDER_NONE);
         nozzle_container->SetCornerRadius(8);
-        nozzle_container->SetBorderColor(panel_bd_col);
+        // nozzle_container->SetBorderColor(panel_bd_col);
 
         // 创建notebook
-        p->m_nozzle_notebook = new wxNotebook(nozzle_container, wxID_ANY, 
-                                            wxDefaultPosition, wxDefaultSize, wxNB_TOP);
-        p->m_nozzle_notebook->SetBackgroundColour(wxColour(255, 255, 255));
+        p->m_nozzle_notebook = new TableStyleNotebook(nozzle_container, wxID_ANY);
 
         // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
-        nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(5));
+        nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
         nozzle_container->SetSizer(nozzle_sizer);
+        nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
 
         // 添加到主布局
         vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
@@ -2058,17 +2263,26 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     // Recreate pages for new nozzle count
     // Create tabs for each nozzle
     for (size_t i = 0; i < new_nozzle_count; i++) {
-        wxPanel* nozzle_panel = new wxPanel(p->m_nozzle_notebook);
-        nozzle_panel->SetBackgroundColour(wxColour(255, 255, 255));
+        wxPanel* nozzle_panel = new wxPanel(p->m_nozzle_notebook, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                            wxTAB_TRAVERSAL | wxBORDER_NONE);
+        // nozzle_panel->SetBackgroundColour(wxColour(255, 255, 255));
 
-         wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);
+        wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);
 
         // Add diameter label and combobox
         wxBoxSizer*   diameter_sizer = new wxBoxSizer(wxHORIZONTAL);
-        wxStaticText* diameter_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Nozzle Diameter"));
+        wxStaticText* diameter_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Diameter"));
+        bool          is_dark        = wxGetApp().app_config->get("dark_color_mode") == "1";
+        if (!is_dark) {
+            diameter_label->SetForegroundColour(wxColor(0, 0, 0));
+        }
+        else {
+            diameter_label->SetForegroundColour(wxColor(194, 194, 194));
+        }
+        
         diameter_label->SetFont(Label::Body_14);
 
-        ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {FromDIP(140), FromDIP(30)}, 0,
+        ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
                                                 nullptr, wxCB_READONLY);
         
 
@@ -2083,13 +2297,14 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
             }
             for (auto& diameter : diameters) {
-                diameter_combo->AppendString(diameter);
+                wxString str = diameter + "mm";
+                diameter_combo->AppendString(str);
             }
         }
         
         
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
-            auto diameter = diameter_combo->GetValue();
+            auto diameter = diameter_combo->GetValue().substr(0, 3);
             auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
             if (preset == nullptr) {
                 MessageDialog dlg(nullptr, _L(""), _L(""));
@@ -2100,7 +2315,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             
             for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
                 // 当前原则上不支持两个头使用不同的喷嘴型号
-                p->m_nozzle_diameter_lists[i]->SetValue(diameter);
+                p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
             }
 
             return wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
@@ -2108,18 +2323,27 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         
         auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
         
-        diameter_combo->SetValue(diam_str);
+        diameter_combo->SetValue(diam_str + "mm");
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 
+        diameter_sizer->AddSpacer(15);
         diameter_sizer->Add(diameter_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
-        diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxEXPAND | wxRIGHT, FromDIP(15));
+        diameter_sizer->AddSpacer(10);
+        diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
         // 删除Flow相关控件
 
         // Add edit button
         ScalableButton* edit_btn = new ScalableButton(nozzle_panel, wxID_ANY, "edit");
-        edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
+        if (is_dark) {
+            edit_btn->SetBackgroundColour(wxColour(45, 45, 49));
+        }
+        else {
+            edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
+        }
+
+        
         edit_btn->SetToolTip(_L("Click to edit nozzle settings"));
 
         edit_btn->Bind(wxEVT_BUTTON, [this, i, new_nozzle_count](wxCommandEvent&) {
@@ -2136,8 +2360,30 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         nozzle_panel->SetSizer(tab_sizer);
 
         // Add tab
-        wxString tab_name = wxString::Format(_L("Nozzle %d"), i + 1);
-        p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
+        wxString tab_name = "";
+        switch (new_nozzle_count) 
+        {
+        case 1: 
+        {
+            tab_name = _L("Nozzle");
+            break;
+        }
+        case 2:
+        {
+            if (i == 0)
+                tab_name = _L("Left Nozzle");
+            else
+                tab_name = _L("Right Nozzle");
+
+            break;
+        }
+        default: 
+        {
+            tab_name = wxString::Format(_L("Nozzle %d"), i + 1);
+        }
+            
+        }
+        p->m_nozzle_notebook->AddTablePage(nozzle_panel, tab_name);
     }
 
     p->m_nozzle_notebook->Layout();

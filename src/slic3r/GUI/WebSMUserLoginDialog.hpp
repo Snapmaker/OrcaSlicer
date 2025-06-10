@@ -67,12 +67,12 @@ private:
     void     OnTimer(wxTimerEvent &event);
 
 private:
-    wxString   TargetUrl     = "https://id.snapmaker.com?from=orca";
-    wxString   LogoutUrl     = "https://id.snapmaker.com/logout?from=orca";
-    wxString   m_hostUrl     = "https://id.snapmaker.com";
-    wxString   m_accountUrl  = "https://account.snapmaker.com";
-    wxString   m_userInfoUrl = "https://account.snapmaker.com/api/common/accounts/current";
-    wxString   m_home_url    = "https://www.snapmaker.com/";
+    wxString   TargetUrl     = "https://id.snapmaker.cn?from=orca";
+    wxString   LogoutUrl     = "https://id.snapmaker.cn/logout?from=orca";
+    wxString   m_hostUrl     = "https://id.snapmaker.cn";
+    wxString   m_accountUrl  = "https://api.snapmaker.cn";
+    wxString   m_userInfoUrl = "https://api.snapmaker.cn/api/common/accounts/current";
+    wxString   m_home_url    = "https://www.snapmaker.cn/";
     wxWebView *m_browser;
 
     std::string m_AutotestToken;

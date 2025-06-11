@@ -322,156 +322,139 @@ enum class ActionButtonType : int {
     abSendGCode
 };
 
+// CustomNotebook.h
+#pragma once
 
-class TableStyleNotebook : public wxNotebook
+#include <wx/wx.h>
+#include <vector>
+
+class CustomNotebook : public wxControl
 {
 public:
-    TableStyleNotebook(wxWindow* parent, wxWindowID id = wxID_ANY) : wxNotebook(parent, id, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+    CustomNotebook(wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize)
+        : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1), m_tabHeight(24), m_tabPadding(10), m_roundRadius(5)
     {
-        // 禁用所有原生绘制
-        SetThemeEnabled(false);
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        UpdateColors();
 
-        // 设置默认颜色
-        m_bgColor           = wxColour(255, 255, 255);
-        m_borderColor       = wxColour(240, 240, 240);
-        m_selectedTabColor  = wxColour(255, 255, 255);
-        m_textColor         = wxColour(194, 194, 193);
-        m_dividerColor      = wxColour(240, 240, 240);
-        m_selectedTextColor = wxColour(0, 0, 0);
-
-        // 绑定绘制事件
-        Bind(wxEVT_PAINT, &TableStyleNotebook::OnPaint, this);
-        Bind(wxEVT_ERASE_BACKGROUND, &TableStyleNotebook::OnEraseBackground, this);
-        Bind(wxEVT_LEFT_DOWN, &TableStyleNotebook::OnMouseClick, this);
-        Bind(wxEVT_SIZE, &TableStyleNotebook::OnSize, this);
+        Bind(wxEVT_PAINT, &CustomNotebook::OnPaint, this);
+        Bind(wxEVT_ERASE_BACKGROUND, &CustomNotebook::OnEraseBackground, this);
+        Bind(wxEVT_LEFT_DOWN, &CustomNotebook::OnLeftDown, this);
+        Bind(wxEVT_SIZE, &CustomNotebook::OnSize, this);
     }
 
-    void AddTablePage(wxWindow* page, const wxString& label)
+    void AddPage(wxWindow* page, const wxString& text)
     {
-        AddPage(page, label, false);
-        page->SetBackgroundColour(m_selectedTabColor);
-        // 确保新页面位置正确
-        wxSize size = GetClientSize();
-        page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
-    }
-
-private:
-    wxColour m_bgColor;
-    wxColour m_borderColor;
-    wxColour m_selectedTabColor;
-    wxColour m_textColor;
-    wxColour m_selectedTextColor;
-    wxColour m_dividerColor;
-    int      m_tabHeight  = 24;
-    int      m_tabPadding = 10;
-    int      m_round_radius = 5;
-
-    // 拦截所有布局请求
-    virtual void DoSetSize(int x, int y, 
-                          int width, int height,
-                          int sizeFlags = wxSIZE_AUTO) override {
-        wxNotebook::DoSetSize(x, y, width, height, sizeFlags);
-        updateLayout(); // 强制应用自定义布局
-    }
-
-    virtual void DoSetClientSize(int width, int height) override {
-        wxNotebook::DoSetClientSize(width, height);
-        updateLayout();
-    }
-
-    void updateColor(bool is_dark) {
-        if (!is_dark) {
-            m_bgColor          = wxColour(255, 255, 255);
-            m_borderColor      = wxColour(240, 240, 240);
-            m_selectedTabColor = wxColour(255, 255, 255);
-            m_textColor        = wxColour(194, 194, 193);
-            m_dividerColor     = wxColour(240, 240, 240);
-            m_selectedTextColor = wxColour(0, 0, 0);
+        m_tabs.push_back({text, page});
+        if (page) {
+            page->Reparent(this);
+            page->Hide();
+            page->SetBackgroundColour(m_selectedTabColor);
         }
-        else {
-            m_bgColor = wxColour(45, 45, 49);
-            m_borderColor = wxColour(76, 76, 85);
-            m_selectedTabColor = wxColour(45, 45, 49);
-            m_textColor        = wxColour(104, 105, 107);
-            m_dividerColor     = wxColour(51, 51, 55);
-            m_selectedTextColor = wxColour(255, 255, 255);
+
+        if (m_selectedIndex == -1) {
+            SetSelection(0);
         }
+
+        UpdateLayout();
+        Refresh();
     }
 
+    void DeleteAllPages()
+    {
+        for (auto& tab : m_tabs) {
+            if (tab.page) {
+                tab.page->Destroy();
+            }
+        }
+        m_tabs.clear();
+        m_selectedIndex = -1;
+        UpdateLayout();
+        Refresh();
+    }
+
+    size_t GetPageCount() const { return m_tabs.size(); }
+
+    wxWindow* GetPage(size_t index) const { return (index < m_tabs.size()) ? m_tabs[index].page : nullptr; }
+
+    int GetSelection() const { return m_selectedIndex; }
+
+    void SetSelection(size_t index)
+    {
+        if (index >= m_tabs.size() || static_cast<int>(index) == m_selectedIndex)
+            return;
+
+        if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
+            m_tabs[m_selectedIndex].page->Hide();
+        }
+
+        m_selectedIndex = index;
+
+        if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
+            m_tabs[m_selectedIndex].page->Show();
+        }
+
+        UpdateLayout();
+        Refresh();
+    }
+
+protected:
     void OnPaint(wxPaintEvent& event)
     {
-        // 获取当前明暗模式
-        bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
-        updateColor(is_dark);
+        UpdateColors();
 
         wxPaintDC dc(this);
-        PrepareDC(dc);
-
-        // 获取控件尺寸
-        wxSize size = GetClientSize();
 
         // 1. 绘制背景
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(m_bgColor));
-        dc.DrawRectangle(0, 0, size.x, size.y);
+        dc.DrawRectangle(GetClientRect());
 
-        // 3. 绘制标签背景区域
+        // 2. 绘制标签背景区域
         dc.SetPen(wxPen(m_dividerColor, 1));
         dc.SetBrush(wxBrush(m_dividerColor));
-        wxRect label_rect = {0, 0, size.x, m_tabHeight};
-        dc.DrawRoundedRectangle(label_rect, m_round_radius);
-        dc.DrawRectangle(0, m_tabHeight - 2, size.x, 4);
+        wxRect labelRect(0, 0, GetSize().x, m_tabHeight);
+        dc.DrawRoundedRectangle(labelRect, m_roundRadius);
+        dc.DrawRectangle(0, m_tabHeight - 2, GetSize().x, 4);
 
-        // 4. 绘制所有标签
-        // 使用系统默认字体并调整大小
-        wxFont tabFont = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-        tabFont.SetPointSize(FromDIP(8)); // 跨DPI适配
-        SetFont(tabFont);
+        // 3. 绘制所有标签
+        wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        font.SetPointSize(m_textSize);
+        dc.SetFont(font);
 
-        int xPos = 0; // 起始位置
-        int selectedTab = GetSelection();
-        for (size_t i = 0; i < GetPageCount(); ++i) {
-            wxString label      = GetPageText(i);
-            bool     isSelected = (int) i == selectedTab;
+        int xPos = 0;
+        for (size_t i = 0; i < m_tabs.size(); ++i) {
+            bool isSelected = static_cast<int>(i) == m_selectedIndex;
 
-            // 计算标签宽度
             int textWidth, textHeight;
-            dc.GetTextExtent(label, &textWidth, &textHeight);
+            dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
             int tabWidth = textWidth + 2 * m_tabPadding;
 
-            
             if (isSelected) {
                 dc.SetPen(wxPen(m_dividerColor, 1));
                 dc.SetBrush(wxBrush(m_bgColor));
-                wxRect selectedRect = wxRect(xPos, 0, tabWidth, m_tabHeight + 2);
+                wxRect selectedRect(xPos, 0, tabWidth, m_tabHeight + 2);
                 dc.DrawRectangle(selectedRect);
-                dc.DrawRoundedRectangle(selectedRect, m_round_radius);
+                dc.DrawRoundedRectangle(selectedRect, m_roundRadius);
 
                 dc.SetPen(wxPen(m_bgColor, 1));
                 dc.SetBrush(wxBrush(m_bgColor));
                 dc.DrawRectangle(xPos, m_tabHeight, tabWidth, 4);
             }
 
-            // 绘制标签文本
             dc.SetTextForeground(isSelected ? m_selectedTextColor : m_textColor);
-            dc.DrawText(label, xPos + m_tabPadding, (m_tabHeight - textHeight) / 2);
+            dc.DrawText(m_tabs[i].text, xPos + m_tabPadding, (m_tabHeight - textHeight) / 2);
 
-            xPos += tabWidth; // 移动到下一个标签位置
+            xPos += tabWidth;
         }
 
-        // 2. 绘制外边框
+        // 4. 绘制外边框
         dc.SetPen(wxPen(m_borderColor, 1));
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        wxRect rect = {0, 0, size.x, size.y};
-        dc.DrawRoundedRectangle(rect, m_round_radius);
+        dc.DrawRoundedRectangle(GetClientRect(), m_roundRadius);
     }
 
-    void OnEraseBackground(wxEraseEvent& event)
-    {
-        // 阻止默认背景擦除
-    }
-
-    void OnMouseClick(wxMouseEvent& event)
+    void OnLeftDown(wxMouseEvent& event)
     {
         wxPoint pos = event.GetPosition();
         if (pos.y > m_tabHeight) {
@@ -479,53 +462,127 @@ private:
             return;
         }
 
-        // 计算点击了哪个标签
-        int        xPos        = 0;
-        int        selectedTab = -1;
-        wxClientDC dc(this);
-
-        for (size_t i = 0; i < GetPageCount(); ++i) {
-            wxString label = GetPageText(i);
-
-            // 计算标签宽度
-            int textWidth, textHeight;
-            dc.GetTextExtent(label, &textWidth, &textHeight);
-            int tabWidth = textWidth + 2 * m_tabPadding;
-
-            if (pos.x >= xPos && pos.x <= xPos + tabWidth) {
-                selectedTab = i;
-                break;
-            }
-
-            xPos += tabWidth + 1;
+        int tabIndex = HitTest(pos);
+        if (tabIndex != -1 && tabIndex != m_selectedIndex) {
+            SetSelection(tabIndex);
+            Refresh();
         }
-
-        if (selectedTab != -1 && selectedTab != GetSelection()) {
-            SetSelection(selectedTab);
-            Refresh(); // 触发重绘
-        }
-
-        // event.Skip();
     }
 
-    void updateLayout() {
-        wxSize size = GetClientSize();
-
-        // 移动所有页面到正确位置
-        for (size_t i = 0; i < GetPageCount(); ++i) {
-            wxWindow* page = GetPage(i);
-            page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
-        }
-
-        Refresh();
-    }
-
-    // 实现调整逻辑
     void OnSize(wxSizeEvent& event)
     {
-        wxGetApp().CallAfter([this] { updateLayout(); }); // 异步确保在父类布局后执行
+        UpdateLayout();
+        Refresh();
         event.Skip();
     }
+
+    void OnEraseBackground(wxEraseEvent& event) {}
+
+private:
+    struct TabInfo
+    {
+        wxString  text;
+        wxWindow* page;
+    };
+
+    wxRect GetTabRect(size_t index) const
+    {
+        if (index >= m_tabs.size())
+            return wxRect();
+
+        wxClientDC dc(const_cast<CustomNotebook*>(this));
+        wxFont     font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        font.SetPointSize(m_textSize);
+        dc.SetFont(font);
+
+        int textWidth, textHeight;
+        dc.GetTextExtent(m_tabs[index].text, &textWidth, &textHeight);
+        int tabWidth = textWidth + 2 * m_tabPadding;
+
+        int x = 0;
+        for (size_t i = 0; i < index; ++i) {
+            dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
+            x += textWidth + 2 * m_tabPadding;
+        }
+
+        return wxRect(x, 0, tabWidth, m_tabHeight);
+    }
+
+    int HitTest(const wxPoint& pt) const
+    {
+        if (pt.y > m_tabHeight)
+            return -1;
+
+        wxClientDC dc(const_cast<CustomNotebook*>(this));
+        wxFont     font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        font.SetPointSize(m_textSize);
+        dc.SetFont(font);
+
+        int xPos = 0;
+        for (size_t i = 0; i < m_tabs.size(); ++i) {
+            int textWidth, textHeight;
+            dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
+            int tabWidth = textWidth + 2 * m_tabPadding;
+
+            if (pt.x >= xPos && pt.x <= xPos + tabWidth) {
+                return i;
+            }
+
+            xPos += tabWidth;
+        }
+
+        return -1;
+    }
+
+    void UpdateColors()
+    {
+        bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
+
+        if (!is_dark) {
+            m_bgColor           = wxColour(255, 255, 255);
+            m_borderColor       = wxColour(240, 240, 240);
+            m_selectedTabColor  = wxColour(255, 255, 255);
+            m_textColor         = wxColour(194, 194, 193);
+            m_dividerColor      = wxColour(240, 240, 240);
+            m_selectedTextColor = wxColour(0, 0, 0);
+        } else {
+            m_bgColor           = wxColour(45, 45, 49);
+            m_borderColor       = wxColour(76, 76, 85);
+            m_selectedTabColor  = wxColour(45, 45, 49);
+            m_textColor         = wxColour(104, 105, 107);
+            m_dividerColor      = wxColour(51, 51, 55);
+            m_selectedTextColor = wxColour(255, 255, 255);
+        }
+    }
+
+    void UpdateLayout()
+    {
+        if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
+            wxSize size = GetSize();
+            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+            m_tabs[m_selectedIndex].page->Layout();
+        }
+    }
+
+private:
+    std::vector<TabInfo> m_tabs;
+    int                  m_selectedIndex;
+
+    wxColour m_bgColor;
+    wxColour m_borderColor;
+    wxColour m_selectedTabColor;
+    wxColour m_textColor;
+    wxColour m_selectedTextColor;
+    wxColour m_dividerColor;
+
+    int m_tabHeight;
+    int m_tabPadding;
+    int m_roundRadius;
+#ifdef _WIN32
+    int m_textSize = 10;
+#else
+    int m_textSize = 13;
+#endif
 };
 
 struct Sidebar::priv
@@ -576,7 +633,7 @@ struct Sidebar::priv
     wxPanel* m_panel_printer_content = nullptr;
 
     // nozzle notebook  and related controls
-    TableStyleNotebook*                  m_nozzle_notebook{nullptr};
+    CustomNotebook*                  m_nozzle_notebook{nullptr};
     std::vector<ComboBox*>       m_nozzle_diameter_lists;
     std::vector<ScalableButton*> m_nozzle_edit_btns;
 
@@ -1145,7 +1202,7 @@ Sidebar::Sidebar(Plater *parent)
         // nozzle_container->SetBorderColor(panel_bd_col);
 
         // 创建notebook
-        p->m_nozzle_notebook = new TableStyleNotebook(nozzle_container, wxID_ANY);
+        p->m_nozzle_notebook = new CustomNotebook(nozzle_container, wxID_ANY);
 
         // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
@@ -1650,10 +1707,10 @@ void Sidebar::update_all_preset_comboboxes()
     }
 
     if (cfg.opt_bool("pellet_modded_printer")) {
-		p->m_staticText_filament_settings->SetLabel(_L("Pellets"));
+        p->m_staticText_filament_settings->SetLabel(_L("Pellets"));
         p->m_filament_icon->SetBitmap_("pellets");
     } else {
-		p->m_staticText_filament_settings->SetLabel(_L("Filament"));
+        p->m_staticText_filament_settings->SetLabel(_L("Filament"));
         p->m_filament_icon->SetBitmap_("filament");
     }
 
@@ -2361,9 +2418,9 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         // Add tab
         wxString tab_name = "";
-        switch (new_nozzle_count) 
+        switch (new_nozzle_count)
         {
-        case 1: 
+        case 1:
         {
             tab_name = _L("Nozzle");
             break;
@@ -2377,13 +2434,13 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
             break;
         }
-        default: 
+        default:
         {
             tab_name = wxString::Format(_L("Nozzle %d"), i + 1);
         }
             
         }
-        p->m_nozzle_notebook->AddTablePage(nozzle_panel, tab_name);
+        p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
     }
 
     p->m_nozzle_notebook->Layout();
@@ -3232,7 +3289,7 @@ struct Plater::priv
     void init_notification_manager();
 
     // Caching last value of show_action_buttons parameter for show_action_buttons(), so that a callback which does not know this state will not override it.
-    //mutable bool    			ready_to_slice = { false };
+    //mutable bool                ready_to_slice = { false };
     // Flag indicating that the G-code export targets a removable device, therefore the show_action_buttons() needs to be called at any case when the background processing finishes.
     ExportingStatus             exporting_status { NOT_EXPORTING };
     std::string                 last_output_path;
@@ -3269,8 +3326,8 @@ private:
     /* display project name */
     wxString                    m_project_name;
 
-    Slic3r::UndoRedo::Stack 	m_undo_redo_stack_main;
-    Slic3r::UndoRedo::Stack 	m_undo_redo_stack_gizmos;
+    Slic3r::UndoRedo::Stack     m_undo_redo_stack_main;
+    Slic3r::UndoRedo::Stack     m_undo_redo_stack_gizmos;
     Slic3r::UndoRedo::Stack    *m_undo_redo_stack_active = &m_undo_redo_stack_main;
     int                         m_prevent_snapshots = 0;     /* Used for avoid of excess "snapshoting".
                                                               * Like for "delete selected" or "set numbers of copies"
@@ -3282,8 +3339,8 @@ private:
     // BBS: backup
     size_t m_saved_timestamp = 0;
     size_t m_backup_timestamp = 0;
-    std::string 				m_last_fff_printer_profile_name;
-    std::string 				m_last_sla_printer_profile_name;
+    std::string                 m_last_fff_printer_profile_name;
+    std::string                 m_last_sla_printer_profile_name;
 
     // vector of all warnings generated by last slicing
     std::vector<std::pair<Slic3r::PrintStateBase::Warning, size_t>> current_warnings;
@@ -3337,7 +3394,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     , config(Slic3r::DynamicPrintConfig::new_from_defaults_keys({
         "printable_area", "bed_exclude_area", "bed_custom_texture", "bed_custom_model", "print_sequence",
         "extruder_clearance_radius", "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
-		"nozzle_height", "skirt_type", "skirt_loops", "skirt_speed","min_skirt_length", "skirt_distance", "skirt_start_angle",
+        "nozzle_height", "skirt_type", "skirt_loops", "skirt_speed","min_skirt_length", "skirt_distance", "skirt_start_angle",
         "brim_width", "brim_object_gap", "brim_type", "nozzle_diameter", "single_extruder_multi_material", "preferred_orientation",
         "enable_prime_tower", "wipe_tower_x", "wipe_tower_y", "prime_tower_width", "prime_tower_brim_width", "prime_volume",
         "extruder_colour", "filament_colour", "material_colour", "printable_height", "printer_model", "printer_technology",
@@ -4387,7 +4444,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     //         // Is there any modifier or advanced config data?
                     //         for (ModelVolume *model_volume : model_object->volumes) model_volume->config.reset();
                     //     }
-                    // } 
+                    // }
                     else if (/*load_config && (file_version > app_version)*/ false) {
                         if (config_substitutions.unrecogized_keys.size() > 0) {
                             wxString text  = wxString::Format(_L("The 3mf's version %s is newer than %s's version %s, Found following keys unrecognized:"),
@@ -4419,7 +4476,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 show_info(q, text, _L("Newer 3mf version"));
                             }
                         }
-                    } 
+                    }
                     else if (!load_config) {
                         // reset config except color
                         for (ModelObject *model_object : model.objects) {
@@ -4689,7 +4746,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     if (!boost::iends_with(path.string(), ".obj")) { return; }
                     const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config();
                     ObjColorDialog                 color_dlg(nullptr, input_colors, is_single_color, extruder_colours, filament_ids, first_extruder_id);
-                    if (color_dlg.ShowModal() != wxID_OK) { 
+                    if (color_dlg.ShowModal() != wxID_OK) {
                         filament_ids.clear();
                     }
                 };
@@ -5731,19 +5788,19 @@ void Plater::priv::process_validation_warning(StringObjectException const &warni
         auto po = dynamic_cast<PrintObjectBase const *>(warning.object);
         auto mo = po ? po->model_object() : dynamic_cast<ModelObject const *>(warning.object);
         auto action_fn = (mo || !warning.opt_key.empty()) ? [id = mo ? mo->id() : 0, opt = warning.opt_key](wxEvtHandler *) {
-		    auto & objects = wxGetApp().model().objects;
-		    auto iter = id.id ? std::find_if(objects.begin(), objects.end(), [id](auto o) { return o->id() == id; }) : objects.end();
+            auto & objects = wxGetApp().model().objects;
+            auto iter = id.id ? std::find_if(objects.begin(), objects.end(), [id](auto o) { return o->id() == id; }) : objects.end();
             if (iter != objects.end()) {
                 wxGetApp().mainframe->select_tab(MainFrame::tp3DEditor);
-			    wxGetApp().obj_list()->select_items({{*iter, nullptr}});
+                wxGetApp().obj_list()->select_items({{*iter, nullptr}});
             }
             if (!opt.empty()) {
                 if (iter != objects.end())
-				    wxGetApp().params_panel()->switch_to_object();
+                    wxGetApp().params_panel()->switch_to_object();
                 wxGetApp().sidebar().jump_to_option(opt, Preset::TYPE_PRINT, L"");
-		    }
-		    return false;
-	    } : std::function<bool(wxEvtHandler *)>();
+            }
+            return false;
+        } : std::function<bool(wxEvtHandler *)>();
         auto hypertext = (mo || !warning.opt_key.empty()) ? _u8L("Jump to") : "";
         if (mo) hypertext += std::string(" [") + mo->name + "]";
         if (!warning.opt_key.empty()) hypertext += std::string(" (") + warning.opt_key + ")";
@@ -7816,7 +7873,7 @@ int Plater::priv::update_print_required_data(Slic3r::DynamicPrintConfig config, 
 
 void Plater::priv::on_action_send_to_printer(bool isall)
 {
-	if (!m_send_to_sdcard_dlg) m_send_to_sdcard_dlg = new SendToPrinterDialog(q);
+    if (!m_send_to_sdcard_dlg) m_send_to_sdcard_dlg = new SendToPrinterDialog(q);
     if (isall) {
         m_send_to_sdcard_dlg->prepare(PLATE_ALL_IDX);
     }
@@ -7824,7 +7881,7 @@ void Plater::priv::on_action_send_to_printer(bool isall)
         m_send_to_sdcard_dlg->prepare(partplate_list.get_curr_plate_index());
     }
 
-	m_send_to_sdcard_dlg->ShowModal();
+    m_send_to_sdcard_dlg->ShowModal();
 }
 
 
@@ -7890,10 +7947,10 @@ void Plater::priv::on_action_export_all_sliced_file(SimpleEvent &)
 
 void Plater::priv::on_action_export_to_sdcard(SimpleEvent&)
 {
-	if (q != nullptr) {
-		BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received export sliced file event\n";
-		q->send_to_printer();
-	}
+    if (q != nullptr) {
+        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received export sliced file event\n";
+        q->send_to_printer();
+    }
 }
 
 void Plater::priv::on_action_export_to_sdcard_all(SimpleEvent&)
@@ -8128,7 +8185,7 @@ void Plater::priv::on_right_click(RBtnEvent& evt)
                     const GLVolume* gl_volume = selection.get_first_volume();
                     const ModelVolume *model_volume = get_model_volume(*gl_volume, selection.get_model()->objects);
                     menu = (model_volume != nullptr && model_volume->is_text()) ? menus.text_part_menu() :
-                           (model_volume != nullptr && model_volume->is_svg()) ? menus.svg_part_menu() : 
+                           (model_volume != nullptr && model_volume->is_svg()) ? menus.svg_part_menu() :
                         menus.part_menu();
                 } else
                     menu = menus.multi_selection_menu();
@@ -8341,8 +8398,8 @@ void Plater::priv::update_title_dirty_status()
     wxGetApp().mainframe->topbar()->SetTitle(title);
 #else
     wxGetApp().mainframe->SetTitle(title);
-    wxGetApp().mainframe->update_title_colour_after_set_title();    
-#endif    
+    wxGetApp().mainframe->update_title_colour_after_set_title();
+#endif
 }
 
 void Plater::priv::set_project_filename(const wxString& filename)
@@ -9088,9 +9145,9 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
     // Make sure that no updating function calls take_snapshot until we are done.
     SuppressSnapshots snapshot_supressor(q);
 
-    bool 				temp_snapshot_was_taken 	= this->undo_redo_stack().temp_snapshot_active();
-    PrinterTechnology 	new_printer_technology 		= it_snapshot->snapshot_data.printer_technology;
-    bool 				printer_technology_changed 	= this->printer_technology != new_printer_technology;
+    bool                 temp_snapshot_was_taken     = this->undo_redo_stack().temp_snapshot_active();
+    PrinterTechnology     new_printer_technology         = it_snapshot->snapshot_data.printer_technology;
+    bool                 printer_technology_changed     = this->printer_technology != new_printer_technology;
     if (printer_technology_changed) {
         //BBS do not support SLA
     }
@@ -9131,7 +9188,7 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
     }
     else if (this->sidebar->obj_list()->is_selected(itLayerRoot))
         top_snapshot_data.flags |= UndoRedo::SnapshotData::SELECTED_LAYERROOT_ON_SIDEBAR;
-    bool   		 new_variable_layer_editing_active = (new_flags & UndoRedo::SnapshotData::VARIABLE_LAYER_EDITING_ACTIVE) != 0;
+    bool            new_variable_layer_editing_active = (new_flags & UndoRedo::SnapshotData::VARIABLE_LAYER_EDITING_ACTIVE) != 0;
     bool         new_selected_settings_on_sidebar  = (new_flags & UndoRedo::SnapshotData::SELECTED_SETTINGS_ON_SIDEBAR) != 0;
     bool         new_selected_layer_on_sidebar     = (new_flags & UndoRedo::SnapshotData::SELECTED_LAYER_ON_SIDEBAR) != 0;
     bool         new_selected_layerroot_on_sidebar = (new_flags & UndoRedo::SnapshotData::SELECTED_LAYERROOT_ON_SIDEBAR) != 0;
@@ -10253,7 +10310,7 @@ auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config
     // only enlarge
     if (xyScale > 1.2) {
         for (auto _obj : objects)
-            _obj->scale(xyScale, xyScale, zscale); 
+            _obj->scale(xyScale, xyScale, zscale);
     }
     else {
         for (auto _obj : objects)
@@ -11572,7 +11629,7 @@ void Plater::add_file()
     {
     case LoadFilesType::Single3MF:
         open_3mf_file(paths[0]);
-    	break;
+        break;
 
     case LoadFilesType::SingleOther: {
         Plater::TakeSnapshot snapshot(this, snapshot_label);
@@ -12002,10 +12059,10 @@ void Plater::export_gcode(bool prefer_removable)
         return;
     }
     default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
-    AppConfig 				&appconfig 				 = *wxGetApp().app_config;
-    RemovableDriveManager 	&removable_drive_manager = *wxGetApp().removable_drive_manager();
+    AppConfig                 &appconfig                  = *wxGetApp().app_config;
+    RemovableDriveManager     &removable_drive_manager = *wxGetApp().removable_drive_manager();
     // Get a last save path, either to removable media or to an internal media.
-    std::string      		 start_dir 				 = appconfig.get_last_output_dir(default_output_file.parent_path().string(), prefer_removable);
+    std::string               start_dir                  = appconfig.get_last_output_dir(default_output_file.parent_path().string(), prefer_removable);
     if (prefer_removable) {
         // Returns a path to a removable media if it exists, prefering start_dir. Update the internal removable drives database.
         start_dir = removable_drive_manager.get_removable_drive_path(start_dir);
@@ -12500,7 +12557,7 @@ std::string create_unique_3mf_filepath(const std::string &file, const SvgFiles s
                 is_unique = false;
                 break;
             }
-        } 
+        }
     } while (!is_unique);
     return path_in_3mf;
 }
@@ -12553,7 +12610,7 @@ void publish(Model &model, SaveStrategy strategy) {
                                 "If you hit 'NO', all SVGs in the project will not be editable any more."),
                              _L("Private protection"), wxYES_NO | wxICON_QUESTION);
         if (dialog.ShowModal() == wxID_NO){
-            for (ModelObject *object : model.objects) 
+            for (ModelObject *object : model.objects)
                 for (ModelVolume *volume : object->volumes)
                     if (volume->emboss_shape.has_value())
                         volume->emboss_shape.reset();
@@ -12572,7 +12629,7 @@ void publish(Model &model, SaveStrategy strategy) {
             // check whether original filename is already in:
             filename = get_file_name(svgfile->path);
         }
-        svgfile->path_in_3mf = create_unique_3mf_filepath(filename, svgfiles);        
+        svgfile->path_in_3mf = create_unique_3mf_filepath(filename, svgfiles);
     }
 }
 }
@@ -13460,9 +13517,9 @@ void Plater::publish_job_finished(wxCommandEvent &evt)
 // Called when the Eject button is pressed.
 void Plater::eject_drive()
 {
-	wxBusyCursor wait;
+    wxBusyCursor wait;
     wxGetApp().removable_drive_manager()->set_and_verify_last_save_path(p->last_output_dir_path);
-	wxGetApp().removable_drive_manager()->eject_drive();
+    wxGetApp().removable_drive_manager()->eject_drive();
 }
 
 void Plater::take_snapshot(const std::string &snapshot_name) { p->take_snapshot(snapshot_name); }

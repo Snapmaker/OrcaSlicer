@@ -752,7 +752,13 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         if (should_travel_to_tower || gcodegen.m_need_change_layer_lift_z) {
             // FIXME: It would be better if the wipe tower set the force_travel flag for all toolchanges,
             // then we could simplify the condition and make it more readable.
-            gcode += gcodegen.retract();
+            auto type      = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+            if (type == ZHopType::zhtAuto) {
+                type = ZHopType::zhtSpiral;
+            }
+            auto lift_type = gcodegen.to_lift_type(type);
+            
+            gcode += gcodegen.retract(false, false, lift_type);
             gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
             gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed, "Travel to a Wipe Tower");
             gcode += gcodegen.unretract();
@@ -6212,6 +6218,7 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
     gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();
 
     gcode += m_writer.reset_e();
+
     // Orca: check if should + can lift (roughly from SuperSlicer)
     RetractLiftEnforceType retract_lift_type = RetractLiftEnforceType(EXTRUDER_CONFIG(retract_lift_enforce));
 

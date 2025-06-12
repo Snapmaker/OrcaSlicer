@@ -16,26 +16,17 @@ END_EVENT_TABLE()
 WebPreprintDialog::WebPreprintDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Print preset"))
 {
-    m_prePrint_url = "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                     "/web/flutter_web/index.html?path=filament_extruder_mapping";
+    m_prePrint_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                     "/web/flutter_web/index.html?path=filament_extruder_mapping");
 
-    m_preSend_url = "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                     "/web/flutter_web/index.html?path=pre_send";
+    m_preSend_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                     "/web/flutter_web/index.html?path=pre_send");
     SetBackgroundColour(*wxWHITE);
 
     // Create the webview
 
     // 语言判断
-    wxString strlang = wxGetApp().current_language_code_safe();
-    wxString target_url = m_prePrint_url;
-    if (strlang != "") {
-        if (target_url.find("?") != std::string::npos) {
-            target_url += "&lang=" + strlang;
-        } else {
-            target_url += "?lang=" + strlang;
-        }
-    }
-        
+    wxString target_url = wxGetApp().get_international_url(m_prePrint_url);
 
     m_browser = WebView::CreateWebView(this, target_url);
     if (m_browser == nullptr) {
@@ -112,7 +103,7 @@ bool WebPreprintDialog::run()
     SSWCP::update_active_filename(m_gcode_file_name);
     SSWCP::update_display_filename(m_display_file_name);
 
-    this->load_url(m_send_page ? m_preSend_url : m_prePrint_url);
+    this->load_url(m_send_page ? wxGetApp().get_international_url(m_preSend_url) : wxGetApp().get_international_url(m_prePrint_url));
     if (this->ShowModal() == wxID_OK) {
         return true;
     }

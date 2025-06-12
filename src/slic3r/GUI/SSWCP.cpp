@@ -2429,9 +2429,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
 
                                 if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                    wxGetApp().mainframe->load_printer_url(
-                                        "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                                        "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+                                    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=device_control");
+                                    wxGetApp().mainframe->load_printer_url(wxGetApp().get_international_url(url)); // 到时全部加载本地交互页面
                                 } else {
                                     wxGetApp().mainframe->m_printer_view->reload();
                                 }

@@ -293,43 +293,41 @@ wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWin
     combobox->GetDropDown().Bind(wxEVT_COMBOBOX, [this, combobox, current_region, local_regions](wxCommandEvent &e) {
         auto region_index = e.GetSelection();
         auto region       = local_regions[region_index];
-
-        /*auto area   = "";
-        if (region == "CHN" || region == "China")
-            area = "CN";
-        else if (region == "USA")
-            area = "US";
-        else if (region == "Asia-Pacific")
-            area = "Others";
-        else if (region == "Europe")
-            area = "US";
-        else if (region == "North America")
-            area = "US";
-        else
-            area = "Others";*/
-        combobox->SetSelection(region_index);
-        NetworkAgent* agent = wxGetApp().getAgent();
+        
+        // snapmaker
         AppConfig* config = GUI::wxGetApp().app_config;
-        if (agent) {
-            MessageDialog msg_wingow(this, _L("Changing the region will log out your account.\n") + "\n" + _L("Do you want to continue?"), L("Region selection"),
-                                     wxICON_QUESTION | wxOK | wxCANCEL);
+        combobox->SetSelection(region_index);
+        auto info = wxGetApp().sm_get_userinfo();
+        if (info && info->is_user_login()) {
+            MessageDialog msg_wingow(this, _L("Changing the region will log out your account and restart.\n") + "\n" + _L("Do you want to continue?"),
+                                     L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
+
             if (msg_wingow.ShowModal() == wxID_CANCEL) {
                 combobox->SetSelection(current_region);
                 return;
             } else {
-                wxGetApp().request_user_logout();
+                wxGetApp().sm_request_user_logout();
                 config->set("region", region.ToStdString());
-                auto area = config->get_country_code();
-                if (agent) {
-                    agent->set_country_code(area);
-                }
                 EndModal(wxID_CANCEL);
             }
-        } else {
-            config->set("region", region.ToStdString());
-        }
 
-        wxGetApp().update_publish_status();
+            Close();
+            GetParent()->RemoveChild(this);
+            wxGetApp().recreate_GUI(_L("Change Region"));
+        } else {
+            MessageDialog msg_wingow(nullptr,
+                                     _L("Switching the region requires application restart.\n") + "\n" + _L("Do you want to continue?"),
+                                     L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
+            if (msg_wingow.ShowModal() == wxID_CANCEL) {
+                combobox->SetSelection(current_region);
+                return;
+            }
+            config->set("region", region.ToStdString());
+            Close();
+            GetParent()->RemoveChild(this);
+            wxGetApp().recreate_GUI(_L("Change Region"));
+        }
+    
         e.Skip();
     });
 

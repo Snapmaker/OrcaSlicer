@@ -67,6 +67,7 @@ private:
     void     OnTimer(wxTimerEvent &event);
 
 private:
+
     wxString   TargetUrl     = "https://id.snapmaker.cn?from=orca";
     wxString   LogoutUrl     = "https://id.snapmaker.cn/logout?from=orca";
     wxString   m_hostUrl     = "https://id.snapmaker.cn";

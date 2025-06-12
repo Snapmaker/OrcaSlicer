@@ -3904,6 +3904,19 @@ void GUI_App::get_login_info()
     }
 }
 
+wxString GUI_App::get_international_url(const wxString& origin_url) {
+    wxString lang = wxString::FromUTF8(app_config->get_language_code());
+    wxString region = wxString::FromUTF8(app_config->get_country_code());
+
+    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
+
+    if (origin_url.find("?") != std::string::npos) {
+        return origin_url + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("_") + region + wxString::FromUTF8("&dark_mode=" + dark_mode);
+    } else {
+        return origin_url + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("_") + region + wxString::FromUTF8("&dark_mode=" + dark_mode); 
+    }
+}
+
 bool GUI_App::is_user_login()
 {
     if (m_agent) {
@@ -4167,7 +4180,11 @@ std::string GUI_App::handle_web_request(std::string cmd)
             } else if (command_str.compare("homepage_test_browser") == 0) {
                 CallAfter([this] {
                     auto dialog = new WebUrlDialog();
-                    dialog->load_url("http://127.0.0.1:" + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/web/flutter_web/index.html");
+
+                    auto lang = wxGetApp().app_config->get_language_code();
+                    auto region = wxGetApp().app_config->get_country_code();
+
+                    dialog->load_url(get_international_url(wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/web/flutter_web/index.html")));
                     dialog->Show();
                     // delete dialog;
                 });
@@ -4257,8 +4274,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 }
             } else if (command_str.compare("GotoTestHomepage") == 0) {
                 CallAfter([this]() {
-                    wxString wxurl = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=homepage";
-                    this->mainframe->m_webview->load_url(wxurl);
+                    wxString wxurl = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=homepage");
+                    this->mainframe->m_webview->load_url(get_international_url(wxurl));
                 });
             }
         }

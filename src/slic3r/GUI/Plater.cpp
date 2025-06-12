@@ -1695,8 +1695,9 @@ void Sidebar::update_all_preset_comboboxes()
             }
             else {
                 // 未连接机器
-                wxGetApp().mainframe->load_printer_url("http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                                                       "/web/flutter_web/index.html?path=device_control"); // 到时全部加载本地交互页面
+                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                                  "/web/flutter_web/index.html?path=device_control");
+                wxGetApp().mainframe->load_printer_url(wxGetApp().get_international_url(url)); // 到时全部加载本地交互页面
             }
 
             if (!machine_connecting_btn->IsShown() && !is_test) {

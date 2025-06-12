@@ -503,6 +503,8 @@ private:
     void            get_login_info();
     bool            is_user_login();
 
+    wxString get_international_url(const wxString& origin_url);
+
     // SM
     struct SMUserInfo
     {

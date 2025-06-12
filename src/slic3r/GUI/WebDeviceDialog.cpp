@@ -15,24 +15,15 @@ END_EVENT_TABLE()
 WebDeviceDialog::WebDeviceDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Add Device"))
 {
-    m_device_url = "http://localhost:" + std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                   "/web/flutter_web/index.html?path=discovery";
+    m_device_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                   "/web/flutter_web/index.html?path=discovery");
 
     SetBackgroundColour(*wxWHITE);
 
     // Create the webview
 
     // 语言判断
-    wxString strlang = wxGetApp().current_language_code_safe();
-    wxString target_url = m_device_url;
-    if (strlang != "") {
-        if (target_url.find("?") != std::string::npos) {
-            target_url += "&lang=" + strlang;
-        } else {
-            target_url += "?lang=" + strlang;
-        }
-    }
-        
+    wxString target_url = wxGetApp().get_international_url(m_device_url);
 
     m_browser = WebView::CreateWebView(this, target_url);
     if (m_browser == nullptr) {

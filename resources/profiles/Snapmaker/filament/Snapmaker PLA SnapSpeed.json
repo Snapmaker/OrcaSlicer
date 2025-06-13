@@ -96,9 +96,6 @@
     "fan_max_speed": [
         "100"
     ],
-    "fan_min_speed": [
-        "20"
-    ],
     "filament_cooling_final_speed": [
         "3.4"
     ],
@@ -243,9 +240,6 @@
     "nozzle_temperature": [
         "200"
     ],
-    "nozzle_temperature_initial_layer": [
-        "200"
-    ],
     "nozzle_temperature_range_high": [
         "240"
     ],
@@ -260,9 +254,6 @@
     ],
     "pellet_flow_coefficient": [
         "0.4157"
-    ],
-    "reduce_fan_stop_start_freq": [
-        "0"
     ],
     "required_nozzle_HRC": [
         "0"
@@ -303,11 +294,17 @@
     "filament_max_volumetric_speed": [
         "18"
     ],
-    "filament_settings_id": [
-        "Snapmaker PLA SnapSpeed - 111"
-    ],
     "is_custom_defined": "0",
     "pressure_advance": [
         "0.045"
+    ],
+    "fan_min_speed": [
+        "100"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "220"
+    ],
+    "reduce_fan_stop_start_freq": [
+        "1"
     ]
 }

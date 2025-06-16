@@ -2430,7 +2430,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
                                 if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
                                     wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=device_control");
-                                    wxGetApp().mainframe->load_printer_url(wxGetApp().get_international_url(url)); // 到时全部加载本地交互页面
+                                    auto real_url = wxGetApp().get_international_url(url);
+                                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
                                 } else {
                                     wxGetApp().mainframe->m_printer_view->reload();
                                 }
@@ -3019,6 +3020,10 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
         std::string cmd = "";
         std::string event_id = "";
         json params;
+
+        if(header.count("seqid")){
+            m_seqid = header["seqid"].get<std::string>();
+        }
 
         if (payload.count("cmd")) {
             cmd = payload["cmd"].get<std::string>();

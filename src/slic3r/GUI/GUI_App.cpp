@@ -4184,7 +4184,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     auto lang = wxGetApp().app_config->get_language_code();
                     auto region = wxGetApp().app_config->get_country_code();
 
-                    dialog->load_url(get_international_url(wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/web/flutter_web/index.html")));
+                    auto real_url = get_international_url(wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/web/flutter_web/index.html"));
+                    dialog->load_url(real_url);
                     dialog->Show();
                     // delete dialog;
                 });
@@ -4275,7 +4276,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
             } else if (command_str.compare("GotoTestHomepage") == 0) {
                 CallAfter([this]() {
                     wxString wxurl = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=homepage");
-                    this->mainframe->m_webview->load_url(get_international_url(wxurl));
+                    auto real_url = get_international_url(wxurl);
+                    this->mainframe->m_webview->load_url(real_url);
                 });
             }
         }

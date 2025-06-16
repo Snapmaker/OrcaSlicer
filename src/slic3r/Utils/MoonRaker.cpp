@@ -443,6 +443,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始文件上传，源文件: " << upload_data.source_path.string() 
                            << ", 目标路径: " << upload_data.upload_path.string();
     
+    // 依赖flutter，先放开
     if (upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 上传后需要开始打印，显示预打印对话框";
         

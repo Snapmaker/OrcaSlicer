@@ -3911,9 +3911,9 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
     string dark_mode = wxGetApp().app_config->get("dark_color_mode");
 
     if (origin_url.find("?") != std::string::npos) {
-        return origin_url + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("_") + region + wxString::FromUTF8("&dark_mode=" + dark_mode);
+        return origin_url + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region + wxString::FromUTF8("&dark_mode=" + dark_mode);
     } else {
-        return origin_url + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("_") + region + wxString::FromUTF8("&dark_mode=" + dark_mode); 
+        return origin_url + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region + wxString::FromUTF8("&dark_mode=" + dark_mode); 
     }
 }
 

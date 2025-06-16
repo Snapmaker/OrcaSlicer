@@ -1101,6 +1101,14 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         m_sn = params["sn"].get<std::string>();
         m_sn_mtx.unlock();
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 设置SN: " << m_sn;
+
+        if (m_ca == "" || m_cert == "" || m_key == "") {
+            bool flag = ask_for_tls_info(params);
+            if (!flag) {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 获取TLS认证信息失败";
+                return false;
+            }
+        }
     }
 
     // 验证证书格式

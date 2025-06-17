@@ -758,7 +758,10 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             }
             auto lift_type = gcodegen.to_lift_type(type);
             
-            gcode += gcodegen.retract(false, false, lift_type);
+            if (gcodegen.m_config.z_hop_when_prime.get_at(gcodegen.m_writer.extruder()->id())) {
+                gcode += gcodegen.retract(false, false, lift_type);
+            }
+            
             gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
             gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed, "Travel to a Wipe Tower");
             gcode += gcodegen.unretract();

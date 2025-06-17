@@ -528,22 +528,19 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
 
                 wxGetApp().app_config->save_device_info(info);
 
-                // 同步卡片
-                auto devices = wxGetApp().app_config->get_devices();
-                json param;
-                param["command"]       = "local_devices_arrived";
-                param["sequece_id"]    = "10001";
-                param["data"]          = devices;
-                std::string logout_cmd = param.dump();
-                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                GUI::wxGetApp().run_script(strJS);
+                //// 同步卡片
+                //auto devices = wxGetApp().app_config->get_devices();
+                //json param;
+                //param["command"]       = "local_devices_arrived";
+                //param["sequece_id"]    = "10001";
+                //param["data"]          = devices;
+                //std::string logout_cmd = param.dump();
+                //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                //GUI::wxGetApp().run_script(strJS);
 
                 // wcp订阅
-                auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
-                if (ptr) {
-                    ptr->m_res_data = devices;
-                    ptr->send_to_js();
-                }
+                json data = wxGetApp().app_config->get_devices();
+                wxGetApp().device_card_notify(data);
 
                 wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
             }

@@ -1697,7 +1697,8 @@ void Sidebar::update_all_preset_comboboxes()
                 // 未连接机器
                 wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                   "/web/flutter_web/index.html?path=device_control");
-                wxGetApp().mainframe->load_printer_url(wxGetApp().get_international_url(url)); // 到时全部加载本地交互页面
+                auto real_url = wxGetApp().get_international_url(url);
+                wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
             }
 
             if (!machine_connecting_btn->IsShown() && !is_test) {
@@ -13290,6 +13291,13 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             // 如果用户取消操作，直接返回
             return;
         }
+        config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());
+        upload_job.switch_to_device_tab    = dlg.switch_to_device_tab();
+        upload_job.upload_data.upload_path = dlg.filename();
+        upload_job.upload_data.post_action = dlg.post_action();
+        upload_job.upload_data.group       = dlg.group();
+        upload_job.upload_data.storage     = dlg.storage();
+
 
         WebPreprintDialog dialog;
         dialog.set_swtich_to_device(dlg.switch_to_device_tab());

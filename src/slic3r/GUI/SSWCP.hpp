@@ -40,7 +40,10 @@ public:
         : m_cmd(cmd), m_header(header), m_webview(webview), m_event_id(event_id), m_param_data(data)
     {}
 
-    virtual ~SSWCP_Instance() {}
+    virtual ~SSWCP_Instance() {
+        if (m_work_thread.joinable())
+            m_work_thread.detach();
+    }
 
     // Process the command
     virtual void process();
@@ -91,7 +94,17 @@ private:
     // select tab
     void sw_SwitchTab();
 
+    // unsubscribe
+    void sw_Webview_Unsubscribe();
+    void sw_UnsubscribeAll();
+    void sw_Unsubscribe_Filter();
+
+    // get file stream
+    void sw_GetFileStream();
+
+
     static std::unordered_map<std::string, json> m_wcp_cache;
+    std::thread                                  m_work_thread; // Worker thread
 
 public:
     std::string m_cmd;           // Command to execute
@@ -357,7 +370,7 @@ public:
     static void on_webview_delete(wxWebView* webview);
 
     // query the info of the machine
-    static bool query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, int timeout_second = 5);
+    static bool query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, std::string& device_name, int timeout_second = 5);
 
     // update the active file name
     static void update_active_filename(const std::string& filename);

@@ -2797,11 +2797,9 @@ void GUI_App::machine_find()
                                                     GUI::wxGetApp().run_script(strJS);
 
                                                     // wcp订阅
-                                                    auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
-                                                    if (ptr) {
-                                                        ptr->m_res_data = this->app_config->get_devices();
-                                                        ptr->send_to_js();
-                                                    }
+                                                    json data = this->app_config->get_devices();
+                                                    wxGetApp().device_card_notify(data);
+                                                    
                                                 });
                                             }
                                         }
@@ -3907,6 +3905,9 @@ void GUI_App::get_login_info()
 wxString GUI_App::get_international_url(const wxString& origin_url) {
     wxString lang = wxString::FromUTF8(app_config->get_language_code());
     wxString region = wxString::FromUTF8(app_config->get_country_code());
+    if (region == "Others") {
+        region = "US";
+    }
 
     string dark_mode = wxGetApp().app_config->get("dark_color_mode");
 
@@ -4229,11 +4230,8 @@ std::string GUI_App::handle_web_request(std::string cmd)
                             GUI::wxGetApp().run_script(strJS);
 
                             // wcp订阅
-                            auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
-                            if (ptr) {
-                                ptr->m_res_data = this->app_config->get_devices();
-                                ptr->send_to_js();
-                            }
+                            json data = this->app_config->get_devices();
+                            wxGetApp().device_card_notify(data);
                         });
                     }
                 }
@@ -6792,6 +6790,39 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
     }
 }
 
+void GUI_App::recent_file_notify(const json& res)
+{
+    for (const auto& instance : m_recent_file_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = res;
+            ptr->send_to_js();
+        }
+    }
+}
+
+void GUI_App::device_card_notify(const json& res)
+{
+    for (const auto& instance : m_device_card_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = res;
+            ptr->send_to_js();
+        }
+    }
+}
+
+void GUI_App::user_login_notify(const json& res)
+{
+    for (const auto& instance : m_user_login_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = res;
+            ptr->send_to_js();
+        }
+    }
+}
+
 bool GUI_App::config_wizard_startup()
 {
     // test
@@ -7073,21 +7104,18 @@ bool GUI_App::sm_disconnect_current_machine()
             }
         }
 
-        // 同步卡片
-        json param;
-        param["command"]       = "local_devices_arrived";
-        param["sequece_id"]    = "10001";
-        param["data"]          = devices;
-        std::string logout_cmd = param.dump();
-        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-        GUI::wxGetApp().run_script(strJS);
+        //// 同步卡片
+        //json param;
+        //param["command"]       = "local_devices_arrived";
+        //param["sequece_id"]    = "10001";
+        //param["data"]          = devices;
+        //std::string logout_cmd = param.dump();
+        //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+        //GUI::wxGetApp().run_script(strJS);
 
         // wcp订阅
-        auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
-        if (ptr) {
-            ptr->m_res_data = devices;
-            ptr->send_to_js();
-        }
+        json data = this->app_config->get_devices();
+        wxGetApp().device_card_notify(data);
 
         wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
         wxGetApp().set_connect_host(nullptr);
@@ -7116,22 +7144,20 @@ void GUI_App::start_download(std::string url)
 }
 
 void GUI_App::SMUserInfo::notify() {
-    auto ptr = wxGetApp().m_user_login_subscriber.lock();
-    if (ptr) {
-        json data;
-        if (m_login) {
-            data["status"]   = "online";
-            data["nickname"] = m_login_user_name;
-            data["icon"]     = m_login_user_icon_url;
-            data["token"]    = m_login_user_token;
-            data["userid"]   = m_login_user_id;
-            data["account"]  = m_login_user_account;
-        } else {
-            data["status"] = "offline";
-        }
-        ptr->m_res_data = data;
-        ptr->send_to_js();
+    json data;
+    if (m_login) {
+        data["status"]   = "online";
+        data["nickname"] = m_login_user_name;
+        data["icon"]     = m_login_user_icon_url;
+        data["token"]    = m_login_user_token;
+        data["userid"]   = m_login_user_id;
+        data["account"]  = m_login_user_account;
+    } else {
+        data["status"] = "offline";
     }
+
+    wxGetApp().user_login_notify(data);
+
 }
 bool is_support_filament(int extruder_id)
 {

@@ -769,11 +769,8 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
         GUI::wxGetApp().run_script(strJS);
 
         // wcp订阅
-        auto ptr = GUI::wxGetApp().m_device_card_subscriber.lock();
-        if (ptr) {
-            ptr->m_res_data = devices;
-            ptr->send_to_js();
-        }
+        json data = devices;
+        wxGetApp().device_card_notify(data);
 
         MessageDialog msg_window_connected(nullptr, host->get_host() + _L(" connected sucessfully !\n"), L("Machine Connected"),
                                            wxICON_QUESTION | wxOK);

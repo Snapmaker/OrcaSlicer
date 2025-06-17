@@ -821,9 +821,13 @@ private:
     SMUserInfo m_login_userinfo;
 
 public:
-    std::weak_ptr<SSWCP_Instance> m_recent_file_subscriber;
-    std::weak_ptr<SSWCP_Instance> m_user_login_subscriber;
-    std::weak_ptr<SSWCP_Instance> m_device_card_subscriber;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
+
+    void recent_file_notify(const json& res);
+    void user_login_notify(const json& res);
+    void device_card_notify(const json& res);
 
 
 public:

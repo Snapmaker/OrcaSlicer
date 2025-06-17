@@ -1091,6 +1091,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBools,               long_retractions_when_cut))
     ((ConfigOptionFloats,              z_hop))
     // BBS
+    ((ConfigOptionBools,               z_hop_when_prime))
     ((ConfigOptionEnumsGeneric,        z_hop_types))
     ((ConfigOptionFloats,              travel_slope))
     ((ConfigOptionFloats,              retract_lift_above))

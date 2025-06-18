@@ -39,6 +39,73 @@ namespace Slic3r { namespace GUI {
 
 extern json m_ProfileJson;
 
+std::vector<std::string> load_thumbnails(const std::string& file, size_t image_count)
+{
+    std::vector<std::string> res;
+    // Read a 64k block from the end of the G-code.
+    boost::nowide::ifstream ifs(file);
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  before parse_file %1%") % file.c_str();
+
+    bool        begin_found = false;
+    bool        end_found   = false;
+    std::string line;
+
+    int thumbnail_id = 0;
+    while (std::getline(ifs, line)) {
+        if (thumbnail_id == image_count) {
+            break;
+        }
+        // 找到缩略图开始标记
+        if (line.find("; THUMBNAIL_BLOCK_START") != std::string::npos) {
+            std::string thumb_content = "";
+            int         width         = 0;
+            int         height        = 0;
+            int         data_size     = 0;
+
+            // 跳过空行
+            std::getline(ifs, line);
+            std::getline(ifs, line);
+
+            // 读取缩略图信息行
+            std::getline(ifs, line);
+            if (line.find("; thumbnail begin") != std::string::npos) {
+                // 解析宽度、高度和数据大小
+                // 格式: "; thumbnail begin 48x48 1144"
+                sscanf(line.c_str(), "; thumbnail begin %dx%d %d", &width, &height, &data_size);
+
+                // 读取Base64编码的数据
+                std::string base64_data;
+                while (std::getline(ifs, line)) {
+                    if (line.find("; thumbnail end") != std::string::npos) {
+                        break;
+                    }
+                    // 移除行首的 "; "
+                    if (line.substr(0, 2) == "; ") {
+                        base64_data += line.substr(2);
+                    }
+                }
+                thumb_content = base64_data;
+                res.emplace_back(thumb_content);
+                
+                ++thumbnail_id;
+            }
+
+            // 读取到块结束标记
+            while (std::getline(ifs, line)) {
+                if (line.find("; THUMBNAIL_BLOCK_END") != std::string::npos) {
+                    break;
+                }
+            }
+        }
+    }
+
+    ifs.clear(); // 清除可能的 EOF 标志
+    ifs.seekg(0);
+
+    return std::move(res);
+
+}
+
 // Util
 std::vector<char> create_zip_with_miniz(const std::string& name1, // 原文件路径（如 "c:/xxx/1.gcode"）
                                         const std::string& name2  // ZIP 内文件名（如 "target.gcode"）
@@ -221,11 +288,55 @@ void SSWCP_Instance::process() {
         sw_Unsubscribe_Filter();
     } else if (m_cmd == "sw_GetFileStream") {
         sw_GetFileStream();
+    } else if (m_cmd == "sw_GetActiveFile") {
+        sw_GetActiveFile();
     }
     else {
         handle_general_fail();
     }
 }
+
+void SSWCP_Instance::sw_GetActiveFile()
+{
+    try {
+        std::string file_path = SSWCP::get_active_filename();
+        std::string file_name = SSWCP::get_display_filename();
+        if (file_path == "" || file_name == "") {
+            handle_general_fail();
+            return;
+        }
+        bool iszip = false;
+        if (m_param_data.count("is_zip")) {
+            iszip = m_param_data["is_zip"].get<bool>();
+        }
+
+        if (iszip) {
+            std::string zipname = generate_zip_path(file_path, file_name);
+            json        res     = get_or_create_zip_json(file_path, file_path, zipname);
+            size_t      name_index = file_name.find_last_of(".");
+            size_t      path_index = file_path.find_last_of(".");
+            if (name_index == std::string::npos || path_index == std::string::npos) {
+                m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
+                m_res_data["file_path"] = file_path.substr(0, path_index) + ".zip";
+                send_to_js();
+                finish_job();
+            } else {
+                handle_general_fail();
+                return;
+            }
+        } else {
+            m_res_data["file_name"] = file_name;
+            m_res_data["file_path"] = file_path;
+            send_to_js();
+            finish_job();
+        }
+
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 
 void SSWCP_Instance::sw_GetFileStream() {
     try {
@@ -354,7 +465,7 @@ void SSWCP_Instance::send_to_js() {
         std::string str_res = "window.postMessage(JSON.stringify(" + response.dump() + "), '*');";
         str_res             = std::string(wxString(str_res).ToUTF8());
 
-        if (m_webview) {
+        if (m_webview && m_webview->GetRefData()) {
             auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
             wxGetApp().CallAfter([weak_self, str_res]() {
                 try {
@@ -1814,10 +1925,12 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             return;
         }
 
-        GCodeProcessor processor;
+        auto& config = wxGetApp().plater()->get_partplate_list().get_curr_plate()->fff_print()->config();
+        auto& result = *(wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_slice_result());
+        /*GCodeProcessor processor;
         processor.process_file(filename.data());
         auto& result = processor.result();
-        auto& config = processor.current_dynamic_config();
+        auto& config = processor.current_dynamic_config();*/
 
         auto time = wxGetApp()
             .mainframe->plater()
@@ -1922,19 +2035,15 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
             thumbnail_count = thumbnails_size.size();
 
-            for (int i = 0; i < thumbnail_count; ++i) {
-                if (config.has("thumb" + std::to_string(i))) {
-                    json thumbnail        = json::object();
-                    auto thumbnail_string = "data:image/png;base64," + config.option<ConfigOptionString>("thumb" + std::to_string(i))->value;
-                    thumbnail["url"]      = thumbnail_string;
-                    thumbnail["width"]    = thumbnails_size[i].first;
-                    thumbnail["height"]   = thumbnails_size[i].second;
+            auto thumbnail_list = load_thumbnails(filename, thumbnail_count);
+            for (int i = 0; i < thumbnail_list.size(); ++i) {
+                json thumbnail        = json::object();
+                auto thumbnail_string = "data:image/png;base64," + thumbnail_list[i];
+                thumbnail["url"]      = thumbnail_string;
+                thumbnail["width"]    = thumbnails_size[i].first;
+                thumbnail["height"]   = thumbnails_size[i].second;
 
-                    thumbnails.push_back(thumbnail);
-
-                } else {
-                    break;
-                }
+                thumbnails.push_back(thumbnail);
             }
         }
         
@@ -1944,6 +2053,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         
         // file name
         response["filename"] = SSWCP::get_display_filename();
+        response["filepath"] = SSWCP::get_active_filename();
 
         
 
@@ -1966,16 +2076,19 @@ void SSWCP_MachineOption_Instance::sw_SetFilamentMappingComplete()
         std::string status = m_param_data["status"].get<std::string>();
         if (status == "success" || status == "canceled") {
             int flag = -1;
-            // 耗材绑定成功
             if (status == "success") {
-                MessageDialog msg_window(nullptr, " " + _L("setting successfully, continue to print?") + "\n", _L("Print Job Setting"),
-                                         wxICON_QUESTION | wxOK | wxCANCEL);
-                flag = msg_window.ShowModal();
-            } else {
-                MessageDialog msg_window(nullptr, " " + _L("cancel the setting, continue to print?") + "\n", _L("Print Job Setting"),
-                                         wxICON_QUESTION | wxOK | wxCANCEL);
-                flag = msg_window.ShowModal();
+                flag = wxID_OK;
             }
+            //// 耗材绑定成功
+            //if (status == "success") {
+            //    MessageDialog msg_window(nullptr, " " + _L("setting successfully, continue to print?") + "\n", _L("Print Job Setting"),
+            //                             wxICON_QUESTION | wxOK | wxCANCEL);
+            //    flag = msg_window.ShowModal();
+            //} else {
+            //    MessageDialog msg_window(nullptr, " " + _L("cancel the setting, continue to print?") + "\n", _L("Print Job Setting"),
+            //                             wxICON_QUESTION | wxOK | wxCANCEL);
+            //    flag = msg_window.ShowModal();
+            //}
             
 
             if (flag == wxID_OK) {

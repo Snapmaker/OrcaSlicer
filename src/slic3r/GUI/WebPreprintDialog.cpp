@@ -43,7 +43,7 @@ WebPreprintDialog::WebPreprintDialog()
     Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WebPreprintDialog::OnScriptMessage, this, m_browser->GetId());
 
     // Set dialog size
-    SetSize(FromDIP(wxSize(800, 600)));
+    SetSize(FromDIP(wxSize(800, 800)));
 
     // Create sizer and add webview
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);

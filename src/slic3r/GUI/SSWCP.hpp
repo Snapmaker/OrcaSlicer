@@ -102,6 +102,7 @@ private:
     // get file stream
     void sw_GetFileStream();
 
+    void sw_GetActiveFile();
 
     static std::unordered_map<std::string, json> m_wcp_cache;
     std::thread                                  m_work_thread; // Worker thread

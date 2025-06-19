@@ -1038,8 +1038,8 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
 
             
             m_client_id = result["clientid"].get<std::string>();
-            m_user_name = result["username"].get<std::string>();
-            m_password = result["password"].get<std::string>();
+            m_user_name = "";
+            m_password  = "";
             m_ca = result["ca"].get<std::string>();
             m_cert = result["cert"].get<std::string>();
             m_key = result["key"].get<std::string>();

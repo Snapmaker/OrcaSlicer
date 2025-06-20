@@ -5,10 +5,13 @@
 #include <iostream>
 #include <mutex>
 #include <stack>
+#include <wx/socket.h>
 
 #include <wx/webview.h>
 #include <unordered_set>
 #include <unordered_map>
+#include <boost/asio.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include "nlohmann/json.hpp"
 #include "slic3r/Utils/Bonjour.hpp"
 #include "slic3r/Utils/TimeoutMap.hpp"
@@ -16,8 +19,41 @@
 
 
 using namespace nlohmann;
+namespace asio = boost::asio;
+using tcp = asio::ip::tcp;
 
 namespace Slic3r { namespace GUI {
+
+class WCP_Logger
+{
+public:
+    bool run();
+
+    static WCP_Logger& getInstance();
+
+    // Add a log message to the queue
+    void add_log(const wxString& log);
+
+    void worker();
+
+private:
+    WCP_Logger();
+    ~WCP_Logger();
+    std::mutex           m_log_mtx; // Mutex for thread-safe access
+    std::queue<wxString> m_log_que;
+
+    std::thread m_work_thread;
+
+    std::mutex     m_end_mtx;
+    bool m_end = false;
+    wxSocketClient m_client;
+
+    asio::io_context io_ctx;
+    tcp::socket*      socket = nullptr;
+    tcp::resolver*    resolver;
+
+    bool inited = false;
+};
 
 // Base class for handling web communication instances
 class SSWCP_Instance : public std::enable_shared_from_this<SSWCP_Instance>

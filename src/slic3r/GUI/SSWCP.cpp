@@ -37,6 +37,106 @@ using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
 
+
+// WCP_Logger
+WCP_Logger::WCP_Logger() {
+    
+}
+
+bool WCP_Logger::run()
+{
+    if (inited) {
+        return true; // Already initialized
+    }
+
+    inited = true;
+
+    // 创建IO上下文和TCP套接字
+    socket = new tcp::socket(io_ctx);
+
+    // 解析服务器地址（本地回环）
+    resolver       = new tcp::resolver(io_ctx);
+    auto endpoints = resolver->resolve("127.0.0.1", "50000"); // 端口与Python服务端一致
+
+    // 连接服务器（同步连接，阻塞直到成功或失败）
+
+    try {
+        asio::connect(*socket, endpoints);
+    } catch (std::exception& e) {
+        return false;
+    }
+
+    m_work_thread = std::thread(&WCP_Logger::worker, this);
+}
+
+WCP_Logger& WCP_Logger::getInstance()
+{
+    static WCP_Logger instance;
+    return instance;
+}
+
+// Add a log message to the queue
+void WCP_Logger::add_log(const wxString& log)
+{
+    std::lock_guard<std::mutex> lock(m_log_mtx);
+    m_log_que.push(log + "\n");
+}
+
+void WCP_Logger::worker()
+{
+    while (true) {
+        m_log_mtx.lock();
+        if (!m_log_que.empty()) {
+            wxString log = m_log_que.front();
+            m_log_que.pop();
+            m_log_mtx.unlock();
+
+            try {
+                asio::write(*socket, asio::buffer(log.ToUTF8().data(), log.length() + 1));
+            }
+            catch (std::exception& e) {
+
+            }
+            
+        } else {
+            m_log_mtx.unlock();
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+
+        bool end_flag = false;
+        m_end_mtx.lock();
+        end_flag = m_end;
+        m_end_mtx.unlock();
+        if (end_flag)
+            break;
+    }
+}
+
+WCP_Logger::~WCP_Logger()
+{
+    m_end_mtx.lock();
+    m_end = true;
+    m_end_mtx.unlock();
+
+    if (m_work_thread.joinable())
+        m_work_thread.join();
+
+    try {
+        if (socket->is_open()) {
+            socket->close();
+        }
+    }
+    catch (std::exception& e) {
+        delete resolver;
+        delete socket;
+        return;
+    }
+    
+
+    delete resolver;
+    delete socket;
+}
+
 extern json m_ProfileJson;
 
 std::vector<std::string> load_thumbnails(const std::string& file, size_t image_count)
@@ -312,12 +412,12 @@ void SSWCP_Instance::sw_GetActiveFile()
 
         if (iszip) {
             std::string zipname = generate_zip_path(file_path, file_name);
-            json        res     = get_or_create_zip_json(file_path, file_path, zipname);
+            json        res     = get_or_create_zip_json(file_path, file_name, zipname);
             size_t      name_index = file_name.find_last_of(".");
             size_t      path_index = file_path.find_last_of(".");
-            if (name_index == std::string::npos || path_index == std::string::npos) {
+            if (!(name_index == std::string::npos || path_index == std::string::npos)) {
                 m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
-                m_res_data["file_path"] = file_path.substr(0, path_index) + ".zip";
+                m_res_data["file_path"] = wxString(zipname).ToUTF8();
                 send_to_js();
                 finish_job();
             } else {
@@ -3385,6 +3485,9 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
         if (!webview) {
             return;
         }
+
+        WCP_Logger::getInstance().run();
+        WCP_Logger::getInstance().add_log(message);
 
         json j_message = json::parse(message);
 

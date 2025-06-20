@@ -6,10 +6,10 @@
     "setting_id": "28360872781",
     "inherits": "Snapmaker PLA SnapSpeed @base",
     "compatible_printers": [
-      "Snapmaker J1 (0.2 nozzle)",
-      "Snapmaker J1 (0.4 nozzle)",
-      "Snapmaker J1 (0.6 nozzle)",
-      "Snapmaker J1 (0.8 nozzle)"
+        "Snapmaker J1 (0.2 nozzle)",
+        "Snapmaker J1 (0.4 nozzle)",
+        "Snapmaker J1 (0.6 nozzle)",
+        "Snapmaker J1 (0.8 nozzle)"
     ],
     "activate_air_filtration": [
         "0"
@@ -255,7 +255,7 @@
         "1"
     ],
     "slow_down_layer_time": [
-        "5"
+        "16"
     ],
     "slow_down_min_speed": [
         "10"
@@ -278,5 +278,4 @@
     "textured_plate_temp_initial_layer": [
         "45"
     ]
-
-  }
+}

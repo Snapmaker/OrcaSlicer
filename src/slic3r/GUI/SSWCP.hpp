@@ -96,13 +96,13 @@ public:
     virtual void process();
 
     // Send response back to JavaScript
-    virtual void send_to_js(int code, const wxString& msg);
+    virtual void send_to_js(int code = 200, const wxString& msg = "OK");
 
     // Clean up after job completion
     virtual void finish_job();
 
     // General failure
-    void handle_general_fail(int code, const wxString& msg);
+    void handle_general_fail(int code = -1, const wxString& msg = "failure");
 
     // Get instance type
     virtual INSTANCE_TYPE getType() { return m_type; }

@@ -618,7 +618,7 @@ void SSWCP_Instance::sw_GetFileStream() {
     }
 }
 
-void SSWCP_Instance::handle_general_fail(int code = -1, const wxString& msg = "failure")
+void SSWCP_Instance::handle_general_fail(int code, const wxString& msg)
 {
     try {
         m_status = -1;
@@ -652,7 +652,7 @@ wxWebView* SSWCP_Instance::get_web_view() const {
 }
 
 // Send response to JavaScript
-void SSWCP_Instance::send_to_js(int code = 200, const wxString& msg = "OK")
+void SSWCP_Instance::send_to_js(int code, const wxString& msg)
 {
     try {
         if (is_Instance_illegal()) {

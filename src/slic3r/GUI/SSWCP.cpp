@@ -49,8 +49,6 @@ bool WCP_Logger::run()
         return true; // Already initialized
     }
 
-    inited = true;
-
     // 创建IO上下文和TCP套接字
     socket = new tcp::socket(io_ctx);
 
@@ -67,6 +65,10 @@ bool WCP_Logger::run()
     }
 
     m_work_thread = std::thread(&WCP_Logger::worker, this);
+
+    inited = true;
+
+    return inited;
 }
 
 WCP_Logger& WCP_Logger::getInstance()
@@ -75,11 +77,44 @@ WCP_Logger& WCP_Logger::getInstance()
     return instance;
 }
 
-// Add a log message to the queue
-void WCP_Logger::add_log(const wxString& log)
+bool WCP_Logger::set_level(wxString& level)
 {
+    if (m_log_level_map.count(level)) {
+        m_log_level = m_log_level_map[level];
+        return true;
+    } else {
+        m_log_level = 0;
+        return false;
+    }
+}
+
+// Add a log message to the queue
+void WCP_Logger::add_log(const wxString& content, bool is_web = false, wxString time = "", wxString module = "Default", wxString level = "debug")
+{
+    
+    if (!inited) {
+        return;
+    }
+
+    if (time == "") {
+        // 获取当前时间
+        wxDateTime now = wxDateTime::Now();
+
+        // 格式化日期时间部分（年-月-日 时:分:秒）
+        wxString dateTimePart = now.Format(_T("%Y-%m-%d %H:%M:%S"));
+
+        // 获取毫秒并格式化为三位字符串（补零）
+        int      milliseconds = now.GetMillisecond();
+        wxString msPart       = wxString::Format(_T("%03d"), milliseconds);
+
+        // 拼接完整时间字符串
+        time = dateTimePart + _T(":") + msPart;
+    }
+
+
+
     std::lock_guard<std::mutex> lock(m_log_mtx);
-    m_log_que.push(log + "\n");
+    m_log_que.push(time + "[ " + (is_web ? "Flutter" : "Native") + " ] [ " + level + " ] [ " + module + "] " + content + "\n");
 }
 
 void WCP_Logger::worker()
@@ -390,6 +425,12 @@ void SSWCP_Instance::process() {
         sw_GetFileStream();
     } else if (m_cmd == "sw_GetActiveFile") {
         sw_GetActiveFile();
+    } else if (m_cmd == "sw_Log") {
+        sw_Log();
+    } else if (m_cmd == "sw_SetLogLevel") {
+        sw_SetLogLevel();
+    } else if (m_cmd == "sw_LaunchConsole") {
+        sw_LaunchConsole();
     }
     else {
         handle_general_fail();
@@ -437,6 +478,69 @@ void SSWCP_Instance::sw_GetActiveFile()
     }
 }
 
+void SSWCP_Instance::sw_LaunchConsole() {
+    try {
+        bool res = WCP_Logger::getInstance().run();
+        if (res) {
+            send_to_js(200, "Orca Console has been launched");
+            finish_job();
+        } else {
+            handle_general_fail(-1, "Orca Console launched failed");
+        }
+    }
+    catch (std::exception& e) {
+        wxString reason = e.what();
+        handle_general_fail(-1, "Exception caught: " + reason);
+    }
+}
+
+void SSWCP_Instance::sw_SetLogLevel() {
+    try {
+        if (m_param_data.count("level")) {
+            wxString level = m_param_data["level"].get<std::string>();
+            bool res = WCP_Logger::getInstance().set_level(level);
+            if (res) {
+                send_to_js(200, "The log level has been set to " + level);
+                finish_job();
+            } else {
+                handle_general_fail(-1, "The param [level] is not legal, the log level will be set to debug");
+            }
+        } else {
+            handle_general_fail(-1, "param [level] required!");
+        }
+    }
+    catch (std::exception& e) {
+        wxString reason = e.what();
+        handle_general_fail(-1, "Exception caught: " + reason);
+    }
+}
+
+void SSWCP_Instance::sw_Log()
+{
+    try {
+        wxString time = m_param_data.count("time") ? m_param_data["time"].get<wxString>() : "";
+        wxString level = m_param_data.count("level") ? m_param_data["level"].get<wxString>() : "";
+        wxString module = m_param_data.count("module") ? m_param_data["module"].get<wxString>() : "";
+        wxString content = m_param_data.count("content") ? m_param_data["content"].get<wxString>() : "";
+
+        auto& logger = WCP_Logger::getInstance();
+
+        if (!logger.m_log_level_map.count(level)) {
+            // todo log:级别不对,转成debug,打原生log
+            level = "debug";
+        } 
+
+        if (logger.m_log_level_map[level] >= logger.get_level()) {
+            logger.add_log(content, true, time, module, level);
+        }
+
+        finish_job();
+
+    }
+    catch (std::exception& e) {
+        finish_job();
+    }
+}
 
 void SSWCP_Instance::sw_GetFileStream() {
     try {
@@ -514,11 +618,11 @@ void SSWCP_Instance::sw_GetFileStream() {
     }
 }
 
-void SSWCP_Instance::handle_general_fail()
+void SSWCP_Instance::handle_general_fail(int code = -1, const wxString& msg = "failure")
 {
     try {
         m_status = -1;
-        m_msg    = "failure";
+        m_msg    = msg.ToUTF8();
         send_to_js();
         finish_job();
     } catch (std::exception& e) {}
@@ -548,11 +652,15 @@ wxWebView* SSWCP_Instance::get_web_view() const {
 }
 
 // Send response to JavaScript
-void SSWCP_Instance::send_to_js() {
+void SSWCP_Instance::send_to_js(int code = 200, const wxString& msg = "OK")
+{
     try {
         if (is_Instance_illegal()) {
             return;
         }
+        m_status = code;
+        m_msg    = msg.ToUTF8();
+
         json response, payload;
         response["header"] = m_header;
 
@@ -939,9 +1047,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
 
 // Handle timeout event
 void SSWCP_Instance::on_timeout() {
-    m_status = -2;
-    m_msg = "timeout";
-    send_to_js();
+    send_to_js(-2, "timeout");
     finish_job();
 }
 
@@ -1071,6 +1177,9 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                          if (reply.txt_data.count("userid")) {
                                              machine_data["userid"] = reply.txt_data["userid"];
                                          }
+                                         if (reply.txt_data.count("device_name")) {
+                                             machine_data["device_name"] = reply.txt_data["device_name"];
+                                         }
 
                                          // 模拟一下
                                         /* machine_data["cover"] = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
@@ -1078,6 +1187,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 
                                          if (reply.txt_data.count("machine_type")) {
                                              std::string machine_type      = reply.txt_data["machine_type"];
+                                             machine_data["machine_type"] = machine_type;
 
                                              auto machine_ip_type = MachineIPType::getInstance();
                                              if (machine_ip_type) {
@@ -2562,13 +2672,16 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                 std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                 connect_params["link_mode"] = link_mode;
 
+                std::string id = m_param_data.count("id") ? m_param_data["id"].get<std::string>() : "";
+                std::string userid = m_param_data.count("userid") ? m_param_data["userid"].get<std::string>() : "";
+
                 if (!host) {
                     // 错误处理
                     finish_job();
                 } else {
                     auto weak_self     = std::weak_ptr<SSWCP_Instance>(shared_from_this());
                     //设置断联回调
-                    m_work_thread = std::thread([weak_self, host, connect_params, link_mode] {
+                    m_work_thread = std::thread([weak_self, host, connect_params, link_mode, id, userid] {
                         auto     self = weak_self.lock();
                         wxString msg = "";
                         json     params;
@@ -2661,7 +2774,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                             }
 
                             if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type != "") {
-                                wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params,nozzle_diameters, device_name]() {
+                                wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params,nozzle_diameters, device_name, id, userid]() {
                                     // 查询成功
                                     DeviceInfo info;
                                     info.ip        = ip;
@@ -2669,6 +2782,9 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     info.dev_name  = ip;
                                     info.connected = true;
                                     info.link_mode = link_mode;
+                                    info.id        = id;
+                                    info.userid    = userid;
+                                    ;
 
                                     info.model_name = machine_type;
                                     info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
@@ -2771,7 +2887,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                     }
                                 });
                             } else {
-                                wxGetApp().CallAfter([connect_params, ip, host, link_mode]() {
+                                wxGetApp().CallAfter([connect_params, ip, host, link_mode, id, userid]() {
                                     // 是否为连接过的设备
                                     DeviceInfo  query_info;
                                     std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
@@ -2808,6 +2924,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 info.model_name = machine_type;
                                                 info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
                                                 info.link_mode  = link_mode;
+                                                info.id         = id;
+                                                info.userid     = userid;
                                                 if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                     info.sn       = connect_params["sn"].get<std::string>();
                                                     info.dev_name = info.sn != "" ? info.sn : info.dev_name;
@@ -2860,6 +2978,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                 info.dev_name  = ip;
                                                 info.connected = true;
                                                 info.link_mode = link_mode;
+                                                info.id        = id;
+                                                info.userid    = id;
                                                 info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
                                                 if (connect_params.count("sn") && connect_params["sn"].is_string()) {
                                                     info.sn       = connect_params["sn"].get<std::string>();
@@ -3487,7 +3607,7 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
         }
 
         WCP_Logger::getInstance().run();
-        WCP_Logger::getInstance().add_log(message);
+        WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
 
         json j_message = json::parse(message);
 

@@ -3816,7 +3816,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("z_hop_when_prime", coBools);
     def->label = L("Z hop when moving to tower");
     def->mode  = comAdvanced;
-    def->set_default_value(new ConfigOptionBools{false});
+    def->set_default_value(new ConfigOptionBools{true});
 
     def = this->add("travel_slope", coFloats);
     def->label = L("Traveling angle");

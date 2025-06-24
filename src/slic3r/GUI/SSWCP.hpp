@@ -32,9 +32,17 @@ public:
     static WCP_Logger& getInstance();
 
     // Add a log message to the queue
-    void add_log(const wxString& log);
+    void add_log(const wxString& content, bool is_web, wxString time, wxString module, wxString level);
 
     void worker();
+
+    bool set_level(wxString& level);
+
+    int get_level() { return m_log_level; }
+
+    std::unordered_map<wxString, int> m_log_level_map = {
+        {"debug", 0},{"info", 1},{"warning", 2},{"error", 3},{"fatal", 4},
+    };
 
 private:
     WCP_Logger();
@@ -53,6 +61,9 @@ private:
     tcp::resolver*    resolver;
 
     bool inited = false;
+
+    int                               m_log_level     = 0;
+
 };
 
 // Base class for handling web communication instances
@@ -85,13 +96,13 @@ public:
     virtual void process();
 
     // Send response back to JavaScript
-    virtual void send_to_js();
+    virtual void send_to_js(int code, const wxString& msg);
 
     // Clean up after job completion
     virtual void finish_job();
 
     // General failure
-    void handle_general_fail();
+    void handle_general_fail(int code, const wxString& msg);
 
     // Get instance type
     virtual INSTANCE_TYPE getType() { return m_type; }
@@ -137,8 +148,12 @@ private:
 
     // get file stream
     void sw_GetFileStream();
-
     void sw_GetActiveFile();
+
+    // orca console
+    void sw_LaunchConsole();
+    void sw_Log();
+    void sw_SetLogLevel();
 
     static std::unordered_map<std::string, json> m_wcp_cache;
     std::thread                                  m_work_thread; // Worker thread

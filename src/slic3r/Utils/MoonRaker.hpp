@@ -94,6 +94,10 @@ public:
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>){}
+
+    virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) {}
+
 protected:
     // Internal upload implementations
 #ifdef WIN32
@@ -206,6 +210,10 @@ public:
     virtual void async_camera_start(const std::string& domain, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) override;
 
     void set_connection_lost(std::function<void()> callback) override;
 

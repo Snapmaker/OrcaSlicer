@@ -310,6 +310,12 @@ private:
     // 结束预打印流程
     void sw_FinishPreprint();
 
+    // 请求设备下载文件并打印
+    void sw_PullCloudFile();
+
+    // 请求设备取消下载文件
+    void sw_CancelPullCloudFile();
+
 private:
     std::thread m_work_thread;  // Worker thread
 };

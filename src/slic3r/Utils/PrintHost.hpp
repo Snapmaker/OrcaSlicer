@@ -124,6 +124,10 @@ public:
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>){}
+
+    virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) {}
+
     //Support for cloud webui login
     virtual bool is_cloud() const { return false; }
     virtual bool is_logged_in() const { return false; }

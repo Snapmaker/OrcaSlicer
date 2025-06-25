@@ -1859,6 +1859,62 @@ void Moonraker_Mqtt::async_canmera_stop(const std::string& domain, std::function
     }
 }
 
+// 请求设备下载云文件并打印
+void Moonraker_Mqtt::async_pull_cloud_file(const nlohmann::json& targets,
+                                           std::function<void(const nlohmann::json& response)>                  callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始请求设备下载云文件";
+    wcp_loger.add_log("开始请求设备下载云文件", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "server.files.pull";
+
+    json params = json::object();
+
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 添加云文件下载目标,  属性数量: " << targets.size();
+    wcp_loger.add_log("添加云文件下载目标, 属性数量: " + std::to_string(targets.size()), false, "",
+                      "Moonraker_Mqtt", "info");
+
+    params = targets;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 请求设备下载文件超时";
+                             wcp_loger.add_log("请求设备下载文件超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求设备下载文件超时请求失败";
+        wcp_loger.add_log("发送请求设备下载文件超时请求失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
+void Moonraker_Mqtt::async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 请求设备取消上传";
+    wcp_loger.add_log("请求设备取消上传", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "server.files.cancel_pull";
+
+    json params = json::object();
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 请求设备取消上传超时";
+                             wcp_loger.add_log("请求设备取消上传超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送设备取消上传请求失败";
+        wcp_loger.add_log("发送设备取消上传请求失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 // Query printer information
 void Moonraker_Mqtt::async_get_machine_info(
     const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,

@@ -158,19 +158,24 @@ WCP_Logger::~WCP_Logger()
         m_work_thread.join();
 
     try {
-        if (socket->is_open()) {
+        if (socket != nullptr && socket->is_open()) {
             socket->close();
         }
     }
     catch (std::exception& e) {
-        delete resolver;
-        delete socket;
+        if (resolver)
+            delete resolver;
+        
+        if (socket)
+            delete socket;
         return;
     }
     
-
-    delete resolver;
-    delete socket;
+    if (resolver)
+        delete resolver;
+    
+    if (socket)
+        delete socket;
 }
 
 extern json m_ProfileJson;
@@ -1384,6 +1389,10 @@ void SSWCP_MachineOption_Instance::process()
         sw_GetPrintZip();
     } else if (m_cmd == "sw_FinishPreprint") {
         sw_FinishPreprint();
+    } else if (m_cmd == "sw_PullCloudFile") {
+        sw_PullCloudFile();
+    } else if (m_cmd == "sw_CancelPullCloudFile") {
+        sw_CancelPullCloudFile();
     }
     
     else {
@@ -1722,7 +1731,7 @@ void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
         wxGetApp().get_connect_host(host);
             
         if (!host) {
-            handle_general_fail();
+            handle_general_fail(-1, "Can't find the active machine");
             return;
         }
 
@@ -1734,6 +1743,54 @@ void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_PullCloudFile()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Can't find the active machine");
+            return;
+        }
+
+        json items = m_param_data;
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_pull_cloud_file(items, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_CancelPullCloudFile()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Can't find the active machine");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_cancel_pull_cloud_file([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -3553,6 +3610,8 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_GetPrintLegal",
     "sw_GetPrintZip",
     "sw_FinishPreprint",
+    "sw_PullCloudFile",
+    "sw_CancelPullCloudFile",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
@@ -3606,8 +3665,6 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
         if (!webview) {
             return;
         }
-
-        WCP_Logger::getInstance().run();
         WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
 
         json j_message = json::parse(message);

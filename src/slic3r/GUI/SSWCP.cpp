@@ -114,7 +114,7 @@ void WCP_Logger::add_log(const wxString& content, bool is_web = false, wxString 
 
 
     std::lock_guard<std::mutex> lock(m_log_mtx);
-    m_log_que.push(time + "[ " + (is_web ? "Flutter" : "Native") + " ] [ " + level + " ] [ " + module + "] " + content + "\n");
+    m_log_que.push((time + " [ " + (is_web ? "Flutter" : "Native") + " ] [ " + level + " ] [ " + module + "] " + content + "\n").ToUTF8());
 }
 
 void WCP_Logger::worker()
@@ -126,6 +126,7 @@ void WCP_Logger::worker()
             m_log_que.pop();
             m_log_mtx.unlock();
 
+            log += "\n";
             try {
                 asio::write(*socket, asio::buffer(log.ToUTF8().data(), log.length() + 1));
             }

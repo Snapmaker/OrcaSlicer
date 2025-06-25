@@ -4,29 +4,28 @@
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 
-namespace Slic3r {
-namespace GUI {
+namespace Slic3r { namespace GUI {
 
 std::string url_get_param(const std::string& url, const std::string& key)
 {
     size_t start = url.find(key);
-    if (start == std::string::npos) return "";
+    if (start == std::string::npos)
+        return "";
     size_t eq = url.find('=', start);
-    if (eq == std::string::npos) return "";
+    if (eq == std::string::npos)
+        return "";
     std::string key_str = url.substr(start, eq - start);
     if (key_str != key)
         return "";
     start += key.size() + 1;
     size_t end = url.find('&', start);
-    if (end == std::string::npos) end = url.length(); // Last param
+    if (end == std::string::npos)
+        end = url.length(); // Last param
     std::string result = url.substr(start, end - start);
     return result;
 }
 
-void session::start()
-{
-    read_first_line();
-}
+void session::start() { read_first_line(); }
 
 void session::stop()
 {
@@ -67,6 +66,24 @@ void session::read_next_line()
 {
     auto self(shared_from_this());
 
+    if (headers.method == "OPTIONS") {
+        // 构造OPTIONS响应（允许跨域）
+        std::stringstream ssOut;
+        ssOut << "HTTP/1.1 200 OK\r\n";
+        ssOut << "Access-Control-Allow-Origin: *\r\n";                            // 允许所有源
+        ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";          // 允许的方法
+        ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"; // 允许的请求头
+        ssOut << "Content-Length: 0\r\n";                                         // 无响应体
+        ssOut << "\r\n";                                                          // 头和主体之间的空行（必须）
+
+        // 异步发送响应
+        async_write(socket, boost::asio::buffer(ssOut.str()), [this, self](const boost::beast::error_code& e, std::size_t s) {
+            std::cout << "OPTIONS预检请求已处理" << std::endl;
+            server.stop(self); // 关闭连接
+        });
+        return; // 提前返回，避免后续逻辑
+    }
+
     async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
             std::string  line, ignore;
@@ -91,9 +108,9 @@ void session::read_next_line()
                     std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
                     async_write(socket, boost::asio::buffer(str->c_str(), str->length()),
                                 [this, self, str](const boost::beast::error_code& e, std::size_t s) {
-                        std::cout << "done" << std::endl;
-                        server.stop(self);
-                    });
+                                    std::cout << "done" << std::endl;
+                                    server.stop(self);
+                                });
                 } else {
                     read_body();
                 }
@@ -142,9 +159,7 @@ void HttpServer::IOServer::stop_all()
     sessions.clear();
 }
 
-HttpServer::IOServer::IOServer(HttpServer& server) 
-    : server(server)
-    , acceptor(io_service)
+HttpServer::IOServer::IOServer(HttpServer& server) : server(server), acceptor(io_service)
 {
     boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
     acceptor.open(endpoint.protocol());
@@ -154,24 +169,25 @@ HttpServer::IOServer::IOServer(HttpServer& server)
 
 HttpServer::HttpServer(boost::asio::ip::port_type port) : port(port) {}
 
-bool HttpServer::is_port_available(boost::asio::ip::port_type port) {
+bool HttpServer::is_port_available(boost::asio::ip::port_type port)
+{
     try {
-        boost::asio::io_service io_service;
+        boost::asio::io_service        io_service;
         boost::asio::ip::tcp::acceptor acceptor(io_service);
         boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), port);
-        
+
         acceptor.open(endpoint.protocol());
         acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         acceptor.bind(endpoint);
         acceptor.close();
         return true;
-    }
-    catch (const boost::system::system_error&) {
+    } catch (const boost::system::system_error&) {
         return false;
     }
 }
 
-boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port_type start_port) {
+boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port_type start_port)
+{
     // 尝试从起始端口开始查找可用端口
     for (boost::asio::ip::port_type p = start_port; p < start_port + 1000; ++p) {
         if (is_port_available(p)) {
@@ -184,7 +200,7 @@ boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port
 void HttpServer::start()
 {
     BOOST_LOG_TRIVIAL(info) << "start_http_service...";
-    
+
     try {
         // 如果指定端口不可用，查找下一个可用端口
         if (!is_port_available(port)) {
@@ -193,7 +209,7 @@ void HttpServer::start()
             port = new_port;
         }
 
-        start_http_server = true;
+        start_http_server    = true;
         m_http_server_thread = create_thread([this] {
             try {
                 set_current_thread_name("http_server");
@@ -201,8 +217,7 @@ void HttpServer::start()
                 server_->acceptor.listen();
                 server_->do_accept();
                 server_->io_service.run();
-            }
-            catch (const std::exception& e) {
+            } catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "HTTP server error: " << e.what();
                 start_http_server = false;
             }
@@ -210,14 +225,13 @@ void HttpServer::start()
 
         // 等待服务器启动
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
+
         if (!start_http_server) {
             throw std::runtime_error("Failed to start HTTP server");
         }
-        
+
         BOOST_LOG_TRIVIAL(info) << "HTTP server started successfully on port " << port;
-    }
-    catch (const std::exception& e) {
+    } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
         start_http_server = false;
         throw;
@@ -311,11 +325,12 @@ std::shared_ptr<HttpServer::Response> HttpServer::web_server_handle_request(cons
     return std::make_shared<ResponseFile>(file_path);
 }
 
-std::string HttpServer::map_url_to_file_path(const std::string& url) {
+std::string HttpServer::map_url_to_file_path(const std::string& url)
+{
     if (url.find("..") != std::string::npos) {
         return "";
     }
-    
+
     std::string trimmed_url = url;
 
     size_t question_mark = trimmed_url.find('?');
@@ -343,71 +358,78 @@ std::string HttpServer::map_url_to_file_path(const std::string& url) {
     }
 }
 
-void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
-{
-    const std::string sHTML = "<html><body><h1>404 Not Found</h1><p>There's nothing here.</p></body></html>";
-    ssOut << "HTTP/1.1 404 Not Found" << std::endl;
-    ssOut << "content-type: text/html" << std::endl;
-    ssOut << "content-length: " << sHTML.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << sHTML;
-}
-
 void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
 {
-    const std::string sHTML = "<html><body><p>redirect to url </p></body></html>";
-    ssOut << "HTTP/1.1 302 Found" << std::endl;
-    ssOut << "Location: " << location_str << std::endl;
-    ssOut << "content-type: text/html" << std::endl;
-    ssOut << "content-length: " << sHTML.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << sHTML;
+    const std::string sHTML          = "<html><body><p>redirect to url </p></body></html>";
+    size_t            content_length = sHTML.size(); // 字节长度（与字符数相同，因无多字节字符）
+
+    ssOut << "HTTP/1.1 302 Found\r\n";
+    ssOut << "Location: " << location_str << "\r\n";
+    ssOut << "Content-Type: text/html\r\n";
+    ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
+    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
+    ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
+    ssOut << sHTML;                                          // 响应体（长度必须匹配）
+}
+
+void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
+{
+    const std::string sHTML          = "<html><body><h1>404 Not Found</h1><p>There's nothing here.</p></body></html>";
+    size_t            content_length = sHTML.size(); // 字节长度
+
+    ssOut << "HTTP/1.1 404 Not Found\r\n";
+    ssOut << "Content-Type: text/html\r\n";
+    ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
+    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
+    ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
+    ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
 
 void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
 {
     std::ifstream file(file_path, std::ios::binary);
-    if(!file){
+    if (!file) {
         ResponseNotFound notFoundResponse;
         notFoundResponse.write_response(ssOut);
         return;
     }
 
+    // 读取文件内容并计算长度（关键：使用字节长度）
     std::ostringstream fileStream;
-    fileStream  << file.rdbuf();
-    std::string fileContent = fileStream.str();
+    fileStream << file.rdbuf();
+    std::string fileContent    = fileStream.str();
+    size_t      content_length = fileContent.size(); // 字节长度，非字符数
 
-    std::string content_type = "application/octet-stream"; 
-
-
-    if(ends_with(file_path,".html")){
+    // 确定Content-Type（保持原有逻辑）
+    std::string content_type = "application/octet-stream";
+    if (ends_with(file_path, ".html"))
         content_type = "text/html";
-    }else if(ends_with(file_path, ".css")){
+    else if (ends_with(file_path, ".css"))
         content_type = "text/css";
-    }else if(ends_with(file_path, ".js")){
+    else if (ends_with(file_path, ".js"))
         content_type = "text/javascript";
-    }else if(ends_with(file_path, ".png")){
+    else if (ends_with(file_path, ".png"))
         content_type = "image/png";
-    }else if(ends_with(file_path, ".jpg")){
+    else if (ends_with(file_path, ".jpg"))
         content_type = "image/jpeg";
-    }else if(ends_with(file_path, ".gif")){
+    else if (ends_with(file_path, ".gif"))
         content_type = "image/gif";
-    }else if(ends_with(file_path, ".svg")){ 
+    else if (ends_with(file_path, ".svg"))
         content_type = "image/svg+xml";
-    }else if(ends_with(file_path, ".ttf")){
+    else if (ends_with(file_path, ".ttf"))
         content_type = "application/x-font-ttf";
-    }else if(ends_with(file_path, ".json")){
+    else if (ends_with(file_path, ".json"))
         content_type = "application/json";
-    }
 
-    ssOut << "HTTP/1.1 200 OK" << std::endl;
-    ssOut << "Content-Type: " << content_type << std::endl;
-    ssOut << "Content-Length: " << fileContent.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << fileContent;
-
-
+    // 构造响应头（严格使用\r\n，头结束后空行）
+    ssOut << "HTTP/1.1 200 OK\r\n";
+    ssOut << "Content-Type: " << content_type << "\r\n";
+    ssOut << "Content-Length: " << content_length << "\r\n"; // 必须与实际内容长度一致
+    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
+    ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+    ssOut << "\r\n";      // 头和主体之间的空行（必须）
+    ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
 }
 
-} // GUI
-} //Slic3r
+}} // namespace Slic3r::GUI

@@ -66,6 +66,7 @@ PrinterWebView::~PrinterWebView()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Start";
     SetEvtHandlerEnabled(false);
+    SSWCP::on_webview_delete(m_browser);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " End";
 }

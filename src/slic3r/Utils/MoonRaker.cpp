@@ -1067,7 +1067,7 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             wcp_loger.add_log("获取本地IP失败: " + std::string(e.what()), false, "", "Moonraker_Mqtt", "error");
             local_ip = "0.0.0.0"; // 失败时使用默认IP
         }
-        m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, true));
+        m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, "", "", true));
         m_mqtt_client_tls.reset();
         BOOST_LOG_TRIVIAL(error) << "本地ip" << local_ip;
         wcp_loger.add_log("本地ip: " + local_ip, false, "", "Moonraker_Mqtt", "error");
@@ -1093,6 +1093,28 @@ nlohmann::json Moonraker_Mqtt::get_auth_info() {
     return authinfo;
 }
 
+bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::string& msg)
+{
+    if (m_mqtt_client_tls->CheckConnected()) {
+        std::string dis_msg = "success";
+        m_mqtt_client_tls->Disconnect(dis_msg);
+    }
+
+    if (!engine->CheckConnected()) {
+        msg = "engine connection failed";
+        return false;
+    }
+
+    m_mqtt_client_tls = engine;
+
+    m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
+        this->on_mqtt_tls_message_arrived(topic, payload);
+    });
+
+    msg = "success";
+    return true;
+}
+
 // Ask for TLS info
 bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
 {
@@ -1102,21 +1124,25 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     }
 
     if(m_mqtt_client->CheckConnected()) {
-        m_mqtt_client->Disconnect();
+        std::string dc_msg = "";
+        m_mqtt_client->Disconnect(dc_msg);
     }
 
     m_sn_mtx.lock();
     m_sn = "";
     m_sn_mtx.unlock();
 
-    bool is_connect = m_mqtt_client->Connect();
+    std::string connection_msg = "";
+    bool is_connect = m_mqtt_client->Connect(connection_msg);
+
     if(!is_connect || !cn_params.count("code") || cn_params["code"].get<std::string>() == "") {
         return false;
     }
 
     std::string auth_code  = cn_params["code"].get<std::string>();
 
-    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 1);
+    std::string sub_msg             = "success";
+    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 1, sub_msg);
     if (!response_subscribed) {
         return false;
     }
@@ -1189,7 +1215,8 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     }
     body["id"] = seq_id;
 
-    if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 1)){
+    std::string pub_msg = "";
+    if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 1, pub_msg)){
         return false;
     }
 
@@ -1299,7 +1326,8 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     if (m_mqtt_client) {
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 断开旧的MQTT客户端连接";
         wcp_loger.add_log("断开旧的MQTT客户端连接", false, "", "Moonraker_Mqtt", "info");
-        m_mqtt_client->Disconnect();
+        std::string dc_msg = "success";
+        m_mqtt_client->Disconnect(dc_msg);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         m_mqtt_client.reset();
     }
@@ -1307,7 +1335,8 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     if (m_mqtt_client_tls) {
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 断开旧的MQTTS客户端连接";
         wcp_loger.add_log("断开旧的MQTTS客户端连接", false, "", "Moonraker_Mqtt", "info");
-        m_mqtt_client_tls->Disconnect();
+        std::string dc_msg = "success";
+        m_mqtt_client_tls->Disconnect(dc_msg);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         m_mqtt_client_tls.reset();
     }
@@ -1332,7 +1361,9 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         return false;
     }
 
-    bool is_connect = m_mqtt_client_tls->Connect();
+    std::string connection_msg = "";
+    bool is_connect = m_mqtt_client_tls->Connect(connection_msg);
+    msg                        = connection_msg;
     if (!is_connect) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] MQTT连接失败";
         wcp_loger.add_log("MQTT连接失败", false, "", "Moonraker_Mqtt", "error");
@@ -1353,8 +1384,11 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 1);
-    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 1);
+    std::string no_sub_msg              = "success";
+    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 1, no_sub_msg);
+
+    std::string res_sub_msg         = "success";
+    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 1, res_sub_msg);
     
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 订阅主题结果 - 通知主题: " << (notification_subscribed ? "成功" : "失败")
                            << ", 响应主题: " << (response_subscribed ? "成功" : "失败");
@@ -1380,7 +1414,8 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
         return false;
     }
 
-    bool flag = m_mqtt_client_tls->Disconnect();
+    std::string dc_msg = "success";
+    bool flag = m_mqtt_client_tls->Disconnect(dc_msg);
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS断开连接结果: " << (flag ? "成功" : "失败");
     wcp_loger.add_log("MQTTS断开连接结果: " + std::string((flag ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
     m_sn_mtx.lock();
@@ -1408,7 +1443,8 @@ void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohm
     
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用SN主题: " << main_layer;
     wcp_loger.add_log("使用SN主题: " + main_layer, false, "", "Moonraker_Mqtt", "info");
-    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1) : false;
+    std::string sub_msg = "success";
+    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1, sub_msg) : false;
 
     if (!res) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 订阅状态主题失败";
@@ -1548,7 +1584,8 @@ void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_re
 
             BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 发布测试请求到主题: " << main_layer + m_request_topic;
             wcp_loger.add_log("发布测试请求到主题: " + main_layer + m_request_topic, false, "", "Moonraker_Mqtt", "info");
-            bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 1);
+            std::string pub_msg = "success";
+            bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 1, pub_msg);
             if (!res) {
                 BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发布测试请求失败";
                 wcp_loger.add_log("发布测试请求失败", false, "", "Moonraker_Mqtt", "error");
@@ -1654,7 +1691,8 @@ void Moonraker_Mqtt::async_unsubscribe_machine_info(std::function<void(const nlo
     main_layer = m_sn;
     m_sn_mtx.unlock();
 
-    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Unsubscribe(main_layer + m_status_topic) : false;
+    std::string un_sub_msg = "success";
+    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Unsubscribe(main_layer + m_status_topic, un_sub_msg) : false;
 
     if (!res) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 取消订阅状态主题失败";
@@ -2049,7 +2087,8 @@ bool Moonraker_Mqtt::send_to_request(
         std::string topic = main_layer + m_request_topic;
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 发布到主题: " << topic;
         wcp_loger.add_log("发布到主题: " + topic, false, "", "Moonraker_Mqtt", "info");
-        bool res = m_mqtt_client_tls->Publish(topic, body.dump(), 1);
+        std::string pub_msg = "success";
+        bool res = m_mqtt_client_tls->Publish(topic, body.dump(), 1, pub_msg);
         if (!res) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发布请求失败，方法: " << method;
             wcp_loger.add_log("发布请求失败，方法: " + method, false, "", "Moonraker_Mqtt", "error");

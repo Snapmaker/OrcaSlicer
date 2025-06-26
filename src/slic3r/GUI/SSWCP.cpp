@@ -629,7 +629,7 @@ void SSWCP_Instance::handle_general_fail(int code, const wxString& msg)
     try {
         m_status = -1;
         m_msg    = msg.ToUTF8();
-        send_to_js();
+        send_to_js(code, msg);
         finish_job();
     } catch (std::exception& e) {}
     
@@ -2476,8 +2476,10 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
             auto        weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
             wxGetApp().CallAfter([=]() {
                 MqttClient* mqtt_client = new MqttClient("mqtt://" + ip + ":" + std::to_string(port), "Snapmaker Orca");
-                if (mqtt_client->Connect()) {
-                    if (mqtt_client->Subscribe("cloud/config/response", 2)) {
+                std::string connect_msg = "";
+                if (mqtt_client->Connect(connect_msg)) {
+                    std::string sub_msg = "success";
+                    if (mqtt_client->Subscribe("cloud/config/response", 1, sub_msg)) {
                         mqtt_client->SetMessageCallback([weak_self, mqtt_client](const std::string& topic, const std::string& message) {
                             auto self = weak_self.lock();
                             if (self) {
@@ -2488,7 +2490,8 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                                         self->send_to_js();
                                         self->finish_job();
 
-                                        mqtt_client->Disconnect();
+                                        std::string dc_msg = "success";
+                                        bool flag = mqtt_client->Disconnect(dc_msg);
                                         wxGetApp().CallAfter([mqtt_client]() { delete mqtt_client; });
                                         return;
                                     }
@@ -2511,7 +2514,8 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                         req_body["id"]                 = generator.generate_seq_id();
 
                         // 发送请求
-                        if (mqtt_client->Publish("cloud/config/request", req_body.dump(), 2)) {
+                        std::string pub_msg = "success";
+                        if (mqtt_client->Publish("cloud/config/request", req_body.dump(), 1, pub_msg)) {
                             return;
                         }
                     }
@@ -2663,7 +2667,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                 } 
             });
            
-        } else {
+        } 
+        else {
             if (m_param_data.count("ip")) {
                 std::string ip = m_param_data["ip"].get<std::string>();
 
@@ -3559,6 +3564,997 @@ void SSWCP_MachineManage_Instance::sw_SwitchModel()
     }
 }
 
+// SSWCP_MqttAgent_Instance
+
+std::unordered_map<wxWebView*, std::pair<std::string, std::shared_ptr<MqttClient>>> SSWCP_MqttAgent_Instance::m_mqtt_engine_map;
+std::mutex                                          SSWCP_MqttAgent_Instance::m_engine_map_mtx;
+std::map<std::pair<std::string, wxWebView*>, std::string>   SSWCP_MqttAgent_Instance::m_subscribe_map;
+std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> SSWCP_MqttAgent_Instance::m_subscribe_instance_map;
+
+void SSWCP_MqttAgent_Instance::process()
+{
+    if (m_cmd == "sw_create_mqtt_client") {
+        sw_create_mqtt_client();
+    } else if (m_cmd == "sw_mqtt_connect") {
+        sw_mqtt_connect();
+    } else if (m_cmd == "sw_mqtt_disconnect") {
+        sw_mqtt_disconnect();
+    } else if (m_cmd == "sw_mqtt_subscribe") {
+        sw_mqtt_subscribe();
+    } else if (m_cmd == "sw_mqtt_unsubscribe") {
+        sw_mqtt_unsubscribe();
+    } else if (m_cmd == "sw_mqtt_publish") {
+        sw_mqtt_publish();
+    } else if (m_cmd == "sw_mqtt_set_engine") {
+        sw_mqtt_set_engine();
+    } else {
+        handle_general_fail();
+    }
+}
+
+// 校验mqtt引擎id
+bool SSWCP_MqttAgent_Instance::validate_id(const std::string& id)
+{
+    bool flag = true;
+
+    m_engine_map_mtx.lock();
+    if (!m_mqtt_engine_map.count(m_webview)) {
+        flag = false;
+    } else {
+        flag = m_mqtt_engine_map[m_webview].first == id;
+    }
+    
+    m_engine_map_mtx.unlock();
+
+    return flag;
+}
+
+// webview析构回调
+void SSWCP_MqttAgent_Instance::set_Instance_illegal()
+{
+    SSWCP_Instance::set_Instance_illegal();
+
+    clean_current_engine();
+}
+
+// 清空当前mqtt实例
+void SSWCP_MqttAgent_Instance::clean_current_engine()
+{
+    //清除该实例的所有订阅
+    for (auto iter = m_subscribe_map.begin(); iter != m_subscribe_map.end();) {
+        if (iter->first.second == m_webview) {
+            iter = m_subscribe_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    for (auto iter = m_subscribe_instance_map.begin(); iter != m_subscribe_instance_map.end();) {
+        if (iter->first.second == m_webview) {
+            iter = m_subscribe_instance_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    m_engine_map_mtx.lock();
+    m_mqtt_engine_map.erase(m_webview);
+    m_engine_map_mtx.unlock();
+}
+
+// mqtt静态消息回调
+void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::string& payload)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Mqtt_Agent] 收到MQTT消息，主题: " << topic << ", 载荷长度: " << payload.length();
+    wcp_loger.add_log("收到MQTTS消息，主题: " + topic + ", 载荷长度: " + std::to_string(payload.length()), false, "", "Mqtt_Agent",
+                      "info");
+    try {
+        wxGetApp().CallAfter([topic, payload]() {
+            for (const auto& item : SSWCP_MqttAgent_Instance::m_subscribe_map) {
+
+                std::string id_topic = item.second;
+                std::string target_topic = topic;
+                if (id_topic.find("+") != std::string::npos) {
+                    id_topic = id_topic.substr(id_topic.find_first_of("/"));
+                    target_topic = topic.substr(topic.find_first_of("/"));
+
+                }
+
+                if (id_topic == target_topic) {
+                    if (SSWCP_MqttAgent_Instance::m_subscribe_instance_map.count(item.first)) {
+                        auto& instance                = SSWCP_MqttAgent_Instance::m_subscribe_instance_map[item.first];
+                        if (auto self = instance.lock()) {
+                            self->m_res_data["topic"] = topic;
+                            self->m_res_data["data"]  = payload;
+                            self->send_to_js();
+                        }
+                        
+                    } else {
+                        return;
+                    }
+                }
+            }
+        });
+
+    } catch (std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 处理MQTT消息异常: " << e.what();
+        wcp_loger.add_log("处理MQTTS消息异常: " + std::string(e.what()), false, "", "Moonraker_Mqtt", "error");
+    }
+}
+
+// 创建mqtt实例
+void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
+{
+    try {
+        // 解析参数
+        std::string server_address = "";
+        std::string clientId       = "";
+        std::string ca             = "";
+        std::string cert           = "";
+        std::string key            = "";
+        std::string username       = "";
+        std::string password       = "";
+        bool        clean_session  = false;
+
+        if (m_param_data.count("server_address") || !m_param_data["server_address"].is_string()) {
+            server_address = m_param_data["server_address"].get<std::string>();
+            if (server_address == "") {
+                handle_general_fail(-1, "the value of param [server_address] is illegal");
+                return;
+            }
+        }
+        else {
+            handle_general_fail(-1, "param [server_address] is required or wrong type");
+            return;
+        }
+
+        if (m_param_data.count("clientId") || !m_param_data["clientId"].is_string()) {
+            clientId = m_param_data["clientId"].get<std::string>();
+            if (clientId == "") {
+                handle_general_fail(-1, "the value of param [clientId] is illegal");
+                return;
+            }
+        } else {
+            handle_general_fail(-1, "param [clientId] is required or wroing type");
+            return;
+        }
+
+        ca = m_param_data.count("ca") ? m_param_data["ca"].get<std::string>() : "";
+        cert = m_param_data.count("cert") ? m_param_data["cert"].get<std::string>() : "";
+        key  = m_param_data.count("key") ? m_param_data["key"].get<std::string>() : "";
+
+        clean_session = m_param_data.count("clean_session") ? m_param_data["clean_session"].get<bool>() : false;
+
+        username = m_param_data.count("username") ? m_param_data["username"].get<std::string>() : "";
+        password = m_param_data.count("password") ? m_param_data["password"].get<std::string>() : "";
+
+
+        // 确认mqtt连接类型，并创建实例
+        std::shared_ptr<MqttClient> client = nullptr;
+        std::string type = "mqtt";
+        if (ca != "" && cert != "" && key != "") {
+            type = "mqtts";
+            client.reset(new MqttClient(server_address, clientId, ca, cert, key, username, password, clean_session));
+        } else {
+            client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
+        }
+
+        if (client == nullptr) {
+            // 创建失败
+            handle_general_fail(-1, "create instance failed");
+            return;
+        }
+
+        // 清空当前m_clinet的订阅列表
+        clean_current_engine();
+
+        // 替换新引擎
+        bool flag = set_current_engine({std::to_string(int64_t(client.get())), client});
+        if (!flag) {
+            handle_general_fail(-1, "create failed");
+            return;
+        }
+        
+        // 绑定静态回调 
+        client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
+
+        m_res_data["type"] = type;
+        m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
+
+        send_to_js();
+        finish_job();
+
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// mqtt引擎建立连接
+void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
+{
+    try {
+        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
+            handle_general_fail(-1, "param [id] is required or wrong type");
+            return;
+        }
+
+        std::string id = m_param_data["id"].get<std::string>();
+
+        if (!validate_id(id)) {
+            handle_general_fail(-1, "id is illegal");
+            return;
+        }
+
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        auto                          engine   = get_current_engine();
+        m_work_thread = std::thread([weak_ptr, engine]() {
+            if (!weak_ptr.lock()) {
+                return;
+            }
+            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+
+            std::string msg;
+            bool flag = engine->Connect(msg);
+
+            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+                auto self = weak_ptr.lock();
+                if (self) {
+                    if (flag) {
+                        self->send_to_js(200, msg);
+                        self->finish_job();
+                    } else {
+                        self->handle_general_fail(-1, msg);
+                    }
+                }
+            });
+        });
+        
+
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// mqtt引擎断开连接
+void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
+{
+    try {
+        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
+            handle_general_fail(-1, "param [id] is required or wrong type");
+            return;
+        }
+
+        std::string id = m_param_data["id"].get<std::string>();
+
+        if (!validate_id(id)) {
+            handle_general_fail(-1, "id is illegal");
+            return;
+        }
+
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        auto                          engine   = get_current_engine();
+        m_work_thread                          = std::thread([weak_ptr, engine]() {
+            if (!weak_ptr.lock()) {
+                return;
+            }
+            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+
+            std::string msg  = "success";
+            bool        flag = engine->Disconnect(msg);
+
+            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+                auto self = weak_ptr.lock();
+                if (self) {
+                    if (flag) {
+                        self->send_to_js(200, msg);
+                        self->finish_job();
+                    } else {
+                        self->handle_general_fail(-1, msg);
+                    }
+                }
+            });
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// 订阅topic
+void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
+{
+    try {
+        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
+            handle_general_fail(-1, "param [id] is required or wrong type");
+            return;
+        }
+
+        std::string id = m_param_data["id"].get<std::string>();
+
+        if (!validate_id(id)) {
+            handle_general_fail(-1, "id is illegal");
+            return;
+        }
+
+        if (m_event_id == "") {
+            handle_general_fail(-1, "event_id is required or wrong type");
+            return;
+        }
+
+        std::string event_id = m_event_id;
+
+        if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
+            handle_general_fail(-1, "param [topic] is required or wrong type");
+            return;
+        }
+        std::string topic = m_param_data["topic"].get<std::string>();
+
+
+        m_subscribe_map[{event_id, m_webview}] = topic;
+        m_subscribe_instance_map[{event_id, m_webview}] = shared_from_this();
+
+        if (!m_param_data.count("qos") || !m_param_data["qos"].is_number()) {
+            handle_general_fail(-1, "param [qos] is required or wrong type");
+            return;
+        }
+        int qos = m_param_data["qos"].get<int>();
+
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        auto                          engine   = get_current_engine();
+        m_work_thread                          = std::thread([weak_ptr, engine, topic, qos]() {
+            if (!weak_ptr.lock()) {
+                return;
+            }
+            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+
+            std::string msg  = "success";
+            bool        flag = engine->Subscribe(topic, qos, msg);
+
+            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+                auto self = weak_ptr.lock();
+                if (self) {
+                    if (flag) {     
+                        // 回复后， 设置event_id, 长期保留对象
+                        if (self->m_event_id != "") {
+                            self->send_to_js(200, msg);
+                            
+                            json header;
+                            self->m_header.clear();
+                            self->m_header["event_id"] = self->m_event_id;
+                        } else {
+                            self->handle_general_fail(-1, "event_id is null");
+                        }
+                        
+                    } else {
+                        self->handle_general_fail(-1, msg);
+                    }
+                }
+            });
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+// 取消订阅
+void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
+    try {
+        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
+            handle_general_fail(-1, "param [id] is required or wrong type");
+            return;
+        }
+
+        std::string id = m_param_data["id"].get<std::string>();
+
+        if (!validate_id(id)) {
+            handle_general_fail(-1, "id is illegal");
+            return;
+        }
+
+        if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
+            handle_general_fail(-1, "param [topic] is required or wrong type");
+            return;
+        }
+        std::string topic = m_param_data["topic"].get<std::string>();
+
+        // 维护订阅topic表和eventid实例表
+        for (auto iter = m_subscribe_map.begin();
+            iter != m_subscribe_map.end(); ) {
+            if (iter->second == topic) {
+                if (m_subscribe_instance_map.count(iter->first)) {
+                    m_subscribe_instance_map.erase(iter->first);
+                }
+                iter = m_subscribe_map.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        auto                          engine   = get_current_engine();
+        m_work_thread                          = std::thread([weak_ptr, engine, topic]() {
+            if (!weak_ptr.lock()) {
+                return;
+            }
+            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+
+            std::string msg  = "success";
+            bool        flag = engine->Unsubscribe(topic, msg);
+
+            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+                auto self = weak_ptr.lock();
+                if (self) {
+                    if (flag) {
+                        self->send_to_js(200, msg);
+                        self->finish_job();
+                    } else {
+                        self->handle_general_fail(-1, msg);
+                    }
+                }
+            });
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
+{
+    try {
+        if (!m_param_data.count("engine_id") || !m_param_data["engine_id"].is_string()) {
+            handle_general_fail(-1, "param [engine_id] is required or wrong type");
+            return;
+        }
+
+        std::string engine_id = m_param_data["engine_id"].get<std::string>();
+
+        if (!validate_id(engine_id)) {
+            handle_general_fail(-1, "id is illegal");
+            return;
+        }
+
+        if (!m_param_data.count("ip") || !m_param_data["ip"].is_string()) {
+            handle_general_fail(-1, "param [ip] is required or wrong type");
+            return;
+        }
+        std::string ip = m_param_data["ip"].get<std::string>();
+
+        if (!m_param_data.count("port") || !m_param_data["port"].is_number()) {
+            handle_general_fail(-1, "param [port] is required or wrong type");
+            return;
+        }
+        int port = m_param_data["port"].get<int>();
+
+        auto config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+
+        PrintHostType type = PrintHostType::htMoonRaker_mqtt;
+        // todo : 增加输入与type的映射
+
+        config.option<ConfigOptionEnum<PrintHostType>>("host_type")->value = type;
+
+        config.set("print_host", ip + (port == -1 ? "" : ":" + std::to_string(port)));
+
+        std::shared_ptr<PrintHost> tmp_host(PrintHost::get_print_host(&config));
+        wxGetApp().set_connect_host(tmp_host);
+        wxGetApp().set_host_config(config);
+
+        // 整理订阅列表，取消权限，但是保留真正的底层订阅
+        // 维护订阅topic表和eventid实例表
+        clean_current_engine();
+
+        std::shared_ptr<Moonraker_Mqtt> host = dynamic_pointer_cast<Moonraker_Mqtt>(tmp_host);
+        if (host) {
+            auto engine = get_current_engine();
+            if (engine == nullptr) {
+                handle_general_fail(-1, "invalid engine");
+                return;
+            }
+
+            if (!engine->CheckConnected()) {
+                handle_general_fail(-1, "engine connection lost");
+                return;
+            }
+            std::string msg    = "success";
+            bool flag = host->set_engine(engine, msg);
+
+            {
+                if (m_param_data.count("ip")) {
+                    std::string ip = m_param_data["ip"].get<std::string>();
+
+                    int port = -1;
+                    if (m_param_data.count("port") && m_param_data["port"].is_number_integer()) {
+                        port = m_param_data["port"].get<int>();
+                    }
+
+                    // test
+                    if (port == -1 || port == 1883) {
+                        port = 1884;
+                    }
+
+                    json connect_params;
+                    if (m_param_data.count("sn") && m_param_data["sn"].is_string()) {
+                        connect_params["sn"] = m_param_data["sn"].get<std::string>();
+
+                        host->m_sn_mtx.lock();
+                        host->m_sn = m_param_data["sn"].get<std::string>();
+                        host->m_sn_mtx.unlock();
+                    } else {
+                        handle_general_fail(-1, "param [sn] is required or wrong type");
+                        return;
+                    }
+
+                    // 序列化参数
+                    if (m_param_data.count("code"))
+                        connect_params["code"] = m_param_data["code"];
+
+                    if (m_param_data.count("ca"))
+                        connect_params["ca"] = m_param_data["ca"];
+
+                    if (m_param_data.count("cert"))
+                        connect_params["cert"] = m_param_data["cert"];
+
+                    if (m_param_data.count("key"))
+                        connect_params["key"] = m_param_data["key"];
+
+                    if (m_param_data.count("user"))
+                        connect_params["user"] = m_param_data["user"];
+
+                    if (m_param_data.count("password"))
+                        connect_params["password"] = m_param_data["password"];
+
+                    if (m_param_data.count("port"))
+                        connect_params["port"] = m_param_data["port"];
+
+                    if (m_param_data.count("clientid"))
+                        connect_params["clientid"] = m_param_data["clientid"];
+
+                    std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
+                    connect_params["link_mode"] = link_mode;
+
+                    std::string id     = m_param_data.count("id") ? m_param_data["id"].get<std::string>() : "";
+                    std::string userid = m_param_data.count("userid") ? m_param_data["userid"].get<std::string>() : "";
+
+                    if (!host) {
+                        handle_general_fail(-1, "host created failed");
+                        return;
+                    } else {
+                        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+                        // 设置断联回调
+                        m_work_thread = std::thread([weak_self, host, connect_params, link_mode, id, userid] {
+                            auto     self = weak_self.lock();
+                            wxString msg  = "";
+                            json     params;
+                            host->set_connection_lost([]() {
+                                wxGetApp().CallAfter([]() {
+                                    wxGetApp().app_config->set("use_new_connect", "false");
+                                    auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
+                                    p_config->set("print_host", "");
+                                    wxGetApp().set_connect_host(nullptr);
+
+                                    auto devices = wxGetApp().app_config->get_devices();
+                                    for (size_t i = 0; i < devices.size(); ++i) {
+                                        if (devices[i].connected) {
+                                            devices[i].connected = false;
+                                            wxGetApp().app_config->save_device_info(devices[i]);
+                                            break;
+                                        }
+                                    }
+
+                                    // 更新卡片
+                                    json param;
+                                    param["command"]       = "local_devices_arrived";
+                                    param["sequece_id"]    = "10001";
+                                    param["data"]          = devices;
+                                    std::string logout_cmd = param.dump();
+                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                                    GUI::wxGetApp().run_script(strJS);
+
+                                    // wcp订阅
+                                    json data = devices;
+                                    wxGetApp().device_card_notify(data);
+
+                                    /*MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
+                                                             wxICON_QUESTION | wxOK);
+                                    msg_window.ShowModal();*/
+
+                                    wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+                                });
+                            });
+                            bool res = true;
+
+                            std::string ip_port = host->get_host();
+                            if (res) {
+                                int         pos = ip_port.find(':');
+                                std::string ip  = ip_port;
+                                if (pos != std::string::npos) {
+                                    ip = ip_port.substr(0, pos);
+                                }
+
+                                // 更新其他设备连接状态为断开
+                                auto devices = wxGetApp().app_config->get_devices();
+                                for (size_t i = 0; i < devices.size(); ++i) {
+                                    if (devices[i].connected) {
+                                        devices[i].connected = false;
+                                        wxGetApp().app_config->save_device_info(devices[i]);
+                                        break;
+                                    }
+                                }
+
+                                // 查询机器的机型和喷嘴信息
+                                std::string              machine_type = "";
+                                std::vector<std::string> nozzle_diameters;
+                                std::string              device_name = "";
+
+                                std::shared_ptr<PrintHost> host = nullptr;
+                                wxGetApp().get_connect_host(host);
+
+                                // 设置sn
+
+                                if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type != "") {
+                                    wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params, nozzle_diameters, device_name,
+                                                          id, userid]() {
+                                        // 查询成功
+                                        DeviceInfo info;
+                                        info.ip        = ip;
+                                        info.dev_id    = host->get_sn() != "" ? host->get_sn() : ip;
+                                        info.dev_name  = ip;
+                                        info.connected = true;
+                                        info.link_mode = link_mode;
+                                        info.id        = id;
+                                        info.userid    = userid;
+                                        ;
+
+                                        info.model_name = machine_type;
+                                        info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
+                                        if (connect_params.count("sn") && connect_params["sn"].is_string()) {
+                                            std::string sn = host->get_sn();
+                                            info.sn        = connect_params["sn"].get<std::string>();
+                                            if (sn != "" && sn != info.sn) {
+                                                info.sn = sn;
+                                            }
+                                            info.dev_name = info.sn != "" ? info.sn : info.dev_name;
+                                            info.dev_id   = info.sn != "" ? info.sn : info.ip;
+                                        }
+
+                                        if (device_name != "") {
+                                            info.dev_name = device_name;
+                                        }
+
+                                        size_t vendor_pos = machine_type.find_first_of(" ");
+                                        if (vendor_pos != std::string::npos) {
+                                            std::string vendor        = machine_type.substr(0, vendor_pos);
+                                            std::string machine_cover = LOCALHOST_URL +
+                                                                        std::to_string(wxGetApp().m_page_http_server.get_port()) +
+                                                                        "/profiles/" + vendor + "/" + machine_type + "_cover.png";
+                                            info.img = machine_cover;
+                                        }
+
+                                        auto auth_info = host->get_auth_info();
+                                        try {
+                                            info.ca       = auth_info["ca"];
+                                            info.cert     = auth_info["cert"];
+                                            info.key      = auth_info["key"];
+                                            info.user     = auth_info["user"];
+                                            info.password = auth_info["password"];
+                                            info.port     = auth_info["port"];
+                                            info.clientid = auth_info["clientid"];
+                                        } catch (std::exception& e) {}
+
+                                        DeviceInfo query_info;
+                                        bool       exist = wxGetApp().app_config->get_device_info(info.dev_id, query_info);
+                                        if (nozzle_diameters.empty()) {
+                                            if (exist) {
+                                                query_info.connected = true;
+                                                wxGetApp().app_config->save_device_info(query_info);
+                                            } else {
+                                                wxGetApp().app_config->save_device_info(info);
+                                                MessageDialog msg_window(nullptr,
+                                                                         ip + " " + _L("The target machine model has been detected as") +
+                                                                             "" + machine_type + "\n" +
+                                                                             _L("Please bind the nozzle information") + "\n",
+                                                                         _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
+                                                msg_window.ShowModal();
+
+                                                auto dialog          = WebPresetDialog(&wxGetApp());
+                                                dialog.m_bind_nozzle = true;
+                                                dialog.m_device_id   = ip;
+                                                dialog.run();
+                                            }
+
+                                        } else {
+                                            info.nozzle_sizes = nozzle_diameters;
+                                            info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
+                                            wxGetApp().app_config->save_device_info(info);
+
+                                            auto dialog        = WebPresetDialog(&wxGetApp());
+                                            dialog.m_device_id = ip;
+
+                                            // 检查是否该预设已经选入系统
+                                            int  nModel = m_ProfileJson["model"].size();
+                                            bool isFind = false;
+                                            for (int m = 0; m < nModel; m++) {
+                                                if (m_ProfileJson["model"][m]["model"].get<std::string>() == info.model_name) {
+                                                    // 绑定的预设已被选入系统
+                                                    isFind                      = true;
+                                                    std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"]
+                                                                                      .get<std::string>();
+                                                    std::string se_nozz_selected = nozzle_diameters[0];
+                                                    if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
+                                                        nozzle_selected += ";" + se_nozz_selected;
+                                                        m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
+                                                    }
+
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!isFind) {
+                                                json new_item;
+                                                new_item["vendor"]          = "Snapmaker";
+                                                new_item["model"]           = info.model_name;
+                                                new_item["nozzle_selected"] = nozzle_diameters[0];
+                                                m_ProfileJson["model"].push_back(new_item);
+                                            }
+
+                                            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+
+                                            dialog.SaveProfile();
+                                            bool flag = false;
+                                            dialog.apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
+                                                                flag);
+                                            wxGetApp().update_mode();
+                                        }
+                                    });
+                                } else {
+                                    wxGetApp().CallAfter([connect_params, ip, host, link_mode, id, userid]() {
+                                        // 是否为连接过的设备
+                                        DeviceInfo  query_info;
+                                        std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
+                                        if (wxGetApp().app_config->get_device_info(dev_id, query_info)) {
+                                            query_info.connected = true;
+                                            wxGetApp().app_config->save_device_info(query_info);
+                                        } else {
+                                            auto machine_ip_type = MachineIPType::getInstance();
+                                            if (machine_ip_type) {
+                                                std::string machine_type = "";
+                                                if (machine_ip_type->get_machine_type(ip, machine_type)) {
+                                                    // 已经发现过的机型信息
+                                                    // test
+                                                    if (machine_type == "lava") {
+                                                        machine_type = "Snapmaker test";
+                                                    }
+
+                                                    DeviceInfo info;
+                                                    host->get_auth_info();
+                                                    auto auth_info = host->get_auth_info();
+                                                    try {
+                                                        info.ca       = auth_info["ca"];
+                                                        info.cert     = auth_info["cert"];
+                                                        info.key      = auth_info["key"];
+                                                        info.user     = auth_info["user"];
+                                                        info.password = auth_info["password"];
+                                                        info.port     = auth_info["port"];
+                                                        info.clientid = auth_info["clientid"];
+                                                    } catch (std::exception& e) {}
+                                                    info.ip         = ip;
+                                                    info.dev_id     = dev_id;
+                                                    info.dev_name   = ip;
+                                                    info.connected  = true;
+                                                    info.model_name = machine_type;
+                                                    info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
+                                                    info.link_mode  = link_mode;
+                                                    info.id         = id;
+                                                    info.userid     = userid;
+                                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
+                                                        info.sn       = connect_params["sn"].get<std::string>();
+                                                        info.dev_name = info.sn != "" ? info.sn : info.dev_name;
+                                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
+                                                    }
+
+                                                    size_t vendor_pos = machine_type.find_first_of(" ");
+                                                    if (vendor_pos != std::string::npos) {
+                                                        std::string vendor        = machine_type.substr(0, vendor_pos);
+                                                        std::string machine_cover = LOCALHOST_URL +
+                                                                                    std::to_string(
+                                                                                        wxGetApp().m_page_http_server.get_port()) +
+                                                                                    "/profiles/" + vendor + "/" + machine_type +
+                                                                                    "_cover.png";
+                                                        info.img = machine_cover;
+                                                    }
+
+                                                    wxGetApp().app_config->save_device_info(info);
+                                                    // todo 绑定喷嘴
+
+                                                    MessageDialog msg_window(nullptr,
+                                                                             ip + " " + _L("The target machine model has been detected as") +
+                                                                                 " " + machine_type + "\n" +
+                                                                                 _L("Please bind the nozzle information") + "\n",
+                                                                             _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
+                                                    msg_window.ShowModal();
+                                                    auto dialog          = WebPresetDialog(&wxGetApp());
+                                                    dialog.m_bind_nozzle = true;
+                                                    dialog.m_device_id   = ip;
+                                                    dialog.run();
+
+                                                    if (info.nozzle_sizes.empty())
+                                                        info.nozzle_sizes.push_back("0.4");
+
+                                                    info.preset_name = machine_type + " (" + info.nozzle_sizes[0] + " nozzle)";
+
+                                                    wxGetApp().app_config->save_device_info(info);
+                                                } else {
+                                                    DeviceInfo info;
+                                                    auto       auth_info = host->get_auth_info();
+                                                    try {
+                                                        info.ca       = auth_info["ca"];
+                                                        info.cert     = auth_info["cert"];
+                                                        info.key      = auth_info["key"];
+                                                        info.user     = auth_info["user"];
+                                                        info.password = auth_info["password"];
+                                                        info.port     = auth_info["port"];
+                                                        info.clientid = auth_info["clientid"];
+                                                    } catch (std::exception& e) {}
+                                                    info.ip        = ip;
+                                                    info.dev_id    = dev_id;
+                                                    info.dev_name  = ip;
+                                                    info.connected = true;
+                                                    info.link_mode = link_mode;
+                                                    info.id        = id;
+                                                    info.userid    = id;
+                                                    info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
+                                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
+                                                        info.sn       = connect_params["sn"].get<std::string>();
+                                                        info.dev_name = info.sn != "" ? info.sn : info.dev_name;
+                                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
+                                                    }
+                                                    wxGetApp().app_config->save_device_info(info);
+                                                    MessageDialog msg_window(
+                                                        nullptr,
+                                                        ip + " " +
+                                                            _L("The target machine model has not been detected. Please bind manually."),
+                                                        _L("Machine Bind"), wxICON_QUESTION | wxOK);
+                                                    msg_window.ShowModal();
+                                                    auto dialog        = WebPresetDialog(&wxGetApp());
+                                                    dialog.m_device_id = info.dev_id;
+                                                    dialog.run();
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+
+                                wxGetApp().CallAfter([weak_self]() {
+                                    // 更新首页设备卡片
+                                    auto devices = wxGetApp().app_config->get_devices();
+
+                                    json param;
+                                    param["command"]       = "local_devices_arrived";
+                                    param["sequece_id"]    = "10001";
+                                    param["data"]          = devices;
+                                    std::string logout_cmd = param.dump();
+                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                                    GUI::wxGetApp().run_script(strJS);
+
+                                    // wcp订阅
+                                    json data = devices;
+                                    wxGetApp().device_card_notify(data);
+
+                                    /*MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine
+                                    Connected"), wxICON_QUESTION | wxOK); msg_window.ShowModal();*/
+
+                                    auto dialog = wxGetApp().get_web_device_dialog();
+                                    if (dialog) {
+                                        dialog->EndModal(1);
+                                    }
+
+                                    wxGetApp().app_config->set("use_new_connect", "true");
+                                    wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+                                    wxGetApp().mainframe->m_print_enable = true;
+                                    wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
+                                    // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
+
+                                    if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
+                                        wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                                                               "/web/flutter_web/index.html?path=device_control");
+                                        auto     real_url = wxGetApp().get_international_url(url);
+                                        wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                                    } else {
+                                        wxGetApp().mainframe->m_printer_view->reload();
+                                    }
+
+                                    auto self = weak_self.lock();
+                                    if (!self) {
+                                        return;
+                                    }
+                                    self->send_to_js();
+                                    self->finish_job();
+                                });
+
+                            } 
+                        });
+                    }
+
+                } else {
+                    handle_general_fail(-1, "param [ip] required");
+                }
+            }
+            
+        } else {
+            handle_general_fail();
+        }
+
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
+{
+    try {
+        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
+            handle_general_fail(-1, "param [id] is required or wrong type");
+            return;
+        }
+
+        std::string id = m_param_data["id"].get<std::string>();
+
+        if (!validate_id(id)) {
+            handle_general_fail(-1, "id is illegal");
+            return;
+        }
+
+        if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
+            handle_general_fail(-1, "param [topic] is required or wrong type");
+            return;
+        }
+        std::string topic = m_param_data["topic"].get<std::string>();
+
+        if (!m_param_data.count("qos") || !m_param_data["qos"].is_number()) {
+            handle_general_fail(-1, "param [qos] is required or wrong type");
+            return;
+        }
+        int qos = m_param_data["qos"].get<int>();
+
+        if (!m_param_data.count("payload") || !m_param_data["payload"].is_string()) {
+            handle_general_fail(-1, "param [payload] required");
+            return;
+        }
+        std::string payload = m_param_data["payload"].get<std::string>();
+        
+
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        auto                          engine   = get_current_engine();
+        m_work_thread                          = std::thread([weak_ptr, engine, topic, payload, qos]() {
+            if (!weak_ptr.lock()) {
+                return;
+            }
+            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+
+            std::string msg  = "success";
+            bool        flag = engine->Publish(topic, payload, qos, msg);
+
+            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+                auto self = weak_ptr.lock();
+                if (self) {
+                    if (flag) {
+                        self->send_to_js(200, msg);
+                        self->finish_job();
+                    } else {
+                        self->handle_general_fail(-1, msg);
+                    }
+                }
+            });
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+
+
 // SSWCP
 TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> SSWCP::m_instance_list;
 constexpr std::chrono::milliseconds SSWCP::DEFAULT_INSTANCE_TIMEOUT;
@@ -3635,6 +4631,10 @@ std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"
 };
 
+std::unordered_set<std::string> SSWCP::m_mqtt_agent_cmd_list = {
+    "sw_create_mqtt_client", "sw_mqtt_connect", "sw_mqtt_disconnect", "sw_mqtt_subscribe", "sw_mqtt_unpublish", "sw_mqtt_publish", "sw_mqtt_set_engine"
+};
+
 std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
 {
     std::shared_ptr<SSWCP_Instance> instance;
@@ -3651,7 +4651,9 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
         instance = std::make_shared<SSWCP_UserLogin_Instance>(cmd, header, data, event_id, webview);
     } else if (m_machine_manage_cmd_list.find(cmd) != m_machine_manage_cmd_list.end()) {
         instance = std::make_shared<SSWCP_MachineManage_Instance>(cmd, header, data, event_id, webview);
-    } 
+    } else if(m_mqtt_agent_cmd_list.find(cmd) != m_mqtt_agent_cmd_list.end()) {
+        instance = std::make_shared<SSWCP_MqttAgent_Instance>(cmd, header, data, event_id, webview);
+    }
     else {
         instance = std::make_shared<SSWCP_Instance>(cmd, header, data, event_id, webview);
     }

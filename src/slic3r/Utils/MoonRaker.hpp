@@ -255,7 +255,12 @@ private:
     // Ask for TLS info
     bool ask_for_tls_info(const nlohmann::json& params);
 
+ 
+
 public:
+    // set engine
+    bool set_engine(const std::shared_ptr<MqttClient>& engine, std::string& msg);
+
     // Callback structure for MQTT requests
     struct RequestCallback {
         std::function<void(const nlohmann::json&)> success_cb;  // Success callback
@@ -286,6 +291,7 @@ private:
     static std::string m_notification_topic;
     static std::string m_request_topic;
 
+public:
     // Printer serial number
     static std::string m_sn;
     static std::mutex m_sn_mtx;

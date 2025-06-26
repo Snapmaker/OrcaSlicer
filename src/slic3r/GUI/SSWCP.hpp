@@ -16,6 +16,7 @@
 #include "slic3r/Utils/Bonjour.hpp"
 #include "slic3r/Utils/TimeoutMap.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
+#include "slic3r/Utils/MQTT.hpp"
 
 
 using namespace nlohmann;
@@ -79,6 +80,7 @@ public:
         SLICE_PROJECT,      // For homepage project business
         USER_LOGIN,         // For user login
         MACHINE_MANAGE,     // For homepage machine card
+        MQTT_AGENT,         // For mqtt-agent
     };
 
 public:
@@ -156,6 +158,9 @@ private:
     void sw_SetLogLevel();
 
     static std::unordered_map<std::string, json> m_wcp_cache;
+
+
+protected:
     std::thread                                  m_work_thread; // Worker thread
 
 public:
@@ -207,8 +212,76 @@ private:
 
     void sw_get_pin_code();
 
+};
+
+// mqtt-agent
+class SSWCP_MqttAgent_Instance : public SSWCP_Instance
+{
+public:
+    SSWCP_MqttAgent_Instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
+        : SSWCP_Instance(cmd, header, data, event_id, webview)
+    {
+        m_type = MQTT_AGENT;
+    }
+
+    ~SSWCP_MqttAgent_Instance()
+    {
+        if (m_work_thread.joinable())
+            m_work_thread.detach();
+    }
+
+    void process() override;
+
+public:
+    static std::unordered_map<wxWebView*, std::pair<std::string, std::shared_ptr<MqttClient>>> m_mqtt_engine_map; // (id, client)
+    static std::mutex                                          m_engine_map_mtx;
+
+    static std::map<std::pair<std::string, wxWebView*>, std::string> m_subscribe_map;          // ((event_id, webview), topic)
+    static std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> m_subscribe_instance_map; // ((event_id, webview), instance)
+
+public:
+    bool validate_id(const std::string& id);
+    std::shared_ptr<MqttClient> get_current_engine() {
+        m_engine_map_mtx.lock();
+        std::shared_ptr<MqttClient> ptr = nullptr;
+        if (m_mqtt_engine_map.count(m_webview)) {
+            ptr = m_mqtt_engine_map[m_webview].second;
+        } 
+        
+        m_engine_map_mtx.unlock();
+
+        return ptr;
+    }
+    bool set_current_engine(const std::pair<std::string, std::shared_ptr<MqttClient>>& target) {
+        bool flag = true;
+        m_engine_map_mtx.lock();
+        m_mqtt_engine_map[m_webview] = target;
+        
+        m_engine_map_mtx.unlock();
+        return flag;
+    }
+
+    void set_Instance_illegal() override;
+
 private:
-    std::thread m_work_thread;  // Worker thread
+
+    void sw_create_mqtt_client();
+    void sw_mqtt_connect();
+    void sw_mqtt_disconnect();
+    void sw_mqtt_subscribe();
+    void sw_mqtt_unsubscribe();
+    void sw_mqtt_publish();
+    void sw_mqtt_set_engine();
+
+
+
+
+private:
+    void clean_current_engine();
+
+    static void mqtt_msg_cb(const std::string& topic, const std::string& payload);
+
+    
 };
 
 // Instance class for handling machine discovery
@@ -316,8 +389,6 @@ private:
     // 请求设备取消下载文件
     void sw_CancelPullCloudFile();
 
-private:
-    std::thread m_work_thread;  // Worker thread
 };
 
 // Instance class for Snapmaker machine manage
@@ -451,6 +522,7 @@ private:
     static std::unordered_set<std::string> m_project_cmd_list; // homepage project commands
     static std::unordered_set<std::string> m_login_cmd_list; // homepage login commands
     static std::unordered_set<std::string> m_machine_manage_cmd_list; // homepage machine manage commands;
+    static std::unordered_set<std::string> m_mqtt_agent_cmd_list; // mqtt-agent commands;
 
     static TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> m_instance_list;  // Active instances
     static constexpr std::chrono::milliseconds DEFAULT_INSTANCE_TIMEOUT{80000}; // Default timeout (8s)

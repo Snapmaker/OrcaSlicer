@@ -232,6 +232,8 @@ WebViewPanel::~WebViewPanel()
     
     delete m_tools_menu;
 
+    SSWCP::on_webview_delete(m_browser);
+
     if (m_LoginUpdateTimer != nullptr) {
         m_LoginUpdateTimer->Stop();
         delete m_LoginUpdateTimer;

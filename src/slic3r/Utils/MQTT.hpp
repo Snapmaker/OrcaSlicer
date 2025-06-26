@@ -54,9 +54,11 @@ class MqttClient : public mqtt::callback,
 {
 public:
     // 基础构造函数 - 用于普通MQTT连接
-    MqttClient(const std::string& server_address, 
+    MqttClient(const std::string& server_address,
                const std::string& client_id,
-               bool clean_session = false);
+               const std::string& username = "",
+               const std::string& password = "",
+               bool               clean_session = false);
                
     // SSL/TLS构造函数 - 使用证书内容
     MqttClient(const std::string& server_address, 
@@ -72,19 +74,19 @@ public:
     ~MqttClient();
 
     // Connect to the MQTT broker
-    bool Connect();
+    bool Connect(std::string& msg);
 
     // Disconnect from the MQTT broker
-    bool Disconnect();
+    bool Disconnect(std::string& msg);
 
     // Subscribe to a specific topic with given QoS
-    bool Subscribe(const std::string& topic, int qos);
+    bool Subscribe(const std::string& topic, int qos, std::string& msg);
 
     // Unsubscribe from a specific topic
-    bool Unsubscribe(const std::string& topic);
+    bool Unsubscribe(const std::string& topic, std::string& msg);
 
     // Publish a message to a specific topic with given QoS
-    bool Publish(const std::string& topic, const std::string& payload, int qos);
+    bool Publish(const std::string& topic, const std::string& payload, int qos, std::string& msg);
 
     // Set callback for handling incoming messages
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback);

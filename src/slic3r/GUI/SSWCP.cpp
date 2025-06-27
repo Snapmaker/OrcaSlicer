@@ -3736,7 +3736,12 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         // 确认mqtt连接类型，并创建实例
         std::shared_ptr<MqttClient> client = nullptr;
         std::string type = "mqtt";
-        client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
+        if (ca != "" && cert != "" && key != "") {
+            type = "mqtts";
+            client.reset(new MqttClient(server_address, clientId, ca, cert, key, username, password, clean_session));
+        }else{
+            client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
+        }
 
         if (client == nullptr) {
             // 创建失败
@@ -3760,34 +3765,6 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         
         // 绑定静态回调 
         client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
-
-        m_res_data["type"] = type;
-        m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
-
-        // 兼容错误处理，之后定位原因
-        
-        std::shared_ptr<MqttClient> tls_client = nullptr;
-        if (ca != "" && cert != "" && key != "") {
-            type = "mqtts";
-            tls_client.reset(new MqttClient(server_address, clientId, ca, cert, key, username, password, clean_session));
-            // 清空当前m_clinet的订阅列表
-            auto ptr1 = get_current_engine();
-            if (!ptr1) {
-                ptr1.reset();
-            }
-            clean_current_engine();
-
-            // 替换新引擎
-            bool flag1 = set_current_engine({std::to_string(int64_t(tls_client.get())), tls_client});
-            if (!flag1) {
-                handle_general_fail(-1, "create failed");
-                return;
-            }
-
-            // 绑定静态回调
-            tls_client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
-        }
-        
 
         m_res_data["type"] = type;
         m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));

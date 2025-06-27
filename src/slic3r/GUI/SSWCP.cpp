@@ -488,7 +488,8 @@ void SSWCP_Instance::sw_LaunchConsole() {
     try {
         bool res = WCP_Logger::getInstance().run();
         if (res) {
-            send_to_js(200, "Orca Console has been launched");
+            m_msg = "Orca Console has been launched";
+            send_to_js();
             finish_job();
         } else {
             handle_general_fail(-1, "Orca Console launched failed");
@@ -506,7 +507,8 @@ void SSWCP_Instance::sw_SetLogLevel() {
             wxString level = m_param_data["level"].get<std::string>();
             bool res = WCP_Logger::getInstance().set_level(level);
             if (res) {
-                send_to_js(200, "The log level has been set to " + level);
+                m_msg = ("The log level has been set to " + level).ToUTF8();
+                send_to_js();
                 finish_job();
             } else {
                 handle_general_fail(-1, "The param [level] is not legal, the log level will be set to debug");
@@ -627,9 +629,9 @@ void SSWCP_Instance::sw_GetFileStream() {
 void SSWCP_Instance::handle_general_fail(int code, const wxString& msg)
 {
     try {
-        m_status = -1;
+        m_status = code;
         m_msg    = msg.ToUTF8();
-        send_to_js(code, msg);
+        send_to_js();
         finish_job();
     } catch (std::exception& e) {}
     
@@ -658,14 +660,12 @@ wxWebView* SSWCP_Instance::get_web_view() const {
 }
 
 // Send response to JavaScript
-void SSWCP_Instance::send_to_js(int code, const wxString& msg)
+void SSWCP_Instance::send_to_js()
 {
     try {
         if (is_Instance_illegal()) {
             return;
         }
-        m_status = code;
-        m_msg    = msg.ToUTF8();
 
         json response, payload;
         response["header"] = m_header;
@@ -1053,7 +1053,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
 
 // Handle timeout event
 void SSWCP_Instance::on_timeout() {
-    send_to_js(-2, "timeout");
+    handle_general_fail(-2, "time out");
     finish_job();
 }
 
@@ -3733,12 +3733,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         // 确认mqtt连接类型，并创建实例
         std::shared_ptr<MqttClient> client = nullptr;
         std::string type = "mqtt";
-        if (ca != "" && cert != "" && key != "") {
-            type = "mqtts";
-            client.reset(new MqttClient(server_address, clientId, ca, cert, key, username, password, clean_session));
-        } else {
-            client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
-        }
+        client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
 
         if (client == nullptr) {
             // 创建失败
@@ -3747,6 +3742,10 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         }
 
         // 清空当前m_clinet的订阅列表
+        auto ptr = get_current_engine();
+        if (!ptr) {
+            ptr.reset();
+        }
         clean_current_engine();
 
         // 替换新引擎
@@ -3758,6 +3757,34 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         
         // 绑定静态回调 
         client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
+
+        m_res_data["type"] = type;
+        m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
+
+        // 兼容错误处理，之后定位原因
+        
+        std::shared_ptr<MqttClient> tls_client = nullptr;
+        if (ca != "" && cert != "" && key != "") {
+            type = "mqtts";
+            tls_client.reset(new MqttClient(server_address, clientId, ca, cert, key, username, password, clean_session));
+            // 清空当前m_clinet的订阅列表
+            auto ptr1 = get_current_engine();
+            if (!ptr1) {
+                ptr1.reset();
+            }
+            clean_current_engine();
+
+            // 替换新引擎
+            bool flag1 = set_current_engine({std::to_string(int64_t(tls_client.get())), tls_client});
+            if (!flag1) {
+                handle_general_fail(-1, "create failed");
+                return;
+            }
+
+            // 绑定静态回调
+            tls_client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
+        }
+        
 
         m_res_data["type"] = type;
         m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
@@ -3801,7 +3828,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        self->send_to_js(200, msg);
+                        self->m_msg = msg;
+                        self->send_to_js();
                         self->finish_job();
                     } else {
                         self->handle_general_fail(-1, msg);
@@ -3847,7 +3875,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        self->send_to_js(200, msg);
+                        self->m_msg = msg;
+                        self->send_to_js();
                         self->finish_job();
                     } else {
                         self->handle_general_fail(-1, msg);
@@ -3917,7 +3946,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                     if (flag) {     
                         // 回复后， 设置event_id, 长期保留对象
                         if (self->m_event_id != "") {
-                            self->send_to_js(200, msg);
+                            self->m_msg = msg;
+                            self->send_to_js();
                             
                             json header;
                             self->m_header.clear();
@@ -3987,7 +4017,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        self->send_to_js(200, msg);
+                        self->m_msg = msg;
+                        self->send_to_js();
                         self->finish_job();
                     } else {
                         self->handle_general_fail(-1, msg);
@@ -4040,13 +4071,10 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
         wxGetApp().set_connect_host(tmp_host);
         wxGetApp().set_host_config(config);
 
-        // 整理订阅列表，取消权限，但是保留真正的底层订阅
-        // 维护订阅topic表和eventid实例表
-        clean_current_engine();
-
         std::shared_ptr<Moonraker_Mqtt> host = dynamic_pointer_cast<Moonraker_Mqtt>(tmp_host);
         if (host) {
             auto engine = get_current_engine();
+            
             if (engine == nullptr) {
                 handle_general_fail(-1, "invalid engine");
                 return;
@@ -4086,29 +4114,48 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                     }
 
                     // 序列化参数
-                    if (m_param_data.count("code"))
+                    if (m_param_data.count("code")){
                         connect_params["code"] = m_param_data["code"];
+                    }
+                        
 
-                    if (m_param_data.count("ca"))
+                    if (m_param_data.count("ca")) {
                         connect_params["ca"] = m_param_data["ca"];
+                        host->m_ca           = m_param_data["ca"].get<std::string>();
+                    }
+                        
 
-                    if (m_param_data.count("cert"))
+                    if (m_param_data.count("cert")) {
                         connect_params["cert"] = m_param_data["cert"];
+                        host->m_cert           = m_param_data["cert"].get<std::string>();
+                    }
+                        
 
-                    if (m_param_data.count("key"))
+                    if (m_param_data.count("key")) {
                         connect_params["key"] = m_param_data["key"];
+                        host->m_key           = m_param_data["key"].get<std::string>();
+                    }
 
-                    if (m_param_data.count("user"))
+                    if (m_param_data.count("user")) {
                         connect_params["user"] = m_param_data["user"];
+                        host->m_user_name           = m_param_data["user"].get<std::string>();
+                    }
 
-                    if (m_param_data.count("password"))
+                    if (m_param_data.count("password")) {
                         connect_params["password"] = m_param_data["password"];
+                        host->m_password           = m_param_data["password"].get<std::string>();
+                    }
 
-                    if (m_param_data.count("port"))
+                    if (m_param_data.count("port")) {
                         connect_params["port"] = m_param_data["port"];
+                        host->m_port           = m_param_data["port"].get<int>();
+                    }
 
-                    if (m_param_data.count("clientid"))
+                    if (m_param_data.count("clientid")) {
                         connect_params["clientid"] = m_param_data["clientid"];
+                        host->m_client_id           = m_param_data["clientid"].get<std::string>();
+                    }
+                        
 
                     std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                     connect_params["link_mode"] = link_mode;
@@ -4468,6 +4515,11 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     if (!self) {
                                         return;
                                     }
+
+                                    // 整理订阅列表，取消权限，但是保留真正的底层订阅
+                                    // 维护订阅topic表和eventid实例表
+                                    auto mqtt_self = dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(self);
+                                    mqtt_self->clean_current_engine();
                                     self->send_to_js();
                                     self->finish_job();
                                 });
@@ -4540,7 +4592,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        self->send_to_js(200, msg);
+                        self->m_msg = msg;
+                        self->send_to_js();
                         self->finish_job();
                     } else {
                         self->handle_general_fail(-1, msg);

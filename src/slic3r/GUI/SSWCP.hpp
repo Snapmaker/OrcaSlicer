@@ -98,7 +98,7 @@ public:
     virtual void process();
 
     // Send response back to JavaScript
-    virtual void send_to_js(int code = 200, const wxString& msg = "OK");
+    virtual void send_to_js();
 
     // Clean up after job completion
     virtual void finish_job();

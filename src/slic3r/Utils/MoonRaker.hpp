@@ -299,7 +299,7 @@ public:
     // Auth info
     static nlohmann::json m_auth_info;
 
-private:
+public:
     std::string m_user_name = "";
     std::string m_password = "";
     std::string m_ca = "";

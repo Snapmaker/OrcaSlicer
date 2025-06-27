@@ -1095,14 +1095,15 @@ nlohmann::json Moonraker_Mqtt::get_auth_info() {
 
 bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::string& msg)
 {
-    if (m_mqtt_client_tls->CheckConnected()) {
-        std::string dis_msg = "success";
-        m_mqtt_client_tls->Disconnect(dis_msg);
-    }
 
     if (!engine->CheckConnected()) {
         msg = "engine connection failed";
         return false;
+    }
+
+    if (m_mqtt_client_tls && m_mqtt_client_tls->CheckConnected()) {
+        std::string dis_msg = "success";
+        m_mqtt_client_tls->Disconnect(dis_msg);
     }
 
     m_mqtt_client_tls = engine;

@@ -57,9 +57,9 @@ MqttClient::MqttClient(const std::string& server_address,
     try {
         // 创建临时文件
         boost::filesystem::path temp_dir = boost::filesystem::temp_directory_path();
-        
+
         // CA证书临时文件
-        boost::filesystem::path ca_path = temp_dir / ("ca_" + client_id + ".pem");
+        boost::filesystem::path ca_path = temp_dir / ("ca_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!ca_content.empty()) {
             std::ofstream ca_file(ca_path.string());
             ca_file << ca_content;
@@ -68,7 +68,7 @@ MqttClient::MqttClient(const std::string& server_address,
         }
 
         // 客户端证书临时文件
-        boost::filesystem::path cert_path = temp_dir / ("cert_" + client_id + ".pem");
+        boost::filesystem::path cert_path = temp_dir / ("cert_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!cert_content.empty()) {
             std::ofstream cert_file(cert_path.string());
             cert_file << cert_content;
@@ -77,7 +77,7 @@ MqttClient::MqttClient(const std::string& server_address,
         }
 
         // 私钥临时文件
-        boost::filesystem::path key_path = temp_dir / ("key_" + client_id + ".pem");
+        boost::filesystem::path key_path = temp_dir / ("key_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!key_content.empty()) {
             std::ofstream key_file(key_path.string());
             key_file << key_content;

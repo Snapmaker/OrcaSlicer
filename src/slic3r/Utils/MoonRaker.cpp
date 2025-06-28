@@ -1854,7 +1854,7 @@ void Moonraker_Mqtt::async_camera_start(const std::string& domain, std::function
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始启动摄像头监控，域名: " << domain;
     wcp_loger.add_log("开始启动摄像头监控，域名: " + domain, false, "", "Moonraker_Mqtt", "info");
-    std::string method = "server.camera.start_monitor";
+    std::string method = "camera.start_monitor";
 
     json params;
     params["domain"]     = domain;
@@ -1878,7 +1878,7 @@ void Moonraker_Mqtt::async_canmera_stop(const std::string& domain, std::function
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始停止摄像头监控，域名: " << domain;
     wcp_loger.add_log("开始停止摄像头监控，域名: " + domain, false, "", "Moonraker_Mqtt", "info");
-    std::string method = "server.camera.stop_monitor";
+    std::string method = "camera.stop_monitor";
 
     json params;
     params["domain"] = domain;

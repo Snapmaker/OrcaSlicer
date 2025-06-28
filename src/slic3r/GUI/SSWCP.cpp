@@ -2251,11 +2251,14 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             auto filament_density = config.option<ConfigOptionFloats>("filament_density")->values;
 
             std::vector<double> filament_used_g(filament_density.size(), 0);
+            double              total_weight = 0;
             for (const auto& pr : result.print_statistics.total_volumes_per_extruder) {
                 filament_used_g[pr.first] = filament_density[pr.first] * pr.second * 0.001;
+                total_weight += filament_used_g[pr.first];
             }
 
             response["filament_weight"] = filament_used_g;
+            response["filament_weight_total"] = total_weight;
         }
         
 

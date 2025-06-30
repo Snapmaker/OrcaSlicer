@@ -3666,10 +3666,18 @@ void MainFrame::get_recent_projects(nlohmann::json& data, int images) {
     for (size_t i = 0; i < m_recent_projects.GetCount(); ++i) {
         json item;
         std::string proj    = m_recent_projects.GetHistoryFile(i).ToStdString();
-        item["project_name"] = proj.substr(proj.find_last_of("/\\") + 1);
-        item["path"]  = proj;
+        std::string proj_utf8 = boost::locale::conv::to_utf<char>(proj, "GBK");
+        item["project_name"] = proj_utf8.substr(proj.find_last_of("/\\") + 1);
+        item["path"]  = proj_utf8;
         boost::system::error_code ec;
-        std::time_t               t = boost::filesystem::last_write_time(proj, ec);
+        std::time_t               t;
+        try {
+            t = boost::filesystem::last_write_time(proj_utf8, ec);
+        }
+        catch (std::exception& e) {
+            std::string e_msg = e.what();
+            BOOST_LOG_TRIVIAL(error) << e.what(); 
+        }        
         if (!ec) {
             std::string time = wxDateTime(t).FormatISOCombined(' ').ToStdString();
             item["time"]      = time;

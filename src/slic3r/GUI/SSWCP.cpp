@@ -676,8 +676,10 @@ void SSWCP_Instance::send_to_js()
 
         response["payload"] = payload;
 
-        std::string str_res = "window.postMessage(JSON.stringify(" + response.dump() + "), '*');";
-        str_res             = std::string(wxString(str_res).ToUTF8());
+        std::string json_str = response.dump(4, ' ', true);
+        std::string str_res = "window.postMessage(JSON.stringify(" + json_str + "), '*');";
+
+        WCP_Logger::getInstance().add_log(str_res, false, "", "WCP", "info");
 
         if (m_webview && m_webview->GetRefData()) {
             auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
@@ -687,7 +689,10 @@ void SSWCP_Instance::send_to_js()
                     if (self) {
                         WebView::RunScript(self->m_webview, str_res);
                     }
-                } catch (std::exception& e) {}
+                } catch (std::exception& e) {
+                    WCP_Logger::getInstance().add_log(e.what(), false, "", "WCP", "info");
+                
+                }
             });
         }
     } catch (std::exception& e) {}

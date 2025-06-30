@@ -53,6 +53,9 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
 #ifdef __APPLE__
     txt_filename->OSXDisableAllSmartSubstitutions();
 #endif
+    // Ĭ�϶�Ҫ�л���deviceҳ
+    m_switch_to_device_tab = true;
+
     const AppConfig *app_config = wxGetApp().app_config;
 
     auto *label_dir_hint = new wxStaticText(this, wxID_ANY, _L("Use forward slashes ( / ) as a directory separator if needed."));
@@ -101,7 +104,7 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
     txt_filename->SetValue(recent_path);
 
 
-    auto checkbox_sizer = new wxBoxSizer(wxHORIZONTAL);
+    /*auto checkbox_sizer = new wxBoxSizer(wxHORIZONTAL);
     auto checkbox       = new ::CheckBox(this, wxID_APPLY);
     checkbox->SetValue(m_switch_to_device_tab);
     checkbox->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) {
@@ -115,7 +118,7 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
     checkbox_text->SetFont(::Label::Body_13);
     checkbox_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
     content_sizer->Add(checkbox_sizer);
-    content_sizer->AddSpacer(VERT_SPACING);
+    content_sizer->AddSpacer(VERT_SPACING);*/
     
     if (size_t extension_start = recent_path.find_last_of('.'); extension_start != std::string::npos)
         m_valid_suffix = recent_path.substr(extension_start);

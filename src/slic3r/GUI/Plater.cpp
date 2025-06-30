@@ -13306,7 +13306,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog.set_display_file_name(upload_job.upload_data.upload_path.string());
         bool res = dialog.run();
 
-        if (dialog.need_switch_to_device()) {
+        if (res && dialog.need_switch_to_device()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
         }
 

@@ -3666,13 +3666,20 @@ void MainFrame::get_recent_projects(nlohmann::json& data, int images) {
     for (size_t i = 0; i < m_recent_projects.GetCount(); ++i) {
         json item;
         std::string proj    = m_recent_projects.GetHistoryFile(i).ToStdString();
-        std::string proj_utf8 = boost::locale::conv::to_utf<char>(proj, "GBK");
-        item["project_name"] = proj_utf8.substr(proj.find_last_of("/\\") + 1);
-        item["path"]  = proj_utf8;
+#ifdef WIN32
+        UINT codePage = GetACP();
+        if (codePage != 65001) {
+            proj = boost::locale::conv::to_utf<char>(proj, "GBK");
+        }
+#endif 
+
+        
+        item["project_name"] = proj.substr(proj.find_last_of("/\\") + 1);
+        item["path"]  = proj;
         boost::system::error_code ec;
         std::time_t               t;
         try {
-            t = boost::filesystem::last_write_time(proj_utf8, ec);
+            t = boost::filesystem::last_write_time(proj, ec);
         }
         catch (std::exception& e) {
             std::string e_msg = e.what();

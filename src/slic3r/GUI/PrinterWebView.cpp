@@ -68,6 +68,8 @@ PrinterWebView::~PrinterWebView()
     SetEvtHandlerEnabled(false);
     SSWCP::on_webview_delete(m_browser);
 
+    wxGetApp().fltviews().remove_printer_view(this);
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " End";
 }
 
@@ -81,6 +83,12 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     m_apikey = apikey;
     m_apikey_sent = false;
     
+    if (url.find("device_control") != std::string::npos) {
+        wxGetApp().fltviews().add_printer_view(this, url, apikey);
+    } else {
+        wxGetApp().fltviews().remove_printer_view(this);
+    }
+
     m_browser->LoadURL(url);
     m_browser->Show();
     //m_browser->SetFocus();

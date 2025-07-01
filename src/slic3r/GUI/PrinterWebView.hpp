@@ -31,7 +31,7 @@ namespace Slic3r {
 namespace GUI {
 
 
-class PrinterWebView : public wxPanel {
+class PrinterWebView : public wxPanel{
 public:
     PrinterWebView(wxWindow *parent);
     virtual ~PrinterWebView();

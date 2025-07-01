@@ -459,6 +459,8 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
                         agent->user_logout();
                     }
                 }
+
+                wxGetApp().fltviews().relead_all();
             }
 
             this->EndModal(wxID_OK);

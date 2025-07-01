@@ -30,6 +30,7 @@
 #include "../Utils/PrintHost.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/Utils/Bonjour.hpp"
+#include "slic3r/GUI/PrinterWebView.hpp"
 
 
 #include <mutex>
@@ -832,6 +833,81 @@ public:
 
 public:
     bool sm_disconnect_current_machine();
+
+
+public:
+    class Fltviews
+    {
+    private:
+        std::unordered_map<wxWebView*, wxString> webviews;
+        std::unordered_map<WebViewPanel*, wxString> webview_panels;
+        std::unordered_map<PrinterWebView*, std::pair<wxString, wxString>> printerviews;
+        GUI_App*                                                           app;
+
+    public:
+        Fltviews(GUI_App* app = nullptr) : app(app) {}
+
+        void set_app(GUI_App* app) { this->app = app; }
+
+        void remove_view(wxWebView* view) {
+            if (webviews.count(view)) {
+                webviews.erase(view);
+            }
+        }
+
+        void add_view(wxWebView* view, const wxString& url) {
+            webviews[view] = url;
+        }
+
+        void remove_panel(WebViewPanel* panel)
+        {
+            if (webview_panels.count(panel)) {
+                webview_panels.erase(panel);
+            }
+        }
+
+        void add_webview_panel(WebViewPanel* panel, const wxString& url) {
+            webview_panels[panel] = url;
+        }
+
+        void add_printer_view(PrinterWebView* prview, const wxString& url, const wxString& key)
+        {
+            printerviews[prview] = std::make_pair(url, key);
+        }
+
+        void remove_printer_view(PrinterWebView* prview)
+        {
+            if (printerviews.count(prview)) {
+                printerviews.erase(prview);
+            }
+        }
+
+        void relead_all() {
+            for (const auto& view : webviews) {
+                auto ptr = view.first;
+                wxString new_url = app->get_international_url(view.second);
+                ptr->LoadURL(new_url);
+            }
+
+            for (const auto& panel : webview_panels) {
+                auto ptr = panel.first;
+                wxString new_url = app->get_international_url(panel.second);
+                ptr->load_url(new_url);
+            }
+
+            for (const auto& prview : printerviews) {
+                auto ptr = prview.first;
+                wxString new_url = app->get_international_url(prview.second.first);
+                ptr->load_url(new_url, prview.second.second);
+            }
+        }
+    };
+
+public:
+    Fltviews&       fltviews() { return m_fltviews; }
+
+private:
+    Fltviews m_fltviews;
 };
 
 DECLARE_APP(GUI_App)

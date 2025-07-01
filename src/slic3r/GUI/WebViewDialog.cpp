@@ -88,6 +88,9 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     topsizer->Add(m_info, wxSizerFlags().Expand());
     // Create the webview
     m_browser = WebView::CreateWebView(this, url);
+
+    wxGetApp().fltviews().add_webview_panel(this, url);
+
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -234,6 +237,8 @@ WebViewPanel::~WebViewPanel()
 
     SSWCP::on_webview_delete(m_browser);
 
+    wxGetApp().fltviews().remove_panel(this);
+
     if (m_LoginUpdateTimer != nullptr) {
         m_LoginUpdateTimer->Stop();
         delete m_LoginUpdateTimer;
@@ -252,6 +257,9 @@ void WebViewPanel::load_url(wxString& url)
     if (wxGetApp().get_mode() == comDevelop)
         wxLogMessage(m_url->GetValue());*/
     m_browser->LoadURL(url);
+
+    wxGetApp().fltviews().add_webview_panel(this, url);
+
     m_browser->SetFocus();
     UpdateState();
 }

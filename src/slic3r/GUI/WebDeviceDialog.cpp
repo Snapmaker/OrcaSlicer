@@ -60,7 +60,8 @@ WebDeviceDialog::~WebDeviceDialog()
 
 void WebDeviceDialog::reload()
 {
-    load_url(m_device_url);
+    wxString target_url = wxGetApp().get_international_url(m_device_url);
+    load_url(target_url);
 }
 
 void WebDeviceDialog::load_url(wxString &url)

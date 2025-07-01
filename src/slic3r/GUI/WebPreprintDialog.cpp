@@ -61,6 +61,8 @@ WebPreprintDialog::~WebPreprintDialog()
 {
     SSWCP::on_webview_delete(m_browser);
 
+    wxGetApp().fltviews().remove_view(m_browser);
+
     wxGetApp().set_web_preprint_dialog(nullptr);
 }
 
@@ -93,6 +95,8 @@ void WebPreprintDialog::reload()
 
 void WebPreprintDialog::load_url(wxString &url)
 {
+    wxGetApp().fltviews().add_view(m_browser, url);
+
     m_browser->LoadURL(url);
     m_browser->Show();
     Layout();

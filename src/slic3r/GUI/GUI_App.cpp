@@ -1096,6 +1096,7 @@ GUI_App::GUI_App()
     m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
     m_page_http_server.start();
     
+    m_fltviews.set_app(this);
 }
 
 void GUI_App::shutdown()
@@ -3903,6 +3904,13 @@ void GUI_App::get_login_info()
 }
 
 wxString GUI_App::get_international_url(const wxString& origin_url) {
+
+    wxString baseUrl = origin_url;
+    if (baseUrl.find("?locale=") != std::string::npos) {
+        baseUrl = baseUrl.substr(0, baseUrl.find("?locale="));
+    } else if (baseUrl.find("&locale=") != std::string::npos) {
+        baseUrl = baseUrl.substr(0, baseUrl.find("&locale="));
+    }
     wxString lang = wxString::FromUTF8(app_config->get_language_code());
     wxString region = wxString::FromUTF8(app_config->get_country_code());
     if (region == "Others") {
@@ -3911,10 +3919,12 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
 
     string dark_mode = wxGetApp().app_config->get("dark_color_mode");
 
-    if (origin_url.find("?") != std::string::npos) {
-        return origin_url + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region + wxString::FromUTF8("&dark_mode=" + dark_mode);
+    if (baseUrl.find("?") != std::string::npos) {
+        return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +
+               wxString::FromUTF8("&dark_mode=" + dark_mode);
     } else {
-        return origin_url + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region + wxString::FromUTF8("&dark_mode=" + dark_mode); 
+        return baseUrl + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region +
+               wxString::FromUTF8("&dark_mode=" + dark_mode); 
     }
 }
 

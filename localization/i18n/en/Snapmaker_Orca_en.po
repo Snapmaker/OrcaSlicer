@@ -7611,6 +7611,12 @@ msgstr "Print temperature"
 msgid "Nozzle"
 msgstr "Nozzle"
 
+msgid "Left Nozzle"
+msgstr "Left Nozzle"
+
+msgid "Right Nozzle"
+msgstr "Right Nozzle"
+
 msgid "Nozzle temperature when printing"
 msgstr "Nozzle temperature when printing"
 

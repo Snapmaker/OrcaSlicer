@@ -7,6 +7,6 @@
     "instantiation": "true",
     "compatible_printers": [
         "Snapamker test (0.6 nozzle)",
-        "Snapmaker test (0.8 nozzle)"
+        "Snapmaker U1 (0.8 nozzle)"
     ]
 }

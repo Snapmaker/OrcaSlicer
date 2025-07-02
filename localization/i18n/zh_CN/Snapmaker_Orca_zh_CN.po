@@ -7442,6 +7442,12 @@ msgstr "打印温度"
 msgid "Nozzle"
 msgstr "喷嘴"
 
+msgid "Left Nozzle"
+msgstr "左喷嘴"
+
+msgid "Right Nozzle"
+msgstr "右喷嘴"
+
 msgid "Nozzle temperature when printing"
 msgstr "打印时的喷嘴温度"
 

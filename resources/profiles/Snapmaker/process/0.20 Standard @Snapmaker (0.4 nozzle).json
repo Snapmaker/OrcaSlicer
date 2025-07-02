@@ -33,7 +33,5 @@
   "ironing_speed": "30",
   "overhang_1_4_speed": "40",
   "overhang_2_4_speed": "20",
-  "overhang_3_4_speed": "10",
-  "slowdown_for_curled_perimeters": "0",
-  "sparse_infill_pattern": "grid"
+  "overhang_3_4_speed": "10"
 }

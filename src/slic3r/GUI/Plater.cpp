@@ -1643,8 +1643,8 @@ void Sidebar::update_all_preset_comboboxes()
         local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
         local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
 
-        // Snapmaker test
-        std::string test_preset_name = "Snapmaker test 0.4 nozzle";
+        // Snapmaker U1
+        std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
         bool        is_test          = (test_preset_name == local_name);
 
 
@@ -2438,7 +2438,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         }
         default:
         {
-            tab_name = wxString::Format(_L("Nozzle %d"), i + 1);
+            tab_name = wxString(_L("Nozzle")) + wxString::Format(" %d", i + 1);
         }
             
         }
@@ -13229,7 +13229,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     PrintHostJob upload_job;
 
-    // Snapmaker test
+    // Snapmaker U1
     const auto preset = wxGetApp().preset_bundle->printers.get_edited_preset();
     std::string local_name = "";
     if (preset.is_system) {
@@ -13246,7 +13246,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         upload_job = PrintHostJob(wxGetApp().get_host_config());
     } */
     
-    if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker test 0.4 nozzle") {
+    if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
         // 先不创建job，直接创建上传 / 上传下载对话框
         // 获取默认文件名
         // Obtain default output path
@@ -13306,7 +13306,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog.set_display_file_name(upload_job.upload_data.upload_path.string());
         bool res = dialog.run();
 
-        if (res && dialog.need_switch_to_device()) {
+        if (dialog.is_finish()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
         }
 

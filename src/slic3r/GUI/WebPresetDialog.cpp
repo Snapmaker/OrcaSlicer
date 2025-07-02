@@ -432,8 +432,8 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
                     if (info.model_name != "") {
                         // test
-                        if (info.model_name == "lava") {
-                            info.model_name = "Snapmaker test";
+                        if (info.model_name == "lava" || info.model_name == "Snapmaker test") {
+                            info.model_name = "Snapmaker U1";
                         }
                         model_name = info.model_name;
                         nozzle_sizes = info.nozzle_sizes;

@@ -1,0 +1,11 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PLA Eco @test",
+  "setting_id": "21586560280",
+  "inherits": "Snapmaker PLA Eco @test base",
+  "compatible_printers": [
+    "Snapmaker U1 (0.4 nozzle)"
+  ]
+}

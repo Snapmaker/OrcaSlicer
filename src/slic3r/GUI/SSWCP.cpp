@@ -1384,6 +1384,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_SetFilamentMappingComplete();
     } else if (m_cmd == "sw_GetFileFilamentMapping") {
         sw_GetFileFilamentMapping();
+    } else if (m_cmd == "sw_FinishFilamentMapping") {
+        sw_FinishFilamentMapping();
     } else if(m_cmd == "sw_DownloadMachineFile"){
         sw_DownloadMachineFile();
     } else if (m_cmd == "sw_UploadFiletoMachine") {
@@ -2176,6 +2178,23 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
     }
 }
 
+void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
+{
+    try {
+        if (wxGetApp().get_web_preprint_dialog()) {
+            WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
+            if (dialog) {
+                if(dialog->is_finish()){
+                    dialog->EndModal(wxID_OK);
+                }else{
+                    dialog->EndModal(wxID_CANCEL);
+                }
+            }
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
     try {
@@ -2366,10 +2385,12 @@ void SSWCP_MachineOption_Instance::sw_SetFilamentMappingComplete()
             //    flag = msg_window.ShowModal();
             //}
             
-
-            if (flag == wxID_OK) {
-                if (wxGetApp().get_web_preprint_dialog()) {
-                    wxGetApp().get_web_preprint_dialog()->EndModal(wxID_OK);
+            WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
+            if (dialog) {
+                if(flag == wxID_OK){
+                    dialog->set_finish(true);
+                }else{
+                    dialog->set_finish(false);
                 }
             }
             
@@ -2972,8 +2993,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                             if (machine_ip_type->get_machine_type(ip, machine_type)) {
                                                 // 已经发现过的机型信息
                                                 // test
-                                                if (machine_type == "lava") {
-                                                    machine_type = "Snapmaker test";
+                                                if (machine_type == "lava" || machine_type == "Snapmaker test") {
+                                                    machine_type = "Snapmaker U1";
                                                 }
 
                                                 DeviceInfo info;
@@ -4354,9 +4375,10 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                 if (machine_ip_type->get_machine_type(ip, machine_type)) {
                                                     // 已经发现过的机型信息
                                                     // test
-                                                    if (machine_type == "lava") {
-                                                        machine_type = "Snapmaker test";
-                                                    }
+                                                    
+                                                if (machine_type == "lava" || machine_type == "Snapmaker test") {
+                                                    machine_type = "Snapmaker U1";
+                                                }
 
                                                     DeviceInfo info;
                                                     host->get_auth_info();
@@ -4639,6 +4661,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_CameraStopMonitor",
     "sw_GetFileFilamentMapping",
     "sw_SetFilamentMappingComplete",
+    "sw_FinishFilamentMapping",
     "sw_DownloadMachineFile",
     "sw_UploadFiletoMachine",
     "sw_GetPrintLegal",

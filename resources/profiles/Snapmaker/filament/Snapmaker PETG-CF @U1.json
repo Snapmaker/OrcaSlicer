@@ -1,0 +1,11 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PETG-CF @test",
+  "setting_id": "9504590820",
+  "inherits": "Snapmaker PETG-CF @test base",
+  "compatible_printers": [
+    "Snapmaker U1 (0.4 nozzle)"
+  ]
+}

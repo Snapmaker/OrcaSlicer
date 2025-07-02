@@ -6,8 +6,8 @@
     "setting_id": "GFSB02_02",
     "instantiation": "true",
     "compatible_printers": [
-        "Snapmaker test (0.4 nozzle)",
-        "Snapmaker test (0.6 nozzle)",
-        "Snapmaker test (0.8 nozzle)"
+        "Snapmaker U1 (0.4 nozzle)",
+        "Snapmaker U1 (0.6 nozzle)",
+        "Snapmaker U1 (0.8 nozzle)"
     ]
 }

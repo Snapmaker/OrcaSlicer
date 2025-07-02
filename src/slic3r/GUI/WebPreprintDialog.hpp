@@ -31,6 +31,10 @@ public:
 
     void set_swtich_to_device(bool flag);
 
+    bool is_finish() { return m_finish; }
+
+    void set_finish(bool flag) { m_finish = flag; }
+
 private:
     void OnClose(wxCloseEvent& evt);
     void OnNavigationRequest(wxWebViewEvent &evt);
@@ -47,6 +51,8 @@ private:
     std::string m_display_file_name = "";
     bool        m_send_page         = false;
     bool        m_switch_to_device  = false;
+
+    bool  m_finish = false;
     DECLARE_EVENT_TABLE()
 };
 

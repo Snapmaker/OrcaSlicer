@@ -18,6 +18,10 @@
     "smooth_coefficient": "150",
     "overhang_totally_speed": "50",
     "compatible_printers": [
-        "Snapmaker test (0.4 nozzle)"
-    ]
+        "Snapmaker U1 (0.4 nozzle)"
+    ],
+    "prime_tower_width": "50",
+    "prime_volume": "38",
+    "slowdown_for_curled_perimeters": "0",
+    "wipe_tower_filament": "1"
 }

@@ -367,6 +367,8 @@ private:
     // PrePrint
     void sw_GetFileFilamentMapping();
     void sw_SetFilamentMappingComplete();
+    void sw_FinishFilamentMapping();
+
 
     // Download machine file
     void sw_DownloadMachineFile();

@@ -2,9 +2,9 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker PVA @test",
+  "name": "Snapmaker PVA @U1",
   "setting_id": "41452139080",
-  "inherits": "Snapmaker PVA @test base",
+  "inherits": "Snapmaker PVA @U1 base",
   "compatible_printers": [
     "Snapmaker U1 (0.4 nozzle)"
   ]

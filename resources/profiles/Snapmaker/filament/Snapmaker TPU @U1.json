@@ -2,9 +2,9 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker TPU @test",
+  "name": "Snapmaker TPU @U1",
   "setting_id": "31642856830",
-  "inherits": "Snapmaker TPU @test base",
+  "inherits": "Snapmaker TPU @U1 base",
   "compatible_printers": [
     "Snapmaker U1 (0.4 nozzle)",
     "Snapmaker U1 (0.6 nozzle)",

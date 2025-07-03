@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "Snapmaker TPU @test base",
+  "name": "Snapmaker TPU @U1 base",
   "filament_id": "29716562900",
   "inherits": "fdm_filament_tpu",
   "filament_end_gcode": [

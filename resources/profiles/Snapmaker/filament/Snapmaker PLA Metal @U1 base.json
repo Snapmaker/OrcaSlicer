@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "Snapmaker PLA Metal @test base",
+  "name": "Snapmaker PLA Metal @U1 base",
   "filament_id": "20299943460",
   "inherits": "fdm_filament_pla",
   "filament_end_gcode": [

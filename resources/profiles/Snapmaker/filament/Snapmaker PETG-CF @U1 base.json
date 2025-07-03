@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "Snapmaker PETG-CF @test base",
+  "name": "Snapmaker PETG-CF @U1 base",
   "filament_id": "10425112260",
   "inherits": "fdm_filament_petg",
   "filament_end_gcode": [

@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "Snapmaker PLA Silk @test base",
+  "name": "Snapmaker PLA Silk @U1 base",
   "filament_id": "11813638720",
   "inherits": "fdm_filament_pla",
   "filament_end_gcode": [

@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "PolyLite PLA @test base",
+  "name": "PolyLite PLA @U1 base",
   "filament_id": "13938660340",
   "inherits": "fdm_filament_pla",
   "filament_flow_ratio": [

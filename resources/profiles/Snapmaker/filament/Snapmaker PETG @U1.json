@@ -2,9 +2,9 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker PETG @test",
+  "name": "Snapmaker PETG @U1",
   "setting_id": "24520142710",
-  "inherits": "Snapmaker PETG @test base",
+  "inherits": "Snapmaker PETG @U1 base",
   "compatible_printers": [
     "Snapmaker U1 (0.4 nozzle)"
   ]

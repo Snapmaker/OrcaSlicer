@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "Snapmaker PLA Lite @test base",
+  "name": "Snapmaker PLA Lite @U1 base",
   "filament_id": "1417031127011",
   "filament_end_gcode": [
     ""

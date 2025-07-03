@@ -2,9 +2,9 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Snapmaker PLA Sonic @test",
+    "name": "Snapmaker PLA Sonic @U1",
     "setting_id": "119531393501",
-    "inherits": "Snapmaker PLA Sonic @test base",
+    "inherits": "Snapmaker PLA Sonic @U1 base",
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
     ],

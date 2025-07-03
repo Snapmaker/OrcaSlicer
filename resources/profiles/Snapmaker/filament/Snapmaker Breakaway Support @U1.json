@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker Breakaway Support @test",
+  "name": "Snapmaker Breakaway Support @U1",
   "setting_id": "41460000000",
   "inherits": "Snapmaker Breakaway Support @base",
   "compatible_printers": [

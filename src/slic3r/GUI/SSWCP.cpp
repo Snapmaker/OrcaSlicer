@@ -259,6 +259,9 @@ std::vector<char> create_zip_with_miniz(const std::string& name1, // 原文件�
     }
 
     std::vector<char> file_content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    SSWCP::m_file_size_mutex.lock();
+    SSWCP::m_active_file_size = file_content.size();
+    SSWCP::m_file_size_mutex.unlock();
 
     // 2. 初始化 ZIP 写入器（内存模式）
     mz_zip_archive zip_archive;
@@ -458,19 +461,36 @@ void SSWCP_Instance::sw_GetActiveFile()
         }
 
         if (iszip) {
-            std::string zipname = generate_zip_path(file_path, file_name);
-            json        res     = get_or_create_zip_json(file_path, file_name, zipname);
-            size_t      name_index = file_name.find_last_of(".");
-            size_t      path_index = file_path.find_last_of(".");
-            if (!(name_index == std::string::npos || path_index == std::string::npos)) {
-                m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
-                m_res_data["file_path"] = wxString(zipname).ToUTF8();
-                send_to_js();
-                finish_job();
-            } else {
-                handle_general_fail();
-                return;
-            }
+            std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+            m_work_thread          = std::thread([file_path, file_name, weak_self]() {
+                auto        self       = weak_self.lock();
+                std::string zipname    = generate_zip_path(file_path, file_name);
+                json        res        = get_or_create_zip_json(file_path, file_name, zipname);
+                size_t      name_index = file_name.find_last_of(".");
+                size_t      path_index = file_path.find_last_of(".");
+                if (!(name_index == std::string::npos || path_index == std::string::npos)) {
+                    self->m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
+                    self->m_res_data["file_path"] = wxString(zipname).ToUTF8();
+                    SSWCP::m_file_size_mutex.lock();
+                    self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
+                    SSWCP::m_file_size_mutex.unlock();
+                    
+                    wxGetApp().CallAfter([weak_self]() {
+                        if (weak_self.lock()) {
+                            weak_self.lock()->send_to_js();
+                            weak_self.lock()->finish_job();
+                        }
+                    });
+                } else {
+                    wxGetApp().CallAfter([weak_self]() {
+                        if (weak_self.lock()) {
+                            weak_self.lock()->handle_general_fail();
+                        }
+                    });
+                    return;
+                }
+            });
+            
         } else {
             m_res_data["file_name"] = file_name;
             m_res_data["file_path"] = file_path;
@@ -4621,6 +4641,8 @@ constexpr std::chrono::milliseconds SSWCP::DEFAULT_INSTANCE_TIMEOUT;
 
 std::string SSWCP::m_active_gcode_filename = "";
 std::string SSWCP::m_display_gcode_filename = "";
+long long   SSWCP::m_active_file_size       = 0;
+std::mutex  SSWCP::m_file_size_mutex;
 
 std::unordered_map<std::string, int> SSWCP::m_tab_map = {
     {"Home", MainFrame::TabPosition::tpHome},

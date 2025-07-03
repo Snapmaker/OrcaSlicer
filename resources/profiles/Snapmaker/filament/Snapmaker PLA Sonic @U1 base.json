@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "Snapmaker PLA Sonic @test base",
+  "name": "Snapmaker PLA Sonic @U1 base",
   "filament_id": "141703112701",
   "filament_end_gcode": [
     ""

@@ -513,6 +513,9 @@ public:
     static std::string get_active_filename();
 
     static std::string get_display_filename();
+
+    static std::mutex m_file_size_mutex;
+    static long long m_active_file_size;
     
     
     static std::unordered_map<std::string, int> m_tab_map; // for switching tab

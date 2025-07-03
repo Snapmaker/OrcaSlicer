@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "false",
-  "name": "PolyTerra PLA @test base",
+  "name": "PolyTerra PLA @U1 base",
   "filament_id": "37895926870",
   "inherits": "fdm_filament_pla",
   "filament_cost": [

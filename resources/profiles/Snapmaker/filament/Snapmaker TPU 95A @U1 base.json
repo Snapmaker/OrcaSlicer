@@ -2,7 +2,7 @@
     "type": "filament",
     "from": "system",
     "instantiation": "false",
-    "name": "Snapmaker TPU 95A @test base",
+    "name": "Snapmaker TPU 95A @U1 base",
     "filament_id": "297165629001",
 
     "overhang_fan_threshold": [

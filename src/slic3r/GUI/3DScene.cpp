@@ -565,9 +565,9 @@ void GLVolume::simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_obj
                 if (idx == 0) {
                     int extruder_id = model_volume->extruder_id();
                     //to make black not too hard too see
-                    ColorRGBA new_color = adjust_color_for_rendering(extruder_colors[extruder_id - 1]);
+                    ColorRGBA new_color = adjust_color_for_rendering(extruder_colors[extruder_id == 0 ? extruder_id : (extruder_id - 1)]);
                     if (ban_light) {
-                        new_color[3] = (255 - (extruder_id - 1))/255.0f;
+                        new_color[3] = (255 - (extruder_id == 0 ? extruder_id : extruder_id - 1))/255.0f;
                     }
                     m.set_color(new_color);
                     // shader->set_uniform("uniform_color", new_color);

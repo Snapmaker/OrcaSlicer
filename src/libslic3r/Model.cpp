@@ -2433,6 +2433,8 @@ std::vector<int> ModelVolume::get_extruders() const
     int volume_extruder_id = this->extruder_id();
     if (volume_extruder_id > 0)
         volume_extruders.push_back(volume_extruder_id);
+    else if (volume_extruder_id == 0)
+        volume_extruders.push_back(volume_extruder_id + 1);
 
     return volume_extruders;
 }

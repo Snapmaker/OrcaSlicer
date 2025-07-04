@@ -2778,8 +2778,8 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                 if (m_param_data.count("port"))
                     connect_params["port"] = m_param_data["port"];
 
-                if (m_param_data.count("clientid"))
-                    connect_params["clientid"] = m_param_data["clientid"];
+                if (m_param_data.count("clientId"))
+                    connect_params["clientId"] = m_param_data["clientId"];
 
                 std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                 connect_params["link_mode"] = link_mode;
@@ -2931,7 +2931,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                         info.user     = auth_info["user"];
                                         info.password = auth_info["password"];
                                         info.port     = auth_info["port"];
-                                        info.clientid = auth_info["clientid"];
+                                        info.clientId = auth_info["clientId"];
                                     } catch (std::exception& e) {}
 
                                     DeviceInfo query_info;
@@ -3027,7 +3027,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                     info.user     = auth_info["user"];
                                                     info.password = auth_info["password"];
                                                     info.port     = auth_info["port"];
-                                                    info.clientid = auth_info["clientid"];
+                                                    info.clientId = auth_info["clientId"];
                                                 } catch (std::exception& e) {}
                                                 info.ip         = ip;
                                                 info.dev_id     = dev_id;
@@ -3083,7 +3083,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                                     info.user     = auth_info["user"];
                                                     info.password = auth_info["password"];
                                                     info.port     = auth_info["port"];
-                                                    info.clientid = auth_info["clientid"];
+                                                    info.clientId = auth_info["clientId"];
                                                 } catch (std::exception& e) {}
                                                 info.ip        = ip;
                                                 info.dev_id    = dev_id;
@@ -4082,6 +4082,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
             handle_general_fail(-1, "param [port] is required or wrong type");
             return;
         }
+
+        bool reload_device_view = m_param_data.count("need_reload") ? m_param_data["need_reload"].get<bool>() : true; 
+
         int port = m_param_data["port"].get<int>();
 
         auto config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -4177,11 +4180,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                         host->m_port           = m_param_data["port"].get<int>();
                     }
 
-                    if (m_param_data.count("clientid")) {
-                        connect_params["clientid"] = m_param_data["clientid"];
-                        host->m_client_id           = m_param_data["clientid"].get<std::string>();
+                    if (m_param_data.count("clientId")) {
+                        connect_params["clientId"] = m_param_data["clientId"];
+                        host->m_client_id           = m_param_data["clientId"].get<std::string>();
                     }
-                        
+                    
+
 
                     std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                     connect_params["link_mode"] = link_mode;
@@ -4195,7 +4199,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                     } else {
                         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
                         // 设置断联回调
-                        m_work_thread = std::thread([weak_self, host, connect_params, link_mode, id, userid] {
+                        m_work_thread = std::thread([weak_self, host, connect_params, link_mode, id, userid, reload_device_view] {
                             auto     self = weak_self.lock();
                             wxString msg  = "";
                             json     params;
@@ -4312,7 +4316,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             info.user     = auth_info["user"];
                                             info.password = auth_info["password"];
                                             info.port     = auth_info["port"];
-                                            info.clientid = auth_info["clientid"];
+                                            info.clientId = auth_info["clientId"];
                                         } catch (std::exception& e) {}
 
                                         DeviceInfo query_info;
@@ -4410,7 +4414,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                         info.user     = auth_info["user"];
                                                         info.password = auth_info["password"];
                                                         info.port     = auth_info["port"];
-                                                        info.clientid = auth_info["clientid"];
+                                                        info.clientId = auth_info["clientId"];
                                                     } catch (std::exception& e) {}
                                                     info.ip         = ip;
                                                     info.dev_id     = dev_id;
@@ -4468,7 +4472,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                         info.user     = auth_info["user"];
                                                         info.password = auth_info["password"];
                                                         info.port     = auth_info["port"];
-                                                        info.clientid = auth_info["clientid"];
+                                                        info.clientId = auth_info["clientId"];
                                                     } catch (std::exception& e) {}
                                                     info.ip        = ip;
                                                     info.dev_id    = dev_id;
@@ -4499,7 +4503,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     });
                                 }
 
-                                wxGetApp().CallAfter([weak_self]() {
+                                wxGetApp().CallAfter([weak_self, reload_device_view]() {
                                     // 更新首页设备卡片
                                     auto devices = wxGetApp().app_config->get_devices();
 
@@ -4535,7 +4539,10 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                         auto     real_url = wxGetApp().get_international_url(url);
                                         wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
                                     } else {
-                                        wxGetApp().mainframe->m_printer_view->reload();
+                                        if (reload_device_view) {
+                                            wxGetApp().mainframe->m_printer_view->reload();
+                                        }
+                                        
                                     }
 
                                     auto self = weak_self.lock();

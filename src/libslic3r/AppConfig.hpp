@@ -41,7 +41,7 @@ struct DeviceInfo {
     std::string              ca;
     std::string              cert;
     std::string              key;
-    std::string              clientid;
+    std::string              clientId;
     int              port;
     std::string              link_mode;
     std::string              userid;
@@ -51,7 +51,7 @@ struct DeviceInfo {
     
     // 用于JSON序列化
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key,
-		user, password, ca, cert, key, clientid, port, link_mode, userid, id)
+		user, password, ca, cert, key, clientId, port, link_mode, userid, id)
 };
 
 class AppConfig

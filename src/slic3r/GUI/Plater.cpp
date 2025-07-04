@@ -1638,7 +1638,10 @@ void Sidebar::update_all_preset_comboboxes()
             local_name = edit_preset.name;
         } else {
             const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
-            local_name              = base_preset->name;
+            if (base_preset)
+                local_name = base_preset->name;
+            else
+                local_name = "";
         }
         local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
         local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());

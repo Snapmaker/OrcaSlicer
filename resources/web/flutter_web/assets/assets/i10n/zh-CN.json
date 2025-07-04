@@ -26,10 +26,104 @@
     "No filament or machine found": "未发现文件或设备",
     "Sending print job": "正在发送打印任务",
 
-    "Please make sure the device is turned on and nearby":"请确保设备已打开并在附近",
-
     "idle": "空闲",
     "working": "工作中",
     "error": "异常",
-    "offline": "离线"
+    "offline": "离线",
+
+    "My Devices": "我的设备",
+    "Recent Files": "近期文件",
+    "Print History": "打印历史",
+    "Upload File": "上传文件",
+    "Logout": "退出登录",
+    "Login/Register": "登录/注册",
+    "Login": "登录",
+    "Register": "注册",
+    "Open Project": "打开项目",
+    "Create New Project": "创建新项目",
+
+    "Recent Open Files": "近期打开文件",
+
+    "No open files": "暂无打开的文件",
+    "Delete selected": "删除选中",
+    "Batch processing": "批量处理",
+    "Clear files": "清空文件",
+
+    "LAN mode": "局域网模式",
+    "WAN mode": "广域网模式",
+    "Connect via device screen": "通过设备屏幕局域网网页页面的PIN进行连接",
+    "Bind Via PIN": "通过PIN码绑定",
+    "Searching for devices": "正在搜索设备...",
+
+    "Please authorize on the device screen to continue binding": "请在设备屏幕授权以继续绑定",
+    "Waiting for device authorization": "等待设备授权中...",
+    "Binding rejected": "绑定被拒绝",
+    "Binding successful": "绑定成功",
+    "I know": "我知道了",
+
+    "Device Control": "设备控制",
+
+    "Delete local device": "删除本地设备",
+    "Delete cloud device": "删除云端设备",
+    "Are you sure you want to delete the local device?": "是否删除本地设备？",
+    "Are you sure you want to delete the cloud device?": "是否删除云端设备？",
+
+    "Disconnect": "断开连接",
+    "Are you sure you want to disconnect and delete the device?": "是否断开连接并删除设备？",
+
+    "Disconnect success": "断开连接成功",
+    "Disconnect failed": "断开连接失败",
+
+    "Please login first": "请先登录",
+
+    "Connect success": "连接成功",
+    "Connect failed": "连接失败",
+
+    "Binding": "绑定中...",
+    "Binding failed": "绑定失败",
+
+    "User not logged in": "用户未登录",
+
+    "Please make sure the device is turned on and nearby": "请确保设备已打开并在附近",
+
+    "Not logged in account": "未登录账户",
+    "• LAVA - Only devices that have enabled LAN debugging can be bound": "• LAVA - 只能绑定开启了局域网调试的设备",
+    "• J1、Artisan - Devices without account functions are default to LAN debugging mode": "• J1、Artisan 无账户功能的设备则默认是局域网调试模式",
+
+    "Bind via access code": "通过访问码绑定",
+    "Please find the access code on the LAN page of the device screen and enter it into the box below": "请在设备屏幕的局域网页面找到访问码，并输入到下面方框中",
+    "Access code": "访问码",
+
+    "Print history": "打印历史",
+
+    "Loading data...": "正在加载数据...",
+    "No connectable device": "没有可以连接的设备",
+    "Please check the network or device status": "请检查网络或设备状态",
+    "Retry": "重试",
+    "Device control-new": "设备控制-new",
+    "Device control-old": "设备控制-old",
+
+    "File information": "文件信息",
+    "Model information": "模型信息",
+    "Estimated material": "预估用料",
+    "Estimated time": "预估用时",
+    "File name": "文件名称",
+
+    "Select printer": "选择打印机",
+    "Edit filament": "编辑耗材",
+    "Select print head": "选择打印头",
+
+
+    "Preference setting": "偏好设置",
+    "Auto leveling": "自动调平",
+    "Time-lapse camera": "延时摄影",
+    "Bed leveling": "热床调平",
+    "Flow calibrate": "流量校准",
+    "Extrusion flow calibrate": "挤出流量校准",
+    "Extrusion flow calibrate description": "挤出流量校准用于确保打印机在打印过程中挤出的材料量与预期一致，从而提升打印质量。建议在更换耗材或发现打印异常时进行校准。",
+
+    "Cannot get the current slice file information, or the file does not exist, please re-operate the slice": "无法获取当前切片文件信息,或文件不存在，请重新操作切片",
+    "Cannot get connected machine": "无法获取到当前已连接的设备信息",
+    "Timeout: Cannot get file filament mapping": "无法获取文件耗材映射信息",
+    "Cannot load file content": "无法加载文件内容"
 }

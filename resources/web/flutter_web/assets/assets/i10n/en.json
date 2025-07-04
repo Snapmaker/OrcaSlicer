@@ -9,5 +9,10 @@
     "Connect": "Connect",
     "Snapmaker Account": "Snapmaker Account",
     "Upload Image": "Upload Image",
-    "Upload File": "Upload File"
+    "Upload File": "Upload File",
+
+    
+    "Device Control": "DeviceControl",
+    "Create New Project": "CreateProject",
+    "Waiting for device authorization": "Waiting for device authorization..."
 }

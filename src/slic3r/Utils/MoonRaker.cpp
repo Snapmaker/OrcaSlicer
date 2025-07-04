@@ -1087,7 +1087,7 @@ nlohmann::json Moonraker_Mqtt::get_auth_info() {
     authinfo["ca"]       = m_ca;
     authinfo["cert"]     = m_cert;
     authinfo["key"]      = m_key;
-    authinfo["clientid"] = m_client_id;
+    authinfo["clientId"] = m_client_id;
     authinfo["port"]     = m_port;
 
     return authinfo;
@@ -1238,7 +1238,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
 
     // 在创建新连接前检查参数
     if(!params.count("ca") || !params.count("cert") 
-    || !params.count("key") || !params.count("port") || !params.count("clientid") || !params.count("sn")){
+    || !params.count("key") || !params.count("port") || !params.count("clientId") || !params.count("sn")){
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 缺少TLS参数，尝试获取认证信息";
         wcp_loger.add_log("缺少TLS参数，尝试获取认证信息", false, "", "Moonraker_Mqtt", "info");
         bool flag = ask_for_tls_info(params);
@@ -1256,7 +1256,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         m_cert = params["cert"].get<std::string>();
         m_key = params["key"].get<std::string>();
         m_port = params["port"].get<int>();
-        m_client_id = params["clientid"].get<std::string>();
+        m_client_id = params["clientId"].get<std::string>();
 
         m_sn_mtx.lock();
         m_sn = params["sn"].get<std::string>();

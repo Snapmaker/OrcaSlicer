@@ -16,8 +16,9 @@
   -->
   <base href="/web/flutter_web/">
   <!-- <base href="/web/flutter_web/"> --> <!-- --base-href=/knowledge.io/ -->
+  <!-- <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script> -->
 
-  <meta charset="UTF-8">
+  <meta charset="UTF-8"> 
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="orca control web app">
    <!-- 添加权限策略 -->
@@ -553,15 +554,15 @@
             "api_key": "",
             "ca": "-----BEGIN CERTIFICATE-----MIIDwTCCAqmgAwIBAgIUNA2s7R3LmI2DITpR4fjaO0VCVSUwDQYJKoZIhvcNAQELBQAwaDEUMBIGA1UEAwwLbXF0dC1icm9rZXIxFjAUBgNVBAoMDXNuYXBtYWtlci5jb20xETAPBgNVBAsMCHNvZnR3YXJlMSUwIwYJKoZIhvcNAQkBFhZzb2Z0d2FyZUBzbmFwbWFrZXIuY29tMB4XDTI1MDYxMzAwMDAwMFoXDTM1MDYxMTAwMDAwMFowaDEUMBIGA1UEAwwLbXF0dC1icm9rZXIxFjAUBgNVBAoMDXNuYXBtYWtlci5jb20xETAPBgNVBAsMCHNvZnR3YXJlMSUwIwYJKoZIhvcNAQkBFhZzb2Z0d2FyZUBzbmFwbWFrZXIuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqpeKQ5Khf1AgqMA56ZnVoroJ12s1QR498F9ddE9aQ7N3CihvFL5h+v9gtXMXMe/+MddCHmbkIxZTdeXQrR/splsVRB/u9nMNREZgd6yEysE3msiwqn1zpfIm+hsg/zOvhGMZEVVSA9zrgmbAhZKkoykfVBZ2HXpDWlysNfreZLMOvRjtciJ1Kwqp3jAKMXKH5xU2NS8FYKEgkdKlq2IK8478947ovicRSZk454QOlpbJpk4TIZQMU9fZbTM7t0wCfVdSlkGiB2oiAK4mSmx0WJhEjZmWQgID1U/2ECXOo8o92Qt2MvWZP1nqfaP3PFXifwW9mqqxO2/+Xt1YI4p7CQIDAQABo2MwYTAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBxjAdBgNVHQ4EFgQUr/YO+2JshHKFbvvMVRBNcwBZyhwwHwYDVR0jBBgwFoAUr/YO+2JshHKFbvvMVRBNcwBZyhwwDQYJKoZIhvcNAQELBQADggEBACpZI31bGfnQmncZQXfUREuJMvSRGIBgBebgOCU9kSJ5pf2nZj4ycICWFz8lEd7+jWEcx0+CSZtsosP48GwYas/CvazU7RgzTYwDk3ZPb1Gc+JCXO7RWcKAd5x1sj6vXmnCpdntWfVgYW3fbg6cx4JiyA39rtGo+su3vBijizouRnrQV/hhiEnu60r4FWPehBcIaBHyPjl5EU6BpJKBkMx1CYABvcwhQ9xeK5l6S+wIZEsKl6c8GMlixQH0sCJM+jYruiqUOhbVy6sYz+SZcYOcfXe2tCWAY3Q6FtBLr2brxeI9Tbc6Sf45yxR5efAtdinxlgv0/257QJUPbk0thnZA=-----END CERTIFICATE-----",
             "cert": "-----BEGIN CERTIFICATE-----MIIDuTCCAqGgAwIBAgIUda0rZOToskohrJJ1uviTzse9OkEwDQYJKoZIhvcNAQELBQAwaDEUMBIGA1UEAwwLbXF0dC1icm9rZXIxFjAUBgNVBAoMDXNuYXBtYWtlci5jb20xETAPBgNVBAsMCHNvZnR3YXJlMSUwIwYJKoZIhvcNAQkBFhZzb2Z0d2FyZUBzbmFwbWFrZXIuY29tMB4XDTI1MDYxMzAwMDAwMFoXDTM1MDYxMTAwMDAwMFowFDESMBAGA1UEAwwJbXF0dF9jbGkyMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA/xMcTp4BoEn9lj+qd4ldYGIO5VpM2CpG3oc8HM1nLrLlZcMw5xSeaXK0zG/i/X43znJKzIWSYIFZYZvU5MkX2dDvRVMQbmML01jG/n8FfLCTRQ76eAOCz11Ilhur5wvp7Er+QAg17bLIt6qX41IN2Lm5lELJq7CkreEfcQniZ1EfaRnsdv2xMkJ9vN/hFhc+Sm4DtNklctWuZVPTB3wDQnD2XlqBc1bG+10Nn1Pt/lNudOPMj1RxB3akDKb1bDFiidCB9S87rrZfJFjIChdzUvVdF+v4r2RiTsZ8DPHkrA48xoCXhEPQR+KyV4O4VeKFXYh3tGV3bNmGkuVhZGzFnQIDAQABo4GuMIGrMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgOoMB0GA1UdJQQWMBQGCCsGAQUFBwMCBggrBgEFBQcDBDAdBgNVHQ4EFgQUrXar8N/Ek2lR49/mordIGaYaS6AwHwYDVR0jBBgwFoAUr/YO+2JshHKFbvvMVRBNcwBZyhwwLAYDVR0RBCUwI4IJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBAQAWHBiJipmVhHwmkfatBdUqVfNo7GGPvZQXMPrU1fxKnXHb2NdsKxE4+Q4P9nFlYtq5SkB4yu8fYE2Add2dknXj4D2S5Zo1MhNHMPh0rUDDu8P8abV3t8FhUh71QxwTv1HDiTy7uCGPZXnRhIIL9hlzQoUF4OjpwXN2vLSiTCaYj/BlJMM8a3u2zeaHHQ8fPhHSem97aTW4cLsotmGfVrbliL9uuKb7/0eEb6sYMpKU00+7HIke0BeejAkUgsqDqXZS3ZTmWxa0kmmkhVUwUR/I0siiXFhkLkB70Ics9fGI72Jg9TvYUdllCvF3USuJFWjJMrrQgpIy/aONrNTwb92f-----END CERTIFICATE-----",
-            "clientid": "172.18.0.119",
+            "clientId": "172.18.0.119",
             "connected": false,
             "dev_id": "BE003F28DE84E00E",
             "dev_name": "BE003F28DE84E00E",
-            "img": "http://localhost:13619/profiles/Snapmaker/Snapmaker U1_cover.png",
+            "img": "http://localhost:13619/profiles/Snapmaker/Snapmaker test_cover.png",
             "ip": "172.18.1.19",
             "key": "-----BEGIN RSA PRIVATE KEY-----MIIEpAIBAAKCAQEA/xMcTp4BoEn9lj+qd4ldYGIO5VpM2CpG3oc8HM1nLrLlZcMw5xSeaXK0zG/i/X43znJKzIWSYIFZYZvU5MkX2dDvRVMQbmML01jG/n8FfLCTRQ76eAOCz11Ilhur5wvp7Er+QAg17bLIt6qX41IN2Lm5lELJq7CkreEfcQniZ1EfaRnsdv2xMkJ9vN/hFhc+Sm4DtNklctWuZVPTB3wDQnD2XlqBc1bG+10Nn1Pt/lNudOPMj1RxB3akDKb1bDFiidCB9S87rrZfJFjIChdzUvVdF+v4r2RiTsZ8DPHkrA48xoCXhEPQR+KyV4O4VeKFXYh3tGV3bNmGkuVhZGzFnQIDAQABAoIBACiUZ385Y3xW8R1HZS0NwTl9eC20Sz/jn/E0lhNl+Smkg9rH7h6BOP+BJHLWxQe7nhC9vZkikepBAdGFy12XgXAhbYN7psRNBRtbRxNDbYHMDK3ip2XS9ytaxZq97b/89Prm5mKU+9FkTUrs/KuJSRMm3vePlYp3OIfCJjCjWC3D2JrhBV8AuIzRFALeQ7OW1ZBv+h616HMjvnZnaCjqdXU3GV/Ddz5M2P4/2QY+vvKVa5t5I2HqdWSAuNOy5gG/D30zCvBkT64by3Eu80A2gkGqilXZ9W8xFDRVWXW8VEdhZGVrm+fpTe2SjIUQlnTpsyfy4ntU96hIwxpwhx8oZHECgYEA/+XBtzX0fM7SYAH1baqrcMd/FS82zEuwrEKsg3WWlBBeOJe6K8q24QcrZFBKUlBkOkRkdDydKZnTWLDpDRe6n96k+NXh+0qahsYJPPeipRedxQAlf4q7moJ5UMYoU4rAksDcSaM9POF1NpQGtrNGOrzu93UGI8VEiAWAbbhPNY0CgYEA/y1E/SSNPtXBZ4hqOzImPs52+YFLLgFYkWgyusr5Tqua5Nf+4ivcP924IKX36BG8JxMLtUfvS9MEHmi+U3cWtTT80cJOQzkJXIJeuyyi2A+ng/MPixT4JuOxgWhk1hCVngUgRcN7lskNmzOUAAh3bEF3Z3Sfsy+N/LMhNR1pJFECgYEAvy6ler65yWEvtYDhHyzqZxj07hvXIezOsvQhNRnuBPLxofBhrAQIe7jCh3ChBjx/lTSxpFIAzSraxqFtjFWVHYnW0P3ilr7XEif0kPMmNZeeTKdeXJqGrNobzugtCrVYSIwESJPH1atPyhXvqiHoL0wmcQSiMKlaGRGbMN4Jd6UCgYBWniE65Htlht19rVqR+XXt/9t22iKQ3TgZM4t0yI1T3QBZCdClKUo8C6ECxBOgnNSHVvm0cVSTIm/VeqyQXG5C2FexRAmY2/WHh2Fsm7wzJy0vpwPxrA6H9OY+DRedake/OfI4fCCpkFmkAyAL2tPe1WIYpgfHpS7HRm7RPsh/4QKBgQD5rtZ3hIbXz+AsdvZEsA2fZTxxfKtR8Ept5IAuc43RrH4yRPhnaGDa16CPQuhq6zeD4hsQNRQ822hVQrJT5Kx3tw6qaExJ+1dEUAEbBbkc0vAuagbWwI6H7SZQQ+EYQ/hOqkszrP1JVYCErk64pKC1wQU3Xxe2rTfuHCaOxJ3cVA==-----END RSA PRIVATE KEY-----",
             "link_mode": "lan",
-            "model_name": "Snapmaker U1",
+            "model_name": "Snapmaker test",
             "nozzle_sizes": [
                 0.4,
                 0.4,
@@ -570,7 +571,7 @@
             ],
             "password": "cuzw3WaCiBgt5WQ4",
             "port": 8883,
-            "preset_name": "Snapmaker U1 (0.4 nozzle)",
+            "preset_name": "Snapmaker test (0.4 nozzle)",
             "protocol": 0,
             "sn": "BE003F28DE84E00E",
             "user": "cli2",

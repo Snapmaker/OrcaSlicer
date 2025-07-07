@@ -800,7 +800,16 @@ void AppConfig::save()
         j["orca_presets"].push_back(preset.second);
     }
 
-    j["devices"] = m_device_list;
+    j["devices"] = json::array();
+    for (size_t i = 0; i < m_device_list.size(); ++i) {
+        if (m_device_list[i].link_mode != "wan") {
+            j["devices"].push_back(m_device_list[i]);
+        }
+    }
+
+    // j["devices"] = m_device_list;
+
+
     for (size_t i = 0; i < j["devices"].size(); ++i) {
         j["devices"][i]["connected"] = false;
     }

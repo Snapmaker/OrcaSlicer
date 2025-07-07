@@ -4493,6 +4493,18 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
+client_id_generator
+discovery_device
+lava_core
+lava_device
+lava_device_control
+lava_logger
+lava_theme
+wcp
+
+TODO: Add your license here.
+
+--------------------------------------------------------------------------------
 clock
 decimal
 fake_async
@@ -6225,17 +6237,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
---------------------------------------------------------------------------------
-discovery_device
-lava_core
-lava_device
-lava_device_control
-lava_logger
-lava_theme
-wcp
-
-TODO: Add your license here.
-
 --------------------------------------------------------------------------------
 double-conversion
 icu

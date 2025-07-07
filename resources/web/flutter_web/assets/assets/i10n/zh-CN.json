@@ -125,5 +125,7 @@
     "Cannot get the current slice file information, or the file does not exist, please re-operate the slice": "无法获取当前切片文件信息,或文件不存在，请重新操作切片",
     "Cannot get connected machine": "无法获取到当前已连接的设备信息",
     "Timeout: Cannot get file filament mapping": "无法获取文件耗材映射信息",
-    "Cannot load file content": "无法加载文件内容"
+    "Cannot load file content": "无法加载文件内容",
+
+    "Device current mode is not available/not online": "设备当前模式不可用/不在线"
 }

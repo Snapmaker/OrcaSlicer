@@ -968,7 +968,7 @@
     }
 
     window.sendMessage = function (message) {
-      console.log("I am proxy in html to send message to container: " + message);
+      //console.log("I am proxy in html to send message to container: " + message);
       
       // 调用 window.postMessage 传递消息给 flutter
       window.wx &&  window.wx.postMessage(message); // 调用 window.postMessage 传递消息给 原生系统

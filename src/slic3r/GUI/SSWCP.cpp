@@ -4116,6 +4116,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
             std::string msg    = "success";
             bool flag = host->set_engine(engine, msg);
 
+            if (flag)
             {
                 if (m_param_data.count("ip")) {
                     std::string ip = m_param_data["ip"].get<std::string>();
@@ -4565,8 +4566,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                 } else {
                     handle_general_fail(-1, "param [ip] required");
                 }
+            } else {
+                handle_general_fail();
             }
-            
         } else {
             handle_general_fail();
         }

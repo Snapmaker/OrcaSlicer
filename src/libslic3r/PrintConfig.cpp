@@ -1918,7 +1918,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat { 0. });
 
     def = this->add("tool_change_temprature_wait", coBool);
-    def->label = L("Wait for the temperature when chaning tools");
+    def->label = L("Wait for the temperature when changing tools");
     def->tooltip = L("It will use the M109 instead of M104 T[target] after changing tools if this is set to true");
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));

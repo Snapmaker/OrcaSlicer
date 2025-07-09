@@ -664,7 +664,7 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
         float vol  = config.filament_multitool_ramming_volume.get_at(idx);
         float flow = config.filament_multitool_ramming_flow.get_at(idx);
         m_filpar[idx].multitool_ramming = config.filament_multitool_ramming.get_at(idx);
-        m_filpar[idx].ramming_line_width_multiplicator = 2.;
+        m_filpar[idx].ramming_line_width_multiplicator = 1.6;
         m_filpar[idx].ramming_step_multiplicator = 1.;
 
         // Now the ramming speed vector. In this case it contains just one value (flow).

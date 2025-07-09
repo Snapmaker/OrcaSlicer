@@ -4249,6 +4249,8 @@ if (is_marlin_flavor)
         optgroup->append_single_option_line("machine_load_filament_time");
         optgroup->append_single_option_line("machine_unload_filament_time");
         optgroup->append_single_option_line("machine_tool_change_time");
+        optgroup->append_single_option_line("tool_change_temprature_wait");
+
         m_pages.insert(m_pages.end() - n_after_single_extruder_MM, page);
     }
 

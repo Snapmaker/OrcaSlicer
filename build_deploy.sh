@@ -35,7 +35,7 @@
 # 定义变量
 PROJECT_ROOT=$(pwd)
 ARCH="x86_64"
-VER="2.0.22"           # 改为你的版本号
+VER="2.0.23"           # 改为你的版本号
 APP_NAME="Snapmaker_Orca"
 
 # 创建符号链接

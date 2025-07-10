@@ -171,7 +171,9 @@ private:
         return m_filpar[0].filament_area; // all extruders are assumed to have the same filament diameter at this point
     }
 
-
+	bool   m_change_pressure         = true;
+    float  m_change_pressure_value   = 0.0;
+    float  m_ramming_width_ratio     = 2.0;
 	bool   m_semm               = true; // Are we using a single extruder multimaterial printer?
 	bool   m_enable_filament_ramming = true;
 	bool   m_is_mk4mmu3         = false;

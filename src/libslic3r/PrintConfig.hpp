@@ -1158,6 +1158,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,              filament_stamping_distance))
     ((ConfigOptionBool,                purge_in_prime_tower))
     ((ConfigOptionBool,                enable_filament_ramming))
+    ((ConfigOptionFloat,                ramming_line_width_ratio))
+    ((ConfigOptionBool,                enable_change_pressure_when_wiping))
+    ((ConfigOptionFloat,                ramming_pressure_advance_value))
     ((ConfigOptionBool,                support_multi_bed_types))
 
     // Small Area Infill Flow Compensation

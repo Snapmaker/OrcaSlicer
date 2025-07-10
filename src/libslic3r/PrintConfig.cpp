@@ -4330,6 +4330,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("ramming_line_width_ratio", coFloat);
+    def->label = L("Ramming line width ratio");
+    def->tooltip = L(
+        "This is used to decide the line width of wipe tower when ramming, ramming line width = [this ratio] * extruder * 1.25");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.0));
+
+    def = this->add("enable_change_pressure_when_wiping", coBool);
+    def->label = L("Enable change pressure advance when wiping");
+    def->tooltip = L("If it's set to false, the pressure advance value will not be changed.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("ramming_pressure_advance_value", coFloat);
+    def->label = L("Pressure advance value when ramming");
+    def->tooltip = L("Set_Pressure_advance [this value] when ramming on wipe tower");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
 
     def = this->add("wipe_tower_no_sparse_layers", coBool);
     def->label = L("No sparse layers (beta)");

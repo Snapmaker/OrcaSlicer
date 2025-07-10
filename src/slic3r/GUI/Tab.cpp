@@ -1656,10 +1656,22 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             std::string new_color = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
             new_colors.push_back(new_color);
         }
+        if (wxGetApp().preset_bundle->printers.get_edited_preset().name.find("Snapmaker U1") != std::string::npos) {
+            if (old_filament_size > num_extruder) {
+                num_extruder = old_filament_size;
+                new_colors.clear();
+                for (int i = 0; i < old_filament_size; ++i) {
+                    wxColour    new_col   = Plater::get_next_color_for_filament();
+                    std::string new_color = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+                    new_colors.push_back(new_color);
+                }
+            }
+        } 
         wxGetApp().preset_bundle->set_num_filaments(num_extruder, new_colors);
         wxGetApp().plater()->on_filaments_change(num_extruder);
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+        
     }
 
     if (m_postpone_update_ui) {
@@ -4236,6 +4248,22 @@ if (is_marlin_flavor)
         optgroup = page->new_optgroup(L("Wipe tower"), "param_tower");
         optgroup->append_single_option_line("purge_in_prime_tower", "semm");
         optgroup->append_single_option_line("enable_filament_ramming", "semm");
+        optgroup->append_single_option_line("ramming_line_width_ratio");
+        optgroup->append_single_option_line("enable_change_pressure_when_wiping");
+        optgroup->append_single_option_line("ramming_pressure_advance_value");
+
+         // 添加依赖关系处理
+        optgroup->m_on_change = [this, optgroup](t_config_option_key opt_key, boost::any value) {
+            if (opt_key == "enable_change_pressure_when_wiping") {
+                bool enable_pressure = boost::any_cast<bool>(value);
+                // 根据enable_change_pressure_when_wiping的值来启用/禁用ramming_pressure_advance_value
+                optgroup->enable_field("ramming_pressure_advance_value", enable_pressure);
+            }
+            
+            // 调用原有的更新逻辑
+            update_dirty();
+            on_value_change(opt_key, value);
+        };
 
 
         optgroup = page->new_optgroup(L("Single extruder multi-material parameters"), "param_settings");
@@ -5104,11 +5132,13 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         // check if there is something in the cache to move to the new selected preset
         apply_config_from_cache();
 
+        size_t old_filament_count = m_preset_bundle->filament_presets.size();
+
         load_current_preset();
 
         // Orca: update presets for the selected printer
         if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
-            m_preset_bundle->update_selections(*wxGetApp().app_config);
+            /*m_preset_bundle->update_selections(*wxGetApp().app_config);
             int extruders_count =
                 m_preset_bundle->printers.get_edited_preset().config.opt<ConfigOptionFloats>("nozzle_diameter")->values.size();
             bool support_multi_material =
@@ -5117,7 +5147,21 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
             if (!support_multi_material) {
                 m_preset_bundle->set_num_filaments(extruders_count);
             } 
-            wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
+            wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());*/
+
+            if (preset_name.find("Snapmaker U1") != std::string::npos) {
+                m_preset_bundle->update_selections(*wxGetApp().app_config);
+                if (old_filament_count > m_preset_bundle->filament_presets.size()) {
+                    m_preset_bundle->filament_presets.resize(old_filament_count, m_preset_bundle->filament_presets[0]);
+                }
+                wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
+            } else {
+                m_preset_bundle->update_selections(*wxGetApp().app_config);
+                wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
+            }
+
+            
+            
         }
 
         if (delete_third_printer) {

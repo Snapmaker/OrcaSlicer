@@ -99,10 +99,25 @@ public:
     WipeTowerWriter2&            disable_linear_advance() {
         if (m_gcode_flavor == gcfRepRapSprinter || m_gcode_flavor == gcfRepRapFirmware)
             m_gcode += (std::string("M572 D") + std::to_string(m_current_tool) + " S0\n");
-        else if (m_gcode_flavor == gcfKlipper){}
+        else if (m_gcode_flavor == gcfKlipper){
             // m_gcode += "SET_PRESSURE_ADVANCE ADVANCE=0\n"; // Snapmaker U1
+            
+        }
+            
         else
             m_gcode += "M900 K0\n";
+        return *this;
+    }
+
+    WipeTowerWriter2&           disable_linear_advance_value(float value = 0.0) {
+        if (m_gcode_flavor == gcfRepRapSprinter || m_gcode_flavor == gcfRepRapFirmware)
+            m_gcode += (std::string("M572 D") + std::to_string(m_current_tool) + " S"+ std::to_string(value) + "\n");
+        else if (m_gcode_flavor == gcfKlipper) {
+            m_gcode += "SET_PRESSURE_ADVANCE ADVANCE=" + std::to_string(value) + "\n"; // Snapmaker U1
+        }
+
+        else
+            m_gcode += "M900 K" + std::to_string(value) + "\n";
         return *this;
     }
 
@@ -557,7 +572,10 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     m_perimeter_speed(default_region_config.inner_wall_speed),
     m_current_tool(initial_tool),
     wipe_volumes(wiping_matrix),
-    m_wipe_tower_max_purge_speed(float(config.wipe_tower_max_purge_speed))
+    m_wipe_tower_max_purge_speed(float(config.wipe_tower_max_purge_speed)),
+    m_change_pressure(config.enable_change_pressure_when_wiping),
+    m_change_pressure_value(config.ramming_pressure_advance_value),
+    m_ramming_width_ratio(config.ramming_line_width_ratio)
 {
     // Read absolute value of first layer speed, if given as percentage,
     // it is taken over following default. Speeds from config are not
@@ -664,7 +682,7 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
         float vol  = config.filament_multitool_ramming_volume.get_at(idx);
         float flow = config.filament_multitool_ramming_flow.get_at(idx);
         m_filpar[idx].multitool_ramming = config.filament_multitool_ramming.get_at(idx);
-        m_filpar[idx].ramming_line_width_multiplicator = 1.6;
+        m_filpar[idx].ramming_line_width_multiplicator = m_ramming_width_ratio;
         m_filpar[idx].ramming_step_multiplicator = 1.;
 
         // Now the ramming speed vector. In this case it contains just one value (flow).
@@ -900,8 +918,12 @@ void WipeTower2::toolchange_Unload(
 
     if (do_ramming) {
         writer.travel(ramming_start_pos); // move to starting position
-        if (! m_is_mk4mmu3)
-            writer.disable_linear_advance();
+        if (!m_is_mk4mmu3) {
+            if (m_change_pressure) {
+                writer.disable_linear_advance_value(m_change_pressure_value);
+            }
+        }
+            
         if (cold_ramming)
             writer.set_extruder_temp(old_temperature - 20);
     }
@@ -1015,8 +1037,12 @@ void WipeTower2::toolchange_Unload(
 
         float speed_inc = (final_speed - initial_speed) / (2.f * number_of_cooling_moves - 1.f);
 
-        if (m_is_mk4mmu3)
-            writer.disable_linear_advance();
+        if (m_is_mk4mmu3) {
+            if (m_change_pressure) {
+                writer.disable_linear_advance_value(m_change_pressure_value);
+            }
+        }
+            
 
         writer.suppress_preview()
               .travel(writer.x(), writer.y() + y_step);

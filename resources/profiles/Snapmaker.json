@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.27.02",
+  "version": "02.02.28.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -410,10 +410,6 @@
     {
       "name": "0.24 Standard @Snapmaker Artisan (0.6 nozzle)",
       "sub_path": "process/0.24 Standard @Snapmaker Artisan (0.6 nozzle).json"
-    },
-    {
-      "name": "0.24 Standard @Snapmaker (0.8 nozzle)",
-      "sub_path": "process/0.24 Standard @Snapmaker (0.8 nozzle).json"
     },
     {
       "name": "0.24 Standard @Snapmaker J1 (0.8 nozzle)",
@@ -1947,6 +1943,14 @@
     
   ],
   "machine_list": [
+    {
+      "name": "fdm_klipper",
+      "sub_path": "machine/fdm_klipper.json"
+    },
+    {
+      "name": "fdm_toolchanger",
+      "sub_path": "machine/fdm_toolchanger.json"
+    },
     {
       "name": "fdm_common",
       "sub_path": "machine/fdm_common.json"

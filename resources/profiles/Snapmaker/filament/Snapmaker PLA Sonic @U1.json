@@ -126,10 +126,10 @@
         "1"
     ],
     "filament_multitool_ramming_flow": [
-        "40"
+        "18"
     ],
     "filament_multitool_ramming_volume": [
-        "10"
+        "20"
     ],
     "filament_notes": [
         ""
@@ -216,10 +216,10 @@
         "0"
     ],
     "hot_plate_temp": [
-        "60"
+        "55"
     ],
     "hot_plate_temp_initial_layer": [
-        "60"
+        "55"
     ],
     "idle_temperature": [
         "0"

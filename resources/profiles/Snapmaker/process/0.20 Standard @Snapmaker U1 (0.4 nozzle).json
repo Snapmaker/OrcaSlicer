@@ -13,10 +13,11 @@
     ],
     "ooze_prevention": "1",
     "prime_tower_width": "30",
-    "prime_volume": "45",
+    "prime_volume": "40",
     "slowdown_for_curled_perimeters": "0",
     "standby_temperature_delta": "-150",
-    "wipe_tower_filament": "4",
+    "wipe_tower_filament": "1",
     "preheat_time": "38",
-    "wipe_tower_cone_angle": "5"
+    "wipe_tower_cone_angle": "5",
+    "prime_tower_brim_width": "5"
 }

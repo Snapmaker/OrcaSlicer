@@ -42,7 +42,7 @@ enum class FuzzySkinType {
 };
 
 enum PrintHostType {
-    htMoonRaker_mqtt, htMoonRaker, htPrusaLink, htPrusaConnect, htOctoPrint, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htESP3D, htCrealityPrint, htObico, htFlashforge, htSimplyPrint
+    htPrusaLink, htPrusaConnect, htOctoPrint, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htESP3D, htCrealityPrint, htObico, htFlashforge, htSimplyPrint, htMoonRaker_mqtt, htMoonRaker, 
 };
 
 enum AuthorizationType {

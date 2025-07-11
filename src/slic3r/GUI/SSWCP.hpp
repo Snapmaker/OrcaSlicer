@@ -369,6 +369,18 @@ private:
     void sw_SetFilamentMappingComplete();
     void sw_FinishFilamentMapping();
 
+    // new
+    void sw_SetDeviceName();
+    void sw_ControlLed();
+    void sw_ControlPrintSpeed();
+    void sw_BedMesh_AbortProbeMesh();
+    void sw_ControlPurifier();
+    void sw_ControlMainFan();
+    void sw_ControlGenericFan();
+    void sw_ControlBedTemp();
+    void sw_ControlExtruderTemp();
+    void sw_FilesThumbnailsBase64();
+
 
     // Download machine file
     void sw_DownloadMachineFile();

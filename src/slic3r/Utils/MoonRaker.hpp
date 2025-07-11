@@ -90,13 +90,36 @@ public:
 
     virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) {}
 
-    virtual void async_camera_start(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_camera_start(const std::string& domain, int interval, std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>){}
 
     virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) {}
+
+
+    // new  
+
+    virtual void async_set_device_name(const std::string& device_name, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_control_led(const std::string& name, int white, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_control_print_speed(int percentage, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_control_generic_fan(const std::string& name, int speed, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_control_bed_temp(int temp, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_control_extruder_temp(int temp, int index, int map, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) {}
 
 protected:
     // Internal upload implementations
@@ -207,7 +230,7 @@ public:
 
     virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) override;
 
-    virtual void async_camera_start(const std::string& domain, std::function<void(const nlohmann::json& response)>) override;
+    virtual void async_camera_start(const std::string& domain, int interval, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) override;
 
@@ -218,6 +241,27 @@ public:
     void set_connection_lost(std::function<void()> callback) override;
 
     std::string get_sn() override;
+
+    // new
+    virtual void async_set_device_name(const std::string& device_name, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_control_led(const std::string& name, int white, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_control_print_speed(int percentage, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_control_generic_fan(const std::string& name, int speed, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_control_bed_temp(int temp, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_control_extruder_temp(int temp, int index, int map, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) override;
 
 public:
     // MQTT message handler
@@ -280,6 +324,7 @@ private:
     static std::shared_ptr<MqttClient> m_mqtt_client_tls;
     static TimeoutMap<int64_t, RequestCallback> m_request_cb_map;
     static std::function<void(const nlohmann::json&)> m_status_cb;
+    static std::function<void(const nlohmann::json&)> m_notification_cb;
 
     // MQTT topics
     static std::string m_auth_topic;

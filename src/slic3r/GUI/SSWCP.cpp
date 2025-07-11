@@ -1399,7 +1399,7 @@ void SSWCP_MachineOption_Instance::process()
     } else if (m_cmd == "sw_CameraStartMonitor") {
         sw_CameraStartMonitor();
     } else if (m_cmd == "sw_CameraStopMonitor") {
-        sw_CameraStartMonitor();
+        sw_CameraStopMonitor();
     } else if (m_cmd == "sw_SetFilamentMappingComplete") {
         sw_SetFilamentMappingComplete();
     } else if (m_cmd == "sw_GetFileFilamentMapping") {
@@ -1420,6 +1420,26 @@ void SSWCP_MachineOption_Instance::process()
         sw_PullCloudFile();
     } else if (m_cmd == "sw_CancelPullCloudFile") {
         sw_CancelPullCloudFile();
+    } else if (m_cmd == "sw_setDeviceName") {
+        sw_SetDeviceName();
+    } else if (m_cmd == "sw_ControlLed") {
+        sw_ControlLed();
+    } else if (m_cmd == "sw_ControlPrintSpeed") {
+        sw_ControlPrintSpeed();
+    } else if (m_cmd == "sw_BedMesh_AbortProbeMesh") {
+        sw_BedMesh_AbortProbeMesh();
+    } else if (m_cmd == "sw_ControlPurifier") {
+        sw_ControlPurifier();
+    } else if (m_cmd == "sw_ControlMainFan") {
+        sw_ControlMainFan();
+    } else if (m_cmd == "sw_ControlGenericFan") {
+        sw_ControlGenericFan();
+    } else if (m_cmd == "sw_ControlBedTemp") {
+        sw_ControlBedTemp();
+    } else if (m_cmd == "sw_ControlExtruderTemp") {
+        sw_ControlExtruderTemp();
+    } else if (m_cmd == "sw_FilesThumbnailsBase64") {
+        sw_FilesThumbnailsBase64();
     }
     
     else {
@@ -2441,8 +2461,10 @@ void SSWCP_MachineOption_Instance::sw_CameraStartMonitor() {
 
             std::string domain = m_param_data["domain"].get<std::string>();
 
+            int interval = m_param_data.count("interval") ? m_param_data["interval"].get<int>() : 2;
+
             auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-            host->async_camera_start(domain, [weak_self](const json& response) {
+            host->async_camera_start(domain, interval, [weak_self](const json& response) {
                 auto self = weak_self.lock();
                 if (self) {
                     SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
@@ -2485,6 +2507,315 @@ void SSWCP_MachineOption_Instance::sw_CameraStopMonitor() {
         handle_general_fail();
     }
 }
+
+void SSWCP_MachineOption_Instance::sw_SetDeviceName()
+{
+    try {
+        if (m_param_data.count("name")) {
+            std::string name = m_param_data["name"].get<std::string>();
+
+            std::shared_ptr<PrintHost> host = nullptr;
+            wxGetApp().get_connect_host(host);
+
+            if (!host) {
+                handle_general_fail(-1, "Connection lost!");
+                return;
+            }
+
+            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+            host->async_set_device_name(name, [weak_self](const json& response) {
+                auto self = weak_self.lock();
+                if (self) {
+                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+                }
+            });
+        } else {
+            handle_general_fail(-1, "param [name] required!");
+        }
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ControlLed()
+{
+    try {
+        if (!m_param_data.count("name")) {
+            handle_general_fail(-1, "param [name] required!");
+            return;
+        }
+
+        if (!m_param_data.count("white")) {
+            handle_general_fail(-1, "param [white] required!");
+            return;
+        }
+
+        std::string name    = m_param_data["name"].get<std::string>();
+        int white = m_param_data["white"].get<int>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_control_led(name, white, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ControlPrintSpeed()
+{
+    try {
+        if (!m_param_data.count("percentage")) {
+            handle_general_fail(-1, "param [percentage] required!");
+            return;
+        }
+
+        int percentage = m_param_data["percentage"].get<int>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_control_print_speed(percentage, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_BedMesh_AbortProbeMesh()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_bedmesh_abort_probe_mesh([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ControlPurifier()
+{
+    try {
+
+        int fan_speed = m_param_data.count("fan_speed") ? m_param_data["fan_speed"].get<int>() : -1;
+        int delay_time = m_param_data.count("delay_time") ? m_param_data["delay_time"].get<int>() : -1;
+        int work_time  = m_param_data.count("work_time") ? m_param_data["work_time"].get<int>() : -1;
+        
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_controlPurifier(fan_speed, delay_time, work_time, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ControlMainFan()
+{
+    try {
+        if (!m_param_data.count("speed")) {
+            handle_general_fail(-1, "param [speed] required!");
+            return;
+        }
+
+        int speed = m_param_data["speed"].get<int>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_control_main_fan(speed, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ControlGenericFan()
+{
+    try {
+        if (!m_param_data.count("name")) {
+            handle_general_fail(-1, "param [fan_id] required!");
+            return;
+        }
+
+        if (!m_param_data.count("speed")) {
+            handle_general_fail(-1, "param [speed] required!");
+            return;
+        }
+
+        std::string name = m_param_data["name"].get<std::string>();
+        int speed  = m_param_data["speed"].get<int>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_control_generic_fan(name, speed, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+
+void SSWCP_MachineOption_Instance::sw_ControlBedTemp()
+{
+    try {
+        if (!m_param_data.count("temp")) {
+            handle_general_fail(-1, "param [temp] required!");
+            return;
+        }
+
+        int temp = m_param_data["temp"].get<int>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_control_bed_temp(temp, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ControlExtruderTemp()
+{
+    try {
+        if (!m_param_data.count("temp")) {
+            handle_general_fail(-1, "param [temp] required!");
+            return;
+        }
+
+        int index = m_param_data.count("index") ? m_param_data["index"].get<int>() : -1;
+        int map   = m_param_data.count("map") ? m_param_data["map"].get<int>() : -1;
+
+        int temp = m_param_data["temp"].get<int>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_control_extruder_temp(temp, index, map, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
+{
+    try {
+        if (!m_param_data.count("path")) {
+            handle_general_fail(-1, "param [path] required");
+            return;
+        }
+
+        std::string path = m_param_data["param"].get<std::string>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_files_thumbnails_base64(path, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 
 // SSWCP_MachineConnect_Instance
 void SSWCP_MachineConnect_Instance::process() {
@@ -4700,6 +5031,16 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_FinishPreprint",
     "sw_PullCloudFile",
     "sw_CancelPullCloudFile",
+    "sw_SetDeviceName",
+    "sw_ContolLed",
+    "sw_ControlPrintSpeed",
+    "sw_BedMesh_AbortProbeMesh",
+    "sw_ControlPurifier",
+    "sw_ControlMainFan",
+    "sw_ControlGenericFan",
+    "sw_ControlBedTemp",
+    "sw_ControlExtruderTemp",
+    "sw_FilesThumbnailsBase64",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

@@ -1760,6 +1760,7 @@ void Sidebar::update_all_preset_comboboxes()
     if (p->combo_printer){
         p->combo_printer->update();
         update_printer_thumbnail();
+        update_nozzle_settings();
     }
         
 

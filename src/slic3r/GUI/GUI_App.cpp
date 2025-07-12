@@ -7101,7 +7101,7 @@ bool GUI_App::sm_disconnect_current_machine()
     }
 
     if (res) {
-        wxGetApp().call_after([res](){
+        wxGetApp().CallAfter([this, res](){
             wxGetApp().app_config->set("use_new_connect", "false");
             /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
             p_config->set("print_host", "");*/

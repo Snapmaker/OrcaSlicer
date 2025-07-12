@@ -7101,34 +7101,38 @@ bool GUI_App::sm_disconnect_current_machine()
     }
 
     if (res) {
-        wxGetApp().app_config->set("use_new_connect", "false");
-        /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
-        p_config->set("print_host", "");*/
+        wxGetApp().call_after([res](){
+            wxGetApp().app_config->set("use_new_connect", "false");
+            /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
+            p_config->set("print_host", "");*/
 
-        auto devices = wxGetApp().app_config->get_devices();
-        for (size_t i = 0; i < devices.size(); ++i) {
-            if (devices[i].connected) {
-                devices[i].connected = false;
-                wxGetApp().app_config->save_device_info(devices[i]);
-                break;
+            auto devices = wxGetApp().app_config->get_devices();
+            for (size_t i = 0; i < devices.size(); ++i) {
+                if (devices[i].connected) {
+                    devices[i].connected = false;
+                    wxGetApp().app_config->save_device_info(devices[i]);
+                    break;
+                }
             }
-        }
 
-        //// 同步卡片
-        //json param;
-        //param["command"]       = "local_devices_arrived";
-        //param["sequece_id"]    = "10001";
-        //param["data"]          = devices;
-        //std::string logout_cmd = param.dump();
-        //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-        //GUI::wxGetApp().run_script(strJS);
+            //// 同步卡片
+            //json param;
+            //param["command"]       = "local_devices_arrived";
+            //param["sequece_id"]    = "10001";
+            //param["data"]          = devices;
+            //std::string logout_cmd = param.dump();
+            //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+            //GUI::wxGetApp().run_script(strJS);
 
-        // wcp订阅
-        json data = this->app_config->get_devices();
-        wxGetApp().device_card_notify(data);
+            // wcp订阅
+            json data = this->app_config->get_devices();
+            wxGetApp().device_card_notify(data);
 
-        wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-        wxGetApp().set_connect_host(nullptr);
+            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+            wxGetApp().set_connect_host(nullptr);
+
+        });
+        
     }
 
     return res;

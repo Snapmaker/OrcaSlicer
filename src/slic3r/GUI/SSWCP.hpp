@@ -380,6 +380,7 @@ private:
     void sw_ControlBedTemp();
     void sw_ControlExtruderTemp();
     void sw_FilesThumbnailsBase64();
+    void sw_exception_query();
 
 
     // Download machine file

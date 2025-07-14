@@ -121,6 +121,8 @@ public:
 
     virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) {}
+
 protected:
     // Internal upload implementations
 #ifdef WIN32
@@ -262,6 +264,8 @@ public:
     virtual void async_control_extruder_temp(int temp, int index, int map, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) override;
 
 public:
     // MQTT message handler

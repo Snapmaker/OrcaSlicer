@@ -2082,6 +2082,30 @@ void Moonraker_Mqtt::async_files_thumbnails_base64(const std::string& path, std:
 }
 
 
+void Moonraker_Mqtt::async_exception_query(std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始查询异常状态";
+    wcp_loger.add_log("开始查询异常状态", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "server.exception.query";
+
+    json params;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 查询异常状态超时";
+                             wcp_loger.add_log("查询异常状态超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 查询异常状态失败";
+        wcp_loger.add_log("查询异常状态失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 void Moonraker_Mqtt::async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)> callback) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始获取文件缩略图，文件名: " << filename;

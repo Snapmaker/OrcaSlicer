@@ -1440,6 +1440,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_ControlExtruderTemp();
     } else if (m_cmd == "sw_FilesThumbnailsBase64") {
         sw_FilesThumbnailsBase64();
+    } else if (m_cmd == "sw_exception_query") {
+        sw_exception_query();
     }
     
     else {
@@ -2805,6 +2807,30 @@ void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
 
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
         host->async_files_thumbnails_base64(path, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_exception_query()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_exception_query([weak_self](const json& response) {
             auto self = weak_self.lock();
             if (self) {
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
@@ -5041,6 +5067,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_ControlBedTemp",
     "sw_ControlExtruderTemp",
     "sw_FilesThumbnailsBase64",
+    "sw_exception_query",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

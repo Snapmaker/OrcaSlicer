@@ -148,6 +148,8 @@ public:
 
     virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) {}
+
     //Support for cloud webui login
     virtual bool is_cloud() const { return false; }
     virtual bool is_logged_in() const { return false; }

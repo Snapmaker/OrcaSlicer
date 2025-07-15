@@ -4904,6 +4904,11 @@ void GCodeProcessor::run_post_process()
             std::stringstream ss(cmd.substr(1));
             int tool_number = -1;
             ss >> tool_number;
+            if (gcode_line.size() > 1) {
+                if (gcode_line[1] - '0' > 9 || gcode_line[1] - '0' < 0) {
+                    tool_number = -1;
+                }
+            }
             if (tool_number != -1) {
                 if (tool_number < 0 || (int)m_extruder_temps_config.size() <= tool_number) {
                     // found an invalid value, clamp it to a valid one

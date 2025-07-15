@@ -5107,7 +5107,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_PullCloudFile",
     "sw_CancelPullCloudFile",
     "sw_SetDeviceName",
-    "sw_ContolLed",
+    "sw_ControlLed",
     "sw_ControlPrintSpeed",
     "sw_BedMesh_AbortProbeMesh",
     "sw_ControlPurifier",

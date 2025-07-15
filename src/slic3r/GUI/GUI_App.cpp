@@ -3826,7 +3826,7 @@ void GUI_App::sm_get_login_info() {
 
 void GUI_App::sm_request_login(bool show_user_info)
 {
-    sm_ShowUserLogin();
+    sm_ShowUserLogin(show_user_info);
 
     if (show_user_info) {
         sm_get_login_info();
@@ -3850,8 +3850,18 @@ void GUI_App::sm_ShowUserLogin(bool show)
             ;
         }
     } else {
-        if (sm_login_dlg)
-            sm_login_dlg->EndModal(wxID_OK);
+        try {
+            if (!sm_login_dlg)
+                sm_login_dlg = new SMUserLogin();
+            else {
+                delete sm_login_dlg;
+                sm_login_dlg = new SMUserLogin();
+                sm_login_dlg->Hide();
+            }
+        }
+        catch (std::exception&) {
+            ;
+        }
     }
 }
 

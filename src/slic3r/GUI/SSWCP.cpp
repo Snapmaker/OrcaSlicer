@@ -3756,8 +3756,11 @@ void SSWCP_UserLogin_Instance::sw_UserLogin()
         send_to_js();
 
         finish_job();
-        wxGetApp().CallAfter([]() {
-            wxGetApp().sm_request_login();
+
+        bool show = m_param_data.count("show") ? m_param_data["show"].get<bool>() : true;
+
+        wxGetApp().CallAfter([show]() {
+            wxGetApp().sm_request_login(show);
         });
         
         

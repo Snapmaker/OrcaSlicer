@@ -544,7 +544,12 @@
             "port": 1884,
             "name": "Snapmaker 0.61",
             "connected":true,
-            "id": "44"
+            "id": "44",
+            "clientId": "172.18.0.98",
+            "ca": "------ca------",
+            "cert": "------cert------",
+            "key": "------key------",
+            "link_mode": "lan"
           };
     }
 
@@ -557,6 +562,7 @@
             "clientId": "172.18.0.119",
             "connected": false,
             "dev_id": "BE003F28DE84E00E",
+            "name": "name:BE003F28DE84E00E",
             "dev_name": "BE003F28DE84E00E",
             "img": "http://localhost:13619/profiles/Snapmaker/Snapmaker test_cover.png",
             "ip": "172.18.1.19",
@@ -854,7 +860,7 @@
           // console.log("simulateResponse message: " + JSON.stringify(mokeData) );
           window.postMessage(JSON.stringify(mokeData), '*'); // 调用 window.postMessage 传递消息给 flutter
           return;
-        }  else if (header['cmd'] == 'server.camera.stop_monitor') {
+        }  else if (header['cmd'] == 'camera.stop_monitor') {
           result = {
             'code': -1,
             'data': null,

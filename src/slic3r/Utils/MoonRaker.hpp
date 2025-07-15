@@ -123,6 +123,8 @@ public:
 
     virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>){}
+
 protected:
     // Internal upload implementations
 #ifdef WIN32
@@ -266,6 +268,8 @@ public:
     virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>)  override;
 
 public:
     // MQTT message handler

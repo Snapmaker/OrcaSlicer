@@ -1420,7 +1420,7 @@ void SSWCP_MachineOption_Instance::process()
         sw_PullCloudFile();
     } else if (m_cmd == "sw_CancelPullCloudFile") {
         sw_CancelPullCloudFile();
-    } else if (m_cmd == "sw_setDeviceName") {
+    } else if (m_cmd == "sw_SetDeviceName") {
         sw_SetDeviceName();
     } else if (m_cmd == "sw_ControlLed") {
         sw_ControlLed();
@@ -1442,6 +1442,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_FilesThumbnailsBase64();
     } else if (m_cmd == "sw_exception_query") {
         sw_exception_query();
+    } else if (m_cmd == "sw_GetFileListPage") {
+        sw_GetFileListPage();
     }
     
     else {
@@ -2817,6 +2819,50 @@ void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
         handle_general_fail();
     }
 }
+
+void SSWCP_MachineOption_Instance::sw_GetFileListPage()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        if (!m_param_data.count("root") || !m_param_data["root"].is_string()) {
+            handle_general_fail(-1, "param [root] required or wrong type!");
+            return;
+        }
+
+        if (!m_param_data.count("files_per_page") || !m_param_data["files_per_page"].is_number()) {
+            handle_general_fail(-1, "param [files_per_page] required or wrong type");
+            return;
+        }
+
+        if (!m_param_data.count("page_number") || !m_param_data["page_number"].is_number()) {
+            handle_general_fail(-1, "param [page_number] required or wrong type");
+            return;
+        }
+
+        std::string root = m_param_data["root"].get<std::string>();
+        int files_per_page = m_param_data["files_per_page"].get<int>();
+        int         page_number    = m_param_data["page_number"].get<int>();
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_get_file_page_list(root, files_per_page, page_number, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 
 void SSWCP_MachineOption_Instance::sw_exception_query()
 {
@@ -5071,6 +5117,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_ControlExtruderTemp",
     "sw_FilesThumbnailsBase64",
     "sw_exception_query",
+    "sw_GetFileListPage",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

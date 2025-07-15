@@ -3,8 +3,6 @@
     "description": "发现设备",
     "add device": "添加设备",
     "input_ip_address": "输入IP地址",
-    "ok": "确定",
-    "cancel": "取消",
     "discovery_tip1": "1. 仅能发现同一局域网内的打印机",
     "discovery_tip2": "2. 设备只支持使用2.4GHz Wi-Fi连接使用",
     "Nearby machine": "附近机器",
@@ -25,8 +23,7 @@
     "Jump": "跳过",
     "No filament or machine found": "未发现文件或设备",
     "Sending print job": "正在发送打印任务",
-
-
+    "Done": "完成",
     "My Devices": "我的设备",
     "Recent Files": "近期文件",
     "Print History": "打印历史",
@@ -118,19 +115,14 @@
     "Bind Device": "绑定设备",
     "Confirm Bind": "确认绑定",
     "bind_device_tip_format" : "确认将打印机{}与当前账号产绑定？",
-
+    "Cancel": "取消",
+    "Ok": "确定",
     "Bind": "绑定",
     "Search": "搜索",
     "Scan":"扫一扫",
     "Nearby Machine": "附近设备",
     "Please make sure the device is turned on and nearby":"请确保设备已打开并在附近",
     "Printing Task Messages": "打印任务消息",
-
-
-    "idle": "空闲",
-    "working": "工作中",
-    "error": "异常",
-    "offline": "离线",
 
     "Control": "控制",
     "ToolHead": "执行头",
@@ -198,7 +190,6 @@
 
     "On": "开",
     "Off": "关",
-    "Device current mode is not available/not online.": "当前设备模式不可用/离线。",
     "No extruder": "无挤出头",
     "Extruder": "挤出头",
     "Extruder Temp.": "挤出头温度",
@@ -252,5 +243,8 @@
     "dialog_delete_device_desc_format": "你想要删除设备{}吗?",
     "dialog_unbind_device_desc_format": "你想要解绑设备{}吗?",
 
-    "Camera not on": "摄像头未开启"
+    "Camera not on": "摄像头未开启",
+
+    "Are you sure you want to log in?": "确定要登录吗？",
+    "Login credentials have expired, please login again": "登录凭证已过期，请重新登录"
 }

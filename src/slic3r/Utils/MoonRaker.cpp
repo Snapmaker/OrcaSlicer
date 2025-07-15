@@ -2082,6 +2082,33 @@ void Moonraker_Mqtt::async_files_thumbnails_base64(const std::string& path, std:
 }
 
 
+void Moonraker_Mqtt::async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)> callback){
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始按页获取文件";
+    wcp_loger.add_log("开始按页获取文件", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "server.files.list_page";
+
+    json params;
+
+    params["root"] = root;
+    params["files_per_page"] = files_per_page;
+    params["page_number"]    = page_number;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 按页获取文件超时";
+                             wcp_loger.add_log("按页获取文件超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 按页获取文件失败";
+        wcp_loger.add_log("按页获取文件失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 void Moonraker_Mqtt::async_exception_query(std::function<void(const nlohmann::json& response)> callback)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();

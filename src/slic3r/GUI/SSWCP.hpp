@@ -381,6 +381,7 @@ private:
     void sw_ControlExtruderTemp();
     void sw_FilesThumbnailsBase64();
     void sw_exception_query();
+    void sw_GetFileListPage();
 
 
     // Download machine file

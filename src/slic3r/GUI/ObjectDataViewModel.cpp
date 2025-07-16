@@ -556,7 +556,7 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
 
     
     wxBitmap* bmp = nullptr;
-    if (!m_bitmap_cache) {
+    if (m_bitmap_cache) {
         bmp = m_bitmap_cache->find(scaled_bitmap_name);
     }
     if (bmp == nullptr) {

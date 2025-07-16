@@ -90,6 +90,7 @@ public:
 
     // Set callback for handling incoming messages
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback);
+    void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload, void* this_)> callback);
 
     // 添加设置连接失败回调的方法
     void SetConnectionFailureCallback(std::function<void()> callback) {
@@ -115,6 +116,8 @@ private:
     std::string client_id_;          // Unique client identifier
     std::unique_ptr<mqtt::async_client> client_;      // Async MQTT client instance
     std::function<void(const std::string& topic, const std::string& payload)> message_callback_;  // Message handler
+    std::function<void(const std::string& topic, const std::string& payload, void* this_)> message_callback1_;  // Message handler
+
     mqtt::connect_options connOpts_; // Connection options
     std::atomic<bool> connected_;    // Connection status flag
     std::map<std::string, int> topics_to_resubscribe_;  // Topics to resubscribe after reconnection

@@ -348,7 +348,14 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
 // @param callback: Function to be called when a message arrives
 void MqttClient::SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback)
 {
+    message_callback1_ = nullptr;
     message_callback_ = callback;
+}
+
+void MqttClient::SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload, void* this_)> callback)
+{
+    message_callback_  = nullptr;
+    message_callback1_ = callback;
 }
 
 // Check if the client is currently connected
@@ -441,6 +448,10 @@ void MqttClient::message_arrived(mqtt::const_message_ptr msg)
 {
     if (message_callback_) {
         message_callback_(msg->get_topic(), msg->to_string());
+    }
+
+    if (message_callback1_) {
+        message_callback1_(msg->get_topic(), msg->to_string(), this);
     }
 }
 
@@ -566,6 +577,7 @@ MqttClient::~MqttClient()
         
         // 确保回调不被调用
         message_callback_ = nullptr;
+        message_callback1_           = nullptr;
         connection_failure_callback_ = nullptr;
         
         // 重置客户端指针前，确保没有正在进行的操作

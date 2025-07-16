@@ -4098,14 +4098,14 @@ void SSWCP_MqttAgent_Instance::clean_current_engine()
 }
 
 // mqtt静态消息回调
-void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::string& payload)
+void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Mqtt_Agent] 收到MQTT消息，主题: " << topic << ", 载荷长度: " << payload.length();
     wcp_loger.add_log("收到MQTTS消息，主题: " + topic + ", 载荷长度: " + std::to_string(payload.length()), false, "", "Mqtt_Agent",
                       "info");
     try {
-        wxGetApp().CallAfter([topic, payload]() {
+        wxGetApp().CallAfter([topic, payload, client]() {
             for (const auto& item : SSWCP_MqttAgent_Instance::m_subscribe_map) {
 
                 std::string id_topic = item.second;
@@ -4120,9 +4120,13 @@ void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::
                     if (SSWCP_MqttAgent_Instance::m_subscribe_instance_map.count(item.first)) {
                         auto& instance                = SSWCP_MqttAgent_Instance::m_subscribe_instance_map[item.first];
                         if (auto self = instance.lock()) {
-                            self->m_res_data["topic"] = topic;
-                            self->m_res_data["data"]  = payload;
-                            self->send_to_js();
+                            auto mqtt_self            = dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(self);
+
+                            if (mqtt_self && (void*)(mqtt_self->get_current_engine().get()) == client) {
+                                self->m_res_data["topic"] = topic;
+                                self->m_res_data["data"]  = payload;
+                                self->send_to_js();
+                            }
                         }
                         
                     } else {

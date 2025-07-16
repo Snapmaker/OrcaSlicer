@@ -279,7 +279,7 @@ private:
 private:
     void clean_current_engine();
 
-    static void mqtt_msg_cb(const std::string& topic, const std::string& payload);
+    static void mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client);
 
     
 };

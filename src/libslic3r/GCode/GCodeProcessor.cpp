@@ -4904,11 +4904,6 @@ void GCodeProcessor::run_post_process()
             std::stringstream ss(cmd.substr(1));
             int tool_number = -1;
             ss >> tool_number;
-            if (gcode_line.size() > 1) {
-                if (gcode_line[1] - '0' > 9 || gcode_line[1] - '0' < 0) {
-                    tool_number = -1;
-                }
-            }
             if (tool_number != -1) {
                 if (tool_number < 0 || (int)m_extruder_temps_config.size() <= tool_number) {
                     // found an invalid value, clamp it to a valid one
@@ -5031,8 +5026,8 @@ void GCodeProcessor::run_post_process()
                         }
                         else if (GCodeReader::GCodeLine::cmd_is(gcode_line, "G28")) {
                             ++g1_lines_counter;
-                        }
-                        else if (m_result.backtrace_enabled && GCodeReader::GCodeLine::cmd_starts_with(gcode_line, "T")) {
+                        } else if (m_result.backtrace_enabled && GCodeReader::GCodeLine::cmd_starts_with(gcode_line, "T") &&
+                                   gcode_line.size() > 1 && (gcode_line[1] - '0' < 10 && gcode_line[1] - '0' >= 0)) {
                             // add lines M104 where needed
                             process_line_T(gcode_line, g1_lines_counter, backtrace_T);
                             max_backtrace_time = std::max(max_backtrace_time, backtrace_T.time);

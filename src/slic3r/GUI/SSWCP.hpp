@@ -119,6 +119,7 @@ public:
 
     // Get associated webview
     wxWebView* get_web_view() const;
+    void       set_web_view(wxWebView* view);
 
 public:
     // Handle timeout event

@@ -679,6 +679,10 @@ wxWebView* SSWCP_Instance::get_web_view() const {
     return m_webview;
 }
 
+void SSWCP_Instance::set_web_view(wxWebView* view) {
+    m_webview = view;
+}
+
 // Send response to JavaScript
 void SSWCP_Instance::send_to_js()
 {
@@ -5293,6 +5297,7 @@ void SSWCP::on_webview_delete(wxWebView* view)
     for (const auto& instance : m_instance_list) {
         if (instance.second->value->get_web_view() == view) {
             instances_to_invalidate.push_back(instance.first);
+            instance.second->value->set_web_view(nullptr);
         }
     }
     

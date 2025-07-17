@@ -3518,6 +3518,28 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     m_is_recreating_gui = false;
 
+    //// 重新加载首页和设备页
+    CallAfter([this]{
+        CallAfter([this] {
+            CallAfter([this] {
+                mainframe->m_printer_view->reload();
+                mainframe->m_webview->reload();
+                sm_disconnect_current_machine();
+                auto devices = wxGetApp().app_config->get_devices();
+                for (auto iter = devices.begin(); iter != devices.end();) {
+                    if (iter->link_mode == "wan") {
+                        iter = devices.erase(iter);
+                    } else {
+                        iter++;
+                    }
+                }
+                // wcp订阅
+                wxGetApp().device_card_notify(devices);
+            });
+        });
+    });
+    
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
 }
 
@@ -3878,7 +3900,16 @@ void GUI_App::sm_request_user_logout()
         //    sm_login_dlg = new SMUserLogin(true);
         //}
         //// sm_login_dlg->ShowModal();
-        Http http = Http::post("https://id.snapmaker.com/api/oauth2/revoke");
+
+        wxString region = wxString::FromUTF8(app_config->get_country_code());
+        std::string url    = "";
+        if (region == "CN") {
+            url = "https://api.snapmaker.cn/api/oauth2/revoke";
+        } else {
+            url = "https://id.snapmaker.com/api/oauth2/revoke";
+        }
+
+        Http http = Http::post(url);
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;

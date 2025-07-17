@@ -247,6 +247,9 @@ WebViewPanel::~WebViewPanel()
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << " End";
 }
 
+void WebViewPanel::reload() {
+    m_browser->Reload();
+}
 
 void WebViewPanel::load_url(wxString& url)
 {

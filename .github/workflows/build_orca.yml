@@ -105,20 +105,62 @@ jobs:
         run: |
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          
+          echo "=== 开始证书签名流程 ==="
+          echo "CERTIFICATE_ID: $CERTIFICATE_ID"
+          echo "KEYCHAIN_PATH: $KEYCHAIN_PATH"
+          echo "CERTIFICATE_PATH: $CERTIFICATE_PATH"
+          
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          
+          echo "=== 验证证书文件 ==="
+          ls -la $CERTIFICATE_PATH
+          file $CERTIFICATE_PATH
+          
+          echo "=== 创建和配置keychain ==="
           security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          
+          echo "=== 导入证书 ==="
           security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          
+          echo "=== 查看keychain中的证书 ==="
           security list-keychain -d user -s $KEYCHAIN_PATH
+          echo "=== 查找可用的代码签名证书 ==="
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
+          
+          echo "=== 设置keychain为默认 ==="
+          security default-keychain -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          
+          echo "=== 验证指定证书是否存在 ==="
+          if security find-identity -v -p codesigning $KEYCHAIN_PATH | grep -q "$CERTIFICATE_ID"; then
+            echo "✓ 找到指定的证书: $CERTIFICATE_ID"
+          else
+            echo "✗ 未找到指定的证书: $CERTIFICATE_ID"
+            echo "可用的证书:"
+            security find-identity -v -p codesigning $KEYCHAIN_PATH
+            exit 1
+          fi
+          
+          echo "=== 开始代码签名 ==="
           codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca/Snapmaker Orca.app"
+          
+          echo "=== 创建DMG文件 ==="
           ln -s /Applications ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca/Applications
           hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca -ov -format UDZO Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          
+          echo "=== 签名DMG文件 ==="
           codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          
+          echo "=== 开始公证流程 ==="
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
           xcrun notarytool submit "Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
           xcrun stapler staple Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          
+          echo "=== 签名流程完成 ==="
 
       - name: Create DMG without notary
         if: github.ref != 'refs/heads/main' && inputs.os == 'macos-14' && github.ref != 'refs/heads/innertest_extra'

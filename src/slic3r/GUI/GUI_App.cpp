@@ -3519,25 +3519,17 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     m_is_recreating_gui = false;
 
     //// 重新加载首页和设备页
-    CallAfter([this]{
-        CallAfter([this] {
-            CallAfter([this] {
-                // mainframe->m_printer_view->reload();
-                // mainframe->m_webview->reload();
-                sm_disconnect_current_machine();
-                auto devices = wxGetApp().app_config->get_devices();
-                for (auto iter = devices.begin(); iter != devices.end();) {
-                    if (iter->link_mode == "wan") {
-                        iter = devices.erase(iter);
-                    } else {
-                        iter++;
-                    }
-                }
-                // wcp订阅
-                wxGetApp().device_card_notify(devices);
-            });
-        });
-    });
+    sm_disconnect_current_machine();
+    auto devices = wxGetApp().app_config->get_devices();
+    for (auto iter = devices.begin(); iter != devices.end();) {
+        if (iter->link_mode == "wan") {
+            iter = devices.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+    // wcp订阅
+    wxGetApp().device_card_notify(devices);
     
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";

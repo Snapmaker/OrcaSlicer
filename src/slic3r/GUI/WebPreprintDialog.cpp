@@ -54,6 +54,12 @@ WebPreprintDialog::WebPreprintDialog()
     CenterOnParent();
 
     wxGetApp().UpdateDlgDarkUI(this);
+
+    auto ptr = wxGetApp().get_web_device_dialog();
+    if (ptr) {
+        delete ptr;
+    }
+
     wxGetApp().set_web_preprint_dialog(this);
 }
 

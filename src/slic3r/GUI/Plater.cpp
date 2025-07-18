@@ -13303,14 +13303,14 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         upload_job.upload_data.storage     = dlg.storage();
 
 
-        WebPreprintDialog dialog;
-        dialog.set_swtich_to_device(dlg.switch_to_device_tab());
-        dialog.set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
-        dialog.set_gcode_file_name(upload_job.upload_data.source_path.string());
-        dialog.set_display_file_name(upload_job.upload_data.upload_path.string());
-        bool res = dialog.run();
+        WebPreprintDialog* dialog = new WebPreprintDialog();
+        dialog->set_swtich_to_device(dlg.switch_to_device_tab());
+        dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
+        dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
+        dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+        bool res = dialog->run();
 
-        if (dialog.is_finish()) {
+        if (dialog->is_finish()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
         }
 

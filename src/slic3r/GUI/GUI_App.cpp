@@ -3878,7 +3878,6 @@ void GUI_App::sm_ShowUserLogin(bool show)
             else {
                 delete sm_login_dlg;
                 sm_login_dlg = new SMUserLogin();
-                sm_login_dlg->Hide();
             }
         }
         catch (std::exception&) {

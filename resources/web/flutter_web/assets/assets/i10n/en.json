@@ -12,9 +12,10 @@
     "Upload File": "Upload File",
 
     
-    "Device Control": "DeviceControl",
-    "Create New Project": "CreateProject",
+    "Device Control": "Control",
+    "Create New Project": "NewProject",
     "Waiting for device authorization": "Waiting for device authorization...",
+    "Device connect error, please return to device page and connect again.": "Device connect error, please return to device page and connect again.",
 
     "System": "System",
     "Simplified Chinese": "Simplified Chinese",
@@ -57,6 +58,7 @@
     "device_waiting_for_authorizing_desc": "Waiting for device authorization...",
     "Bind Device": "Bind Device",
     "Rename your device": "Rename your device",
+    "Please input your device name": "Please input your device name",
     "Lan Mode": "Lan Mode",
     "Finding new devices": "Finding new devices",
     "More Nearby Devices": "More Nearby Devices",
@@ -85,7 +87,7 @@
     "Heated Bed Detecting": "Heated Bed Detecting",
     "Power Loss Recovering": "Power Loss Recovering",
     "Calibrating": "Calibrating",
-    "Heated Bed Temp.": "Heated Bed Temp.",
+    "Heated Bed Temp": "Heated Bed Temp.",
 
     "Print Speed": "Print Speed",
     "Fan": "Fan",
@@ -94,7 +96,7 @@
     "Off": "Off",
     "No extruder": "No extruder",
     "Extruder": "Extruder",
-    "Extruder Temp.": "Extruder Temp.",
+    "Extruder Temp": "Extruder Temp",
     "operating...": "operating...",
     "Park Extruder": "Park Extruder",
     "Pick Extruder": "Pick Extruder",
@@ -126,8 +128,8 @@
     "color_name_pink": "Pink",
     "Select Color": "Select Color",
     "Select Filament": "Select Filament",
-    "Main Heat Dissipation Fan Speed": "Main Heat Dissipation Fan Speed",
-    "Sub Heat Dissipation Fan Speed": "Sub Heat Dissipation Fan Speed",
+    "Main Cooling Fan Speed": "Main Cooling Fan Speed",
+    "Assist Cooling Fan Speed": "Assist Cooling Fan Speed",
     "Air Purifier Fan Speed": "Air Purifier Fan Speed",
     "Filename": "Filename",
     "Estimated Time": "Estimated Time",
@@ -143,7 +145,11 @@
     "dialog_device_control_modify_print_speed_tips": "Print speed must be set between 50% and 150%",
     "dialog_delete_device_desc_format": "Do you want to delete device {}?",
     "dialog_unbind_device_desc_format": "'Do you want to unbind device {}?'",
+    "Do you want to disconnect with current device?": "Are you sure you want to disconnect and delete the device?",
+    "Are you sure you want to delete the lan device?": "Are you sure you want to delete the lan device?",
+    "Are you sure you want to delete the cloud device?": "Are you sure you want to delete the cloud device?",
 
-
-    "bind_device_tip_format": "Confirm to bind the printer {} with the current account?"
+    "bind_device_tip_format": "Confirm to bind the printer {} with the current account?",
+    "Filament auto feed": "Filament auto feed",
+    "Filament auto feed description": "Automatic Feeding\n· Insert the 3D printer filaments into the corresponding feeding port until the indicator light of the corresponding feeding port lights up. The device will pre-load the materials, and the feeding will be automatic when the printing starts.\nFilaments Information\n· Official 3D printer filaments information will be recognized by the device. For non-official filaments, the material information needs to be manually edited.\nAutomatic Resume Printing\n· When a filament break occurs during printing, if the device is equipped with the same brand, type, and color of filaments, the device will automatically resume printing."
 }

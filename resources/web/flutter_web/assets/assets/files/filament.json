@@ -3,17 +3,38 @@
       "vendor": "Snapmaker",
       "series": [
         {
-          "name": "basic",
-          "materials": ["PLA", "PETG"]
-        },
-        {
           "name": "matte",
           "materials": ["PLA"]
         },
         {
-          "name": "Support",
-          "materials": ["Breakaway", "PVA"]
+          "name": "snapSpeed",
+          "materials": ["PLA"]
+        },
+        {
+          "name": "basic",
+          "materials": ["PLA"]
+        },
+        {
+          "name": "",
+          "materials": ["ABS"]
+        },
+        {
+          "name": "",
+          "materials": ["PVA"]
+        },
+        {
+          "name": "",
+          "materials": ["PETG"]
+        },
+        {
+          "name": "",
+          "materials": ["TPU 95A"]
+        },
+        {
+          "name": "support for",
+          "materials": ["PLA"]
         }
+        
       ]
     },
     {
@@ -34,7 +55,11 @@
       "series": [
         {
           "name": "",
-          "materials": ["PLA", "PETG"]
+          "materials": ["PLA", "PETG", "ABS", "TPU 95A", "ASA", "BVOH", "EVA", "HIPS", "PA", "PA-CF", "PC", "PCTG", "PE", "PE-CF", "PETG-HF", "PETG-CF", "PHA", "PLA Silk", "PLA-CF", "PVA"]
+        },
+        {
+          "name": "support for",
+          "materials": ["PLA"]
         }
       ]
     }

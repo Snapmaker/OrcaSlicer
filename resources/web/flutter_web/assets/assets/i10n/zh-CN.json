@@ -33,7 +33,7 @@
     "Login": "登录",
     "Register": "注册",
     "Open Project": "打开项目",
-    "Create New Project": "创建新项目",
+    "Create New Project": "创建项目",
 
     "Recent Open Files": "近期打开文件",
 
@@ -56,13 +56,13 @@
 
     "Device Control": "设备控制",
 
-    "Delete local device": "删除本地设备",
+    "Delete lan device": "删除本地设备",
     "Delete cloud device": "删除云端设备",
-    "Are you sure you want to delete the local device?": "是否删除本地设备？",
-    "Are you sure you want to delete the cloud device?": "是否删除云端设备？",
+    "Are you sure you want to delete the lan device?": "您确定是否删除本地设备？",
+    "Are you sure you want to delete the cloud device?": "您确定是否删除云端设备？",
 
     "Disconnect": "断开连接",
-    "Are you sure you want to disconnect and delete the device?": "是否断开连接并删除设备？",
+    "Do you want to disconnect with current device?": "是否与当前设备断开连接？",
 
     "Disconnect success": "断开连接成功",
     "Disconnect failed": "断开连接失败",
@@ -81,9 +81,9 @@
     "• LAVA - Only devices that have enabled LAN debugging can be bound": "• LAVA - 只能绑定开启了局域网调试的设备",
     "• J1、Artisan - Devices without account functions are default to LAN debugging mode": "• J1、Artisan 无账户功能的设备则默认是局域网调试模式",
 
-    "Bind via access code": "通过访问码绑定",
-    "Please find the access code on the LAN page of the device screen and enter it into the box below": "请在设备屏幕的局域网页面找到访问码，并输入到下面方框中",
-    "Access code": "访问码",
+    "Bind via PIN code": "通过PIN码绑定",
+    "Please locate the PIN code on the account page of the device screen and enter it in the box below.": "请在设备界面的账户页面找到PIN码，并在下方框中输入。",
+    "PIN code": "PIN码",
 
     "Print history": "打印历史",
 
@@ -123,11 +123,12 @@
     "Nearby Machine": "附近设备",
     "Please make sure the device is turned on and nearby":"请确保设备已打开并在附近",
     "Printing Task Messages": "打印任务消息",
-
+    "Printing Task": "打印任务",
     "Control": "控制",
     "ToolHead": "执行头",
     "Move": "移动",
     "Filament": "耗材",
+    "Camera": "摄像机",
 
     "File information": "文件信息",
     "Model information": "模型信息",
@@ -137,7 +138,7 @@
 
     "Select printer": "选择打印机",
     "Edit filament": "编辑耗材",
-    "Select print head": "选择打印头",
+    "Select Tool Head": "选择打印头",
 
 
     "Preference setting": "偏好设置",
@@ -146,19 +147,21 @@
     "Bed leveling": "热床调平",
     "Flow calibrate": "流量校准",
     "Extrusion flow calibrate": "挤出流量校准",
-    "Extrusion flow calibrate description": "挤出流量校准用于确保打印机在打印过程中挤出的材料量与预期一致，从而提升打印质量。建议在更换耗材或发现打印异常时进行校准。",
+    "When enabled, the printer will automatically calibrate flow compensation before printing. Recommended after each filament change.": "启用后，打印机将在打印前自动校准流量补偿。每次更换丝材后建议执行。",
 
     "Cannot get the current slice file information, or the file does not exist, please re-operate the slice": "无法获取当前切片文件信息,或文件不存在，请重新操作切片",
     "Cannot get connected machine": "无法获取到当前已连接的设备信息",
     "Timeout: Cannot get file filament mapping": "无法获取文件耗材映射信息",
     "Cannot load file content": "无法加载文件内容",
 
+    "Device connect error, please return to device page and connect again.": "设备连接异常，请返回“我的设备”页，重新发起连接",
     "Confirm": "确认",
     "device_input_pin_code_desc": "请输入PIN码.",
     "device_input_pin_code_tips_desc": "请输入8位PIN码",
     "device_waiting_for_authorizing_title": "请在设备屏幕授权以继续绑定",
     "device_waiting_for_authorizing_desc": "等待设备授权中...",
     "Rename your device": "修改你的设备名称",
+    "Please input your device name": "请输入你的设备名称",
     "Lan Mode": "局域网模式",
     "Finding new devices": "发现附近新设备",
     "Bound successfully": "绑定成功",
@@ -184,7 +187,7 @@
     "Power Loss Recovering": "断电续打恢复中",
     "Calibrating": "调平中",
 
-    "Heated Bed Temp.": "热床温度",
+    "Heated Bed Temp": "热床温度",
     "Print Speed": "打印速度",
     "Fan": "风扇",
 
@@ -192,7 +195,7 @@
     "Off": "关",
     "No extruder": "无挤出头",
     "Extruder": "挤出头",
-    "Extruder Temp.": "挤出头温度",
+    "Extruder Temp": "挤出头温度",
     "operating...": "操作中……",
     "Park Extruder": "放回执行头",
     "Pick Extruder": "取出执行头",
@@ -224,8 +227,8 @@
     "color_name_pink": "粉色",
     "Select Color": "选择颜色",
     "Select Filament": "选择耗材",
-    "Main Heat Dissipation Fan Speed": "主散热风扇风速",
-    "Sub Heat Dissipation Fan Speed": "辅助散热风扇风速",
+    "Main Cooling Fan Speed": "主散热风扇风速",
+    "Assist Cooling Fan Speed": "辅助散热风扇风速",
     "Air Purifier Fan Speed": "空气净化风扇风速",
     "Filename": "文件名称",
     "Estimated Time": "预估用时",
@@ -246,5 +249,54 @@
     "Camera not on": "摄像头未开启",
 
     "Are you sure you want to log in?": "确定要登录吗？",
-    "Login credentials have expired, please login again": "登录凭证已过期，请重新登录"
+    "Login credentials have expired, please login again": "登录凭证已过期，请重新登录",
+    "Set Extruder Temperature": "设置挤出头温度",
+    "Enter Temperature": "输入温度",
+    "Please enter temperature value": "请输入温度值",
+    "Please enter a valid temperature value": "请输入有效的温度值",
+    "Temperature should be between 0-300°C": "温度应在0-300°C之间",
+    "Temperature should be between 0-100°C": "温度应在0-100°C之间",
+    "Temperature should be greater than 0°C": "温度应大于0°C",
+    "Set Header Bed Temperature": "设置热床温度",
+    "Please take a time-lapse photo on the device": "请在设备上进行延时摄影",
+    "Take a time-lapse photo": "去拍摄",
+    "Unconnected machine": "未连接的设备",
+    "Filament auto feed": "自动进料",
+    "Filament auto feed description": "自动进料\n• 耗材塞入对应进料口直至对应进料口指示灯亮起，设备会预载料，打印开始时会自动进料\n材料信息\n• 官方3D打印耗材信息会被设备识别。非官方耗材需要手动编辑材料信息。\n自动续打\n• 打印过程中发生耗材断裂时，若设备配备相同品牌、类型、颜色的耗材，设备会自动续打。",
+    "Unconnected device": "未连接设备",
+    "Current filament not loaded, please load filament first": "当前未装载耗材，请先装料",
+
+    "Ivory White": "象牙白",
+    "Carbon Black": "碳黑",
+    "Lava Orange": "熔岩橙",
+    "Sunburst Yellow": "日落黄",
+    "Moss Mist": "苔藓灰",
+    "Pine Green": "松绿",
+    "Engine Red": "引擎红",
+    "Ash Grey": "灰烬灰",
+    "Celestial Blue": "天蓝",
+    "Sakura Pink": "樱花粉",
+    "Pearl White": "珍珠白",
+    "Black": "黑色",
+    "Grey": "灰色",
+    "Blue": "蓝色",
+    "Red": "红色",
+    "Purple": "紫色",
+    "Orange": "橙色",
+    "Brown": "棕色",
+    "Pink": "粉色",
+    "Green": "绿色",
+    "Yellow": "黄色",
+    "White": "白色",
+    "Sky Blue": "天蓝",
+ 
+
+    "Time remaining": "剩余时间",
+    "N/A": "N/A",
+    "Are you sure you want to disconnect this device?": "确定要断开此设备吗？",
+    "After unbinding the device, the device will be unable to function.": "解绑后，设备将无法正常使用。"
+
+    
+    
+    
 }

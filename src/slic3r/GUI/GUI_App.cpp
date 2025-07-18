@@ -3522,8 +3522,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     CallAfter([this]{
         CallAfter([this] {
             CallAfter([this] {
-                mainframe->m_printer_view->reload();
-                mainframe->m_webview->reload();
+                // mainframe->m_printer_view->reload();
+                // mainframe->m_webview->reload();
                 sm_disconnect_current_machine();
                 auto devices = wxGetApp().app_config->get_devices();
                 for (auto iter = devices.begin(); iter != devices.end();) {

@@ -129,7 +129,7 @@
         "40"
     ],
     "filament_multitool_ramming_volume": [
-        "10"
+        "5"
     ],
     "filament_notes": [
         ""
@@ -183,7 +183,7 @@
         "29"
     ],
     "filament_start_gcode": [
-        "SET_PRESSURE_ADVANCE ADVANCE=0.02\n; filament start gcode\n"
+        "; filament start gcode\n"
     ],
     "filament_toolchange_delay": [
         "0"
@@ -198,7 +198,7 @@
         "100"
     ],
     "filament_vendor": [
-        "Polymaker"
+        "Snapmaker"
     ],
     "filament_wipe": [
         "nil"

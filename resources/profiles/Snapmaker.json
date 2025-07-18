@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.29.02",
+  "version": "02.02.30.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -82,89 +82,7 @@
     }
   ],
   "process_list": [
-    {
-      "name":"fdm_process_common_bambu",
-      "sub_path":"bbl_test_process/fdm_process_common_bambu.json"
-    },
-    {
-      "name":"fdm_process_bbl_common",
-      "sub_path":"bbl_test_process/fdm_process_bbl_common.json"
-    },
-    {
-      "name":"fdm_process_bbl_0.08",
-      "sub_path":"bbl_test_process/fdm_process_bbl_0.08.json"
-    },
-    {
-      "name":"0.08mm Extra Fine Bambu X1C",
-      "sub_path":"bbl_test_process/0.08mm Extra Fine Bambu X1C.json"
-    },
-    {
-      "name":"0.08mm High Quality Bambu X1C",
-      "sub_path":"bbl_test_process/0.08mm High Quality Bambu X1C.json"
-    },
-    {
-      "name":"fdm_process_bbl_0.12",
-      "sub_path":"bbl_test_process/fdm_process_bbl_0.12.json"
-    },
-    {
-      "name":"0.12mm Fine Bambu X1C",
-      "sub_path":"bbl_test_process/0.12mm Fine Bambu X1C.json"
-    },
-    {
-      "name":"0.12mm High Quality Bambu X1C",
-      "sub_path":"bbl_test_process/0.12mm High Quality Bambu X1C.json"
-    },
-    {
-      "name":"fdm_process_bbl_0.16",
-      "sub_path":"bbl_test_process/fdm_process_bbl_0.16.json"
-    },
-    {
-      "name":"0.16mm High Quality Bambu X1C",
-      "sub_path":"bbl_test_process/0.16mm High Quality Bambu X1C.json"
-    },
-    {
-      "name":"0.16mm Optimal Bambu X1C",
-      "sub_path":"bbl_test_process/0.16mm Optimal Bambu X1C.json"
-    },
-    {
-      "name":"fdm_process_bbl_0.20",
-      "sub_path":"bbl_test_process/fdm_process_bbl_0.20.json"
-    },
-    {
-      "name":"0.20mm Bambu Support W Bambu X1C",
-      "sub_path":"bbl_test_process/0.20mm Bambu Support W Bambu X1C.json"
-    },
-    {
-      "name":"0.20mm Standard Bambu X1C",
-      "sub_path":"bbl_test_process/0.20mm Standard Bambu X1C.json"
-    },
-    {
-      "name":"0.20mm Strength Bambu X1C",
-      "sub_path":"bbl_test_process/0.20mm Strength Bambu X1C.json"
-    },
-    {
-      "name":"fdm_process_bbl_0.24",
-      "sub_path":"bbl_test_process/fdm_process_bbl_0.24.json"
-    },
-    {
-      "name":"0.24mm Draft Bambu X1C",
-      "sub_path":"bbl_test_process/0.24mm Draft Bambu X1C.json"
-    },
-    {
-      "name":"fdm_process_bbl_0.28",
-      "sub_path":"bbl_test_process/fdm_process_bbl_0.28.json"
-    },
-    {
-      "name":"0.28mm Extra Draft Bambu X1C",
-      "sub_path":"bbl_test_process/0.28mm Extra Draft Bambu X1C.json"
-    },
-
-
-
-
-
-
-
+    
     {
       "name": "fdm_process_common",
       "sub_path": "process/fdm_process_common.json"
@@ -242,6 +160,14 @@
     {
       "name": "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
       "sub_path": "process/0.20 Standard @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.20 Quality @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.20 Quality @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.20 Support @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.20 Support @Snapmaker U1 (0.4 nozzle).json"
     },
     {
       "name": "0.20 Strength @Snapmaker U1 (0.4 nozzle)",
@@ -542,644 +468,75 @@
   ],
   "filament_list": [
     {
-      "name": "fdm_filament_common_bambu",
-      "sub_path": "bbl_test_filament/fdm_filament_common_bambu.json"
+      "name": "fdm_filament_common_generic",
+      "sub_path": "filament/fdm_filament_common_generic.json"
     },
     {
-      "name": "fdm_filament_abs_bambu",
-      "sub_path": "bbl_test_filament/fdm_filament_abs_bambu.json"
+      "name": "fdm_filament_pla_generic",
+      "sub_path": "filament/fdm_filament_pla_generic.json"
     },
     {
-      "name": "Snapmaker ABS Bambu @base",
-      "sub_path": "bbl_test_filament/Snapmaker ABS Bambu @base.json"
+      "name": "Generic Support For PLA @base",
+      "sub_path": "filament/Generic Support For PLA @base.json"
     },
     {
-      "name": "Snapmaker ABS Bambu X1C",
-      "sub_path": "bbl_test_filament/Snapmaker ABS Bambu X1C.json"
+      "name": "Generic Support For PLA",
+      "sub_path": "filament/Generic Support For PLA.json"
     },
     {
-      "name": "Snapmaker ABS-GF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker ABS-GF Bambu @base.json"
+      "name": "fdm_filament_pva_generic",
+      "sub_path": "filament/fdm_filament_pva_generic.json"
     },
     {
-      "name":"Snapmaker ABS-GF Bambu X1C",
-      "sub_path": "bbl_test_filament/Snapmaker ABS-GF Bambu X1C.json"
+      "name": "Generic PVA @base",
+      "sub_path": "filament/Generic PVA @base.json"
     },
     {
-      "name": "fdm_filament_asa_bambu",
-      "sub_path": "bbl_test_filament/fdm_filament_asa_bambu.json"
+      "name": "Generic PVA",
+      "sub_path": "filament/Generic PVA.json"
     },
     {
-      "name": "Snapmaker ASA Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker ASA Bambu @base.json"
+      "name": "fdm_filament_pet_generic",
+      "sub_path": "filament/fdm_filament_pet_generic.json"
     },
     {
-      "name":"Snapmaker ASA Bambu X1C @0.4 nozzle",
-      "sub_path":"bbl_test_filament/Snapmaker ASA Bambu X1C @0.4 nozzle.json"
+      "name": "Generic PETG @base",
+      "sub_path": "filament/Generic PETG @base.json"
     },
     {
-      "name": "Snapmaker ASA-Aero Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker ASA-Aero Bambu @base.json"
+      "name": "Generic PETG",
+      "sub_path": "filament/Generic PETG.json"
     },
     {
-      "name": "Snapmaker ASA-Aero Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker ASA-Aero Bambu X1C.json"
+      "name": "fdm_filament_tpu_generic",
+      "sub_path": "filament/fdm_filament_tpu_generic.json"
     },
     {
-      "name":"fdm_filament_pa_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pa_bambu.json"
+      "name": "Generic TPU",
+      "sub_path": "filament/Generic TPU.json"
     },
-    {
-      "name":"Snapmaker PA-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PA-CF Bambu @base.json"
-    },
-    {
-      "name": "Snapmaker PA-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PA-CF Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PA6-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PA6-CF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PA6-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PA6-CF Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PA6-GF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PA6-GF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PA6-GF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PA6-GF Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PAHT-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PAHT-CF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PAHT-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PAHT-CF Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_pc_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pc_bambu.json"
-    },
-    {
-      "name":"Snapmaker PC Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PC Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PC Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PC Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PC Bambu P1S",
-      "sub_path":"bbl_test_filament/Snapmaker PC Bambu P1S.json"
-    },
-    {
-      "name":"fdm_filament_pet_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pet_bambu.json"
-    },
-    {
-      "name":"Snapmaker PET-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PET-CF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PET-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PET-CF Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PETG Basic Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PETG Basic Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PETG Basic Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PETG Basic Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PETG HF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PETG HF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PETG HF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PETG HF Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PETG Translucent Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PETG Translucent Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PETG Translucent Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PETG Translucent Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PETG-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PETG-CF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PETG-CF Bambu X1C @0.4 nozzle",
-      "sub_path":"bbl_test_filament/Snapmaker PETG-CF Bambu X1C @0.4 nozzle.json"
-    },
-    {
-      "name":"fdm_filament_pla_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pla_bambu.json"
-    },
-    {
-      "name":"Snapmaker PLA Aero Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Aero Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Aero Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Aero Bambu X1C.json"
-    },
-    {
-      "name": "Snapmaker PLA Basic Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Basic Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Basic Bambu @BBL X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Basic Bambu @BBL X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Dynamic Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Dynamic Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Dynamic Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Dynamic Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Galaxy Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Galaxy Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Galaxy Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Galaxy Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Glow Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Glow Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Glow Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Glow Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Impact Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Impact Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Impact Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Impact Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Marble Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Marble Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Marble Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Marble Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Matte Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Matte Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Matte Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Matte Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Metal Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Metal Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Metal Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Metal Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Silk Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Silk Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Silk Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Silk Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Sparkle Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Sparkle Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Sparkle Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Sparkle Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA Tough Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Tough Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA Tough Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA Tough Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker PLA-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PLA-CF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PLA-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PLA-CF Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_ppa_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_ppa_bambu.json"
-    },
-    {
-      "name":"Snapmaker PPA-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PPA-CF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PPA-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PPA-CF Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_pva_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pva_bambu.json"
-    },
-    {
-      "name":"Snapmaker PVA Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker PVA Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker PVA Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker PVA Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker Support for ABS Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker Support for ABS Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker Support for ABS Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker Support for ABS Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker Support For PA/PET Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker Support For PA PET Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker Support For PA/PET Bambu @BBL X1C",
-      "sub_path":"bbl_test_filament/Snapmaker Support For PA PET Bambu @BBL X1C.json"
-    },
-    {
-      "name":"Snapmaker Support For PLA Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker Support For PLA Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker Support For PLA Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker Support For PLA Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker Support For PLA/PETG Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker Support For PLA-PETG Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker Support For PLA/PETG Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker Support For PLA-PETG Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker Support G Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker Support G Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker Support G Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker Support G Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker Support W Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker Support W Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker Support W Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker Support W Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_tpu_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_tpu_bambu.json"
-    },
-    {
-      "name":"Snapmaker TPU 95A Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker TPU 95A Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker TPU 95A Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker TPU 95A Bambu X1C.json"
-    },
-    {
-      "name":"Snapmaker TPU 95A HF Bambu @base",
-      "sub_path":"bbl_test_filament/Snapmaker TPU 95A HF Bambu @base.json"
-    },
-    {
-      "name":"Snapmaker TPU 95A HF Bambu X1C",
-      "sub_path":"bbl_test_filament/Snapmaker TPU 95A HF Bambu X1C.json"
-    },
-    {
-      "name":"eSUN PLA+ Bambu @base",
-      "sub_path":"bbl_test_filament/eSUN PLA+ @base.json"
-    },
-    {
-      "name":"eSUN PLA+ Bambu X1C",
-      "sub_path":"bbl_test_filament/eSUN PLA+ Bambu X1C.json"
-    },
-    {
-      "name":"Generic ABS Bambu @base",
-      "sub_path":"bbl_test_filament/Generic ABS Bambu @base.json"
-    },
-    {
-      "name":"Generic ABS Bambu",
-      "sub_path":"bbl_test_filament/Generic ABS Bambu.json"
-    },
-    {
-      "name":"Generic ASA Bambu @base",
-      "sub_path":"bbl_test_filament/Generic ASA Bambu @base.json"
-    },
-    {
-      "name":"Generic ASA Bambu",
-      "sub_path":"bbl_test_filament/Generic ASA Bambu.json"
-    },
-    {
-      "name":"fdm_filament_bvoh_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_bvoh_bambu.json"
-    },
-    {
-      "name":"Generic BVOH Bambu @base",
-      "sub_path":"bbl_test_filament/Generic BVOH Bambu @base.json"
-    },
-    {
-      "name":"Generic BVOH Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic BVOH Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_eva_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_eva_bambu.json"
-    },
-    {
-      "name":"Generic EVA Bambu @base",
-      "sub_path":"bbl_test_filament/Generic EVA Bambu @base.json"
-    },
-    {
-      "name":"Generic EVA Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic EVA Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_hips_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_hips_bambu.json"
-    },
-    {
-      "name":"Generic HIPS Bambu @base",
-      "sub_path":"bbl_test_filament/Generic HIPS Bambu @base.json"
-    },
-    {
-      "name":"Generic HIPS Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic HIPS Bambu X1C.json"
-    },
-    {
-      "name":"Generic PA-CF Bambu",
-      "sub_path":"bbl_test_filament/Generic PA-CF Bambu.json"
-    },
-    {
-      "name":"Generic PA Bambu",
-      "sub_path":"bbl_test_filament/Generic PA Bambu.json"
-    },
-    {
-      "name":"Generic PC Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PC Bambu @base.json"
-    },
-    {
-      "name":"Generic PC Bambu",
-      "sub_path":"bbl_test_filament/Generic PC Bambu.json"
-    },
-    {
-      "name":"Generic PC Bambu P1S",
-      "sub_path":"bbl_test_filament/Generic PC Bambu P1S.json"
-    },
-    {
-      "name":"fdm_filament_pctg_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pctg_bambu.json"
-    },
-    {
-      "name":"Generic PCTG Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PCTG Bambu @base.json"
-    },
-    {
-      "name":"Generic PCTG Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PCTG Bambu X1C.json"
-    },
-    {
-      "name":"fdm_filament_pe_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pe_bambu.json"
-    },
-    {
-      "name":"Generic PE Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PE Bambu @base.json"
-    },
-    {
-      "name":"Generic PE Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PE Bambu X1C.json"
-    },
-    {
-      "name":"Generic PE-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PE-CF Bambu @base.json"
-    },
-    {
-      "name":"Generic PE-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PE-CF Bambu X1C.json"
-    },
-    {
-      "name":"Generic PETG-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PETG-CF Bambu @base.json"
-    },
-    {
-      "name":"Generic PETG-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PETG-CF Bambu X1C.json"
-    },
-    {
-      "name":"Generic PETG Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PETG Bambu @base.json"
-    },
-    {
-      "name":"Generic PETG Bambu",
-      "sub_path":"bbl_test_filament/Generic PETG Bambu.json"
-    },
-    {
-      "name":"fdm_filament_pha_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pha_bambu.json"
-    },
-    {
-      "name":"Generic PHA Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PHA Bambu @base.json"
-    },
-    {
-      "name":"Generic PHA Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PHA Bambu X1C.json"
-    },
-    {
-      "name":"Generic PLA Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PLA Bambu @base.json"
-    },
-    {
-      "name":"Generic PLA Bambu",
-      "sub_path":"bbl_test_filament/Generic PLA Bambu.json"
-    },
-    {
-      "name":"Generic PLA High Speed Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PLA High Speed Bambu @base.json"
-    },
-    {
-      "name":"Generic PLA High Speed Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PLA High Speed Bambu X1C.json"
-    },
-    {
-      "name":"Generic PLA Silk Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PLA Silk Bambu @base.json"
-    },
-    {
-      "name":"Generic PLA Silk Bambu",
-      "sub_path":"bbl_test_filament/Generic PLA Silk Bambu.json"
-    },
-    {
-      "name":"Generic PLA-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PLA-CF Bambu @base.json"
-    },
-    {
-      "name":"Generic PLA-CF Bambu",
-      "sub_path":"bbl_test_filament/Generic PLA-CF Bambu.json"
-    },
-    {
-      "name":"fdm_filament_pp_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_pp_bambu.json"
-    },
-    {
-      "name":"Generic PP Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PP Bambu @base.json"
-    },
-    {
-      "name":"Generic PP Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PP Bambu X1C.json"
-    },
-    {
-      "name":"Generic PP-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PP-CF Bambu @base.json"
-    },
-    {
-      "name":"Generic PP-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PP-CF Bambu X1C.json"
-    },
-    {
-      "name":"Generic PP-GF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PP-GF Bambu @base.json"
-    },
-    {
-      "name":"Generic PP-GF Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PP-GF Bambu X1C.json"
-    },
-    {
-      "name":"Generic PPA-CF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PPA-CF Bambu @base.json"
-    },
-    {
-      "name":"Generic PPA-CF Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PPA-CF Bambu X1C.json"
-    },
-    {
-      "name":"Generic PPA-GF Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PPA-GF Bambu @base.json"
-    },
-    {
-      "name":"Generic PPA-GF Bambu X1C",
-      "sub_path":"bbl_test_filament/Generic PPA-GF Bambu X1C.json"
-    },
-    {
-      "name":"Generic PVA Bambu @base",
-      "sub_path":"bbl_test_filament/Generic PVA Bambu @base.json"
-    },
-    {
-      "name":"Generic PVA Bambu",
-      "sub_path":"bbl_test_filament/Generic PVA Bambu.json"
-    },
-    {
-      "name":"fdm_filament_sbs_bambu",
-      "sub_path":"bbl_test_filament/fdm_filament_sbs_bambu.json"
-    },
-    {
-      "name":"Generic SBS Bambu @base",
-      "sub_path":"bbl_test_filament/Generic SBS Bambu @base.json"
-    },
-    {
-      "name":"Generic SBS Bambu",
-      "sub_path":"bbl_test_filament/Generic SBS Bambu.json"
-    },
-    {
-      "name":"Generic TPU Bambu",
-      "sub_path":"bbl_test_filament/Generic TPU Bambu.json"
-    },
-    {
-      "name":"Overture Matte PLA Bambu @base",
-      "sub_path":"bbl_test_filament/Overture Matte PLA Bambu @base.json"
-    },
-    {
-      "name":"Overture Matte PLA Bambu X1C",
-      "sub_path":"bbl_test_filament/Overture Matte PLA Bambu X1C.json"
-    },
-    {
-      "name":"Overture PLA Bambu @base",
-      "sub_path":"bbl_test_filament/Overture PLA Bambu @base.json"
-    },
-    {
-      "name":"Overture PLA Bambu X1C",
-      "sub_path":"bbl_test_filament/Overture PLA Bambu X1C.json"
-    },
-    {
-      "name":"PolyLite ABS Bambu @base",
-      "sub_path":"bbl_test_filament/PolyLite ABS Bambu @base.json"
-    },
-    {
-      "name":"PolyLite ABS Bambu X1C",
-      "sub_path":"bbl_test_filament/PolyLite ABS Bambu X1C.json"
-    },
-    {
-      "name":"PolyLite ASA Bambu @base",
-      "sub_path":"bbl_test_filament/PolyLite ASA Bambu @base.json"
-    },
-    {
-      "name":"PolyLite ASA Bambu X1C",
-      "sub_path":"bbl_test_filament/PolyLite ASA Bambu X1C.json"
-    },
-    {
-      "name":"PolyLite PETG Bambu @base",
-      "sub_path":"bbl_test_filament/PolyLite PETG Bambu @base.json"
-    },
-    {
-      "name":"PolyLite PETG Bambu X1C",
-      "sub_path":"bbl_test_filament/PolyLite PETG Bambu X1C.json"
-    },
-    {
-      "name":"PolyLite PLA Bambu @base",
-      "sub_path":"bbl_test_filament/PolyLite PLA Bambu @base.json"
-    },
-    {
-      "name":"PolyLite PLA Bambu X1C",
-      "sub_path":"bbl_test_filament/PolyLite PLA Bambu X1C.json"
-    },
-    {
-      "name":"PolyTerra PLA Bambu @base",
-      "sub_path":"bbl_test_filament/PolyTerra PLA Bambu @base.json"
-    },
-    {
-      "name":"PolyTerra PLA Bambu X1C",
-      "sub_path":"bbl_test_filament/PolyTerra PLA Bambu X1C.json"
-    },
-    
-    
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
 
 
@@ -1809,8 +1166,8 @@
       "sub_path": "filament/Snapmaker ASA @U1.json"
     },
     {
-      "name": "Snapmaker Breakaway Support @U1",
-      "sub_path": "filament/Snapmaker Breakaway Support @U1.json"
+      "name": "Snapmaker Breakaway Support For PLA @U1",
+      "sub_path": "filament/Snapmaker Breakaway Support For PLA @U1.json"
     },
     {
       "name": "Snapmaker PA-CF @U1 base",
@@ -1877,12 +1234,12 @@
       "sub_path": "filament/Snapmaker PLA Lite @U1.json"
     },
     {
-      "name": "Snapmaker PLA Sonic @U1 base",
-      "sub_path": "filament/Snapmaker PLA Sonic @U1 base.json"
+      "name": "Snapmaker PLA SnapSpeed @U1 base",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1 base.json"
     },
     {
-      "name": "Snapmaker PLA Sonic @U1",
-      "sub_path": "filament/Snapmaker PLA Sonic @U1.json"
+      "name": "Snapmaker PLA SnapSpeed @U1",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1.json"
     },
     {
       "name": "Snapmaker PLA Metal @U1 base",

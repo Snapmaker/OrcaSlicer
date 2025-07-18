@@ -1,0 +1,32 @@
+{
+    "type": "filament",
+    "name": "Generic PVA",
+    "inherits": "Generic PVA @base",
+    "from": "system",
+    "setting_id": "GFSS99",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "filament_end_gcode": [
+        "; filament end gcode \n\n"
+    ],
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_flow": [
+        "20"
+    ],
+    "filament_multitool_ramming_volume": [
+        "5"
+    ],
+    "filament_start_gcode": [
+        "; filament start gcode\n"
+    ],
+    "default_filament_colour": [
+        "#8269AC"
+    ]
+}

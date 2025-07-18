@@ -49,7 +49,7 @@
         "12"
     ],
     "machine_start_gcode": ";===== machine: PR2 ========================\n;===== date: 20250627 =====================\nPRINT_STRAT\n;===== 预热热床和第一个挤出头 =================\nM140 S{bed_temperature_initial_layer_single}\nM104 T{initial_extruder} S140\n\n;===== 粗回零 =================\nG28 X Y\nT{initial_extruder}\nG28 Z\nG90\nG0 Z10 F10000\nMOVE_TO_DISCARD_FILAMENT_POSITION\nM109 S{nozzle_temperature[initial_extruder] - 50}\nROUGHLY_CLEAN_NOZZLE_WITH_DISCARD\nM104 S{nozzle_temperature[initial_extruder] - 90}\nG4 P2000\nROUGHLY_CLEAN_NOZZLE\nMOVE_TO_XY_IDLE_POSITION_EXTRUDER\n\n;===== 检测钢板 =================\nDETECT_BED_PLATE\nMOVE_TO_XY_IDLE_POSITION_EXTRUDER\n\n;===== 自动进料  ======================\nSM_PRINT_AUTO_FEED EXTRUDER=0\nSM_PRINT_AUTO_FEED EXTRUDER=1\nSM_PRINT_AUTO_FEED EXTRUDER=2\nSM_PRINT_AUTO_FEED EXTRUDER=3\n\n;===== 挤出流量  ======================\n{if (is_extruder_used[0])}\nSM_PRINT_FLOW_CALIBRATE INDEX=0 TARGET_TEMP={nozzle_temperature[0]}\n{endif}\n{if (is_extruder_used[1])}\nSM_PRINT_FLOW_CALIBRATE INDEX=1 TARGET_TEMP={nozzle_temperature[1]}\n{endif}\n{if (is_extruder_used[2])}\nSM_PRINT_FLOW_CALIBRATE INDEX=2 TARGET_TEMP={nozzle_temperature[2]}\n{endif}\n{if (is_extruder_used[3])}\nSM_PRINT_FLOW_CALIBRATE INDEX=3 TARGET_TEMP={nozzle_temperature[3]}\n{endif}\n\n;===== 取出第一个挤出头 =================\nT{initial_extruder}\nSET_VELOCITY_LIMIT ACCEL=10000\nM204 S10000\n\n;===== 深度清洁喷嘴 =================\nG90\nG0 Z10 F10000\nROUGHLY_CLEAN_NOZZLE_WITH_DISCARD\nG0 Z5 F10000\nFINELY_CLEAN_NOZZLE_STAGE_1\nG0 Z5 F10000\nROUGHLY_CLEAN_NOZZLE\nG0 Z5 F10000\nFINELY_CLEAN_NOZZLE_STAGE_2\nM83\n\n;===== 第一个挤出头降温 =================\nM109 S{nozzle_temperature[initial_extruder] - 90}\nM190 S{bed_temperature_initial_layer_single}\nM106 S0\nG90\nG0 Z5 F10000\nMOVE_TO_DISCARD_FILAMENT_POSITION\nINNER_CUTOFF_BASE_DISCARD\nINNER_ROUGHLY_CLEAN_NOZZLE_BASE_DISCARD\nINNER_ROUGHLY_CLEAN_NOZZLE_BASE_DISCARD\nMOVE_TO_XY_IDLE_POSITION_EXTRUDER\n\n;===== 精回零 =================\nG28 Z\n;===== 热床调平 =================\nBED_MESH_CALIBRATE\n\n;======== 预挤出/划线 ================\n{if (is_extruder_used[0]) and 0 != initial_extruder}\nSM_PRINT_START_LINE INDEX=0 TARGET_TEMP={nozzle_temperature_initial_layer[0]}\nM83\nM104 S{nozzle_temperature[0] - 90}\n{endif}\n\n{if (is_extruder_used[1]) and 1 != initial_extruder}\nSM_PRINT_START_LINE INDEX=1 TARGET_TEMP={nozzle_temperature_initial_layer[1]}\nM83\nM104 S{nozzle_temperature[1] - 90}\n{endif}\n\n{if (is_extruder_used[2]) and 2 != initial_extruder}\nSM_PRINT_START_LINE INDEX=2 TARGET_TEMP={nozzle_temperature_initial_layer[2]}\nM83\nM104 S{nozzle_temperature[2] - 90}\n{endif}\n\n{if (is_extruder_used[3]) and 3 != initial_extruder}\nSM_PRINT_START_LINE INDEX=3 TARGET_TEMP={nozzle_temperature_initial_layer[3]}\nM83\nM104 S{nozzle_temperature[3] - 90}\n{endif}\n\n{if (is_extruder_used[initial_extruder])}\nSM_PRINT_START_LINE INDEX={initial_extruder} TARGET_TEMP={nozzle_temperature_initial_layer[initial_extruder]}\n{endif}\n\nM106 S0\n\nTIMELAPSE_START",
-    "machine_tool_change_time": "6",
+    "machine_tool_change_time": "5",
     "max_layer_height": [
         "0.32",
         "0.32",
@@ -70,10 +70,10 @@
     ],
     "nozzle_type": "stainless_steel",
     "printable_area": [
-        "0x0",
-        "270x0",
-        "270x270",
-        "0x270"
+        "-0.5x-1",
+        "270.5x-1",
+        "270.5x271",
+        "-0.5x271"
     ],
     "printable_height": "270",
     "printer_settings_id": "MyToolChanger 0.4 nozzle - Copy",
@@ -194,5 +194,6 @@
         "0"
     ],
     "ramming_pressure_advance_value": "0.02",
-    "tool_change_temprature_wait": "0"
+    "tool_change_temprature_wait": "0",
+    "printer_notes": "1、修改幅面坐标，原点坐标\n2、修改换头时间，5S"
 }

@@ -3554,7 +3554,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                                 // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
 
                                 if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=device_control");
+                                    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
                                     auto real_url = wxGetApp().get_international_url(url);
                                     wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
                                 } else {
@@ -4952,7 +4952,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                                     if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
                                         wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
-                                                                               "/web/flutter_web/index.html?path=device_control");
+                                                                               "/web/flutter_web/index.html?path=2");
                                         auto     real_url = wxGetApp().get_international_url(url);
                                         wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
                                     } else {

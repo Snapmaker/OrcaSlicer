@@ -83,15 +83,13 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     m_apikey = apikey;
     m_apikey_sent = false;
     
-    if (url.find("device_control") != std::string::npos) {
+    if (url.find("path=2") != std::string::npos) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
     } else {
         wxGetApp().fltviews().remove_printer_view(this);
     }
 
     m_browser->LoadURL(url);
-
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "TTTTTTTTTTTTTTTTTTTTTTTTTTTTT load url:" + url;
 
     m_browser->Show();
     //m_browser->SetFocus();

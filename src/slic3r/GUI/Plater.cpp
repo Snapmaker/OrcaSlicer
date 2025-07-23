@@ -1699,7 +1699,7 @@ void Sidebar::update_all_preset_comboboxes()
             else {
                 // 未连接机器
                 wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
-                                                  "/web/flutter_web/index.html?path=device_control");
+                                                  "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
             }

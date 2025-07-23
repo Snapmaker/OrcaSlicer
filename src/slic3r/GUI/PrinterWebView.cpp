@@ -90,6 +90,9 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     }
 
     m_browser->LoadURL(url);
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "TTTTTTTTTTTTTTTTTTTTTTTTTTTTT load url:" + url;
+
     m_browser->Show();
     //m_browser->SetFocus();
     UpdateState();

@@ -62,11 +62,11 @@ public:
     // Async printer information methods
     virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback) override {}
     virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)>) override  {}
-    virtual void async_subscribe_machine_info(std::function<void(const nlohmann::json&)>) override {}
+    virtual void async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override {}
     virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)>)override {}
     virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
                                                     std::function<void(const nlohmann::json& response)>                  callback) override {}
-    virtual void async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)>) override {}
+    virtual void async_unsubscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override {}
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override{}
 
     virtual void async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)>) override{}
@@ -206,11 +206,11 @@ public:
     // Override async information methods
     virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)> callback) override;
-    virtual void async_subscribe_machine_info(std::function<void(const nlohmann::json&)>) override;
+    virtual void async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override;
     virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
                                                     std::function<void(const nlohmann::json& response)>                  callback) override;
-    virtual void async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)>) override;
+    virtual void async_unsubscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override;
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override;
     virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) override;
 
@@ -307,8 +307,6 @@ private:
     // Ask for TLS info
     bool ask_for_tls_info(const nlohmann::json& params);
 
- 
-
 public:
     // set engine
     bool set_engine(const std::shared_ptr<MqttClient>& engine, std::string& msg);
@@ -331,8 +329,8 @@ private:
     static std::shared_ptr<MqttClient> m_mqtt_client;
     static std::shared_ptr<MqttClient> m_mqtt_client_tls;
     static TimeoutMap<int64_t, RequestCallback> m_request_cb_map;
-    static std::function<void(const nlohmann::json&)> m_status_cb;
-    static std::function<void(const nlohmann::json&)> m_notification_cb;
+    static std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> m_status_cbs;
+    static std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> m_notification_cbs;
 
     // MQTT topics
     static std::string m_auth_topic;

@@ -13310,7 +13310,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
         bool res = dialog->run();
 
-        wxGetApp().mainframe->m_printer_view->reload();
+        // wxGetApp().mainframe->m_printer_view->reload();
 
         if (dialog->is_finish()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);

@@ -1468,7 +1468,8 @@ void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
         }
 
         auto weak_self  = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_unsubscribe_machine_info([weak_self](const json& response) {
+        std::string key       = m_event_id + std::to_string(int64_t(m_webview));
+        host->async_unsubscribe_machine_info(key, [weak_self](const json& response) {
             auto self = weak_self.lock();
             if (self) {
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
@@ -1497,7 +1498,8 @@ void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
         }
 
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_subscribe_machine_info([weak_self](const json& response) {
+        std::string key       = m_event_id + std::to_string(int64_t(m_webview));
+        host->async_subscribe_machine_info(key, [weak_self](const json& response) {
             auto self = weak_self.lock();
             if (self) {
                 SSWCP_Instance::on_mqtt_status_msg_arrived(self, response);

@@ -992,8 +992,6 @@ bool Moonraker::connect(wxString& msg, const nlohmann::json& params) {
 std::shared_ptr<MqttClient> Moonraker_Mqtt::m_mqtt_client = nullptr;
 std::shared_ptr<MqttClient> Moonraker_Mqtt::m_mqtt_client_tls = nullptr;
 TimeoutMap<int64_t, Moonraker_Mqtt::RequestCallback> Moonraker_Mqtt::m_request_cb_map;
-std::function<void(const nlohmann::json&)> Moonraker_Mqtt::m_status_cb = nullptr;
-std::function<void(const nlohmann::json&)>           Moonraker_Mqtt::m_notification_cb    = nullptr;
 std::string Moonraker_Mqtt::m_response_topic = "/response";
 std::string Moonraker_Mqtt::m_status_topic = "/status";
 std::string Moonraker_Mqtt::m_notification_topic = "/notification";
@@ -1003,6 +1001,9 @@ std::mutex Moonraker_Mqtt::m_sn_mtx;
 std::string Moonraker_Mqtt::m_auth_topic = "/config/response";
 std::string Moonraker_Mqtt::m_auth_req_topic = "/config/request";
 nlohmann::json Moonraker_Mqtt::m_auth_info = nlohmann::json::object();
+std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> Moonraker_Mqtt::m_status_cbs;
+std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> Moonraker_Mqtt::m_notification_cbs;
+
 
 
 Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) : Moonraker(config) {
@@ -1420,6 +1421,12 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     bool flag = m_mqtt_client_tls->Disconnect(dc_msg);
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS断开连接结果: " << (flag ? "成功" : "失败");
     wcp_loger.add_log("MQTTS断开连接结果: " + std::string((flag ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
+
+    if (flag) {
+        m_status_cbs.clear();
+        m_notification_cbs.clear();
+    }
+
     m_sn_mtx.lock();
     m_sn = "";
     m_sn_mtx.unlock();
@@ -1432,37 +1439,41 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
 }
 
 // Subscribe to printer status updates
-void Moonraker_Mqtt::async_subscribe_machine_info(std::function<void(const nlohmann::json&)> callback)
+void Moonraker_Mqtt::async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)> callback)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始订阅机器状态信息";
     wcp_loger.add_log("开始订阅机器状态信息", false, "", "Moonraker_Mqtt", "info");
-    std::string main_layer = "+";
-    
-    m_sn_mtx.lock();
-    main_layer = m_sn;
-    m_sn_mtx.unlock();
-    
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用SN主题: " << main_layer;
-    wcp_loger.add_log("使用SN主题: " + main_layer, false, "", "Moonraker_Mqtt", "info");
-    std::string sub_msg = "success";
-    bool res_status = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1, sub_msg) : false;
-    bool        res_notification = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_notification_topic, 1, sub_msg) : false;
 
-    if (!res_status || !res_notification) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 订阅状态主题失败";
-        wcp_loger.add_log("订阅状态主题失败", false, "", "Moonraker_Mqtt", "error");
-        if (m_status_cb) {
+    if (m_status_cbs.empty()) {
+        std::string main_layer = "+";
+
+        m_sn_mtx.lock();
+        main_layer = m_sn;
+        m_sn_mtx.unlock();
+
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用SN主题: " << main_layer;
+        wcp_loger.add_log("使用SN主题: " + main_layer, false, "", "Moonraker_Mqtt", "info");
+        std::string sub_msg    = "success";
+        bool        res_status = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1, sub_msg) : false;
+        bool res_notification  = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_notification_topic, 1, sub_msg) : false;
+
+        if (!res_status || !res_notification) {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 订阅状态主题失败";
+            wcp_loger.add_log("订阅状态主题失败", false, "", "Moonraker_Mqtt", "error");
             callback(json::value_t::null);
+            return;
         }
-        return;
+
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 成功订阅状态主题: " << main_layer + m_status_topic;
+        wcp_loger.add_log("成功订阅状态主题: " + main_layer + m_status_topic, false, "", "Moonraker_Mqtt", "info");
     }
 
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 成功订阅状态主题: " << main_layer + m_status_topic;
-    wcp_loger.add_log("成功订阅状态主题: " + main_layer + m_status_topic, false, "", "Moonraker_Mqtt", "info");
-    m_status_cb = callback;
-    m_notification_cb = callback;
+    m_status_cbs.insert({hash, callback});
+    m_notification_cbs.insert({hash, callback});
     callback(json::object());
+
+    
 }
 
 // start print job
@@ -1684,34 +1695,46 @@ void Moonraker_Mqtt::async_send_gcodes(const std::vector<std::string>& scripts, 
 }
 
 // Unsubscribe from printer status updates
-void Moonraker_Mqtt::async_unsubscribe_machine_info(std::function<void(const nlohmann::json&)> callback)
+void Moonraker_Mqtt::async_unsubscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)> callback)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始取消订阅机器状态信息";
     wcp_loger.add_log("开始取消订阅机器状态信息", false, "", "Moonraker_Mqtt", "info");
-    std::string main_layer = "+";
-    
-    m_sn_mtx.lock();
-    main_layer = m_sn;
-    m_sn_mtx.unlock();
 
-    std::string un_sub_msg = "success";
-    bool res = m_mqtt_client_tls ? m_mqtt_client_tls->Unsubscribe(main_layer + m_status_topic, un_sub_msg) : false;
+    if (m_status_cbs.count(hash))
+        m_status_cbs.erase(hash);
 
-    if (!res) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 取消订阅状态主题失败";
-        wcp_loger.add_log("取消订阅状态主题失败", false, "", "Moonraker_Mqtt", "error");
-        if (callback) {
-            callback(json::value_t::null);
+    if (m_notification_cbs.count(hash))
+        m_notification_cbs.erase(hash);
+
+    if (m_status_cbs.empty()) {
+        std::string main_layer = "+";
+
+        m_sn_mtx.lock();
+        main_layer = m_sn;
+        m_sn_mtx.unlock();
+
+        std::string un_sub_msg = "success";
+        bool        res        = m_mqtt_client_tls ? m_mqtt_client_tls->Unsubscribe(main_layer + m_status_topic, un_sub_msg) : false;
+
+        if (!res) {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 取消订阅状态主题失败";
+            wcp_loger.add_log("取消订阅状态主题失败", false, "", "Moonraker_Mqtt", "error");
+            if (callback) {
+                callback(json::value_t::null);
+            }
+            return;
         }
-        return;
+
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 成功取消订阅状态主题: " << main_layer + m_status_topic;
+        wcp_loger.add_log("成功取消订阅状态主题: " + main_layer + m_status_topic, false, "", "Moonraker_Mqtt", "info");
+        callback(json::object());
+    } else {
+        callback(json::object());
     }
 
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 成功取消订阅状态主题: " << main_layer + m_status_topic;
-    wcp_loger.add_log("成功取消订阅状态主题: " + main_layer + m_status_topic, false, "", "Moonraker_Mqtt", "info");
-    m_status_cb = nullptr;
-    m_notification_cb = nullptr;
-    callback(json::object());
+
+    
 }
 
 // Set filters for printer status subscription
@@ -2698,7 +2721,7 @@ void Moonraker_Mqtt::on_status_arrived(const std::string& payload)
             wcp_loger.add_log("状态更新包含方法: " + body["method"].get<std::string>(), false, "", "Moonraker_Mqtt", "info");
         }
 
-        if (!m_status_cb) {
+        if (m_status_cbs.empty()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 状态回调未设置";
             wcp_loger.add_log("状态回调未设置", false, "", "Moonraker_Mqtt", "warning");
             return;
@@ -2706,7 +2729,9 @@ void Moonraker_Mqtt::on_status_arrived(const std::string& payload)
 
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 调用状态回调";
         wcp_loger.add_log("调用状态回调", false, "", "Moonraker_Mqtt", "info");
-        m_status_cb(data);
+        for (const auto& func : m_status_cbs) {
+            func.second(data);
+        }
 
     } catch (std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 处理状态更新异常: " << e.what();
@@ -2746,7 +2771,13 @@ void Moonraker_Mqtt::on_notification_arrived(const std::string& payload)
             wcp_loger.add_log("状态更新包含方法: " + body["method"].get<std::string>(), false, "", "Moonraker_Mqtt", "info");
         }
 
-        m_notification_cb(data);
+        if (m_notification_cbs.empty()) {
+            return;
+        }
+
+        for (const auto& func : m_notification_cbs) {
+            func.second(data);
+        }
     } catch (std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 处理通知消息异常: " << e.what();
         wcp_loger.add_log("处理通知消息异常: " + std::string(e.what()), false, "", "Moonraker_Mqtt", "error");

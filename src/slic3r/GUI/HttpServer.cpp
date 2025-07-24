@@ -327,6 +327,13 @@ std::shared_ptr<HttpServer::Response> HttpServer::web_server_handle_request(cons
 
 std::string HttpServer::map_url_to_file_path(const std::string& url)
 {
+    BOOST_LOG_TRIVIAL(fatal) << "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA Mapping URL to file path: " << url;
+    if (url.find("webp") != std::string::npos) {
+        BOOST_LOG_TRIVIAL(fatal) << "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB Mapping URL to file path: " << url;
+    } else if (url.find("html") != std::string::npos) {
+        BOOST_LOG_TRIVIAL(fatal) << "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC Mapping URL to file path: " << url;
+    }
+
     if (url.find("..") != std::string::npos) {
         return "";
     }

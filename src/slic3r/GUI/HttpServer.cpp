@@ -105,6 +105,8 @@ void session::read_next_line()
                     const auto        resp    = server.server.m_request_handler(url_str);
                     std::stringstream ssOut;
                     resp->write_response(ssOut);
+                    BOOST_LOG_TRIVIAL(fatal) << "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+                                             << "  http write response" << ssOut;
                     std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
                     async_write(socket, boost::asio::buffer(str->c_str(), str->length()),
                                 [this, self, str](const boost::beast::error_code& e, std::size_t s) {

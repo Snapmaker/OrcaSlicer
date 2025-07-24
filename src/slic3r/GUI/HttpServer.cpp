@@ -420,6 +420,12 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
         content_type = "application/x-font-ttf";
     else if (ends_with(file_path, ".json"))
         content_type = "application/json";
+    else if (ends_with(file_path, ".webp"))
+        content_type = "image/webp";
+    else if (ends_with(file_path, ".woff"))
+        content_type = "font/woff";
+    else if (ends_with(file_path, ".woff2"))
+        content_type = "font/woff2";
 
     // 构造响应头（严格使用\r\n，头结束后空行）
     ssOut << "HTTP/1.1 200 OK\r\n";

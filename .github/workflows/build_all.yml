@@ -4,7 +4,7 @@ on:
   push:
     branches:
      - main
-     - 2.1.0
+     - innertest_extra
      - release/*
     paths:
      - 'deps/**'
@@ -18,7 +18,7 @@ on:
   pull_request:
     branches:
      - main
-     - 2.1.0
+     - innertest_extra
      - release/*
     paths:
      - 'deps/**'

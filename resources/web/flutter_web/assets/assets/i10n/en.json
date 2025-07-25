@@ -87,7 +87,7 @@
     "Heated Bed Detecting": "Heated Bed Detecting",
     "Power Loss Recovering": "Power Loss Recovering",
     "Calibrating": "Calibrating",
-    "Heated Bed Temp": "Heated Bed Temp.",
+    "Heated Bed Temp.": "Heated Bed Temp.",
 
     "Print Speed": "Print Speed",
     "Fan": "Fan",
@@ -96,7 +96,7 @@
     "Off": "Off",
     "No extruder": "No extruder",
     "Extruder": "Extruder",
-    "Extruder Temp": "Extruder Temp",
+    "Extruder Temp.": "Extruder Temp.",
     "operating...": "operating...",
     "Park Extruder": "Park Extruder",
     "Pick Extruder": "Pick Extruder",

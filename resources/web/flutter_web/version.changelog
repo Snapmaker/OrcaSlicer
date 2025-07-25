@@ -1,0 +1,8 @@
+
+# Changelog
+
+## 1.0.5+20250725112411
+
+* fix: fix the bug of device list synchronization, solve the loop call getDeviceList
+* fix: fix orca hot restart causing the left side menu to adapt 
+* fix: remove redundant log output，and update i10n resource

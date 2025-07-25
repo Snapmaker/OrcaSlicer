@@ -187,7 +187,7 @@
     "Power Loss Recovering": "断电续打恢复中",
     "Calibrating": "调平中",
 
-    "Heated Bed Temp": "热床温度",
+    "Heated Bed Temp.": "热床温度",
     "Print Speed": "打印速度",
     "Fan": "风扇",
 
@@ -195,7 +195,7 @@
     "Off": "关",
     "No extruder": "无挤出头",
     "Extruder": "挤出头",
-    "Extruder Temp": "挤出头温度",
+    "Extruder Temp.": "挤出头温度",
     "operating...": "操作中……",
     "Park Extruder": "放回执行头",
     "Pick Extruder": "取出执行头",
@@ -294,8 +294,11 @@
     "Time remaining": "剩余时间",
     "N/A": "N/A",
     "Are you sure you want to disconnect this device?": "确定要断开此设备吗？",
-    "After unbinding the device, the device will be unable to function.": "解绑后，设备将无法正常使用。"
+    "After unbinding the device, the device will be unable to function.": "解绑后，设备将无法正常使用。",
 
+    "Not Found Page": "找不到页面",
+    "Go Back": "返回"
+   
     
     
     

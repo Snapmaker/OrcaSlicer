@@ -302,6 +302,13 @@ enum ZHopType {
     zhtCount
 };
 
+enum FilamentMapMode {
+    fmmAutoForFlush,
+    fmmAutoForMatch,
+    fmmManual,
+    fmmDefault
+};
+
 enum RetractLiftEnforceType {
     rletAllSurfaces = 0,
     rletTopOnly,

@@ -1852,6 +1852,29 @@ void PresetBundle::export_selections(AppConfig &config)
 }
 
 // BBS
+void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
+{
+    unsigned old_filament_count = this->filament_presets.size();
+    assert(to_del_flament_id < old_filament_count);
+    filament_presets.erase(filament_presets.begin() + to_del_filament_id);
+
+    ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
+
+    if (filament_color->values.size() > to_del_filament_id) {
+        filament_color->values.erase(filament_color->values.begin() + to_del_filament_id);
+    } else {
+        filament_color->values.resize(to_del_filament_id);
+    }
+
+    if (ams_multi_color_filment.size() > to_del_filament_id) {
+        ams_multi_color_filment.erase(ams_multi_color_filment.begin() + to_del_filament_id);
+    } else {
+        ams_multi_color_filment.resize(to_del_filament_id);
+    }
+
+    update_multi_material_filament_presets(to_del_filament_id);
+}
+
 void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> new_colors) {
     int old_filament_count = this->filament_presets.size();
     if (n > old_filament_count && old_filament_count != 0)
@@ -3787,7 +3810,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
     return std::make_pair(std::move(substitutions), presets_loaded);
 }
 
-void PresetBundle::update_multi_material_filament_presets()
+void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filament_id)
 {
     if (printers.get_edited_preset().printer_technology() != ptFFF)
         return;

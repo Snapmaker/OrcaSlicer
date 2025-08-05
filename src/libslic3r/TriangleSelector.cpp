@@ -1702,7 +1702,11 @@ TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
     return out.data;
 }
 
-void TriangleSelector::deserialize(const TriangleSplittingData& data, bool needs_reset, EnforcerBlockerType max_ebt)
+void TriangleSelector::deserialize(const TriangleSplittingData& data,
+                                   bool                         needs_reset,
+                                   EnforcerBlockerType          max_ebt,
+                                   EnforcerBlockerType          to_delete_filament,
+                                   EnforcerBlockerType          replace_filament)
 {
     if (needs_reset)
         reset(); // dump any current state
@@ -1748,11 +1752,37 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data, bool needs
             int num_of_children = num_of_split_sides == 0 ? 0 : num_of_split_sides + 1;
             bool is_split = num_of_children != 0;
             // Only valid if not is_split. Value of the second nibble was subtracted by 3, so it is added back.
-            auto state = is_split ? EnforcerBlockerType::NONE : EnforcerBlockerType((code & 0b1100) == 0b1100 ? next_nibble() + 3 : code >> 2);
+            // auto state = is_split ? EnforcerBlockerType::NONE : EnforcerBlockerType((code & 0b1100) == 0b1100 ? next_nibble() + 3 : code >> 2);
+            auto state = EnforcerBlockerType::NONE;
+            //// BBS
+            //if (state > max_ebt)
+            //    state = EnforcerBlockerType::NONE;
 
-            // BBS
-            if (state > max_ebt)
+            if (!is_split) {
+                if ((code & 0b1100) == 0b1100) {
+                    int next_code = next_nibble();
+                    int num       = 0;
+                    while (next_code == 0b1111) {
+                        num++;
+                        next_code = next_nibble();
+                    }
+                    state = EnforcerBlockerType(next_code + 15 * num + 3); // old:next_nibble() + 3;
+                } else {
+                    state = EnforcerBlockerType(code >> 2);
+                }
+            }
+
+            
+            if (state == to_delete_filament)
+                state = replace_filament;
+            else if (to_delete_filament != EnforcerBlockerType::NONE && state != EnforcerBlockerType::NONE) {
+                state = state > to_delete_filament ? EnforcerBlockerType((int) state - 1) : state;
+            }
+
+            if (state > max_ebt) {
+                assert(false);
                 state = EnforcerBlockerType::NONE;
+            }
 
             // Only valid if is_split.
             int special_side = code >> 2;

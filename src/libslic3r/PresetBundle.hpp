@@ -150,6 +150,10 @@ public:
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
+
+    // Snapmaker
+    std::map<int, std::pair<std::string, std::string>> machine_filaments;
+
     // Calibrate
     Preset const * calibrate_printer = nullptr;
     std::set<Preset const *> calibrate_filaments;

@@ -1448,6 +1448,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_exception_query();
     } else if (m_cmd == "sw_GetFileListPage") {
         sw_GetFileListPage();
+    } else if (m_cmd == "sw_UpdateMachineFilamentInfo") {
+        sw_UpdateMachineFilamentInfo();
     }
     
     else {
@@ -1826,6 +1828,113 @@ void SSWCP_MachineOption_Instance::sw_PullCloudFile()
             }
         });
     } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
+{
+    try {
+        if (!m_param_data.count("objects") || !m_param_data["objects"].is_array()) {
+            handle_general_fail(-1, "param [objects] required or wrong type!");
+            return;
+        }
+
+        json objects = m_param_data["objects"];
+
+        if (objects.size() < 1) {
+            handle_general_fail(-1, "objects is empty!");
+            return;
+        }
+
+        if (!objects[0].count("key") || !objects[0]["key"].is_string()) {
+            handle_general_fail(-1, "param [key] required or wrong type!");
+            return;
+        }
+
+        if (!objects[0].count("value") || !objects[0]["value"].is_string()) {
+            handle_general_fail(-1, "param [value] required or wrong type!");
+        }
+
+        std::string sn = objects[0]["key"].get<std::string>();
+        std::string value = objects[0]["value"].get<std::string>();
+
+        DeviceInfo info;
+        if (!wxGetApp().app_config->get_device_info(sn, info)) {
+            m_msg = "sn does not exist!";
+            send_to_js();
+            finish_job();
+            return;
+        } else {
+            if (!info.connected) {
+                m_msg = "The machine is not connected!";
+                send_to_js();
+                finish_job();
+                return;
+            } else {
+                json j_value;
+                try {
+                    j_value = json::parse(value);
+                }
+                catch (std::exception& e) {
+                    handle_general_fail(-1, "value parse failed");
+                    return;
+                }
+
+                if (!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
+                    !j_value.count("filament_type") || !j_value["filament_type"].is_array() ||
+                    !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
+                    !j_value.count("filament_color") || !j_value["filament_color"].is_array() ||
+                    !j_value.count("extruder_map_table") || !j_value["extruder_map_table"].is_array() ||
+                    !j_value.count("filament_official") || !j_value["filament_official"].is_array()) {
+                    handle_general_fail(-1, "value parse failed");
+                    return;
+                }
+
+                // 存储耗材，并触发更新
+                auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+                filaments.clear();
+
+                size_t count = 0;
+                for (size_t i = 0; i < j_value["filament_official"].size(); ++i) {
+                    bool is_official = j_value["filament_official"][i].get<bool>();
+                    if (/*is_official*/ true) {
+                        std::string vendor = j_value["filament_vendor"][i].get<std::string>();
+                        std::string type   = j_value["filament_type"][i].get<std::string>();
+                        std::string sub_type = j_value["filament_sub_type"][i].get<std::string>();
+
+                        std::string name = "";
+
+                        // 名称特殊处理
+                        if (type == "TPU") {
+                            name = vendor + " " + type;
+                        } else if (sub_type == "Support") {
+                            name = vendor + " Support" + " For " + type;
+                        } else {
+                            name = vendor + " " + type + (sub_type != "NONE" ? " " + sub_type : "");
+                        }
+
+                        int extruder = j_value["extruder_map_table"][i].get<int>();
+
+                        int color = j_value["filament_color"][i].get<int>();
+
+                        std::ostringstream oss;
+                        oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex << (color & 0x00FFFFFF); // 仅取低24位
+
+                        std::string str_color = oss.str();
+
+                        filaments.insert({int(i), {name, str_color}});
+                    }
+                }
+
+                wxGetApp().load_current_presets();
+                send_to_js();
+                finish_job();
+            }
+        }
+
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -3629,6 +3738,11 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
             }
         }
 
+        wxGetApp().CallAfter([]() {
+            wxGetApp().preset_bundle->machine_filaments.clear();
+            wxGetApp().load_current_presets();
+        });
+
         if (self) {
             self->send_to_js();
             self->finish_job();
@@ -5128,6 +5242,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_FilesThumbnailsBase64",
     "sw_exception_query",
     "sw_GetFileListPage",
+    "sw_UpdateMachineFilamentInfo"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

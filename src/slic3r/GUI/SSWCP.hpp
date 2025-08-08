@@ -406,6 +406,9 @@ private:
     // 请求设备取消下载文件
     void sw_CancelPullCloudFile();
 
+    // 设备耗材同步
+    void sw_UpdateMachineFilamentInfo();
+
 };
 
 // Instance class for Snapmaker machine manage

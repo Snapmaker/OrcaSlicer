@@ -1,7 +1,13 @@
 
 # Changelog
 
-## 1.0.5+20250729181539
+## 1.0.6 
 
-* Fixed an issue where some images failed to load properly.
-* Added IPv6 support for device control.
+- Fixed memory leak issue
+- Improved hot restart interaction experience
+- Fixed token invalidation caused by language switching
+- Updated filament information
+- Fixed inaccurate filament color names (multi-language verification required)
+- Optimized device control input fields
+- Synced filament updates to ORCA filament information
+- Fixed issue where ORCA camera could not update properly

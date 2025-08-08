@@ -297,9 +297,10 @@
     "After unbinding the device, the device will be unable to function.": "解绑后，设备将无法正常使用。",
 
     "Not Found Page": "找不到页面",
-    "Go Back": "返回"
-   
-    
+    "Go Back": "返回",
+
+    "Click to select printer": "点击选择打印机",
+    "No available printer": "暂无可用打印机"
     
     
 }

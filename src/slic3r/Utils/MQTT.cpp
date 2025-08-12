@@ -367,9 +367,21 @@ bool MqttClient::CheckConnected()
         return false;
     }
 
+    // 检查客户端指针是否有效
+    if (!client_) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client pointer is null";
+        connected_.store(false, std::memory_order_release);
+        return false;
+    }
+
     // 带超时的连接状态检查
     auto check_future = std::async(std::launch::async, [this]() {
-        return client_->is_connected();
+        try {
+            return client_->is_connected();
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Exception during connection check: " << e.what();
+            return false;
+        }
     });
     
     if (check_future.wait_for(std::chrono::seconds(3)) == std::future_status::timeout) {
@@ -378,7 +390,13 @@ bool MqttClient::CheckConnected()
         return false;
     }
 
-    if (!check_future.get()) {
+    try {
+        if (!check_future.get()) {
+            connected_.store(false, std::memory_order_release);
+            return false;
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Exception getting connection status: " << e.what();
         connected_.store(false, std::memory_order_release);
         return false;
     }
@@ -412,20 +430,26 @@ void MqttClient::connection_lost(const std::string& cause)
                 std::this_thread::sleep_for(std::chrono::seconds(20));
 
                 if (auto self = weak_self.lock()) {
-                    int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
+                    // 检查对象是否仍然有效
+                    if (self->client_) {
+                        int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
 
-                    // 只有当这是最后一个检查线程时才执行检查
-                    if (remaining == 1) {
-                        if (!self->connected_.load(std::memory_order_acquire)) {
-                            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT connection not restored after 20 seconds";
-                            std::string dc_msg = "";
-                            self->Disconnect(dc_msg);
-                            if (self->connection_failure_callback_) {
-                                self->connection_failure_callback_();
+                        // 只有当这是最后一个检查线程时才执行检查
+                        if (remaining == 1) {
+                            if (!self->connected_.load(std::memory_order_acquire)) {
+                                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT connection not restored after 20 seconds";
+                                std::string dc_msg = "";
+                                self->Disconnect(dc_msg);
+                                if (self->connection_failure_callback_) {
+                                    self->connection_failure_callback_();
+                                }
                             }
+                            // 重置重连标志
+                            self->is_reconnecting.store(false, std::memory_order_release);
                         }
-                        // 重置重连标志
-                        self->is_reconnecting.store(false, std::memory_order_release);
+                    } else {
+                        // 客户端已被销毁，减少计数
+                        self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
                     }
                 }
             }).detach();
@@ -433,7 +457,10 @@ void MqttClient::connection_lost(const std::string& cause)
             BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Waiting for automatic reconnection...";
         }
         catch (std::exception& e) {
-
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Failed to start reconnection check: " << e.what();
+            // 重置状态
+            is_reconnecting.store(false, std::memory_order_release);
+            pending_reconnect_checks.fetch_sub(1, std::memory_order_release);
         }
        
     } else {
@@ -552,20 +579,28 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
 // 添加析构函数实现
 MqttClient::~MqttClient()
 {
-    cleanup_temp_files();
     try {
         BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 释放MQTT客户端资源...";
         
+        // 先标记为断开状态，防止新的操作
+        connected_.store(false, std::memory_order_release);
+        is_reconnecting.store(false, std::memory_order_release);
+        
+        // 等待所有重连检查完成
+        while (pending_reconnect_checks.load(std::memory_order_acquire) > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        
         // 如果客户端仍然连接，先断开连接
-        if (connected_.load(std::memory_order_acquire)) {
+        if (client_ && client_->is_connected()) {
             try {
                 BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 在析构函数中断开MQTT连接";
                 
-                // 使用非阻塞方式断开，避免在析构函数中长时间等待
-                client_->disconnect(0);
-                
-                // 不等待断开完成，直接继续
-                connected_.store(false, std::memory_order_release);
+                // 使用阻塞方式断开，确保完全断开
+                auto disctok = client_->disconnect();
+                if (disctok) {
+                    disctok->wait_for(std::chrono::seconds(5));
+                }
             } 
             catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT断开连接时出错: " << e.what();
@@ -580,8 +615,11 @@ MqttClient::~MqttClient()
         message_callback1_           = nullptr;
         connection_failure_callback_ = nullptr;
         
-        // 重置客户端指针前，确保没有正在进行的操作
+        // 最后重置客户端指针
         client_.reset();
+        
+        // 清理临时文件
+        cleanup_temp_files();
         
         BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT客户端资源已释放";
     }

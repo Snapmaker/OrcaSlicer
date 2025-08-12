@@ -3665,14 +3665,7 @@ inline void MainFrame::FileHistory::SetMaxFiles(int max)
 void MainFrame::get_recent_projects(nlohmann::json& data, int images) {
     for (size_t i = 0; i < m_recent_projects.GetCount(); ++i) {
         json item;
-        std::string proj    = m_recent_projects.GetHistoryFile(i).ToStdString();
-#ifdef WIN32
-        UINT codePage = GetACP();
-        if (codePage != 65001) {
-            proj = boost::locale::conv::to_utf<char>(proj, "GBK");
-        }
-#endif 
-
+        std::string proj    = m_recent_projects.GetHistoryFile(i).ToStdString(wxConvUTF8);
         
         item["project_name"] = proj.substr(proj.find_last_of("/\\") + 1);
         item["path"]  = proj;

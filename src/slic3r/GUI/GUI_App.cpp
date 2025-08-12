@@ -4395,7 +4395,7 @@ void GUI_App::request_open_project(std::string project_id)
 
 void GUI_App::sm_request_remove_project(std::string project_id) 
 {
-    mainframe->sm_remove_recent_project(project_id);
+    mainframe->sm_remove_recent_project(wxString::FromUTF8(project_id));
 }
 
 void GUI_App::request_remove_project(std::string project_id)

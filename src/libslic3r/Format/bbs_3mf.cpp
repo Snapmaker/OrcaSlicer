@@ -8195,10 +8195,13 @@ private:
 
 public:
     void operator()() {
+        BOOST_LOG_TRIVIAL(warning) << "--------------------------------Enter operator()---------------------------------";
         boost::unique_lock lock(m_mutex);
         while (true)
         {
+            BOOST_LOG_TRIVIAL(warning) << "--------------------------------Enter First while()---------------------------------";
             while (m_tasks.empty()) {
+                BOOST_LOG_TRIVIAL(warning) << "--------------------------------Enter Second while()---------------------------------";
                 if (m_interval > 0)
                     m_cond.timed_wait(lock, m_next_backup);
                 else
@@ -8211,12 +8214,18 @@ public:
                         m_next_backup = boost::get_system_time() + boost::posix_time::seconds(m_interval);
                 }
             }
+
+            BOOST_LOG_TRIVIAL(warning) << "--------------------------------Break Second while()---------------------------------";
+
             Task t = m_tasks.front();
             if (t.type == Exit) break;
             if (t.object && t.delay) {
                 if (!delay_task(t, lock))
                     continue;
             }
+
+            BOOST_LOG_TRIVIAL(warning) << "--------------------------------Finish Task---------------------------------";
+
             m_tasks.pop_front();
             auto callback = m_post_callback;
             lock.unlock();
@@ -8227,7 +8236,10 @@ public:
                 if (m_ui_tasks.size() == 1 && callback)
                     callback(0);
             }
+
+            BOOST_LOG_TRIVIAL(warning) << "--------------------------------Finish Second while()---------------------------------";
         }
+        BOOST_LOG_TRIVIAL(warning) << "--------------------------------Finish First while()---------------------------------";
     }
 
     bool delay_task(Task& t, boost::unique_lock<boost::mutex> & lock) {

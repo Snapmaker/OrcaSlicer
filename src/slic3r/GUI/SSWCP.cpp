@@ -2392,19 +2392,32 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             .time;
         response["estimated_time"] = time;
 
-        auto color_to_int = [](const std::string& oriclr) -> int {
+        auto color_to_int = [](const std::string& oriclr) -> long long {
 
-            int res = 0;
-            if (oriclr.size() != 7 || oriclr[0] != '#') {
+            long long res = 0;
+            if ((oriclr.size() != 7 && oriclr.size() != 9) || oriclr[0] != '#') {
                 return -1;
             }
-            for (int i = 1; i <= 6; ++i) {
-                if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
-                    res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
-                } else {
-                    res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
+
+            if (oriclr.size() == 7) {
+                for (int i = 1; i <= 6; ++i) {
+                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
+                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
+                    } else {
+                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
+                    }
+                }
+            } else {
+                for (int i = 1; i <= 8; ++i) {
+                    if (oriclr[9 - i] - '0' >= 0 && oriclr[9 - i] - '0' <= 9) {
+                        res += std::pow(16, i - 1) * (oriclr[9 - i] - '0');
+                    } else {
+                        res += std::pow(16, i - 1) * (oriclr[9 - i] - 'A' + 10);
+                    }
                 }
             }
+
+            
 
             return res;
         };
@@ -2413,7 +2426,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         if (config.has("filament_colour")) {
             auto filament_color        = config.option<ConfigOptionStrings>("filament_colour")->values;
 
-            std::vector<int> number_res(filament_color.size(), 0);
+            std::vector<long long> number_res(filament_color.size(), 0);
             for (int i = 0; i < filament_color.size(); ++i) {
                 number_res[i] = color_to_int(filament_color[i]);
             }

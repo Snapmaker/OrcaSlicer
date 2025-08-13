@@ -705,20 +705,17 @@ void SSWCP_Instance::send_to_js()
 
         WCP_Logger::getInstance().add_log(str_res, false, "", "WCP", "info");
 
-        if (m_webview && m_webview->GetRefData()) {
-            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-            wxGetApp().CallAfter([weak_self, str_res]() {
-                try {
-                    auto self = weak_self.lock();
-                    if (self) {
-                        WebView::RunScript(self->m_webview, str_res);
-                    }
-                } catch (std::exception& e) {
-                    WCP_Logger::getInstance().add_log(e.what(), false, "", "WCP", "info");
-                
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        wxGetApp().CallAfter([weak_self, str_res]() {
+            try {
+                auto self = weak_self.lock();
+                if (self && self->m_webview && self->m_webview->GetRefData()) {
+                    WebView::RunScript(self->m_webview, str_res);
                 }
-            });
-        }
+            } catch (std::exception& e) {
+                WCP_Logger::getInstance().add_log(e.what(), false, "", "WCP", "info");
+            }
+        });
     } catch (std::exception& e) {}
 }
 
@@ -2409,10 +2406,10 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 }
             } else {
                 for (int i = 1; i <= 8; ++i) {
-                    if (oriclr[9 - i] - '0' >= 0 && oriclr[9 - i] - '0' <= 9) {
-                        res += std::pow(16, i - 1) * (oriclr[9 - i] - '0');
+                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
+                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
                     } else {
-                        res += std::pow(16, i - 1) * (oriclr[9 - i] - 'A' + 10);
+                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
                     }
                 }
             }
@@ -4107,11 +4104,35 @@ void SSWCP_MachineManage_Instance::sw_DeleteDevices()
         if (m_param_data.count("dev_ids") && m_param_data["dev_ids"].is_array()) {
             auto ids = m_param_data["dev_ids"];
             if (ids.size() == 0) {
+                auto devices = wxGetApp().app_config->get_devices();
+                for (size_t i = 0; i < devices.size(); ++i) {
+                    if (devices[i].connected) {
+                        std::shared_ptr<PrintHost> current_host;
+                        wxGetApp().get_connect_host(current_host);
+                        if (current_host && current_host->get_sn() == devices[i].sn) {
+                            wxString msg = "";
+                            json     param;
+                            current_host->disconnect(msg, param);
+                        }
+                    }
+                }
                 wxGetApp().app_config->clear_device_info();
             } else {
                 for (size_t i = 0; i < ids.size(); ++i) {
                     std::string dev_id = ids[i].get<std::string>();
+
+                    DeviceInfo info;
+                    if (wxGetApp().app_config->get_device_info(dev_id, info)) {
+                        if (info.connected) {
+                            std::shared_ptr<PrintHost> current_host;
+                            wxGetApp().get_connect_host(current_host);
+                            wxString msg = "";
+                            json     param;
+                            current_host->disconnect(msg, param);
+                        }
+                    }
                     wxGetApp().app_config->remove_device_info(dev_id);
+
                 }
             }
 

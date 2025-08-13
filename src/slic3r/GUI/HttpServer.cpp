@@ -169,6 +169,13 @@ HttpServer::IOServer::IOServer(HttpServer& server) : server(server), acceptor(io
 
 HttpServer::HttpServer(boost::asio::ip::port_type port) : port(port) {}
 
+HttpServer::~HttpServer()
+{
+    BOOST_LOG_TRIVIAL(debug) << "HttpServer destructor called, cleaning up resources...";
+    stop();
+    BOOST_LOG_TRIVIAL(debug) << "HttpServer destructor completed";
+}
+
 bool HttpServer::is_port_available(boost::asio::ip::port_type port)
 {
     try {
@@ -231,6 +238,11 @@ void HttpServer::start()
         }
 
         BOOST_LOG_TRIVIAL(info) << "HTTP server started successfully on port " << port;
+        
+        // 启动健康检查
+        BOOST_LOG_TRIVIAL(debug) << "Starting health check for HTTP server...";
+        start_health_check();
+        
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
         start_http_server = false;
@@ -241,6 +253,10 @@ void HttpServer::start()
 void HttpServer::stop()
 {
     start_http_server = false;
+    
+    // 停止健康检查
+    stop_health_check();
+    
     if (server_) {
         server_->acceptor.close();
         server_->stop_all();
@@ -249,6 +265,123 @@ void HttpServer::stop()
     if (m_http_server_thread.joinable())
         m_http_server_thread.join();
     server_.reset();
+}
+
+void HttpServer::restart()
+{
+    BOOST_LOG_TRIVIAL(info) << "Restarting HTTP server on port " << port << "...";
+    
+    BOOST_LOG_TRIVIAL(debug) << "Stopping current HTTP server...";
+    stop();
+    
+    BOOST_LOG_TRIVIAL(debug) << "Waiting for resources to be released...";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 等待资源释放
+    
+    BOOST_LOG_TRIVIAL(debug) << "Starting new HTTP server...";
+    start();
+    
+    BOOST_LOG_TRIVIAL(info) << "HTTP server restart completed";
+}
+
+bool HttpServer::is_healthy()
+{
+    if (!start_http_server || !server_) {
+        BOOST_LOG_TRIVIAL(debug) << "Health check failed: server not started or server object is null";
+        return false;
+    }
+    
+    try {
+        // 检查acceptor是否正常打开
+        if (!server_->acceptor.is_open()) {
+            BOOST_LOG_TRIVIAL(debug) << "Health check failed: acceptor is not open";
+            return false;
+        }
+        
+        // 检查io_service是否正在运行
+        if (server_->io_service.stopped()) {
+            BOOST_LOG_TRIVIAL(debug) << "Health check failed: io_service is stopped";
+            return false;
+        }
+        
+        // 尝试创建一个测试连接来验证服务器是否真正响应
+        boost::asio::io_service test_io_service;
+        boost::asio::ip::tcp::socket test_socket(test_io_service);
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address::from_string("127.0.0.1"), port);
+        
+        boost::system::error_code ec;
+        test_socket.connect(endpoint, ec);
+        
+        if (!ec) {
+            test_socket.close();
+            BOOST_LOG_TRIVIAL(debug) << "Health check passed: test connection successful on port " << port;
+            return true;
+        }
+        
+        BOOST_LOG_TRIVIAL(debug) << "Health check failed: test connection failed with error: " << ec.message();
+        return false;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(debug) << "Health check failed with exception: " << e.what();
+        return false;
+    }
+}
+
+void HttpServer::start_health_check()
+{
+    if (m_health_check_enabled) {
+        BOOST_LOG_TRIVIAL(info) << "Health check is already running";
+        return; // 已经在运行
+    }
+    
+    BOOST_LOG_TRIVIAL(info) << "Starting HTTP server health check with interval: " << m_health_check_interval << "ms";
+    m_health_check_enabled = true;
+    m_health_check_thread = create_thread([this] {
+        set_current_thread_name("http_health_check");
+        
+        while (m_health_check_enabled) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(m_health_check_interval));
+            
+            if (!m_health_check_enabled) {
+                break;
+            }
+            
+            if (start_http_server && !is_healthy()) {
+                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed, attempting restart...";
+                try {
+                    restart();
+                } catch (const std::exception& e) {
+                    BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
+                }
+            } else if (start_http_server) {
+                BOOST_LOG_TRIVIAL(debug) << "HTTP server health check passed";
+            }
+        }
+        BOOST_LOG_TRIVIAL(info) << "Health check thread stopped";
+    });
+}
+
+void HttpServer::stop_health_check()
+{
+    if (!m_health_check_enabled) {
+        BOOST_LOG_TRIVIAL(debug) << "Health check is not running";
+        return;
+    }
+    
+    BOOST_LOG_TRIVIAL(info) << "Stopping HTTP server health check...";
+    m_health_check_enabled = false;
+    if (m_health_check_thread.joinable()) {
+        m_health_check_thread.join();
+        BOOST_LOG_TRIVIAL(info) << "Health check thread joined successfully";
+    }
+}
+
+void HttpServer::set_health_check_interval(int interval_ms)
+{
+    if (interval_ms > 0) {
+        BOOST_LOG_TRIVIAL(info) << "Changing health check interval from " << m_health_check_interval << "ms to " << interval_ms << "ms";
+        m_health_check_interval = interval_ms;
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << "Invalid health check interval: " << interval_ms << "ms, must be positive";
+    }
 }
 
 void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)

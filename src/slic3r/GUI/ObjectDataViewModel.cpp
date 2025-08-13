@@ -558,6 +558,8 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
     wxBitmap* bmp = nullptr;
     if (m_bitmap_cache) {
         bmp = m_bitmap_cache->find(scaled_bitmap_name);
+    } else {
+        m_bitmap_cache = new Slic3r::GUI::BitmapCache;
     }
     if (bmp == nullptr) {
         std::vector<wxBitmap> bmps;
@@ -576,9 +578,13 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
                 node->is_svg_volume() ? m_svg_volume_bmps[vol_type] : 
                 m_volume_bmps[vol_type]);
         }
+        BOOST_LOG_TRIVIAL(warning) << "--------------------Crash test----------------------  bmpcache:" << (m_bitmap_cache == nullptr) ? "true" : "false"; 
         bmp = m_bitmap_cache->insert(scaled_bitmap_name, bmps);
+
     }
 
+
+    BOOST_LOG_TRIVIAL(warning) << "--------------------Crash test----------------------  bmp:" << (bmp == nullptr) ? "true" : "false"; 
     node->SetBitmap(*bmp);
 }
 

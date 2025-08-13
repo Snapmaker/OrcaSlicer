@@ -123,13 +123,24 @@ public:
     };
 
     HttpServer(boost::asio::ip::port_type port = LOCALHOST_PORT);
+    ~HttpServer();  // 添加析构函数
 
     boost::thread m_http_server_thread;
     bool          start_http_server = false;
+    
+    // 添加自动健康检查相关成员
+    boost::thread m_health_check_thread;
+    bool          m_health_check_enabled = false;
+    int           m_health_check_interval = 10000; // 30秒检查一次
 
     bool is_started() { return start_http_server; }
     void start();
     void stop();
+    void restart();  // 添加重启方法
+    bool is_healthy();  // 添加健康检查方法
+    void start_health_check();  // 启动健康检查
+    void stop_health_check();   // 停止健康检查
+    void set_health_check_interval(int interval_ms);  // 设置健康检查间隔
     void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& m_request_handler);
     void setPort(boost::asio::ip::port_type new_port) { 
         if (!start_http_server) {  // 只有在服务器未启动时才允许修改端口

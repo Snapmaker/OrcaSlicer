@@ -2856,8 +2856,20 @@ std::vector<std::string> PresetCollection::merge_presets(PresetCollection &&othe
                 preset.vendor = &it->second;
             }
             m_presets.emplace(it, std::move(preset));
-        } else
+        } else {
+            std::string default_vendor = std::string(PresetBundle::SM_BUNDLE);
+            if (preset.vendor->name == default_vendor) {
+                if (preset.vendor != nullptr) {
+                    // Re-assign a pointer to the vendor structure in the new PresetBundle.
+                    auto it = new_vendors.find(preset.vendor->id);
+                    assert(it != new_vendors.end());
+                    preset.vendor = &it->second;
+                }
+                m_presets.emplace(it, std::move(preset));
+            }
             duplicates.emplace_back(std::move(preset.name));
+        }
+            
     }
     return duplicates;
 }

@@ -131,7 +131,9 @@ public:
     // 添加自动健康检查相关成员
     boost::thread m_health_check_thread;
     bool          m_health_check_enabled = false;
-    int           m_health_check_interval = 10000; // 30秒检查一次
+    int           m_health_check_interval = 5000; // 5秒检查一次
+    mutable std::mutex m_health_check_mutex;  // 保护健康检查相关变量
+    std::condition_variable m_health_check_cv;  // 条件变量，用于精确控制间隔
 
     bool is_started() { return start_http_server; }
     void start();
@@ -141,6 +143,8 @@ public:
     void start_health_check();  // 启动健康检查
     void stop_health_check();   // 停止健康检查
     void set_health_check_interval(int interval_ms);  // 设置健康检查间隔
+    int get_health_check_interval() const;  // 获取健康检查间隔
+    bool is_health_check_enabled() const;   // 检查健康检查是否启用
     void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& m_request_handler);
     void setPort(boost::asio::ip::port_type new_port) { 
         if (!start_http_server) {  // 只有在服务器未启动时才允许修改端口

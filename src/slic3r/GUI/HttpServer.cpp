@@ -1,5 +1,6 @@
 #include "HttpServer.hpp"
 #include <boost/log/trivial.hpp>
+#include <condition_variable>
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
@@ -327,6 +328,8 @@ bool HttpServer::is_healthy()
 
 void HttpServer::start_health_check()
 {
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    
     if (m_health_check_enabled) {
         BOOST_LOG_TRIVIAL(info) << "Health check is already running";
         return; // 已经在运行
@@ -337,11 +340,36 @@ void HttpServer::start_health_check()
     m_health_check_thread = create_thread([this] {
         set_current_thread_name("http_health_check");
         
-        while (m_health_check_enabled) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(m_health_check_interval));
+        while (true) {
+            // 检查是否应该继续运行
+            bool should_continue;
+            int current_interval;
+            {
+                std::lock_guard<std::mutex> lock(m_health_check_mutex);
+                should_continue = m_health_check_enabled;
+                current_interval = m_health_check_interval;
+            }
             
-            if (!m_health_check_enabled) {
+            if (!should_continue) {
                 break;
+            }
+            
+            // 使用条件变量等待，可以响应间隔变化
+            {
+                std::unique_lock<std::mutex> lock(m_health_check_mutex);
+                if (m_health_check_cv.wait_for(lock, std::chrono::milliseconds(current_interval), 
+                    [this] { return !m_health_check_enabled; })) {
+                    // 如果等待被中断（健康检查被禁用），退出循环
+                    break;
+                }
+            }
+            
+            // 再次检查是否应该继续运行
+            {
+                std::lock_guard<std::mutex> lock(m_health_check_mutex);
+                if (!m_health_check_enabled) {
+                    break;
+                }
             }
             
             if (start_http_server && !is_healthy()) {
@@ -361,14 +389,24 @@ void HttpServer::start_health_check()
 
 void HttpServer::stop_health_check()
 {
-    if (!m_health_check_enabled) {
-        BOOST_LOG_TRIVIAL(debug) << "Health check is not running";
-        return;
-    }
+    bool was_running = false;
+    {
+        std::lock_guard<std::mutex> lock(m_health_check_mutex);
+        
+        if (!m_health_check_enabled) {
+            BOOST_LOG_TRIVIAL(debug) << "Health check is not running";
+            return;
+        }
+        
+        BOOST_LOG_TRIVIAL(info) << "Stopping HTTP server health check...";
+        m_health_check_enabled = false;
+        was_running = true;
+        
+        // 通知条件变量，确保健康检查线程能够立即响应停止信号
+        m_health_check_cv.notify_all();
+    } // 锁在这里自动释放
     
-    BOOST_LOG_TRIVIAL(info) << "Stopping HTTP server health check...";
-    m_health_check_enabled = false;
-    if (m_health_check_thread.joinable()) {
+    if (was_running && m_health_check_thread.joinable()) {
         m_health_check_thread.join();
         BOOST_LOG_TRIVIAL(info) << "Health check thread joined successfully";
     }
@@ -376,12 +414,28 @@ void HttpServer::stop_health_check()
 
 void HttpServer::set_health_check_interval(int interval_ms)
 {
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    
     if (interval_ms > 0) {
         BOOST_LOG_TRIVIAL(info) << "Changing health check interval from " << m_health_check_interval << "ms to " << interval_ms << "ms";
         m_health_check_interval = interval_ms;
+        // 通知条件变量，使新的间隔值立即生效
+        m_health_check_cv.notify_all();
     } else {
         BOOST_LOG_TRIVIAL(warning) << "Invalid health check interval: " << interval_ms << "ms, must be positive";
     }
+}
+
+int HttpServer::get_health_check_interval() const
+{
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    return m_health_check_interval;
+}
+
+bool HttpServer::is_health_check_enabled() const
+{
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    return m_health_check_enabled;
 }
 
 void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)

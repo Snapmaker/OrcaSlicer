@@ -2733,17 +2733,17 @@ bool GUI_App::on_init_inner()
 
 
     //启动定时器，轮询进行机器发现
-    m_machine_find_timer = new wxTimer(this, m_machine_find_id);
+    // m_machine_find_timer = new wxTimer(this, m_machine_find_id);
     
-    Bind(wxEVT_TIMER, [this](wxTimerEvent& event) {
-            if (!m_machine_find_engine  && GUI_App::m_app_alive.load()) {
-            machine_find();
-        }
-    }, m_machine_find_timer->GetId());
+    // Bind(wxEVT_TIMER, [this](wxTimerEvent& event) {
+    //         if (!m_machine_find_engine  && GUI_App::m_app_alive.load()) {
+    //         machine_find();
+    //     }
+    // }, m_machine_find_timer->GetId());
 
-    if (!m_machine_find_engine && GUI_App::m_app_alive.load()) {
-        machine_find();
-    }
+    // if (!m_machine_find_engine && GUI_App::m_app_alive.load()) {
+    //     machine_find();
+    // }
 
 #ifdef __APPLE__
     m_machine_find_timer->Start(1000 * 60 * 2);

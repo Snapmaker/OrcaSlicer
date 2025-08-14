@@ -1798,7 +1798,7 @@ void PresetUpdater::import_system_profile()
                     Semver online_version = version_str;
                     Semver current_version = app->preset_bundle->get_vendor_profile_version(vendor);
 
-                    if (current_version < online_version) {
+                    if (current_version <= online_version) {
                         auto source_path = fs::path(dir_entry.path()).replace_extension(".json");
                         auto target_path =  (this->p->vendor_path / vendor).replace_extension(".json");
 

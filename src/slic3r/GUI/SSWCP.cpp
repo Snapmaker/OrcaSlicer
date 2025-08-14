@@ -4875,9 +4875,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                                         auto auth_info = host->get_auth_info();
                                         try {
-                                            info.ca       = auth_info["ca"];
-                                            info.cert     = auth_info["cert"];
-                                            info.key      = auth_info["key"];
+                                            info.ca       = /* auth_info["ca"]*/ "";
+                                            info.cert     = /* auth_info["cert"]*/ "";
+                                            info.key      = /* auth_info["key"]*/ "";
                                             info.user     = auth_info["user"];
                                             info.password = auth_info["password"];
                                             info.port     = auth_info["port"];

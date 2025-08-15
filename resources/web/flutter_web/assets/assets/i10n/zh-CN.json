@@ -46,7 +46,7 @@
     "WAN mode": "广域网模式",
     "Connect via device screen": "通过设备屏幕局域网网页页面的PIN进行连接",
     "Bind Via PIN": "通过PIN码绑定",
-    "Searching for devices": "正在搜索设备...",
+    "Searching for devices": "正在搜索设备",
 
     "Please authorize on the device screen to continue binding": "请在设备屏幕授权以继续绑定",
     "Waiting for device authorization": "等待设备授权中...",
@@ -300,7 +300,13 @@
     "Go Back": "返回",
 
     "Click to select printer": "点击选择打印机",
-    "No available printer": "暂无可用打印机"
+    "No available printer": "暂无可用打印机",
     
-    
+    "Unable to obtain the current slice file information, please re-operate the slice": "无法获取当前切片文件信息，请重新操作切片",
+    "dialog_file_download_success_tips": "文件{}已下载成功，发起上传...",
+    "dialog_file_download_failed_tips": "文件{}下载失败，请重试...",
+    "dialog_file_upload_failed_tips": "文件{}上传失败，请重试...",
+    "dialog_file_upload_success_to_device_tips": "文件{}已上传到设备，发起打印...",
+    "dialog_file_upload_success_to_cloud_tips": "文件{}已上传到云服务，发起打印...",
+    "dialog_file_send_success_to_device_tips": "文件{}已发送成功到设备"
 }

@@ -11,3 +11,4 @@
 - Optimized device control input fields
 - Synced filament updates to ORCA filament information
 - Fixed issue where ORCA camera could not update properly
+- Optimize the use of device names in the UI

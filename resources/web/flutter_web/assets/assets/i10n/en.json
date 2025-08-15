@@ -151,5 +151,12 @@
 
     "bind_device_tip_format": "Confirm to bind the printer {} with the current account?",
     "Filament auto feed": "Filament auto feed",
-    "Filament auto feed description": "Automatic Feeding\n· Insert the 3D printer filaments into the corresponding feeding port until the indicator light of the corresponding feeding port lights up. The device will pre-load the materials, and the feeding will be automatic when the printing starts.\nFilaments Information\n· Official 3D printer filaments information will be recognized by the device. For non-official filaments, the material information needs to be manually edited.\nAutomatic Resume Printing\n· When a filament break occurs during printing, if the device is equipped with the same brand, type, and color of filaments, the device will automatically resume printing."
+    "Filament auto feed description": "Automatic Feeding\n· Insert the 3D printer filaments into the corresponding feeding port until the indicator light of the corresponding feeding port lights up. The device will pre-load the materials, and the feeding will be automatic when the printing starts.\nFilaments Information\n· Official 3D printer filaments information will be recognized by the device. For non-official filaments, the material information needs to be manually edited.\nAutomatic Resume Printing\n· When a filament break occurs during printing, if the device is equipped with the same brand, type, and color of filaments, the device will automatically resume printing.",
+
+    "dialog_file_download_success_tips": "File {} has been downloaded successfully, initiating upload...",
+    "dialog_file_download_failed_tips": "File {} download failed, please try again...",
+    "dialog_file_upload_failed_tips": "File {} upload failed, please try again...",
+    "dialog_file_upload_success_to_device_tips": "File {} has been uploaded to the device, initiating print...",
+    "dialog_file_upload_success_to_cloud_tips": "File {} has been uploaded to the cloud, initiating print...",
+    "dialog_file_send_success_to_device_tips": "File {} has been sent successfully to the device"
 }

@@ -1089,12 +1089,12 @@
       "sub_path": "filament/Snapmaker PLA Matte @U1.json"
     },
     {
-      "name": "Snapmaker PLA Lite @U1 base",
-      "sub_path": "filament/Snapmaker PLA Lite @U1 base.json"
+      "name": "Snapmaker PLA Basic @U1 base",
+      "sub_path": "filament/Snapmaker PLA Basic @U1 base.json"
     },
     {
-      "name": "Snapmaker PLA Lite @U1",
-      "sub_path": "filament/Snapmaker PLA Lite @U1.json"
+      "name": "Snapmaker PLA Basic @U1",
+      "sub_path": "filament/Snapmaker PLA Basic @U1.json"
     },
     {
       "name": "Snapmaker PLA SnapSpeed @base",

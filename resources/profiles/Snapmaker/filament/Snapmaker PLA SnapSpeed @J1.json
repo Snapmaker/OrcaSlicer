@@ -246,7 +246,7 @@
         "0.04"
     ],
     "reduce_fan_stop_start_freq": [
-        "0"
+        "1"
     ],
     "required_nozzle_HRC": [
         "0"
@@ -255,7 +255,7 @@
         "1"
     ],
     "slow_down_layer_time": [
-        "5"
+        "16"
     ],
     "slow_down_min_speed": [
         "10"
@@ -278,5 +278,4 @@
     "textured_plate_temp_initial_layer": [
         "45"
     ]
-
-  }
+}

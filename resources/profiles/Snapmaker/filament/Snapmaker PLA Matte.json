@@ -40,9 +40,12 @@
     "Snapmaker A350 QSKit (0.8 nozzle)"
   ],
   "filament_flow_ratio": [
-        "1.08"
+      "1.08"
   ],
   "pressure_advance": [
-        "0.055"
+      "0.055"
+  ],
+  "slow_down_layer_time": [
+      "16"
   ]
 }

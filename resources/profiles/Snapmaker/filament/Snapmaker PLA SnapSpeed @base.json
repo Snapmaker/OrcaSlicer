@@ -242,7 +242,7 @@
         "0.04"
     ],
     "reduce_fan_stop_start_freq": [
-        "0"
+        "1"
     ],
     "required_nozzle_HRC": [
         "0"

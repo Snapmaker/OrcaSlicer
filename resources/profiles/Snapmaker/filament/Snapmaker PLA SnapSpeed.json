@@ -84,9 +84,6 @@
     "enable_overhang_bridge_fan": [
         "1"
     ],
-    "enable_pressure_advance": [
-        "0"
-    ],
     "eng_plate_temp": [
         "45"
     ],
@@ -98,9 +95,6 @@
     ],
     "fan_max_speed": [
         "100"
-    ],
-    "fan_min_speed": [
-        "20"
     ],
     "filament_cooling_final_speed": [
         "3.4"
@@ -126,9 +120,6 @@
     "filament_end_gcode": [
         " "
     ],
-    "filament_flow_ratio": [
-        "1"
-    ],
     "filament_is_support": [
         "0"
     ],
@@ -140,9 +131,6 @@
     ],
     "filament_long_retractions_when_cut": [
         "nil"
-    ],
-    "filament_max_volumetric_speed": [
-        "2"
     ],
     "filament_minimal_purge_on_wipe_tower": [
         "15"
@@ -252,9 +240,6 @@
     "nozzle_temperature": [
         "200"
     ],
-    "nozzle_temperature_initial_layer": [
-        "200"
-    ],
     "nozzle_temperature_range_high": [
         "240"
     ],
@@ -270,12 +255,6 @@
     "pellet_flow_coefficient": [
         "0.4157"
     ],
-    "pressure_advance": [
-        "0.02"
-    ],
-    "reduce_fan_stop_start_freq": [
-        "0"
-    ],
     "required_nozzle_HRC": [
         "0"
     ],
@@ -283,7 +262,7 @@
         "1"
     ],
     "slow_down_layer_time": [
-        "5"
+        "20"
     ],
     "slow_down_min_speed": [
         "10"
@@ -305,6 +284,27 @@
     ],
     "textured_plate_temp_initial_layer": [
         "45"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "filament_flow_ratio": [
+        "0.98"
+    ],
+    "filament_max_volumetric_speed": [
+        "18"
+    ],
+    "is_custom_defined": "0",
+    "pressure_advance": [
+        "0.045"
+    ],
+    "fan_min_speed": [
+        "100"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "220"
+    ],
+    "reduce_fan_stop_start_freq": [
+        "1"
     ]
-
-  }
+}

@@ -13425,6 +13425,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
         }
 
+        delete dialog;
+
         return;
     }
     else {

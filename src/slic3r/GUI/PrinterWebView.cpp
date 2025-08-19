@@ -107,6 +107,10 @@ bool PrinterWebView::isSnapmakerPage()
     return (url.find("flutter_web") != std::string::npos);
 }
 
+void PrinterWebView::sendMessage(const std::string& msg) {
+    WebView::RunScript(m_browser, msg);
+}
+
 void PrinterWebView::update_mode()
 {
     // m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));

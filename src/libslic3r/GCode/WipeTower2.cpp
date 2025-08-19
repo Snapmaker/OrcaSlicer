@@ -966,8 +966,13 @@ void WipeTower2::toolchange_Unload(
     }
     
 
+    bool is_over_tower_height = false;
+    if (m_plan.size() > 0 && m_num_layer_changes == m_plan.size()) {
+        is_over_tower_height = true;
+    }
+
     // now the ramming itself:
-    while (do_ramming && i < m_filpar[m_current_tool].ramming_speed.size())
+    while (do_ramming && i < m_filpar[m_current_tool].ramming_speed.size() && !is_over_tower_height)
     {
         // The time step is different for SEMM ramming and the MM ramming. See comments in set_extruder() for details.
         const float time_step = m_semm ? 0.25f : m_filpar[m_current_tool].multitool_ramming_time;

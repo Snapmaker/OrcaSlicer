@@ -45,6 +45,7 @@ public:
     void reload();
     void update_mode();
     bool isSnapmakerPage();
+    void sendMessage(const std::string& msg);
 
 private:
     void SendAPIKey();

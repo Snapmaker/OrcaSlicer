@@ -13359,6 +13359,29 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         upload_job = PrintHostJob(wxGetApp().get_host_config());
     } */
     
+    if (local_name == "Snapmaker U1 0.4 nozzle" && devices.size() == 0) {
+        MessageDialog msg_window(nullptr, _L("You don't have active machine, do you want to add one?"), _L("Info"), wxICON_QUESTION | wxOK | wxCANCEL);
+
+        int           res = msg_window.ShowModal();
+        if (res == wxID_OK) {
+            wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
+            auto view = wxGetApp().mainframe->m_printer_view;
+            if (view) {
+                json msg;
+                msg["head"] = json::object();
+                json payload = json::object();
+                payload["cmd"] = "devicepage_add_device";
+                payload["method"] = "call_flutter";
+                payload["params"] = json::object();
+                msg["payload"]    = payload;
+
+                std::string str_msg = msg.dump(4, ' ', true);
+                view->sendMessage(str_msg);
+            }
+        }
+        return;
+    }
+
     if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
         // 先不创建job，直接创建上传 / 上传下载对话框
         // 获取默认文件名

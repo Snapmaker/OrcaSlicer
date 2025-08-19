@@ -226,6 +226,16 @@ int PresetComboBox::update_ams_color()
 {
     if (m_filament_idx < 0) return -1;
     int idx = selected_ams_filament();
+
+    auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    if (idx >= 0) {
+        filament_extruder_map[m_filament_idx] = idx;
+    } else {
+        if (filament_extruder_map.count(m_filament_idx)) {
+            filament_extruder_map.erase(m_filament_idx);
+        }
+    }
+
     std::string color;
     if (idx < 0) {
         auto *preset = m_collection->find_preset(Preset::remove_suffix_modified(GetLabel().ToUTF8().data()));
@@ -713,6 +723,13 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
                 // get current color
                 DynamicPrintConfig* cfg = &wxGetApp().preset_bundle->project_config;
                 auto colors = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone());
+
+                // clear filament_extruder_map
+                auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+                if (filament_extruder_map.count(m_filament_idx)) {
+                    filament_extruder_map.erase(m_filament_idx);
+                }
+
                 wxColour clr(colors->values[m_filament_idx]);
                 if (!clr.IsOk())
                     clr = wxColour(0, 0, 0); // Don't set alfa to transparence

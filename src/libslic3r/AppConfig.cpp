@@ -1426,6 +1426,16 @@ bool AppConfig::get_device_info(const std::string& dev_id, DeviceInfo& info) con
     return false;
 }
 
+void AppConfig::clear_filament_extruder_map()
+{
+    filament_extruder_map.clear();
+}
+
+std::unordered_map<int, int>& AppConfig::get_filament_extruder_map_ref() 
+{
+    return filament_extruder_map;
+}
+
 const std::map<std::string, std::string> AppConfig::filament_name_map = {
     // J1相关映射
     {"PolyLite J1 PLA @0.2 nozzle", "PolyLite PLA @J1 0.2 nozzle"},

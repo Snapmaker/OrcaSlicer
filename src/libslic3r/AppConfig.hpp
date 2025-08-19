@@ -336,6 +336,9 @@ public:
     bool get_device_info(const std::string& dev_id, DeviceInfo& info) const;
     void                    clear_device_info();
 
+	void clear_filament_extruder_map();
+    std::unordered_map<int, int>& get_filament_extruder_map_ref();
+
 private:
 	template<typename T>
 	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const 
@@ -354,7 +357,7 @@ private:
 	// Type of application: Editor or GCodeViewer
 	EAppMode													m_mode { EAppMode::Editor };
 	// Map of section, name -> value
-	std::map<std::string, std::map<std::string, std::string>> 	m_storage;
+	std::unordered_map<std::string, std::map<std::string, std::string>> 	m_storage;
 
 	// Map of enabled vendors / models / variants
 	VendorMap                                                   m_vendors;
@@ -380,6 +383,9 @@ private:
 
     // 添加设备信息存储
     std::vector<DeviceInfo> m_device_list;
+
+	// 耗材喷嘴映射表
+    std::unordered_map<int, int> filament_extruder_map;
 };
 
 } // namespace Slic3r

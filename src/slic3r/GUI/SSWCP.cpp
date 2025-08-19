@@ -2454,6 +2454,15 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             response["filament_weight_total"] = total_weight;
         }
         
+        // filament extruder
+        auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+        if (!filament_extruder_map.empty()) {
+            json object;
+            for (const auto& item : filament_extruder_map) {
+                object[item.first] = item.second; 
+            }
+            response["filament_extruder_map"] = object;
+        }
 
         // printer model
         auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
@@ -3749,6 +3758,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
         }
 
         wxGetApp().CallAfter([]() {
+            wxGetApp().app_config->clear_filament_extruder_map();
             wxGetApp().preset_bundle->machine_filaments.clear();
             wxGetApp().load_current_presets();
         });
@@ -5114,6 +5124,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     if (!self) {
                                         return;
                                     }
+
+                                    // 清除耗材喷嘴映射信息
+                                    wxGetApp().app_config->clear_filament_extruder_map();
 
                                     // 整理订阅列表，取消权限，但是保留真正的底层订阅
                                     // 维护订阅topic表和eventid实例表

@@ -141,6 +141,9 @@ private:
     void sw_GetCache();
     void sw_RemoveCache();
 
+    void sw_SubscribeCacheKey();
+    void sw_UnsubscribeCacheKeys();
+
     // select tab
     void sw_SwitchTab();
 
@@ -157,6 +160,9 @@ private:
     void sw_LaunchConsole();
     void sw_Log();
     void sw_SetLogLevel();
+
+    // mac quit
+    void sw_Exit();
 
     static std::unordered_map<std::string, json> m_wcp_cache;
 

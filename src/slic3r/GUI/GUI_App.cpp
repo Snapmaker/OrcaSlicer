@@ -6854,6 +6854,24 @@ void GUI_App::device_card_notify(const json& res)
     }
 }
 
+void GUI_App::cache_notify(const std::string& key, const json& res)
+{
+    for (const auto& instance : m_cache_subscribers) {
+        auto ptr = instance.first.second.lock();
+        if (ptr) {
+            std::string cache_key = instance.second;
+            if (cache_key == key) {
+                json object = json::object();
+                object[key] = res;
+
+                ptr->m_res_data = object;
+                ptr->send_to_js();
+            }
+        }
+    }
+}
+
+
 void GUI_App::user_login_notify(const json& res)
 {
     for (const auto& instance : m_user_login_subscribers) {

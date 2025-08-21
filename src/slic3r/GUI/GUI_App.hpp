@@ -826,9 +826,20 @@ public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
 
+    struct CachePairCompare
+    {
+        bool operator()(const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& lhs,
+                        const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& rhs) const
+        {
+            return lhs.first <= rhs.first;
+        }
+    };
+    std::map<std::pair<void*, std::weak_ptr<SSWCP_Instance>>, std::string, CachePairCompare>                     m_cache_subscribers;
+
     void recent_file_notify(const json& res);
     void user_login_notify(const json& res);
     void device_card_notify(const json& res);
+    void cache_notify(const std::string& key, const json& res);
 
 
 public:

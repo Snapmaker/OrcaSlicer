@@ -440,9 +440,24 @@ void SSWCP_Instance::process() {
         sw_SetLogLevel();
     } else if (m_cmd == "sw_LaunchConsole") {
         sw_LaunchConsole();
+    } else if (m_cmd == "sw_Exit") {
+        sw_Exit();
+    } else if (m_cmd == "sw_SubscribeCacheKey") {
+        sw_SubscribeCacheKey();
+    } else if (m_cmd == "sw_UnsubscribeCacheKeys") {
+        sw_UnsubscribeCacheKeys();
     }
     else {
         handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_Exit() {
+    try {
+        wxGetApp().Exit();
+    }
+    catch (std::exception& e) {
+
     }
 }
 
@@ -799,6 +814,7 @@ void SSWCP_Instance::sw_SetCache() {
             json objects = m_param_data["objects"];
             for (size_t i = 0; i < objects.size(); ++i) {
                 m_wcp_cache.insert({objects[i]["key"].get<std::string>(), objects[i]["value"]});
+                wxGetApp().cache_notify(objects[i]["key"].get<std::string>(), objects[i]["value"]);
             }
 
             send_to_js();
@@ -845,22 +861,92 @@ void SSWCP_Instance::sw_RemoveCache()
         if (m_param_data.count("keys") && m_param_data["keys"].is_array()) {
             json keys = m_param_data["keys"];
             if (keys.size() == 0) {
+                for (const auto& item : m_wcp_cache) {
+                    wxGetApp().cache_notify(item.first, json::value_t::null);
+                }
                 m_wcp_cache.clear();
             } else {
                 for (size_t i = 0; i < keys.size(); ++i) {
                     std::string key = keys[i].get<std::string>();
                     if (m_wcp_cache.count(key)) {
+                        wxGetApp().cache_notify(key, json::value_t::null);
                         m_wcp_cache.erase(key);
                     }
                 }
-                
             }
+
+
+
             send_to_js();
             finish_job();
         } else {
             handle_general_fail();
         }
     } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_SubscribeCacheKey()
+{
+    try {
+        if (!m_param_data.count("key") || !m_param_data["key"].is_string()) {
+            handle_general_fail(-1, "param [keys] required or wrong type");
+            return;
+        }
+
+        std::string key       = m_param_data["key"].get<std::string>();
+        auto& cache_map = wxGetApp().m_cache_subscribers;
+        
+        for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+            if (iter->first.first == m_webview && iter->second == key) {
+                // 删除之前的订阅
+                iter = cache_map.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+
+        std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+        cache_map[{m_webview, weak_self}]       = key;
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_UnsubscribeCacheKeys()
+{
+    try {
+        if (!m_param_data.count("keys") || !m_param_data["keys"].is_array()) {
+            handle_general_fail(-1, "param [keys] required or wrong type!");
+            return;
+        }
+
+        json keys = m_param_data["keys"];
+        auto& cache_map = wxGetApp().m_cache_subscribers;
+        if (keys.size() == 0) {
+            for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+                if (iter->first.first == m_webview) {
+                    iter = cache_map.erase(iter);
+                } else {
+                    iter++;
+                }
+            }
+        } else {
+            for (size_t i = 0; i < keys.size(); ++i) {
+                std::string delete_key = keys[i].get<std::string>();
+                for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+                    if (iter->first.first == m_webview && iter->second == delete_key) {
+                        iter = cache_map.erase(iter);
+                    } else {
+                        iter++;
+                    }
+                }
+            }
+        }
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -913,6 +999,7 @@ void SSWCP_Instance::sw_UnsubscribeAll() {
     wxGetApp().m_device_card_subscribers.clear();
     wxGetApp().m_recent_file_subscribers.clear();
     wxGetApp().m_user_login_subscribers.clear();
+    wxGetApp().m_cache_subscribers.clear();
 
     send_to_js();
     finish_job();
@@ -946,6 +1033,15 @@ void SSWCP_Instance::sw_Webview_Unsubscribe() {
         }
     }
 
+    auto& cache_map = wxGetApp().m_cache_subscribers;
+    for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+        if (iter->first.first == m_webview) {
+            iter = cache_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
     send_to_js();
     finish_job();
 }
@@ -963,6 +1059,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
         auto&       device_map = wxGetApp().m_device_card_subscribers;
         auto&       login_map  = wxGetApp().m_user_login_subscribers;
         auto&       recent_file_map = wxGetApp().m_recent_file_subscribers;
+        auto&       cache_map       = wxGetApp().m_cache_subscribers;
 
         if (cmd == "") {
             for (auto iter = device_map.begin(); iter != device_map.end();) {
@@ -1015,6 +1112,24 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
                     iter++;
                 }
             }
+
+            for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+                if (iter->first.first == m_webview) {
+                    auto ptr = iter->first.second.lock();
+                    if (ptr) {
+                        if (ptr->m_event_id == event_id) {
+                            iter = cache_map.erase(iter);
+                        } else {
+                            iter++;
+                        }
+                    } else {
+                        iter = cache_map.erase(iter);
+                    }
+                } else {
+                    iter++;
+                }
+            }
+
         } else if (cmd == "sw_SubscribeRecentFiles") {
             for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
                 if (iter->first == m_webview) {
@@ -1061,6 +1176,23 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
                         }
                     } else {
                         iter = device_map.erase(iter);
+                    }
+                } else {
+                    iter++;
+                }
+            }
+        } else if (cmd == "sw_SubscribeCacheKey") {
+            for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+                if (iter->first.first == m_webview) {
+                    auto ptr = iter->first.second.lock();
+                    if (ptr) {
+                        if (event_id == "" || (event_id != "" && event_id == ptr->m_event_id)) {
+                            iter = cache_map.erase(iter);
+                        } else {
+                            iter++;
+                        }
+                    } else {
+                        iter = cache_map.erase(iter);
                     }
                 } else {
                     iter++;
@@ -1162,7 +1294,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     m_engines.push_back(nullptr);
                 }
 
-                Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid", "device_name"};
+                Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid", "device_name", "ip"};
                 std::string      unique_key = "sn";
 
                 for (size_t i = 0; i < m_engines.size(); ++i) {
@@ -1241,6 +1373,11 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                                  machine_ip_type->add_instance(reply.ip.to_string(), "unknown");
                                              }*/
                                          }
+
+                                         if (reply.txt_data.count("ip") && machine_data["ip"] == "") {
+                                             machine_data["ip"] = reply.txt_data["ip"];
+                                         }
+
                                          json machine_object;
                                          if (machine_data.count("unique_value")) {
                                              self->add_machine_to_list(machine_object);
@@ -5470,6 +5607,42 @@ void SSWCP::on_webview_delete(wxWebView* view)
         auto instance_ptr = m_instance_list.get(instance);
         if (instance_ptr) {
             (*instance_ptr)->set_Instance_illegal();
+        }
+    }
+
+    auto& device_map = wxGetApp().m_device_card_subscribers;
+    for (auto iter = device_map.begin(); iter != device_map.end();) {
+        if (iter->first == view) {
+            iter = device_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& login_map = wxGetApp().m_user_login_subscribers;
+    for (auto iter = login_map.begin(); iter != login_map.end();) {
+        if (iter->first == view) {
+            iter = login_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& recent_file_map = wxGetApp().m_recent_file_subscribers;
+    for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
+        if (iter->first == view) {
+            iter = recent_file_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& cache_map = wxGetApp().m_cache_subscribers;
+    for (auto iter = cache_map.begin(); iter != cache_map.end();) {
+        if (iter->first.first == view) {
+            iter = cache_map.erase(iter);
+        } else {
+            iter++;
         }
     }
 }

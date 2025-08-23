@@ -2188,11 +2188,11 @@ static wxMenu* generate_help_menu()
             return true;
         });
 
-    append_menu_item(helpMenu, wxID_ANY, _L("import presets"), _L("import presets"), [](wxCommandEvent&) {
+    append_menu_item(helpMenu, wxID_ANY, _L("Import Profile"), _L("Import Profile"), [](wxCommandEvent&) {
         wxGetApp().import_presets();
     });
 
-    append_menu_item(helpMenu, wxID_ANY, _L("import flutter web"), _L("import flutter web"), [](wxCommandEvent&) {
+    append_menu_item(helpMenu, wxID_ANY, _L("Import Web Resource"), _L("Import Web Resource"), [](wxCommandEvent&) {
         wxGetApp().import_flutter_web();
     });
 

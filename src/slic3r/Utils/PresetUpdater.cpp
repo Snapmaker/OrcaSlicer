@@ -1578,7 +1578,7 @@ bool PresetUpdater::version_check_enabled() const
 void PresetUpdater::import_flutter_web()
 {
     // 1. 弹出文件选择框
-    wxFileDialog dialog(nullptr, _L("Choose a preset package file:"), "", "", "Preset packages (*.zip)|*.zip",
+    wxFileDialog dialog(nullptr, _L("Please choose a web resource package file:"), "", "", "resource packages (*.zip)|*.zip",
                         wxFD_OPEN | wxFD_FILE_MUST_EXIST);
 
     if (dialog.ShowModal() != wxID_OK)
@@ -1595,7 +1595,7 @@ void PresetUpdater::import_flutter_web()
 
         // 3. 解压zip文件到临时目录
         if (!p->extract_file(zip_file, temp_path.string())) {
-            GUI::MessageDialog(nullptr, _L("Failed to extract flutter package.")).ShowModal();
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
             return;
         }
 
@@ -1605,7 +1605,7 @@ void PresetUpdater::import_flutter_web()
 
         auto app = dynamic_cast<GUI::GUI_App*>(wxTheApp);
         if (!app) {
-            GUI::MessageDialog(nullptr, _L("import failed")).ShowModal();
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
         }
 
         // 读取当前flutter资源包版本
@@ -1667,8 +1667,6 @@ void PresetUpdater::import_flutter_web()
                         bool legal = true;
                         legal      = min_ver <= soft_ver;
                         if (!legal) {
-                            wxString str  = _L("needed, but current version is ");
-                            wxString str2 = _L("Bind with Pin Code");
                             changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") +
                                           soft_ver.to_string() + "\n")
                                              .ToStdString();
@@ -1720,7 +1718,7 @@ void PresetUpdater::import_flutter_web()
 
         wxString message;
         if (!outdated_presets.empty()) {
-            message = _L("Following presets were not imported because they are older or same version:\n");
+            message = _L("The following profiles could not be imported due to outdated versions.") + "\n";
             for (const auto& preset : outdated_presets) {
                 message += "• " + preset + "\n";
             }
@@ -1731,9 +1729,9 @@ void PresetUpdater::import_flutter_web()
 
         if (need_restart) {
             GUI::MessageDialog msg_wingow(nullptr,
-                                          _L("Updating the web resources requires application restart.\n") + "\n" +
+                                          _L("Updating the web resources requires application restart.") + "\n" +
                                               _L("Do you want to continue?"),
-                                          L("Web resource update"), wxICON_QUESTION | wxOK | wxCANCEL);
+                                          L("Snapmaker Orca"), wxICON_QUESTION | wxOK | wxCANCEL);
             if (msg_wingow.ShowModal() == wxID_CANCEL) {
                 return;
             }
@@ -1744,7 +1742,7 @@ void PresetUpdater::import_flutter_web()
 
     } catch (std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to importweb resources: " << e.what();
-        GUI::MessageDialog(nullptr, _L("Failed to import web resources.")).ShowModal();
+        GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
     }
 
     // 6. 清理临时目录
@@ -1754,7 +1752,7 @@ void PresetUpdater::import_flutter_web()
 void PresetUpdater::import_system_profile()
 {
     // 1. 弹出文件选择框
-    wxFileDialog dialog(nullptr, _L("Choose a preset package file:"), "", "", "Preset packages (*.zip)|*.zip",
+    wxFileDialog dialog(nullptr, _L("Please choose a system profile package file:"), "", "", "Profile packages (*.zip)|*.zip",
                         wxFD_OPEN | wxFD_FILE_MUST_EXIST);
 
     if (dialog.ShowModal() != wxID_OK)
@@ -1771,7 +1769,7 @@ void PresetUpdater::import_system_profile()
 
         // 3. 解压zip文件到临时目录
         if (!p->extract_file(zip_file, temp_path.string())) {
-            GUI::MessageDialog(nullptr, _L("Failed to extract preset package.")).ShowModal();
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
             return;
         }
 
@@ -1781,7 +1779,7 @@ void PresetUpdater::import_system_profile()
 
         auto app = dynamic_cast<GUI::GUI_App*>(wxTheApp);
         if (!app) {
-            GUI::MessageDialog(nullptr, _L("import failed")).ShowModal();
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
         }
 
         // 遍历解压的文件夹
@@ -1832,8 +1830,6 @@ void PresetUpdater::import_system_profile()
                         bool legal = true;
                         legal      = min_ver <= soft_ver;
                         if (!legal) {
-                            wxString str  = _L("needed, but current version is ");
-                            wxString str2 = _L("Bind with Pin Code");
                             changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") +
                                           soft_ver.to_string() + "\n")
                                              .ToStdString();
@@ -1912,7 +1908,7 @@ void PresetUpdater::import_system_profile()
 
         wxString message;
         if (!outdated_presets.empty()) {
-            message = _L("Following presets were not imported because they are older or same version:\n");
+            message = _L("The following profiles could not be imported due to outdated versions.") + "\n";
             for (const auto& preset : outdated_presets) {
                 message += "• " + preset + "\n";
             }
@@ -1921,19 +1917,19 @@ void PresetUpdater::import_system_profile()
 
         if (need_restart) {
             GUI::MessageDialog msg_wingow(nullptr,
-                                          _L("Updating the system resources requires application restart.\n") + "\n" +
+                                          _L("Updating the system resources requires application restart.") + "\n" +
                                               _L("Do you want to continue?"),
                                           L("System resource update"), wxICON_QUESTION | wxOK | wxCANCEL);
             if (msg_wingow.ShowModal() == wxID_CANCEL) {
                 return;
             }
 
-            app->recreate_GUI(_L("Update web resources"));
+            app->recreate_GUI(_L("Update system profiles"));
         }
 
     } catch (std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to import presets: " << e.what();
-        GUI::MessageDialog(nullptr, _L("Failed to import presets.")).ShowModal();
+        GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
     }
 
     // 6. 清理临时目录

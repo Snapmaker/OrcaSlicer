@@ -13322,6 +13322,42 @@ msgid ""
 "initial_tool."
 msgstr ""
 
+msgid "Import Profile"
+msgstr "Import Profile"
+
+msgid "Import Web Resource"
+msgstr "Import Web Resource"
+
+msgid "Merge with"
+msgstr "Merge with"
+
+msgid "The following profiles could not be imported due to outdated versions."
+msgstr "The following profiles could not be imported due to outdated versions."
+
+msgid "This web resouce could not be imported due to outdated versions."
+msgstr "This web resource could not be imported due to outdated versions."
+
+msgid "Import Failed"
+msgstr "Import Failed"
+
+msgid "Please choose a system profile package file:"
+msgstr "Please choose a system profile package file:"
+
+msgid "Please choose a web resource package file:"
+msgstr "Please choose a web resource package file:"
+
+msgid "Updating the web resources requires application restart."
+msgstr "Updating the web resources requires application restart."
+
+msgid "Updating the system resources requires application restart."
+msgstr "Updating the system resources requires application restart."
+
+msgid "Print Preprocessing"
+msgstr "Print Preprocessing"
+
+msgid "Pretreat the uploaded content"
+msgstr "Pretreat the uploaded content"
+
 msgid "Initial tool"
 msgstr ""
 

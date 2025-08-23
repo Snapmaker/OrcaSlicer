@@ -115,6 +115,11 @@ bool WebPreprintDialog::run()
     SSWCP::update_display_filename(m_display_file_name);
 
     auto real_url = m_send_page ? wxGetApp().get_international_url(m_preSend_url) : wxGetApp().get_international_url(m_prePrint_url);
+    if(m_send_page){
+        this->SetTitle(_L("Pretreat the uploaded content"));
+    }else{
+        this->SetTitle(_L("Print Preprocessing"));
+    }
 
     this->load_url(real_url);
     if (this->ShowModal() == wxID_OK) {

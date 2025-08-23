@@ -1294,7 +1294,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     m_engines.push_back(nullptr);
                 }
 
-                Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid", "device_name", "ip"};
+                Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid", "device_name", "ip", "region"};
                 std::string      unique_key = "sn";
 
                 for (size_t i = 0; i < m_engines.size(); ++i) {
@@ -1376,6 +1376,10 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 
                                          if (reply.txt_data.count("ip") && machine_data["ip"] == "") {
                                              machine_data["ip"] = reply.txt_data["ip"];
+                                         }
+
+                                         if (reply.txt_data.count("region")) {
+                                             machine_data["region"] = reply.txt_data["region"];
                                          }
 
                                          json machine_object;

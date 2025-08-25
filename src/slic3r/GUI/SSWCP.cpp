@@ -2565,11 +2565,14 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             auto filament_color        = config.option<ConfigOptionStrings>("filament_colour")->values;
 
             std::vector<long long> number_res(filament_color.size(), 0);
+            std::vector<std::string> str_res(filament_color.size());
             for (int i = 0; i < filament_color.size(); ++i) {
                 number_res[i] = color_to_int(filament_color[i]);
+                str_res[i]    = filament_color[i];
             }
 
             response["filament_color"] = number_res;
+            response["filament_color_rgba"] = str_res;
         }
         
 
@@ -2600,7 +2603,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         if (!filament_extruder_map.empty()) {
             json object;
             for (const auto& item : filament_extruder_map) {
-                object[item.first] = item.second; 
+                object[std::to_string(item.first)] = std::to_string(item.second); 
             }
             response["filament_extruder_map"] = object;
         }

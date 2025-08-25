@@ -1,12 +1,6 @@
 
 # Changelog
 
-- Fixed memory leak issue
-- Improved hot restart interaction experience
-- Fixed token invalidation caused by language switching
-- Updated filament information
-- Fixed inaccurate filament color names (multi-language verification required)
-- Optimized device control input fields
-- Synced filament updates to ORCA filament information
-- Fixed issue where ORCA camera could not update properly
-- Optimize the use of device names in the UI
+- Optimize the extruder mapping relationship in the print flow initiated after slicing
+- Encrypt locally saved data
+- Optimize the connection machine authorization process

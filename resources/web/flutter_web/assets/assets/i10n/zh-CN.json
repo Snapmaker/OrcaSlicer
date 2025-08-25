@@ -45,7 +45,8 @@
     "LAN mode": "局域网模式",
     "WAN mode": "广域网模式",
     "Connect via device screen": "通过设备屏幕局域网网页页面的PIN进行连接",
-    "Bind Via PIN": "通过PIN码绑定",
+    "Bind Via PIN": "PIN码绑定",
+    "Bind Via IP": "IP码搜索绑定",
     "Searching for devices": "正在搜索设备",
 
     "Please authorize on the device screen to continue binding": "请在设备屏幕授权以继续绑定",
@@ -81,10 +82,10 @@
     "• LAVA - Only devices that have enabled LAN debugging can be bound": "• LAVA - 只能绑定开启了局域网调试的设备",
     "• J1、Artisan - Devices without account functions are default to LAN debugging mode": "• J1、Artisan 无账户功能的设备则默认是局域网调试模式",
 
-    "Bind via PIN code": "通过PIN码绑定",
+    "Please enter the device Settings page, click the LAN mode, click on the LAN mode, find the IP content displayed on the screen, and input it into the input box below.": "请进入设备设置页面，点击LAN模式，点击LAN模式，找到屏幕上显示的IP内容，并输入到下方输入框中。",
     "Please locate the PIN code on the account page of the device screen and enter it in the box below.": "请在设备界面的账户页面找到PIN码，并在下方框中输入。",
     "PIN code": "PIN码",
-
+    "Ip address": "IP地址",
     "Print history": "打印历史",
 
     "Loading data...": "正在加载数据...",

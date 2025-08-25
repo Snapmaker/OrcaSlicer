@@ -6681,6 +6681,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
 
     if (res) {
         load_current_presets();
+        wxGetApp().sidebar().update_nozzle_settings();
         update_publish_status();
         mainframe->refresh_plugin_tips();
         // BBS: remove SLA related message

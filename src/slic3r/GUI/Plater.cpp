@@ -1780,7 +1780,6 @@ void Sidebar::update_all_preset_comboboxes()
     if (p->combo_printer){
         p->combo_printer->update();
         update_printer_thumbnail();
-        update_nozzle_settings();
     }
         
 
@@ -1846,6 +1845,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
     case Preset::TYPE_PRINTER:
     {
+        // update_nozzle_settings();
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
 

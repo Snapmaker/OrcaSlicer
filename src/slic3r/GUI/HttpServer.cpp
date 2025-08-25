@@ -244,6 +244,10 @@ void HttpServer::start()
         BOOST_LOG_TRIVIAL(debug) << "Starting health check for HTTP server...";
         start_health_check();
         
+        // 启动重启检查
+        BOOST_LOG_TRIVIAL(debug) << "Starting restart check for HTTP server...";
+        start_restart_check();
+        
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
         start_http_server = false;
@@ -257,6 +261,9 @@ void HttpServer::stop()
     
     // 停止健康检查
     stop_health_check();
+    
+    // 停止重启检查
+    stop_restart_check();
     
     if (server_) {
         server_->acceptor.close();
@@ -373,11 +380,11 @@ void HttpServer::start_health_check()
             }
             
             if (start_http_server && !is_healthy()) {
-                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed, attempting restart...";
-                try {
-                    restart();
-                } catch (const std::exception& e) {
-                    BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
+                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed, requesting restart...";
+                // 设置重启请求标志，而不是直接调用restart()来避免死锁
+                {
+                    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+                    m_restart_requested = true;
                 }
             } else if (start_http_server) {
                 BOOST_LOG_TRIVIAL(debug) << "HTTP server health check passed";
@@ -412,6 +419,71 @@ void HttpServer::stop_health_check()
     }
 }
 
+void HttpServer::start_restart_check()
+{
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    
+    if (m_restart_check_enabled) {
+        BOOST_LOG_TRIVIAL(info) << "Restart check is already running";
+        return;
+    }
+    
+    BOOST_LOG_TRIVIAL(info) << "Starting HTTP server restart check...";
+    m_restart_check_enabled = true;
+    m_restart_check_thread = create_thread([this] {
+        set_current_thread_name("http_restart_check");
+        
+        while (true) {
+            // 检查是否应该继续运行
+            bool should_continue;
+            {
+                std::lock_guard<std::mutex> lock(m_health_check_mutex);
+                should_continue = m_restart_check_enabled;
+            }
+            
+            if (!should_continue) {
+                break;
+            }
+            
+            // 检查是否有重启请求
+            if (is_restart_requested()) {
+                BOOST_LOG_TRIVIAL(warning) << "HTTP server restart requested by health check, performing restart...";
+                try {
+                    restart();
+                } catch (const std::exception& e) {
+                    BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
+                }
+            }
+            
+            // 等待一段时间再检查
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        }
+        BOOST_LOG_TRIVIAL(info) << "Restart check thread stopped";
+    });
+}
+
+void HttpServer::stop_restart_check()
+{
+    bool was_running = false;
+    {
+        std::lock_guard<std::mutex> lock(m_health_check_mutex);
+        
+        if (!m_restart_check_enabled) {
+            BOOST_LOG_TRIVIAL(debug) << "Restart check is not running";
+            return;
+        }
+        
+        BOOST_LOG_TRIVIAL(info) << "Stopping HTTP server restart check...";
+        m_restart_check_enabled = false;
+        was_running = true;
+    }
+    
+    if (was_running && m_restart_check_thread.joinable()) {
+        m_restart_check_thread.join();
+        BOOST_LOG_TRIVIAL(info) << "Restart check thread joined successfully";
+    }
+}
+
 void HttpServer::set_health_check_interval(int interval_ms)
 {
     std::lock_guard<std::mutex> lock(m_health_check_mutex);
@@ -436,6 +508,12 @@ bool HttpServer::is_health_check_enabled() const
 {
     std::lock_guard<std::mutex> lock(m_health_check_mutex);
     return m_health_check_enabled;
+}
+
+bool HttpServer::is_restart_requested() const
+{
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    return m_restart_requested;
 }
 
 void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)

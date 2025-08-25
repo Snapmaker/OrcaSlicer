@@ -153,6 +153,7 @@ public:
     bool is_restart_requested() const;      // 检查是否有重启请求
     void start_restart_check();  // 启动重启检查
     void stop_restart_check();   // 停止重启检查
+    void simulate_crash();       // 模拟服务器崩溃，用于测试重启机制
     void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& m_request_handler);
     void setPort(boost::asio::ip::port_type new_port) { 
         if (!start_http_server) {  // 只有在服务器未启动时才允许修改端口

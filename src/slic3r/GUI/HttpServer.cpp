@@ -244,9 +244,7 @@ void HttpServer::start()
         BOOST_LOG_TRIVIAL(debug) << "Starting health check for HTTP server...";
         start_health_check();
         
-        // 启动重启检查
-        BOOST_LOG_TRIVIAL(debug) << "Starting restart check for HTTP server...";
-        start_restart_check();
+        // 重启检查已集成到健康检查中，无需单独线程
         
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
@@ -262,8 +260,7 @@ void HttpServer::stop()
     // 停止健康检查
     stop_health_check();
     
-    // 停止重启检查
-    stop_restart_check();
+    // 重启检查已集成到健康检查中，无需单独停止
     
     if (server_) {
         server_->acceptor.close();
@@ -280,7 +277,17 @@ void HttpServer::restart()
     BOOST_LOG_TRIVIAL(info) << "Restarting HTTP server on port " << port << "...";
     
     BOOST_LOG_TRIVIAL(debug) << "Stopping current HTTP server...";
-    stop();
+    // 只停止HTTP服务器，不停止健康检查和重启检查线程
+    start_http_server = false;
+    
+    if (server_) {
+        server_->acceptor.close();
+        server_->stop_all();
+        server_->io_service.stop();
+    }
+    if (m_http_server_thread.joinable())
+        m_http_server_thread.join();
+    server_.reset();
     
     BOOST_LOG_TRIVIAL(debug) << "Waiting for resources to be released...";
     std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 等待资源释放
@@ -379,12 +386,15 @@ void HttpServer::start_health_check()
                 }
             }
             
-            if (start_http_server && !is_healthy()) {
-                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed, requesting restart...";
-                // 设置重启请求标志，而不是直接调用restart()来避免死锁
-                {
-                    std::lock_guard<std::mutex> lock(m_health_check_mutex);
-                    m_restart_requested = true;
+            // 检查服务器是否健康，或者服务器是否已经停止运行
+            if ((start_http_server && !is_healthy()) || !start_http_server) {
+                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed or server stopped, performing restart...";
+                try {
+                    // 在健康检查线程中直接执行重启，避免通过标志传递
+                    restart();
+                    BOOST_LOG_TRIVIAL(info) << "HTTP server restart completed by health check thread";
+                } catch (const std::exception& e) {
+                    BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
                 }
             } else if (start_http_server) {
                 BOOST_LOG_TRIVIAL(debug) << "HTTP server health check passed";
@@ -447,12 +457,16 @@ void HttpServer::start_restart_check()
             
             // 检查是否有重启请求
             if (is_restart_requested()) {
-                BOOST_LOG_TRIVIAL(warning) << "HTTP server restart requested by health check, performing restart...";
-                try {
-                    restart();
-                } catch (const std::exception& e) {
-                    BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
+                BOOST_LOG_TRIVIAL(warning) << "HTTP server restart requested by health check, clearing restart flag...";
+                // 清除重启请求标志，避免重复处理
+                {
+                    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+                    m_restart_requested = false;
                 }
+                
+                // 在重启检查线程中，我们只负责清理标志，不直接调用restart()
+                // 实际的重启操作由主线程或其他机制来处理
+                BOOST_LOG_TRIVIAL(info) << "Restart flag cleared, restart should be handled externally";
             }
             
             // 等待一段时间再检查
@@ -514,6 +528,30 @@ bool HttpServer::is_restart_requested() const
 {
     std::lock_guard<std::mutex> lock(m_health_check_mutex);
     return m_restart_requested;
+}
+
+void HttpServer::simulate_crash()
+{
+    BOOST_LOG_TRIVIAL(warning) << "Simulating HTTP server crash for testing restart mechanism...";
+    
+    try {
+        if (server_) {
+            // 关闭acceptor来模拟崩溃
+            server_->acceptor.close();
+            BOOST_LOG_TRIVIAL(info) << "Acceptor closed to simulate crash";
+            
+            // 停止io_service来模拟崩溃
+            server_->io_service.stop();
+            BOOST_LOG_TRIVIAL(info) << "IO service stopped to simulate crash";
+        }
+        
+        // 设置标志，让健康检查能够检测到崩溃
+        start_http_server = false;
+        BOOST_LOG_TRIVIAL(info) << "Server state set to crashed for health check detection";
+        
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Error during crash simulation: " << e.what();
+    }
 }
 
 void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)

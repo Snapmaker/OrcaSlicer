@@ -86,6 +86,9 @@
     "Please locate the PIN code on the account page of the device screen and enter it in the box below.": "请在设备界面的账户页面找到PIN码，并在下方框中输入。",
     "PIN code": "PIN码",
     "Ip address": "IP地址",
+    "The current device already exists": "当前设备已存在",
+    "Whether to delete or disconnect a local presence device": "是否删除或断开本地存在的设备",
+    "Currently only supports IPV4 addresses": "目前仅支持IPV4地址",
     "Print history": "打印历史",
 
     "Loading data...": "正在加载数据...",

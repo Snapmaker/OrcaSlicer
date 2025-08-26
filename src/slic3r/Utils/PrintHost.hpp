@@ -126,6 +126,8 @@ public:
 
     virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>){}
 
+    virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+
     virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_set_device_name(const std::string& device_name, std::function<void(const nlohmann::json& response)>) {}

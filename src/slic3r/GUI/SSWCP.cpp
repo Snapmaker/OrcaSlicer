@@ -1562,6 +1562,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_PullCloudFile();
     } else if (m_cmd == "sw_CancelPullCloudFile") {
         sw_CancelPullCloudFile();
+    } else if (m_cmd == "sw_StartCloudPrint") {
+        sw_StartCloudPrint();
     } else if (m_cmd == "sw_SetDeviceName") {
         sw_SetDeviceName();
     } else if (m_cmd == "sw_ControlLed") {
@@ -2106,6 +2108,32 @@ void SSWCP_MachineOption_Instance::sw_CancelPullCloudFile()
             }
         });
     } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_StartCloudPrint()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Can't find the active machine");
+            return;
+        }
+
+        json items = m_param_data;
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_start_cloud_print(items, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -5431,6 +5459,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_FinishPreprint",
     "sw_PullCloudFile",
     "sw_CancelPullCloudFile",
+    "sw_StartCloudPrint",
     "sw_SetDeviceName",
     "sw_ControlLed",
     "sw_ControlPrintSpeed",

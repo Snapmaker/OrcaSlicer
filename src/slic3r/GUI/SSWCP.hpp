@@ -412,6 +412,9 @@ private:
     // 请求设备取消下载文件
     void sw_CancelPullCloudFile();
 
+    // 请求设备下载文件并打印
+    void sw_StartCloudPrint();
+
     // 设备耗材同步
     void sw_UpdateMachineFilamentInfo();
 

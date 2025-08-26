@@ -2022,7 +2022,7 @@ void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
                 if (!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
                     !j_value.count("filament_type") || !j_value["filament_type"].is_array() ||
                     !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
-                    !j_value.count("filament_color") || !j_value["filament_color"].is_array() ||
+                    ((!j_value.count("filament_color") || !j_value["filament_color"].is_array()) && (!j_value.count("filament_color_rgba") || !j_value["filament_color_rgba"].is_array())) ||
                     !j_value.count("extruder_map_table") || !j_value["extruder_map_table"].is_array() ||
                     !j_value.count("filament_official") || !j_value["filament_official"].is_array()) {
                     handle_general_fail(-1, "value parse failed");
@@ -2054,14 +2054,24 @@ void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
 
                         int extruder = j_value["extruder_map_table"][i].get<int>();
 
-                        int color = j_value["filament_color"][i].get<int>();
 
-                        std::ostringstream oss;
-                        oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex << (color & 0x00FFFFFF); // 仅取低24位
+                        if (j_value.count("filament_color_rgba")) {
+                            std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
+                            filaments.insert({int(i), {name, str_color}});
+                        } else {
+                            if (j_value["filament_color"][i].is_number()) {
+                                int                color = j_value["filament_color"][i].get<int>();
+                                std::ostringstream oss;
+                                oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex
+                                    << (color & 0x00FFFFFF); // 仅取低24位
 
-                        std::string str_color = oss.str();
-
-                        filaments.insert({int(i), {name, str_color}});
+                                std::string str_color = oss.str();
+                                filaments.insert({int(i), {name, str_color}});
+                            } else {
+                                std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
+                                filaments.insert({int(i), {name, str_color}});
+                            }
+                        }
                     }
                 }
 

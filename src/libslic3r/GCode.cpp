@@ -3194,20 +3194,21 @@ void GCode::_print_first_layer_extruder_temperatures(GCodeOutputStream &file, Pr
                 file.write(m_writer.set_temperature(temp, wait, first_printing_extruder_id));
         } else {
             // Set temperatures of all the printing extruders.
-            bool has_active = true;
-            int target_temp = -1;
-            int target_tool  = -1;
+            bool is_active   = true;
+            int  target_temp = -1;
+            int  target_tool = -1;
             for (unsigned int tool_id : print.extruders()) {
+                is_active = true;
                 int temp = print.config().nozzle_temperature_initial_layer.get_at(tool_id);
                 if (print.config().ooze_prevention.value && tool_id != first_printing_extruder_id) {
-                    has_active = false;
+                    is_active = false;
                     if (print.config().idle_temperature.get_at(tool_id) == 0)
                         temp += print.config().standby_temperature_delta.value;
                     else
                         temp = print.config().idle_temperature.get_at(tool_id);
                 }
                 if (temp > 0) {
-                    if (has_active) {
+                    if (is_active) {
                         target_temp = temp;
                         target_tool = tool_id;
                     }else

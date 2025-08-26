@@ -422,6 +422,12 @@ protected:
         font.SetPointSize(m_textSize);
         dc.SetFont(font);
 
+        auto height = dc.GetCharHeight();
+        if (height > m_tabHeight - 2) {
+            m_tabHeight = height + 2;
+            Layout();
+        }
+
         int xPos = 0;
         for (size_t i = 0; i < m_tabs.size(); ++i) {
             bool isSelected = static_cast<int>(i) == m_selectedIndex;

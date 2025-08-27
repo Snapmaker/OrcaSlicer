@@ -389,6 +389,8 @@ private:
     void sw_FilesThumbnailsBase64();
     void sw_exception_query();
     void sw_GetFileListPage();
+    void sw_UploadCameraTimelapse();
+    void sw_DeleteCameraTimelapse();
 
 
     // Download machine file

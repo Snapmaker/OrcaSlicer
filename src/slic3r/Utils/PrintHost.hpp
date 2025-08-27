@@ -154,6 +154,10 @@ public:
 
     virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>){}
 
+    virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+
     //Support for cloud webui login
     virtual bool is_cloud() const { return false; }
     virtual bool is_logged_in() const { return false; }

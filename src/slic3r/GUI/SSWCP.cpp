@@ -1590,6 +1590,10 @@ void SSWCP_MachineOption_Instance::process()
         sw_GetFileListPage();
     } else if (m_cmd == "sw_UpdateMachineFilamentInfo") {
         sw_UpdateMachineFilamentInfo();
+    } else if (m_cmd == "sw_UploadCameraTimelapse") {
+        sw_UploadCameraTimelapse();
+    } else if (m_cmd == "sw_DeleteCameraTimelapse") {
+        sw_DeleteCameraTimelapse();
     }
     
     else {
@@ -3131,6 +3135,53 @@ void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_UploadCameraTimelapse()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_upload_camera_timelapse(m_param_data, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_delete_camera_timelapse(m_param_data, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -5472,7 +5523,9 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_FilesThumbnailsBase64",
     "sw_exception_query",
     "sw_GetFileListPage",
-    "sw_UpdateMachineFilamentInfo"
+    "sw_UpdateMachineFilamentInfo",
+    "sw_UploadCameraTimelapse",
+    "sw_DeleteCameraTimelapse"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

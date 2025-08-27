@@ -127,6 +127,10 @@ public:
 
     virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>){}
 
+    virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+
 protected:
     // Internal upload implementations
 #ifdef WIN32
@@ -245,6 +249,10 @@ public:
     virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
     void set_connection_lost(std::function<void()> callback) override;
 

@@ -2254,6 +2254,62 @@ void Moonraker_Mqtt::async_canmera_stop(const std::string& domain, std::function
     }
 }
 
+// 请求上传延时摄影文件
+void Moonraker_Mqtt::async_upload_camera_timelapse(const nlohmann::json& targets,
+    std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始请求上传延时摄影文件";
+    wcp_loger.add_log("开始请求上传延时摄影文件", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "camera.upload_timelapse_instance";
+
+    json params = json::object();
+
+    params = targets;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 请求上传延时摄影文件超时";
+                             wcp_loger.add_log("请求上传延时摄影文件超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求上传延时摄影文件失败";
+        wcp_loger.add_log("发送请求上传延时摄影文件失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
+// 请求删除延时摄影文件
+void Moonraker_Mqtt::async_delete_camera_timelapse(const nlohmann::json&                               targets,
+                                                   std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始请求删除延时摄影文件";
+    wcp_loger.add_log("开始请求删除延时摄影文件", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "camera.delete_timelapse_instance";
+
+    json params = json::object();
+
+    params = targets;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 请求删除延时摄影文件超时";
+                             wcp_loger.add_log("请求删除延时摄影文件超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求上传删除摄影文件失败";
+        wcp_loger.add_log("发送请求删除延时摄影文件失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 // 请求设备下载云文件并打印
 void Moonraker_Mqtt::async_start_cloud_print(const nlohmann::json& targets,
                                            std::function<void(const nlohmann::json& response)>                  callback)

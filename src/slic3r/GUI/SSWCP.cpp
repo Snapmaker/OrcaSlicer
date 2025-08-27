@@ -2055,7 +2055,7 @@ void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
                         int extruder = j_value["extruder_map_table"][i].get<int>();
 
 
-                        if (j_value.count("filament_color_rgba")) {
+                        if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() && j_value["filament_color_rgba"].size() != 0) {
                             std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
                             filaments.insert({int(i), {name, str_color}});
                         } else {

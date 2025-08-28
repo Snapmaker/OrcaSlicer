@@ -9,8 +9,5 @@
   ],
   "nozzle_temperature": [
     "200"
-  ],
-  "default_filament_colour": [
-    "#D5DDDC"
   ]
 }

@@ -31,7 +31,6 @@
 
   "slow_down_min_speed": ["20"],
   "slow_down_layer_time": ["7"],
-  "default_filament_colour": ["#D9DFE3"],
   "filament_type": ["PVA"],
   "nozzle_temperature_range_low": ["190"],
 

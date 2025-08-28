@@ -5,7 +5,6 @@
   "name": "fdm_filament_pla",
   "inherits": "fdm_filament_common",
 
-  "default_filament_colour": ["#FFFFFF"],
   "filament_cost": ["100"],
   "filament_flow_ratio": ["0.98"],
   "filament_retraction_length": ["2"],

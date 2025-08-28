@@ -25,8 +25,5 @@
     ],
     "filament_start_gcode": [
         "; filament start gcode\n"
-    ],
-    "default_filament_colour": [
-        "#8269AC"
     ]
 }

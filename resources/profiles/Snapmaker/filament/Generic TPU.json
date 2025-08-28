@@ -21,7 +21,13 @@
     "filament_end_gcode": [
         "; filament end gcode \n\n"
     ],
-    "default_filament_colour": [
-        "#8269AC"
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_flow": [
+        "3.2"
+    ],
+    "filament_multitool_ramming_volume": [
+        "0.5"
     ]
 }

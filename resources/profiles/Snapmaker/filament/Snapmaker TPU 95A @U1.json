@@ -279,9 +279,6 @@
     ],
     "textured_plate_temp_initial_layer": [
         "35"
-    ],
-    "default_filament_colour": [
-        "#383737"
     ]
   
 }

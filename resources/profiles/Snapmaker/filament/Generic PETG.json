@@ -23,7 +23,16 @@
     "filament_start_gcode": [
         "; filament start gcode\n"
     ],
-    "default_filament_colour": [
-        "#8269AC"
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_flow": [
+        "15"
+    ],
+    "filament_multitool_ramming_volume": [
+        "0.5"
     ]
 }

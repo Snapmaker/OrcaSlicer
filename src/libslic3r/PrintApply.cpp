@@ -233,7 +233,12 @@ static t_config_option_keys print_config_diffs(
         if (opt_new == nullptr)
             //FIXME This may happen when executing some test cases.
             continue;
-        const ConfigOption *opt_new_filament = std::binary_search(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key) ? new_full_config.option(filament_prefix + opt_key) : nullptr;
+
+        auto                iter             = std::find(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key);
+
+        // const ConfigOption *opt_new_filament = std::binary_search(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key) ? new_full_config.option(filament_prefix + opt_key) : nullptr;
+        const ConfigOption* opt_new_filament = (iter == extruder_retract_keys.end()) ? nullptr :
+                                                                                       new_full_config.option(filament_prefix + opt_key);
         if (opt_new_filament != nullptr && ! opt_new_filament->is_nil()) {
             // An extruder retract override is available at some of the filament presets.
             bool overriden = opt_new->overriden_by(opt_new_filament);

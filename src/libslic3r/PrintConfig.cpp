@@ -3766,7 +3766,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloats {18});
 
     def = this->add("retract_length_toolchange", coFloats);
-    def->label = L("Length");
+    def->label = L("Retraction Length (Toolchange)");
     //def->full_label = L("Retraction Length (Toolchange)");
     def->full_label = "Retraction Length (Toolchange)";
     //def->tooltip = L("When retraction is triggered before changing tool, filament is pulled back "
@@ -3871,7 +3871,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloats { 0. });
 
     def = this->add("retract_restart_extra_toolchange", coFloats);
-    def->label = L("Extra length on restart");
+    def->label = L("Extra length on restart (Toolchange)");
     def->tooltip = L("When the retraction is compensated after changing tool, the extruder will push "
                   "this additional amount of filament.");
     def->sidetext = L("mm");
@@ -5424,7 +5424,9 @@ void PrintConfigDef::init_fff_params()
         // percents
         "retract_before_wipe",
         "long_retractions_when_cut",
-        "retraction_distances_when_cut"
+        "retraction_distances_when_cut",
+        "retract_length_toolchange",
+        "retract_restart_extra_toolchange"
         }) {
         auto it_opt = options.find(opt_key);
         assert(it_opt != options.end());
@@ -5495,6 +5497,8 @@ void PrintConfigDef::init_extruder_option_keys()
         "z_hop",
         "z_hop_types",
         "z_hop_when_prime",
+        "retract_length_toolchange",
+        "retract_restart_extra_toolchange"
     };
     assert(std::is_sorted(m_extruder_retract_keys.begin(), m_extruder_retract_keys.end()));
 }
@@ -5525,7 +5529,9 @@ void PrintConfigDef::init_filament_option_keys()
         "wipe",
         "wipe_distance",
         "z_hop",
-        "z_hop_types"
+        "z_hop_types",
+        "retract_length_toolchange",
+        "retract_restart_extra_toolchange",
     };
     assert(std::is_sorted(m_filament_retract_keys.begin(), m_filament_retract_keys.end()));
 }

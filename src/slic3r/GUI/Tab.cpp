@@ -3184,7 +3184,9 @@ void TabFilament::add_filament_overrides_page()
                                         "filament_wipe_distance",
                                         "filament_retract_before_wipe",
                                         "filament_long_retractions_when_cut",
-                                        "filament_retraction_distances_when_cut"
+                                        "filament_retraction_distances_when_cut",
+                                        "filament_retract_length_toolchange",
+                                        "filament_retract_restart_extra_toolchange"
                                         //SoftFever
                                         // "filament_seam_gap"
                                      })
@@ -3223,7 +3225,9 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                                             "filament_wipe_distance",
                                             "filament_retract_before_wipe",
                                             "filament_long_retractions_when_cut",
-                                            "filament_retraction_distances_when_cut"
+                                            "filament_retraction_distances_when_cut",
+                                            "filament_retract_length_toolchange",
+                                            "filament_retract_restart_extra_toolchange"
                                             //SoftFever
                                             // "filament_seam_gap"
                                         };

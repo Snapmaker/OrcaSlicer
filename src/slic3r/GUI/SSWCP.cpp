@@ -442,12 +442,39 @@ void SSWCP_Instance::process() {
         sw_LaunchConsole();
     } else if (m_cmd == "sw_Exit") {
         sw_Exit();
+    } else  if(m_cmd == "sw_FileLog") {
+        sw_FileLog();
     } else if (m_cmd == "sw_SubscribeCacheKey") {
         sw_SubscribeCacheKey();
     } else if (m_cmd == "sw_UnsubscribeCacheKeys") {
         sw_UnsubscribeCacheKeys();
     }
     else {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_FileLog() {
+    try {
+        std::string level = m_param_data.count("level") ? m_param_data["level"].get<std::string>() : "debug";
+        std::string content = m_param_data.count("content") ? m_param_data["content"].get<std::string>() : "";
+
+        if(level == "debug") {
+            BOOST_LOG_TRIVIAL(debug) << "[WCP] " << content;
+        } else if(level == "info") {
+            BOOST_LOG_TRIVIAL(info) << "[WCP] " << content;
+        } else if(level == "warning") {
+            BOOST_LOG_TRIVIAL(warning) << "[WCP] " << content;
+        } else if(level == "error") {
+            BOOST_LOG_TRIVIAL(error) << "[WCP] " << content;
+        } else if(level == "fatal") {
+            BOOST_LOG_TRIVIAL(fatal) << "[WCP] " << content;
+        }
+
+        send_to_js();
+        finish_job();
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }

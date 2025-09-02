@@ -164,6 +164,9 @@ private:
     // mac quit
     void sw_Exit();
 
+    // orca log
+    void sw_FileLog();
+
     static std::unordered_map<std::string, json> m_wcp_cache;
 
 

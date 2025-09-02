@@ -23,6 +23,8 @@
     "Jump": "跳过",
     "No filament or machine found": "未发现文件或设备",
     "Sending print job": "正在发送打印任务",
+    "Setting print preferences success": "设置打印偏好成功",
+    "Setting print preferences failed": "设置打印偏好失败",
     "Done": "完成",
     "My Devices": "我的设备",
     "Recent Files": "近期文件",
@@ -81,14 +83,17 @@
     "Not logged in account": "未登录账户",
     "• LAVA - Only devices that have enabled LAN debugging can be bound": "• LAVA - 只能绑定开启了局域网调试的设备",
     "• J1、Artisan - Devices without account functions are default to LAN debugging mode": "• J1、Artisan 无账户功能的设备则默认是局域网调试模式",
-
-    "Please enter the device Settings page, click the LAN mode, click on the LAN mode, find the IP content displayed on the screen, and input it into the input box below.": "请进入设备设置页面，点击LAN模式，点击LAN模式，找到屏幕上显示的IP内容，并输入到下方输入框中。",
+    
     "Please locate the PIN code on the account page of the device screen and enter it in the box below.": "请在设备界面的账户页面找到PIN码，并在下方框中输入。",
+    "Machine IP acquisition method": "机器IP获取方法",
+    "Settings -> LAN Mode -> IP": "设置 -> LAN模式 -> IP",
     "PIN code": "PIN码",
     "Ip address": "IP地址",
     "The current device already exists": "当前设备已存在",
     "Whether to delete or disconnect a local presence device": "是否删除或断开本地存在的设备",
     "Currently only supports IPV4 addresses": "目前仅支持IPV4地址",
+    "Please enter IP address": "请输入IP地址",
+    "Invalid IP address format": "无效的IP地址格式",
     "Print history": "打印历史",
 
     "Loading data...": "正在加载数据...",
@@ -315,5 +320,15 @@
     "dialog_file_upload_failed_tips": "文件{}上传失败，请重试...",
     "dialog_file_upload_success_to_device_tips": "文件{}已上传到设备，发起打印...",
     "dialog_file_upload_success_to_cloud_tips": "文件{}已上传到云服务，发起打印...",
-    "dialog_file_send_success_to_device_tips": "文件{}已发送成功到设备"
+    "dialog_file_send_success_to_device_tips": "文件{}已发送成功到设备",
+
+    "The current device is currently processing the offline state, please check the device and try again.": "当前设备处于离线状态，请检查设备并重试",
+    "Your account has been unbound from the device. Please reselect the device to initiate the connection.": "您的账户已被设备解绑，请重新选择设备发起连接",
+    "The device failed to download the model file. Please check the device network and upload it again.": "设备下载模型文件失败，请检查设备网络并重新上传",
+    "The current mode of the device is not available, please check the current LAN mode status.": "设备当前模式不可用，请检查当前局域网模式状态",
+    "The device is not available, please check the device network status.": "设备不可用，请检查设备网络状态",
+    "The device is not available, please check the device network status or try again later.": "设备不可用，请检查设备网络状态或稍后重试",
+    "File upload failed, please check network connection and try again.": "文件上传失败，请检查网络连接后重试",
+    "Unable to get current slicing details, go to the Prepare page to initiate slicing": "无法获取当前切片详情，请前往准备页面发起切片",
+    "The device is not connected, please click the printer to initiate device connection.": "设备未连接，请点击选择打印机发起设备连接"
 }

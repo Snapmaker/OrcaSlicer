@@ -2230,6 +2230,31 @@ void Moonraker_Mqtt::async_camera_start(const std::string& domain, int interval,
     }
 }
 
+void Moonraker_Mqtt::async_delete_machine_file(const std::string& path, std::function<void(const nlohmann::json& response)> callback) {
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始删除文件，路径: " << path;
+    wcp_loger.add_log("开始删除文件，路径: " + path, false, "", "Moonraker_Mqtt", "info");
+    std::string method = "server.files.delete_file";
+
+    json params;
+    params["path"] = path;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 删除文件超时";
+                             wcp_loger.add_log("删除文件超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送删除文件请求失败";
+        wcp_loger.add_log("发送删除文件请求失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
+
 void Moonraker_Mqtt::async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)> callback) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始停止摄像头监控，域名: " << domain;

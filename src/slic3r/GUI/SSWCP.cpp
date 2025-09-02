@@ -1542,6 +1542,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_CameraStartMonitor();
     } else if (m_cmd == "sw_CameraStopMonitor") {
         sw_CameraStopMonitor();
+    } else if (m_cmd == "sw_DeleteMachineFile") {
+        sw_DeleteMachineFile();
     } else if (m_cmd == "sw_SetFilamentMappingComplete") {
         sw_SetFilamentMappingComplete();
     } else if (m_cmd == "sw_GetFileFilamentMapping") {
@@ -2797,6 +2799,36 @@ void SSWCP_MachineOption_Instance::sw_CameraStartMonitor() {
         } else {
             handle_general_fail();
         }
+
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_DeleteMachineFile() {
+    try {
+        if(!m_param_data.count("path")){
+            handle_general_fail(-1, "param [path] required!");
+            return;
+        }
+
+        std::string path = m_param_data["path"].get<std::string>();
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_delete_machine_file(path, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
 
     } catch (std::exception& e) {
         handle_general_fail();
@@ -5500,6 +5532,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_MachineFilesGetDirectory",
     "sw_CameraStartMonitor",
     "sw_CameraStopMonitor",
+    "sw_DeleteMachineFile",
     "sw_GetFileFilamentMapping",
     "sw_SetFilamentMappingComplete",
     "sw_FinishFilamentMapping",

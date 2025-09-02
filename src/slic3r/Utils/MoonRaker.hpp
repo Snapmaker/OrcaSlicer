@@ -94,6 +94,8 @@ public:
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_delete_machine_file(const std::string& path, std::function<void(const nlohmann::json& response)>) {}
+
     virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>){}
 
     virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
@@ -243,6 +245,8 @@ public:
     virtual void async_camera_start(const std::string& domain, int interval, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_delete_machine_file(const std::string& path, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 

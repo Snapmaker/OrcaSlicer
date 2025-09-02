@@ -370,6 +370,7 @@ private:
     void sw_MachineFilesGetDirectory();
     void sw_CameraStartMonitor();
     void sw_CameraStopMonitor();
+    void sw_DeleteMachineFile();
 
     // PrePrint
     void sw_GetFileFilamentMapping();

@@ -1321,6 +1321,17 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     m_engines.push_back(nullptr);
                 }
 
+                // 预热扫描：发送一轮短超时查询以激活休眠后的mDNS响应
+                for (const auto& svc : mdns_service_names) {
+                    Bonjour(svc)
+                        .set_retries(1)
+                        .set_timeout(2)
+                        .on_reply([](BonjourReply&&){})
+                        .on_complete([]{})
+                        .lookup();
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
                 Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid", "device_name", "ip", "region"};
                 std::string      unique_key = "sn";
 

@@ -227,9 +227,25 @@ int PresetComboBox::update_ams_color()
     if (m_filament_idx < 0) return -1;
     int idx = selected_ams_filament();
 
+    auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+
+    int real_idx = -1;
+    int tmp      = idx;
+    if (tmp >= 0) {
+        for (auto iter = filaments.begin(); iter != filaments.end(); ++iter) {
+            if (tmp == 0) {
+                real_idx = iter->first;
+                break;
+            }
+
+            tmp--;
+        }
+    }
+    
+
     auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
-    if (idx >= 0) {
-        filament_extruder_map[m_filament_idx] = idx;
+    if (real_idx >= 0) {
+        filament_extruder_map[m_filament_idx] = real_idx;
     } else {
         if (filament_extruder_map.count(m_filament_idx)) {
             filament_extruder_map.erase(m_filament_idx);

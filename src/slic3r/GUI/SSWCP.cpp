@@ -1360,6 +1360,11 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 
                                          machine_data["name"] = hostname != "" ? hostname : reply.service_name;
                                          // machine_data["hostname"] = reply.hostname;
+
+                                         if (!reply.ip.is_v4()) {
+                                             return;
+                                         }
+
                                          machine_data["ip"]       = reply.ip.to_string();
                                          machine_data["port"]     = reply.port;
                                          if (reply.txt_data.count("protocol")) {

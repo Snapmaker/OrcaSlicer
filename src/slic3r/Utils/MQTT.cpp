@@ -19,7 +19,7 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     , connection_failure_callback_(nullptr)
     , pending_reconnect_checks{0}  // 添加计数器
 {
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 初始化MQTT连接 server_address: " << server_address << ", client_id: " << client_id;
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 初始化MQTT连接 server_address: " << server_address << ", client_id: " << client_id;
 
     // Configure connection options
     // 写死false
@@ -50,7 +50,7 @@ MqttClient::MqttClient(const std::string& server_address,
                       bool clean_session)
     : MqttClient(server_address, client_id, username, password, clean_session)
 {
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 初始化MQTT SSL连接 server_address: " << server_address << ", client_id: " << client_id
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 初始化MQTT SSL连接 server_address: " << server_address << ", client_id: " << client_id
                             << ", ca_content: " << ca_content << ", cert_content: " << cert_content << ", username: " << username
                             << ", password: " << password;
     
@@ -64,7 +64,7 @@ MqttClient::MqttClient(const std::string& server_address,
             std::ofstream ca_file(ca_path.string());
             ca_file << ca_content;
             ca_file.close();
-            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] CA证书已写入临时文件: " << ca_path;
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] CA证书已写入临时文件: " << ca_path;
         }
 
         // 客户端证书临时文件
@@ -73,7 +73,7 @@ MqttClient::MqttClient(const std::string& server_address,
             std::ofstream cert_file(cert_path.string());
             cert_file << cert_content;
             cert_file.close();
-            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 客户端证书已写入临时文件: " << cert_path;
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 客户端证书已写入临时文件: " << cert_path;
         }
 
         // 私钥临时文件
@@ -82,7 +82,7 @@ MqttClient::MqttClient(const std::string& server_address,
             std::ofstream key_file(key_path.string());
             key_file << key_content;
             key_file.close();
-            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 私钥已写入临时文件: " << key_path;
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 私钥已写入临时文件: " << key_path;
         }
 
         // 配置SSL/TLS
@@ -132,19 +132,19 @@ bool MqttClient::Connect(std::string& msg)
 
     try {
         // 添加详细的连接参数日志
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 正在连接MQTT服务器: " << server_address_;
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 正在连接MQTT服务器: " << server_address_;
         
         // 如果是SSL连接，添加SSL配置信息日志
         try {
             auto ssl_opts = connOpts_.get_ssl_options();
-            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] SSL配置信息:"
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] SSL配置信息:"
                 << "\n - 服务器地址: " << server_address_
                 << "\n - 客户端ID: " << client_id_
                 << "\n - CA证书长度: " << (ssl_opts.get_trust_store().empty() ? 0 : ssl_opts.get_trust_store().length())
                 << "\n - 客户端证书长度: " << (ssl_opts.get_key_store().empty() ? 0 : ssl_opts.get_key_store().length())
                 << "\n - 私钥长度: " << (ssl_opts.get_private_key().empty() ? 0 : ssl_opts.get_private_key().length());
         } catch (...) {
-            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 非SSL连接";
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 非SSL连接";
         }
 
         const char* context = "connection";
@@ -185,7 +185,7 @@ bool MqttClient::Connect(std::string& msg)
         }
 
         connected_.store(true, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Successfully connected to MQTT server";
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Successfully connected to MQTT server";
         msg = "success";
         return true;
     }
@@ -218,7 +218,7 @@ bool MqttClient::Disconnect(std::string& msg)
     }
 
     try {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnecting from MQTT server...";
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Disconnecting from MQTT server...";
         
         // 清理连接
         try {
@@ -234,7 +234,7 @@ bool MqttClient::Disconnect(std::string& msg)
         }
 
         connected_.store(false, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Successfully disconnected from MQTT server";
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Successfully disconnected from MQTT server";
         msg = "success";
         return true;
     }
@@ -267,7 +267,7 @@ bool MqttClient::Subscribe(const std::string& topic, int qos, std::string& msg)
     }
 
     try {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Subscribing to MQTT topic '" << topic << "' with QoS " << qos;
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Subscribing to MQTT topic '" << topic << "' with QoS " << qos;
         mqtt::token_ptr subtok = client_->subscribe(topic, qos, nullptr, subListener_);
         if (!subtok->wait_for(std::chrono::seconds(5))) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Subscribe timeout for topic: " << topic;
@@ -296,7 +296,7 @@ bool MqttClient::Unsubscribe(const std::string& topic, std::string& msg)
     }
 
     try {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Unsubscribing from MQTT topic '" << topic << "'";
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Unsubscribing from MQTT topic '" << topic << "'";
         mqtt::token_ptr unsubtok = client_->unsubscribe(topic);
         if (!unsubtok->wait_for(std::chrono::seconds(5))) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Unsubscribe timeout for topic: " << topic;
@@ -454,7 +454,7 @@ void MqttClient::connection_lost(const std::string& cause)
                 }
             }).detach();
 
-            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Waiting for automatic reconnection...";
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Waiting for automatic reconnection...";
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Failed to start reconnection check: " << e.what();
@@ -530,7 +530,7 @@ void MqttClient::on_success(const mqtt::token& tok)
 // 添加连接成功的回调
 void MqttClient::connected(const std::string& cause)
 {
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT connection established";
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection established";
     connected_.store(true, std::memory_order_release);
     is_reconnecting.store(false, std::memory_order_release);
     pending_reconnect_checks.store(0, std::memory_order_release);
@@ -544,7 +544,7 @@ void MqttClient::resubscribe_topics() {
         return;
     }
 
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Resubscribing to " << topics_to_resubscribe_.size() << " topics";
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Resubscribing to " << topics_to_resubscribe_.size() << " topics";
     
     for (const auto& topic_pair : topics_to_resubscribe_) {
         try {
@@ -580,7 +580,7 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
 MqttClient::~MqttClient()
 {
     try {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 释放MQTT客户端资源...";
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 释放MQTT客户端资源...";
         
         // 先标记为断开状态，防止新的操作
         connected_.store(false, std::memory_order_release);
@@ -594,7 +594,7 @@ MqttClient::~MqttClient()
         // 如果客户端仍然连接，先断开连接
         if (client_ && client_->is_connected()) {
             try {
-                BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 在析构函数中断开MQTT连接";
+                BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 在析构函数中断开MQTT连接";
                 
                 // 使用阻塞方式断开，确保完全断开
                 auto disctok = client_->disconnect();
@@ -621,7 +621,7 @@ MqttClient::~MqttClient()
         // 清理临时文件
         cleanup_temp_files();
         
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT客户端资源已释放";
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT客户端资源已释放";
     }
     catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT客户端析构时发生异常: " << e.what();

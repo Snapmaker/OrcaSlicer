@@ -314,6 +314,7 @@ private:
     void sw_GetMachineFindSupportInfo();
     void sw_StartMachineFind();
     void sw_StopMachineFind();
+    void sw_WakeupFind();
 
 private:
     void add_machine_to_list(const json& machine_info);

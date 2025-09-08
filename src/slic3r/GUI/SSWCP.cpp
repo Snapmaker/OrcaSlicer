@@ -1260,6 +1260,8 @@ void SSWCP_MachineFind_Instance::process() {
         sw_GetMachineFindSupportInfo();
     } else if (m_cmd == "sw_StopMachineFind") {
         sw_StopMachineFind();
+    } else if (m_cmd == "sw_WakeupFind") {
+        sw_WakeupFind();
     } else {
         handle_general_fail();
     }
@@ -1292,6 +1294,50 @@ void SSWCP_MachineFind_Instance::sw_GetMachineFindSupportInfo()
     send_to_js();
 }
 
+void SSWCP_MachineFind_Instance::sw_WakeupFind()
+{
+    try {
+        // 1) 广域服务浏览：触发 _services._dns-sd._udp.local.，维持约8秒
+        //    此查询促使 AP/交换机为本机建立 224.0.0.251:5353 的组播转发表，并促使设备进行通告
+        try {
+            Bonjour::TxtKeys warmup_txt_keys = {};
+            auto warmup = Bonjour("services._dns-sd")
+                              .set_protocol("udp")
+                              .set_txt_keys(std::move(warmup_txt_keys))
+                              .set_retries(2)
+                              .set_timeout(4) // 2*4 = ~8s
+                              .on_reply([](BonjourReply&&){})
+                              .on_complete([](){})
+                              .lookup();
+            (void)warmup;
+        } catch (...) {
+            // 预热失败不影响后续短查
+        }
+
+        // 2) 目标服务短查：对 snapmaker 做一次短查询（2 秒），帮助休眠设备快速回应
+        try {
+            auto kick = Bonjour("snapmaker")
+                            .set_retries(1)
+                            .set_timeout(2)
+                            .on_reply([](BonjourReply&&){})
+                            .on_complete([](){})
+                            .lookup();
+            (void)kick;
+        } catch (...) {
+        }
+
+        // 立刻返回成功，查询在线程中进行
+        m_status = 200;
+        m_msg    = "OK";
+        m_res_data["result"] = "wakeup_started";
+        send_to_js();
+        finish_job();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 // Start machine discovery
 void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 {
@@ -1321,16 +1367,16 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     m_engines.push_back(nullptr);
                 }
 
-                // 预热扫描：发送一轮短超时查询以激活休眠后的mDNS响应
-                for (const auto& svc : mdns_service_names) {
-                    Bonjour(svc)
-                        .set_retries(1)
-                        .set_timeout(2)
-                        .on_reply([](BonjourReply&&){})
-                        .on_complete([]{})
-                        .lookup();
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                //// 预热扫描：发送一轮短超时查询以激活休眠后的mDNS响应
+                //for (const auto& svc : mdns_service_names) {
+                //    Bonjour(svc)
+                //        .set_retries(1)
+                //        .set_timeout(2)
+                //        .on_reply([](BonjourReply&&){})
+                //        .on_complete([]{})
+                //        .lookup();
+                //}
+                //std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
                 Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type", "link_mode", "userid", "device_name", "ip", "region"};
                 std::string      unique_key = "sn";
@@ -1473,6 +1519,7 @@ void SSWCP_MachineFind_Instance::sw_StopMachineFind()
 void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
 {
     try {
+        BOOST_LOG_TRIVIAL(fatal) << "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT" << machine_info.dump();
         for (const auto& [key, value] : machine_info.items()) {
             std::string sn        = value["sn"].get<std::string>();
             bool        need_send = false;
@@ -5554,6 +5601,7 @@ std::unordered_set<std::string> SSWCP::m_machine_find_cmd_list = {
     "sw_GetMachineFindSupportInfo",
     "sw_StartMachineFind",
     "sw_StopMachineFind",
+    "sw_WakeupFind",
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {

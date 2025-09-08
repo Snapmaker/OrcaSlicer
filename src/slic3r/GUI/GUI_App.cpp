@@ -7144,15 +7144,12 @@ bool GUI_App::sm_disconnect_current_machine()
     wxGetApp().get_connect_host(host);
     wxString msg = "";
 
-    bool res = false;
-    if (host == nullptr) {
-        return true;
-    } else {
-        res = host->disconnect(msg, {});
+    if (host) {
+        host->disconnect(msg, {});
     }
 
-    if (res) {
-        wxGetApp().CallAfter([this, res](){
+    if (true) {
+        wxGetApp().CallAfter([this](){
             wxGetApp().app_config->set("use_new_connect", "false");
             /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
             p_config->set("print_host", "");*/
@@ -7189,7 +7186,7 @@ bool GUI_App::sm_disconnect_current_machine()
         
     }
 
-    return res;
+    return true;
 }
 
 void GUI_App::start_download(std::string url)

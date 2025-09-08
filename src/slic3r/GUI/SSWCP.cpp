@@ -4108,7 +4108,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
         if (!res) {
             if (self) {
                 self->m_status = 1;
-                self->m_msg    = "connected failed";
+                self->m_msg    = "disconnected failed";
             }
         }
 
@@ -5165,6 +5165,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     /*MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
                                                              wxICON_QUESTION | wxOK);
                                     msg_window.ShowModal();*/
+
+                                    wxGetApp().set_connect_host(nullptr);
 
                                     wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
                                 });

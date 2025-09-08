@@ -3689,12 +3689,16 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                         auto     self = weak_self.lock();
                         wxString msg = "";
                         json     params;
-                        host->set_connection_lost([]() {
-                            wxGetApp().CallAfter([]() {
+                        host->set_connection_lost([&host]() {
+                            wxGetApp().CallAfter([&host]() {
                                 wxGetApp().app_config->set("use_new_connect", "false");
                                 auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
                                 p_config->set("print_host", "");
                                 wxGetApp().set_connect_host(nullptr);
+                                wxString msg = "";
+                                json     params;
+                                host->disconnect(msg, params);
+                                
 
                                 auto devices = wxGetApp().app_config->get_devices();
                                 for (size_t i = 0; i < devices.size(); ++i) {
@@ -5138,6 +5142,15 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxGetApp().app_config->set("use_new_connect", "false");
                                     auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
                                     p_config->set("print_host", "");
+
+                                    std::shared_ptr<PrintHost> ptr = nullptr;
+                                    wxGetApp().get_connect_host(ptr);
+                                    if (ptr) {
+                                        wxString disconn_msg = "";
+                                        json     disconn_param;
+                                        ptr->disconnect(disconn_msg, disconn_param);
+                                    }
+
                                     wxGetApp().set_connect_host(nullptr);
 
                                     auto devices = wxGetApp().app_config->get_devices();

@@ -2519,7 +2519,11 @@ bool Moonraker_Mqtt::send_to_request(
     json body;
     body["jsonrpc"] = "2.0";
     body["method"] = method;
-    body["params"] = params;
+
+    if (!params.empty()) {
+        body["params"] = params;
+    }
+    
 
     int64_t seq_id = m_seq_generator.generate_seq_id();
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 生成序列ID: " << seq_id;

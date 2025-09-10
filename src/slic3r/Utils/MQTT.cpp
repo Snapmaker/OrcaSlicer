@@ -435,6 +435,7 @@ void MqttClient::connection_lost(const std::string& cause)
                         int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
 
                         // 只有当这是最后一个检查线程时才执行检查
+                        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT Remaining thread count: " << remaining;
                         if (remaining == 0){
                             self->is_reconnecting.store(false, std::memory_order_release);
                         } else if (remaining <= 1) {

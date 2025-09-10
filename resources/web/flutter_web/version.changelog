@@ -1,6 +1,5 @@
 
 # Changelog
 
-- Optimize the extruder mapping relationship in the print flow initiated after slicing
-- Encrypt locally saved data
-- Optimize the connection machine authorization process
+- 修复设备状态，设备卡片的数据和状态同步
+- 上传并打印添加设备后，耗材获取有异常出现

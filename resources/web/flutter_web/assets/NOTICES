@@ -4523,7 +4523,6 @@ THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 client_id_generator
-discovery_device
 lava_core
 lava_device
 lava_device_control

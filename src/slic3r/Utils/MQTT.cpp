@@ -435,7 +435,7 @@ void MqttClient::connection_lost(const std::string& cause)
                         int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
 
                         // 只有当这是最后一个检查线程时才执行检查
-                        if (remaining == 1) {
+                        if (remaining <= 1) {
                             if (!self->connected_.load(std::memory_order_acquire)) {
                                 BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT connection not restored after 20 seconds";
                                 std::string dc_msg = "";

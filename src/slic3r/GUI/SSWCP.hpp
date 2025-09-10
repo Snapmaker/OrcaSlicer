@@ -129,6 +129,8 @@ public:
 
     static void on_mqtt_status_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response);
 
+    static std::unordered_map<std::string, json> m_wcp_cache;
+
 private:
     // Test methods
     void sync_test();
@@ -167,8 +169,10 @@ private:
     // orca log
     void sw_FileLog();
 
-    static std::unordered_map<std::string, json> m_wcp_cache;
 
+public:
+    // 抽象工具类函数
+    void update_filament_info(const json& objects, bool send_message = false);
 
 protected:
     std::thread                                  m_work_thread; // Worker thread
@@ -424,6 +428,7 @@ private:
 
     // 设备耗材同步
     void sw_UpdateMachineFilamentInfo();
+
 
 };
 

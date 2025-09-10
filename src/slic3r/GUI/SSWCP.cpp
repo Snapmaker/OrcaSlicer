@@ -1242,6 +1242,120 @@ void SSWCP_Instance::on_timeout() {
     finish_job();
 }
 
+void SSWCP_Instance::update_filament_info(const json& objects, bool send_message)
+{
+    if (objects.size() < 1) {
+        if (send_message)
+            handle_general_fail(-1, "objects is empty!");
+        return;
+    }
+
+    if (!objects[0].count("key") || !objects[0]["key"].is_string()) {
+        if (send_message)
+            handle_general_fail(-1, "param [key] required or wrong type!");
+        return;
+    }
+
+    if (!objects[0].count("value") || !objects[0]["value"].is_string()) {
+        if (send_message)
+            handle_general_fail(-1, "param [value] required or wrong type!");
+        return;
+    }
+
+    std::string sn    = objects[0]["key"].get<std::string>();
+    std::string value = objects[0]["value"].get<std::string>();
+
+    DeviceInfo info;
+    if (!wxGetApp().app_config->get_device_info(sn, info)) {
+        m_msg = "sn does not exist!";
+        if (send_message) {
+            handle_general_fail(-1, m_msg);
+        }
+        return;
+    } else {
+        if (!info.connected) {
+            m_msg = "The machine is not connected!";
+            if (send_message) {
+                handle_general_fail(-1, m_msg);
+            }
+            return;
+        } else {
+            json j_value;
+            try {
+                j_value = json::parse(value);
+            } catch (std::exception& e) {
+                if (send_message)
+                    handle_general_fail(-1, "value parse failed");
+                return;
+            }
+
+            if (!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() || !j_value.count("filament_type") ||
+                !j_value["filament_type"].is_array() || !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
+                ((!j_value.count("filament_color") || !j_value["filament_color"].is_array()) &&
+                 (!j_value.count("filament_color_rgba") || !j_value["filament_color_rgba"].is_array())) ||
+                !j_value.count("extruder_map_table") || !j_value["extruder_map_table"].is_array() || !j_value.count("filament_official") ||
+                !j_value["filament_official"].is_array()) {
+                if (send_message) {
+                    handle_general_fail(-1, "value parse failed");
+                }
+                return;
+            }
+
+            // 存储耗材，并触发更新
+            auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+            filaments.clear();
+
+            size_t count = 0;
+            for (size_t i = 0; i < j_value["filament_official"].size(); ++i) {
+                bool is_official = j_value["filament_official"][i].get<bool>();
+                if (/*is_official*/ true) {
+                    std::string vendor   = j_value["filament_vendor"][i].get<std::string>();
+                    std::string type     = j_value["filament_type"][i].get<std::string>();
+                    std::string sub_type = j_value["filament_sub_type"][i].get<std::string>();
+
+                    std::string name = "";
+
+                    // 名称特殊处理
+                    if (type == "TPU") {
+                        name = vendor + " " + type;
+                    } else if (sub_type == "Support") {
+                        name = vendor + " Support" + " For " + type;
+                    } else {
+                        name = vendor + " " + type + (sub_type != "NONE" ? " " + sub_type : "");
+                    }
+
+                    int extruder = j_value["extruder_map_table"][i].get<int>();
+
+                    if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
+                        j_value["filament_color_rgba"].size() != 0) {
+                        std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
+                        filaments.insert({int(i), {name, str_color}});
+                    } else {
+                        if (j_value["filament_color"][i].is_number()) {
+                            int                color = j_value["filament_color"][i].get<int>();
+                            std::ostringstream oss;
+                            oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex
+                                << (color & 0x00FFFFFF); // 仅取低24位
+
+                            std::string str_color = oss.str();
+                            filaments.insert({int(i), {name, str_color}});
+                        } else {
+                            std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
+                            filaments.insert({int(i), {name, str_color}});
+                        }
+                    }
+                }
+            }
+
+            wxGetApp().load_current_presets();
+            if (send_message) {
+                send_to_js();
+                finish_job();
+            }
+        }
+    }
+}
+
 // SSWCP_MachineFind_Instance implementation
 
 // Process machine find commands
@@ -2076,108 +2190,7 @@ void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
             return;
         }
 
-        json objects = m_param_data["objects"];
-
-        if (objects.size() < 1) {
-            handle_general_fail(-1, "objects is empty!");
-            return;
-        }
-
-        if (!objects[0].count("key") || !objects[0]["key"].is_string()) {
-            handle_general_fail(-1, "param [key] required or wrong type!");
-            return;
-        }
-
-        if (!objects[0].count("value") || !objects[0]["value"].is_string()) {
-            handle_general_fail(-1, "param [value] required or wrong type!");
-        }
-
-        std::string sn = objects[0]["key"].get<std::string>();
-        std::string value = objects[0]["value"].get<std::string>();
-
-        DeviceInfo info;
-        if (!wxGetApp().app_config->get_device_info(sn, info)) {
-            m_msg = "sn does not exist!";
-            send_to_js();
-            finish_job();
-            return;
-        } else {
-            if (!info.connected) {
-                m_msg = "The machine is not connected!";
-                send_to_js();
-                finish_job();
-                return;
-            } else {
-                json j_value;
-                try {
-                    j_value = json::parse(value);
-                }
-                catch (std::exception& e) {
-                    handle_general_fail(-1, "value parse failed");
-                    return;
-                }
-
-                if (!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
-                    !j_value.count("filament_type") || !j_value["filament_type"].is_array() ||
-                    !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
-                    ((!j_value.count("filament_color") || !j_value["filament_color"].is_array()) && (!j_value.count("filament_color_rgba") || !j_value["filament_color_rgba"].is_array())) ||
-                    !j_value.count("extruder_map_table") || !j_value["extruder_map_table"].is_array() ||
-                    !j_value.count("filament_official") || !j_value["filament_official"].is_array()) {
-                    handle_general_fail(-1, "value parse failed");
-                    return;
-                }
-
-                // 存储耗材，并触发更新
-                auto& filaments = wxGetApp().preset_bundle->machine_filaments;
-                filaments.clear();
-
-                size_t count = 0;
-                for (size_t i = 0; i < j_value["filament_official"].size(); ++i) {
-                    bool is_official = j_value["filament_official"][i].get<bool>();
-                    if (/*is_official*/ true) {
-                        std::string vendor = j_value["filament_vendor"][i].get<std::string>();
-                        std::string type   = j_value["filament_type"][i].get<std::string>();
-                        std::string sub_type = j_value["filament_sub_type"][i].get<std::string>();
-
-                        std::string name = "";
-
-                        // 名称特殊处理
-                        if (type == "TPU") {
-                            name = vendor + " " + type;
-                        } else if (sub_type == "Support") {
-                            name = vendor + " Support" + " For " + type;
-                        } else {
-                            name = vendor + " " + type + (sub_type != "NONE" ? " " + sub_type : "");
-                        }
-
-                        int extruder = j_value["extruder_map_table"][i].get<int>();
-
-
-                        if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() && j_value["filament_color_rgba"].size() != 0) {
-                            std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                            filaments.insert({int(i), {name, str_color}});
-                        } else {
-                            if (j_value["filament_color"][i].is_number()) {
-                                int                color = j_value["filament_color"][i].get<int>();
-                                std::ostringstream oss;
-                                oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex
-                                    << (color & 0x00FFFFFF); // 仅取低24位
-
-                                std::string str_color = oss.str();
-                                filaments.insert({int(i), {name, str_color}});
-                            } else {
-                                std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
-                                filaments.insert({int(i), {name, str_color}});
-                            }
-                        }
-                    }
-                }
-
-                wxGetApp().load_current_presets();
-                send_to_js();
-                finish_job();
-            }
-        }
+        update_filament_info(m_param_data["objects"], true);
 
     }
     catch (std::exception& e) {
@@ -5497,6 +5510,34 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                                     // 清除耗材喷嘴映射信息
                                     wxGetApp().app_config->clear_filament_extruder_map();
+
+                                    // 尝试获取新的耗材喷嘴映射信息
+                                    if (self->m_wcp_cache.count("deviceFilamentInfo")) {
+                                        std::string value_str = m_wcp_cache["deviceFilamentInfo"].get<std::string>();
+                                        json value                 = json::parse(value_str);
+                                        json value_item            = value["value"];
+                                        auto machines     = wxGetApp().app_config->get_devices();
+                                        bool find                  = false;
+                                        for (auto& [key, value] : value_item.items()) {
+                                            if (find) {
+                                                break;
+                                            }
+
+                                            for (const auto& machine : machines) {
+                                                if (machine.sn == key && machine.connected) {
+                                                    find = true;
+                                                    json target = json::array();
+                                                    json object = json::object();
+                                                    object["key"] = key;
+                                                    object["value"]    = value.dump();
+                                                    target.push_back(object);
+                                                    self->update_filament_info(target, false);
+                                                    break;
+                                                }
+                                            }
+
+                                        }
+                                    }
 
                                     // 整理订阅列表，取消权限，但是保留真正的底层订阅
                                     // 维护订阅topic表和eventid实例表

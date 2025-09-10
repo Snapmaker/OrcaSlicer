@@ -2531,22 +2531,22 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
             return;
         }
 
-        std::string download_url = std::string(wxString(m_param_data["url"].get<std::string>()).ToUTF8());
+        wxString download_url = wxString::FromUTF8(m_param_data["url"].get<std::string>());
 
         // 从 URL 获取默认文件名（如果没有提供）
-        std::string filename   = "";
+        wxString filename   = "";
         if (!m_param_data.count("filename")) {
             size_t last_slash = download_url.find_last_of("/");
             if (last_slash != std::string::npos) {
-                filename = wxString(download_url.substr(last_slash + 1)).ToUTF8();
+                filename = download_url.substr(last_slash + 1);
             }
         } else {
-            filename = wxString(m_param_data["filename"].get<std::string>()).ToUTF8();
+            filename = wxString::FromUTF8(m_param_data["filename"].get<std::string>());
         }
         
 
         // 获取文件扩展名
-        std::string extension;
+        wxString extension;
         size_t      dot_pos = filename.find_last_of(".");
         if (dot_pos != std::string::npos) {
             extension = filename.substr(dot_pos + 1);
@@ -2579,7 +2579,7 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
             // 获取选择的保存路径
             wxString path = saveFileDialog.GetPath();
 
-            auto   final_url    = Http::encode_url_path(download_url);
+            auto final_url = Http::encode_url_path(download_url.ToStdString(wxConvUTF8));
             
 
             Http http_object = Http::get(final_url);
@@ -2594,7 +2594,7 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
                 })
                 .on_complete([=](std::string body, unsigned) {
                     try {
-                        boost::nowide::ofstream file(path.c_str(), std::ios::binary);
+                        boost::nowide::ofstream file(path.ToStdString(wxConvUTF8), std::ios::binary);
                         if (!file.is_open()) {
                             BOOST_LOG_TRIVIAL(error) << "Failed to open file for writing: " << path;
                             return;

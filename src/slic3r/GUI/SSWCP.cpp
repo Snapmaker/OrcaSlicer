@@ -3256,7 +3256,7 @@ void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
             return;
         }
 
-        std::string path = m_param_data["param"].get<std::string>();
+        std::string path = m_param_data["path"].get<std::string>();
 
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);

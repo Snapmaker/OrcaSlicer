@@ -503,13 +503,16 @@ void MqttClient::on_failure(const mqtt::token& tok)
         if (tok.get_reason_code() != 0) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Reason code: " << tok.get_reason_code();
         }
-        // 这里可以触发连接失败的处理逻辑
+        // 首次连接失败，禁用自动重连
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 首次连接失败，禁用自动重连";
+        connOpts_.set_automatic_reconnect(std::chrono::seconds(0), std::chrono::seconds(0));
+        
         connected_.store(false, std::memory_order_release);
         
-        //// 调用连接失败回调
-        //if (connection_failure_callback_) {
-        //    connection_failure_callback_();
-        //}
+        // 调用连接失败回调
+        if (connection_failure_callback_) {
+            connection_failure_callback_();
+        }
     } else {
         // 其他操作失败的处理
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Operation failed for token: " << tok.get_message_id();
@@ -536,6 +539,10 @@ void MqttClient::connected(const std::string& cause)
     BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection established, server_adress: " << this->server_address_;
     connected_.store(true, std::memory_order_release);
     is_reconnecting.store(false, std::memory_order_release);
+    
+    // 连接成功后重新启用自动重连，这样后续断开就能正常重连了
+    connOpts_.set_automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 连接成功，已启用自动重连";
     
     // 不直接置0，让检查线程自然完成并减少计数
     // 这样可以避免竞态条件，让计数逻辑更加一致

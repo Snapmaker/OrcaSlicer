@@ -1578,8 +1578,12 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                          }
 
                                          if (reply.txt_data.count("ip") && machine_data["ip"] == "") {
+                                             BOOST_LOG_TRIVIAL(warning) << "[Machine Find] Can't find the endpoint's ip, use the txtData: "
+                                                                        << reply.txt_data["ip"];
                                              machine_data["ip"] = reply.txt_data["ip"];
                                          }
+
+                                         machine_data["txt_ip"] = reply.txt_data["ip"];
 
                                          if (reply.txt_data.count("region")) {
                                              machine_data["region"] = reply.txt_data["region"];

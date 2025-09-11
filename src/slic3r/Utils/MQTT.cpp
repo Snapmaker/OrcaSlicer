@@ -409,7 +409,7 @@ bool MqttClient::CheckConnected()
 // @param cause: Reason for connection loss
 void MqttClient::connection_lost(const std::string& cause)
 {
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection lost";
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection lost, address: " << this->server_address_;
     if (!cause.empty()) {
         BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Cause: " << cause;
     }
@@ -431,7 +431,7 @@ void MqttClient::connection_lost(const std::string& cause)
 
                 if (auto self = weak_self.lock()) {
                     // 检查对象是否仍然有效
-                    if (self->client_) {
+                    if (self->client_ && self->is_reconnecting.load(std::memory_order_acquire)) {
                         int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
 
                         // 只有当这是最后一个检查线程时才执行检查
@@ -452,6 +452,7 @@ void MqttClient::connection_lost(const std::string& cause)
                         }
                     } else {
                         // 客户端已被销毁，减少计数
+                        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT Client has been destructed, --pending_reconnect_checks";
                         self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
                     }
                 }
@@ -533,7 +534,7 @@ void MqttClient::on_success(const mqtt::token& tok)
 // 添加连接成功的回调
 void MqttClient::connected(const std::string& cause)
 {
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection established";
+    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection established, server_adress: " << this->server_address_;
     connected_.store(true, std::memory_order_release);
     is_reconnecting.store(false, std::memory_order_release);
     pending_reconnect_checks.store(0, std::memory_order_release);

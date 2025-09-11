@@ -452,8 +452,7 @@ void MqttClient::connection_lost(const std::string& cause)
                         }
                     } else {
                         // 客户端已被销毁，减少计数
-                        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT Client has been destructed, --pending_reconnect_checks";
-                        self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
+                        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT Client has been destructed";
                     }
                 }
             }).detach();
@@ -537,7 +536,9 @@ void MqttClient::connected(const std::string& cause)
     BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection established, server_adress: " << this->server_address_;
     connected_.store(true, std::memory_order_release);
     is_reconnecting.store(false, std::memory_order_release);
-    pending_reconnect_checks.store(0, std::memory_order_release);
+    
+    // 不直接置0，让检查线程自然完成并减少计数
+    // 这样可以避免竞态条件，让计数逻辑更加一致
     
     // 连接成功后重新订阅之前的主题
     /*resubscribe_topics();*/

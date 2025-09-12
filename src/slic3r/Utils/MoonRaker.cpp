@@ -1097,23 +1097,49 @@ nlohmann::json Moonraker_Mqtt::get_auth_info() {
 
 bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::string& msg)
 {
+    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 开始设置MQTT引擎 id: " << std::to_string(int64_t(engine.get()));
 
-    if (!engine->CheckConnected()) {
-        msg = "engine connection failed";
+    if (!engine) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 引擎指针为空，无法设置";
+        msg = "engine is null";
         return false;
     }
 
-    if (m_mqtt_client_tls && m_mqtt_client_tls->CheckConnected()) {
-        std::string dis_msg = "success";
-        m_mqtt_client_tls->Disconnect(dis_msg);
+    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 检查新引擎连接状态...";
+    if (!engine->CheckConnected()) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 新引擎连接检查失败";
+        msg = "engine connection failed";
+        return false;
+    }
+    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 新引擎连接状态正常";
+
+    if (m_mqtt_client_tls) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 检查旧引擎连接状态...";
+        if (m_mqtt_client_tls->CheckConnected()) {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 旧引擎仍处于连接状态，开始断开...";
+            std::string dis_msg = "success";
+            bool disconnect_result = m_mqtt_client_tls->Disconnect(dis_msg);
+            if (disconnect_result) {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 旧引擎断开成功: " << dis_msg;
+            } else {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 旧引擎断开失败: " << dis_msg;
+            }
+        } else {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 旧引擎已处于断开状态";
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 没有旧的引擎需要断开";
     }
 
+    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 设置新引擎指针";
     m_mqtt_client_tls = engine;
 
+    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 设置消息回调函数";
     m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
         this->on_mqtt_tls_message_arrived(topic, payload);
     });
 
+    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 引擎设置完成";
     msg = "success";
     return true;
 }

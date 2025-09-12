@@ -5059,12 +5059,22 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                 return;
             }
 
+            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 检查引擎连接状态...";
+
             if (!engine->CheckConnected()) {
+                BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎连接状态异常";
                 handle_general_fail(-1, "engine connection lost");
                 return;
             }
+            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎连接状态正常";
+
             std::string msg    = "success";
+
+            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 设置引擎...";
+
             bool flag = host->set_engine(engine, msg);
+
+            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎设置完成, flag: " << flag;
 
             if (flag)
             {

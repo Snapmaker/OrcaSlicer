@@ -6231,6 +6231,13 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         (the extruder might be already retracted fully or partially). We call these
         methods even if we performed wipe, since this will ensure the entire retraction
         length is honored in case wipe path was too short.  */
+
+    // Snapmaker U1
+    std::string printer_model = this->m_curr_print->m_config.printer_model.value;
+    if (printer_model == "Snapmaker U1" && toolchange) {
+        gcode += "M400\n";
+    }
+
     gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();
 
     gcode += m_writer.reset_e();

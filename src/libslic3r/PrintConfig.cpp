@@ -4276,6 +4276,18 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(30.0));
 
+
+    def = this->add("delta_temperature", coInt);
+    def->label = L("Preheat delta temperature");
+    def->tooltip = L("Allow user to set the Preheat temperature. If target temperature is 220 and Preheat delta temperature is -30, then "
+                     "the preheat temperature will be 190");
+    def->sidetext = "∆°C";
+    def->min     = -50;
+    def->max     = 50;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+
     def = this->add("preheat_steps", coInt);
     def->label = L("Preheat steps");
     def->tooltip = L("Insert multiple preheat commands(e.g. M104.1). Only useful for Prusa XL. For other printers, please set it to 1.");

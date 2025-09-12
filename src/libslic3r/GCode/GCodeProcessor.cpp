@@ -1063,6 +1063,7 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     // Orca: 
     m_is_XL_printer = is_XL_printer(config);
     m_preheat_time = config.preheat_time;
+    m_delta_temperature = config.delta_temperature;
     m_preheat_steps = config.preheat_steps;
     // sanity check
     if(m_preheat_steps < 1)
@@ -1539,6 +1540,7 @@ void GCodeProcessor::reset()
 
     m_seams_count = 0;
     m_preheat_time = 0.f;
+    m_delta_temperature = 0;
     m_preheat_steps = 1;
 
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING
@@ -4925,6 +4927,8 @@ void GCodeProcessor::run_post_process()
                 [tool_number, this](unsigned int id, const std::vector<float>& time_diffs) {
                     const int temperature = int(m_layer_id != 1 ? m_extruder_temps_config[tool_number] :
                                                                   m_extruder_temps_first_layer_config[tool_number]);
+
+                    const int delta = m_delta_temperature;
                     // Orca: M104.1 for XL printers, I can't find the documentation for this so I copied the C++ comments from
                     // Prusa-Firmware-Buddy here
                     /**
@@ -4949,7 +4953,7 @@ void GCodeProcessor::run_post_process()
                     } else {
                         std::string comment = "preheat T" + std::to_string(tool_number) +
                                               " time: " + std::to_string((int) std::round(time_diffs[0])) + "s";
-                        return GCodeWriter::set_temperature(temperature, this->m_flavor, false, tool_number, comment);
+                        return GCodeWriter::set_temperature(temperature + m_delta_temperature, this->m_flavor, false, tool_number, comment);
                     }
                 },
                 // line replacer

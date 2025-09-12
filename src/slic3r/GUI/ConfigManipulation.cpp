@@ -661,6 +661,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     bool have_ooze_prevention = config->opt_bool("ooze_prevention");
     toggle_line("standby_temperature_delta", have_ooze_prevention);
     toggle_line("preheat_time", have_ooze_prevention);
+    // int delta_temperature = config->opt_int("delta_temperature");
+    toggle_line("delta_temperature", have_ooze_prevention);
     int preheat_steps = config->opt_int("preheat_steps");
     toggle_line("preheat_steps", have_ooze_prevention && (preheat_steps > 0));
 

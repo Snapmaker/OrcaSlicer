@@ -4121,17 +4121,20 @@ void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
 }
 
 void SSWCP_MachineConnect_Instance::sw_disconnect() {
+    bool need_reload = m_param_data.count("need_reload") ? m_param_data["need_reload"].get<bool>() : true;
     auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-    m_work_thread = std::thread([weak_self](){
+    m_work_thread = std::thread([weak_self, need_reload](){
         auto                       self = weak_self.lock();
 
-        bool res = wxGetApp().sm_disconnect_current_machine();
+        bool res = wxGetApp().sm_disconnect_current_machine(need_reload);
         if (!res) {
             if (self) {
                 self->m_status = 1;
                 self->m_msg    = "disconnected failed";
             }
         }
+
+       
 
         wxGetApp().CallAfter([]() {
             wxGetApp().app_config->clear_filament_extruder_map();
@@ -5243,7 +5246,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                                 if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type != "") {
                                     wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params, nozzle_diameters, device_name,
-                                                          id, userid]() {
+                                                          id, userid, reload_device_view]() {
                                         // 查询成功
                                         DeviceInfo info;
                                         info.ip        = ip;
@@ -5347,7 +5350,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                 m_ProfileJson["model"].push_back(new_item);
                                             }
 
-                                            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+                                            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(reload_device_view);
 
                                             dialog.SaveProfile();
                                             bool flag = false;
@@ -5500,7 +5503,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     }
 
                                     wxGetApp().app_config->set("use_new_connect", "true");
-                                    wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+                                    wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(reload_device_view);
                                     wxGetApp().mainframe->m_print_enable = true;
                                     wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
                                     // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面

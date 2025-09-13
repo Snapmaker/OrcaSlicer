@@ -843,7 +843,7 @@ public:
 
 
 public:
-    bool sm_disconnect_current_machine();
+    bool sm_disconnect_current_machine(bool need_reload_printerview = true);
 
 
 public:

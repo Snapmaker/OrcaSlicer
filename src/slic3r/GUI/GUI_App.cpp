@@ -7149,7 +7149,7 @@ void GUI_App::disassociate_url(std::wstring url_prefix)
 }
 
 
-bool GUI_App::sm_disconnect_current_machine()
+bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
 {
     std::shared_ptr<PrintHost> host = nullptr;
     wxGetApp().get_connect_host(host);
@@ -7160,7 +7160,7 @@ bool GUI_App::sm_disconnect_current_machine()
     }
 
     if (true) {
-        wxGetApp().CallAfter([this](){
+        wxGetApp().CallAfter([this, need_reload_printerview](){
             wxGetApp().app_config->set("use_new_connect", "false");
             /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
             p_config->set("print_host", "");*/
@@ -7187,7 +7187,7 @@ bool GUI_App::sm_disconnect_current_machine()
             json data = this->app_config->get_devices();
             wxGetApp().device_card_notify(data);
 
-            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(need_reload_printerview);
             wxGetApp().set_connect_host(nullptr);
 
             wxGetApp().preset_bundle->machine_filaments.clear();

@@ -1629,7 +1629,7 @@ void Sidebar::remove_unused_filament_combos(const size_t current_extruder_count)
     }
 }
 
-void Sidebar::update_all_preset_comboboxes()
+void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 {
     PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
     const auto print_tech = preset_bundle.printers.get_edited_preset().printer_technology();
@@ -1697,7 +1697,8 @@ void Sidebar::update_all_preset_comboboxes()
                                                                  MainFrame::PrintSelectType::eSendGcode;
             }
 
-            p_mainframe->load_printer_url(url, apikey);
+            if (reload_printer_view)
+                p_mainframe->load_printer_url(url, apikey);
 
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
@@ -1727,7 +1728,8 @@ void Sidebar::update_all_preset_comboboxes()
                 wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
-                wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                if (reload_printer_view)
+                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
             }
 
             if (!machine_connecting_btn->IsShown() && !is_test) {
@@ -1852,7 +1854,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
     case Preset::TYPE_PRINTER:
     {
         // update_nozzle_settings();
-        update_all_preset_comboboxes();
+        update_all_preset_comboboxes(false);
         p->show_preset_comboboxes();
 
         /* update bed shape */

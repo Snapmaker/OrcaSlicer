@@ -4,8 +4,73 @@
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#endif
 
 namespace Slic3r { namespace GUI {
+
+// 检测Windows系统是否支持UTF-8模式
+bool is_windows_utf8_mode()
+{
+#ifdef _WIN32
+    static bool checked = false;
+    static bool utf8_mode = false;
+    
+    if (!checked) {
+        // 检查系统是否启用了UTF-8模式
+        // 最可靠的方法：检查ANSI代码页是否为UTF-8
+        if (GetACP() == CP_UTF8) {
+            utf8_mode = true;
+        } else {
+            // 对于现代Windows系统（Windows 10 1903+），
+            // 即使没有全局启用UTF-8模式，文件系统API通常也能处理UTF-8路径
+            // 这里我们采用保守策略：只有在明确启用UTF-8模式时才返回true
+            utf8_mode = false;
+        }
+        checked = true;
+    }
+    
+    return utf8_mode;
+#else
+    return true; // 非Windows系统通常支持UTF-8
+#endif
+}
+
+// 辅助函数：将UTF-8字符串转换为适合文件系统操作的编码
+std::string utf8_to_filesystem_encoding(const std::string& utf8_str)
+{
+#ifdef _WIN32
+    if (utf8_str.empty()) return utf8_str;
+    
+    // 策略1：如果系统明确支持UTF-8模式，直接返回UTF-8字符串
+    if (is_windows_utf8_mode()) {
+        return utf8_str;
+    }
+    
+    // 策略2：传统模式需要转换为系统编码（GBK）
+    // 虽然某些情况下UTF-8路径可能成功，但为了确保兼容性，还是进行编码转换
+    // 将UTF-8转换为宽字符（UTF-16）
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) return utf8_str; // 转换失败，返回原字符串
+    
+    std::wstring wstr(wlen - 1, 0);
+    MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, &wstr[0], wlen);
+    
+    // 将宽字符转换为系统编码（GBK）
+    int len = WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return utf8_str; // 转换失败，返回原字符串
+    
+    std::string result(len - 1, 0);
+    WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), -1, &result[0], len, nullptr, nullptr);
+    
+    return result;
+#else
+    // 在非Windows系统上，UTF-8通常就是系统编码
+    return utf8_str;
+#endif
+}
 
 std::string url_get_param(const std::string& url, const std::string& key)
 {
@@ -634,10 +699,10 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
         return "";
     }
 
-    std::string trimmed_url = url;
+    wxString trimmed_url = wxString::FromUTF8(url);
 
     size_t question_mark = trimmed_url.find('?');
-    if (question_mark != std::string::npos) {
+    if (question_mark != wxString::npos) {
         trimmed_url = trimmed_url.substr(0, question_mark);
     }
 
@@ -645,7 +710,7 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
         trimmed_url = "/flutter_web/index.html"; // 默认首页
     } else if (trimmed_url.substr(0, 11) == "/localfile/") {
         auto real_path = trimmed_url.substr(11);
-        return std::string(wxString(real_path).ToUTF8());
+        return real_path.ToStdString(wxConvUTF8);
     }
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
@@ -655,9 +720,11 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
     }
 
     if (trimmed_url.find("flutter_web") == std::string::npos) {
-        return std::string(wxString(resources_dir() + trimmed_url).ToUTF8());
+        wxString res = wxString::FromUTF8(resources_dir()) + trimmed_url;
+        return res.ToStdString(wxConvUTF8);
     } else {
-        return std::string(wxString(data_dir() + trimmed_url).ToUTF8());
+        wxString res = wxString::FromUTF8(data_dir()) + trimmed_url;
+        return res.ToStdString(wxConvUTF8);
     }
 }
 
@@ -690,7 +757,10 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
 
 void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
 {
-    std::ifstream file(file_path, std::ios::binary);
+    // 将UTF-8路径转换为适合文件系统操作的编码，自动适配Windows的UTF-8模式
+    std::string system_file_path = utf8_to_filesystem_encoding(file_path);
+    
+    std::ifstream file(system_file_path, std::ios::binary);
     if (!file) {
         ResponseNotFound notFoundResponse;
         notFoundResponse.write_response(ssOut);

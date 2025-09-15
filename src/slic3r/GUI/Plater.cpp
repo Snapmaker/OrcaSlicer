@@ -1731,7 +1731,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
-                if (!is_sm_page) {
+                if (!is_sm_page && reload_printer_view) {
                     wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
                     is_sm_page = true;
                 }

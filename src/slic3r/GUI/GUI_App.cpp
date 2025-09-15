@@ -7191,7 +7191,7 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
             wxGetApp().set_connect_host(nullptr);
 
             wxGetApp().preset_bundle->machine_filaments.clear();
-            wxGetApp().load_current_presets();
+            // wxGetApp().load_current_presets();
 
         });
         

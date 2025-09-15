@@ -4122,9 +4122,32 @@ void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
 
 void SSWCP_MachineConnect_Instance::sw_disconnect() {
     bool need_reload = m_param_data.count("need_reload") ? m_param_data["need_reload"].get<bool>() : true;
+
+    std::string dev_id = m_param_data.count("dev_id") ? m_param_data["dev_id"] : "";
+
     auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-    m_work_thread = std::thread([weak_self, need_reload](){
+    m_work_thread = std::thread([weak_self, need_reload, dev_id](){
         auto                       self = weak_self.lock();
+
+        if (dev_id != "") {
+            DeviceInfo info;
+            if (wxGetApp().app_config->get_device_info(dev_id, info)) {
+                if (info.connected == false) {
+                    if (self) {
+                        self->handle_general_fail(-3, dev_id + " is not connected before disconnect!");
+                        return;
+                    }
+                }
+            } else {
+                if (self) {
+                    self->handle_general_fail(-1, dev_id + " is not exist!");
+                    return;
+                }
+            }
+        }
+        
+
+        
 
         bool res = wxGetApp().sm_disconnect_current_machine(need_reload);
         if (!res) {
@@ -4136,11 +4159,11 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
 
        
 
-        wxGetApp().CallAfter([]() {
+        /*wxGetApp().CallAfter([]() {
             wxGetApp().app_config->clear_filament_extruder_map();
             wxGetApp().preset_bundle->machine_filaments.clear();
             wxGetApp().load_current_presets();
-        });
+        });*/
 
         if (self) {
             self->send_to_js();
@@ -5350,7 +5373,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                 m_ProfileJson["model"].push_back(new_item);
                                             }
 
-                                            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(reload_device_view);
+                                            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
 
                                             dialog.SaveProfile();
                                             bool flag = false;

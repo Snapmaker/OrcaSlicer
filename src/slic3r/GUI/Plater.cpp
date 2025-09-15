@@ -1677,7 +1677,9 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         bool        is_test          = (test_preset_name == local_name);
 
 
-        if (!use_new_connection && !is_test) {
+        static bool is_sm_page = false;
+
+        if (!use_new_connection && !is_test && reload_printer_view) {
 
             connection_btn->Show();
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
@@ -1696,9 +1698,9 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
                                                                  MainFrame::PrintSelectType::eSendGcode;
             }
-
-            if (reload_printer_view)
-                p_mainframe->load_printer_url(url, apikey);
+            
+            p_mainframe->load_printer_url(url, apikey);
+            is_sm_page = false;
 
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
@@ -1728,8 +1730,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
-                if (reload_printer_view)
+                
+                if (!is_sm_page) {
                     wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                    is_sm_page = true;
+                }
+                    
             }
 
             if (!machine_connecting_btn->IsShown() && !is_test) {
@@ -1854,7 +1860,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
     case Preset::TYPE_PRINTER:
     {
         // update_nozzle_settings();
-        update_all_preset_comboboxes(false);
+        update_all_preset_comboboxes();
         p->show_preset_comboboxes();
 
         /* update bed shape */

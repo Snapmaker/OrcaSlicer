@@ -599,9 +599,9 @@ MqttClient::~MqttClient()
         is_reconnecting.store(false, std::memory_order_release);
         
         // 等待所有重连检查完成
-        while (pending_reconnect_checks.load(std::memory_order_acquire) > 0) {
+        /*while (pending_reconnect_checks.load(std::memory_order_acquire) > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
+        }*/
         
         // 如果客户端仍然连接，先断开连接
         if (client_ && client_->is_connected()) {

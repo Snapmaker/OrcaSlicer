@@ -1697,6 +1697,11 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                     apikey = cfg.opt_string("printhost_apikey");
                 print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
                                                                  MainFrame::PrintSelectType::eSendGcode;
+
+                if (url.find("127.0.0.1") != std::string::npos) {
+                    // 加载二代机页面
+                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=6");
+                }
             }
             
             p_mainframe->load_printer_url(url, apikey);

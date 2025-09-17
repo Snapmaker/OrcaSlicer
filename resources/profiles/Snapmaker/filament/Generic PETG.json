@@ -6,7 +6,7 @@
     "setting_id": "GFSG00_01",
     "instantiation": "true",
     "filament_max_volumetric_speed": [
-        "13"
+        "12"
     ],
     "filament_long_retractions_when_cut": [
         "1"
@@ -18,10 +18,10 @@
         "Snapmaker U1 (0.4 nozzle)"
     ],
     "filament_end_gcode": [
-        "; filament end gcode \n\n"
+        ""
     ],
     "filament_start_gcode": [
-        "; filament start gcode\n"
+        ""
     ],
     "enable_pressure_advance": [
         "1"
@@ -30,9 +30,24 @@
         "1"
     ],
     "filament_multitool_ramming_flow": [
-        "15"
+        "20"
     ],
     "filament_multitool_ramming_volume": [
-        "0.5"
+        "5"
+    ],
+    "filament_minimal_purge_on_wipe_tower": [
+        "50"
+    ],
+    "hot_plate_temp": [
+        "80"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "80"
+    ],
+    "pressure_advance": [
+        "0.04"
+    ],
+    "filament_vendor": [
+        "Generic"
     ]
 }

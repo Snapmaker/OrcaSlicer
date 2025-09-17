@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.34.02",
+  "version": "02.02.35.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -433,6 +433,10 @@
       "sub_path": "filament/fdm_filament_pla_generic.json"
     },
     {
+      "name": "fdm_filament_pctg_generic",
+      "sub_path": "filament/fdm_filament_pctg_generic.json"
+    },
+    {
       "name": "Generic Support For PLA @base",
       "sub_path": "filament/Generic Support For PLA @base.json"
     },
@@ -471,6 +475,70 @@
     {
       "name": "Generic TPU",
       "sub_path": "filament/Generic TPU.json"
+    },
+    {
+      "name": "Generic PCTG @base",
+      "sub_path": "filament/Generic PCTG @base.json"
+    },
+    {
+      "name": "Generic PCTG",
+      "sub_path": "filament/Generic PCTG.json"
+    },
+    {
+      "name": "Generic PETG HF @base",
+      "sub_path": "filament/Generic PETG HF @base.json"
+    },
+    {
+      "name": "Generic PETG HF",
+      "sub_path": "filament/Generic PETG HF.json"
+    },
+    {
+      "name": "Generic PETG-CF @base",
+      "sub_path": "filament/Generic PETG-CF @base.json"
+    },
+    {
+      "name": "Generic PETG-CF",
+      "sub_path": "filament/Generic PETG-CF.json"
+    },
+    {
+      "name": "Generic PETG-GF @base",
+      "sub_path": "filament/Generic PETG-GF @base.json"
+    },
+    {
+      "name": "Generic PETG-GF",
+      "sub_path": "filament/Generic PETG-GF.json"
+    },
+    {
+      "name": "Generic PLA High Speed @base",
+      "sub_path": "filament/Generic PLA High Speed @base.json"
+    },
+    {
+      "name": "Generic PLA High Speed",
+      "sub_path": "filament/Generic PLA High Speed.json"
+    },
+    {
+      "name": "Generic PLA Silk @base",
+      "sub_path": "filament/Generic PLA Silk @base.json"
+    },
+    {
+      "name": "Generic PLA Silk",
+      "sub_path": "filament/Generic PLA Silk.json"
+    },
+    {
+      "name": "Generic PLA @base",
+      "sub_path": "filament/Generic PLA @base.json"
+    },
+    {
+      "name": "Generic PLA",
+      "sub_path": "filament/Generic PLA.json"
+    },
+    {
+      "name": "Generic PLA-CF @base",
+      "sub_path": "filament/Generic PLA-CF @base.json"
+    },
+    {
+      "name": "Generic PLA-CF",
+      "sub_path": "filament/Generic PLA-CF.json"
     },
 
 

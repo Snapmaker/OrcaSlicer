@@ -12,10 +12,10 @@
         "1"
     ],
     "filament_end_gcode": [
-        "; filament end gcode \n\n"
+        "\n\n"
     ],
     "filament_start_gcode": [
-        "; filament start gcode\n"
+        ""
     ],
     "nozzle_temperature": [
         "230"
@@ -31,5 +31,8 @@
     ],
     "filament_multitool_ramming_volume": [
         "0.5"
+    ],
+    "filament_vendor": [
+        "Generic"
     ]
 }

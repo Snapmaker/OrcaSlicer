@@ -1,34 +1,39 @@
 {
     "type": "filament",
-    "name": "Generic TPU",
-    "inherits": "fdm_filament_tpu_generic",
+    "name": "Generic PCTG",
+    "inherits": "Generic PCTG @base",
     "from": "system",
-    "filament_id": "GFU99",
-    "setting_id": "GFSR99",
+    "setting_id": "GFSG97_001",
     "instantiation": "true",
-    "filament_max_volumetric_speed": [
-        "3.2"
-    ],
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
-    ],
-    "filament_start_gcode": [
-        "; filament start gcode\n"
     ],
     "enable_pressure_advance": [
         "1"
     ],
     "filament_end_gcode": [
-        "; filament end gcode \n\n"
+        ""
+    ],
+    "filament_minimal_purge_on_wipe_tower": [
+        "50"
     ],
     "filament_multitool_ramming": [
         "1"
     ],
-    "filament_multitool_ramming_flow": [
-        "3.2"
-    ],
     "filament_multitool_ramming_volume": [
-        "0.5"
+        "5"
+    ],
+    "filament_start_gcode": [
+        ""
+    ],
+    "hot_plate_temp": [
+        "95"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "95"
+    ],
+    "pressure_advance": [
+        "0.04"
     ],
     "filament_vendor": [
         "Generic"

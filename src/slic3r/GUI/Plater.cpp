@@ -1780,7 +1780,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         }
     } else {
         // Orca: combobox don't have the btDefault option, so we need to -1
-        m_bed_type_list->SelectAndNotify(btPEI - 1);
+        m_bed_type_list->SelectAndNotify(btPCT - 1);
         m_bed_type_list->Disable();
     }
 

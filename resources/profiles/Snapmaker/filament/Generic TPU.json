@@ -28,9 +28,12 @@
         "3.2"
     ],
     "filament_multitool_ramming_volume": [
-        "0.5"
+        "0.1"
     ],
     "filament_vendor": [
         "Generic"
+    ],
+    "filament_retract_length_toolchange": [
+        "2"
     ]
 }

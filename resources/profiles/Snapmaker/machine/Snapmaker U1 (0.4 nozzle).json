@@ -195,6 +195,6 @@
     ],
     "ramming_pressure_advance_value": "0.02",
     "tool_change_temprature_wait": "0",
-    "printer_notes": "1、修改幅面坐标，原点坐标\n2、修改换头时间，5S",
+    "printer_notes": "",
     "machine_pause_gcode": "M600"
 }

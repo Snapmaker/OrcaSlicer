@@ -21,5 +21,5 @@
     "wipe_tower_cone_angle": "15",
     "prime_tower_brim_width": "5",
     "initial_layer_print_height": "0.25",
-    "min_width_top_surface": "0"
+    "min_width_top_surface": "300%"
 }

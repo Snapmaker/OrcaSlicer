@@ -37,5 +37,14 @@
     ],
     "pressure_advance": [
         "0.03"
+    ],
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_volume": [
+        "5"
+    ],
+    "filament_retract_length_toolchange": [
+        "10"
     ]
 }

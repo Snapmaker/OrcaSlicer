@@ -334,5 +334,9 @@
   "dialog_filament_type_none_tips": "未识别到耗材，请在设备上挂载耗材或编辑耗材信息",
   "Features are under development, please stay tuned": "功能开发中, 敬请期待",
 
-  "No time-lapse video": "暂无延时摄影视频"
+  "No time-lapse video": "暂无延时摄影视频",
+
+  "Failed to obtain connection authorization": "获取连接授权失败",
+  "The existing device connection is connecting, please wait":  "当前已有设备连接正在连接，请稍候"
+
 }

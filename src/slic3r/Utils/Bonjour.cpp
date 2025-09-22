@@ -677,6 +677,24 @@ UdpSocket::UdpSocket( Bonjour::ReplyFn replyfn, const asio::ip::address& multica
 	}
 }
 
+UdpSocket::~UdpSocket()
+{
+	try {
+		// 取消所有异步操作
+		socket.cancel();
+		
+		// 关闭socket
+		if (socket.is_open()) {
+			socket.close();
+		}
+		
+		BOOST_LOG_TRIVIAL(debug) << "UdpSocket destroyed, socket closed";
+	}
+	catch (const std::exception& e) {
+		BOOST_LOG_TRIVIAL(error) << "Error closing socket in destructor: " << e.what();
+	}
+}
+
 void UdpSocket::send()
 {
 	try {
@@ -948,6 +966,17 @@ void Bonjour::priv::lookup_perform()
 	catch (std::exception& e) {
 		BOOST_LOG_TRIVIAL(error) << e.what();
 	}
+	
+	// 清理sockets，释放内存
+	for (auto* socket : sockets) {
+		if (socket) {
+			// 先取消所有异步操作
+			socket->cancel();
+			// 然后释放内存
+			delete socket;
+		}
+	}
+	sockets.clear();
 }
 
 void Bonjour::priv::resolve_perform()
@@ -1042,6 +1071,17 @@ void Bonjour::priv::resolve_perform()
 	catch (std::exception& e) {
 		BOOST_LOG_TRIVIAL(error) << e.what();
 	}
+	
+	// 清理sockets，释放内存
+	for (auto* socket : sockets) {
+		if (socket) {
+			// 先取消所有异步操作
+			socket->cancel();
+			// 然后释放内存
+			delete socket;
+		}
+	}
+	sockets.clear();
 }
 
 

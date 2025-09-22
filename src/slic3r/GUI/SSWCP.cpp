@@ -1627,6 +1627,7 @@ void SSWCP_MachineFind_Instance::sw_StopMachineFind()
     try {
         SSWCP::stop_machine_find();
         send_to_js();
+        finish_job();
     }
     catch (std::exception& e) {
         handle_general_fail();

@@ -335,11 +335,12 @@
 
   "No time-lapse video": "暂无延时摄影视频",
 
+  "Bind success": "绑定成功",
   "Device connect error, please return to device page and connect again.": "设备连接异常，请返回“我的设备”页，重新发起连接",
   "Failed to obtain connection authorization": "获取连接授权失败",
   "The existing device connection is connecting, please wait":  "当前已有设备连接正在连接，请稍候",
   "The device authorization has been removed, please add the device again.": "设备授权已移除，请重新添加设备",
   "The device communication failed, please check whether the device is normal and unresponsive.": "设备通信失败，请检查设备是否正常",
-  "The network is disconnected, please check whether the network environment of the software is normal.": "网络断开，请检查软件的网络环境是否正常"
-
+  "The network is disconnected, please check whether the network environment of the software is normal.": "网络断开，请检查软件的网络环境是否正常",
+  "this command requires the printer to be online, currently the printer is not online": "当前设备不在线"
 }

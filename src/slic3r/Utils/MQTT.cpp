@@ -598,10 +598,17 @@ MqttClient::~MqttClient()
         connected_.store(false, std::memory_order_release);
         is_reconnecting.store(false, std::memory_order_release);
         
-        // 等待所有重连检查完成
-        /*while (pending_reconnect_checks.load(std::memory_order_acquire) > 0) {
+        // 等待所有重连检查完成，但设置超时避免卡死
+        int timeout_count = 0;
+        const int max_timeout = 20; // 最多等待5秒 (50 * 100ms)
+        while (pending_reconnect_checks.load(std::memory_order_acquire) > 0 && timeout_count < max_timeout) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }*/
+            timeout_count++;
+        }
+        
+        if (timeout_count >= max_timeout) {
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 等待重连检查超时，强制继续析构";
+        }
         
         // 如果客户端仍然连接，先断开连接
         if (client_ && client_->is_connected()) {

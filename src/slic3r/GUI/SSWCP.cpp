@@ -1460,9 +1460,10 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
         std::vector<string> protocols;
 
         float last_time = -1;
-        if (m_param_data.count("last_time") && m_param_data.is_number()) {
+        if (m_param_data.count("last_time") && m_param_data["last_time"].is_number()) {
             last_time = m_param_data["last_time"].get<float>();
         }
+        last_time = -1;
 
         // 目前只支持通过mdns协议搜索snapmaker,prusalink，之后可以再扩充
         protocols.push_back("mdns");

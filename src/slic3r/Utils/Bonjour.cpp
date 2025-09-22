@@ -1114,7 +1114,14 @@ Bonjour::Bonjour(Bonjour &&other) : p(std::move(other.p)) {}
 Bonjour::~Bonjour()
 {
 	if (p && p->io_thread.joinable()) {
-		p->io_thread.detach();
+		// 检查是否在同一个线程中，避免死锁
+		if (p->io_thread.get_id() != std::this_thread::get_id()) {
+			// 等待线程完成，确保资源正确清理
+			p->io_thread.join();
+		} else {
+			// 如果在同一个线程中，使用detach避免死锁
+			p->io_thread.detach();
+		}
 	}
 }
 

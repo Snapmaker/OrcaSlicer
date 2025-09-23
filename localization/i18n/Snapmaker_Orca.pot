@@ -14483,6 +14483,21 @@ msgstr ""
 msgid "User cancelled."
 msgstr ""
 
+msgid "Nozzle Bind"
+msgstr ""
+
+msgid "The target machine model has been detected as"
+msgstr ""
+
+msgid "Please bind the nozzle information"
+msgstr ""
+
+msgid "Machine Disconnected"
+msgstr ""
+
+msgid "Connection has been disconnected and recovery attempt failed. Please reconnect."
+msgstr ""
+
 #: resources/data/hints.ini: [hint:Precise wall]
 msgid "Precise wall\nDid you know that turning on precise wall can improve precision and layer consistency?"
 msgstr ""

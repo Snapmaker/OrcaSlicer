@@ -5230,9 +5230,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     json data = devices;
                                     wxGetApp().device_card_notify(data);
 
-                                    /*MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
+                                    MessageDialog msg_window(nullptr, " " + _L("Connection has been disconnected and recovery attempt failed. Please reconnect.") + "\n", _L("Machine Disconnected"),
                                                              wxICON_QUESTION | wxOK);
-                                    msg_window.ShowModal();*/
+                                    msg_window.ShowModal();
 
                                     wxGetApp().set_connect_host(nullptr);
 

@@ -15252,6 +15252,21 @@ msgstr "在尝试登录时发生了异常，请重试。"
 msgid "User cancelled."
 msgstr "用户已取消。"
 
+msgid "Nozzle Bind"
+msgstr "喷嘴信息绑定"
+
+msgid "The target machine model has been detected as"
+msgstr "检测目标机型为"
+
+msgid "Please bind the nozzle information"
+msgstr "请绑定喷嘴信息"
+
+msgid "Machine Disconnected"
+msgstr "设备断联"
+
+msgid "Connection has been disconnected and recovery attempt failed. Please reconnect."
+msgstr "设备已断联，且尝试重连失败，请尝试重新连接"
+
 #: resources/data/hints.ini: [hint:Precise wall]
 msgid ""
 "Precise wall\n"

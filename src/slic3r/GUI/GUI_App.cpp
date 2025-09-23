@@ -3519,7 +3519,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     m_is_recreating_gui = false;
 
     //// 重新加载首页和设备页
-    sm_disconnect_current_machine();
+    sm_disconnect_current_machine(true);
     auto devices = wxGetApp().app_config->get_devices();
     for (auto iter = devices.begin(); iter != devices.end();) {
         if (iter->link_mode == "wan") {
@@ -3528,6 +3528,54 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
             iter++;
         }
     }
+
+
+
+    // wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(true);
+
+    // auto url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+    // wxGetApp().mainframe->load_printer_url(url);
+
+    bool use_new_connection = wxGetApp().app_config->get("use_new_connect") == "true";
+
+    const auto& edit_preset = preset_bundle->printers.get_edited_preset();
+
+    std::string local_name = "";
+    if (edit_preset.is_system) {
+        local_name = edit_preset.name;
+    } else {
+        const auto& base_preset = preset_bundle->printers.get_preset_base(edit_preset);
+        if (base_preset)
+            local_name = base_preset->name;
+        else
+            local_name = "";
+    }
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+
+    // Snapmaker U1
+    std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
+    bool        is_test          = (test_preset_name == local_name);
+
+    
+    
+
+    if (!preset_bundle->is_bbl_vendor()) {
+        if (is_test) {
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+            auto     real_url = wxGetApp().get_international_url(url);
+            mainframe->load_printer_url(real_url);
+        } else {
+            std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
+            auto url = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
+            mainframe->load_printer_url(url);
+        }
+    }
+
+
+
+
+
     // wcp订阅
     wxGetApp().device_card_notify(devices);
     

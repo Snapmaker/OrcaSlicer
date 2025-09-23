@@ -1458,6 +1458,9 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     m_sn_mtx.unlock();
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 重置SN";
     wcp_loger.add_log("重置SN", false, "", "Moonraker_Mqtt", "info");
+    
+    // 等待一段时间让MQTT客户端完成清理，避免内存访问问题
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     m_mqtt_client_tls.reset();
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] MQTTS客户端已重置";
     wcp_loger.add_log("MQTTS客户端已重置", false, "", "Moonraker_Mqtt", "info");    

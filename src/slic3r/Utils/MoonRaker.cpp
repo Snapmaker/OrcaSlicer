@@ -52,7 +52,7 @@ std::string get_host_from_url(const std::string& url_in)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始解析URL获取主机信息: " << url_in;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始解析URL获取主机信息: " << url_in;
     wcp_loger.add_log("开始解析URL获取主机信息: " + url_in, false, "", "Moonraker_Mqtt", "info");
     
 
@@ -61,7 +61,7 @@ std::string get_host_from_url(const std::string& url_in)
     size_t double_slash = url.find("//");
     if (double_slash == std::string::npos) {
         url = "http://" + url;
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 添加默认协议前缀，修改后的URL: " << url;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 添加默认协议前缀，修改后的URL: " << url;
         wcp_loger.add_log("添加默认协议前缀，修改后的URL: " + url, false, "", "Moonraker_Mqtt", "info");
     }
     
@@ -79,12 +79,12 @@ std::string get_host_from_url(const std::string& url_in)
                 rc = curl_url_get(hurl, CURLUPART_PORT, &port, 0);
                 if (rc == CURLUE_OK && port != nullptr) {
                     out = std::string(host) + ":" + port;
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 成功提取主机和端口: " << out;
+                    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 成功提取主机和端口: " << out;
                     wcp_loger.add_log("成功提取主机和端口 " + out, false, "", "Moonraker_Mqtt", "info");
                     curl_free(port);
                 } else {
                     out = host;
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 成功提取主机（无端口）: " << out;
+                    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 成功提取主机（无端口）: " << out;
                     wcp_loger.add_log("成功提取主机(无端口): " + out, false, "", "Moonraker_Mqtt", "info");
                     curl_free(host);
                 }
@@ -105,7 +105,7 @@ std::string get_host_from_url(const std::string& url_in)
     }
        
     
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] URL解析完成，返回结果: " << out;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] URL解析完成，返回结果: " << out;
     wcp_loger.add_log("URL解析完成，返回结果: " + out, false, "", "Moonraker_Mqtt", "info");
     return out;
 }
@@ -115,13 +115,13 @@ std::string substitute_host(const std::string& orig_addr, std::string sub_addr)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始替换主机地址，原地址: " << orig_addr << ", 新地址: " << sub_addr;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始替换主机地址，原地址: " << orig_addr << ", 新地址: " << sub_addr;
     wcp_loger.add_log("开始替换主机地址，原地址: " + orig_addr + ", 新地址: " + sub_addr, false, "", "Moonraker_Mqtt", "info");
     
     // put ipv6 into [] brackets
     if (sub_addr.find(':') != std::string::npos && sub_addr.at(0) != '[') {
         sub_addr = "[" + sub_addr + "]";
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 检测到IPv6地址，添加方括号: " << sub_addr;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 检测到IPv6地址，添加方括号: " << sub_addr;
         wcp_loger.add_log("检测到IPv6地址，添加方括号: " + sub_addr, false, "", "Moonraker_Mqtt", "info");
     }
 
@@ -168,7 +168,7 @@ std::string substitute_host(const std::string& orig_addr, std::string sub_addr)
                 rc = curl_url_get(hurl, CURLUPART_URL, &url, 0);
                 if (rc == CURLUE_OK) {
                     out = url;
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 主机地址替换成功: " << out;
+                    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 主机地址替换成功: " << out;
                     wcp_loger.add_log("主机地址替换成功: " + out, false, "", "Moonraker_Mqtt", "info");
                     curl_free(url);
                 } else {
@@ -200,7 +200,7 @@ std::string substitute_host(const std::string& orig_addr, std::string sub_addr)
 std::string escape_string(const std::string& unescaped)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始URL编码字符串，长度: " << unescaped.size();
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 开始URL编码字符串，长度: " << unescaped.size();
     wcp_loger.add_log("开始URL编码字符串，长度: " + std::to_string(unescaped.size()), false, "", "Moonraker_Mqtt", "info");
 
     std::string ret_val;
@@ -209,7 +209,7 @@ std::string escape_string(const std::string& unescaped)
         char* decoded = curl_easy_escape(curl, unescaped.c_str(), unescaped.size());
         if (decoded) {
             ret_val = std::string(decoded);
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] URL编码成功";
+            BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] URL编码成功";
             wcp_loger.add_log("URL编码成功: ", false, "", "Moonraker_Mqtt", "info");
             curl_free(decoded);
         } else {
@@ -228,7 +228,7 @@ std::string escape_string(const std::string& unescaped)
 std::string escape_path_by_element(const boost::filesystem::path& path)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始路径元素编码: " << path.string();
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 开始路径元素编码: " << path.string();
     wcp_loger.add_log("开始路径元素编码: " + path.string(), false, "", "Moonraker_Mqtt", "info");
     
     std::string             ret_val = escape_string(path.filename().string());
@@ -240,7 +240,7 @@ std::string escape_path_by_element(const boost::filesystem::path& path)
         parent  = parent.parent_path();
     }
     
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 路径编码完成: " << ret_val;
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 路径编码完成: " << ret_val;
     wcp_loger.add_log("路径编码完成: " + ret_val, false, "", "Moonraker_Mqtt", "info");
     return ret_val;
 }
@@ -253,7 +253,7 @@ Moonraker::Moonraker(DynamicPrintConfig* config)
     , m_ssl_revoke_best_effort(config->opt_bool("printhost_ssl_ignore_revoke"))
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 初始化Moonraker实例，主机: " << m_host;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 初始化Moonraker实例，主机: " << m_host;
     wcp_loger.add_log("初始化Moonraker实例，主机: " + m_host, false, "", "Moonraker_Mqtt", "info");
 }
 
@@ -264,7 +264,7 @@ const char* Moonraker::get_name() const { return "Moonraker"; }
 bool Moonraker::test_with_resolved_ip(wxString& msg) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始使用解析的IP进行测试";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始使用解析的IP进行测试";
     wcp_loger.add_log("开始使用解析的IP进行测试", false, "", "Moonraker_Mqtt", "info");
     
     // Since the request is performed synchronously here,
@@ -275,7 +275,7 @@ bool Moonraker::test_with_resolved_ip(wxString& msg) const
     auto url = substitute_host(make_url("api/version"), GUI::into_u8(msg));
     msg.Clear();
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息，URL: %2%") % name % url;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息，URL: %2%") % name % url;
     wcp_loger.add_log(name + std::string(": 获取版本信息，URL: ") + url, false, "", "Moonraker_Mqtt", "info");
 
     std::string host = get_host_from_url(m_host);
@@ -298,7 +298,7 @@ bool Moonraker::test_with_resolved_ip(wxString& msg) const
             msg = format_error(body, error, status);
         })
         .on_complete([&, this](std::string body, unsigned) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息成功: %2%") % name % body;
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息成功: %2%") % name % body;
             wcp_loger.add_log(std::string(name) + ": 获取版本信息成功: " + body, false, "", "Moonraker_Mqtt", "info");
 
             try {
@@ -320,7 +320,7 @@ bool Moonraker::test_with_resolved_ip(wxString& msg) const
                     wcp_loger.add_log("版本文本验证失败", false, "", "Moonraker_Mqtt", "error");
                     msg = GUI::format_wxstr(_L("Mismatched type of print host: %s"), (text ? *text : name));
                 } else {
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 版本验证成功";
+                    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 版本验证成功";
                     wcp_loger.add_log("版本验证成功", false, "", "Moonraker_Mqtt", "info");
                 }
             } catch (const std::exception& e) {
@@ -333,7 +333,7 @@ bool Moonraker::test_with_resolved_ip(wxString& msg) const
         .ssl_revoke_best_effort(m_ssl_revoke_best_effort)
         .perform_sync();
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] IP测试完成，结果: " << (res ? "成功" : "失败");
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] IP测试完成，结果: " << (res ? "成功" : "失败");
     wcp_loger.add_log("IP测试完成，结果: " + std::string(res ? "成功" : "失败"), false, "", "Moonraker_Mqtt", "info");
     return res;
 }
@@ -341,7 +341,7 @@ bool Moonraker::test_with_resolved_ip(wxString& msg) const
 
 bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, json& response) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始获取机器信息，目标数量: " << targets.size();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始获取机器信息，目标数量: " << targets.size();
     wcp_loger.add_log("开始获取机器信息，目标数量: " + std::to_string(targets.size()), false, "", "Moonraker_Mqtt", "info");
 
     
@@ -359,7 +359,7 @@ bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::v
             value += pair.second[i];
         }
         http.form_add(pair.first, value);
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 添加查询参数: " << pair.first << " = " << value;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 添加查询参数: " << pair.first << " = " << value;
         wcp_loger.add_log("添加查询参数: " + pair.first + " = " + value, false, "", "Moonraker_Mqtt", "info");
     }
 
@@ -376,7 +376,7 @@ bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::v
             }
         })
         .on_complete([&](std::string body, unsigned) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 获取机器信息成功";
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 获取机器信息成功";
             wcp_loger.add_log("获取机器信息成功", false, "", "Moonraker_Mqtt", "info");
             try {
                 response = json::parse(body);
@@ -393,7 +393,7 @@ bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::v
 bool Moonraker::send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始发送G代码，数量: " << codes.size();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始发送G代码，数量: " << codes.size();
     wcp_loger.add_log("开始发送G代码，数量: " + std::to_string(codes.size()), false, "", "Moonraker_Mqtt", "info");
     
     bool res = true;
@@ -401,7 +401,7 @@ bool Moonraker::send_gcodes(const std::vector<std::string>& codes, std::string& 
     for (const auto code : codes) {
         param += "\n";
         param += code;
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 添加G代码: " << code;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 添加G代码: " << code;
         wcp_loger.add_log("添加G代码: " + code, false, "", "Moonraker_Mqtt", "info");
     }
     auto url = make_url("printer/gcode/script");
@@ -414,7 +414,7 @@ bool Moonraker::send_gcodes(const std::vector<std::string>& codes, std::string& 
             res = false;    
         })
         .on_complete([&](std::string body, unsigned){
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] G代码发送成功";
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] G代码发送成功";
             wcp_loger.add_log("G代码发送成功", false, "", "Moonraker_Mqtt", "info");
             res = true;
         })
@@ -426,7 +426,7 @@ bool Moonraker::send_gcodes(const std::vector<std::string>& codes, std::string& 
 bool Moonraker::test(wxString& msg) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始连接测试";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始连接测试";
     wcp_loger.add_log("开始连接测试", false, "", "Moonraker_Mqtt", "info");
     
     //// test
@@ -447,7 +447,7 @@ bool Moonraker::test(wxString& msg) const
     bool res = true;
     auto url = make_url("printer/info");
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息，URL: %2%") % name % url;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息，URL: %2%") % name % url;
     wcp_loger.add_log(name + std::string(": 获取版本信息，URL: ") + url, false, "", "Moonraker_Mqtt", "info");
     // Here we do not have to add custom "Host" header - the url contains host filled by user and libCurl will set the header by itself.
     auto http = Http::get(std::move(url));
@@ -460,7 +460,7 @@ bool Moonraker::test(wxString& msg) const
             msg = format_error(body, error, status);
         })
         .on_complete([&, this](std::string body, unsigned) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息成功: %2%") % name % body;
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 获取版本信息成功: %2%") % name % body;
             wcp_loger.add_log(name + std::string(": 获取版本信息成功: ") + body, false, "", "Moonraker_Mqtt", "info");
 
             //try {
@@ -491,14 +491,14 @@ bool Moonraker::test(wxString& msg) const
         .on_ip_resolve([&](std::string address) {
             // Workaround for Windows 10/11 mDNS resolve issue, where two mDNS resolves in succession fail.
             // Remember resolved address to be reused at successive REST API call.
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] IP解析成功: " << address;
+            BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] IP解析成功: " << address;
             wcp_loger.add_log("IP解析成功: " + address, false, "", "Moonraker_Mqtt", "info");
             msg = GUI::from_u8(address);
         })
 #endif // WIN32
         .perform_sync();
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 连接测试完成，结果: " << (res ? "成功" : "失败");
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 连接测试完成，结果: " << (res ? "成功" : "失败");
     wcp_loger.add_log("连接测试完成，结果: " + std::string((res ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
     return res;
 }
@@ -517,12 +517,12 @@ wxString Moonraker::get_test_failed_msg(wxString& msg) const
 bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, ErrorFn error_fn, InfoFn info_fn) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始文件上传，源文件: " << upload_data.source_path.string() 
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始文件上传，源文件: " << upload_data.source_path.string() 
                            << ", 目标路径: " << upload_data.upload_path.string();
     wcp_loger.add_log("开始文件上传，源文件: " + upload_data.source_path.string() + ", 目标路径: " + upload_data.upload_path.string(), false, "", "Moonraker_Mqtt", "info");
     // 依赖flutter，先放开
     if (upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 上传后需要开始打印，显示预打印对话框";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 上传后需要开始打印，显示预打印对话框";
         wcp_loger.add_log("上传后需要开始打印，显示预打印对话框", false, "", "Moonraker_Mqtt", "info");
         // 创建 promise 和 future 用于线程同步
         std::promise<bool> promise;
@@ -536,7 +536,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
             dialog.set_display_file_name(upload_data.upload_path.string());
             bool res = dialog.run();
 
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 预打印对话框结果: " << (res ? "确认" : "取消");
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 预打印对话框结果: " << (res ? "确认" : "取消");
             wcp_loger.add_log("预打印对话框结果: " + std::string((res ? "确认" : "取消")), false, "", "Moonraker_Mqtt", "info");
             // 设置结果
             promise.set_value(res);
@@ -546,7 +546,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
         bool flag = future.get();
 
         if (!flag) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 用户取消了打印，终止上传";
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 用户取消了打印，终止上传";
             wcp_loger.add_log("用户取消了打印，终止上传", false, "", "Moonraker_Mqtt", "info");
             Http::Progress progress(0, 0, 0, 0, "");
             bool           cancel = true;
@@ -556,11 +556,11 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
     }
 
 #ifndef WIN32
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 使用主机名上传（非Windows）";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用主机名上传（非Windows）";
     wcp_loger.add_log("使用主机名上传（非Windows）", false, "", "Moonraker_Mqtt", "info");
     return upload_inner_with_host(std::move(upload_data), prorgess_fn, error_fn, info_fn);
 #else
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] Windows平台，开始IP解析流程";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Windows平台，开始IP解析流程";
     wcp_loger.add_log("Windows平台，开始IP解析流程", false, "", "Moonraker_Mqtt", "info");
     std::string host = get_host_from_url(m_host);
 
@@ -569,11 +569,11 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
     boost::system::error_code             ec;
     boost::asio::ip::address              host_ip = boost::asio::ip::make_address(host, ec);
     if (!ec) {
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 主机已是IP地址: " << host_ip.to_string();
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 主机已是IP地址: " << host_ip.to_string();
         wcp_loger.add_log("主机已是IP地址: " + host_ip.to_string(), false, "", "Moonraker_Mqtt", "info");
         resolved_addr.push_back(host_ip);
     } else if (GUI::get_app_config()->get_bool("allow_ip_resolve") && boost::algorithm::ends_with(host, ".local")) {
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始解析.local域名: " << host;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 开始解析.local域名: " << host;
         wcp_loger.add_log("开始解析.local域名: " + host, false, "", "Moonraker_Mqtt", "info");
         Bonjour("Moonraker")
             .set_hostname(host)
@@ -583,7 +583,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
                 for (const auto& rpl : replies) {
                     boost::asio::ip::address ip(rpl.ip);
                     ra.emplace_back(ip);
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 解析到IP地址: " << rpl.ip;
+                    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 解析到IP地址: " << rpl.ip;
                     wcp_loger.add_log("解析到IP地址: " + rpl.ip.to_string(), false, "", "Moonraker_Mqtt", "info");
                 }
             })
@@ -599,19 +599,19 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
         return upload_inner_with_host(std::move(upload_data), prorgess_fn, error_fn, info_fn);
     } else if (resolved_addr.size() == 1) {
         // one address resolved - upload there
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 解析到单个地址，开始上传: " << resolved_addr.front().to_string();
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 解析到单个地址，开始上传: " << resolved_addr.front().to_string();
         wcp_loger.add_log("解析到单个地址，开始上传: " + resolved_addr.front().to_string(), false, "", "Moonraker_Mqtt", "info");
         return upload_inner_with_resolved_ip(std::move(upload_data), prorgess_fn, error_fn, info_fn, resolved_addr.front());
     } else if (resolved_addr.size() == 2 && resolved_addr[0].is_v4() != resolved_addr[1].is_v4()) {
         // there are just 2 addresses and 1 is ip_v4 and other is ip_v6
         // try sending to both. (Then if both fail, show both error msg after second try)
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 解析到IPv4和IPv6地址，依次尝试上传";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 解析到IPv4和IPv6地址，依次尝试上传";
         wcp_loger.add_log("解析到IPv4和IPv6地址，依次尝试上传", false, "", "Moonraker_Mqtt", "info");
         wxString error_message;
         if (!upload_inner_with_resolved_ip(
                 std::move(upload_data), prorgess_fn,
                 [&msg = error_message, resolved_addr, &wcp_loger](wxString error) { 
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 第一个IP上传失败: " << resolved_addr.front().to_string();
+                    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 第一个IP上传失败: " << resolved_addr.front().to_string();
                     wcp_loger.add_log("第一个IP上传失败: " + resolved_addr.front().to_string(), false, "", "Moonraker_Mqtt", "warning");
                     msg = GUI::format_wxstr("%1%: %2%", resolved_addr.front(), error); 
                 },
@@ -619,7 +619,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
             !upload_inner_with_resolved_ip(
                 std::move(upload_data), prorgess_fn,
                 [&msg = error_message, resolved_addr, &wcp_loger](wxString error) {
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 第二个IP上传失败: " << resolved_addr.back().to_string();
+                    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 第二个IP上传失败: " << resolved_addr.back().to_string();
                     wcp_loger.add_log("第二个IP上传失败: " + resolved_addr.back().to_string(), false, "", "Moonraker_Mqtt", "warning");
                     msg += GUI::format_wxstr("\n%1%: %2%", resolved_addr.back(), error);
                 },
@@ -629,21 +629,21 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
             error_fn(error_message);
             return false;
         }
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 至少一个IP地址上传成功";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 至少一个IP地址上传成功";
         wcp_loger.add_log("至少一个IP地址上传成功", false, "", "Moonraker_Mqtt", "info");
         return true;
     } else {
         // There are multiple addresses - user needs to choose which to use.
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 解析到多个地址（" << resolved_addr.size() << "个），需要用户选择";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 解析到多个地址（" << resolved_addr.size() << "个），需要用户选择";
         wcp_loger.add_log("解析到多个地址（" + std::to_string(resolved_addr.size()) + "个），需要用户选择", false, "", "Moonraker_Mqtt", "info");
         size_t       selected_index = resolved_addr.size();
         IPListDialog dialog(nullptr, boost::nowide::widen(m_host), resolved_addr, selected_index);
         if (dialog.ShowModal() == wxID_OK && selected_index < resolved_addr.size()) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 用户选择IP地址: " << resolved_addr[selected_index].to_string();
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 用户选择IP地址: " << resolved_addr[selected_index].to_string();
             wcp_loger.add_log("用户选择IP地址: " + resolved_addr[selected_index].to_string(), false, "", "Moonraker_Mqtt", "info");
             return upload_inner_with_resolved_ip(std::move(upload_data), prorgess_fn, error_fn, info_fn, resolved_addr[selected_index]);
         } else {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 用户取消IP选择";
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 用户取消IP选择";
             wcp_loger.add_log("用户取消IP选择", false, "", "Moonraker_Mqtt", "info");
         }
     }
@@ -656,7 +656,7 @@ bool Moonraker::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, Erro
 bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, ProgressFn prorgess_fn, ErrorFn error_fn, InfoFn info_fn, const boost::asio::ip::address& resolved_addr) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 使用解析的IP地址上传: " << resolved_addr.to_string();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用解析的IP地址上传: " << resolved_addr.to_string();
     wcp_loger.add_log("使用解析的IP地址上传: " + resolved_addr.to_string(), false, "", "Moonraker_Mqtt", "info");
     info_fn(L"resolve", boost::nowide::widen(resolved_addr.to_string()));
 
@@ -679,7 +679,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
 
     info_fn(L"resolve", boost::nowide::widen(url));
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 上传文件 %2% 到 %3%, 文件名: %4%, 路径: %5%, 打印: %6%") % name %
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 上传文件 %2% 到 %3%, 文件名: %4%, 路径: %5%, 打印: %6%") % name %
                                    upload_data.source_path % url % upload_filename.string() % upload_parent_path.string() %
                                    (upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "是" : "否");
     wcp_loger.add_log(name + std::string(": 上传文件 ") + upload_data.source_path.string() + " 到 " + url + ", 文件名: " + upload_filename.string() + ", 路径: " + upload_parent_path.string() + ", 打印: " + (upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "是" : "否"), false, "", "Moonraker_Mqtt", "info");
@@ -698,7 +698,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
         .form_add_file("file", upload_data.source_path.string(), upload_filename.string())
 
         .on_complete([&](std::string body, unsigned status) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 文件上传成功: HTTP %2%: %3%") % name % status % body;
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 文件上传成功: HTTP %2%: %3%") % name % status % body;
             wcp_loger.add_log(name + std::string(": 文件上传成功: HTTP ") + std::to_string(status) + ": " + body, false, "", "Moonraker_Mqtt", "info");
         })
         .on_error([&](std::string body, std::string error, unsigned status) {
@@ -706,7 +706,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
                                             status % body;
             wcp_loger.add_log(name + std::string(": 上传文件到 ") + url + " 失败: " + error + ", HTTP " + std::to_string(status) + ", 响应体: `" + body + "`", false, "", "Moonraker_Mqtt", "error");
             // 尝试8080端口
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 尝试使用8080端口重新上传";
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 尝试使用8080端口重新上传";
             wcp_loger.add_log("尝试使用8080端口重新上传", false, "", "Moonraker_Mqtt", "info");
             url = substitute_host(make_url_8080("server/files/upload"), GUI::into_u8(test_msg_or_host_ip));
 
@@ -718,7 +718,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
                 .form_add("path", upload_parent_path.string()) // XXX: slashes on windows ???
                 .form_add_file("file", upload_data.source_path.string(), upload_filename.string())
                 .on_complete([&](std::string body, unsigned status) {
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 8080端口文件上传成功: HTTP %2%: %3%") % name % status % body;
+                    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 8080端口文件上传成功: HTTP %2%: %3%") % name % status % body;
                     wcp_loger.add_log(name + std::string(": 8080端口文件上传成功: HTTP ") + std::to_string(status) + ": " + body, false, "", "Moonraker_Mqtt", "info");
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
@@ -732,7 +732,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
                     prorgess_fn(std::move(progress), cancel);
                     if (cancel) {
                         // Upload was canceled
-                        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << name << ": 8080端口上传被取消";
+                        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << name << ": 8080端口上传被取消";
                         wcp_loger.add_log(name + std::string(": 8080端口上传被取消"), false, "", "Moonraker_Mqtt", "info");
                         result = false;
                     }
@@ -746,7 +746,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
             prorgess_fn(std::move(progress), cancel);
             if (cancel) {
                 // Upload was canceled
-                BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << name << ": 上传被取消";
+                BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << name << ": 上传被取消";
                 wcp_loger.add_log(name + std::string(": 上传被取消"), false, "", "Moonraker_Mqtt", "info");
                 result = false;
             }
@@ -754,7 +754,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
         .ssl_revoke_best_effort(m_ssl_revoke_best_effort)
         .perform_sync();
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] IP地址上传完成，结果: " << (result ? "成功" : "失败");
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] IP地址上传完成，结果: " << (result ? "成功" : "失败");
     wcp_loger.add_log("IP地址上传完成，结果: " + std::string((result ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
     return result;
 }
@@ -764,7 +764,7 @@ bool Moonraker::upload_inner_with_resolved_ip(PrintHostUpload upload_data, Progr
 bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn prorgess_fn, ErrorFn error_fn, InfoFn info_fn) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 使用主机名上传文件";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用主机名上传文件";
     wcp_loger.add_log("使用主机名上传文件", false, "", "Moonraker_Mqtt", "info");
     const char* name = get_name();
 
@@ -792,7 +792,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
     {
         // If https is entered we assume signed ceritificate is being used
         // IP resolving will not happen - it could resolve into address not being specified in cert
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 使用HTTPS或禁用IP解析，直接使用主机名";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用HTTPS或禁用IP解析，直接使用主机名";
         wcp_loger.add_log("使用HTTPS或禁用IP解析，直接使用主机名", false, "", "Moonraker_Mqtt", "info");
         url = make_url("server/files/upload");
     }
@@ -804,16 +804,16 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
         // This new address returns in "test_msg_or_host_ip" variable.
         // Solves troubles of uploades failing with name address.
         // in original address (m_host) replace host for resolved ip
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 使用IP解析workaround";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用IP解析workaround";
         wcp_loger.add_log("使用IP解析workaround", false, "", "Moonraker_Mqtt", "info");
         info_fn(L"resolve", test_msg_or_host_ip);
         url = substitute_host(make_url("server/files/upload"), GUI::into_u8(test_msg_or_host_ip));
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] IP解析后的上传地址: " << url;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] IP解析后的上传地址: " << url;
         wcp_loger.add_log("IP解析后的上传地址: " + url, false, "", "Moonraker_Mqtt", "info");
     }
 #endif // _WIN32
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 上传文件 %2% 到 %3%, 文件名: %4%, 路径: %5%, 打印: %6%") % name %
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 上传文件 %2% 到 %3%, 文件名: %4%, 路径: %5%, 打印: %6%") % name %
                                    upload_data.source_path % url % upload_filename.string() % upload_parent_path.string() %
                                    (upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "是" : "否");
     wcp_loger.add_log(name + std::string(": 上传文件 ") + upload_data.source_path.string() + " 到 " + url + ", 文件名: " + upload_filename.string() + ", 路径: " + upload_parent_path.string() + ", 打印: " + (upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "是" : "否"), false, "", "Moonraker_Mqtt", "info");
@@ -827,7 +827,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
     // 0, this is not needed, but it should not break anything if it stays. https://www.rfc-editor.org/rfc/rfc7230#section-5.4
     std::string host = get_host_from_url(m_host);
     http.header("Host", host);
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 设置Host头: " << host;
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 设置Host头: " << host;
     wcp_loger.add_log("设置Host头: " + host, false, "", "Moonraker_Mqtt", "info");
 #endif // _WIN32
     set_auth(http);
@@ -835,7 +835,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
         .form_add("path", upload_parent_path.string()) // XXX: slashes on windows ???
         .form_add_file("file", upload_data.source_path.string(), upload_filename.string())
         .on_complete([&](std::string body, unsigned status) {
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 文件上传成功: HTTP %2%: %3%") % name % status % body;
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 文件上传成功: HTTP %2%: %3%") % name % status % body;
             wcp_loger.add_log(name + std::string(": 文件上传成功: HTTP ") + std::to_string(status) + ": " + body, false, "", "Moonraker_Mqtt", "info");
         })
         .on_error([&](std::string body, std::string error, unsigned status) {
@@ -843,7 +843,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
                                             body;
             wcp_loger.add_log(name + std::string(": 上传文件失败: ") + error + ", HTTP " + std::to_string(status) + ", 响应体: `" + body + "`", false, "", "Moonraker_Mqtt", "error");
             // 尝试8080端口
-            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 尝试使用8080端口重新上传";
+            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 尝试使用8080端口重新上传";
             wcp_loger.add_log("尝试使用8080端口重新上传", false, "", "Moonraker_Mqtt", "info");
             url = make_url_8080("server/files/upload");
             
@@ -854,7 +854,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
                 .form_add("path", upload_parent_path.string()) // XXX: slashes on windows ???
                 .form_add_file("file", upload_data.source_path.string(), upload_filename.string())
                 .on_complete([&](std::string body, unsigned status) {
-                    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << boost::format("%1%: 8080端口文件上传成功: HTTP %2%: %3%") % name % status % body;
+                    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << boost::format("%1%: 8080端口文件上传成功: HTTP %2%: %3%") % name % status % body;
                     wcp_loger.add_log(name + std::string(": 8080端口文件上传成功: HTTP ") + std::to_string(status) + ": " + body, false, "", "Moonraker_Mqtt", "info");
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
@@ -868,7 +868,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
                     prorgess_fn(std::move(progress), cancel);
                     if (cancel) {
                         // Upload was canceled
-                        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << name << ": 8080端口上传被取消";
+                        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << name << ": 8080端口上传被取消";
                         wcp_loger.add_log(name + std::string(": 8080端口上传被取消"), false, "", "Moonraker_Mqtt", "info");
                         res = false;
                     }
@@ -882,7 +882,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
             prorgess_fn(std::move(progress), cancel);
             if (cancel) {
                 // Upload was canceled
-                BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] " << name << ": 上传被取消";
+                BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] " << name << ": 上传被取消";
                 wcp_loger.add_log(name + std::string(": 上传被取消"), false, "", "Moonraker_Mqtt", "info");
                 res = false;
             }
@@ -892,7 +892,7 @@ bool Moonraker::upload_inner_with_host(PrintHostUpload upload_data, ProgressFn p
 #endif
         .perform_sync();
 
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 主机名上传完成，结果: " << (res ? "成功" : "失败");
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 主机名上传完成，结果: " << (res ? "成功" : "失败");
     wcp_loger.add_log("主机名上传完成，结果: " + std::string((res ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
     return res;
 }
@@ -902,7 +902,7 @@ bool Moonraker::validate_version_text(const boost::optional<std::string>& versio
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     bool result = version_text ? boost::starts_with(*version_text, "Moonraker") : true;
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 版本文本验证: " << (version_text ? *version_text : "空") 
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 版本文本验证: " << (version_text ? *version_text : "空") 
                             << ", 结果: " << (result ? "通过" : "失败");
     wcp_loger.add_log("版本文本验证: " + (version_text ? *version_text : "空") + ", 结果: " + (result ? "通过" : "失败"), false, "", "Moonraker_Mqtt", "info");
     return result;
@@ -912,12 +912,12 @@ bool Moonraker::validate_version_text(const boost::optional<std::string>& versio
 void Moonraker::set_auth(Http& http) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 设置认证头，API密钥长度: " << m_apikey.length();
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 设置认证头，API密钥长度: " << m_apikey.length();
     wcp_loger.add_log("设置认证头，API密钥长度: " + std::to_string(m_apikey.length()), false, "", "Moonraker_Mqtt", "info");
     http.header("X-Api-Key", m_apikey);
 
     if (!m_cafile.empty()) {
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 设置CA文件: " << m_cafile;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 设置CA文件: " << m_cafile;
         wcp_loger.add_log("设置CA文件: " + m_cafile, false, "", "Moonraker_Mqtt", "info");
         http.ca_file(m_cafile);
     }
@@ -926,13 +926,13 @@ void Moonraker::set_auth(Http& http) const
 std::string Moonraker::make_url_8080(const std::string& path) const
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 构建8080端口URL，路径: " << path;
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 构建8080端口URL，路径: " << path;
     wcp_loger.add_log("构建8080端口URL，路径: " + path, false, "", "Moonraker_Mqtt", "info");
     size_t pos = m_host.find(":");
     std::string target_host = m_host;
     if (pos != std::string::npos && pos != std::string("http:").length() - 1 && std::string("https:").length() - 1) {
         target_host = target_host.substr(0, pos);
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 移除端口号，目标主机: " << target_host;
+        BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 移除端口号，目标主机: " << target_host;
         wcp_loger.add_log("移除端口号，目标主机: " + target_host, false, "", "Moonraker_Mqtt", "info");
     }
     
@@ -948,7 +948,7 @@ std::string Moonraker::make_url_8080(const std::string& path) const
         result = (boost::format("http://%1%:8080/%2%") % target_host % path).str();
     }
     
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 8080端口URL构建完成: " << result;
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] 8080端口URL构建完成: " << result;
     wcp_loger.add_log("8080端口URL构建完成: " + result, false, "", "Moonraker_Mqtt", "info");
     return result;
 }
@@ -1261,7 +1261,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
 // Connect to MQTT broker
 bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始MQTT连接流程";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始MQTT连接流程";
     wcp_loger.add_log("开始MQTT连接流程", false, "", "Moonraker_Mqtt", "info");
 
     // 在创建新连接前检查参数
@@ -1276,7 +1276,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
             return false;
         }
     }else{
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 使用提供的TLS参数";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用提供的TLS参数";
         wcp_loger.add_log("使用提供的TLS参数", false, "", "Moonraker_Mqtt", "info");
         m_user_name = params.count("user")     ? params["user"].get<std::string>() : "";
         m_password = params.count("password") ? params["password"].get<std::string>() : "";
@@ -1289,7 +1289,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         m_sn_mtx.lock();
         m_sn = params["sn"].get<std::string>();
         m_sn_mtx.unlock();
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 设置SN: " << m_sn;
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 设置SN: " << m_sn;
         wcp_loger.add_log("设置SN: " + m_sn, false, "", "Moonraker_Mqtt", "info");
 
         if (m_ca == "" || m_cert == "" || m_key == "") {
@@ -1342,7 +1342,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     }
 
     // 记录连接参数（不记录敏感信息的具体内容）
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] MQTTS连接参数:"
+    BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] MQTTS连接参数:"
         << "\n - 主机: " << m_host
         << "\n - 端口: " << m_port
         << "\n - 客户端ID: " << m_client_id
@@ -1353,7 +1353,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
 
     // 在创建新连接前，确保旧连接已断开
     if (m_mqtt_client) {
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 断开旧的MQTT客户端连接";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 断开旧的MQTT客户端连接";
         wcp_loger.add_log("断开旧的MQTT客户端连接", false, "", "Moonraker_Mqtt", "info");
         std::string dc_msg = "success";
         m_mqtt_client->Disconnect(dc_msg);
@@ -1362,7 +1362,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     }
 
     if (m_mqtt_client_tls) {
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 断开旧的MQTTS客户端连接";
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 断开旧的MQTTS客户端连接";
         wcp_loger.add_log("断开旧的MQTTS客户端连接", false, "", "Moonraker_Mqtt", "info");
         std::string dc_msg = "success";
         m_mqtt_client_tls->Disconnect(dc_msg);
@@ -1380,7 +1380,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     }
     
     std::string mqtts_url = "mqtts://" + host_ip + ":" + std::to_string(m_port);
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 创建MQTTS客户端，URL: " << mqtts_url << ", 客户端ID: " << m_client_id;
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 创建MQTTS客户端，URL: " << mqtts_url << ", 客户端ID: " << m_client_id;
     wcp_loger.add_log("创建MQTTS客户端，URL: " + mqtts_url + ", 客户端ID: " + m_client_id, false, "", "Moonraker_Mqtt", "info");
     m_mqtt_client_tls.reset(new MqttClient(mqtts_url, m_client_id, m_ca, m_cert, m_key));
 
@@ -1398,7 +1398,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         wcp_loger.add_log("MQTT连接失败", false, "", "Moonraker_Mqtt", "error");
         return false;
     }
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] MQTTS连接成功";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS连接成功";
     wcp_loger.add_log("MQTTS连接成功", false, "", "Moonraker_Mqtt", "info");
 
     m_sn_mtx.lock();
@@ -1427,7 +1427,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     });
 
     bool result = is_connect && notification_subscribed && response_subscribed;
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] MQTT连接流程完成，结果: " << (result ? "成功" : "失败");
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTT连接流程完成，结果: " << (result ? "成功" : "失败");
     wcp_loger.add_log("MQTT连接流程完成，结果: " + std::string((result ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
     return result;
 }
@@ -1435,7 +1435,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
 // Disconnect from MQTT broker
 bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始断开MQTT连接";
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始断开MQTT连接";
     wcp_loger.add_log("开始断开MQTT连接", false, "", "Moonraker_Mqtt", "info");
     if (!m_mqtt_client_tls) {
         BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] MQTTS客户端不存在，无需断开";

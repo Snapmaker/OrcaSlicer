@@ -19,7 +19,7 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     , connection_failure_callback_(nullptr)
     , pending_reconnect_checks{0}  // 添加计数器
 {
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 初始化MQTT连接 server_address: " << server_address << ", client_id: " << client_id;
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 初始化MQTT连接 server_address: " << server_address << ", client_id: " << client_id;
 
     // Configure connection options
     // 写死false
@@ -50,7 +50,7 @@ MqttClient::MqttClient(const std::string& server_address,
                       bool clean_session)
     : MqttClient(server_address, client_id, username, password, clean_session)
 {
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 初始化MQTT SSL连接 server_address: " << server_address << ", client_id: " << client_id
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 初始化MQTT SSL连接 server_address: " << server_address << ", client_id: " << client_id
                             << ", ca_content: " << ca_content << ", cert_content: " << cert_content << ", username: " << username
                             << ", password: " << password;
     
@@ -64,7 +64,7 @@ MqttClient::MqttClient(const std::string& server_address,
             std::ofstream ca_file(ca_path.string());
             ca_file << ca_content;
             ca_file.close();
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] CA证书已写入临时文件: " << ca_path;
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] CA证书已写入临时文件: " << ca_path;
         }
 
         // 客户端证书临时文件
@@ -73,7 +73,7 @@ MqttClient::MqttClient(const std::string& server_address,
             std::ofstream cert_file(cert_path.string());
             cert_file << cert_content;
             cert_file.close();
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 客户端证书已写入临时文件: " << cert_path;
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] 客户端证书已写入临时文件: " << cert_path;
         }
 
         // 私钥临时文件
@@ -82,7 +82,7 @@ MqttClient::MqttClient(const std::string& server_address,
             std::ofstream key_file(key_path.string());
             key_file << key_content;
             key_file.close();
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 私钥已写入临时文件: " << key_path;
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] 私钥已写入临时文件: " << key_path;
         }
 
         // 配置SSL/TLS
@@ -124,7 +124,7 @@ MqttClient::MqttClient(const std::string& server_address,
 bool MqttClient::Connect(std::string& msg)
 {
     if (connected_.load(std::memory_order_acquire)) {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] " << client_id_ 
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] " << client_id_ 
                                    << " Already connected to MQTT server " << server_address_;
         msg = "success";
         return true;
@@ -132,19 +132,19 @@ bool MqttClient::Connect(std::string& msg)
 
     try {
         // 添加详细的连接参数日志
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 正在连接MQTT服务器: " << server_address_;
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 正在连接MQTT服务器: " << server_address_;
         
         // 如果是SSL连接，添加SSL配置信息日志
         try {
             auto ssl_opts = connOpts_.get_ssl_options();
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] SSL配置信息:"
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] SSL配置信息:"
                 << "\n - 服务器地址: " << server_address_
                 << "\n - 客户端ID: " << client_id_
                 << "\n - CA证书长度: " << (ssl_opts.get_trust_store().empty() ? 0 : ssl_opts.get_trust_store().length())
                 << "\n - 客户端证书长度: " << (ssl_opts.get_key_store().empty() ? 0 : ssl_opts.get_key_store().length())
                 << "\n - 私钥长度: " << (ssl_opts.get_private_key().empty() ? 0 : ssl_opts.get_private_key().length());
         } catch (...) {
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 非SSL连接";
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] 非SSL连接";
         }
 
         const char* context = "connection";
@@ -185,7 +185,7 @@ bool MqttClient::Connect(std::string& msg)
         }
 
         connected_.store(true, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Successfully connected to MQTT server";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Successfully connected to MQTT server";
         msg = "success";
         return true;
     }
@@ -212,13 +212,13 @@ bool MqttClient::Connect(std::string& msg)
 bool MqttClient::Disconnect(std::string& msg)
 {
     if (!connected_.load(std::memory_order_acquire)) {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT client already disconnected";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client already disconnected";
         msg = "success";
         return true;  // 已经断开就返回成功
     }
 
     try {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Disconnecting from MQTT server...";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnecting from MQTT server...";
         
         // 清理连接
         try {
@@ -234,7 +234,7 @@ bool MqttClient::Disconnect(std::string& msg)
         }
 
         connected_.store(false, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Successfully disconnected from MQTT server";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Successfully disconnected from MQTT server";
         msg = "success";
         return true;
     }
@@ -267,7 +267,7 @@ bool MqttClient::Subscribe(const std::string& topic, int qos, std::string& msg)
     }
 
     try {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Subscribing to MQTT topic '" << topic << "' with QoS " << qos;
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Subscribing to MQTT topic '" << topic << "' with QoS " << qos;
         mqtt::token_ptr subtok = client_->subscribe(topic, qos, nullptr, subListener_);
         if (!subtok->wait_for(std::chrono::seconds(5))) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Subscribe timeout for topic: " << topic;
@@ -296,7 +296,7 @@ bool MqttClient::Unsubscribe(const std::string& topic, std::string& msg)
     }
 
     try {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Unsubscribing from MQTT topic '" << topic << "'";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Unsubscribing from MQTT topic '" << topic << "'";
         mqtt::token_ptr unsubtok = client_->unsubscribe(topic);
         if (!unsubtok->wait_for(std::chrono::seconds(5))) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Unsubscribe timeout for topic: " << topic;
@@ -363,13 +363,13 @@ void MqttClient::SetMessageCallback(std::function<void(const std::string& topic,
 bool MqttClient::CheckConnected()
 {
     if (!connected_.load(std::memory_order_acquire)) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client is not connected to server";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client is not connected to server";
         return false;
     }
 
     // 检查客户端指针是否有效
     if (!client_) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client pointer is null";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client pointer is null";
         connected_.store(false, std::memory_order_release);
         return false;
     }
@@ -379,13 +379,13 @@ bool MqttClient::CheckConnected()
         try {
             return client_->is_connected();
         } catch (const std::exception& e) {
-            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Exception during connection check: " << e.what();
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] Exception during connection check: " << e.what();
             return false;
         }
     });
     
     if (check_future.wait_for(std::chrono::seconds(3)) == std::future_status::timeout) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Connection status check timeout";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Connection status check timeout";
         connected_.store(false, std::memory_order_release);
         return false;
     }
@@ -396,7 +396,7 @@ bool MqttClient::CheckConnected()
             return false;
         }
     } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Exception getting connection status: " << e.what();
+        BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] Exception getting connection status: " << e.what();
         connected_.store(false, std::memory_order_release);
         return false;
     }
@@ -435,7 +435,7 @@ void MqttClient::connection_lost(const std::string& cause)
                         int remaining = self->pending_reconnect_checks.fetch_sub(1, std::memory_order_acq_rel);
 
                         // 只有当这是最后一个检查线程时才执行检查
-                        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT Remaining thread count: " << remaining;
+                        BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] MQTT Remaining thread count: " << remaining;
                         if (remaining == 0){
                             self->is_reconnecting.store(false, std::memory_order_release);
                         } else if (remaining <= 1) {
@@ -452,12 +452,12 @@ void MqttClient::connection_lost(const std::string& cause)
                         }
                     } else {
                         // 客户端已被销毁，减少计数
-                        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT Client has been destructed";
+                        BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] MQTT Client has been destructed";
                     }
                 }
             }).detach();
 
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Waiting for automatic reconnection...";
+            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Waiting for automatic reconnection...";
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Failed to start reconnection check: " << e.what();
@@ -536,13 +536,13 @@ void MqttClient::on_success(const mqtt::token& tok)
 // 添加连接成功的回调
 void MqttClient::connected(const std::string& cause)
 {
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT connection established, server_adress: " << this->server_address_;
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT connection established, server_adress: " << this->server_address_;
     connected_.store(true, std::memory_order_release);
     is_reconnecting.store(false, std::memory_order_release);
     
     // 连接成功后重新启用自动重连，这样后续断开就能正常重连了
     connOpts_.set_automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 连接成功，已启用自动重连";
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 连接成功，已启用自动重连";
     
     // 不直接置0，让检查线程自然完成并减少计数
     // 这样可以避免竞态条件，让计数逻辑更加一致
@@ -556,17 +556,17 @@ void MqttClient::resubscribe_topics() {
         return;
     }
 
-    BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] Resubscribing to " << topics_to_resubscribe_.size() << " topics";
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Resubscribing to " << topics_to_resubscribe_.size() << " topics";
     
     for (const auto& topic_pair : topics_to_resubscribe_) {
         try {
             auto tok = client_->subscribe(topic_pair.first, topic_pair.second, nullptr,  subListener_);
             if (!tok->wait_for(std::chrono::seconds(5))) {
-                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Subscribe timeout for topic: " << topic_pair.first;
+                BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Subscribe timeout for topic: " << topic_pair.first;
                 continue;
             }
             if (!tok->is_complete() || tok->get_return_code() != 0) {
-                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Failed to resubscribe to topic: " << topic_pair.first;
+                BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Failed to resubscribe to topic: " << topic_pair.first;
             }
         } catch (const mqtt::exception& exc) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error resubscribing to topic " << topic_pair.first 
@@ -592,7 +592,7 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
 MqttClient::~MqttClient()
 {
     try {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 释放MQTT客户端资源...";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 释放MQTT客户端资源...";
         
         // 先标记为断开状态，防止新的操作
         connected_.store(false, std::memory_order_release);
@@ -613,7 +613,7 @@ MqttClient::~MqttClient()
         // 如果客户端仍然连接，先断开连接
         if (client_ && client_->is_connected()) {
             try {
-                BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 在析构函数中断开MQTT连接";
+                BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 在析构函数中断开MQTT连接";
                 
                 // 使用阻塞方式断开，确保完全断开
                 auto disctok = client_->disconnect();
@@ -640,7 +640,7 @@ MqttClient::~MqttClient()
         // 清理临时文件
         cleanup_temp_files();
         
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT客户端资源已释放";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT客户端资源已释放";
     }
     catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT客户端析构时发生异常: " << e.what();

@@ -1639,7 +1639,7 @@ void SSWCP_MachineFind_Instance::sw_StopMachineFind()
 void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
 {
     try {
-        BOOST_LOG_TRIVIAL(fatal) << "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT" << machine_info.dump();
+        BOOST_LOG_TRIVIAL(info) << "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT" << machine_info.dump();
         for (const auto& [key, value] : machine_info.items()) {
             std::string sn        = value["sn"].get<std::string>();
             bool        need_send = false;
@@ -5087,22 +5087,22 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                 return;
             }
 
-            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 检查引擎连接状态...";
+            BOOST_LOG_TRIVIAL(info) << "[SSWCP_MqttAgent_Instance] 检查引擎连接状态...";
 
             if (!engine->CheckConnected()) {
                 BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎连接状态异常";
                 handle_general_fail(-1, "engine connection lost");
                 return;
             }
-            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎连接状态正常";
+            BOOST_LOG_TRIVIAL(info) << "[SSWCP_MqttAgent_Instance] 引擎连接状态正常";
 
             std::string msg    = "success";
 
-            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 设置引擎...";
+            BOOST_LOG_TRIVIAL(info) << "[SSWCP_MqttAgent_Instance] 设置引擎...";
 
             bool flag = host->set_engine(engine, msg);
 
-            BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎设置完成, flag: " << flag;
+            BOOST_LOG_TRIVIAL(info) << "[SSWCP_MqttAgent_Instance] 引擎设置完成, flag: " << flag;
 
             if (flag)
             {

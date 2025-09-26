@@ -1303,7 +1303,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
             // 存储耗材，并触发更新
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
-            auto  tmp_filaments = filaments;
+            static auto tmp_filaments = filaments;
             filaments.clear();
 
             size_t count = 0;
@@ -1373,6 +1373,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 }
             }
             if (need_load_preset) {
+                tmp_filaments = filaments;
                 wxGetApp().load_current_presets();
             }
 

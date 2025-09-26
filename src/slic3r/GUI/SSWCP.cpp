@@ -1303,6 +1303,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
             // 存储耗材，并触发更新
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+            auto  tmp_filaments = filaments;
             filaments.clear();
 
             size_t count = 0;
@@ -1321,7 +1322,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     } else if (sub_type == "Support") {
                         name = vendor + " Support" + " For " + type;
                     } else {
-                        name = vendor + " " + type + (sub_type != "NONE" ? " " + sub_type : "");
+                        name = vendor + " " + type + ((sub_type != "NONE" && sub_type != "") ? " " + sub_type : "");
                     }
 
                     int extruder = j_value["extruder_map_table"][i].get<int>();
@@ -1347,7 +1348,35 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 }
             }
 
-            wxGetApp().load_current_presets();
+            bool need_load_preset = false;
+
+            if (filaments.size() == 0 && tmp_filaments.size() != 0)
+                need_load_preset = true;
+
+            for (auto iter = filaments.begin(); iter != filaments.end(); iter++) {
+                if (tmp_filaments.count(iter->first)) {
+                    auto pair     = iter->second;
+                    auto tmp_pair = tmp_filaments[iter->first];
+                    if (pair.first == tmp_pair.first && pair.second == pair.second) {
+                        continue;
+                    } else {
+                        need_load_preset = true;
+                        break;
+                    }
+                } else {
+                    auto pair        = iter->second;
+                    if (pair.first.find("NONE") != std::string::npos) {
+                        continue;
+                    }
+                    need_load_preset = true;
+                    break;
+                }
+            }
+            if (need_load_preset) {
+                wxGetApp().load_current_presets();
+            }
+
+            
             if (send_message) {
                 send_to_js();
                 finish_job();

@@ -35,3 +35,6 @@ src/Snapmaker_Orca-doc/
 **/.flatpak-builder/
 resources/profiles/user/default
 *.code-workspace
+
+# Windows reserved device names
+nul

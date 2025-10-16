@@ -18,6 +18,7 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     , is_reconnecting(false)
     , connection_failure_callback_(nullptr)
     , pending_reconnect_checks{0}  // 添加计数器
+    , ever_connected_(false)  // 初始为false，首次成功连接后设为true
 {
     BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 初始化MQTT连接 server_address: " << server_address << ", client_id: " << client_id;
 
@@ -26,8 +27,9 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     connOpts_.set_clean_session(false);
     connOpts_.set_keep_alive_interval(30);
     connOpts_.set_connect_timeout(10);
-    // 设置自动重连参数
-    connOpts_.set_automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));
+    // 初始禁用自动重连，只有首次连接成功后才启用
+    // 这样可以避免首次连接失败时的自动重连问题
+    connOpts_.set_automatic_reconnect(std::chrono::seconds(0), std::chrono::seconds(0));
     client_->set_callback(*this);
 
     // 设置认证信息
@@ -211,42 +213,35 @@ bool MqttClient::Connect(std::string& msg)
 // @return: true if disconnection successful, false otherwise
 bool MqttClient::Disconnect(std::string& msg)
 {
-    if (!connected_.load(std::memory_order_acquire)) {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client already disconnected";
-        msg = "success";
-        return true;  // 已经断开就返回成功
-    }
-
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnect called, connected state: " << connected_.load(std::memory_order_acquire);
+    
     try {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnecting from MQTT server...";
-        
-        // 清理连接
-        try {
-            auto disctok = client_->disconnect();
-            // 设置5秒超时
-            if (!disctok->wait_for(std::chrono::seconds(5))) {
-                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT disconnect timeout";
+        // 即使 connected_ 为 false，也要尝试断开
+        // 因为可能有底层的异步连接尝试正在进行
+        if (client_) {
+            try {
+                BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] 调用底层 disconnect() 以终止任何进行中的连接尝试";
+                auto disctok = client_->disconnect();
+                // 设置5秒超时
+                if (!disctok->wait_for(std::chrono::seconds(5))) {
+                    BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT disconnect timeout";
+                }
+            } catch (const mqtt::exception& exc) {
+                // 如果没有连接，这里会抛出异常，是正常的
+                BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnect exception (may be normal if not connected): " << exc.what();
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Unexpected error during disconnect";
             }
-        } catch (const mqtt::exception& exc) {
-            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error during disconnect: " << exc.what();
-        } catch (...) {
-            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Unexpected error during disconnect";
         }
 
         connected_.store(false, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Successfully disconnected from MQTT server";
-        msg = "success";
-        return true;
-    }
-    catch (const mqtt::exception& exc) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error disconnecting from MQTT server: " << exc.what();
-        // 即使发生异常，也要标记为断开状态
-        connected_.store(false, std::memory_order_release);
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnect completed";
         msg = "success";
         return true;
     }
     catch (const std::exception& exc) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Unexpected error while disconnecting: " << exc.what();
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error disconnecting from MQTT server: " << exc.what();
+        // 即使发生异常，也要标记为断开状态
         connected_.store(false, std::memory_order_release);
         msg = "success";
         return true;
@@ -416,6 +411,15 @@ void MqttClient::connection_lost(const std::string& cause)
 
     connected_.store(false, std::memory_order_release);
     
+    // 如果从未成功连接过，说明是首次连接失败，不应该启动重连逻辑
+    if (!ever_connected_.load(std::memory_order_acquire)) {
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 从未成功连接过，不启动自动重连逻辑";
+        if (connection_failure_callback_) {
+            connection_failure_callback_();
+        }
+        return;
+    }
+    
     if (!is_reconnecting.load(std::memory_order_acquire)) {
         is_reconnecting.store(true, std::memory_order_release);
         pending_reconnect_checks.fetch_add(1, std::memory_order_release);
@@ -503,9 +507,8 @@ void MqttClient::on_failure(const mqtt::token& tok)
         if (tok.get_reason_code() != 0) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Reason code: " << tok.get_reason_code();
         }
-        // 首次连接失败，禁用自动重连
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 首次连接失败，禁用自动重连";
-        connOpts_.set_automatic_reconnect(std::chrono::seconds(0), std::chrono::seconds(0));
+        // 首次连接失败（自动重连已在构造时禁用，这里不需要额外处理）
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] 首次连接失败，因未曾成功连接过，自动重连保持禁用状态";
         
         connected_.store(false, std::memory_order_release);
         
@@ -539,6 +542,9 @@ void MqttClient::connected(const std::string& cause)
     BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT connection established, server_adress: " << this->server_address_;
     connected_.store(true, std::memory_order_release);
     is_reconnecting.store(false, std::memory_order_release);
+    
+    // 标记为曾经成功连接过
+    ever_connected_.store(true, std::memory_order_release);
     
     // 连接成功后重新启用自动重连，这样后续断开就能正常重连了
     connOpts_.set_automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));

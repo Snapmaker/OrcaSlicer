@@ -128,6 +128,7 @@ private:
 
     std::atomic<bool> is_reconnecting; // 是否正在调试重连
     std::atomic<int> pending_reconnect_checks;  // 添加重连检查计数器
+    std::atomic<bool> ever_connected_;  // 是否曾经成功连接过
 
     // 临时文件路径
     boost::filesystem::path temp_ca_path_;

@@ -4855,6 +4855,11 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
             }
             auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
 
+            engine->SetConnectionFailureCallback([engine]() {
+                std::string msg = "";
+                engine->Disconnect(msg);
+            });
+
             std::string msg;
             bool flag = engine->Connect(msg);
 

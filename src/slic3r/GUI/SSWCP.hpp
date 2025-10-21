@@ -188,6 +188,8 @@ public:
     int         m_status = 200;  // Response status code
     std::string m_msg = "OK";    // Response message
 
+    static bool m_first_connected;
+
 protected:
     INSTANCE_TYPE m_type = COMMON;  // Instance type
 

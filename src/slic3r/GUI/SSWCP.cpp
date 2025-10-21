@@ -401,6 +401,8 @@ json get_or_create_zip_json(const std::string& name1,   // 原文件路径（如
     return j;
 }
 
+bool SSWCP_Instance::m_first_connected = true;
+
 // Base SSWCP_Instance implementation
 void SSWCP_Instance::process() {
     if (m_event_id != "") {
@@ -1304,6 +1306,12 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
             // 存储耗材，并触发更新
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
             static auto tmp_filaments = filaments;
+
+            if (m_first_connected) {
+                tmp_filaments = filaments;
+                m_first_connected = false;
+            }
+
             filaments.clear();
 
             size_t count = 0;
@@ -3739,6 +3747,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
                         wxString msg = "";
                         json     params;
                         host->set_connection_lost([&host]() {
+                            SSWCP_Instance::m_first_connected = true;
                             wxGetApp().CallAfter([&host]() {
                                 wxGetApp().app_config->set("use_new_connect", "false");
                                 auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
@@ -4182,6 +4191,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
         
 
         bool res = wxGetApp().sm_disconnect_current_machine(need_reload);
+        m_first_connected = true;
         if (!res) {
             if (self) {
                 self->m_status = 1;
@@ -4191,11 +4201,12 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
 
        
 
-        /*wxGetApp().CallAfter([]() {
+        wxGetApp().CallAfter([]() {
+
             wxGetApp().app_config->clear_filament_extruder_map();
             wxGetApp().preset_bundle->machine_filaments.clear();
             wxGetApp().load_current_presets();
-        });*/
+        });
 
         if (self) {
             self->send_to_js();
@@ -5228,6 +5239,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                             wxString msg  = "";
                             json     params;
                             host->set_connection_lost([]() {
+                                wxGetApp().CallAfter([]() {
+                                    SSWCP_Instance::m_first_connected = true;
+                                    wxGetApp().app_config->clear_filament_extruder_map();
+                                    wxGetApp().preset_bundle->machine_filaments.clear();
+                                    wxGetApp().load_current_presets();
+                                });
                                 wxGetApp().CallAfter([]() {
                                     wxGetApp().app_config->set("use_new_connect", "false");
                                     auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);

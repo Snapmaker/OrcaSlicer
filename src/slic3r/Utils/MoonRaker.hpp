@@ -62,6 +62,7 @@ public:
     // Async printer information methods
     virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback) override {}
     virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)>) override  {}
+    virtual void async_get_device_info(std::function<void(const nlohmann::json& response)>) override  {}
     virtual void async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override {}
     virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)>)override {}
     virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
@@ -214,6 +215,7 @@ public:
     // Override async information methods
     virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)> callback) override;
+    virtual void async_get_device_info(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override;
     virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,

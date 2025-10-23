@@ -80,6 +80,8 @@ public:
 
     virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)>) {}
 
+    virtual void async_get_device_info(std::function<void(const nlohmann::json& response)>) {}
+
     virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)>) {}

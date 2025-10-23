@@ -2446,6 +2446,32 @@ void Moonraker_Mqtt::async_cancel_pull_cloud_file(std::function<void(const nlohm
     }
 }
 
+// Query device information (firmware version)
+// Query printer information
+void Moonraker_Mqtt::async_get_device_info(std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始查询固件信息";
+    wcp_loger.add_log("开始查询固件信息", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "system.get_device_info";
+
+    json params;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 查询固件信息超时";
+                             wcp_loger.add_log("查询固件信息超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送查询固件信息请求失败";
+        wcp_loger.add_log("发送查询固件信息请求失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 // Query printer information
 void Moonraker_Mqtt::async_get_machine_info(
     const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,

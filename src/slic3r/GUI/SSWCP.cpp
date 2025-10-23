@@ -1755,8 +1755,9 @@ void SSWCP_MachineOption_Instance::process()
     }
     if (m_cmd == "sw_SendGCodes") {
         sw_SendGCodes();
-    }
-    else if (m_cmd == "sw_GetMachineState") {
+    } else if (m_cmd == "sw_SystemGetDeviceInfo") {
+        sw_SystemGetDeviceInfo();
+    } else if (m_cmd == "sw_GetMachineState") {
         sw_GetMachineState();
     } else if (m_cmd == "sw_SubscribeMachineState") {
         sw_SubscribeMachineState();
@@ -1975,6 +1976,27 @@ void SSWCP_MachineOption_Instance::sw_GetMachineState() {
     }
 }
 
+void SSWCP_MachineOption_Instance::sw_SystemGetDeviceInfo() {
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+        if (!host) {
+            handle_general_fail();
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_get_device_info([weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+
+    } catch (const std::exception&) {
+        handle_general_fail();
+    }
+}
 
 void SSWCP_MachineOption_Instance::sw_SendGCodes() {
     try {
@@ -5759,6 +5781,7 @@ std::unordered_set<std::string> SSWCP::m_machine_find_cmd_list = {
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
+    "system.get_device_info",
     "sw_SendGCodes",
     "sw_GetMachineState",
     "sw_SubscribeMachineState",

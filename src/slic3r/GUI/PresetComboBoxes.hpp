@@ -185,9 +185,71 @@ public:
     void msw_rescale() override;
     void OnSelect(wxCommandEvent& evt) override;
 
+    // 设置按钮显示状态（用于打印机类型的combobox）
+    void set_show_connection_button(bool show);
+    void set_show_machine_connecting_button(bool show);
+    void set_show_edit_button(bool show);
+    
+    bool get_show_connection_button() const { return m_show_connection_button; }
+    bool get_show_machine_connecting_button() const { return m_show_machine_connecting_button; }
+    bool get_show_edit_button() const { return m_show_edit_button; }
+    
+    // 绑定按钮点击事件
+    void bind_connection_button_handler(std::function<void()> handler);
+    void bind_machine_connecting_button_handler(std::function<void()> handler);
+    void bind_edit_button_handler(std::function<void()> handler);
+    
+    // 设置按钮tooltip
+    void set_connection_tooltip(const wxString& tooltip);
+    void set_machine_connecting_tooltip(const wxString& tooltip);
+
+protected:
+    void paintEvent(wxPaintEvent& evt);
+    void render(wxDC& dc);
+    void onMouseLeftDown(wxMouseEvent& evt);
+    void onMouseLeftUp(wxMouseEvent& evt);
+    void onMouseEnter(wxMouseEvent& evt);
+    void onMouseLeave(wxMouseEvent& evt);
+    void onMouseMove(wxMouseEvent& evt);
+
 private:
     // BBS
     wxColor m_color;
+    
+    // 按钮显示标志（仅用于打印机类型）
+    bool m_show_connection_button { false };
+    bool m_show_machine_connecting_button { false };
+    bool m_show_edit_button { false };
+    
+    // 按钮图标
+    ScalableBitmap m_connection_icon;
+    ScalableBitmap m_machine_connecting_icon;
+    ScalableBitmap m_edit_icon;
+    
+    // 鼠标悬停状态
+    enum class HoverState {
+        NONE,
+        CONNECTION_BTN,
+        MACHINE_CONNECTING_BTN,
+        EDIT_BTN,
+        DROPDOWN
+    };
+    HoverState m_hover_state { HoverState::NONE };
+    
+    // 事件处理函数
+    std::function<void()> m_connection_btn_handler;
+    std::function<void()> m_machine_connecting_btn_handler;
+    std::function<void()> m_edit_btn_handler;
+    
+    // Tooltip相关
+    wxString m_connection_tooltip;
+    wxString m_machine_connecting_tooltip;
+    
+    // 计算各个区域的矩形
+    wxRect get_connection_btn_rect() const;
+    wxRect get_machine_connecting_btn_rect() const;
+    wxRect get_edit_btn_rect() const;
+    wxRect get_dropdown_rect() const;
 };
 
 

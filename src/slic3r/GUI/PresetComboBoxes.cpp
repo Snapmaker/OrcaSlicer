@@ -676,9 +676,22 @@ bool PresetComboBox::selection_is_changed_according_to_physical_printers()
 // ---------------------------------
 
 PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset_type) :
-    PresetComboBox(parent, preset_type, wxSize(25 * wxGetApp().em_unit(), 30 * wxGetApp().em_unit() / 10))
+    PresetComboBox(parent, preset_type, wxSize(25 * wxGetApp().em_unit(), 30 * wxGetApp().em_unit() / 10)),
+    m_connection_icon(this, "monitor_signal_strong", 16),
+    m_machine_connecting_icon(this, "monitor_machine_working", 16),
+    m_edit_icon(this, "edit", 16)
 {
     GetDropDown().SetUseContentWidth(true,true);
+    
+    // 对于打印机类型的combo box，绑定自定义绘制和鼠标事件
+    if (m_type == Preset::TYPE_PRINTER) {
+        Bind(wxEVT_PAINT, &PlaterPresetComboBox::paintEvent, this);
+        Bind(wxEVT_LEFT_DOWN, &PlaterPresetComboBox::onMouseLeftDown, this);
+        Bind(wxEVT_LEFT_UP, &PlaterPresetComboBox::onMouseLeftUp, this);
+        Bind(wxEVT_ENTER_WINDOW, &PlaterPresetComboBox::onMouseEnter, this);
+        Bind(wxEVT_LEAVE_WINDOW, &PlaterPresetComboBox::onMouseLeave, this);
+        Bind(wxEVT_MOTION, &PlaterPresetComboBox::onMouseMove, this);
+    }
 
     if (m_type == Preset::TYPE_FILAMENT)
     {
@@ -1251,6 +1264,305 @@ void PlaterPresetComboBox::msw_rescale()
     // BBS
     if (edit_btn != nullptr)
         edit_btn->msw_rescale();
+    
+    // 重新缩放按钮图标
+    m_connection_icon.msw_rescale();
+    m_machine_connecting_icon.msw_rescale();
+    m_edit_icon.msw_rescale();
+}
+
+// 设置按钮显示状态
+void PlaterPresetComboBox::set_show_connection_button(bool show)
+{
+    if (m_show_connection_button != show) {
+        m_show_connection_button = show;
+        Refresh();
+    }
+}
+
+void PlaterPresetComboBox::set_show_machine_connecting_button(bool show)
+{
+    if (m_show_machine_connecting_button != show) {
+        m_show_machine_connecting_button = show;
+        Refresh();
+    }
+}
+
+void PlaterPresetComboBox::set_show_edit_button(bool show)
+{
+    if (m_show_edit_button != show) {
+        m_show_edit_button = show;
+        Refresh();
+    }
+}
+
+// 绑定按钮事件处理函数
+void PlaterPresetComboBox::bind_connection_button_handler(std::function<void()> handler)
+{
+    m_connection_btn_handler = handler;
+}
+
+void PlaterPresetComboBox::bind_machine_connecting_button_handler(std::function<void()> handler)
+{
+    m_machine_connecting_btn_handler = handler;
+}
+
+void PlaterPresetComboBox::bind_edit_button_handler(std::function<void()> handler)
+{
+    m_edit_btn_handler = handler;
+}
+
+void PlaterPresetComboBox::set_connection_tooltip(const wxString& tooltip)
+{
+    m_connection_tooltip = tooltip;
+}
+
+void PlaterPresetComboBox::set_machine_connecting_tooltip(const wxString& tooltip)
+{
+    m_machine_connecting_tooltip = tooltip;
+}
+
+// 计算各个区域的矩形
+wxRect PlaterPresetComboBox::get_machine_connecting_btn_rect() const
+{
+    if (!m_show_machine_connecting_button)
+        return wxRect();
+    
+    wxSize size = GetSize();
+    wxSize icon_size = m_machine_connecting_icon.GetBmpSize();
+    int x = 5 + 16 + 4; // 下拉箭头后（机器名称左边）
+    int y = (size.y - icon_size.y) / 2;
+    return wxRect(x, y, icon_size.x, icon_size.y);
+}
+
+wxRect PlaterPresetComboBox::get_edit_btn_rect() const
+{
+    if (!m_show_edit_button)
+        return wxRect();
+    
+    wxSize size = GetSize();
+    wxSize icon_size = m_edit_icon.GetBmpSize();
+    
+    // 编辑按钮在 connection_btn 的左边
+    int right_offset = 8; // 右边距
+    if (m_show_connection_button) {
+        right_offset += 16 + 8; // connection_btn 宽度 + 增加间距
+    }
+    
+    int x = size.x - icon_size.x - right_offset;
+    int y = (size.y - icon_size.y) / 2;
+    return wxRect(x, y, icon_size.x, icon_size.y);
+}
+
+wxRect PlaterPresetComboBox::get_connection_btn_rect() const
+{
+    if (!m_show_connection_button)
+        return wxRect();
+    
+    wxSize size = GetSize();
+    wxSize icon_size = m_connection_icon.GetBmpSize();
+    int x = size.x - icon_size.x - 8; // 最右侧
+    int y = (size.y - icon_size.y) / 2;
+    return wxRect(x, y, icon_size.x, icon_size.y);
+}
+
+wxRect PlaterPresetComboBox::get_dropdown_rect() const
+{
+    wxSize size = GetSize();
+    return wxRect(0, 0, 25, size.y); // 左侧25px为下拉箭头区域
+}
+
+// 自定义绘制
+void PlaterPresetComboBox::paintEvent(wxPaintEvent& evt)
+{
+    if (m_type == Preset::TYPE_PRINTER) {
+        wxPaintDC dc(this);
+        render(dc);
+    } else {
+        evt.Skip();
+    }
+}
+
+void PlaterPresetComboBox::render(wxDC& dc)
+{
+    int states = state_handler.states();
+    wxSize size = GetSize();
+    
+    // 1. 绘制背景和边框
+    StaticBox::render(dc);
+    
+    // 2. 绘制下拉箭头（左侧）
+    // 使用 create_scaled_bitmap 创建下拉箭头图标
+    wxBitmap dropdown_bmp = create_scaled_bitmap("drop_down", nullptr, 16);
+    if (dropdown_bmp.IsOk()) {
+        int x = 5;
+        int y = (size.y - 16) / 2;
+        dc.DrawBitmap(dropdown_bmp, wxPoint(x, y));
+    }
+    
+    int left_offset = 5 + 16 + 4; // 下拉箭头后的起始位置
+    
+    // 3. 绘制 machine_connecting_btn（在机器名称左边）
+    if (m_show_machine_connecting_button && m_machine_connecting_icon.bmp().IsOk()) {
+        wxRect rect = get_machine_connecting_btn_rect();
+        dc.DrawBitmap(m_machine_connecting_icon.bmp(), wxPoint(rect.x, rect.y));
+        left_offset += m_machine_connecting_icon.GetBmpSize().x + 6;
+    }
+    
+    // 4. 绘制机器名称
+    auto text = GetLabel();
+    if (!text.IsEmpty()) {
+        dc.SetFont(GetFont());
+        dc.SetTextForeground(StateColor::darkModeColorFor(wxColour(38, 46, 48)));
+        
+        // 计算可用宽度（需要为右侧按钮预留空间）
+        int right_reserve = 8; // 基础右边距
+        if (m_show_edit_button) {
+            right_reserve += 16 + 4; // 编辑按钮 + 间距
+        }
+        if (m_show_connection_button) {
+            right_reserve += 16 + 8; // connection_btn + 增加间距
+        }
+        
+        int available_width = size.x - left_offset - right_reserve;
+        
+        wxSize text_size = dc.GetTextExtent(text);
+        if (text_size.x > available_width) {
+            text = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, available_width);
+        }
+        
+        int text_x = left_offset;
+        int text_y = (size.y - text_size.y) / 2;
+        dc.DrawText(text, wxPoint(text_x, text_y));
+    }
+    
+    // 5. 绘制编辑按钮（在 connection_btn 左边）
+    if (m_show_edit_button && m_edit_icon.bmp().IsOk()) {
+        wxRect rect = get_edit_btn_rect();
+        dc.DrawBitmap(m_edit_icon.bmp(), wxPoint(rect.x, rect.y));
+    }
+    
+    // 6. 绘制 connection_btn（最右侧）
+    if (m_show_connection_button && m_connection_icon.bmp().IsOk()) {
+        wxRect rect = get_connection_btn_rect();
+        dc.DrawBitmap(m_connection_icon.bmp(), wxPoint(rect.x, rect.y));
+    }
+}
+
+// 鼠标事件处理
+void PlaterPresetComboBox::onMouseLeftDown(wxMouseEvent& evt)
+{
+    wxPoint pos = evt.GetPosition();
+    
+    // 检查是否点击了编辑按钮
+    if (m_show_edit_button && get_edit_btn_rect().Contains(pos)) {
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了连接按钮
+    if (m_show_connection_button && get_connection_btn_rect().Contains(pos)) {
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了machine_connecting按钮
+    if (m_show_machine_connecting_button && get_machine_connecting_btn_rect().Contains(pos)) {
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 其他区域，允许触发下拉菜单
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseLeftUp(wxMouseEvent& evt)
+{
+    wxPoint pos = evt.GetPosition();
+    
+    // 检查是否点击了编辑按钮
+    if (m_show_edit_button && get_edit_btn_rect().Contains(pos)) {
+        if (m_edit_btn_handler) {
+            m_edit_btn_handler();
+        }
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了连接按钮
+    if (m_show_connection_button && get_connection_btn_rect().Contains(pos)) {
+        if (m_connection_btn_handler) {
+            m_connection_btn_handler();
+        }
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了machine_connecting按钮
+    if (m_show_machine_connecting_button && get_machine_connecting_btn_rect().Contains(pos)) {
+        if (m_machine_connecting_btn_handler) {
+            m_machine_connecting_btn_handler();
+        }
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 其他区域，触发下拉菜单
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseEnter(wxMouseEvent& evt)
+{
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseLeave(wxMouseEvent& evt)
+{
+    if (m_hover_state != HoverState::NONE) {
+        m_hover_state = HoverState::NONE;
+        Refresh();
+    }
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseMove(wxMouseEvent& evt)
+{
+    wxPoint pos = evt.GetPosition();
+    HoverState new_state = HoverState::NONE;
+    
+    // 检查鼠标位置
+    if (m_show_edit_button && get_edit_btn_rect().Contains(pos)) {
+        new_state = HoverState::EDIT_BTN;
+        // 清除tooltip
+        SetToolTip("");
+    } else if (m_show_connection_button && get_connection_btn_rect().Contains(pos)) {
+        new_state = HoverState::CONNECTION_BTN;
+        // 显示连接按钮tooltip
+        if (!m_connection_tooltip.IsEmpty()) {
+            SetToolTip(m_connection_tooltip);
+        }
+    } else if (m_show_machine_connecting_button && get_machine_connecting_btn_rect().Contains(pos)) {
+        new_state = HoverState::MACHINE_CONNECTING_BTN;
+        // 显示机器连接按钮tooltip
+        if (!m_machine_connecting_tooltip.IsEmpty()) {
+            SetToolTip(m_machine_connecting_tooltip);
+        }
+    } else if (get_dropdown_rect().Contains(pos)) {
+        new_state = HoverState::DROPDOWN;
+        // 清除tooltip
+        SetToolTip("");
+    } else {
+        // 清除tooltip
+        SetToolTip("");
+    }
+    
+    // 如果状态改变，触发重绘
+    if (new_state != m_hover_state) {
+        m_hover_state = new_state;
+        Refresh();
+    }
+    
+    evt.Skip();
 }
 
 

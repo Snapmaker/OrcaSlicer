@@ -13645,6 +13645,9 @@ msgstr ""
 msgid "Connecting to printer..."
 msgstr "正在连接打印机..."
 
+msgid "The machine has been connected and is currently in working mode"
+msgstr "设备已连接，当前处于工作模式"
+
 msgid "The failed test result has been dropped."
 msgstr "测试失败的结果已被删除。"
 

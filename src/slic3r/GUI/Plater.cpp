@@ -1050,51 +1050,44 @@ Sidebar::Sidebar(Plater *parent)
         p->panel_printer_preset->Bind(wxEVT_LEFT_DOWN, [this](auto& evt) { p->combo_printer->wxEvtHandler::ProcessEvent(evt); });
 
         PlaterPresetComboBox* combo_printer = new PlaterPresetComboBox(p->panel_printer_preset, Preset::TYPE_PRINTER);
-        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_CENTER_HORIZONTAL);
+        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_LEFT);
         combo_printer->SetBorderWidth(0);
-        ScalableButton* edit_btn = new ScalableButton(p->panel_printer_preset, wxID_ANY, "edit");
-        ScalableBitmap        bitmap_printer(p->panel_printer_preset, "printer_placeholder", 48);
-        p->image_printer                    = new wxStaticBitmap(p->panel_printer_preset, wxID_ANY, bitmap_printer.bmp(), wxDefaultPosition,
+        
+        ScalableBitmap bitmap_printer(p->panel_printer_preset, "printer_placeholder", 48);
+        p->image_printer = new wxStaticBitmap(p->panel_printer_preset, wxID_ANY, bitmap_printer.bmp(), wxDefaultPosition,
                                                                  PRINTER_THUMBNAIL_SIZE, 0);
         p->image_printer->Bind(wxEVT_LEFT_DOWN, [this](auto& evt) { p->combo_printer->wxEvtHandler::ProcessEvent(evt); });
-        edit_btn->SetToolTip(_L("Click to edit preset"));
-        edit_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
-            {
+        
+        p->combo_printer = combo_printer;
+
+        // 绑定 combo 内部按钮的事件处理（按钮现在在 combo 内部）
+        combo_printer->bind_edit_button_handler([this, combo_printer]() {
                 p->editing_filament = -1;
                 if (combo_printer->switch_to_tab())
                     p->editing_filament = 0;
             });
-        combo_printer->edit_btn = edit_btn;
-        p->combo_printer = combo_printer;
-
-        connection_btn = new ScalableButton(p->panel_printer_preset, wxID_ANY, "monitor_signal_strong");
-        connection_btn->SetBackgroundColour(wxColour(255, 255, 255));
-        connection_btn->SetToolTip(_L("Connection"));
-        connection_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
-            {
+        
+        combo_printer->bind_connection_button_handler([this]() {
                 wxGetApp().sm_disconnect_current_machine();
                 PhysicalPrinterDialog dlg(this->GetParent());
                 dlg.ShowModal();
             });
 
-        machine_connecting_btn = new ScalableButton(p->panel_printer_preset, wxID_ANY, "monitor_machine_working");
-        machine_connecting_btn->SetBackgroundColour(wxColour(255, 255, 255));
-        machine_connecting_btn->SetToolTip(_L("The machine has been connected and is currently in working mode."));
-        machine_connecting_btn->Hide();
+        combo_printer->bind_machine_connecting_button_handler([this]() {
+            // machine_connecting_btn 的处理逻辑（如果有的话）
+        });
+        
+        // 显示编辑按钮（鼠标悬停时原来会显示，现在直接显示）
+        combo_printer->set_show_edit_button(true);
+        
+        // 设置按钮tooltip
+        combo_printer->set_connection_tooltip(_L("Connect to printer"));
+        combo_printer->set_machine_connecting_tooltip(_L("The machine has been connected and is currently in working mode"));
 
-        auto hovered = std::make_shared<wxWindow*>();
-        for (wxWindow* w : std::initializer_list<wxWindow*>{p->panel_printer_preset, edit_btn, p->image_printer, combo_printer}) {
-            w->Bind(wxEVT_ENTER_WINDOW, [w, hovered, edit_btn](wxMouseEvent& evt) {
-                *hovered = w;
-                edit_btn->SetBitmap_("edit");
-            });
-            w->Bind(wxEVT_LEAVE_WINDOW, [w, hovered, edit_btn](wxMouseEvent& evt) {
-                if (*hovered == w) {
-                    edit_btn->SetBitmap_("dot");
-                    *hovered = nullptr;
-                }
-            });
-        }
+        // 外部按钮已集成到 combo 内部，不再需要创建
+        // 保留变量引用以避免编译错误，但设为 nullptr
+        connection_btn = nullptr;
+        machine_connecting_btn = nullptr;
 
         wxBoxSizer* vsizer_printer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer_printer = new wxBoxSizer(wxHORIZONTAL);
@@ -1102,15 +1095,11 @@ Sidebar::Sidebar(Plater *parent)
         wxBoxSizer* vsizer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer = new wxBoxSizer(wxHORIZONTAL);
 
-        wxBoxSizer* hsizer_printer_btn = new wxBoxSizer(wxHORIZONTAL);
-        hsizer_printer_btn->Add(edit_btn, 0);
-        hsizer_printer_btn->Add(connection_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(4));
-        hsizer_printer_btn->Add(machine_connecting_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(4));
-        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_RIGHT);
+        // 简化后的布局：打印机图片 + combo_printer（内含所有按钮）
+        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_LEFT);
 
         hsizer->Add(p->image_printer, 0, wxLEFT | wxALIGN_CENTER, FromDIP(4));
         hsizer->Add(combo_printer, 1, wxALIGN_CENTRE | wxLEFT | wxRIGHT, FromDIP(6));
-        hsizer->Add(hsizer_printer_btn, 0, wxALIGN_TOP | wxTOP | wxRIGHT, FromDIP(4));
         hsizer->AddSpacer(FromDIP(10));
         p->panel_printer_preset->SetSizer(hsizer);
 
@@ -1643,17 +1632,19 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     bool use_new_connection = appconfig->get("use_new_connect") == "true";
 
-    machine_connecting_btn->Hide();
+    // 隐藏所有按钮（使用 combo 内部的按钮）
+    p->combo_printer->set_show_machine_connecting_button(false);
+    p->combo_printer->set_show_connection_button(false);
 
     if (preset_bundle.use_bbl_network()) {
         //only show connection button for not-BBL printer
-        connection_btn->Hide();
+        // connection_btn->Hide(); // 已在上面隐藏
         //only show sync-ams button for BBL printer
         ams_btn->Show();
         //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
-        connection_btn->Hide();
+        // connection_btn->Hide(); // 已在上面隐藏
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
 
@@ -1681,7 +1672,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
         if (!use_new_connection && !is_test && reload_printer_view) {
 
-            connection_btn->Show();
+            p->combo_printer->set_show_connection_button(true);
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             wxString apikey;
             if (url.empty()) {
@@ -1727,7 +1718,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
 
                 if (local_name == preset_name) {
-                    machine_connecting_btn->Show();
+                    p->combo_printer->set_show_machine_connecting_button(true);
                 }
             }
             else {
@@ -1743,8 +1734,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                     
             }
 
-            if (!machine_connecting_btn->IsShown() && !is_test) {
-                connection_btn->Show();
+            if (!p->combo_printer->get_show_machine_connecting_button() && !is_test) {
+                p->combo_printer->set_show_connection_button(true);
             }
         }
 

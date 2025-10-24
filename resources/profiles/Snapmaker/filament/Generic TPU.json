@@ -35,5 +35,17 @@
     ],
     "filament_retract_length_toolchange": [
         "2"
+    ],
+    "filament_deretraction_speed": [
+        "20"
+    ],
+    "filament_retraction_length": [
+        "1.5"
+    ],
+    "filament_retraction_speed": [
+        "20"
+    ],
+    "pressure_advance": [
+        "0.4"
     ]
 }

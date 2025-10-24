@@ -273,10 +273,10 @@
         "40"
     ],
     "textured_plate_temp": [
-        "60"
+        "55"
     ],
     "textured_plate_temp_initial_layer": [
-        "60"
+        "55"
     ],
     "filament_retract_length_toolchange": [
         "10"

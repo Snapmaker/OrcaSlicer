@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.37.02",
+  "version": "02.02.38.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -139,12 +139,40 @@
       "sub_path": "process/0.20 Standard @Snapmaker U1 (0.4 nozzle).json"
     },
     {
-      "name": "0.20 Quality @Snapmaker U1 (0.4 nozzle)",
-      "sub_path": "process/0.20 Quality @Snapmaker U1 (0.4 nozzle).json"
+      "name": "0.08 Extra Fine @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.08 Extra Fine @Snapmaker U1 (0.4 nozzle).json"
     },
     {
-      "name": "0.20 Support @Snapmaker U1 (0.4 nozzle)",
-      "sub_path": "process/0.20 Support @Snapmaker U1 (0.4 nozzle).json"
+      "name": "0.08 High Quality @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.08 High Quality @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.12 Fine @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.12 Fine @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.12 High Quality @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.12 High Quality @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.16 High Quality @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.16 High Quality @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.16 Optimal @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.16 Optimal @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.20 strength @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.20 strength @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.24 Draft @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.24 Draft @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
+      "name": "0.28 Extra Draft @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.28 Extra Draft @Snapmaker U1 (0.4 nozzle).json"
     },
 
     
@@ -437,6 +465,58 @@
       "sub_path": "filament/fdm_filament_pctg_generic.json"
     },
     {
+      "name": "fdm_filament_bvoh_generic",
+      "sub_path":"filament/fdm_filament_bvoh_generic.json"
+    },
+    {
+      "name": "fdm_filament_abs_generic",
+      "sub_path": "filament/fdm_filament_abs_generic.json"
+    },
+    {
+      "name": "fdm_filament_asa_generic",
+      "sub_path": "filament/fdm_filament_asa_generic.json"
+    },
+    {
+      "name": "fdm_filament_pa_generic",
+      "sub_path": "filament/fdm_filament_pa_generic.json"
+    },
+    {
+      "name": "fdm_filament_pc_generic",
+      "sub_path": "filament/fdm_filament_pc_generic.json"
+    },
+    {
+      "name": "Generic ABS @base",
+      "sub_path": "filament/Generic ABS @base.json"
+    },
+    {
+      "name": "Generic ABS",
+      "sub_path": "filament/Generic ABS.json"
+    },
+    {
+      "name": "Generic ASA @base",
+      "sub_path": "filament/Generic ASA @base.json"
+    },
+    {
+      "name": "Generic ASA",
+      "sub_path": "filament/Generic ASA.json"
+    },
+    {
+      "name": "Generic PA",
+      "sub_path": "filament/Generic PA.json"
+    },
+    {
+      "name": "Generic PA-CF",
+      "sub_path": "filament/Generic PA-CF.json"
+    },
+    {
+      "name": "Generic PC @base",
+      "sub_path": "filament/Generic PC @base.json"
+    },
+    {
+      "name": "Generic PC",
+      "sub_path": "filament/Generic PC.json"
+    },
+    {
       "name": "Generic Support For PLA @base",
       "sub_path": "filament/Generic Support For PLA @base.json"
     },
@@ -539,6 +619,22 @@
     {
       "name": "Generic PLA-CF",
       "sub_path": "filament/Generic PLA-CF.json"
+    },
+    {
+      "name": "Generic BVOH @base",
+      "sub_path": "filament/Generic BVOH @base.json"
+    },
+    {
+      "name": "Generic BVOH",
+      "sub_path": "filament/Generic BVOH.json"
+    },
+    {
+      "name": "Generic TPU 95A HF @base",
+      "sub_path": "filament/Generic TPU 95A HF @base.json"
+    },
+    {
+      "name": "Generic TPU 95A HF",
+      "sub_path": "filament/Generic TPU 95A HF.json"
     },
 
 

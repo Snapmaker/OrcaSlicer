@@ -1766,17 +1766,33 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         m_bed_type_list->Enable();
         // Orca: don't update bed type if loading project
         if (!p->plater->is_loading_project()) {
-            auto str_bed_type = wxGetApp().app_config->get_printer_setting(wxGetApp().preset_bundle->printers.get_selected_preset_name(),
-                                                                           "curr_bed_type");
-            if (!str_bed_type.empty()) {
+            std::string printer_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+            auto str_bed_type = wxGetApp().app_config->get_printer_setting(printer_name, "curr_bed_type");
+            
+            BedType bed_type_to_use;
+            bool is_first_time = str_bed_type.empty();
+            
+            if (!is_first_time) {
+                // This printer has saved bed type configuration
                 int bed_type_value = atoi(str_bed_type.c_str());
                 if (bed_type_value == 0)
                     bed_type_value = 1;
-                m_bed_type_list->SelectAndNotify(bed_type_value - 1);
+                bed_type_to_use = (BedType)bed_type_value;
             } else {
-                BedType bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
-                m_bed_type_list->SelectAndNotify((int) bed_type - 1);
+                // Orca: First time using this printer, get default bed type
+                bed_type_to_use = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
+                
+                // Orca: Save to app_config immediately to prevent bed type inheritance
+                wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
+                wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
             }
+            
+            // Orca: Update proj_config directly to avoid callback context issues
+            wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type_to_use));
+            
+            // Orca: Update UI without triggering callback to avoid unintended side effects
+            // The callback should only be triggered by user manual changes, not by preset switching
+            m_bed_type_list->SetSelection((int)bed_type_to_use - 1);
         }
     } else {
         // Orca: combobox don't have the btDefault option, so we need to -1
@@ -7235,7 +7251,16 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
 
         if (new_bed_type != btCount) {
             BedType old_bed_type = proj_config.opt_enum<BedType>("curr_bed_type");
-            if (old_bed_type != new_bed_type) {
+            
+            // Orca: Check if we need to force save even when old_bed_type == new_bed_type
+            // This handles the case where it's the first time using this printer and the default
+            // bed type happens to match the current proj_config value (inherited from previous printer)
+            std::string printer_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+            auto saved_bed_type_str = wxGetApp().app_config->get_printer_setting(printer_name, "curr_bed_type");
+            
+            // Execute full update flow if bed type changed OR first time configuring this printer
+            // (even if values happen to be equal, we need to update global config, invalidate slices, etc.)
+            if (old_bed_type != new_bed_type || saved_bed_type_str.empty()) {
                 proj_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(new_bed_type));
 
                 wxGetApp().plater()->update_project_dirty_from_presets();
@@ -7246,8 +7271,7 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
                 // update app_config
                 AppConfig* app_config = wxGetApp().app_config;
                 app_config->set("curr_bed_type", std::to_string(int(new_bed_type)));
-                app_config->set_printer_setting(wxGetApp().preset_bundle->printers.get_selected_preset_name(),
-                                                "curr_bed_type", std::to_string(int(new_bed_type)));
+                app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(new_bed_type)));
 
                 //update slice status
                 auto plate_list = partplate_list.get_plate_list();

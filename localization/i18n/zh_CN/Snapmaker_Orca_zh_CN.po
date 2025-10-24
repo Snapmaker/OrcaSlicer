@@ -14200,6 +14200,9 @@ msgstr "使用下列文件名上传到打印机："
 msgid "Use forward slashes ( / ) as a directory separator if needed."
 msgstr "如有需要，请使用正斜杠（ / ）作为目录分隔符。"
 
+msgid "Please do not include the special characters #, *, and ;in filenames."
+msgstr "请不要在文件名中包含特殊字符 #, *, 和 ;。"
+
 msgid "Upload to storage"
 msgstr "上传到存储单位"
 
@@ -14207,6 +14210,9 @@ msgid "Switch to Device tab after upload."
 msgstr "上传后跳转到设备页。"
 
 #, c-format, boost-format
+msgid "The filename '%s' contains special characters (#, *, or ;) which may cause issues.Do you wish to continue?"
+msgstr "上传文件名有\"%s\"特殊字符。您是否要继续？"
+
 msgid "Upload filename doesn't end with \"%s\". Do you wish to continue?"
 msgstr "上传文件名不以\"%s\"结尾。您是否要继续？"
 

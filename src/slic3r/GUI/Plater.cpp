@@ -1780,7 +1780,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         }
     } else {
         // Orca: combobox don't have the btDefault option, so we need to -1
-        m_bed_type_list->SelectAndNotify(btPTE - 1);
+        // Orca: use Select instead of SelectAndNotify to avoid overwriting printer settings when switching printers
+        m_bed_type_list->Select(btPEI - 1);
         m_bed_type_list->Disable();
     }
 

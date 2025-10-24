@@ -361,6 +361,7 @@ private:
 
     // Machine option methods
     void sw_SendGCodes();
+    void sw_FileGetStatus();
     void sw_SystemGetDeviceInfo();
     void sw_GetMachineState();
     void sw_GetPrintInfo();

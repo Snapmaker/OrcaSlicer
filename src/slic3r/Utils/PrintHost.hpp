@@ -78,6 +78,8 @@ public:
 
     virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback){}
 
+    virtual void async_server_files_get_status(std::function<void(const nlohmann::json& response)> callback) {}
+
     virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_get_device_info(std::function<void(const nlohmann::json& response)>) {}

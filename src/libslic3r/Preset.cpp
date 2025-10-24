@@ -772,6 +772,8 @@ BedType Preset::get_default_bed_type(PresetBundle* preset_bundle)
         return BedType::btPC;
     } else if (model_id == "C11") {
         return BedType::btPEI;
+    } else if (model_id == "SM_U1") {
+        return BedType::btPTE;
     }
     return BedType::btPEI;
 }

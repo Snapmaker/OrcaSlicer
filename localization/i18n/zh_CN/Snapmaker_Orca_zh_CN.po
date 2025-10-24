@@ -2692,6 +2692,9 @@ msgid "Install failed"
 msgstr "安装失败"
 
 # snapmaker orca beta
+msgid "Note: The firmware version of SnapmakerU1 should be no less than"
+msgstr "提示：建议SnapmakerU1 固件版本不低于"
+
 msgid "Snapmaker Orca beta is forked from Orca Slicer by SoftFever."
 msgstr "Snapmaker Orca beta 基于 SoftFever 的 Orca Slicer开发。"
 

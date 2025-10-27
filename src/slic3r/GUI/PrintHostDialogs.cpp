@@ -127,7 +127,7 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
         // BBS: 检查文件名是否包含特殊字符
         if (path.find_first_of("#*;") != wxString::npos) {
             MessageDialog msg_window(this, 
-                wxString::Format(_L("The filename '%s' contains special characters (#, *, or ;) which may cause issues.\n\nDo you wish to continue?"), path), 
+                wxString::Format(_L("The filename '%s' contains special characters (#, *, or ;) which may cause issues.Do you wish to continue?"), path), 
                 wxString(SLIC3R_APP_NAME), wxYES | wxNO | wxICON_WARNING);
             if (msg_window.ShowModal() == wxID_NO)
                 return false;

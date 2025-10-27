@@ -14211,7 +14211,7 @@ msgstr "上传后跳转到设备页。"
 
 #, c-format, boost-format
 msgid "The filename '%s' contains special characters (#, *, or ;) which may cause issues.Do you wish to continue?"
-msgstr "上传文件名有\"%s\"特殊字符。您是否要继续？"
+msgstr "上传文件名\"%s\"有“#，*，；”特殊字符。您是否要继续？"
 
 msgid "Upload filename doesn't end with \"%s\". Do you wish to continue?"
 msgstr "上传文件名不以\"%s\"结尾。您是否要继续？"

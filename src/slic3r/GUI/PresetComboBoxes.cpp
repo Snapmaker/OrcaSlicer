@@ -1330,7 +1330,7 @@ wxRect PlaterPresetComboBox::get_machine_connecting_btn_rect() const
     
     wxSize size = GetSize();
     wxSize icon_size = m_machine_connecting_icon.GetBmpSize();
-    int x = 5 + 16 + 4; // 下拉箭头后（机器名称左边）
+    int x = 5 + 16 + 6; // 下拉箭头后（机器名称左边，间距从4改为6）
     int y = (size.y - icon_size.y) / 2;
     return wxRect(x, y, icon_size.x, icon_size.y);
 }
@@ -1400,7 +1400,7 @@ void PlaterPresetComboBox::render(wxDC& dc)
         dc.DrawBitmap(dropdown_bmp, wxPoint(x, y));
     }
     
-    int left_offset = 5 + 16 + 4; // 下拉箭头后的起始位置
+    int left_offset = 5 + 16 + 6; // 下拉箭头后的起始位置（间距从4改为6）
     
     // 3. 绘制 machine_connecting_btn（在机器名称左边）
     if (m_show_machine_connecting_button && m_machine_connecting_icon.bmp().IsOk()) {

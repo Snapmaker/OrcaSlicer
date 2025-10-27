@@ -5810,7 +5810,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "system.get_device_info",
     "sw_SendGCodes",
     "sw_FileGetStatus",
-    "sw_SystemGetDeviceInfo"
+    "sw_SystemGetDeviceInfo",
     "sw_GetMachineState",
     "sw_SubscribeMachineState",
     "sw_GetMachineObjects",

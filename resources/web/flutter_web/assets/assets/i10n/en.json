@@ -204,6 +204,7 @@
   "clear_all_files_confirm_message": "Are you sure you want to clear all recent files? This action cannot be undone.",
   "delete_confirm_yes": "Confirm Delete",
   "delete_confirm_no": "Cancel",
+  "connect_devcice_fail_tip_format": "Connect {} failed, please reselect your device and connect.",
 
   "error_0002052300000000_title": "Filament Anomaly",
   "error_0002052300000000_desc": "Filament runout detected in Toolhead 1. Try reloading filament, then tap the play button to resume the print job.",

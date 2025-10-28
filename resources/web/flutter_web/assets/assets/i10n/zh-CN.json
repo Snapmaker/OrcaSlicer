@@ -147,7 +147,7 @@
   "Select printer": "选择打印机",
   "Edit filament": "编辑耗材",
   "Select Tool Head": "选择打印头",
-
+  "Please enter the correct number": "请输入正确的数字",
 
   "Preference setting": "偏好设置",
   "Auto leveling": "自动调平",
@@ -382,6 +382,7 @@
   "clear_all_files_confirm_message": "确定要清空所有最近文件吗？此操作无法撤销。",
   "delete_confirm_yes": "确认",
   "delete_confirm_no": "取消",
+  "connect_devcice_fail_tip_format": "连接{}失败，请重新选择设备并连接",
 
   "error_0002052300000000_title": "耗材异常",
   "error_0002052300000000_desc": "检测到 1 号执行头断料，可尝试重新装载耗材，然后点击继续打印恢复作业。",

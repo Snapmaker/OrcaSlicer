@@ -306,7 +306,7 @@ jobs:
         run: |
           ./BuildLinux.sh -isr
           mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
-          chmod +x ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
+          chmod +x ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
 
       - name: Build orca_custom_preset_tests
         if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.1.0') && inputs.os == 'ubuntu-22.04'

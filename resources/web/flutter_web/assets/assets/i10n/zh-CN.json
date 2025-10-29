@@ -9,8 +9,51 @@
   "Manual connect": "手动连接",
   "Connect": "连接",
   "Connecting...": "连接中...",
+  "Connecting": "连接中...",
+  "Uploading...": "上传中...",
+  "Uploading": "上传中...",
+
+  "Device download file success": "设备下载文件成功",
+  "Device download file failed": "设备下载文件失败",
+
+  "Upload file success": "上传文件成功",
+  "Upload file failed": "上传文件失败",
+
+  "Delete file success": "删除文件成功",
+  "Delete file failed": "删除文件失败",
+
+  "Sending print job...": "正在发送打印任务...",
+  "Saving image...": "正在保存图片...",
+  "Save image failed.": "保存图片失败",
+  "Save image successfully": "保存图片成功",
+
+  "Authorizing timeout!": "授权超时!",
+
+  "Network connection failed. Please check your network connection.": "网络连接失败，请检查您的网络连接",
+  
+  "Set led failed": "设置LED失败",
+  "Set led success": "设置LED成功",
+
+  "Set print speed failed": "设置打印速度失败",
+  "Set print speed success": "设置打印速度成功",
+
+  "Could not get version from device": "无法获取设备版本",
+  "Device is offline": "设备已离线",
+  "Device is online": "设备已在线",
+
+  "Setting extruder mapping": "设置挤出头映射",
+
+  "Download failed": "下载失败",
+  "Cannot get machine filament mapping": "无法获取机器耗材映射信息",
+
+  "please input number": "请输入数字",
+  "device is offline, please retry refresh": "设备已离线，请刷新重试",
+  "device is busy, please waiting ...": "设备繁忙，请等待...",
+  "device is default, please set to go Home": "设备默认，请设置归位",
+  "this operation requires the printer to be online, currently the printer is not online": "此操作需要设备在线，当前设备不在线",
+
   "Connected": "已连接",
-  "Binded": "已绑定",
+  "Bound": "已绑定",
   "Other Machine connect": "其他设备连接",
   "The current device is connected": "当前设备已连接",
   "No Data": "当前无数据",
@@ -223,6 +266,10 @@
   "Auto Loading": "自动进料",
   "Unloading": "退料",
   "Manual Loading": "手动进料",
+  "Wait for device response...": "等待设备响应...",
+  "loading...": "加载中...",
+  "Loading...": "加载中...",
+  "Login...": "登录中...",
 
   "Heated Bed Temp.": "热床温度",
   "Print Speed": "打印速度",
@@ -302,6 +349,7 @@
   "Filament auto feed description": "自动进料\n• 耗材塞入对应进料口直至对应进料口指示灯亮起，设备会预载料，打印开始时会自动进料\n材料信息\n• 官方3D打印耗材信息会被设备识别。非官方耗材需要手动编辑材料信息。\n自动续打\n• 打印过程中发生耗材断裂时，若设备配备相同品牌、类型、颜色的耗材，设备会自动续打。",
   "Unconnected device": "未连接设备",
   "Current filament not loaded, please load filament first": "当前未装载耗材，请先装料",
+  "Loading filament config...": "加载耗材配置中...",
 
   "Ivory White": "象牙白",
   "Carbon Black": "碳黑",
@@ -346,10 +394,18 @@
   "dialog_file_upload_success_to_device_tips": "文件{}已上传到设备，发起打印...",
   "dialog_file_upload_success_to_cloud_tips": "文件{}已上传到云服务，发起打印...",
   "dialog_file_send_success_to_device_tips": "文件{}已发送成功到设备",
+  "cancel_print_confirm_title": "提示",
+  "cancel_print_confirm_message": "您确认要终止本次打印任务么？",
+  "cancel_print_confirm_yes": "确认",
+  "cancel_print_confirm_no": "取消",
 
   "Refresh More": "刷新更多",
   "downloading_desc_format": "{}，下载中...({}%)",
   "downloaded_desc_format": "{}，下载完成",
+  "Version Compatibility": "版本兼容",
+  "device_firmware_version_not_compatible_desc": "检测到当前设备固件版本过低，为避免出现通信问题，建议升级设备固件",
+  "dont_remind_again_desc": "不再提示",
+  "Remind later": "稍后提示",
 
   "The current device is currently processing the offline state, please check the device and try again.": "当前设备处于离线状态，请检查设备并重试",
   "Your account has been unbound from the device. Please reselect the device to initiate the connection.": "您的账户已被设备解绑，请重新选择设备发起连接",

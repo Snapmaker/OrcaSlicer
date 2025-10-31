@@ -1,4 +1,80 @@
 {
+  "dialog": {
+    "http": {
+      "success": "请求成功",
+      "bad_request": "请求参数错误，请检查输入",
+      "unauthorized": "未授权或登录已过期，请重新登录",
+      "forbidden": "权限不足，无法访问该资源",
+      "not_found": "资源未找到",
+      "too_many_requests": "请求过于频繁，请稍后再试",
+      "internal_server_error": "服务器内部错误",
+      "service_unavailable": "服务暂时不可用，请稍后再试",
+      "unknown": "网络请求失败"
+    },
+    "open_business": {
+      "email_verification_failed": "邮箱验证码发送失败，请稍后重试",
+      "sms_verification_failed": "手机验证码发送失败，请稍后重试",
+      "file_upload_failed": "文件上传失败，请检查文件格式和大小",
+      "file_info_not_found": "文件信息不存在，请重新选择文件",
+      "unknown": "业务操作失败"
+    },
+    "permission": {
+      "verification_code_error": "验证码错误，请重新输入",
+      "login_failed": "登录失败，请检查用户名和密码",
+      "authorization_missing": "缺少授权信息，请重新登录",
+      "token_expired": "登录已过期，请重新登录",
+      "authentication_failed": "身份验证失败，请重新登录",
+      "unknown": "权限验证失败"
+    },
+    "user_service": {
+      "not_found": "用户不存在，请检查账户信息",
+      "frozen": "账户已被冻结，请联系客服",
+      "update_failed": "用户信息更新失败，请稍后重试",
+      "image_upload_failed": "图片上传失败，请检查图片格式",
+      "file_upload_failed": "文件上传失败，请检查文件格式",
+      "certificate_expired": "用户证书已失效，正在重新获取",
+      "email_not_found": "邮箱不存在，请检查邮箱地址",
+      "phone_not_found": "手机号不存在，请检查手机号码",
+      "unknown": "用户服务错误"
+    },
+    "device_service": {
+      "not_found": "设备未找到，请检查设备连接",
+      "register_failed": "设备注册失败，请稍后重试",
+      "bind_failed": "设备绑定失败，请检查设备状态",
+      "invalid": "设备无效，请检查设备信息",
+      "image_upload_failed": "设备图片上传失败",
+      "file_upload_failed": "设备文件上传失败",
+      "certificate_update_failed": "设备证书更新失败",
+      "unauthorized": "设备未授权，请重新绑定",
+      "not_connected": "设备未连接，请检查网络",
+      "authorization_check_failed": "设备授权检测异常",
+      "auth_code_locale_not_match": "设备认证检查区域失败",
+      "unknown": "设备服务错误"
+    },
+    "business_operation": {
+      "no_permission": "您没有执行此操作的权限",
+      "unknown": "操作失败"
+    },
+    "title": {
+      "http": "网络错误",
+      "open_business": "业务错误",
+      "permission": "权限错误",
+      "business_operation": "操作错误",
+      "user_service": "用户服务错误",
+      "device_service": "设备服务错误",
+      "other": "系统错误"
+    },
+    "action": {
+      "confirm": "确定",
+      "cancel": "取消",
+      "retry": "重试",
+      "relogin": "重新登录",
+      "contact_support": "联系客服",
+      "reselect": "重新选择",
+      "resend": "重新发送",
+      "check_device": "检查设备"
+    }
+  },
   "title": "发现设备",
   "description": "发现设备",
   "add device": "添加设备",
@@ -54,6 +130,7 @@
 
   "Connected": "已连接",
   "Bound": "已绑定",
+  "This device is already bound to your account": "此设备已绑定到您的账户",
   "Other Machine connect": "其他设备连接",
   "The current device is connected": "当前设备已连接",
   "No Data": "当前无数据",
@@ -117,9 +194,12 @@
   "Connect success": "连接成功",
   "Connect failed": "连接失败",
 
-  "Binding": "绑定中...",
+  "Binding...": "绑定中...",
   "Binding failed": "绑定失败",
 
+  "Refresh completed": "刷新完成",
+  "Refresh failed": "刷新失败",
+  
   "User not logged in": "用户未登录",
 
   "Not logged in account": "未登录账户",
@@ -406,6 +486,7 @@
   "device_firmware_version_not_compatible_desc": "检测到当前设备固件版本过低，为避免出现通信问题，建议升级设备固件",
   "dont_remind_again_desc": "不再提示",
   "Remind later": "稍后提示",
+  "Could not get device version": "无法获取设备信息",
 
   "The current device is currently processing the offline state, please check the device and try again.": "当前设备处于离线状态，请检查设备并重试",
   "Your account has been unbound from the device. Please reselect the device to initiate the connection.": "您的账户已被设备解绑，请重新选择设备发起连接",
@@ -440,6 +521,9 @@
   "delete_confirm_no": "取消",
   "connect_devcice_fail_tip_format": "连接{}失败，请重新选择设备并连接",
 
+  "Check": "查看",
+  "default_exception_title": "异常",
+  "Error Code": "错误码",
   "error_0002052300000000_title": "耗材异常",
   "error_0002052300000000_desc": "检测到 1 号执行头断料，可尝试重新装载耗材，然后点击继续打印恢复作业。",
   "error_0002052300010000_title": "耗材异常",

@@ -1,4 +1,80 @@
 {
+  "dialog": {
+    "http": {
+      "success": "Request successful",
+      "bad_request": "Bad request, please check your input",
+      "unauthorized": "Unauthorized or session expired, please login again",
+      "forbidden": "Insufficient permissions to access this resource",
+      "not_found": "Resource not found",
+      "too_many_requests": "Too many requests, please try again later",
+      "internal_server_error": "Internal server error",
+      "service_unavailable": "Service temporarily unavailable, please try again later",
+      "unknown": "Network request failed"
+    },
+    "open_business": {
+      "email_verification_failed": "Failed to send email verification code, please try again later",
+      "sms_verification_failed": "Failed to send SMS verification code, please try again later",
+      "file_upload_failed": "File upload failed, please check file format and size",
+      "file_info_not_found": "File information not found, please select file again",
+      "unknown": "Business operation failed"
+    },
+    "permission": {
+      "verification_code_error": "Verification code error, please re-enter",
+      "login_failed": "Login failed, please check username and password",
+      "authorization_missing": "Authorization information missing, please login again",
+      "token_expired": "Session expired, please login again",
+      "authentication_failed": "Authentication failed, please login again",
+      "unknown": "Permission verification failed"
+    },
+    "user_service": {
+      "not_found": "User not found, please check account information",
+      "frozen": "Account has been frozen, please contact customer support",
+      "update_failed": "Failed to update user information, please try again later",
+      "image_upload_failed": "Image upload failed, please check image format",
+      "file_upload_failed": "File upload failed, please check file format",
+      "certificate_expired": "User certificate has expired, retrieving new certificate",
+      "email_not_found": "Email not found, please check email address",
+      "phone_not_found": "Phone number not found, please check phone number",
+      "unknown": "User service error"
+    },
+    "device_service": {
+      "not_found": "Device not found, please check device connection",
+      "register_failed": "Device registration failed, please try again later",
+      "bind_failed": "Device binding failed, please check device status",
+      "invalid": "Invalid device, please check device information",
+      "image_upload_failed": "Device image upload failed",
+      "file_upload_failed": "Device file upload failed",
+      "certificate_update_failed": "Device certificate update failed",
+      "unauthorized": "Device unauthorized, please rebind device",
+      "not_connected": "Device not connected, please check network",
+      "authorization_check_failed": "Device authorization check failed",
+      "auth_code_locale_not_match": "Device authorization code locale not match",
+      "unknown": "Device service error"
+    },
+    "business_operation": {
+      "no_permission": "You don't have permission to perform this operation",
+      "unknown": "Operation failed"
+    },
+    "title": {
+      "http": "Network Error",
+      "open_business": "Business Error",
+      "permission": "Permission Error",
+      "business_operation": "Operation Error",
+      "user_service": "User Service Error",
+      "device_service": "Device Service Error",
+      "other": "System Error"
+    },
+    "action": {
+      "confirm": "Confirm",
+      "cancel": "Cancel",
+      "retry": "Retry",
+      "relogin": "Login Again",
+      "contact_support": "Contact Support",
+      "reselect": "Reselect",
+      "resend": "Resend",
+      "check_device": "Check Device"
+    }
+  },
   "title": "Discovery Device",
   "add device": "Add Device",
   "input_ip_address": "Enter IP address",
@@ -196,6 +272,7 @@
   "device_firmware_version_not_compatible_desc": "Current device version not compatible. To avoid communication problems, it is recommended to upgrade the device firmware",
   "dont_remind_again_desc": "Don't remind again",
   "Remind later": "Remind later",
+  "Could not get device version": "Could not get device version",
 
   "dialog_file_download_success_tips": "File {} has been downloaded successfully, initiating upload...",
   "dialog_file_download_failed_tips": "File {} download failed, please try again...",
@@ -214,6 +291,9 @@
   "delete_confirm_no": "Cancel",
   "connect_devcice_fail_tip_format": "Connect {} failed, please reselect your device and connect.",
 
+  "Check": "Check",
+  "default_exception_title": "Exception",
+  "Error Code": "Error Code",
   "error_0002052300000000_title": "Filament Anomaly",
   "error_0002052300000000_desc": "Filament runout detected in Toolhead 1. Try reloading filament, then tap the play button to resume the print job.",
   "error_0002052300010000_title": "Filament Anomaly",

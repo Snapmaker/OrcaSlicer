@@ -304,7 +304,7 @@
   "Connect device success": "连接设备成功",
   "Connect device failed": "连接设备失败",
   "Idle": "空闲",
-  "Working": "工作中",
+  "Working": "忙碌",
   "Error": "异常",
   "Offline": "离线",
   "XYZ Calibrating": "XYZ校准中",
@@ -486,7 +486,7 @@
   "device_firmware_version_not_compatible_desc": "检测到当前设备固件版本过低，为避免出现通信问题，建议升级设备固件",
   "dont_remind_again_desc": "不再提示",
   "Remind later": "稍后提示",
-  "Could not get device version": "无法获取设备信息",
+  "Could not get device version": "无法获取设备固件版本信息",
 
   "The current device is currently processing the offline state, please check the device and try again.": "当前设备处于离线状态，请检查设备并重试",
   "Your account has been unbound from the device. Please reselect the device to initiate the connection.": "您的账户已被设备解绑，请重新选择设备发起连接",

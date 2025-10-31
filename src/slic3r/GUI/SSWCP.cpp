@@ -1847,6 +1847,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_UploadCameraTimelapse();
     } else if (m_cmd == "sw_DeleteCameraTimelapse") {
         sw_DeleteCameraTimelapse();
+    } else if (m_cmd == "sw_ServerClientManagerSetUserinfo") {
+        sw_ServerClientManagerSetUserinfo();
     }
     
     else {
@@ -2449,6 +2451,44 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
         }
 
     } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_ServerClientManagerSetUserinfo()
+{
+    try {
+        if (!m_param_data.count("auther")) {
+            handle_general_fail(-1, "param [auther] is required");
+            return;
+        }
+
+        json auther = m_param_data["auther"];
+
+        if(!auther.count("id") || !auther.count("nickname")){
+            handle_general_fail(-1, "param [id] and [nickname] is required");
+            return;
+        }
+
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "can't find the active machine");
+            return;
+        }
+        
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_server_client_manager_set_userinfo(m_param_data,
+                                            [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response); 
+            }
+        });
+
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -5854,7 +5894,8 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_GetFileListPage",
     "sw_UpdateMachineFilamentInfo",
     "sw_UploadCameraTimelapse",
-    "sw_DeleteCameraTimelapse"
+    "sw_DeleteCameraTimelapse",
+    "sw_ServerClientManagerSetUserinfo"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {

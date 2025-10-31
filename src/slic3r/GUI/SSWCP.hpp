@@ -421,6 +421,9 @@ private:
     // 结束预打印流程
     void sw_FinishPreprint();
 
+    // 设置已绑定用户信息
+    void sw_ServerClientManagerSetUserinfo();
+
     // 请求设备下载文件并打印
     void sw_PullCloudFile();
 

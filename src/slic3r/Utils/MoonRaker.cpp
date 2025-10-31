@@ -2185,6 +2185,38 @@ void Moonraker_Mqtt::async_exception_query(std::function<void(const nlohmann::js
     }
 }
 
+void Moonraker_Mqtt::async_server_client_manager_set_userinfo(const nlohmann::json& user, std::function<void(const nlohmann::json& response)> callback) {
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 开始设置已绑定用户信息";
+    wcp_loger.add_log("开始设置已绑定用户信息", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "server.client_manager.set_userinfo";
+
+
+
+    if (!user.count("auther") || !user["auther"].count("id") || !user["auther"].count("nickname")) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 设置已绑定用户信息失败，id或nickname不存在";
+        wcp_loger.add_log("设置已绑定用户信息失败，id或nickname不存在", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+        return;
+    }
+
+    json params = user;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 设置已绑定用户信息超时";
+                             wcp_loger.add_log("设置已绑定用户信息超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送设置已绑定用户信息请求失败";
+        wcp_loger.add_log("发送设置已绑定用户信息请求失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 void Moonraker_Mqtt::async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)> callback) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始获取文件缩略图，文件名: " << filename;

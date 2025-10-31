@@ -89,7 +89,8 @@ public:
     virtual void async_machine_files_metadata(const std::string& filename, std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)>) {}
-
+    
+    virtual void async_server_client_manager_set_userinfo(const nlohmann::json& user, std::function<void(const nlohmann::json& response)>) {}
     virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_camera_start(const std::string& domain, int interval, std::function<void(const nlohmann::json& response)>) {}
@@ -243,6 +244,8 @@ public:
     virtual void async_machine_files_metadata(const std::string& filename, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)>) override;
+    
+    virtual void async_server_client_manager_set_userinfo(const nlohmann::json& user, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) override;
 

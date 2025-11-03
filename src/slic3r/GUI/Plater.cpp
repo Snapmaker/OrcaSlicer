@@ -1789,6 +1789,9 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         // Orca: 不支持多床型时，从配置读取默认床型
         BedType default_bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
         
+        // Orca: 即使不支持多床型，也需要保存床型到 project_config，确保数据一致性
+        wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(default_bed_type));
+        
         // Orca: combobox don't have the btDefault option, so we need to -1
         // Orca: use Select instead of SelectAndNotify to avoid overwriting printer settings when switching printers
         m_bed_type_list->Select((int)default_bed_type - 1);

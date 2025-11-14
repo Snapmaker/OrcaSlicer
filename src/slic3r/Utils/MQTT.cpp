@@ -2,6 +2,8 @@
 #include <thread>
 #include <boost/log/trivial.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/filesystem/fstream.hpp>
+#include <future>
 #include <fstream>
 
 // Constructor: Initialize MQTT client with server address and client ID
@@ -63,27 +65,39 @@ MqttClient::MqttClient(const std::string& server_address,
         // CA证书临时文件
         boost::filesystem::path ca_path = temp_dir / ("ca_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!ca_content.empty()) {
-            std::ofstream ca_file(ca_path.string());
+            boost::filesystem::ofstream ca_file(ca_path);
             ca_file << ca_content;
             ca_file.close();
+            if (!ca_file) {
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] 写入CA证书临时文件失败: " << ca_path;
+                throw std::runtime_error("Failed to write CA certificate temporary file");
+            }
             BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] CA证书已写入临时文件: " << ca_path;
         }
 
         // 客户端证书临时文件
         boost::filesystem::path cert_path = temp_dir / ("cert_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!cert_content.empty()) {
-            std::ofstream cert_file(cert_path.string());
+            boost::filesystem::ofstream cert_file(cert_path);
             cert_file << cert_content;
             cert_file.close();
+            if (!cert_file) {
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] 写入客户端证书临时文件失败: " << cert_path;
+                throw std::runtime_error("Failed to write client certificate temporary file");
+            }
             BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] 客户端证书已写入临时文件: " << cert_path;
         }
 
         // 私钥临时文件
         boost::filesystem::path key_path = temp_dir / ("key_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!key_content.empty()) {
-            std::ofstream key_file(key_path.string());
+            boost::filesystem::ofstream key_file(key_path);
             key_file << key_content;
             key_file.close();
+            if (!key_file) {
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] 写入私钥临时文件失败: " << key_path;
+                throw std::runtime_error("Failed to write private key temporary file");
+            }
             BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] 私钥已写入临时文件: " << key_path;
         }
 

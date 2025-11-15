@@ -10,7 +10,7 @@ endif()
 if(NOT DEFINED BBL_INTERNAL_TESTING)
 set(BBL_INTERNAL_TESTING "0")
 endif()
-set(Snapmaker_VERSION "2.1.1")
+set(Snapmaker_VERSION "2.1.2")
 set(MIN_FIRM_VER "0.8.4")
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
        Snapmaker_VERSION_MATCH ${Snapmaker_VERSION})

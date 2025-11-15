@@ -74,7 +74,7 @@ jobs:
 
           echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           echo "date=$date" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          echo "date: ${{ env.date }} version: ${{ env.ver }}"
+          echo "date: ${{ env.date }} version: nightly_build"
         shell: pwsh
 
 #   Mac
@@ -150,15 +150,15 @@ jobs:
           
           echo "=== 创建DMG文件 ==="
           ln -s /Applications ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca -ov -format UDZO Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca -ov -format UDZO Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
           
           echo "=== 签名DMG文件 ==="
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
           
           echo "=== 开始公证流程 ==="
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
-          xcrun notarytool submit "Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-          xcrun stapler staple Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          xcrun notarytool submit "Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg" --keychain-profile "notarytool-profile" --wait
+          xcrun stapler staple Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
           
           echo "=== 签名流程完成 ==="
 
@@ -167,14 +167,14 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           ln -s /Applications ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca -ov -format UDZO Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build_${{inputs.arch}}/Snapmaker_Orca -ov -format UDZO Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
 
       - name: Upload artifacts mac
         if: inputs.os == 'macos-14'
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}
-          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          name: Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build
+          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
 
       - name: Deploy Mac release
         if: (github.ref == 'refs/heads/main' && inputs.os == 'macos-14') || (github.ref == 'refs/heads/2.1.0' && inputs.os == 'macos-14')
@@ -182,8 +182,8 @@ jobs:
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
-          asset_name: Snapmaker_Orca_Mac_${{inputs.arch}}_${{ env.ver }}.dmg
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
+          asset_name: Snapmaker_Orca_Mac_${{inputs.arch}}_nightly_build.dmg
           asset_content_type: application/octet-stream
           max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
 
@@ -216,26 +216,26 @@ jobs:
         if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}/build
         shell: cmd
-        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip ${{ github.workspace }}/build/Snapmaker_Orca'
+        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip Snapmaker_Orca_Windows_nightly_build_portable.zip ${{ github.workspace }}/build/Snapmaker_Orca'
 
       - name: Pack PDB
         if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}/build/src/Release
         shell: cmd
-        run: '"C:/Program Files/7-Zip/7z.exe" a -m0=lzma2 -mx9 Debug_PDB_${{ env.ver }}_for_developers_only.7z  *.pdb'
+        run: '"C:/Program Files/7-Zip/7z.exe" a -m0=lzma2 -mx9 Debug_PDB_nightly_build_for_developers_only.7z  *.pdb'
 
       - name: Upload artifacts Win zip
         if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Windows_${{ env.ver }}_portable
-          path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
+          name: Snapmaker_Orca_Windows_nightly_build_portable
+          path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_nightly_build_portable.zip
 
       - name: Upload artifacts Win installer
         if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Windows_${{ env.ver }}
+          name: Snapmaker_Orca_Windows_nightly_build
           path: ${{ github.workspace }}/build/Snapmaker_Orca*.exe
 
       - name: Upload artifacts Win PDB
@@ -243,7 +243,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PDB
-          path: ${{ github.workspace }}/build/src/Release/Debug_PDB_${{ env.ver }}_for_developers_only.7z
+          path: ${{ github.workspace }}/build/src/Release/Debug_PDB_nightly_build_for_developers_only.7z
 
       - name: Deploy Windows release portable
         if: (github.ref == 'refs/heads/main' && inputs.os == 'windows-latest') || (github.ref == 'refs/heads/2.1.0' && inputs.os == 'windows-latest')
@@ -251,8 +251,8 @@ jobs:
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
-          asset_name: Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
+          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_nightly_build_portable.zip
+          asset_name: Snapmaker_Orca_Windows_nightly_build_portable.zip
           asset_content_type: application/x-zip-compressed
           max_releases: 1
 
@@ -262,8 +262,8 @@ jobs:
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
-          asset_name: Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
+          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_Installer_nightly_build.exe
+          asset_name: Snapmaker_Orca_Windows_Installer_nightly_build.exe
           asset_content_type: application/x-msdownload
           max_releases: 1
 
@@ -305,8 +305,8 @@ jobs:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         run: |
           ./BuildLinux.sh -isr
-          mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
-          chmod +x ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
+          mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_nightly_build_Beta.AppImage
+          chmod +x ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_nightly_build_Beta.AppImage
 
       - name: Build orca_custom_preset_tests
         if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.1.0') && inputs.os == 'ubuntu-22.04'
@@ -324,8 +324,8 @@ jobs:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}_Beta.AppImage
-          path: './build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage'
+          name: Snapmaker_Orca_Linux_ubuntu_${{ env.ubuntu-ver }}_nightly_build_Beta.AppImage
+          path: './build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_nightly_build_Beta.AppImage'
 
       - name: Deploy Ubuntu release
         if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.1.0') && (inputs.os == 'ubuntu-22.04' || inputs.os == 'ubuntu-24.04') }}
@@ -335,8 +335,8 @@ jobs:
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
-          asset_name: Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
+          asset_path: ./build/Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_nightly_build_Beta.AppImage
+          asset_name: Snapmaker_Orca_Linux${{ env.ubuntu-ver-str }}_nightly_build_Beta.AppImage
           asset_content_type: application/octet-stream
           max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
 

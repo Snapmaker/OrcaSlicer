@@ -200,8 +200,17 @@ function build_slicer() {
         cd Snapmaker_Orca
         # remove previously built app
         rm -rf "./Snapmaker Orca.app"
-        # fully copy newly built app
-        cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker Orca.app" "./Snapmaker Orca.app"
+        # determine source app path (handle both space and underscore names)
+        APP_SOURCE_PATH="../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker Orca.app"
+        if [ ! -d "$APP_SOURCE_PATH" ]; then
+            APP_SOURCE_PATH="../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca.app"
+        fi
+        if [ ! -d "$APP_SOURCE_PATH" ]; then
+            echo "Error: cannot find built app bundle at $APP_SOURCE_PATH"
+            exit 1
+        fi
+        # fully copy newly built app (rename to canonical name with space)
+        cp -pR "$APP_SOURCE_PATH" "./Snapmaker Orca.app"
         # fix resources
         resources_path=$(readlink "./Snapmaker Orca.app/Contents/Resources")
         rm "./Snapmaker Orca.app/Contents/Resources"

@@ -1,4 +1,4 @@
-app-id: io.github.softfever.Snapmaker_Orca
+app-id: io.github.Snapmaker.Snapmaker_Orca
 runtime: org.gnome.Platform
 runtime-version: "48"
 sdk: org.gnome.Sdk
@@ -16,7 +16,7 @@ finish-args:
   - --filesystem=/media
   - --filesystem=/run/spnav.sock:ro
   # Allow Snapmaker_Orca to talk to other instances
-  - --talk-name=io.github.softfever.Snapmaker_Orca.InstanceCheck.*
+  - --talk-name=io.github.Snapmaker.Snapmaker_Orca.InstanceCheck.*
   - --system-talk-name=org.freedesktop.UDisks2
   - --env=SPNAV_SOCKET=/run/spnav.sock
 
@@ -305,7 +305,7 @@ modules:
 
       # AppData metainfo for Gnome Software & Co.
       - type: file
-        path: io.github.softfever.Snapmaker_Orca.metainfo.xml
+        path: io.github.Snapmaker.Snapmaker_Orca.metainfo.xml
 
       # start-up script
       - type: file

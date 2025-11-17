@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio, built using C++ with wxWidgets for the GUI and CMake as the build system. The project uses a modular architecture with separate libraries for core slicing functionality, GUI components, and platform-specific code.
+Snapmaker_Orca is an open-source 3D slicer application forked from Bambu Studio, built using C++ with wxWidgets for the GUI and CMake as the build system. The project uses a modular architecture with separate libraries for core slicing functionality, GUI components, and platform-specific code.
 
 ## Build Commands
 
@@ -240,7 +240,7 @@ Run individual test suites:
 
 ### Codebase Navigation
 - Use search tools extensively - codebase has 500k+ lines
-- Key entry points: `src/OrcaSlicer.cpp` for application startup
+- Key entry points: `src/Snapmaker_Orca.cpp` for application startup
 - Core slicing: `libslic3r/Print.cpp` orchestrates the slicing pipeline
 - Configuration: `PrintConfig.cpp` defines all print/printer/material settings
 

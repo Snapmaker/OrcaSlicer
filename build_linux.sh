@@ -209,7 +209,7 @@ if [[ -n "${BUILD_DEPS}" ]] ; then
 fi
 
 if [[ -n "${BUILD_ORCA}" ]] ; then
-    echo "Configuring OrcaSlicer..."
+    echo "Configuring Snapmaker_Orca..."
     if [[ -n "${CLEAN_BUILD}" ]] ; then
         rm -fr build
     fi
@@ -229,7 +229,7 @@ if [[ -n "${BUILD_ORCA}" ]] ; then
         BUILD_ARGS+=(-DORCA_UPDATER_SIG_KEY="${ORCA_UPDATER_SIG_KEY}")
     fi
 
-    echo "Configuring OrcaSlicer..."
+    echo "Configuring Snapmaker_Orca..."
     set -x
     cmake -S . -B build "${CMAKE_C_CXX_COMPILER_CLANG[@]}" "${CMAKE_LLD_LINKER_ARGS[@]}" -G "Ninja Multi-Config" \
 	  -DSLIC3R_PCH="${SLIC3R_PRECOMPILED_HEADERS}" \
@@ -240,11 +240,11 @@ if [[ -n "${BUILD_ORCA}" ]] ; then
 	  "${BUILD_ARGS[@]}"
     set +x
     echo "done"
-    echo "Building OrcaSlicer ..."
+    echo "Building Snapmaker_Orca ..."
     if [[ -n "${BUILD_DEBUG}" ]] ; then
-        cmake --build build --config Debug --target OrcaSlicer
+        cmake --build build --config Debug --target Snapmaker_Orca
     else
-        cmake --build build --config Release --target OrcaSlicer
+        cmake --build build --config Release --target Snapmaker_Orca
     fi
     echo "Building Snapmaker_Orca_profile_validator .."
     if [[ -n "${BUILD_DEBUG}" ]] ; then

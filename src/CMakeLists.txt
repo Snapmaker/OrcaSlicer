@@ -95,9 +95,9 @@ if(ORCA_TOOLS)
             MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker_Orca Profile Validator"
             MACOSX_BUNDLE_BUNDLE_VERSION "${SLIC3R_VERSION}"
             MACOSX_BUNDLE_SHORT_VERSION_STRING "${SLIC3R_VERSION}"
-            MACOSX_BUNDLE_IDENTIFIER "com.softfever.Snapmaker_Orca.profile-validator"
+            MACOSX_BUNDLE_IDENTIFIER "com.Snapmaker.Snapmaker_Orca.profile-validator"
             MACOSX_BUNDLE_COPYRIGHT "© 2024 SoftFever"
-            MACOSX_BUNDLE_GUI_IDENTIFIER "com.softfever.Snapmaker_Orca.profile-validator"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.Snapmaker.Snapmaker_Orca.profile-validator"
         )
     else()
         add_executable(Snapmaker_Orca_profile_validator dev-utils/Snapmaker_Orca_profile_validator.cpp)

@@ -246,18 +246,22 @@ else ()
         set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/../resources")
     endif ()
     if (CMAKE_MACOSX_BUNDLE)
-        if (CMAKE_CONFIGURATION_TYPES)
-            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Snapmaker Orca.app/Contents/Resources")
-        else()
-            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/Snapmaker Orca.app/Contents/Resources")
-        endif()
         set(MACOSX_BUNDLE_ICON_FILE Icon.icns)
-        set(MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca")
-        set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION})
-        set(MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
+        set_target_properties(Snapmaker_Orca PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION}
+            MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
+        # Get the bundle directory by going up from the executable to the .app bundle
+        if (CMAKE_CONFIGURATION_TYPES)
+            set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
+        else()
+            set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
+        endif()
     endif()
     add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-        COMMAND ln -sfn "${SLIC3R_RESOURCES_DIR}" "${BIN_RESOURCES_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
         COMMENT "Symlinking the resources directory into the build tree"
         VERBATIM)
 endif ()

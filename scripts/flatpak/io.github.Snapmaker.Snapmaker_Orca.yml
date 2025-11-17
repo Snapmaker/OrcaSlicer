@@ -1,6 +1,6 @@
 app-id: io.github.softfever.Snapmaker_Orca
 runtime: org.gnome.Platform
-runtime-version: "47"
+runtime-version: "48"
 sdk: org.gnome.Sdk
 command: entrypoint
 separate-locales: true
@@ -196,7 +196,7 @@ modules:
       - type: file
         url: https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/V7_6_0.zip
         dest: external-packages/OCCT
-        sha256: 28334F0E98F1B1629799783E9B4D21E05349D89E695809D7E6DFA45EA43E1DBC
+        sha256: 28334f0e98f1b1629799783e9b4d21e05349d89e695809d7e6dfa45ea43e1dbc
 
       # OpenCSG
       - type: file

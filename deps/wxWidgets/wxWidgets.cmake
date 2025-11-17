@@ -22,7 +22,7 @@ endif ()
 # ** THIS INCLUDES BUILD ARGS. **
 # ...if you can find a way around this size limitation, be my guest.
 
-orcaslicer_add_cmake_project(
+Snapmaker_Orca_add_cmake_project(
     wxWidgets
     GIT_REPOSITORY "https://github.com/SoftFever/Orca-deps-wxWidgets"
     GIT_SHALLOW ON

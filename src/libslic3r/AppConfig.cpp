@@ -37,8 +37,9 @@ using namespace nlohmann;
 
 namespace Slic3r {
 
-static const std::string VERSION_CHECK_URL = "https://check-version.orcaslicer.com/latest";
-static const std::string PROFILE_UPDATE_URL = "https://api.github.com/repos/OrcaSlicer/orcaslicer-profiles/releases/tags";
+static const std::string VERSION_CHECK_URL_STABLE = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases/latest";
+static const std::string VERSION_CHECK_URL = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases";
+static const std::string PROFILE_UPDATE_URL = "https://api.github.com/repos/Snapmaker/Orca_Presets/releases/latest";
 static const std::string MODELS_STR = "models";
 
 const std::string AppConfig::SECTION_FILAMENTS = "filaments";
@@ -263,6 +264,9 @@ void AppConfig::set_defaults()
     if(get("check_stable_update_only").empty()) {
         set_bool("check_stable_update_only", false);
     }
+    // SM prerelease does not update
+    set_bool("check_stable_update_only", true);
+
 
     // Orca
     if(get("show_splash_screen").empty()) {
@@ -522,6 +526,8 @@ std::string AppConfig::load()
 #else
         ifs >> j;
 #endif
+        // SM orca
+        update_filament_names(j);
     }
     catch(nlohmann::detail::parse_error &err) {
 #ifdef WIN32
@@ -669,6 +675,11 @@ std::string AppConfig::load()
                 }
             }
         }
+
+        // SM Orca
+        if (j.contains("devices")) {
+            m_device_list = j["devices"].get<std::vector<DeviceInfo>>();
+        }
     } catch(std::exception err) {
         BOOST_LOG_TRIVIAL(info) << format("parse app config \"%1%\", error: %2%", AppConfig::loading_path(), err.what());
 
@@ -785,6 +796,11 @@ void AppConfig::save()
             continue;
         }
         for (const auto& kvp : category.second) {
+            // SM Orca
+            if (kvp.first == "use_new_connect") {
+                j[category.first][kvp.first] = false;
+                continue;
+            }
             if (kvp.second == "true") {
                 j[category.first][kvp.first] = true;
                 continue;
@@ -819,6 +835,20 @@ void AppConfig::save()
     // write machine settings
     for (const auto& preset : m_printer_settings) {
         j["orca_presets"].push_back(preset.second);
+    }
+
+    j["devices"] = json::array();
+    for (size_t i = 0; i < m_device_list.size(); ++i) {
+        if (m_device_list[i].link_mode != "wan") {
+            j["devices"].push_back(m_device_list[i]);
+        }
+    }
+
+    // j["devices"] = m_device_list;
+
+
+    for (size_t i = 0; i < j["devices"].size(); ++i) {
+        j["devices"][i]["connected"] = false;
     }
     for (const auto& local_machine : m_local_machines) {
         json m_json;
@@ -1382,10 +1412,10 @@ std::string AppConfig::config_path()
     return path;
 }
 
-std::string AppConfig::version_check_url() const
+std::string AppConfig::version_check_url(bool stable_only/* = false*/) const
 {
     auto from_settings = get("version_check_url");
-    return from_settings.empty() ? VERSION_CHECK_URL : from_settings;
+    return from_settings.empty() ? stable_only ? VERSION_CHECK_URL_STABLE : VERSION_CHECK_URL : from_settings;
 }
 
 std::string AppConfig::profile_update_url() const
@@ -1396,6 +1426,198 @@ std::string AppConfig::profile_update_url() const
 bool AppConfig::exists()
 {
     return boost::filesystem::exists(config_path());
+}
+
+void AppConfig::save_device_info(const DeviceInfo& device)
+{
+    // 检查是否已存在该设备
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&device](const DeviceInfo& d) { return d.dev_id == device.dev_id; });
+    
+    if (it != m_device_list.end()) {
+        // 更新已存在的设备信息
+        *it = device;
+    } else {
+        // 添加新设备
+        m_device_list.push_back(device);
+    }
+    m_dirty = true;
+}
+
+void AppConfig::clear_device_info()
+{
+    m_device_list.clear();
+    m_dirty = true;
+}
+
+void AppConfig::remove_device_info(const std::string& dev_id)
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
+    
+    if (it != m_device_list.end()) {
+        m_device_list.erase(it);
+        m_dirty = true;
+    }
+}
+
+std::vector<DeviceInfo> AppConfig::get_devices() const
+{
+    return m_device_list;
+}
+
+bool AppConfig::get_device_info(const std::string& dev_id, DeviceInfo& info) const
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
+    
+    if (it != m_device_list.end()) {
+        info = *it;
+        return true;
+    }
+    return false;
+}
+
+void AppConfig::clear_filament_extruder_map()
+{
+    filament_extruder_map.clear();
+}
+
+std::unordered_map<int, int>& AppConfig::get_filament_extruder_map_ref() 
+{
+    return filament_extruder_map;
+}
+
+const std::map<std::string, std::string> AppConfig::filament_name_map = {
+    // J1相关映射
+    {"PolyLite J1 PLA @0.2 nozzle", "PolyLite PLA @J1 0.2 nozzle"},
+    {"PolyLite J1 PLA", "PolyLite PLA @J1"},
+    {"PolyTerra J1 PLA @0.2 nozzle", "PolyTerra PLA @J1 0.2 nozzle"},
+    {"PolyTerra J1 PLA", "PolyTerra PLA @J1"},
+    {"Snapmaker J1 ABS @0.2 nozzle", "Snapmaker ABS @J1 0.2 nozzle"},
+    {"Snapmaker J1 ABS @0.8 nozzle", "Snapmaker ABS @J1 0.8 nozzle"},
+    {"Snapmaker J1 ABS", "Snapmaker ABS @J1"},
+    {"Snapmaker J1 ABS Benchy", "Snapmaker ABS Benchy @J1"},
+    {"Snapmaker J1 ASA @0.2 nozzle", "Snapmaker ASA @J1 0.2 nozzle"},
+    {"Snapmaker J1 ASA", "Snapmaker ASA @J1"},
+    {"Snapmaker J1 Breakaway Support", "Snapmaker Breakaway Support @J1"},
+    {"Snapmaker J1 PA-CF", "Snapmaker PA-CF @J1"},
+    {"Snapmaker J1 PET", "Snapmaker PET @J1"},
+    {"Snapmaker J1 PETG @0.2 nozzle", "Snapmaker PETG @J1 0.2 nozzle"},
+    {"Snapmaker J1 PETG @0.8 nozzle", "Snapmaker PETG @J1 0.8 nozzle"},
+    {"Snapmaker J1 PETG", "Snapmaker PETG @J1"},
+    {"Snapmaker J1 PETG-CF", "Snapmaker PETG-CF @J1"},
+    {"Snapmaker J1 PLA", "Snapmaker PLA @J1"},
+    {"Snapmaker J1 PLA Eco @0.2 nozzle", "Snapmaker PLA Eco @J1 0.2 nozzle"},
+    {"Snapmaker J1 PLA Eco @0.8 nozzle", "Snapmaker PLA Eco @J1 0.8 nozzle"},
+    {"Snapmaker J1 PLA Eco", "Snapmaker PLA Eco @J1"},
+    {"Snapmaker J1 PLA Matte @0.2 nozzle", "Snapmaker PLA Matte @J1 0.2 nozzle"},
+    {"Snapmaker J1 PLA Matte @0.8 nozzle", "Snapmaker PLA Matte @J1 0.8 nozzle"},
+    {"Snapmaker J1 PLA Matte", "Snapmaker PLA Matte @J1"},
+    {"Snapmaker J1 PLA Metal @0.2 nozzle", "Snapmaker PLA Metal @J1 0.2 nozzle"},
+    {"Snapmaker J1 PLA Metal", "Snapmaker PLA Metal @J1"},
+    {"Snapmaker J1 PLA Silk @0.2 nozzle", "Snapmaker PLA Silk @J1 0.2 nozzle"},
+    {"Snapmaker J1 PLA Silk", "Snapmaker PLA Silk @J1"},
+    {"Snapmaker J1 PLA-CF", "Snapmaker PLA-CF @J1"},
+    {"Snapmaker J1 PVA @0.2 nozzle", "Snapmaker PVA @J1 0.2 nozzle"},
+    {"Snapmaker J1 PVA", "Snapmaker PVA @J1"},
+    {"Snapmaker J1 TPE", "Snapmaker TPE @J1"},
+    {"Snapmaker J1 TPU", "Snapmaker TPU @J1"},
+    {"Snapmaker J1 TPU High-Flow", "Snapmaker TPU High-Flow @J1"},
+
+    // Dual相关映射
+    {"PolyLite Dual PLA @0.2 nozzle", "PolyLite PLA @Dual 0.2 nozzle"},
+    {"PolyLite Dual PLA", "PolyLite PLA @Dual"},
+    {"PolyTerra Dual PLA @0.2 nozzle", "PolyTerra PLA @Dual 0.2 nozzle"},
+    {"PolyTerra Dual PLA", "PolyTerra PLA @Dual"},
+    {"Snapmaker Dual ABS @0.2 nozzle", "Snapmaker ABS @Dual 0.2 nozzle"},
+    {"Snapmaker Dual ABS @0.8 nozzle", "Snapmaker ABS @Dual 0.8 nozzle"},
+    {"Snapmaker Dual ABS", "Snapmaker ABS @Dual"},
+    {"Snapmaker Dual ABS Benchy", "Snapmaker ABS Benchy @Dual"},
+    {"Snapmaker Dual ASA @0.2 nozzle", "Snapmaker ASA @Dual 0.2 nozzle"},
+    {"Snapmaker Dual ASA", "Snapmaker ASA @Dual"},
+    {"Snapmaker Dual PA-CF", "Snapmaker PA-CF @Dual"},
+    {"Snapmaker Dual PET @0.8 nozzle", "Snapmaker PET @Dual 0.8 nozzle"},
+    {"Snapmaker Dual PET", "Snapmaker PET @Dual"},
+    {"Snapmaker Dual PETG @0.2 nozzle", "Snapmaker PETG @Dual 0.2 nozzle"},
+    {"Snapmaker Dual PETG @0.8 nozzle", "Snapmaker PETG @Dual 0.8 nozzle"},
+    {"Snapmaker Dual PETG", "Snapmaker PETG @Dual"},
+    {"Snapmaker Dual PETG-CF", "Snapmaker PETG-CF @Dual"},
+    {"Snapmaker Dual PLA", "Snapmaker PLA @Dual"},
+    {"Snapmaker Dual PLA Eco @0.2 nozzle", "Snapmaker PLA Eco @Dual 0.2 nozzle"},
+    {"Snapmaker Dual PLA Eco @0.8 nozzle", "Snapmaker PLA Eco @Dual 0.8 nozzle"},
+    {"Snapmaker Dual PLA Eco", "Snapmaker PLA Eco @Dual"},
+    {"Snapmaker Dual PLA Matte @0.2 nozzle", "Snapmaker PLA Matte @Dual 0.2 nozzle"},
+    {"Snapmaker Dual PLA Matte @0.8 nozzle", "Snapmaker PLA Matte @Dual 0.8 nozzle"},
+    {"Snapmaker Dual PLA Matte", "Snapmaker PLA Matte @Dual"},
+    {"Snapmaker Dual PLA Metal @0.2 nozzle", "Snapmaker PLA Metal @Dual 0.2 nozzle"},
+    {"Snapmaker Dual PLA Metal", "Snapmaker PLA Metal @Dual"},
+    {"Snapmaker Dual PLA Silk @0.2 nozzle", "Snapmaker PLA Silk @Dual 0.2 nozzle"},
+    {"Snapmaker Dual PLA Silk", "Snapmaker PLA Silk @Dual"},
+    {"Snapmaker Dual PLA-CF @0.8 nozzle", "Snapmaker PLA-CF @Dual 0.8 nozzle"},
+    {"Snapmaker Dual PLA-CF", "Snapmaker PLA-CF @Dual"},
+    {"Snapmaker Dual PVA @0.2 nozzle", "Snapmaker PVA @Dual 0.2 nozzle"},
+    {"Snapmaker Dual PVA", "Snapmaker PVA @Dual"},
+    {"Snapmaker Dual TPE", "Snapmaker TPE @Dual"},
+    {"Snapmaker Dual TPU", "Snapmaker TPU @Dual"},
+    {"Snapmaker Dual TPU High-Flow", "Snapmaker TPU High-Flow @Dual"}};
+
+void AppConfig::update_filament_names(json& j)
+{
+    bool need_save = false;
+
+    // 更新 filaments 数组中的耗材名称
+    if (j.contains("filaments") && j["filaments"].is_array()) {
+        auto& filaments = j["filaments"];
+        for (auto& filament : filaments) {
+            if (filament.is_string()) {
+                std::string old_name = filament.get<std::string>();
+                auto it = filament_name_map.find(old_name);
+                if (it != filament_name_map.end()) {
+                    filament = it->second;
+                    need_save = true;
+                }
+            }
+        }
+    }
+
+    // 更新 orca_presets 中的耗材名称
+    if (j.contains("orca_presets") && j["orca_presets"].is_array()) {
+        auto& presets = j["orca_presets"];
+        for (auto& preset : presets) {
+            // 更新主要耗材字段
+            if (preset.contains("filament")) {
+                std::string old_name = preset["filament"].get<std::string>();
+                auto it = filament_name_map.find(old_name);
+                if (it != filament_name_map.end()) {
+                    preset["filament"] = it->second;
+                    need_save = true;
+                }
+            }
+
+            // 更新 filament_XX 字段
+            for (int i = 1; ; i++) {
+                std::string key = std::string("filament_") + (i < 10 ? "0" : "") + std::to_string(i);
+                if (!preset.contains(key)) {
+                    break;
+                }
+
+                std::string old_name = preset[key].get<std::string>();
+                auto it = filament_name_map.find(old_name);
+                if (it != filament_name_map.end()) {
+                    preset[key] = it->second;
+                    need_save = true;
+                }
+            }
+        }
+    }
+
+    //// 如果有更新，保存文件
+    //if (need_save) {
+    //    std::string conf_path = (fs::path(Slic3r::data_dir()) / "Snapmaker_Orca.conf").string();
+    //    boost::nowide::ofstream ofs(conf_path);
+    //    ofs << std::setw(4) << j << std::endl;
+    //}
 }
 
 }; // namespace Slic3r

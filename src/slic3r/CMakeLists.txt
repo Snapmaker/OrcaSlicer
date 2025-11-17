@@ -500,6 +500,20 @@ set(SLIC3R_GUI_SOURCES
     GUI/WipeTowerDialog.cpp
     GUI/wxExtensions.cpp
     GUI/wxExtensions.hpp
+    GUI/SMPhysicalPrinterDialog.hpp
+    GUI/SMPhysicalPrinterDialog.cpp
+    GUI/SSWCP.cpp
+    GUI/SSWCP.hpp
+    GUI/WebPresetDialog.hpp
+    GUI/WebPresetDialog.cpp
+    GUI/WebSMUserLoginDialog.cpp
+    GUI/WebSMUserLoginDialog.hpp
+    GUI/WebDeviceDialog.cpp
+    GUI/WebDeviceDialog.hpp
+    GUI/WebPreprintDialog.hpp
+    GUI/WebPreprintDialog.cpp
+    GUI/WebUrlDialog.cpp
+    GUI/WebUrlDialog.hpp
     pchheader.cpp
     pchheader.hpp
     Utils/ASCIIFolding.cpp
@@ -576,6 +590,11 @@ set(SLIC3R_GUI_SOURCES
     Utils/WebSocketClient.hpp
     Utils/WxFontUtils.cpp
     Utils/WxFontUtils.hpp
+    Utils/MQTT.hpp
+    Utils/MQTT.cpp
+    Utils/MoonRaker.cpp
+    Utils/MoonRaker.hpp
+    Utils/TimeoutMap.hpp
 )
 
 add_subdirectory(GUI/DeviceTab)
@@ -635,6 +654,11 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
 
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
 target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(libslic3r_gui paho-mqttpp3-static)
+
+target_include_directories(libslic3r_gui PRIVATE ${PAHO_MQTT_CPP_PATH}/include)
+
+target_include_directories(libslic3r_gui PRIVATE ${PAHO_MQTT_C_PATH}/src)
 
 if (WIN32)
     target_include_directories(libslic3r_gui SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/WebView2/include)

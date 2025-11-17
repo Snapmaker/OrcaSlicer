@@ -458,7 +458,7 @@ ModelObject* Model::add_object(const char *name, const char *path, const Triangl
     new_volume->source.volume_idx = (int)new_object->volumes.size() - 1;
     // BBS: set extruder id to 1
     if (!new_object->config.has("extruder") || new_object->config.extruder() == 0)
-        new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
+        new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
     new_object->invalidate_bounding_box();
     return new_object;
 }
@@ -476,7 +476,7 @@ ModelObject* Model::add_object(const char *name, const char *path, TriangleMesh 
     new_volume->source.volume_idx = (int)new_object->volumes.size() - 1;
     // BBS: set default extruder id to 1
     if (!new_object->config.has("extruder") || new_object->config.extruder() == 0)
-        new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
+        new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
     new_object->invalidate_bounding_box();
     return new_object;
 }
@@ -487,7 +487,7 @@ ModelObject* Model::add_object(const ModelObject &other)
     new_object->set_model(this);
     // BBS: set default extruder id to 1
     if (!new_object->config.has("extruder") || new_object->config.extruder() == 0)
-        new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
+        new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
     this->objects.push_back(new_object);
     // BBS: backup
     if (need_backup) {
@@ -2424,7 +2424,7 @@ int ModelVolume::extruder_id() const
         const ConfigOption *opt = this->config.option("extruder");
         if ((opt == nullptr) || (opt->getInt() == 0))
             opt = this->object->config.option("extruder");
-        extruder_id = (opt == nullptr) ? 1 : opt->getInt();
+        extruder_id = (opt == nullptr) ? 0 : opt->getInt();
     }
     return extruder_id;
 }
@@ -2466,6 +2466,8 @@ std::vector<int> ModelVolume::get_extruders() const
     int volume_extruder_id = this->extruder_id();
     if (volume_extruder_id > 0)
         volume_extruders.push_back(volume_extruder_id);
+    else if (volume_extruder_id == 0)
+        volume_extruders.push_back(volume_extruder_id + 1);
 
     return volume_extruders;
 }
@@ -2476,6 +2478,19 @@ void ModelVolume::update_extruder_count(size_t extruder_count)
     for (int extruder_id : used_extruders) {
         if (extruder_id > extruder_count) {
             mmu_segmentation_facets.set_enforcer_block_type_limit(*this, (EnforcerBlockerType)extruder_count);
+            break;
+        }
+    }
+}
+
+void ModelVolume::update_extruder_count_when_delete_filament(size_t extruder_count, size_t filament_id, int replace_filament_id)
+{
+    std::vector<int> used_extruders = get_extruders();
+    for (int extruder_id : used_extruders) {
+        if (extruder_id >= filament_id) {
+            mmu_segmentation_facets.set_enforcer_block_type_limit(*this, (EnforcerBlockerType) (extruder_count),
+                                                                  (EnforcerBlockerType) (filament_id),
+                                                                  (EnforcerBlockerType) (replace_filament_id));
             break;
         }
     }
@@ -3375,10 +3390,13 @@ void FacetsAnnotation::get_facets(const ModelVolume& mv, std::vector<indexed_tri
     selector.get_facets(facets_per_type);
 }
 
-void FacetsAnnotation::set_enforcer_block_type_limit(const ModelVolume& mv, EnforcerBlockerType max_type)
+void FacetsAnnotation::set_enforcer_block_type_limit(const ModelVolume&  mv,
+                                                     EnforcerBlockerType max_type,
+                                                     EnforcerBlockerType to_delete_filament,
+                                                     EnforcerBlockerType replace_filament)
 {
     TriangleSelector selector(mv.mesh());
-    selector.deserialize(m_data, false, max_type);
+    selector.deserialize(m_data, false, max_type, to_delete_filament, replace_filament);
     this->set(selector);
 }
 

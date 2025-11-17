@@ -52,6 +52,31 @@ using boost::property_tree::ptree;
 
 namespace Slic3r {
 
+Semver get_min_version_from_json(std::string file_path)
+{
+    try {
+        boost::nowide::ifstream ifs(file_path);
+        json                    j;
+        ifs >> j;
+        if (!j.count(BBL_JSON_KEY_MIN_VERSION)) {
+            return Semver();
+        }
+        std::string version_str = j.at(BBL_JSON_KEY_MIN_VERSION);
+
+        auto config_version = Semver::parse(version_str);
+        if (!config_version) {
+            return Semver();
+        } else {
+            return *config_version;
+        }
+    }
+    catch (nlohmann::detail::parse_error& err) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << file_path
+                                 << " got a nlohmann::detail::parse_error, reason = " << err.what();
+        return Semver();
+    }
+}
+
 //BBS: add a function to load the version from xxx.json
 Semver get_version_from_json(std::string file_path)
 {
@@ -753,17 +778,10 @@ BedType Preset::get_default_bed_type(PresetBundle* preset_bundle)
 {
     if (config.has("default_bed_type") && !config.opt_string("default_bed_type").empty()) {
         try {
-            std::string str_bed_type = config.opt_string("default_bed_type");
-            
-            // Try parsing as integer first (legacy format)
-            int bed_type_value = atoi(str_bed_type.c_str());
-            if (bed_type_value > 0) {
+            std::string str_bed_type   = config.opt_string("default_bed_type");
+            int         bed_type_value = atoi(str_bed_type.c_str());
+            if (bed_type_value != 0)
                 return BedType(bed_type_value);
-            }
-            else {
-                BOOST_LOG_TRIVIAL(error) << "default_bed_type: invalid bed type: " << str_bed_type;
-            }
-            return BedType::btPEI;
 
         } catch(...) {
             ;
@@ -775,6 +793,8 @@ BedType Preset::get_default_bed_type(PresetBundle* preset_bundle)
         return BedType::btPC;
     } else if (model_id == "C11") {
         return BedType::btPEI;
+    } else if (model_id == "SM_U1") {
+        return BedType::btPTE;
     }
     return BedType::btPEI;
 }
@@ -814,7 +834,7 @@ static std::vector<std::string> s_Preset_print_options {
     "support_top_z_distance", "support_on_build_plate_only","support_critical_regions_only", "bridge_no_support", "thick_bridges", "thick_internal_bridges","dont_filter_internal_bridges","enable_extra_bridge_layer", "max_bridge_length", "print_sequence", "print_order", "support_remove_small_overhang",
     "filename_format", "wall_filament", "support_bottom_z_distance",
     "sparse_infill_filament", "solid_infill_filament", "support_filament", "support_interface_filament","support_interface_not_for_body",
-    "ooze_prevention", "standby_temperature_delta", "preheat_time","preheat_steps", "interface_shells", "line_width", "initial_layer_line_width", "inner_wall_line_width",
+    "ooze_prevention", "standby_temperature_delta", "preheat_time","delta_temperature","preheat_steps", "interface_shells", "line_width", "initial_layer_line_width", "inner_wall_line_width",
     "outer_wall_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width",
     "skin_infill_line_width","skeleton_infill_line_width",
     "top_surface_line_width", "support_line_width", "infill_wall_overlap","top_bottom_infill_wall_overlap", "bridge_flow", "internal_bridge_flow",
@@ -866,7 +886,7 @@ static std::vector<std::string> s_Preset_filament_options {
     "activate_air_filtration","during_print_exhaust_fan_speed","complete_print_exhaust_fan_speed",
     // Retract overrides
     "filament_retraction_length", "filament_z_hop", "filament_z_hop_types", "filament_retract_lift_above", "filament_retract_lift_below", "filament_retract_lift_enforce", "filament_retraction_speed", "filament_deretraction_speed", "filament_retract_restart_extra", "filament_retraction_minimum_travel",
-    "filament_retract_when_changing_layer", "filament_wipe", "filament_retract_before_wipe",
+    "filament_retract_when_changing_layer", "filament_wipe", "filament_retract_before_wipe", "filament_retract_length_toolchange", "filament_retract_restart_extra_toolchange",
     // Profile compatibility
     "filament_vendor", "compatible_prints", "compatible_prints_condition", "compatible_printers", "compatible_printers_condition", "inherits",
     //BBS
@@ -902,8 +922,8 @@ static std::vector<std::string> s_Preset_printer_options {
     "nozzle_height",
     "default_print_profile", "inherits",
     "silent_mode",
-    "scan_first_layer", "machine_load_filament_time", "machine_unload_filament_time", "machine_tool_change_time", "time_cost", "machine_pause_gcode", "template_custom_gcode",
-    "nozzle_type", "nozzle_hrc","auxiliary_fan", "nozzle_volume","upward_compatible_machine", "z_hop_types", "travel_slope", "retract_lift_enforce","support_chamber_temp_control","support_air_filtration","printer_structure",
+    "scan_first_layer", "machine_load_filament_time", "machine_unload_filament_time", "machine_tool_change_time", "tool_change_temprature_wait", "time_cost", "machine_pause_gcode", "template_custom_gcode",
+    "nozzle_type", "nozzle_hrc","auxiliary_fan", "nozzle_volume","upward_compatible_machine", "z_hop_types", "z_hop_when_prime", "travel_slope", "retract_lift_enforce","support_chamber_temp_control","support_air_filtration","printer_structure",
     "best_object_pos","head_wrap_detect_zone",
     "host_type", "print_host", "printhost_apikey", "bbl_use_printhost",
     "print_host_webui",
@@ -911,7 +931,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "printhost_user", "printhost_password", "printhost_ssl_ignore_revoke", "thumbnails", "thumbnails_format",
     "use_firmware_retraction", "use_relative_e_distances", "printer_notes",
     "cooling_tube_retraction",
-    "cooling_tube_length", "high_current_on_filament_swap", "parking_pos_retraction", "extra_loading_move", "purge_in_prime_tower", "enable_filament_ramming",
+    "cooling_tube_length", "high_current_on_filament_swap", "parking_pos_retraction", "extra_loading_move", "purge_in_prime_tower", "enable_filament_ramming", "ramming_line_width_ratio", "enable_change_pressure_when_wiping", "ramming_pressure_advance_value", 
     "z_offset",
     "disable_m73", "preferred_orientation", "emit_machine_limits_to_gcode", "pellet_modded_printer", "support_multi_bed_types", "default_bed_type", "bed_mesh_min","bed_mesh_max","bed_mesh_probe_distance", "adaptive_bed_mesh_margin", "enable_long_retraction_when_cut","long_retractions_when_cut","retraction_distances_when_cut"
     };
@@ -2615,6 +2635,17 @@ size_t PresetCollection::first_visible_idx() const
     return first_visible;
 }
 
+std::vector<std::string> PresetCollection::diameters_of_selected_printer()
+{
+    std::set<std::string> diameters;
+    auto printer_model = m_edited_preset.config.opt_string("printer_model");
+    for (auto &preset : m_presets) {
+        if (preset.config.opt_string("printer_model") == printer_model)
+            diameters.insert(preset.config.opt_string("printer_variant"));
+    }
+    return std::vector<std::string>{diameters.begin(), diameters.end()};
+}
+
 void PresetCollection::set_default_suppressed(bool default_suppressed)
 {
     if (m_default_suppressed != default_suppressed) {
@@ -2897,8 +2928,20 @@ std::vector<std::string> PresetCollection::merge_presets(PresetCollection &&othe
                 preset.vendor = &it->second;
             }
             m_presets.emplace(it, std::move(preset));
-        } else
+        } else {
+            std::string default_vendor = std::string(PresetBundle::SM_BUNDLE);
+            if (preset.vendor->name == default_vendor) {
+                if (preset.vendor != nullptr) {
+                    // Re-assign a pointer to the vendor structure in the new PresetBundle.
+                    auto it = new_vendors.find(preset.vendor->id);
+                    assert(it != new_vendors.end());
+                    preset.vendor = &it->second;
+                }
+                m_presets.emplace(it, std::move(preset));
+            }
             duplicates.emplace_back(std::move(preset.name));
+        }
+            
     }
     return duplicates;
 }

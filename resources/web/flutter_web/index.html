@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/web/flutter_web/">
+
+  <meta charset="UTF-8"> 
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Snapmaker Orca">
+   <!-- 添加权限策略 -->
+  <meta http-equiv="Permissions-Policy" content="local-files-write=*">
+  <meta http-equiv="Access-Control-Allow-Origin" content="*">
+  <meta http-equiv="Access-Control-Allow-Methods" content="GET, POST, PUT, DELETE, OPTIONS">
+  <meta http-equiv="Access-Control-Allow-Headers" content="Content-Type, Authorization, x-amz-checksum-sha256">
+  <!-- iOS meta tags & icons -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="web">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Snapmaker Orca</title>
+  <link rel="manifest" href="manifest.json">
+
+
+  <!-- 针对 macOS 的优化 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- 在head中添加 -->
+  <meta name="theme-color" content="#ffffff">
+  <link rel="apple-touch-startup-image" href="splash.png">
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+
+  <script>
+    if ('application/octet-stream' in MimeType) {
+      MimeType['image/webp'] = 'webp';
+    }
+  </script>
+  <script>
+
+    function open_browser() {
+      const message = JSON.stringify({
+        sequence_id: 1222222,
+        command: "homepage_test_browser",
+        params: {
+          url: "https://snapmaker.com", 
+          title: "Snapmaker",
+        },
+      });
+       // 调用 window.postMessage 传递消息给 flutter
+      window.wx &&  window.wx.postMessage(message); // 调用 window.postMessage 传递消息给 原生系统
+      ///模拟收到响应结果5000
+      if(!window.wx) {
+        // 我不能发现 window.wx 
+        console.log('i dont find window.wx, so i simulate a return by postMessage, message: ', message)
+      }
+    }
+
+    // 发送消息
+    window.sendMessage = function (message) {
+      //console.log("I am proxy in html to send message to container: " + message);
+      
+      // 调用 window.postMessage 传递消息给 flutter
+      window.wx &&  window.wx.postMessage(message); // 调用 window.postMessage 传递消息给 原生系统
+      ///模拟收到响应结果5000
+      if(!window.wx) {
+        // 我不能发现 window.wx 
+        console.log('i dont find window.wx, so i simulate a return by postMessage')
+      }
+    }
+  </script>
+</body>
+</html>

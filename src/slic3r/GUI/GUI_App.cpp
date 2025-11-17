@@ -9,6 +9,13 @@
 #include "libslic3r_version.h"
 #include "Downloader.hpp"
 
+#include "slic3r/GUI/WebUrlDialog.hpp"
+#include "slic3r/GUI/WebPresetDialog.hpp"
+
+#include "slic3r/GUI/SSWCP.hpp"
+#include "slic3r/Utils/PresetUpdater.hpp"
+#include "slic3r/Config/Version.hpp"
+
 // Localization headers: include libslic3r version first so everything in this file
 // uses the slic3r/GUI version (the macros will take precedence over the functions).
 // Also, there is a check that the former is not included from slic3r module.
@@ -360,7 +367,7 @@ public:
 
 		// Based on Text
         memDc.SetFont(m_constant_text.based_on_font);
-        auto bs_version = wxString::Format(_L("Based on PrusaSlicer and BambuStudio")).ToStdString();
+        auto bs_version = wxString::Format("Based on Orca Slicer").ToStdString();
         wxSize based_on_ext = memDc.GetTextExtent(bs_version);
         wxRect based_on_rect(
 			wxPoint(0, height - based_on_ext.GetHeight() * 2),
@@ -518,8 +525,7 @@ static const FileWildcards file_wildcards_by_type[FT_SIZE] = {
     /* FT_OBJ */     { "OBJ files"sv,       { ".obj"sv } },
     /* FT_AMF */     { "AMF files"sv,       { ".amf"sv, ".zip.amf"sv, ".xml"sv } },
     /* FT_3MF */     { "3MF files"sv,       { ".3mf"sv } },
-    /* FT_GCODE_3MF */ {"Gcode 3MF files"sv, {".gcode.3mf"sv}},
-    /* FT_GCODE */   { "G-code files"sv,    { ".gcode"sv} },
+    /* FT_GCODE */   { "G-code files"sv,    { ".gcode"sv, ".3mf"sv } },
 #ifdef __APPLE__
     /* FT_MODEL */
     {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".usd"sv, ".usda"sv, ".usdc"sv, ".usdz"sv, ".abc"sv, ".ply"sv}},
@@ -750,7 +756,7 @@ static void generic_exception_handle()
         // and terminate the app so it is at least certain to happen now.
         BOOST_LOG_TRIVIAL(error) << boost::format("std::bad_alloc exception: %1%") % ex.what();
         flush_logs();
-        wxString errmsg = wxString::Format(_L("OrcaSlicer will terminate because of running out of memory. "
+        wxString errmsg = wxString::Format(_L("Snapmaker Orca will terminate because of running out of memory."
                                               "It may be a bug. It will be appreciated if you report the issue to our team."));
         wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Fatal error"), wxOK | wxICON_ERROR);
 
@@ -759,19 +765,21 @@ static void generic_exception_handle()
      } catch (const boost::io::bad_format_string& ex) {
      	BOOST_LOG_TRIVIAL(error) << boost::format("Uncaught exception: %1%") % ex.what();
         	flush_logs();
-        wxString errmsg = _L("OrcaSlicer will terminate because of a localization error. "
+        wxString errmsg = _L("Snapmaker Orca will terminate because of a localization error. "
                              "It will be appreciated if you report the specific scenario this issue happened.");
         wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Critical error"), wxOK | wxICON_ERROR);
         std::terminate();
         //throw;
     } catch (const std::exception& ex) {
-        wxLogError(format_wxstr(_L("OrcaSlicer got an unhandled exception: %1%"), ex.what()));
+        wxLogError(format_wxstr(_L("Snapmaker Orca got an unhandled exception: %1%"), ex.what()));
         BOOST_LOG_TRIVIAL(error) << boost::format("Uncaught exception: %1%") % ex.what();
         flush_logs();
         throw;
     }
 //#endif
 }
+
+std::atomic<bool> GUI_App::m_app_alive{true};
 
 void GUI_App::toggle_show_gcode_window()
 {
@@ -1092,7 +1100,7 @@ GUI_App::GUI_App()
     , m_downloader(std::make_unique<Downloader>())
 	, m_other_instance_message_handler(std::make_unique<OtherInstanceMessageHandler>())
 {
-	//app config initializes early becasuse it is used in instance checking in OrcaSlicer.cpp
+	//app config initializes early becasuse it is used in instance checking in Snapmaker_Orca.cpp
     this->init_app_config();
     this->init_download_path();
 #if wxUSE_WEBVIEW_EDGE
@@ -1100,6 +1108,13 @@ GUI_App::GUI_App()
 #endif
 
     reset_to_active();
+
+    // test
+    m_page_http_server.setPort(PAGE_HTTP_PORT);
+    m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
+    m_page_http_server.start();
+    
+    m_fltviews.set_app(this);
 }
 
 void GUI_App::shutdown()
@@ -1116,6 +1131,25 @@ void GUI_App::shutdown()
         delete login_dlg;
         login_dlg = nullptr;
     }
+
+    if (sm_login_dlg != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy SMlogin dialog");
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
+    }
+
+    if (web_device_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
+        delete web_device_dialog;
+        web_device_dialog = nullptr;
+    }
+
+    if (web_preprint_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web preprint dialog");
+        delete web_preprint_dialog;
+        web_preprint_dialog = nullptr;
+    }
+   
 
     if (m_is_recreating_gui) return;
     m_is_closing = true;
@@ -1872,6 +1906,8 @@ void GUI_App::init_networking_callbacks()
 
 GUI_App::~GUI_App()
 {
+    GUI_App::m_app_alive.store(false);
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy app_config");
@@ -1889,6 +1925,8 @@ GUI_App::~GUI_App()
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
+
+    stop_page_http_server();
 }
 
 // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
@@ -1921,9 +1959,9 @@ static boost::optional<Semver> parse_semver_from_ini(std::string path)
     std::stringstream buffer;
     buffer << stream.rdbuf();
     std::string body = buffer.str();
-    size_t start = body.find("OrcaSlicer ");
+    size_t start = body.find("Snapmaker_Orca ");
     if (start == std::string::npos) {
-        start = body.find("OrcaSlicer ");
+        start = body.find("Snapmaker_Orca ");
         if (start == std::string::npos)
             return boost::none;
     }
@@ -1957,7 +1995,7 @@ void GUI_App::init_webview_runtime()
 {
     // Check WebView Runtime
     if (!WebView::CheckWebViewRuntime()) {
-        int nRet = wxMessageBox(_L("Orca Slicer requires the Microsoft WebView2 Runtime to operate certain features.\nClick Yes to install it now."),
+        int nRet = wxMessageBox(_L("Snapmaker Orca requires the Microsoft WebView2 Runtime to operate certain features.\nClick Yes to install it now."),
                                 _L("WebView2 Runtime"), wxYES_NO);
         if (nRet == wxYES) {
             WebView::DownloadAndInstallWebViewRuntime();
@@ -2078,6 +2116,35 @@ bool GUI_App::check_older_app_config(Semver current_version, bool backup)
     return false;
 }
 
+void GUI_App::copy_web_resources() {
+    auto data_web_path = boost::filesystem::path(data_dir()) / "web";
+    if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
+        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+        auto target_path = data_web_path / "flutter_web";
+        copy_directory_recursively(source_path, target_path);
+    } else {
+        auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
+        auto target_version_file = data_web_path / "flutter_web" / "version.json";
+
+        try {
+            boost::property_tree::ptree source_config, target_config;
+            boost::property_tree::read_json(source_version_file.string(), source_config);
+            boost::property_tree::read_json(target_version_file.string(), target_config);
+            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
+            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
+
+            if (source_build_number_str > target_build_number_str) {
+                auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+                auto target_path = data_web_path / "flutter_web";
+                copy_directory_recursively(source_path, target_path);
+            }
+        }
+        catch (std::exception& e) {
+
+        }
+    }
+}
+
 void GUI_App::copy_older_config()
 {
     preset_bundle->copy_files(m_older_data_dir_path);
@@ -2125,6 +2192,18 @@ void GUI_App::update_http_extra_header()
     Slic3r::Http::set_extra_headers(extra_headers);
     if (m_agent)
         m_agent->set_extra_http_header(extra_headers);
+}
+
+void GUI_App::get_connect_host(std::shared_ptr<PrintHost>& output) {
+    m_cnt_hst_mtx.lock();
+    output = m_connected_host;
+    m_cnt_hst_mtx.unlock();
+}
+
+void GUI_App::set_connect_host(const std::shared_ptr<PrintHost>& input) {
+    m_cnt_hst_mtx.lock();
+    m_connected_host = input;
+    m_cnt_hst_mtx.unlock();
 }
 
 void GUI_App::on_start_subscribe_again(std::string dev_id)
@@ -2305,8 +2384,8 @@ bool GUI_App::on_init_inner()
     }
 #endif
 
-    BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current OrcaSlicer Version %1%")%SoftFever_VERSION;
-
+    BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current Snapmaker_Orca Version %1%")%Snapmaker_VERSION;
+    
 #if defined(__WINDOWS__)
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
     m_is_arm64 = false;
@@ -2349,7 +2428,7 @@ bool GUI_App::on_init_inner()
             RichMessageDialog
                 dlg(nullptr,
                     wxString::Format(_L("%s\nDo you want to continue?"), msg),
-                    "OrcaSlicer", wxICON_QUESTION | wxYES_NO);
+                    "Snapmaker Orca", wxICON_QUESTION | wxYES_NO);
             dlg.ShowCheckBox(_L("Remember my choice"));
             if (dlg.ShowModal() != wxID_YES) return false;
 
@@ -2427,6 +2506,8 @@ bool GUI_App::on_init_inner()
         app_config->set("version", SLIC3R_VERSION);
     }
 
+    // temporarily cancel the loading window
+    /*
     SplashScreen * scrn = nullptr;
     if (app_config->get("show_splash_screen") == "true") {
         // make a bitmap with dark grey banner on the left side
@@ -2447,7 +2528,7 @@ bool GUI_App::on_init_inner()
         wxYield();
         scrn->SetText(_L("Loading configuration")+ dots);
     }
-
+    */
     BOOST_LOG_TRIVIAL(info) << "loading systen presets...";
     preset_bundle = new PresetBundle();
 
@@ -2455,6 +2536,7 @@ bool GUI_App::on_init_inner()
     // supplied as argument to --datadir; in that case we should still run the wizard
     preset_bundle->setup_directories();
 
+    copy_web_resources();
 
     if (m_init_app_config_from_older)
         copy_older_config();
@@ -2469,7 +2551,7 @@ bool GUI_App::on_init_inner()
             associate_files(L"step");
             associate_files(L"stp");
         }
-        associate_url(L"orcaslicer");
+        associate_url(L"Snapmaker_Orca");
 
         if (app_config->get("associate_gcode") == "true")
             associate_files(L"gcode");
@@ -2483,7 +2565,7 @@ bool GUI_App::on_init_inner()
                /* wxString tips = wxString::Format(_L("Click to download new version in default browser: %s"), version_info.version_str);
                 DownloadDialog dialog(this->mainframe,
                     tips,
-                    _L("New version of Orca Slicer"),
+                    _L("New version of Snapmaker Orca"),
                     false,
                     wxCENTER | wxICON_INFORMATION);
 
@@ -2530,7 +2612,7 @@ bool GUI_App::on_init_inner()
                 wxString tips = wxString::Format(_L("Click to download new version in default browser: %s"), version_str);
                 DownloadDialog dialog(this->mainframe,
                     tips,
-                    _L("The Orca Slicer needs an upgrade"),
+                    _L("The Snapmaker Orca needs an upgrade"),
                     false,
                     wxCENTER | wxICON_INFORMATION);
                 dialog.SetExtendedMessage(description_text);
@@ -2767,10 +2849,91 @@ bool GUI_App::on_init_inner()
         m_config_corrupted = false;
         show_error(nullptr,
                    _u8L(
-                       "The OrcaSlicer configuration file may be corrupted and cannot be parsed.\nOrcaSlicer has attempted to recreate the "
+                       "The Snapmaker Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker Orca has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
+
+
+    //启动定时器，轮询进行机器发现
+    // m_machine_find_timer = new wxTimer(this, m_machine_find_id);
+    
+    // Bind(wxEVT_TIMER, [this](wxTimerEvent& event) {
+    //         if (!m_machine_find_engine  && GUI_App::m_app_alive.load()) {
+    //         machine_find();
+    //     }
+    // }, m_machine_find_timer->GetId());
+
+    // if (!m_machine_find_engine && GUI_App::m_app_alive.load()) {
+    //     machine_find();
+    // }
+
+//#ifdef __APPLE__
+//    m_machine_find_timer->Start(1000 * 60 * 2);
+//#elif defined(__linux__)
+//    m_machine_find_timer->Start(1000 * 60 * 2);
+//#else
+//    m_machine_find_timer->Start(5000);
+//#endif
+
     return true;
+}
+
+void GUI_App::machine_find()
+{
+    std::vector<std::string> mdns_service_names;
+
+    mdns_service_names.push_back("snapmaker");
+
+    Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type"};
+    std::string      unique_key = "sn";
+
+    m_machine_find_engine = Bonjour("snapmaker")
+                                .set_txt_keys(std::move(txt_keys))
+                                .set_retries(3)
+                                .set_timeout(10)
+                                .on_reply([this](BonjourReply&& reply) {
+                                    if (!GUI_App::m_app_alive.load())
+                                        return;
+                                    std::string hostname = reply.hostname;
+                                    size_t      pos      = hostname.find(".local");
+                                    if (pos != std::string::npos) {
+                                        hostname = hostname.substr(0, pos);
+                                    }
+                                    std::string ip = reply.ip.to_string();
+
+                                    if (reply.txt_data.count("sn")) {
+                                        std::string sn = reply.txt_data["sn"];
+                                        DeviceInfo  info;
+                                        if (app_config->get_device_info(sn, info)) {
+                                            if (info.ip != ip && info.link_mode != "wan") {
+                                                info.ip = ip;
+                                                app_config->save_device_info(info);
+
+                                                this->CallAfter([this]() {
+                                                    auto devices = app_config->get_devices();
+                                                    json param;
+                                                    param["command"]       = "local_devices_arrived";
+                                                    param["sequece_id"]    = "10001";
+                                                    param["data"]          = devices;
+                                                    std::string logout_cmd = param.dump();
+                                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                                                    GUI::wxGetApp().run_script(strJS);
+
+                                                    // wcp订阅
+                                                    json data = this->app_config->get_devices();
+                                                    wxGetApp().device_card_notify(data);
+                                                    
+                                                });
+                                            }
+                                        }
+                                    }
+                                })
+                                .on_complete([this]() {
+                                    if (!GUI_App::m_app_alive.load())
+                                        return;
+                                    reset_machine_find_engine();
+                                })
+                                .lookup();
 }
 
 void GUI_App::copy_network_if_available()
@@ -3494,6 +3657,68 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     m_is_recreating_gui = false;
 
+    //// 重新加载首页和设备页
+    sm_disconnect_current_machine(true);
+    auto devices = wxGetApp().app_config->get_devices();
+    for (auto iter = devices.begin(); iter != devices.end();) {
+        if (iter->link_mode == "wan") {
+            iter = devices.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+
+
+    // wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(true);
+
+    // auto url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+    // wxGetApp().mainframe->load_printer_url(url);
+
+    bool use_new_connection = wxGetApp().app_config->get("use_new_connect") == "true";
+
+    const auto& edit_preset = preset_bundle->printers.get_edited_preset();
+
+    std::string local_name = "";
+    if (edit_preset.is_system) {
+        local_name = edit_preset.name;
+    } else {
+        const auto& base_preset = preset_bundle->printers.get_preset_base(edit_preset);
+        if (base_preset)
+            local_name = base_preset->name;
+        else
+            local_name = "";
+    }
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+
+    // Snapmaker U1
+    std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
+    bool        is_test          = (test_preset_name == local_name);
+
+    
+    
+
+    if (!preset_bundle->is_bbl_vendor()) {
+        if (is_test) {
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+            auto     real_url = wxGetApp().get_international_url(url);
+            mainframe->load_printer_url(real_url);
+        } else {
+            std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
+            auto url = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
+            mainframe->load_printer_url(url);
+        }
+    }
+
+
+
+
+
+    // wcp订阅
+    wxGetApp().device_card_notify(devices);
+    
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
 }
 
@@ -3765,6 +3990,118 @@ wxString GUI_App::transition_tridid(int trid_id)
     }
 }
 
+void GUI_App::import_presets()
+{
+    if (preset_updater) {
+        preset_updater->import_system_profile();
+    }
+    else {
+        MessageDialog(nullptr, _L("import failed!")).ShowModal();
+    }
+}
+
+void GUI_App::import_flutter_web() {
+    if (preset_updater) {
+        preset_updater->import_flutter_web();
+    } else {
+        MessageDialog(nullptr, _L("import failed!")).ShowModal();
+    }
+}
+
+// SM
+void GUI_App::sm_get_login_info() {
+    if (!m_login_userinfo.is_user_login() || m_login_userinfo.get_user_name().empty()) {
+        // default
+        json param;
+        param["command"] = "studio_useroffline";
+        param["sequece_id"] = "10001";
+        std::string logout_cmd = param.dump();
+        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+        GUI::wxGetApp().run_script(strJS);
+    } else {
+        json param;
+        param["command"]    = "studio_userlogin";
+        param["sequece_id"] = "10001";
+        json data;
+        data["avatar"] = m_login_userinfo.get_user_icon_url();
+        data["name"]   = m_login_userinfo.get_user_name();
+        param["data"]  = data;
+        std::string login_cmd = param.dump();
+        wxString    strJS      = wxString::Format("window.postMessage(%s)", login_cmd);
+        GUI::wxGetApp().run_script(strJS);
+    }
+    mainframe->m_webview->SetLoginPanelVisibility(true);
+}
+
+void GUI_App::sm_request_login(bool show_user_info)
+{
+    sm_ShowUserLogin(show_user_info);
+
+    if (show_user_info) {
+        sm_get_login_info();
+    }
+
+}
+
+void GUI_App::sm_ShowUserLogin(bool show)
+{
+    // BBS: User Login Dialog
+    if (show) {
+        try {
+            if (!sm_login_dlg)
+                sm_login_dlg = new SMUserLogin();
+            else {
+                delete sm_login_dlg;
+                sm_login_dlg = new SMUserLogin();
+            }
+            sm_login_dlg->ShowModal();
+        } catch (std::exception&) {
+            ;
+        }
+    } else {
+        try {
+            if (!sm_login_dlg)
+                sm_login_dlg = new SMUserLogin();
+            else {
+                delete sm_login_dlg;
+                sm_login_dlg = new SMUserLogin();
+            }
+        }
+        catch (std::exception&) {
+            ;
+        }
+    }
+}
+
+void GUI_App::sm_request_user_logout()
+{
+    if (m_login_userinfo.is_user_login()) {
+        m_login_userinfo.set_user_login(false);
+    }
+    try {
+        //if (!sm_login_dlg) {
+        //    sm_login_dlg = new SMUserLogin(true);
+        //} else {
+        //    delete sm_login_dlg;
+        //    sm_login_dlg = new SMUserLogin(true);
+        //}
+        //// sm_login_dlg->ShowModal();
+
+        wxString region = wxString::FromUTF8(app_config->get_country_code());
+        std::string url    = "";
+        if (region == "CN") {
+            url = "https://api.snapmaker.cn/api/oauth2/revoke";
+        } else {
+            url = "https://id.snapmaker.com/api/oauth2/revoke";
+        }
+
+        Http http = Http::post(url);
+        http.form_add("token", m_login_userinfo.get_user_token()).perform();
+    } catch (std::exception&) {
+        ;
+    }
+}
+
 //BBS
 void GUI_App::request_login(bool show_user_info)
 {
@@ -3790,6 +4127,31 @@ void GUI_App::get_login_info()
             GUI::wxGetApp().run_script(strJS);
         }
         mainframe->m_webview->SetLoginPanelVisibility(true);
+    }
+}
+
+wxString GUI_App::get_international_url(const wxString& origin_url) {
+
+    wxString baseUrl = origin_url;
+    if (baseUrl.find("?locale=") != std::string::npos) {
+        baseUrl = baseUrl.substr(0, baseUrl.find("?locale="));
+    } else if (baseUrl.find("&locale=") != std::string::npos) {
+        baseUrl = baseUrl.substr(0, baseUrl.find("&locale="));
+    }
+    wxString lang = wxString::FromUTF8(app_config->get_language_code());
+    wxString region = wxString::FromUTF8(app_config->get_country_code());
+    if (region == "Others") {
+        region = "US";
+    }
+
+    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
+
+    if (baseUrl.find("?") != std::string::npos) {
+        return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +
+               wxString::FromUTF8("&dark_mode=" + dark_mode);
+    } else {
+        return baseUrl + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region +
+               wxString::FromUTF8("&dark_mode=" + dark_mode); 
     }
 }
 
@@ -4125,6 +4487,11 @@ void GUI_App::request_open_project(std::string project_id)
         CallAfter([this, project_id] { mainframe->open_recent_project(-1, wxString::FromUTF8(project_id)); });
 }
 
+void GUI_App::sm_request_remove_project(std::string project_id) 
+{
+    mainframe->sm_remove_recent_project(wxString::FromUTF8(project_id));
+}
+
 void GUI_App::request_remove_project(std::string project_id)
 {
     mainframe->remove_recent_project(-1, wxString::FromUTF8(project_id));
@@ -4164,7 +4531,7 @@ void GUI_App::on_http_error(wxCommandEvent &evt)
 
     // Version limit
     if (code == HttpErrorVersionLimited) {
-        MessageDialog msg_dlg(nullptr, _L("The version of Orca Slicer is too low and needs to be updated to the latest version before it can be used normally."), "", wxAPPLY | wxOK);
+        MessageDialog msg_dlg(nullptr, _L("The version of Snapmaker Orca is too low and needs to be updated to the latest version before it can be used normally"), "", wxAPPLY | wxOK);
         if (msg_dlg.ShowModal() == wxOK) {
         }
 
@@ -4474,7 +4841,7 @@ std::string detect_updater_os_info()
 
 std::string detect_updater_version()
 {
-    return SoftFever_VERSION;
+    return Snapmaker_VERSION;
 }
 
 std::string detect_updater_iid(AppConfig* config)
@@ -4656,147 +5023,107 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
 {
     AppConfig* app_config = wxGetApp().app_config;
     bool       check_stable_only = app_config->get_bool("check_stable_update_only");
-    auto version_check_url = app_config->version_check_url();
-
-    UpdaterQuery query{
-        detect_updater_iid(app_config),
-        detect_updater_version(),
-        detect_updater_os(),
-        detect_updater_arch(),
-        detect_updater_os_info()
-    };
-
-    const std::string query_string = build_updater_query(query);
-    if (!query_string.empty()) {
-        const bool has_query = version_check_url.find('?') != std::string::npos;
-        if (!has_query)
-            version_check_url.push_back('?');
-        else if (!version_check_url.empty() && version_check_url.back() != '&' && version_check_url.back() != '?')
-            version_check_url.push_back('&');
-        version_check_url += query_string;
-    }
-
-    auto http = Http::get(version_check_url);
-    maybe_attach_updater_signature(http, query_string, version_check_url);
-
-    http.header("accept", "application/vnd.github.v3+json")
-        .timeout_connect(5)
-        .timeout_max(10)
+    auto       version_check_url = app_config->version_check_url(check_stable_only);
+    Http::get(version_check_url)
         .on_error([&](std::string body, std::string error, unsigned http_status) {
           (void)body;
           BOOST_LOG_TRIVIAL(error) << format("Error getting: `%1%`: HTTP %2%, %3%", "check_new_version_sf", http_status,
                                              error);
         })
-        .on_complete([this, by_user, check_stable_only](std::string body, unsigned http_status) {
+        .timeout_connect(1)
+        .on_complete([this,by_user, check_stable_only](std::string body, unsigned http_status) {
+          // Http response OK
           if (http_status != 200)
             return;
           try {
             boost::trim(body);
-            if (body.empty()) {
-                if (by_user != 0)
-                    this->no_new_version();
-                return;
-            }
-
+            // Orca: parse github release, inspired by SS
             boost::property_tree::ptree root;
-            std::stringstream           json_stream(body);
+            std::stringstream json_stream(body);
             boost::property_tree::read_json(json_stream, root);
 
+            // at least two number, use '.' as separator. can be followed by -Az23 for prereleased and +Az42 for
+            // metadata
             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
-            Semver    current_version = get_version(SoftFever_VERSION, matcher);
-            Semver    best_pre(0, 0, 0);
-            Semver    best_release(0, 0, 0);
-            bool      best_pre_valid = false;
-            bool      best_release_valid = false;
+
+            Semver           current_version = get_version(Snapmaker_VERSION, matcher);
+            Semver best_pre(0, 0, 0);
+            Semver best_release(0, 0, 0);
             std::string best_pre_url;
             std::string best_release_url;
             std::string best_release_content;
             std::string best_pre_content;
-
-            auto consider_release = [&](const boost::property_tree::ptree& node) {
-                auto tag_opt = node.get_optional<std::string>("tag_name");
-                if (!tag_opt)
-                    return;
-
-                std::string tag = *tag_opt;
-                if (!tag.empty() && tag.front() == 'v')
+            const std::regex reg_num("([0-9]+)");
+            if (check_stable_only) {
+                std::string tag = root.get<std::string>("tag_name");
+                if (tag[0] == 'v')
                     tag.erase(0, 1);
-
+                for (std::regex_iterator it = std::sregex_iterator(tag.begin(), tag.end(), reg_num); it != std::sregex_iterator(); ++it) {}
                 Semver tag_version = get_version(tag, matcher);
-                if (!tag_version.valid())
-                    return;
-
-                const bool is_prerelease = node.get_optional<bool>("prerelease").get_value_or(false);
-                const std::string html_url = node.get_optional<std::string>("html_url").get_value_or(std::string());
-                const std::string body_copy = node.get_optional<std::string>("body").get_value_or(std::string());
-
-                if (is_prerelease) {
-                    if (!best_pre_valid || best_pre < tag_version) {
-                        best_pre        = tag_version;
-                        best_pre_url    = html_url;
-                        best_pre_content = body_copy;
-                        best_pre_valid  = true;
+                if (root.get<bool>("prerelease")) {
+                    if (best_pre < tag_version) {
+                        best_pre         = tag_version;
+                        best_pre_url     = root.get<std::string>("html_url");
+                        best_pre_content = root.get<std::string>("body");
+                        best_pre.set_prerelease("Preview");
                     }
                 } else {
-                    if (!best_release_valid || best_release < tag_version) {
+                    if (best_release < tag_version) {
                         best_release         = tag_version;
-                        best_release_url     = html_url;
-                        best_release_content = body_copy;
-                        best_release_valid   = true;
+                        best_release_url     = root.get<std::string>("html_url");
+                        best_release_content = root.get<std::string>("body");
                     }
                 }
-            };
-
-            if (root.get_optional<std::string>("tag_name")) {
-                consider_release(root);
             } else {
-                for (const auto& child : root)
-                    consider_release(child.second);
+                for (auto json_version : root) {
+                    std::string tag = json_version.second.get<std::string>("tag_name");
+                    if (tag[0] == 'v')
+                        tag.erase(0, 1);
+                    for (std::regex_iterator it = std::sregex_iterator(tag.begin(), tag.end(), reg_num); it != std::sregex_iterator();
+                         ++it) {}
+                    Semver tag_version = get_version(tag, matcher);
+                    if (json_version.second.get<bool>("prerelease")) {
+                        if (best_pre < tag_version) {
+                            best_pre         = tag_version;
+                            best_pre_url     = json_version.second.get<std::string>("html_url");
+                            best_pre_content = json_version.second.get<std::string>("body");
+                            best_pre.set_prerelease("Preview");
+                        }
+                    } else {
+                        if (best_release < tag_version) {
+                            best_release         = tag_version;
+                            best_release_url     = json_version.second.get<std::string>("html_url");
+                            best_release_content = json_version.second.get<std::string>("body");
+                        }
+                    }
+                }
             }
 
-            if (!best_release_valid && !best_pre_valid) {
-                if (by_user != 0)
-                    this->no_new_version();
-                return;
-            }
-
-            if (best_pre_valid && best_release_valid && best_pre < best_release) {
-                best_pre        = best_release;
-                best_pre_url    = best_release_url;
+            // if release is more recent than beta, use release anyway
+            if (best_pre < best_release) {
+                best_pre         = best_release;
+                best_pre_url     = best_release_url;
                 best_pre_content = best_release_content;
-                best_pre_valid  = true;
             }
-
-            const bool        prefer_release = check_stable_only || !best_pre_valid;
-            const Semver&     chosen_version = prefer_release ? best_release : best_pre;
-            const bool        chosen_valid   = prefer_release ? best_release_valid : best_pre_valid;
-
-            if (!chosen_valid) {
+            // if we're the most recent, don't do anything
+            if ((check_stable_only ? best_release : best_pre) <= current_version) {
                 if (by_user != 0)
                     this->no_new_version();
                 return;
             }
 
-            if (current_version.valid() && chosen_version <= current_version) {
-                if (by_user != 0)
-                    this->no_new_version();
-                return;
-            }
-
-            version_info.url           = prefer_release ? best_release_url : best_pre_url;
-            version_info.version_str   = prefer_release ? best_release.to_string_sf() : best_pre.to_string();
-            version_info.description   = prefer_release ? best_release_content : best_pre_content;
+            version_info.url           = check_stable_only ? best_release_url : best_pre_url;
+            version_info.version_str   = check_stable_only ? best_release.to_string_sf() : best_pre.to_string_sf();
+            version_info.description   = check_stable_only ? best_release_content : best_pre_content;
             version_info.force_upgrade = false;
 
             wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
-            evt->SetString((prefer_release ? best_release : best_pre).to_string());
+            evt->SetString((check_stable_only ? best_release : best_pre).to_string());
             GUI::wxGetApp().QueueEvent(evt);
           } catch (...) {}
-        });
-
-    http.perform();
+        })
+        .perform();
 }
-
 void GUI_App::process_network_msg(std::string dev_id, std::string msg)
 {
     if (dev_id.empty()) {
@@ -4945,7 +5272,7 @@ std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
 
-    version_display = SoftFever_VERSION;
+    version_display = Snapmaker_VERSION;
     return version_display;
 }
 
@@ -5202,8 +5529,7 @@ void GUI_App::start_sync_user_preset(bool with_progress_dlg)
     m_sync_update_thread = Slic3r::create_thread(
         [this, progressFn, cancelFn, finishFn, t = std::weak_ptr<int>(m_user_sync_token)] {
             // get setting list, update setting list
-            std::string version = preset_bundle->get_vendor_profile_version(PresetBundle::ORCA_DEFAULT_BUNDLE).to_string();
-            if(!m_agent) return;
+            std::string version = preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE).to_string();
             int ret = m_agent->get_setting_list2(version, [this](auto info) {
                 auto type = info[BBL_JSON_KEY_TYPE];
                 auto name = info[BBL_JSON_KEY_NAME];
@@ -5320,6 +5646,16 @@ void GUI_App::start_http_server()
 void GUI_App::stop_http_server()
 {
     m_http_server.stop();
+}
+
+void GUI_App::start_page_http_server() 
+{
+    if (!m_page_http_server.is_started())
+        m_page_http_server;
+}
+void GUI_App::stop_page_http_server()
+{
+    m_page_http_server.stop();
 }
 
 void GUI_App::switch_staff_pick(bool on)
@@ -5506,7 +5842,7 @@ bool GUI_App::load_language(wxString language, bool initial)
     	// Get the active language from PrusaSlicer.ini, or empty string if the key does not exist.
         language = app_config->get("language");
         if (! language.empty())
-        	BOOST_LOG_TRIVIAL(info) << boost::format("language provided by OrcaSlicer.conf: %1%") % language;
+        	BOOST_LOG_TRIVIAL(info) << boost::format("language provided by Snapmaker_Orca.conf: %1%") % language;
         else {
             // Get the system language.
             const wxLanguage lang_system = wxLanguage(wxLocale::GetSystemLanguage());
@@ -5563,7 +5899,7 @@ bool GUI_App::load_language(wxString language, bool initial)
 	}
 
 	if (language_info != nullptr && language_info->LayoutDirection == wxLayout_RightToLeft) {
-    	BOOST_LOG_TRIVIAL(trace) << boost::format("The following language code requires right to left layout, which is not supported by OrcaSlicer: %1%") % language_info->CanonicalName.ToUTF8().data();
+    	BOOST_LOG_TRIVIAL(trace) << boost::format("The following language code requires right to left layout, which is not supported by Snapmaker_Orca: %1%") % language_info->CanonicalName.ToUTF8().data();
 		language_info = nullptr;
 	}
 
@@ -5648,14 +5984,14 @@ bool GUI_App::load_language(wxString language, bool initial)
 
     if (! wxLocale::IsAvailable(language_info->Language)) {
     	// Loading the language dictionary failed.
-    	wxString message = "Switching Orca Slicer to language " + language_info->CanonicalName + " failed.";
+    	wxString message = "Switching Snapmaker Orca to language " + language_info->CanonicalName + " failed.";
 #if !defined(_WIN32) && !defined(__APPLE__)
         // likely some linux system
         message += "\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n";
 #endif
         if (initial)
         	message + "\n\nApplication will close.";
-        wxMessageBox(message, "Orca Slicer - Switching language failed", wxOK | wxICON_ERROR);
+        wxMessageBox(message, "Snapmaker Orca - Switching language failed", wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
 		else
@@ -5982,7 +6318,7 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
                 associate_files(L"step");
                 associate_files(L"stp");
             }
-            associate_url(L"orcaslicer");
+            associate_url(L"Snapmaker_Orca");
         }
         else {
             if (app_config->get("associate_gcode") == "true")
@@ -6065,7 +6401,7 @@ bool GUI_App::check_and_save_current_preset_changes(const wxString& caption, con
             act_buttons |= ActionButtons::REMEMBER_CHOISE;
         UnsavedChangesDialog dlg(caption, header, "", act_buttons);
         bool no_need_change = dlg.getUpdateItemCount() == 0 ? true : false;
-        if (!no_need_change && dlg.ShowModal() == wxID_CANCEL)
+        if (!no_need_change &&dlg.ShowModal() == wxID_CANCEL)
             return false;
 
         if (dlg.save_preset())  // save selected changes
@@ -6322,7 +6658,7 @@ void GUI_App::OSXStoreOpenFiles(const wxArrayString &fileNames)
         if (is_gcode_file(into_u8(filename)))
             ++ num_gcodes;
     if (fileNames.size() == num_gcodes) {
-        // Opening PrusaSlicer by drag & dropping a G-Code onto OrcaSlicer icon in Finder,
+        // Opening PrusaSlicer by drag & dropping a G-Code onto Snapmaker_Orca icon in Finder,
         // just G-codes were passed. Switch to G-code viewer mode.
         m_app_mode = EAppMode::GCodeViewer;
         unlock_lockfile(get_instance_hash_string() + ".lock", data_dir() + "/cache/");
@@ -6507,9 +6843,9 @@ void GUI_App::open_mall_page_dialog()
     }
 
     if (link_url.find("?") != std::string::npos) {
-        link_url += "&from=orcaslicer";
+        link_url += "&from=Snapmaker_Orca";
     } else {
-        link_url += "?from=orcaslicer";
+        link_url += "?from=Snapmaker_Orca";
     }
 
     wxLaunchDefaultBrowser(link_url);
@@ -6715,6 +7051,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
 
     if (res) {
         load_current_presets();
+        wxGetApp().sidebar().update_nozzle_settings();
         update_publish_status();
         mainframe->refresh_plugin_tips();
         // BBS: remove SLA related message
@@ -6866,6 +7203,57 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
     }
 }
 
+void GUI_App::recent_file_notify(const json& res)
+{
+    for (const auto& instance : m_recent_file_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = res;
+            ptr->send_to_js();
+        }
+    }
+}
+
+void GUI_App::device_card_notify(const json& res)
+{
+    for (const auto& instance : m_device_card_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = res;
+            ptr->send_to_js();
+        }
+    }
+}
+
+void GUI_App::cache_notify(const std::string& key, const json& res)
+{
+    for (const auto& instance : m_cache_subscribers) {
+        auto ptr = instance.first.second.lock();
+        if (ptr) {
+            std::string cache_key = instance.second;
+            if (cache_key == key) {
+                json object = json::object();
+                object[key] = res;
+
+                ptr->m_res_data = object;
+                ptr->send_to_js();
+            }
+        }
+    }
+}
+
+
+void GUI_App::user_login_notify(const json& res)
+{
+    for (const auto& instance : m_user_login_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = res;
+            ptr->send_to_js();
+        }
+    }
+}
+
 bool GUI_App::config_wizard_startup()
 {
     if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
@@ -7011,7 +7399,7 @@ void GUI_App::associate_files(std::wstring extend)
 
     std::wstring prog_path = L"\"" + std::wstring(app_path) + L"\"";
     std::wstring prog_id = L" Orca.Slicer.1";
-    std::wstring prog_desc = L"OrcaSlicer";
+    std::wstring prog_desc = L"Snapmaker_Orca";
     std::wstring prog_command = prog_path + L" \"%1\"";
     std::wstring reg_base = L"Software\\Classes";
     std::wstring reg_extension = reg_base + L"\\." + extend;
@@ -7036,7 +7424,7 @@ void GUI_App::disassociate_files(std::wstring extend)
 
     std::wstring prog_path = L"\"" + std::wstring(app_path) + L"\"";
     std::wstring prog_id = L" Orca.Slicer.1";
-    std::wstring prog_desc = L"OrcaSlicer";
+    std::wstring prog_desc = L"Snapmaker_Orca";
     std::wstring prog_command = prog_path + L" \"%1\"";
     std::wstring reg_base = L"Software\\Classes";
     std::wstring reg_extension = reg_base + L"\\." + extend;
@@ -7117,6 +7505,57 @@ void GUI_App::disassociate_url(std::wstring url_prefix)
 }
 
 
+bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
+{
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+    wxString msg = "";
+
+    if (host) {
+        host->disconnect(msg, {});
+    }
+
+    if (true) {
+        wxGetApp().CallAfter([this, need_reload_printerview](){
+            wxGetApp().app_config->set("use_new_connect", "false");
+            /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
+            p_config->set("print_host", "");*/
+
+            auto devices = wxGetApp().app_config->get_devices();
+            for (size_t i = 0; i < devices.size(); ++i) {
+                if (devices[i].connected) {
+                    devices[i].connected = false;
+                    wxGetApp().app_config->save_device_info(devices[i]);
+                    break;
+                }
+            }
+
+            //// 同步卡片
+            //json param;
+            //param["command"]       = "local_devices_arrived";
+            //param["sequece_id"]    = "10001";
+            //param["data"]          = devices;
+            //std::string logout_cmd = param.dump();
+            //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+            //GUI::wxGetApp().run_script(strJS);
+
+            // wcp订阅
+            json data = this->app_config->get_devices();
+            wxGetApp().device_card_notify(data);
+
+            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(need_reload_printerview);
+            wxGetApp().set_connect_host(nullptr);
+
+            wxGetApp().preset_bundle->machine_filaments.clear();
+            // wxGetApp().load_current_presets();
+
+        });
+        
+    }
+
+    return true;
+}
+
 void GUI_App::start_download(std::string url)
 {
     if (!plater_) {
@@ -7136,6 +7575,22 @@ void GUI_App::start_download(std::string url)
 
 }
 
+void GUI_App::SMUserInfo::notify() {
+    json data;
+    if (m_login) {
+        data["status"]   = "online";
+        data["nickname"] = m_login_user_name;
+        data["icon"]     = m_login_user_icon_url;
+        data["token"]    = m_login_user_token;
+        data["userid"]   = m_login_user_id;
+        data["account"]  = m_login_user_account;
+    } else {
+        data["status"] = "offline";
+    }
+
+    wxGetApp().user_login_notify(data);
+
+}
 bool is_support_filament(int extruder_id)
 {
     auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;

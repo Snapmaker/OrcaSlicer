@@ -39,6 +39,7 @@
 #include "slic3r/GUI/MarkdownTip.hpp"
 #include "libslic3r/miniz_extension.hpp"
 #include "slic3r/GUI/GUI_Utils.hpp"
+#include "slic3r/GUI/MsgDialog.hpp"
 
 namespace fs = boost::filesystem;
 using Slic3r::GUI::Config::Index;
@@ -91,10 +92,12 @@ struct Update
 	//BBS: add directory support
 	bool is_directory {false};
 
+    bool can_install{true};
+
 	Update() {}
 	//BBS: add directory support
 	//BBS: use changelog string instead of url
-	Update(fs::path &&source, fs::path &&target, const Version &version, std::string vendor, std::string changelog, std::string description, bool forced = false, bool is_dir = false)
+	Update(fs::path &&source, fs::path &&target, const Version &version, std::string vendor, std::string changelog, std::string description, bool forced = false, bool is_dir = false, bool can_install = true)
 		: source(std::move(source))
 		, target(std::move(target))
 		, version(version)
@@ -103,9 +106,10 @@ struct Update
 		, descriptions(std::move(description))
 		, forced_update(forced)
 		, is_directory(is_dir)
+        , can_install(can_install)
 	{}
 
-    Update(fs::path &&source, fs::path &&target, const Version &version, std::string vendor, std::string changelog, std::string description, std::function<bool(const std::string)> file_filter,  bool forced = false, bool is_dir = false)
+    Update(fs::path &&source, fs::path &&target, const Version &version, std::string vendor, std::string changelog, std::string description, std::function<bool(const std::string)> file_filter,  bool forced = false, bool is_dir = false, bool can_install = true)
 		: source(std::move(source))
 		, target(std::move(target))
 		, version(version)
@@ -115,6 +119,7 @@ struct Update
         , file_filter(file_filter)
 		, forced_update(forced)
 		, is_directory(is_dir)
+        , can_install(can_install)
 	{}
 
 	//BBS: add directory support
@@ -296,6 +301,7 @@ bool PresetUpdater::priv::get_file(const std::string &url, const fs::path &targe
             fs::rename(tmp_path, target_path);
             res = true;
         })
+        .timeout_max(30)
         .perform_sync();
 
     return res;
@@ -664,7 +670,8 @@ void PresetUpdater::priv::sync_config()
     }
     AppConfig *app_config = GUI::wxGetApp().app_config;
 
-    auto profile_update_url = app_config->profile_update_url() + "/" + SoftFever_VERSION;
+    // auto profile_update_url = app_config->profile_update_url() + "/" + Snapmaker_VERSION;
+    auto profile_update_url = app_config->profile_update_url();
     // parse the assets section and get the latest asset by comparing the name
 
     Http::get(profile_update_url)
@@ -706,7 +713,7 @@ void PresetUpdater::priv::sync_config()
                         for (auto asset : assets) {
                             std::string name          = asset["name"].get<std::string>();
                             int         versionNumber = -1;
-                            std::regex  regexPattern("orcaslicer-profiles_ota_.*\\.([0-9]+)\\.zip$");
+                            std::regex  regexPattern("Snapmaker_Orca-profiles_ota_.*\\.([0-9]+)\\.zip$");
                             std::smatch matches;
                             if (std::regex_search(name, matches, regexPattern) && matches.size() > 1) {
                                 versionNumber = std::stoi(matches[1].str());
@@ -849,7 +856,7 @@ void PresetUpdater::priv::sync_plugins(std::string http_url, std::string plugin_
         BOOST_LOG_TRIVIAL(info) << "non need to sync plugins for there is no plugins currently.";
         return;
     }
-    std::string curr_version = NetworkAgent::use_legacy_network ? BAMBU_NETWORK_AGENT_VERSION_LEGACY : BAMBU_NETWORK_AGENT_VERSION;
+    std::string curr_version = SLIC3R_VERSION;
     std::string using_version = curr_version.substr(0, 9) + "00";
 
     std::string cached_version;
@@ -1084,7 +1091,7 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
         // return false if name is end with .stl, case insensitive
         return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
                boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
-        }, false, true);
+        }, false, true, true);
 	}
 
 	return perform_updates(std::move(updates), snapshot);
@@ -1112,7 +1119,7 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
             vendor_name.erase(vendor_name.size() - 5);
             if (bundles.find(vendor_name) != bundles.end())continue;
 
-            const auto is_vendor_enabled = (vendor_name == PresetBundle::ORCA_DEFAULT_BUNDLE) // always update configs from resource to vendor for ORCA_DEFAULT_BUNDLE
+            const auto is_vendor_enabled = (vendor_name == PresetBundle::SM_BUNDLE) // always update configs from resource to vendor for ORCA_DEFAULT_BUNDLE
                                            || (enabled_vendors.find(vendor_name) != enabled_vendors.end());
             if (enabled_config_update) {
                 if ( fs::exists(path_in_vendor)) {
@@ -1251,19 +1258,41 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                     oss<< ifs.rdbuf();
                     changelog = oss.str();
                     ifs.close();
+                    // 替换所有的 \\n 为 \n
+                    size_t pos = 0;
+                    while ((pos = changelog.find("\\n", pos)) != std::string::npos) {
+                        changelog.replace(pos, 2, "\n");
+                        pos += 1; // 移动到下一个可能的位置
+                    }
                 }
 
                 bool version_match = ((vendor_ver.maj() == cache_ver.maj()) && (vendor_ver.min() == cache_ver.min()));
                 if (version_match && (vendor_ver < cache_ver)) {
+
+                    Semver min_ver  = get_min_version_from_json(file_path);
+                    Semver soft_ver = Semver(std::string(Snapmaker_VERSION));
+
+                    bool legal = true;
+                    legal      = min_ver <= soft_ver;
+                    if (!legal) {
+                        wxString str = _L("needed, but current version is ");
+                        wxString str2 = _L("Bind with Pin Code");
+                        changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") + 
+                                      soft_ver.to_string() + "\n")
+                                         .ToStdString();
+                    }
+
                     BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:need to update settings from " << vendor_ver.to_string()
                                             << " to newer version " << cache_ver.to_string() << ", app version " << SLIC3R_VERSION;
                     Version version;
                     version.config_version = cache_ver;
                     version.comment        = description;
-                    // Orca: update vendor.json
-                    updates.updates.emplace_back(std::move(file_path), std::move(path_in_vendor.string()), std::move(version), vendor_name, changelog, "", force_update, false);
-                    //Orca: update vendor folder
-                    updates.updates.emplace_back(cache_profile_path / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "", force_update, true);
+
+                        updates.updates.emplace_back(std::move(file_path), std::move(path_in_vendor.string()), std::move(version), vendor_name, changelog, "", force_update, false, legal);
+
+                        //BBS: add directory support
+                        updates.updates.emplace_back(cache_path / "profiles" / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "",
+                                                     force_update, true, legal);
                 }
             }
         }
@@ -1303,7 +1332,8 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
         for (const auto &update : updates.updates) {
             BOOST_LOG_TRIVIAL(info) << '\t' << update;
 
-            update.install();
+            if (update.can_install)
+                update.install();
             //if (!update.is_directory) {
             //    vendor_path = update.source.parent_path().string();
             //    vendor_name = update.vendor;
@@ -1464,7 +1494,7 @@ PresetUpdater::UpdateResult PresetUpdater::config_update(const Semver& old_slic3
         }
 
         // regular update
-        if (params == UpdateParams::SHOW_NOTIFICATION) {
+        if (/* params == UpdateParams::SHOW_NOTIFICATION */0) {
             p->set_waiting_updates(updates);
             GUI::wxGetApp().plater()->get_notification_manager()->push_notification(GUI::NotificationType::PresetUpdateAvailable);
         }
@@ -1568,6 +1598,367 @@ void PresetUpdater::do_printer_config_update()
 bool PresetUpdater::version_check_enabled() const
 {
 	return p->enabled_version_check;
+}
+
+void PresetUpdater::import_flutter_web()
+{
+    // 1. 弹出文件选择框
+    wxFileDialog dialog(nullptr, _L("Please choose a web resource package file:"), "", "", "resource packages (*.zip)|*.zip",
+                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+
+    if (dialog.ShowModal() != wxID_OK)
+        return;
+
+    std::string zip_file = dialog.GetPath().ToUTF8().data();
+
+    // 2. 创建临时目录用于解压
+    boost::filesystem::path temp_path = boost::filesystem::temp_directory_path() / "orca_temp_flutter_import";
+    try {
+        if (boost::filesystem::exists(temp_path))
+            boost::filesystem::remove_all(temp_path);
+        boost::filesystem::create_directories(temp_path);
+
+        // 3. 解压zip文件到临时目录
+        if (!p->extract_file(zip_file, temp_path.string())) {
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+            return;
+        }
+
+        // 4. 检查版本并导入
+        std::vector<std::string> outdated_presets;
+        Updates                  updates;
+
+        auto app = dynamic_cast<GUI::GUI_App*>(wxTheApp);
+        if (!app) {
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+        }
+
+        // 读取当前flutter资源包版本
+        std::string ori_version_str = "0";
+        std::string ori_build_number_str = "0";
+
+        auto ori_version_file = boost::filesystem::path(data_dir()) / "web" / "flutter_web" / "version.json";
+        boost::property_tree::ptree ori_config;
+        boost::property_tree::read_json(ori_version_file.string(), ori_config);
+        ori_version_str      = ori_config.get<std::string>("version", "0");
+        ori_build_number_str = ori_config.get<std::string>("build_number", "0");
+
+        // 遍历解压的文件夹
+        for (auto& dir_entry : boost::filesystem::directory_iterator(temp_path / "flutter_web")) {
+            if (dir_entry.path().filename() == "version.json") {
+                try {
+                    // 读取json文件获取版本信息
+                    boost::property_tree::ptree config;
+                    boost::property_tree::read_json(dir_entry.path().string(), config);
+                    std::string version_str = config.get<std::string>("version", "0");
+                    std::string build_number_str = config.get<std::string>("build_number", "0");
+
+                    // std::string vendor      = dir_entry.path().stem().string();
+                    
+
+
+                    // 使用 Semver 进行版本比较
+                    Semver online_version  = version_str;
+                    Semver current_version = ori_version_str;
+
+                    if (/* current_version < online_version && */ori_build_number_str < build_number_str) {
+                        auto source_folder_path = fs::path(dir_entry.path().parent_path());
+                        auto target_folder_path = (boost::filesystem::path(data_dir()) / "web" / "flutter_web");
+                        // 创建Version对象
+                        Version version;
+                        version.config_version = online_version; // 将Semver赋值给Version的config_version
+
+                        // changelog
+                        std::string             changelog      = "";
+                        std::string             changelog_file = fs::path(dir_entry.path()).replace_extension(".changelog").string();
+                        boost::nowide::ifstream ifs(changelog_file);
+                        if (ifs) {
+                            std::ostringstream oss;
+                            oss << ifs.rdbuf();
+                            changelog = oss.str();
+                            ifs.close();
+                            // 替换所有的 \\n 为 \n
+                            size_t pos = 0;
+                            while ((pos = changelog.find("\\n", pos)) != std::string::npos) {
+                                changelog.replace(pos, 2, "\n");
+                                pos += 1; // 移动到下一个可能的位置
+                            }
+                        }
+
+                        // 检查最小要求软件版本
+                        Semver min_ver = get_min_version_from_json(dir_entry.path().string());
+                        Semver soft_ver = Semver(std::string(Snapmaker_VERSION));
+
+                        bool legal = true;
+                        legal      = min_ver <= soft_ver;
+                        if (!legal) {
+                            changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") +
+                                          soft_ver.to_string() + "\n")
+                                             .ToStdString();
+                        }
+
+                        // 版本较新且兼容，添加到更新列表
+
+                        updates.updates.emplace_back(std::move(source_folder_path), std::move(target_folder_path), version, "flutter_web", changelog, "",
+                                                     false, true, legal);
+
+                    } else {
+                        // 版本较旧或不兼容，添加到提示列表
+                        outdated_presets.push_back("flutter_web");
+                    }
+                } catch (std::exception& e) {
+                    BOOST_LOG_TRIVIAL(error) << "Failed to parse web resources json: " << e.what();
+                    continue;
+                }
+            }
+        }
+
+        // 5. 执行更新并提示结果
+        bool need_restart = false;
+        if (!updates.updates.empty()) {
+            std::vector<GUI::MsgUpdateConfig::Update> updates_msg;
+            for (const auto& update : updates.updates) {
+                // BBS: skip directory
+                if (!update.is_directory)
+                    continue;
+
+                if (update.can_install) {
+                    need_restart = true;
+                }
+                std::string changelog = update.change_log;
+                updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
+            }
+
+            GUI::MsgUpdateConfig dlg(updates_msg);
+
+            const auto res = dlg.ShowModal();
+
+            if (res == wxID_OK) {
+                p->perform_updates(std::move(updates));
+            } else {
+                boost::filesystem::remove_all(temp_path);
+                return;
+            }
+        }
+
+        wxString message;
+        if (!outdated_presets.empty()) {
+            message = _L("The following profiles could not be imported due to outdated versions.") + "\n";
+            for (const auto& preset : outdated_presets) {
+                message += "• " + preset + "\n";
+            }
+            GUI::MessageDialog(nullptr, message).ShowModal();
+        }
+
+        
+
+        if (need_restart) {
+            GUI::MessageDialog msg_wingow(nullptr,
+                                          _L("Updating the web resources requires application restart.") + "\n" +
+                                              _L("Do you want to continue?"),
+                                          L("Snapmaker Orca"), wxICON_QUESTION | wxOK | wxCANCEL);
+            if (msg_wingow.ShowModal() == wxID_CANCEL) {
+                return;
+            }
+
+            app->recreate_GUI(_L("Update web resources"));
+        }
+            
+
+    } catch (std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to importweb resources: " << e.what();
+        GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+    }
+
+    // 6. 清理临时目录
+    boost::filesystem::remove_all(temp_path);
+}
+
+void PresetUpdater::import_system_profile()
+{
+    // 1. 弹出文件选择框
+    wxFileDialog dialog(nullptr, _L("Please choose a system profile package file:"), "", "", "Profile packages (*.zip)|*.zip",
+                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+
+    if (dialog.ShowModal() != wxID_OK)
+        return;
+
+    std::string zip_file = dialog.GetPath().ToUTF8().data();
+
+    // 2. 创建临时目录用于解压
+    boost::filesystem::path temp_path = boost::filesystem::temp_directory_path() / "orca_temp_import";
+    try {
+        if (boost::filesystem::exists(temp_path))
+            boost::filesystem::remove_all(temp_path);
+        boost::filesystem::create_directories(temp_path);
+
+        // 3. 解压zip文件到临时目录
+        if (!p->extract_file(zip_file, temp_path.string())) {
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+            return;
+        }
+
+        // 4. 检查版本并导入
+        std::vector<std::string> outdated_presets;
+        Updates                  updates;
+
+        auto app = dynamic_cast<GUI::GUI_App*>(wxTheApp);
+        if (!app) {
+            GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+        }
+
+        // 遍历解压的文件夹
+        for (auto& dir_entry : boost::filesystem::directory_iterator(temp_path / "profiles")) {
+            if (dir_entry.path().extension() == ".json") {
+                try {
+                    // 读取json文件获取版本信息
+                    boost::property_tree::ptree config;
+                    boost::property_tree::read_json(dir_entry.path().string(), config);
+                    std::string version_str = config.get<std::string>("version", "0");
+                    std::string vendor      = dir_entry.path().stem().string();
+
+                    // 使用 Semver 进行版本比较
+                    Semver online_version = version_str;
+                    Semver current_version = app->preset_bundle->get_vendor_profile_version(vendor);
+
+                    if (current_version <= online_version) {
+                        auto source_path = fs::path(dir_entry.path()).replace_extension(".json");
+                        auto target_path =  (this->p->vendor_path / vendor).replace_extension(".json");
+
+                        auto source_folder_path = fs::path(dir_entry.path().parent_path() / dir_entry.path().stem());
+                        auto target_folder_path = (p->vendor_path / vendor);
+                        // 创建Version对象
+                        Version version;
+                        version.config_version = online_version; // 将Semver赋值给Version的config_version
+
+                        //changelog
+                        std::string             changelog;
+                        std::string             changelog_file = fs::path(dir_entry.path()).replace_extension(".changelog").string();
+                        boost::nowide::ifstream ifs(changelog_file);
+                        if (ifs) {
+                            std::ostringstream oss;
+                            oss << ifs.rdbuf();
+                            changelog = oss.str();
+                            ifs.close();
+                            // 替换所有的 \\n 为 \n
+                            size_t pos = 0;
+                            while ((pos = changelog.find("\\n", pos)) != std::string::npos) {
+                                changelog.replace(pos, 2, "\n");
+                                pos += 1; // 移动到下一个可能的位置
+                            }
+                        }
+
+                        // 检查最小要求软件版本
+                        Semver min_ver  = get_min_version_from_json(source_path.string());
+                        Semver soft_ver = Semver(std::string(Snapmaker_VERSION));
+
+                        bool legal = true;
+                        legal      = min_ver <= soft_ver;
+                        if (!legal) {
+                            changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") +
+                                          soft_ver.to_string() + "\n")
+                                             .ToStdString();
+                        }
+
+
+                        // 版本较新且兼容，添加到更新列表
+                         updates.updates.emplace_back(
+                             std::move(source_path),
+                             std::move(target_path),
+                             version,  // Version 类型
+                             vendor,         // std::string
+                             changelog,            // changelog
+                             ""             // description
+                             ,false
+                             ,false
+                             ,legal
+                         );
+
+                         updates.updates.emplace_back(
+                             std::move(source_folder_path),
+                             std::move(target_folder_path),
+                             version,
+                             vendor,
+                             "",
+                             "",
+                             false,
+                             true,
+                             legal
+                         );
+
+                        BOOST_LOG_TRIVIAL(info) << boost::format("Found newer version for %1%: %2% -> %3%") 
+                            % vendor % current_version.to_string() % online_version.to_string();
+                    } else {
+                        // 版本较旧或不兼容，添加到提示列表
+                        outdated_presets.push_back(vendor);
+                        BOOST_LOG_TRIVIAL(warning) << boost::format("Skip update for %1%: online version=%2%, current_version=%3%") 
+                            % vendor % online_version.to_string() % current_version.to_string();
+                    }
+                } catch (std::exception& e) {
+                    BOOST_LOG_TRIVIAL(error) << "Failed to parse preset json: " << e.what();
+                    continue;
+                }
+            }
+        }
+
+        // 5. 执行更新并提示结果
+        bool need_restart = false;
+        if (!updates.updates.empty()) {
+            std::vector<GUI::MsgUpdateConfig::Update> updates_msg;
+            for (const auto& update : updates.updates) {
+                // BBS: skip directory
+                if (update.is_directory)
+                    continue;
+
+                if (update.can_install) {
+                    need_restart = true;
+                }
+                std::string changelog = update.change_log;
+                updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
+            }
+
+            GUI::MsgUpdateConfig dlg(updates_msg);
+
+            const auto res = dlg.ShowModal();
+
+            if (res == wxID_OK) {
+                p->perform_updates(std::move(updates));
+            } else {
+                boost::filesystem::remove_all(temp_path);
+                return;
+            }
+
+            
+        }
+
+        wxString message;
+        if (!outdated_presets.empty()) {
+            message = _L("The following profiles could not be imported due to outdated versions.") + "\n";
+            for (const auto& preset : outdated_presets) {
+                message += "• " + preset + "\n";
+            }
+            GUI::MessageDialog(nullptr, message).ShowModal();
+        }
+
+        if (need_restart) {
+            GUI::MessageDialog msg_wingow(nullptr,
+                                          _L("Updating the system resources requires application restart.") + "\n" +
+                                              _L("Do you want to continue?"),
+                                          L("System resource update"), wxICON_QUESTION | wxOK | wxCANCEL);
+            if (msg_wingow.ShowModal() == wxID_CANCEL) {
+                return;
+            }
+
+            app->recreate_GUI(_L("Update system profiles"));
+        }
+
+    } catch (std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to import presets: " << e.what();
+        GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+    }
+
+    // 6. 清理临时目录
+    boost::filesystem::remove_all(temp_path);
 }
 
 }

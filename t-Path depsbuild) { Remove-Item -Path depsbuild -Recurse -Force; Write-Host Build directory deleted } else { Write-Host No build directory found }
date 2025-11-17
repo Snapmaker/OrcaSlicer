@@ -1,0 +1,24 @@
+[1mdiff --git a/deps/NanoSVG/NanoSVG.cmake b/deps/NanoSVG/NanoSVG.cmake[m
+[1mindex 5c833e3249..ae6550d831 100644[m
+[1m--- a/deps/NanoSVG/NanoSVG.cmake[m
+[1m+++ b/deps/NanoSVG/NanoSVG.cmake[m
+[36m@@ -3,7 +3,7 @@[m
+ # for rasterizing svg files from their original size to a squared power of two texture on Windows systems using[m
+ # AMD Radeon graphics cards[m
+ [m
+[31m-orcaslicer_add_cmake_project(NanoSVG[m
+[32m+[m[32mSnapmaker_Orca_add_cmake_project(NanoSVG[m
+     DEPENDS dep_Boost[m
+     URL https://github.com/SoftFever/nanosvg/archive/863f6aa97ef62028126fa2c19bd4350394c2e15e.zip[m
+         URL_HASH SHA256=8d9c1624ad6518dd6dfa31e4f8dc7da9ec243d88bae595c7a037450617fec851[m
+[1mdiff --git a/deps/libnoise/libnoise.cmake b/deps/libnoise/libnoise.cmake[m
+[1mindex 0e19f26926..c0ba327394 100644[m
+[1m--- a/deps/libnoise/libnoise.cmake[m
+[1m+++ b/deps/libnoise/libnoise.cmake[m
+[36m@@ -1,4 +1,4 @@[m
+[31m-orcaslicer_add_cmake_project(libnoise[m
+[32m+[m[32mSnapmaker_Orca_add_cmake_project(libnoise[m
+     URL https://github.com/SoftFever/Orca-deps-libnoise/archive/refs/tags/1.0.zip[m
+         URL_HASH SHA256=96ffd6cc47898dd8147aab53d7d1b1911b507d9dbaecd5613ca2649468afd8b6[m
+ )[m
+\ No newline at end of file[m

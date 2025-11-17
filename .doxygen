@@ -42,7 +42,7 @@ DOXYFILE_ENCODING      = UTF-8
 # title of most generated pages and in a few other places.
 # The default value is: My Project.
 
-PROJECT_NAME           = OrcaSlicer
+PROJECT_NAME           = Snapmaker_Orca
 
 # The PROJECT_NUMBER tag can be used to enter a project or revision number. This
 # could be handy for archiving the generated documentation or if some version
@@ -54,14 +54,14 @@ PROJECT_NUMBER         = 1.6.3
 # for a project that appears at the top of each page and should give viewer a
 # quick idea about the purpose of the project. Keep the description short.
 
-PROJECT_BRIEF          = OrcaSlicer
+PROJECT_BRIEF          = Snapmaker_Orca
 
 # With the PROJECT_LOGO tag one can specify a logo or an icon that is included
 # in the documentation. The maximum height of the logo should not exceed 55
 # pixels and the maximum width should not exceed 200 pixels. Doxygen will copy
 # the logo to the output directory.
 
-PROJECT_LOGO           = ./resources/images/OrcaSlicer_32px.png
+PROJECT_LOGO           = ./resources/images/Snapmaker_Orca_32px.png
 
 # The OUTPUT_DIRECTORY tag is used to specify the (relative or absolute) path
 # into which the generated documentation will be written. If a relative path is
@@ -184,7 +184,7 @@ FULL_PATH_NAMES        = YES
 # will be relative from the directory where doxygen is started.
 # This tag requires that the tag FULL_PATH_NAMES is set to YES.
 
-STRIP_FROM_PATH        = /Users/runner/work/OrcaSlicer/OrcaSlicer
+STRIP_FROM_PATH        = /Users/runner/work/Snapmaker_Orca/Snapmaker_Orca
 
 # The STRIP_FROM_INC_PATH tag can be used to strip a user-defined part of the
 # path mentioned in the documentation of a class, which tells the reader which
@@ -193,7 +193,7 @@ STRIP_FROM_PATH        = /Users/runner/work/OrcaSlicer/OrcaSlicer
 # specify the list of include paths that are normally passed to the compiler
 # using the -I flag.
 
-STRIP_FROM_INC_PATH    = /Users/runner/work/OrcaSlicer/OrcaSlicer
+STRIP_FROM_INC_PATH    = /Users/runner/work/Snapmaker_Orca/Snapmaker_Orca
 
 # If the SHORT_NAMES tag is set to YES, doxygen will generate much shorter (but
 # less readable) file names. This can be useful is your file systems doesn't
@@ -1286,7 +1286,7 @@ GENERATE_HTML          = YES
 # The default directory is: html.
 # This tag requires that the tag GENERATE_HTML is set to YES.
 
-HTML_OUTPUT            = OrcaSlicer_Dev_Document
+HTML_OUTPUT            = Snapmaker_Orca_Dev_Document
 
 # The HTML_FILE_EXTENSION tag can be used to specify the file extension for each
 # generated HTML page (for example: .htm, .php, .asp).

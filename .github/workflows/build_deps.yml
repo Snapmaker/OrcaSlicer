@@ -140,7 +140,7 @@ jobs:
           path: ${{ github.workspace }}/deps/build/OrcaSlicer_dep_ubuntu_*.tar.gz
 
   build_orca:
-    name: Build OrcaSlicer
+    name: Build Snapmaker_Orca
     needs: [build_deps]
     if: ${{ !cancelled() && !inputs.build-deps-only && inputs.force-build || (inputs.valid-cache == true && needs.build_deps.result == 'skipped') || (inputs.valid-cache != true && success()) }}
     uses: ./.github/workflows/build_orca.yml

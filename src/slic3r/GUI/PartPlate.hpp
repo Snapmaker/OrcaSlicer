@@ -241,6 +241,8 @@ public:
     // @return PrintSequence::{ByLayer,ByObject}
     PrintSequence get_real_print_seq(bool* plate_same_as_global=nullptr) const;
 
+    void clear_filament_map();
+
     bool has_spiral_mode_config() const;
     bool get_spiral_vase_mode() const;
     void set_spiral_vase_mode(bool spiral_mode, bool as_global);
@@ -477,8 +479,15 @@ public:
     void set_first_layer_print_sequence(const std::vector<int> &sorted_filaments);
     void set_other_layers_print_sequence(const std::vector<LayerPrintSequence>& layer_seq_list);
     void update_first_layer_print_sequence(size_t filament_nums);
+    void update_first_layer_print_sequence_when_delete_filament(size_t filamen_id);
+
 
     void print() const;
+
+    void on_extruder_count_changed(int extruder_count);
+    void set_filament_count(int filament_count);
+    void on_filament_added();
+    void on_filament_deleted(int filament_count, int filament_id);
 
     friend class cereal::access;
     friend class UndoRedo::StackImpl;
@@ -571,6 +580,8 @@ class PartPlateList : public ObjectBase
     bool render_cali_logo = true;
 
     bool m_is_dark = false;
+
+    int m_filament_count = 1;
 
     void init();
     //compute the origin for printable plate with index i
@@ -855,6 +866,12 @@ public:
     void show_cali_texture(bool show = true);
     void init_cali_texture_info();
     void load_cali_textures();
+
+    void on_extruder_count_changed(int extruder_count);
+
+    void set_filament_count(int filament_count);
+    void on_filament_deleted(int filament_count, int filament_id);
+    void on_filament_added(int filament_count);
 
     BedTextureInfo bed_texture_info[btCount];
     BedTextureInfo cali_texture_info;

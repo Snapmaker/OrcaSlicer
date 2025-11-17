@@ -2,7 +2,7 @@
 APPIMAGETOOLURL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(uname -m).AppImage"
 
 
-APP_IMAGE="@SLIC3R_APP_KEY@_Linux_V@SoftFever_VERSION@.AppImage"
+APP_IMAGE="@SLIC3R_APP_KEY@_Linux_V@Snapmaker_VERSION@.AppImage"
 
 wget ${APPIMAGETOOLURL} -O ../appimagetool.AppImage
 chmod +x ../appimagetool.AppImage
@@ -28,8 +28,6 @@ Categories=Utility;
 MimeType=model/stl;application/vnd.ms-3mfdocument;application/prs.wavefront-obj;application/x-amf;
 EOF
 
-
-export ARCH=$(uname -m)
 
 if [ -f /.dockerenv ] ; then # Only run if inside of a Docker Container
   ../appimagetool.AppImage --appimage-extract-and-run . $([ ! -z "${container}" ] && echo '--appimage-extract-and-run')

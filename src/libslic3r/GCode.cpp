@@ -281,7 +281,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
     std::string OozePrevention::post_toolchange(GCode& gcodegen)
     {
         return (gcodegen.config().standby_temperature_delta.value != 0) ?
-            gcodegen.writer().set_temperature(this->_get_temp(gcodegen), true, gcodegen.writer().extruder()->id()) :
+            gcodegen.writer().set_temperature(this->_get_temp(gcodegen), gcodegen.config().tool_change_temprature_wait, gcodegen.writer().extruder()->id()) :
             std::string();
     }
 
@@ -723,6 +723,12 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         float wipe_tower_rotation = tcr.priming ? 0.f : alpha;
         Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
 
+         // For Snapmaker Artision
+        gcodegen.m_next_wipe_x = 0;
+        gcodegen.m_next_wipe_y = 0;
+        auto transformed_pos   = Eigen::Rotation2Df(wipe_tower_rotation) * tcr.start_pos + wipe_tower_offset;
+        gcodegen.m_next_wipe_x = transformed_pos(0);
+        gcodegen.m_next_wipe_y = transformed_pos(1);
 
         std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
 
@@ -741,13 +747,21 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                                  gcodegen.config().filament_multitool_ramming.get_at(tcr.initial_tool));
         const bool should_travel_to_tower = !tcr.priming && (tcr.force_travel     // wipe tower says so
                                                              || !needs_toolchange // this is just finishing the tower with no toolchange
-                                                             || will_go_down // Make sure to move to prime tower before moving down
                                                              || is_ramming);
 
         if (should_travel_to_tower || gcodegen.m_need_change_layer_lift_z) {
             // FIXME: It would be better if the wipe tower set the force_travel flag for all toolchanges,
             // then we could simplify the condition and make it more readable.
-            gcode += gcodegen.retract();
+            auto type      = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+            if (type == ZHopType::zhtAuto) {
+                type = ZHopType::zhtSpiral;
+            }
+            auto lift_type = gcodegen.to_lift_type(type);
+            
+            if (gcodegen.m_config.z_hop_when_prime.get_at(gcodegen.m_writer.extruder()->id())) {
+                gcode += gcodegen.retract(false, false, lift_type);
+            }
+            
             gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
             gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed, "Travel to a Wipe Tower");
             gcode += gcodegen.unretract();
@@ -838,6 +852,8 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         auto  trans_pos = [wt_rot = Eigen::Rotation2Df(angle), &translation](const Vec2f& p) -> Vec2f { return wt_rot * p + translation; };
         Vec2f transformed_pos = trans_pos(pos);
         Vec2f old_pos(-1000.1f, -1000.1f);
+
+        bool isFirstTransform = true;
 
         while (gcode_str) {
             std::getline(gcode_str, line);  // we read the gcode line by line
@@ -3206,16 +3222,29 @@ void GCode::_print_first_layer_extruder_temperatures(GCodeOutputStream &file, Pr
                 file.write(m_writer.set_temperature(temp, wait, first_printing_extruder_id));
         } else {
             // Set temperatures of all the printing extruders.
+            bool is_active   = true;
+            int  target_temp = -1;
+            int  target_tool = -1;
             for (unsigned int tool_id : print.extruders()) {
+                is_active = true;
                 int temp = print.config().nozzle_temperature_initial_layer.get_at(tool_id);
-                if (m_ooze_prevention.enable && tool_id != first_printing_extruder_id) {
+                if (print.config().ooze_prevention.value && tool_id != first_printing_extruder_id) {
+                    is_active = false;
                     if (print.config().idle_temperature.get_at(tool_id) == 0)
                         temp += print.config().standby_temperature_delta.value;
                     else
                         temp = print.config().idle_temperature.get_at(tool_id);
                 }
-                if (temp > 0)
-                    file.write(m_writer.set_temperature(temp, wait, tool_id));
+                if (temp > 0) {
+                    if (is_active) {
+                        target_temp = temp;
+                        target_tool = tool_id;
+                    }else
+                        file.write(m_writer.set_temperature(temp, wait, tool_id));
+                }                
+            }
+            if (target_temp != -1 && target_tool != -1) {
+                file.write(m_writer.set_temperature(target_temp, wait, target_tool));
             }
         }
     }
@@ -6343,9 +6372,17 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         (the extruder might be already retracted fully or partially). We call these
         methods even if we performed wipe, since this will ensure the entire retraction
         length is honored in case wipe path was too short.  */
-    if ((!this->on_first_layer()  || this->config().bottom_surface_pattern != InfillPattern::ipHilbertCurve) &&
-	    (role != erTopSolidInfill || this->config().top_surface_pattern    != InfillPattern::ipHilbertCurve))
-        gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();
+
+    // Snapmaker U1
+    std::string printer_model = this->m_curr_print->m_config.printer_model.value;
+    if (printer_model == "Snapmaker U1" && toolchange) {
+        gcode += "M400\n";
+    }
+     if ((!this->on_first_layer()  || this->config().bottom_surface_pattern != InfillPattern::ipHilbertCurve) &&
+	    (role != erTopSolidInfill || this->config().top_surface_pattern    != InfillPattern::ipHilbertCurve)){
+            gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();
+        }
+
 
     gcode += m_writer.reset_e();
     // Orca: check if should + can lift (roughly from SuperSlicer)
@@ -6545,6 +6582,10 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         snprintf(key_value, sizeof(key_value), "flush_length_%d", flush_idx + 1);
         dyn_config.set_key_value(key_value, new ConfigOptionFloat(0.f));
     }
+
+    // For Snapmaker Artisian
+    dyn_config.set_key_value("next_wipe_x", new ConfigOptionFloat(m_next_wipe_x));
+    dyn_config.set_key_value("next_wipe_y", new ConfigOptionFloat(m_next_wipe_y));
 
     // Process the custom change_filament_gcode.
     const std::string& change_filament_gcode = m_config.change_filament_gcode.value;

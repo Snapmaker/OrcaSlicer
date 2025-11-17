@@ -16,13 +16,12 @@ on:
 
 jobs:
   build_orca:
-    name: Build OrcaSlicer
+    name: Build Snapmaker_Orca
     runs-on: ${{ inputs.os }}
     env:
       date:
       ver:
       ver_pure:
-      ORCA_UPDATER_SIG_KEY: ${{ secrets.ORCA_UPDATER_SIG_KEY }}
 
     steps:
       - name: Checkout
@@ -44,7 +43,7 @@ jobs:
       - name: Get the version and date on Ubuntu and macOS
         if: inputs.os != 'windows-latest'
         run: |
-          ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+          ver_pure=$(grep 'set(Snapmaker_VERSION' version.inc | cut -d '"' -f2)
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             ver="PR-${{ github.event.number }}"
           else
@@ -67,7 +66,7 @@ jobs:
               $ver = "PR" + $prNumber
           } else {
               $versionContent = Get-Content version.inc -Raw
-              if ($versionContent -match 'set\(SoftFever_VERSION "(.*?)"\)') {
+              if ($versionContent -match 'set\(Snapmaker_VERSION "(.*?)"\)') {
                   $ver = $matches[1]
               }
               $ver = "V$ver"
@@ -102,7 +101,7 @@ jobs:
 
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && inputs.os == 'macos-14'
+        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -119,94 +118,94 @@ jobs:
           security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app
-          # Sign OrcaSlicer_profile_validator.app if it exists
-          if [ -f "${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
-            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app
+          # Sign Snapmaker_Orca_profile_validator.app if it exists
+          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app
           fi
           
-          # Create main OrcaSlicer DMG without the profile validator helper
-          mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
-          rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
-          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/Applications
-          hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/universal/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
+          # Create main Snapmaker Orca DMG without the profile validator helper
+          mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
+          rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
+          cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/
+          ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
+          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
+          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
           
-          # Create separate OrcaSlicer_profile_validator DMG if the app exists
-          if [ -f "${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
-            mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg
-            rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg/*
-            cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg/
-            ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg/Applications
-            hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg
-            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg
+          # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
+          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg
+            rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
+            cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
+            ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
+            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
+            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
           fi
           
           # Notarize main DMG
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
-          xcrun notarytool submit "OrcaSlicer_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-          xcrun stapler staple OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
+          xcrun notarytool submit "Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+          xcrun stapler staple Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
           
           # Notarize profile validator DMG if it exists
-          if [ -f "OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
-            xcrun notarytool submit "OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-            xcrun stapler staple OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg
+          if [ -f "Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
+            xcrun notarytool submit "Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
+            xcrun stapler staple Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
           fi
 
       - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && inputs.os == 'macos-14'
+        if: github.ref != 'refs/heads/main' && inputs.os == 'macos-14' && github.ref != 'refs/heads/2.2.0'
         working-directory: ${{ github.workspace }}
         run: |
-          mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
-          rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
-          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/Applications
-          hdiutil create -volname "OrcaSlicer" -srcfolder ${{ github.workspace }}/build/universal/OrcaSlicer_dmg -ov -format UDZO OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
+          mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
+          rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
+          cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/
+          ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
+          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
           
-          # Create separate OrcaSlicer_profile_validator DMG if the app exists
-          if [ -f "${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
-            mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg
-            rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg/*
-            cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg/
-            ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg/Applications
-            hdiutil create -volname "OrcaSlicer Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/OrcaSlicer_profile_validator_dmg -ov -format UDZO OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg
+          # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
+          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg
+            rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
+            cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
+            ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
+            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
           fi
 
       - name: Upload artifacts mac
         if: inputs.os == 'macos-14'
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_Mac_universal_${{ env.ver }}
-          path: ${{ github.workspace }}/OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
+          name: Snapmaker_Orca_Mac_universal_${{ env.ver }}
+          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
 
-      - name: Upload OrcaSlicer_profile_validator DMG mac
+      - name: Upload Snapmaker_Orca_profile_validator DMG mac
         if: inputs.os == 'macos-14'
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_profile_validator_Mac_universal_DMG_${{ env.ver }}
-          path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg
+          name: Snapmaker_Orca_profile_validator_Mac_universal_DMG_${{ env.ver }}
+          path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
           if-no-files-found: ignore
 
       - name: Deploy Mac release
-        if: github.ref == 'refs/heads/main' && inputs.os == 'macos-14'
+        if: (github.ref == 'refs/heads/main' || github.ref == "refs/heads/2.2.0") && inputs.os == 'macos-14'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ${{ github.workspace }}/OrcaSlicer_Mac_universal_${{ env.ver }}.dmg
-          asset_name: OrcaSlicer_Mac_universal_nightly.dmg
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
+          asset_name: Snapmaker_Orca_Mac_universal_nightly.dmg
           asset_content_type: application/octet-stream
           max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
 
-      - name: Deploy Mac OrcaSlicer_profile_validator DMG release
-        if: github.ref == 'refs/heads/main' && inputs.os == 'macos-14'
+      - name: Deploy Mac Snapmaker_Orca_profile_validator DMG release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ${{ github.workspace }}/OrcaSlicer_profile_validator_Mac_universal_${{ env.ver }}.dmg
-          asset_name: OrcaSlicer_profile_validator_Mac_universal_nightly.dmg
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
+          asset_name: Snapmaker_Orca_profile_validator_Mac_universal_nightly.dmg
           asset_content_type: application/octet-stream
           max_releases: 1
 
@@ -239,7 +238,7 @@ jobs:
         if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}/build
         shell: cmd
-        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip OrcaSlicer_Windows_${{ env.ver }}_portable.zip ${{ github.workspace }}/build/OrcaSlicer'
+        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip ${{ github.workspace }}/build/Snapmaker_Orca'
 
       - name: Pack PDB
         if: inputs.os == 'windows-latest'
@@ -251,15 +250,15 @@ jobs:
         if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_Windows_${{ env.ver }}_portable
-          path: ${{ github.workspace }}/build/OrcaSlicer
+          name: Snapmaker_Orca_Windows_${{ env.ver }}_portable
+          path: ${{ github.workspace }}/build/Snapmaker_Orca
 
       - name: Upload artifacts Win installer
         if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_Windows_${{ env.ver }}
-          path: ${{ github.workspace }}/build/OrcaSlicer*.exe
+          name: Snapmaker_Orca_Windows_${{ env.ver }}
+          path: ${{ github.workspace }}/build/Snapmaker_Orca*.exe
 
       - name: Upload artifacts Win PDB
         if: inputs.os == 'windows-latest'
@@ -268,43 +267,43 @@ jobs:
           name: PDB
           path: ${{ github.workspace }}/build/src/Release/Debug_PDB_${{ env.ver }}_for_developers_only.7z
 
-      - name: Upload OrcaSlicer_profile_validator Win
+      - name: Upload Snapmaker_Orca_profile_validator Win
         if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_profile_validator_Windows_${{ env.ver }}
-          path: ${{ github.workspace }}/build/src/Release/OrcaSlicer_profile_validator.exe
+          name: Snapmaker_Orca_profile_validator_Windows_${{ env.ver }}
+          path: ${{ github.workspace }}/build/src/Release/Snapmaker_Orca_profile_validator.exe
 
       - name: Deploy Windows release portable
-        if: github.ref == 'refs/heads/main' && inputs.os == 'windows-latest'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'windows-latest'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ${{ github.workspace }}/build/OrcaSlicer_Windows_${{ env.ver }}_portable.zip
-          asset_name: OrcaSlicer_Windows_nightly_portable.zip
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
+          asset_name: Snapmaker_Orca_Windows_nightly_portable.zip
           asset_content_type: application/x-zip-compressed
           max_releases: 1
 
       - name: Deploy Windows release installer
-        if: github.ref == 'refs/heads/main' && inputs.os == 'windows-latest'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'windows-latest'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ${{ github.workspace }}/build/OrcaSlicer_Windows_Installer_${{ env.ver }}.exe
-          asset_name: OrcaSlicer_Windows_Installer_nightly.exe
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
+          asset_name: Snapmaker_Orca_Windows_Installer_nightly.exe
           asset_content_type: application/x-msdownload
           max_releases: 1
 
-      - name: Deploy Windows OrcaSlicer_profile_validator release
-        if: github.ref == 'refs/heads/main' && inputs.os == 'windows-latest'
+      - name: Deploy Windows Snapmaker_Orca_profile_validator release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'windows-latest'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ${{ github.workspace }}/build/src/Release/OrcaSlicer_profile_validator.exe
-          asset_name: OrcaSlicer_profile_validator_Windows_nightly.exe
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/build/src/Release/Snapmaker_Orca_profile_validator.exe
+          asset_name: Snapmaker_Orca_profile_validator_Windows_nightly.exe
           asset_content_type: application/x-msdownload
           max_releases: 1
 
@@ -326,7 +325,7 @@ jobs:
       - name: Install dependencies from build_linux.sh
         if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
         shell: bash
-        run: sudo env "ORCA_UPDATER_SIG_KEY=$ORCA_UPDATER_SIG_KEY" ./build_linux.sh -ur
+        run: sudo ./build_linux.sh -ur
 
       - name: Fix permissions
         if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
@@ -340,15 +339,15 @@ jobs:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         run: |
           ./build_linux.sh -isr
-          mv -n ./build/OrcaSlicer_Linux_V${{ env.ver_pure }}.AppImage ./build/OrcaSlicer_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
-          chmod +x ./build/OrcaSlicer_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
+          mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
+          chmod +x ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
 
       - name: Build orca_custom_preset_tests
-        if: github.ref == 'refs/heads/main' && inputs.os == 'ubuntu-24.04'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'ubuntu-24.04'
         working-directory: ${{ github.workspace }}/build/src/Release
         shell: bash
         run: |
-          ./OrcaSlicer_profile_validator -p ${{ github.workspace }}/resources/profiles -g 1
+          ./Snapmaker_Orca_profile_validator -p ${{ github.workspace }}/resources/profiles -g 1
           cd ${{ github.workspace }}/resources/profiles
           zip -r orca_custom_preset_tests.zip user/
 
@@ -359,32 +358,32 @@ jobs:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
-          path: './build/OrcaSlicer_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage'
+          name: Snapmaker_Orca_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
+          path: './build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage'
 
-      - name: Upload OrcaSlicer_profile_validator Ubuntu
+      - name: Upload Snapmaker_Orca_profile_validator Ubuntu
         if: ${{ ! env.ACT && inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04' }}
         env:
           ubuntu-ver: ${{ (inputs.os == 'ubuntu-20.04' && '2004') || (inputs.os == 'ubuntu-24.04' && '2404') || '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_profile_validator_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
-          path: './build/src/Release/OrcaSlicer_profile_validator'
+          name: Snapmaker_Orca_profile_validator_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
+          path: './build/src/Release/Snapmaker_Orca_profile_validator'
 
       - name: Deploy Ubuntu release
-        if: ${{ ! env.ACT && github.ref == 'refs/heads/main' && (inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04') }}
+        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && (inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04') }}
         env:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ./build/OrcaSlicer_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
-          asset_name: OrcaSlicer_Linux_AppImage${{ env.ubuntu-ver-str }}_nightly.AppImage
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
+          asset_name: Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_nightly.AppImage
           asset_content_type: application/octet-stream
           max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
       - name: Deploy Ubuntu release
-        if: ${{ ! env.ACT && github.ref == 'refs/heads/main' && inputs.os == 'ubuntu-24.04' }}
+        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'ubuntu-24.04' }}
         uses: rickstaa/action-create-tag@v1
         with:
           tag: "nightly-builds"
@@ -392,25 +391,25 @@ jobs:
           force_push_tag: true
           message: "nightly-builds"
 
-      - name: Deploy Ubuntu OrcaSlicer_profile_validator release
-        if: ${{ ! env.ACT && github.ref == 'refs/heads/main' && (inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04') }}
+      - name: Deploy Ubuntu Snapmaker_Orca_profile_validator release
+        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && (inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04') }}
         env:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
-          asset_path: ./build/src/Release/OrcaSlicer_profile_validator
-          asset_name: OrcaSlicer_profile_validator_Linux${{ env.ubuntu-ver-str }}_nightly
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ./build/src/Release/Snapmaker_Orca_profile_validator
+          asset_name: Snapmaker_Orca_profile_validator_Linux${{ env.ubuntu-ver-str }}_nightly
           asset_content_type: application/octet-stream
           max_releases: 1
 
       - name: Deploy orca_custom_preset_tests
-        if: ${{ ! env.ACT && github.ref == 'refs/heads/main' && inputs.os == 'ubuntu-24.04' }}
+        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'ubuntu-24.04' }}
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
-          upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-          release_id: 137995723
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
           asset_path: ${{ github.workspace }}/resources/profiles/orca_custom_preset_tests.zip
           asset_name: orca_custom_preset_tests.zip
           asset_content_type: application/octet-stream

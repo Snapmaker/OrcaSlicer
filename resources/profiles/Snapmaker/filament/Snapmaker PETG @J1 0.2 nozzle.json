@@ -1,0 +1,14 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "true",
+  "name": "Snapmaker PETG @J1 0.2 nozzle",
+  "setting_id": "1003693375",
+  "inherits": "Snapmaker PETG @J1 base",
+  "compatible_printers": [
+    "Snapmaker J1 (0.2 nozzle)"
+  ],
+  "filament_max_volumetric_speed": [
+    "1.6"
+  ]
+}

@@ -62,6 +62,10 @@ PingCodeBindDialog::PingCodeBindDialog(Plater* plater /*= nullptr*/)
 #endif //__WINDOWS__
     wxBoxSizer* sizer_main = new wxBoxSizer(wxVERTICAL);
 
+ 
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
+
     SetBackgroundColour(*wxWHITE);
     wxBoxSizer* m_sizer_main = new wxBoxSizer(wxVERTICAL);
     auto m_line_top = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1), wxTAB_TRAVERSAL);
@@ -353,6 +357,9 @@ PingCodeBindDialog::~PingCodeBindDialog() {
 #endif //__WINDOWS__
 
      m_tocken.reset(new int(0));
+
+     std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
      SetBackgroundColour(*wxWHITE);
      wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);
@@ -960,6 +967,8 @@ UnBindMachineDialog::UnBindMachineDialog(Plater *plater /*= nullptr*/)
      : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe), wxID_ANY, _L("Log out printer"), wxDefaultPosition, wxDefaultSize, wxCAPTION)
  {
     m_tocken.reset(new int(0));
+std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
      SetBackgroundColour(*wxWHITE);
      wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);

@@ -106,7 +106,7 @@ static wxString update_custom_filaments()
 }
 
 GuideFrame::GuideFrame(GUI_App *pGUI, long style)
-    : DPIDialog((wxWindow *) (pGUI->mainframe), wxID_ANY, "OrcaSlicer", wxDefaultPosition, wxDefaultSize, style),
+    : DPIDialog((wxWindow *) (pGUI->mainframe), wxID_ANY, "Snapmaker Orca", wxDefaultPosition, wxDefaultSize, style),
 	m_appconfig_new()
 {
     SetBackgroundColour(*wxWHITE);
@@ -308,10 +308,10 @@ void GuideFrame::OnNavigationComplete(wxWebViewEvent &evt)
 
         bFirstComplete = true;
     }
-
+    
     m_browser->Show();
     Layout();
-
+    
     wxString NewUrl = evt.GetURL();
 
     UpdateState();
@@ -373,7 +373,7 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
     try {
         wxString strInput = evt.GetString();
         BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;OnRecv:" << strInput.c_str();
-        json     j        = json::parse(strInput.utf8_string());
+        json     j        = json::parse(strInput);
 
         wxString strCmd = j["command"];
         BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;Command:" << strCmd;
@@ -475,6 +475,8 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
                         agent->user_logout();
                     }
                 }
+
+                wxGetApp().fltviews().relead_all();
             }
 
             this->EndModal(wxID_OK);
@@ -601,7 +603,7 @@ bool GuideFrame::IsFirstUse()
     if (strVal == "1")
         return false;
 
-    if (orca_bundle_rsrc == true)
+    if (sm_bundle_rsrc == true)
         return true;
 
     return true;
@@ -801,11 +803,11 @@ bool GuideFrame::apply_config(AppConfig *app_config, PresetBundle *preset_bundle
             variant.clear();
         return std::string();
     };
-    // Orca "custom" printers are considered first, then 3rd party.
-    if (preferred_model = get_preferred_printer_model(PresetBundle::ORCA_DEFAULT_BUNDLE, preferred_variant);
+    // Prusa printers are considered first, then 3rd party.
+    if (preferred_model = get_preferred_printer_model(PresetBundle::SM_BUNDLE, preferred_variant);
         preferred_model.empty()) {
         for (const auto& bundle : enabled_vendors) {
-            if (bundle.first == PresetBundle::ORCA_DEFAULT_BUNDLE) { continue; }
+            if (bundle.first == PresetBundle::SM_BUNDLE) { continue; }
             if (preferred_model = get_preferred_printer_model(bundle.first, preferred_variant);
                 !preferred_model.empty())
                     break;
@@ -882,10 +884,10 @@ bool GuideFrame::run()
             //we install the default here
             bool apply_keeped_changes = false;
             //clear filament section and use default materials
-            app.app_config->set_variant(PresetBundle::ORCA_DEFAULT_BUNDLE,
-                PresetBundle::ORCA_DEFAULT_PRINTER_MODEL, PresetBundle::ORCA_DEFAULT_PRINTER_VARIANT, "true");
+            app.app_config->set_variant(PresetBundle::SM_BUNDLE,
+                PresetBundle::SM_DEFAULT_PRINTER_MODEL, PresetBundle::SM_DEFAULT_PRINTER_VARIANT, "true");
             app.app_config->clear_section(AppConfig::SECTION_FILAMENTS);
-            app.preset_bundle->load_selections(*app.app_config, {PresetBundle::ORCA_DEFAULT_PRINTER_MODEL, PresetBundle::ORCA_DEFAULT_PRINTER_VARIANT, PresetBundle::ORCA_DEFAULT_FILAMENT, std::string()});
+            app.preset_bundle->load_selections(*app.app_config, {PresetBundle::SM_DEFAULT_PRINTER_MODEL, PresetBundle::SM_DEFAULT_PRINTER_VARIANT, PresetBundle::SM_DEFAULT_FILAMENT, std::string()});
 
             app.app_config->set_legacy_datadir(false);
             app.update_mode();
@@ -998,12 +1000,12 @@ int GuideFrame::LoadProfileData()
 
         // Orca: add custom as default
         // Orca: add json logic for vendor bundle
-        orca_bundle_rsrc = true;
+        sm_bundle_rsrc = true;
 
-        // search if there exists a .json file in vendor_dir folder, if exists, set orca_bundle_rsrc to false
+        // search if there exists a .json file in vendor_dir folder, if exists, set sm_bundle_rsrc to false
         for (const auto& entry : boost::filesystem::directory_iterator(vendor_dir)) {
             if (!boost::filesystem::is_directory(entry) && boost::iequals(entry.path().extension().string(), ".json") && !boost::iequals(entry.path().stem().string(), PresetBundle::ORCA_FILAMENT_LIBRARY)) {
-                orca_bundle_rsrc = false;
+                sm_bundle_rsrc = false;
                 break;
             }
         }
@@ -1294,6 +1296,9 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
 
                 std::string             sub_file = sub_path.string();
                 LoadFile(sub_file, contents);
+                if (contents == "") {
+                    continue;
+                }
                 json pm = json::parse(contents);
 
                 std::string strInstant = pm["instantiation"];

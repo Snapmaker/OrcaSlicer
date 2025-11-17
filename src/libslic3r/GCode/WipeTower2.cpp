@@ -565,7 +565,8 @@ public:
                      float line_width,
                      GCodeFlavor flavor,
                      const std::vector<WipeTower2::FilamentParameters>& filament_parameters,
-                     bool  enable_arc_fitting)
+                     bool  enable_arc_fitting,
+                     const std::string& printer_model)
         :
 		m_current_pos(std::numeric_limits<float>::max(), std::numeric_limits<float>::max()),
 		m_current_z(0.f),
@@ -574,8 +575,9 @@ public:
 		m_extrusion_flow(0.f),
 		m_preview_suppressed(false),
 		m_elapsed_time(0.f),
-        m_gcode_flavor(flavor), m_filpar(filament_parameters)
-        //m_enable_arc_fitting(enable_arc_fitting)
+    m_gcode_flavor(flavor),
+    m_filpar(filament_parameters),
+    m_printer_model(printer_model)
     {
             // ORCA: This class is only used by non BBL printers, so set the parameter appropriately.
             // This fixes an issue where the wipe tower was using BBL tags resulting in statistics for purging in the purge tower not being displayed.
@@ -624,10 +626,25 @@ public:
     WipeTowerWriter2&            disable_linear_advance() {
         if (m_gcode_flavor == gcfRepRapSprinter || m_gcode_flavor == gcfRepRapFirmware)
             m_gcode += (std::string("M572 D") + std::to_string(m_current_tool) + " S0\n");
-        else if (m_gcode_flavor == gcfKlipper)
-            m_gcode += "SET_PRESSURE_ADVANCE ADVANCE=0\n";
+        else if (m_gcode_flavor == gcfKlipper){
+            // m_gcode += "SET_PRESSURE_ADVANCE ADVANCE=0\n"; // Snapmaker U1
+            
+        }
+            
         else
             m_gcode += "M900 K0\n";
+        return *this;
+    }
+
+    WipeTowerWriter2&           disable_linear_advance_value(float value = 0.0) {
+        if (m_gcode_flavor == gcfRepRapSprinter || m_gcode_flavor == gcfRepRapFirmware)
+            m_gcode += (std::string("M572 D") + std::to_string(m_current_tool) + " S"+ std::to_string(value) + "\n");
+        else if (m_gcode_flavor == gcfKlipper) {
+            m_gcode += "SET_PRESSURE_ADVANCE ADVANCE=" + Slic3r::float_to_string_decimal_point(value, 4) + "\n"; // Snapmaker U1
+        }
+
+        else
+            m_gcode += "M900 K" + std::to_string(value) + "\n";
         return *this;
     }
 
@@ -896,16 +913,20 @@ public:
 	WipeTowerWriter2& speed_override_backup()
     {
         // This is only supported by Prusa at this point (https://github.com/prusa3d/PrusaSlicer/issues/3114)
-        if (m_gcode_flavor == gcfMarlinLegacy || m_gcode_flavor == gcfMarlinFirmware)
+        if (m_gcode_flavor == gcfMarlinLegacy || m_gcode_flavor == gcfMarlinFirmware || is_snapmaker_u1()) {
+            // u1 特殊处理
             m_gcode += "M220 B\n";
+        }
 		return *this;
     }
 
 	// Let the firmware restore the active speed override value.
 	WipeTowerWriter2& speed_override_restore()
 	{
-        if (m_gcode_flavor == gcfMarlinLegacy || m_gcode_flavor == gcfMarlinFirmware)
+        if (m_gcode_flavor == gcfMarlinLegacy || m_gcode_flavor == gcfMarlinFirmware || is_snapmaker_u1()) {
+            // u1 特殊处理
             m_gcode += "M220 R\n";
+        }
 		return *this;
     }
 
@@ -1151,6 +1172,13 @@ private:
     GCodeFlavor   m_gcode_flavor;
     bool          m_enable_arc_fitting = false;
     const std::vector<WipeTower2::FilamentParameters>& m_filpar;
+	std::string   m_printer_model;
+
+	// 判断是否是 Snapmaker U1 打印机
+	bool is_snapmaker_u1() const {
+		return boost::icontains(m_printer_model, "Snapmaker") && 
+		       boost::icontains(m_printer_model, "U1");
+	}
 
 	std::string   set_format_X(float x)
     {
@@ -1240,7 +1268,11 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     m_infill_speed(default_region_config.sparse_infill_speed),
     m_perimeter_speed(default_region_config.inner_wall_speed),
     m_current_tool(initial_tool),
-    wipe_volumes(wiping_matrix), m_wipe_tower_max_purge_speed(float(config.wipe_tower_max_purge_speed)),
+    wipe_volumes(wiping_matrix),
+    m_wipe_tower_max_purge_speed(float(config.wipe_tower_max_purge_speed)),
+    m_change_pressure(config.enable_change_pressure_when_wiping),
+    m_change_pressure_value(config.ramming_pressure_advance_value),
+    m_ramming_width_ratio(config.ramming_line_width_ratio),
     m_enable_arc_fitting(config.enable_arc_fitting), 
     m_used_fillet(config.wipe_tower_fillet_wall), 
     m_rib_width(config.wipe_tower_rib_width), 
@@ -1274,6 +1306,9 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
 
     m_is_mk4mmu3 = boost::icontains(config.printer_notes.value, "PRINTER_MODEL_MK4") && boost::icontains(config.printer_notes.value, "MMU");
 
+    // 保存打印机型号信息
+    m_printer_model = config.printer_model.value;
+
     // Calculate where the priming lines should be - very naive test not detecting parallelograms etc.
     const std::vector<Vec2d>& bed_points = config.printable_area.values;
     BoundingBoxf bb(bed_points);
@@ -1305,7 +1340,8 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar.push_back(FilamentParameters());
 
     m_filpar[idx].material = config.filament_type.get_at(idx);
-    m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
+    // m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
+    m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
     m_filpar[idx].temperature = config.nozzle_temperature.get_at(idx);
     m_filpar[idx].first_layer_temperature = config.nozzle_temperature_initial_layer.get_at(idx);
     m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(idx);
@@ -1351,7 +1387,7 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
         float vol  = config.filament_multitool_ramming_volume.get_at(idx);
         float flow = config.filament_multitool_ramming_flow.get_at(idx);
         m_filpar[idx].multitool_ramming = config.filament_multitool_ramming.get_at(idx) && vol > 0.f && flow > 0.f;
-        m_filpar[idx].ramming_line_width_multiplicator = 2.;
+        m_filpar[idx].ramming_line_width_multiplicator = m_ramming_width_ratio;
         m_filpar[idx].ramming_step_multiplicator = 1.;
 
         // Now the ramming speed vector. In this case it contains just one value (flow).
@@ -1405,7 +1441,7 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
     for (size_t idx_tool = 0; idx_tool < tools.size(); ++ idx_tool) {
         size_t old_tool = m_current_tool;
 
-        WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting);
+        WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting, m_printer_model);
         writer.set_extrusion_flow(m_extrusion_flow)
               .set_z(m_z_pos)
               .set_initial_tool(m_current_tool);
@@ -1432,7 +1468,10 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
         toolchange_Load(writer, cleaning_box); // Prime the tool.
         if (idx_tool + 1 == tools.size()) {
             // Last tool should not be unloaded, but it should be wiped enough to become of a pure color.
-            toolchange_Wipe(writer, cleaning_box, wipe_volumes[tools[idx_tool-1]][tool]);
+            if (idx_tool == 0)
+                toolchange_Wipe(writer, cleaning_box, wipe_volumes[tools[idx_tool]][tool]);
+            else
+                toolchange_Wipe(writer, cleaning_box, wipe_volumes[tools[idx_tool - 1]][tool]);
         } else {
             // Ram the hot material out of the melt zone, retract the filament into the cooling tubes and let it cool.
             //writer.travel(writer.x(), writer.y() + m_perimeter_width, 7200);
@@ -1500,7 +1539,7 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
         (tool != (unsigned int)(-1) ? wipe_area+m_depth_traversed-0.5f*m_perimeter_width
                                     : m_wipe_tower_depth-m_perimeter_width));
 
-	WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting);
+	WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting, m_printer_model);
 	writer.set_extrusion_flow(m_extrusion_flow)
 		.set_z(m_z_pos)
 		.set_initial_tool(m_current_tool)
@@ -1590,8 +1629,12 @@ void WipeTower2::toolchange_Unload(
 
     if (do_ramming) {
         writer.travel(ramming_start_pos); // move to starting position
-        if (! m_is_mk4mmu3)
-            writer.disable_linear_advance();
+        if (!m_is_mk4mmu3) {
+            if (m_change_pressure) {
+                writer.disable_linear_advance_value(m_change_pressure_value);
+            }
+        }
+            
         if (cold_ramming)
             writer.set_extruder_temp(old_temperature - 20);
     }
@@ -1634,8 +1677,13 @@ void WipeTower2::toolchange_Unload(
     }
     
 
+    bool is_over_tower_height = false;
+    if (m_plan.size() > 0 && m_num_layer_changes == m_plan.size()) {
+        is_over_tower_height = true;
+    }
+
     // now the ramming itself:
-    while (do_ramming && i < m_filpar[m_current_tool].ramming_speed.size())
+    while (do_ramming && i < m_filpar[m_current_tool].ramming_speed.size() && !is_over_tower_height)
     {
         // The time step is different for SEMM ramming and the MM ramming. See comments in set_extruder() for details.
         const float time_step = m_semm ? 0.25f : m_filpar[m_current_tool].multitool_ramming_time;
@@ -1705,8 +1753,12 @@ void WipeTower2::toolchange_Unload(
 
         float speed_inc = (final_speed - initial_speed) / (2.f * number_of_cooling_moves - 1.f);
 
-        if (m_is_mk4mmu3)
-            writer.disable_linear_advance();
+        if (m_is_mk4mmu3) {
+            if (m_change_pressure) {
+                writer.disable_linear_advance_value(m_change_pressure_value);
+            }
+        }
+            
 
         writer.suppress_preview()
               .travel(writer.x(), writer.y() + y_step);
@@ -1928,7 +1980,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
 
     size_t old_tool = m_current_tool;
 
-	WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting);
+	WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting, m_printer_model);
 	writer.set_extrusion_flow(m_extrusion_flow)
 		.set_z(m_z_pos)
 		.set_initial_tool(m_current_tool)
@@ -2216,14 +2268,12 @@ void WipeTower2::save_on_last_wipe()
 int WipeTower2::first_toolchange_to_nonsoluble(
         const std::vector<WipeTowerInfo::ToolChange>& tool_changes) const
 {
-    // Orca: allow calculation of the required depth and wipe volume for soluable toolchanges as well
-    // NOTE: it's not clear if this is the right way, technically we should disable wipe tower if soluble filament is used as it
-    // will will make the wipe tower unstable. Need to revist this in the future.
-    return tool_changes.empty() ? -1 : 0;
-    //for (size_t idx=0; idx<tool_changes.size(); ++idx)
-    //    if (! m_filpar[tool_changes[idx].new_tool].is_soluble)
-    //        return idx;
-    //return -1;
+    // 使用 wipe_tower_filament 配置来决定哪个挤出机用于 wipe tower
+    for (size_t idx=0; idx<tool_changes.size(); ++idx) {
+        if (!m_filpar[tool_changes[idx].new_tool].is_soluble)
+            return idx;
+    }
+    return -1;
 }
 
 static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first,

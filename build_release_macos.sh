@@ -176,7 +176,7 @@ function build_slicer() {
                     -DORCA_TOOLS=ON \
                     ${ORCA_UPDATER_SIG_KEY:+-DORCA_UPDATER_SIG_KEY="$ORCA_UPDATER_SIG_KEY"} \
                     -DCMAKE_PREFIX_PATH="$DEPS/usr/local" \
-                    -DCMAKE_INSTALL_PREFIX="$PWD/OrcaSlicer" \
+                    -DCMAKE_INSTALL_PREFIX="$PWD/Snapmaker_Orca" \
                     -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
                     -DCMAKE_MACOSX_RPATH=ON \
                     -DCMAKE_INSTALL_RPATH="${DEPS}/usr/local" \
@@ -193,42 +193,42 @@ function build_slicer() {
             ./scripts/run_gettext.sh
         )
 
-        echo "Fix macOS app package..."
-        (
-            cd "$PROJECT_BUILD_DIR"
-            mkdir -p OrcaSlicer
-            cd OrcaSlicer
-            # remove previously built app
-            rm -rf ./OrcaSlicer.app
-            # fully copy newly built app
-            cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/OrcaSlicer.app" ./OrcaSlicer.app
-            # fix resources
-            resources_path=$(readlink ./OrcaSlicer.app/Contents/Resources)
-            rm ./OrcaSlicer.app/Contents/Resources
-            cp -R "$resources_path" ./OrcaSlicer.app/Contents/Resources
-            # delete .DS_Store file
-            find ./OrcaSlicer.app/ -name '.DS_Store' -delete
-            
-            # Copy OrcaSlicer_profile_validator.app if it exists
-            if [ -f "../src$BUILD_DIR_CONFIG_SUBDIR/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
-                echo "Copying OrcaSlicer_profile_validator.app..."
-                rm -rf ./OrcaSlicer_profile_validator.app
-                cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/OrcaSlicer_profile_validator.app" ./OrcaSlicer_profile_validator.app
+    echo "Fix macOS app package..."
+    (
+        cd "$PROJECT_BUILD_DIR"
+        mkdir -p Snapmaker_Orca
+        cd Snapmaker_Orca
+        # remove previously built app
+        rm -rf "./Snapmaker Orca.app"
+        # fully copy newly built app
+        cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker Orca.app" "./Snapmaker Orca.app"
+        # fix resources
+        resources_path=$(readlink "./Snapmaker Orca.app/Contents/Resources")
+        rm "./Snapmaker Orca.app/Contents/Resources"
+        cp -R "$resources_path" "./Snapmaker Orca.app/Contents/Resources"
+        # delete .DS_Store file
+        find "./Snapmaker Orca.app/" -name '.DS_Store' -delete
+
+         # Copy Snapmaker_Orca_profile_validator.app if it exists
+            if [ -f "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+                echo "Copying Snapmaker_Orca_profile_validator.app..."
+                rm -rf ./Snapmaker_Orca_profile_validator.app
+                cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app" ./Snapmaker_Orca_profile_validator.app
                 # delete .DS_Store file
-                find ./OrcaSlicer_profile_validator.app/ -name '.DS_Store' -delete
+                find ./Snapmaker_Orca_profile_validator.app/ -name '.DS_Store' -delete
             fi
         )
 
-        # extract version
-        # export ver=$(grep '^#define SoftFever_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
-        # ver="_V${ver//\"}"
-        # echo $PWD
-        # if [ "1." != "$NIGHTLY_BUILD". ];
-        # then
-        #     ver=${ver}_dev
-        # fi
+    # extract version
+    # export ver=$(grep '^#define Snapmaker_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
+    # ver="_V${ver//\"}"
+    # echo $PWD
+    # if [ "1." != "$NIGHTLY_BUILD". ];
+    # then
+    #     ver=${ver}_dev
+    # fi
 
-        # zip -FSr OrcaSlicer${ver}_Mac_${_ARCH}.zip OrcaSlicer.app
+        # zip -FSr Snapmaker_Orca${ver}_Mac_${_ARCH}.zip OrcaSlicer.app
 
     fi
     done
@@ -242,40 +242,40 @@ function build_universal() {
     # Create universal binary
     echo "Creating universal binary..."
     # PROJECT_BUILD_DIR="$PROJECT_DIR/build_Universal"
-    mkdir -p "$PROJECT_BUILD_DIR/OrcaSlicer"
-    UNIVERSAL_APP="$PROJECT_BUILD_DIR/OrcaSlicer/OrcaSlicer.app"
+    mkdir -p "$PROJECT_BUILD_DIR/Snapmaker_Orca"
+    UNIVERSAL_APP="$PROJECT_BUILD_DIR/Snapmaker_Orca/Snapmaker Orca.app"
     rm -rf "$UNIVERSAL_APP"
-    cp -R "$PROJECT_DIR/build/arm64/OrcaSlicer/OrcaSlicer.app" "$UNIVERSAL_APP"
+    cp -R "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker Orca.app" "$UNIVERSAL_APP"
     
     # Get the binary path inside the .app bundle
-    BINARY_PATH="Contents/MacOS/OrcaSlicer"
+    BINARY_PATH="Contents/MacOS/Snapmaker_Orca"
     
     # Create universal binary using lipo
     lipo -create \
-        "$PROJECT_DIR/build/x86_64/OrcaSlicer/OrcaSlicer.app/$BINARY_PATH" \
-        "$PROJECT_DIR/build/arm64/OrcaSlicer/OrcaSlicer.app/$BINARY_PATH" \
+        "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/$BINARY_PATH" \
+        "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/$BINARY_PATH" \
         -output "$UNIVERSAL_APP/$BINARY_PATH"
         
     echo "Universal binary created at $UNIVERSAL_APP"
     
     # Create universal binary for profile validator if it exists
-    if [ -f "$PROJECT_DIR/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ] && \
-       [ -f "$PROJECT_DIR/build/x86_64/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
-        echo "Creating universal binary for OrcaSlicer_profile_validator..."
-        UNIVERSAL_VALIDATOR_APP="$PROJECT_BUILD_DIR/OrcaSlicer/OrcaSlicer_profile_validator.app"
+    if [ -f "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ] && \
+       [ -f "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+        echo "Creating universal binary for Snapmaker_Orca_profile_validator..."
+        UNIVERSAL_VALIDATOR_APP="$PROJECT_BUILD_DIR/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
         rm -rf "$UNIVERSAL_VALIDATOR_APP"
-        cp -R "$PROJECT_DIR/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app" "$UNIVERSAL_VALIDATOR_APP"
+        cp -R "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app" "$UNIVERSAL_VALIDATOR_APP"
         
         # Get the binary path inside the profile validator .app bundle
-        VALIDATOR_BINARY_PATH="Contents/MacOS/OrcaSlicer_profile_validator"
+        VALIDATOR_BINARY_PATH="Contents/MacOS/Snapmaker_Orca_profile_validator"
         
         # Create universal binary using lipo
         lipo -create \
-            "$PROJECT_DIR/build/x86_64/OrcaSlicer/OrcaSlicer_profile_validator.app/$VALIDATOR_BINARY_PATH" \
-            "$PROJECT_DIR/build/arm64/OrcaSlicer/OrcaSlicer_profile_validator.app/$VALIDATOR_BINARY_PATH" \
+            "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/$VALIDATOR_BINARY_PATH" \
+            "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/$VALIDATOR_BINARY_PATH" \
             -output "$UNIVERSAL_VALIDATOR_APP/$VALIDATOR_BINARY_PATH"
             
-        echo "Universal binary for OrcaSlicer_profile_validator created at $UNIVERSAL_VALIDATOR_APP"
+        echo "Universal binary for Snapmaker_Orca_profile_validator created at $UNIVERSAL_VALIDATOR_APP"
     fi
 }
 

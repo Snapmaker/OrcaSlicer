@@ -731,6 +731,7 @@ class Print;
         int m_seams_count;
         bool m_single_extruder_multi_material;
         float m_preheat_time;
+        int m_delta_temperature;
         int m_preheat_steps;
         bool m_disable_m73;
 #if ENABLE_GCODE_VIEWER_STATISTICS
@@ -740,7 +741,7 @@ class Print;
         enum class EProducer
         {
             Unknown,
-            OrcaSlicer,
+            Snapmaker_Orca,
             Slic3rPE,
             Slic3r,
             SuperSlicer,
@@ -753,6 +754,8 @@ class Print;
 
         static const std::vector<std::pair<GCodeProcessor::EProducer, std::string>> Producers;
         EProducer m_producer;
+
+        DynamicConfig m_current_config;
 
         TimeProcessor m_time_processor;
         UsedFilaments m_used_filaments;
@@ -783,7 +786,10 @@ class Print;
         const GCodeProcessorResult& get_result() const { return m_result; }
         GCodeProcessorResult& result() { return m_result; }
         GCodeProcessorResult&& extract_result() { return std::move(m_result); }
+        DynamicConfig&              current_dynamic_config() { return m_current_config; }
 
+
+        GCodeReader& parser() { return m_parser; }
         // Load a G-code into a stand-alone G-code viewer.
         // throws CanceledException through print->throw_if_canceled() (sent by the caller as callback).
         void process_file(const std::string& filename, std::function<void()> cancel_callback = nullptr);

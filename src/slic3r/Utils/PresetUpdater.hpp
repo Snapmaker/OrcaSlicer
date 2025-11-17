@@ -61,7 +61,11 @@ public:
 
 	bool version_check_enabled() const;
 
-private:
+	void import_system_profile();
+
+	void import_flutter_web();
+
+public:
 	struct priv;
 	std::unique_ptr<priv> p;
 };

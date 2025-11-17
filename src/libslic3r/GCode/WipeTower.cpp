@@ -119,7 +119,7 @@ public:
 
     WipeTowerWriter&				 set_initial_tool(size_t tool) { m_current_tool = tool; return *this; }
 
-	WipeTowerWriter&				 set_z(float z)
+	WipeTowerWriter&				 set_z(float z) 
 		{ m_current_z = z; return *this; }
 
 	WipeTowerWriter& 			 set_extrusion_flow(float flow)
@@ -238,7 +238,7 @@ public:
 	WipeTowerWriter& travel(float x, float y, float f = 0.f)
 		{ return extrude_explicit(x, y, 0.f, f); }
 
-	WipeTowerWriter& travel(const Vec2f &dest, float f = 0.f)
+	WipeTowerWriter& travel(const Vec2f &dest, float f = 0.f) 
 		{ return extrude_explicit(dest.x(), dest.y(), 0.f, f); }
 
 	// Extrude a line from current position to x, y with the extrusion amount given by m_extrusion_flow.
@@ -249,7 +249,7 @@ public:
         return extrude_explicit(x, y, std::sqrt(dx*dx+dy*dy) * m_extrusion_flow, f, true);
 	}
 
-	WipeTowerWriter& extrude(const Vec2f &dest, const float f = 0.f)
+	WipeTowerWriter& extrude(const Vec2f &dest, const float f = 0.f) 
 		{ return extrude(dest.x(), dest.y(), f); }
 
     WipeTowerWriter& rectangle(const Vec2f& ld,float width,float height,const float f = 0.f)
@@ -300,7 +300,7 @@ public:
         do {
             ++i;
             if (i == 4) i = 0;
-            if (need_change_flow) {
+            if (need_change_flow) { 
                 if (i == 1) {
                     // using bridge flow in bridge area, and add notes for gcode-check when flow changed
                     set_extrusion_flow(wipe_tower->extrusion_flow(0.2));
@@ -359,7 +359,7 @@ public:
 
 	// Elevate the extruder head above the current print_z position.
 	WipeTowerWriter& z_hop(float hop, float f = 0.f)
-	{
+	{ 
 		m_gcode += std::string("G1") + set_format_Z(m_current_z + hop);
 		if (f != 0 && f != m_current_feedrate)
 			m_gcode += set_format_F(f);
@@ -368,7 +368,7 @@ public:
 	}
 
 	// Lower the extruder head back to the current print_z position.
-	WipeTowerWriter& z_hop_reset(float f = 0.f)
+	WipeTowerWriter& z_hop_reset(float f = 0.f) 
 		{ return z_hop(0, f); }
 
 	// Move to x1, +y_increment,
@@ -456,14 +456,14 @@ public:
     }
 
 	WipeTowerWriter& flush_planner_queue()
-	{
-		m_gcode += "G4 S0\n";
+	{ 
+		m_gcode += "G4 S0\n"; 
 		return *this;
 	}
 
 	// Reset internal extruder counter.
 	WipeTowerWriter& reset_extruder()
-	{
+	{ 
 		m_gcode += "G92 E0\n";
 		return *this;
 	}
@@ -674,7 +674,8 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar.push_back(FilamentParameters());
 
     m_filpar[idx].material = config.filament_type.get_at(idx);
-    m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
+    // m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
+    m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
     // BBS
     m_filpar[idx].is_support = config.filament_is_support.get_at(idx);
     m_filpar[idx].nozzle_temperature = config.nozzle_temperature.get_at(idx);

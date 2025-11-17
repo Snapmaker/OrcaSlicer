@@ -6,6 +6,7 @@
 #include "slic3r/GUI/MainFrame.hpp"
 #include "libslic3r_version.h"
 #include "../Utils/Http.hpp"
+#include "SSWCP.hpp"
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -36,10 +37,13 @@ namespace GUI {
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
  {
-    wxString url = wxString::Format("file://%s/web/homepage/index.html", from_u8(resources_dir()));
-    wxString strlang = wxGetApp().current_language_code_safe();
-    if (strlang != "")
-        url = wxString::Format("file://%s/web/homepage/index.html?lang=%s", from_u8(resources_dir()), strlang);
+    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=1");
+    // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
+    // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
+    url = wxGetApp().get_international_url(url);
+
+    // test
+    // url = "http://localhost:13619/web/flutter_web/1.html";
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
     
@@ -84,6 +88,9 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     topsizer->Add(m_info, wxSizerFlags().Expand());
     // Create the webview
     m_browser = WebView::CreateWebView(this, url);
+
+    wxGetApp().fltviews().add_webview_panel(this, url);
+
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -228,6 +235,10 @@ WebViewPanel::~WebViewPanel()
     
     delete m_tools_menu;
 
+    SSWCP::on_webview_delete(m_browser);
+
+    wxGetApp().fltviews().remove_panel(this);
+
     if (m_LoginUpdateTimer != nullptr) {
         m_LoginUpdateTimer->Stop();
         delete m_LoginUpdateTimer;
@@ -236,16 +247,22 @@ WebViewPanel::~WebViewPanel()
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << " End";
 }
 
+void WebViewPanel::reload() {
+    m_browser->Reload();
+}
 
 void WebViewPanel::load_url(wxString& url)
 {
     this->Show();
     this->Raise();
-    m_url->SetLabelText(url);
+    /*m_url->SetLabelText(url);
 
     if (wxGetApp().get_mode() == comDevelop)
-        wxLogMessage(m_url->GetValue());
+        wxLogMessage(m_url->GetValue());*/
     m_browser->LoadURL(url);
+
+    wxGetApp().fltviews().add_webview_panel(this, url);
+
     m_browser->SetFocus();
     UpdateState();
 }
@@ -416,9 +433,9 @@ void WebViewPanel::OnClose(wxCloseEvent& evt)
 
 void WebViewPanel::OnFreshLoginStatus(wxTimerEvent &event)
 {
-    auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
+    /*auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
     if (mainframe && mainframe->m_webview == this)
-        Slic3r::GUI::wxGetApp().get_login_info();
+        Slic3r::GUI::wxGetApp().sm_get_login_info();*/
 }
 
 void WebViewPanel::SetLoginPanelVisibility(bool bshow)
@@ -467,9 +484,9 @@ void WebViewPanel::OpenModelDetail(std::string id, NetworkAgent *agent)
     {
         if (url.find("?") != std::string::npos) 
         { 
-            url += "&from=orcaslicer";
+            url += "&from=Snapmaker_Orca";
         } else {
-            url += "?from=orcaslicer";
+            url += "?from=Snapmaker_Orca";
         }
         
         wxLaunchDefaultBrowser(url); 
@@ -490,6 +507,9 @@ void WebViewPanel::ShowNetpluginTip()
     // Install Network Plugin
     //std::string NP_Installed = wxGetApp().app_config->get("installed_networking");
     bool        bValid       = wxGetApp().is_compatibility_version();
+
+    // SM test
+    bValid = true;
 
     int nShow = 0;
     if (!bValid) nShow = 1;
@@ -654,6 +674,10 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
 
     if (wxGetApp().get_mode() == comDevelop)
         wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
+
+    // test
+    SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
+
     std::string response = wxGetApp().handle_web_request(evt.GetString().ToUTF8().data());
     if (response.empty()) return;
 

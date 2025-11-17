@@ -34,6 +34,8 @@ public:
     std::string storage() const;
     bool switch_to_device_tab() const {return m_switch_to_device_tab;}
 
+    const boost::filesystem::path origin_path() { return m_ori_file_path; }
+
     virtual void EndModal(int ret) override;
     virtual void init();
     virtual std::map<std::string, std::string> extendedInfo() const { return {}; }
@@ -51,6 +53,7 @@ protected:
     boost::filesystem::path m_path;
     PrintHostPostUploadActions m_post_actions;
     wxArrayString m_storage_names;
+    boost::filesystem::path  m_ori_file_path;
 };
 
 

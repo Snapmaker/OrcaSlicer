@@ -1,5 +1,5 @@
 // AdaptivePAInterpolator.hpp
-// OrcaSlicer
+// Snapmaker_Orca
 //
 // Header file for the AdaptivePAInterpolator class, responsible for interpolating pressure advance (PA) values based on flow rate and acceleration using PCHIP interpolation.
 

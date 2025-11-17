@@ -113,8 +113,9 @@ public:
     void            export_selections(AppConfig &config);
 
     // BBS
-    void            set_num_filaments(unsigned int n, std::vector<std::string> new_colors);
     void            set_num_filaments(unsigned int n, std::string new_col = "");
+    void            set_num_filaments(unsigned int n, std::vector<std::string> new_colors);
+    void            update_num_filaments(unsigned int to_del_filament_id);
     unsigned int sync_ams_list(unsigned int & unknowns);
     //BBS: check whether this is the only edited filament
     bool is_the_only_edited_filament(unsigned int filament_index);
@@ -135,6 +136,8 @@ public:
                                                                                                std::string &      nozzle_temp_max,
                                                                                                std::string &      preset_setting_id);
 
+    Preset *                    get_similar_printer_preset(std::string printer_model, std::string printer_variant);
+    
     PresetCollection            prints;
     PresetCollection            sla_prints;
     PresetCollection            filaments;
@@ -149,6 +152,10 @@ public:
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
+
+    // Snapmaker
+    std::map<int, std::pair<std::string, std::string>> machine_filaments;
+
     // Calibrate
     Preset const * calibrate_printer = nullptr;
     std::set<Preset const *> calibrate_filaments;
@@ -241,7 +248,7 @@ public:
 
     // Read out the number of extruders from an active printer preset,
     // update size and content of filament_presets.
-    void                        update_multi_material_filament_presets();
+    void                        update_multi_material_filament_presets(size_t to_delete_filament_id = size_t(-1));
 
     // Update the is_compatible flag of all print and filament presets depending on whether they are marked
     // as compatible with the currently selected printer (and print in case of filament presets).
@@ -268,11 +275,11 @@ public:
     std::pair<PresetsConfigSubstitutions, std::string> load_system_filaments_json(ForwardCompatibilitySubstitutionRule compatibility_rule);
     VendorProfile                                      get_custom_vendor_models() const;
 
-    //orca: add 'custom' as default
-    static const char *ORCA_DEFAULT_BUNDLE;
-	static const char *ORCA_DEFAULT_PRINTER_MODEL;
-	static const char *ORCA_DEFAULT_PRINTER_VARIANT;
-	static const char *ORCA_DEFAULT_FILAMENT;
+    // SM_FEATURE: add Snapmaker machine as default
+    static const char *SM_BUNDLE;
+    static const char* SM_DEFAULT_PRINTER_MODEL;
+    static const char* SM_DEFAULT_PRINTER_VARIANT;
+    static const char* SM_DEFAULT_FILAMENT;
     static const char *ORCA_FILAMENT_LIBRARY;
 
 

@@ -154,6 +154,7 @@
 #include "FileArchiveDialog.hpp"
 #include "StepMeshDialog.hpp"
 #include "CloneDialog.hpp"
+#include "WebPreprintDialog.hpp"
 
 using boost::optional;
 namespace fs = boost::filesystem;
@@ -200,6 +201,13 @@ wxDEFINE_EVENT(EVT_MODIFY_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_DEL_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
+
+#define PRINTER_THUMBNAIL_SIZE (wxSize(FromDIP(48), FromDIP(48)))
+#define PRINTER_THUMBNAIL_SIZE_SMALL (wxSize(FromDIP(32), FromDIP(32)))
+#define PRINTER_PANEL_SIZE_SMALL (wxSize(FromDIP(98), FromDIP(68)))
+#define PRINTER_PANEL_SIZE_WIDEN (wxSize(FromDIP(136), FromDIP(68)))
+#define PRINTER_PANEL_SIZE (wxSize(FromDIP(98), FromDIP(98)))
+
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
 {
     std::string name = into_u8(wxs_name);
@@ -320,6 +328,274 @@ int SidebarProps::TitlebarMargin() { return 8; }  // Use as side margins on titl
 int SidebarProps::ContentMargin()  { return 12; } // Use as side margins contents of title
 int SidebarProps::IconSpacing()    { return 10; } // Use on main elements
 int SidebarProps::ElementSpacing() { return 5; }  // Use if elements has relation between them like edit button for combo box etc.
+// CustomNotebook.h
+#pragma once
+
+#include <wx/wx.h>
+#include <vector>
+
+class CustomNotebook : public wxControl
+{
+public:
+    CustomNotebook(wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize)
+        : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1), m_tabHeight(24), m_tabPadding(10), m_roundRadius(5)
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        UpdateColors();
+
+        Bind(wxEVT_PAINT, &CustomNotebook::OnPaint, this);
+        Bind(wxEVT_ERASE_BACKGROUND, &CustomNotebook::OnEraseBackground, this);
+        Bind(wxEVT_LEFT_DOWN, &CustomNotebook::OnLeftDown, this);
+        Bind(wxEVT_SIZE, &CustomNotebook::OnSize, this);
+    }
+
+    void AddPage(wxWindow* page, const wxString& text)
+    {
+        m_tabs.push_back({text, page});
+        if (page) {
+            page->Reparent(this);
+            page->Hide();
+            page->SetBackgroundColour(m_selectedTabColor);
+        }
+
+        if (m_selectedIndex == -1) {
+            SetSelection(0);
+        }
+
+        UpdateLayout();
+        Refresh();
+    }
+
+    void DeleteAllPages()
+    {
+        for (auto& tab : m_tabs) {
+            if (tab.page) {
+                tab.page->Destroy();
+            }
+        }
+        m_tabs.clear();
+        m_selectedIndex = -1;
+        UpdateLayout();
+        Refresh();
+    }
+
+    size_t GetPageCount() const { return m_tabs.size(); }
+
+    wxWindow* GetPage(size_t index) const { return (index < m_tabs.size()) ? m_tabs[index].page : nullptr; }
+
+    int GetSelection() const { return m_selectedIndex; }
+
+    void SetSelection(size_t index)
+    {
+        if (index >= m_tabs.size() || static_cast<int>(index) == m_selectedIndex)
+            return;
+
+        if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
+            m_tabs[m_selectedIndex].page->Hide();
+        }
+
+        m_selectedIndex = index;
+
+        if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
+            m_tabs[m_selectedIndex].page->Show();
+        }
+
+        UpdateLayout();
+        Refresh();
+    }
+
+protected:
+    void OnPaint(wxPaintEvent& event)
+    {
+        UpdateColors();
+
+        wxPaintDC dc(this);
+
+        // 1. 绘制背景
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(m_bgColor));
+        dc.DrawRectangle(GetClientRect());
+
+        // 2. 绘制标签背景区域
+        dc.SetPen(wxPen(m_dividerColor, 1));
+        dc.SetBrush(wxBrush(m_dividerColor));
+        wxRect labelRect(0, 0, GetSize().x, m_tabHeight);
+        dc.DrawRoundedRectangle(labelRect, m_roundRadius);
+        dc.DrawRectangle(0, m_tabHeight - 2, GetSize().x, 4);
+
+        // 3. 绘制所有标签
+        wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        font.SetPointSize(m_textSize);
+        dc.SetFont(font);
+
+        auto height = dc.GetCharHeight();
+        if (height > m_tabHeight - 2) {
+            m_tabHeight = height + 2;
+            Layout();
+        }
+
+        int xPos = 0;
+        for (size_t i = 0; i < m_tabs.size(); ++i) {
+            bool isSelected = static_cast<int>(i) == m_selectedIndex;
+
+            int textWidth, textHeight;
+            dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
+            int tabWidth = textWidth + 2 * m_tabPadding;
+
+            if (isSelected) {
+                dc.SetPen(wxPen(m_dividerColor, 1));
+                dc.SetBrush(wxBrush(m_bgColor));
+                wxRect selectedRect(xPos, 0, tabWidth, m_tabHeight + 2);
+                dc.DrawRectangle(selectedRect);
+                dc.DrawRoundedRectangle(selectedRect, m_roundRadius);
+
+                dc.SetPen(wxPen(m_bgColor, 1));
+                dc.SetBrush(wxBrush(m_bgColor));
+                dc.DrawRectangle(xPos, m_tabHeight, tabWidth, 4);
+            }
+
+            dc.SetTextForeground(isSelected ? m_selectedTextColor : m_textColor);
+            dc.DrawText(m_tabs[i].text, xPos + m_tabPadding, (m_tabHeight - textHeight) / 2);
+
+            xPos += tabWidth;
+        }
+
+        // 4. 绘制外边框
+        dc.SetPen(wxPen(m_borderColor, 1));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawRoundedRectangle(GetClientRect(), m_roundRadius);
+    }
+
+    void OnLeftDown(wxMouseEvent& event)
+    {
+        wxPoint pos = event.GetPosition();
+        if (pos.y > m_tabHeight) {
+            event.Skip();
+            return;
+        }
+
+        int tabIndex = HitTest(pos);
+        if (tabIndex != -1 && tabIndex != m_selectedIndex) {
+            SetSelection(tabIndex);
+            Refresh();
+        }
+    }
+
+    void OnSize(wxSizeEvent& event)
+    {
+        UpdateLayout();
+        Refresh();
+        event.Skip();
+    }
+
+    void OnEraseBackground(wxEraseEvent& event) {}
+
+private:
+    struct TabInfo
+    {
+        wxString  text;
+        wxWindow* page;
+    };
+
+    wxRect GetTabRect(size_t index) const
+    {
+        if (index >= m_tabs.size())
+            return wxRect();
+
+        wxClientDC dc(const_cast<CustomNotebook*>(this));
+        wxFont     font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        font.SetPointSize(m_textSize);
+        dc.SetFont(font);
+
+        int textWidth, textHeight;
+        dc.GetTextExtent(m_tabs[index].text, &textWidth, &textHeight);
+        int tabWidth = textWidth + 2 * m_tabPadding;
+
+        int x = 0;
+        for (size_t i = 0; i < index; ++i) {
+            dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
+            x += textWidth + 2 * m_tabPadding;
+        }
+
+        return wxRect(x, 0, tabWidth, m_tabHeight);
+    }
+
+    int HitTest(const wxPoint& pt) const
+    {
+        if (pt.y > m_tabHeight)
+            return -1;
+
+        wxClientDC dc(const_cast<CustomNotebook*>(this));
+        wxFont     font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        font.SetPointSize(m_textSize);
+        dc.SetFont(font);
+
+        int xPos = 0;
+        for (size_t i = 0; i < m_tabs.size(); ++i) {
+            int textWidth, textHeight;
+            dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
+            int tabWidth = textWidth + 2 * m_tabPadding;
+
+            if (pt.x >= xPos && pt.x <= xPos + tabWidth) {
+                return i;
+            }
+
+            xPos += tabWidth;
+        }
+
+        return -1;
+    }
+
+    void UpdateColors()
+    {
+        bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
+
+        if (!is_dark) {
+            m_bgColor           = wxColour(255, 255, 255);
+            m_borderColor       = wxColour(240, 240, 240);
+            m_selectedTabColor  = wxColour(255, 255, 255);
+            m_textColor         = wxColour(194, 194, 193);
+            m_dividerColor      = wxColour(240, 240, 240);
+            m_selectedTextColor = wxColour(0, 0, 0);
+        } else {
+            m_bgColor           = wxColour(45, 45, 49);
+            m_borderColor       = wxColour(76, 76, 85);
+            m_selectedTabColor  = wxColour(45, 45, 49);
+            m_textColor         = wxColour(104, 105, 107);
+            m_dividerColor      = wxColour(51, 51, 55);
+            m_selectedTextColor = wxColour(255, 255, 255);
+        }
+    }
+
+    void UpdateLayout()
+    {
+        if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
+            wxSize size = GetSize();
+            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+            m_tabs[m_selectedIndex].page->Layout();
+        }
+    }
+
+private:
+    std::vector<TabInfo> m_tabs;
+    int                  m_selectedIndex;
+
+    wxColour m_bgColor;
+    wxColour m_borderColor;
+    wxColour m_selectedTabColor;
+    wxColour m_textColor;
+    wxColour m_selectedTextColor;
+    wxColour m_dividerColor;
+
+    int m_tabHeight;
+    int m_tabPadding;
+    int m_roundRadius;
+#ifdef _WIN32
+    int m_textSize = 10;
+#else
+    int m_textSize = 13;
+#endif
+};
 
 struct Sidebar::priv
 {
@@ -335,6 +611,11 @@ struct Sidebar::priv
     PlaterPresetComboBox* combo_printer = nullptr;
     wxBoxSizer *sizer_params;
 
+    // test
+    wxStaticBitmap * image_printer = nullptr;
+    StaticBox*      panel_printer_preset = nullptr;
+    
+
     //BBS Sidebar widgets
     wxPanel* m_panel_print_title;
     wxStaticText* m_staticText_print_title;
@@ -347,6 +628,7 @@ struct Sidebar::priv
     ScalableButton *  m_bpButton_del_filament;
     ScalableButton *  m_bpButton_ams_filament;
     ScalableButton *  m_bpButton_set_filament;
+    int                         m_menu_filament_id = -1;
     wxPanel* m_panel_filament_content;
     wxScrolledWindow* m_scrolledWindow_filament_content;
     wxStaticLine* m_staticline2;
@@ -363,6 +645,11 @@ struct Sidebar::priv
     ScalableButton* m_printer_setting = nullptr;
     wxStaticText* m_text_printer_settings = nullptr;
     wxPanel* m_panel_printer_content = nullptr;
+
+    // nozzle notebook  and related controls
+    CustomNotebook*                  m_nozzle_notebook{nullptr};
+    std::vector<ComboBox*>       m_nozzle_diameter_lists;
+    std::vector<ScalableButton*> m_nozzle_edit_btns;
 
     ObjectList          *m_object_list{ nullptr };
     ObjectSettings      *object_settings{ nullptr };
@@ -750,44 +1037,103 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_content = new wxPanel(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
         p->m_panel_printer_content->SetBackgroundColour(wxColour(255, 255, 255));
 
-        PlaterPresetComboBox* combo_printer = new PlaterPresetComboBox(p->m_panel_printer_content, Preset::TYPE_PRINTER);
-        ScalableButton* edit_btn = new ScalableButton(p->m_panel_printer_content, wxID_ANY, "edit");
-        edit_btn->SetToolTip(_L("Click to edit preset"));
-        edit_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
-            {
+        StateColor panel_bd_col(std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Pressed),
+                                std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Hovered),
+                                std::pair<wxColour, int>(wxColour(0xEEEEEE), StateColor::Normal));
+
+        p->panel_printer_preset = new StaticBox(p->m_panel_printer_content);
+        p->panel_printer_preset->SetCornerRadius(8);
+        p->panel_printer_preset->SetBorderColor(panel_bd_col);
+        p->panel_printer_preset->SetMinSize(PRINTER_PANEL_SIZE_SMALL);
+        p->panel_printer_preset->Bind(wxEVT_LEFT_DOWN, [this](auto& evt) { p->combo_printer->wxEvtHandler::ProcessEvent(evt); });
+
+        PlaterPresetComboBox* combo_printer = new PlaterPresetComboBox(p->panel_printer_preset, Preset::TYPE_PRINTER);
+        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_LEFT);
+        combo_printer->SetBorderWidth(0);
+        
+        ScalableBitmap bitmap_printer(p->panel_printer_preset, "printer_placeholder", 48);
+        p->image_printer = new wxStaticBitmap(p->panel_printer_preset, wxID_ANY, bitmap_printer.bmp(), wxDefaultPosition,
+                                                                 PRINTER_THUMBNAIL_SIZE, 0);
+        p->image_printer->Bind(wxEVT_LEFT_DOWN, [this](auto& evt) { p->combo_printer->wxEvtHandler::ProcessEvent(evt); });
+        
+        p->combo_printer = combo_printer;
+
+        // 绑定 combo 内部按钮的事件处理（按钮现在在 combo 内部）
+        combo_printer->bind_edit_button_handler([this, combo_printer]() {
                 p->editing_filament = -1;
                 if (combo_printer->switch_to_tab())
                     p->editing_filament = 0;
             });
-        combo_printer->edit_btn = edit_btn;
-        p->combo_printer = combo_printer;
-
-        connection_btn = new ScalableButton(p->m_panel_printer_content, wxID_ANY, "monitor_signal_strong");
-        connection_btn->SetBackgroundColour(wxColour(255, 255, 255));
-        connection_btn->SetToolTip(_L("Connection"));
-        connection_btn->Bind(wxEVT_BUTTON, [this, combo_printer](wxCommandEvent)
-            {
+        
+        combo_printer->bind_connection_button_handler([this]() {
+                wxGetApp().sm_disconnect_current_machine();
                 PhysicalPrinterDialog dlg(this->GetParent());
                 dlg.ShowModal();
             });
 
+        combo_printer->bind_machine_connecting_button_handler([this]() {
+            // machine_connecting_btn 的处理逻辑（如果有的话）
+        });
+        
+        // 显示编辑按钮（鼠标悬停时原来会显示，现在直接显示）
+        combo_printer->set_show_edit_button(true);
+        
+        // 设置按钮tooltip
+        combo_printer->set_connection_tooltip(_L("Connect to printer"));
+        combo_printer->set_machine_connecting_tooltip(_L("The machine has been connected and is currently in working mode"));
+
+        // 外部按钮已集成到 combo 内部，不再需要创建
+        // 保留变量引用以避免编译错误，但设为 nullptr
+        connection_btn = nullptr;
+        machine_connecting_btn = nullptr;
+
         wxBoxSizer* vsizer_printer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer_printer = new wxBoxSizer(wxHORIZONTAL);
 
-        vsizer_printer->AddSpacer(FromDIP(16));
-        hsizer_printer->Add(combo_printer, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ContentMargin()));
-        hsizer_printer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()));
-        hsizer_printer->Add(connection_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::IconSpacing()));
-        hsizer_printer->AddSpacer(FromDIP(SidebarProps::ContentMargin()));
-        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);
+        wxBoxSizer* vsizer = new wxBoxSizer(wxVERTICAL);
+        wxBoxSizer* hsizer = new wxBoxSizer(wxHORIZONTAL);
+
+        // 简化后的布局：打印机图片 + combo_printer（内含所有按钮）
+        combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_LEFT);
+
+        hsizer->Add(p->image_printer, 0, wxLEFT | wxALIGN_CENTER, FromDIP(4));
+        hsizer->Add(combo_printer, 1, wxALIGN_CENTRE | wxLEFT | wxRIGHT, FromDIP(6));
+        hsizer->AddSpacer(FromDIP(10));
+        p->panel_printer_preset->SetSizer(hsizer);
+
+        hsizer_printer->Add(p->panel_printer_preset, 1, wxEXPAND, 0);
+        vsizer_printer->AddSpacer(FromDIP(4));
+        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(4));
+        vsizer_printer->AddSpacer(FromDIP(10));
+
+        /*vsizer_printer->AddSpacer(FromDIP(16));
+        hsizer_printer->Add(p->image_printer, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
+        hsizer_printer->Add(combo_printer, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
+        hsizer_printer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
+        hsizer_printer->Add(FromDIP(8), 0, 0, 0, 0);
+        hsizer_printer->Add(connection_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
+        hsizer_printer->Add(machine_connecting_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(3));
+        hsizer_printer->Add(FromDIP(8), 0, 0, 0, 0);
+
+        vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);*/
 
         // Bed type selection
+        // 创建一个像打印机选择那样的容器
+        p->panel_printer_preset = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                                wxTAB_TRAVERSAL | wxBORDER_NONE);
+        p->panel_printer_preset->SetCornerRadius(8);
+        StateColor panel_bd_col1(std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Pressed),
+                            std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Hovered),
+                            std::pair<wxColour, int>(wxColour(0xEEEEEE), StateColor::Normal));
+        // p->panel_printer_preset->SetBorderColor(panel_bd_col1);
+        // p->panel_printer_preset->SetMinSize(PRINTER_PANEL_SIZE_SMALL);
+
+        // 创建Bed type选择控件
         wxBoxSizer* bed_type_sizer = new wxBoxSizer(wxHORIZONTAL);
-        wxStaticText* bed_type_title = new wxStaticText(p->m_panel_printer_content, wxID_ANY, _L("Bed type"));
-        //bed_type_title->SetBackgroundColour();
+        wxStaticText* bed_type_title = new wxStaticText(p->panel_printer_preset, wxID_ANY, _L("Bed type"));
         bed_type_title->Wrap(-1);
         bed_type_title->SetFont(Label::Body_14);
-        m_bed_type_list = new ComboBox(p->m_panel_printer_content, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
+        m_bed_type_list = new ComboBox(p->panel_printer_preset, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
         const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
         if (bed_type_def && bed_type_def->enum_keys_map) {
             for (auto item : bed_type_def->enum_labels) {
@@ -795,6 +1141,7 @@ Sidebar::Sidebar(Plater *parent)
             }
         }
 
+        // 添加链接事件等
         bed_type_title->Bind(wxEVT_ENTER_WINDOW, [bed_type_title, this](wxMouseEvent &e) {
             e.Skip();
             auto font = bed_type_title->GetFont();
@@ -824,25 +1171,44 @@ Sidebar::Sidebar(Plater *parent)
 
         int bed_type_idx = bed_type_value - 1;
         m_bed_type_list->Select(bed_type_idx);
-        bed_type_sizer->Add(bed_type_title, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, FromDIP(SidebarProps::ContentMargin()));
-        bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxEXPAND, FromDIP(SidebarProps::ElementSpacing()));
-        bed_type_sizer->AddSpacer(FromDIP(SidebarProps::ContentMargin()));
-        vsizer_printer->Add(bed_type_sizer, 0, wxEXPAND | wxTOP, FromDIP(5));
-        vsizer_printer->AddSpacer(FromDIP(16));
+
+        // 布局Bed type控件
+        bed_type_sizer->Add(bed_type_title, 0, wxLEFT | wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
+        bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(0));
+        p->panel_printer_preset->SetSizer(bed_type_sizer);
+
+        // 添加到垂直布局
+        vsizer_printer->Add(p->panel_printer_preset, 0, wxEXPAND | wxALL, FromDIP(4));
+        vsizer_printer->AddSpacer(FromDIP(8));
 
         auto& project_config = wxGetApp().preset_bundle->project_config;
-        /*const t_config_enum_values* keys_map = print_config_def.get("curr_bed_type")->enum_keys_map;
-        BedType bed_type = btCount;
-        for (auto item : *keys_map) {
-            if (item.first == str_bed_type)
-                bed_type = (BedType)item.second;
-        }*/
         BedType bed_type = (BedType)bed_type_value;
         project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type));
 
         p->m_panel_printer_content->SetSizer(vsizer_printer);
         p->m_panel_printer_content->Layout();
         scrolled_sizer->Add(p->m_panel_printer_content, 0, wxEXPAND, 0);
+
+        // 创建Nozzle notebook的容器
+        StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                                    wxTAB_TRAVERSAL | wxBORDER_NONE);
+        nozzle_container->SetCornerRadius(8);
+        // nozzle_container->SetBorderColor(panel_bd_col);
+
+        // 创建notebook
+        p->m_nozzle_notebook = new CustomNotebook(nozzle_container, wxID_ANY);
+
+        // 创建nozzle_sizer并添加notebook
+        wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
+        nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
+        nozzle_container->SetSizer(nozzle_sizer);
+        nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
+
+        // 添加到主布局
+        vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
+
+        // Initialize nozzle settings
+        update_nozzle_settings();
     }
 
     {
@@ -1008,6 +1374,8 @@ Sidebar::Sidebar(Plater *parent)
     p->combos_filament.push_back(nullptr);
 
     /* first filament item */
+    // init_filament_combo(&p->combos_filament[0], 0);
+
     p->combos_filament[0] = new PlaterPresetComboBox(p->m_panel_filament_content, Preset::TYPE_FILAMENT);
     auto combo_and_btn_sizer = new wxBoxSizer(wxHORIZONTAL);
     // BBS:  filament double columns
@@ -1018,16 +1386,22 @@ Sidebar::Sidebar(Plater *parent)
     }
     combo_and_btn_sizer->Add(p->combos_filament[0], 1, wxALL | wxEXPAND, FromDIP(2))->SetMinSize({-1, FromDIP(30) });
 
-    ScalableButton* edit_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "edit");
+    /*ScalableButton* edit_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "edit");
     edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
+    edit_btn->SetToolTip(_L("Click to edit preset"));*/
+
+    ScalableButton* edit_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "menu_filament");
     edit_btn->SetToolTip(_L("Click to edit preset"));
 
     PlaterPresetComboBox* combobox = p->combos_filament[0];
-    edit_btn->Bind(wxEVT_BUTTON, [this, combobox](wxCommandEvent)
-        {
-            p->editing_filament = 0;
-            combobox->switch_to_tab();
-        });
+    edit_btn->Bind(wxEVT_BUTTON, [this, edit_btn](wxCommandEvent) {
+        auto    menu = p->plater->filament_action_menu(0);
+        wxPoint pt{0, edit_btn->GetSize().GetHeight() + 10};
+        pt                    = edit_btn->ClientToScreen(pt);
+        pt                    = wxGetApp().mainframe->ScreenToClient(pt);
+        p->m_menu_filament_id = 0;
+        p->plater->PopupMenu(menu, (int) pt.x, pt.y);
+    });
     combobox->edit_btn = edit_btn;
 
     combo_and_btn_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()) - FromDIP(2)); // ElementSpacing - 2 (from combo box))
@@ -1190,16 +1564,27 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
     combo_and_btn_sizer->Add(32 * em / 10, 0, 0, 0, 0);
     combo_and_btn_sizer->Add(del_btn, 0, wxALIGN_CENTER_VERTICAL, 5 * em / 10);
     */
-    ScalableButton* edit_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "edit");
+    ScalableButton* edit_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "menu_filament");
     edit_btn->SetToolTip(_L("Click to edit preset"));
 
     PlaterPresetComboBox* combobox = (*combo);
-    edit_btn->Bind(wxEVT_BUTTON, [this, combobox, filament_idx](wxCommandEvent)
-        {
-            p->editing_filament = -1;
-            if (combobox->switch_to_tab())
-                p->editing_filament = filament_idx; // sync with TabPresetComboxBox's m_filament_idx
-        });
+    //edit_btn->Bind(wxEVT_BUTTON, [this, combobox, filament_idx](wxCommandEvent)
+    //{
+    //    p->editing_filament = -1;
+    //    if (combobox->switch_to_tab())
+    //        p->editing_filament = filament_idx; // sync with TabPresetComboxBox's m_filament_idx
+    //});
+
+    edit_btn->Bind(wxEVT_BUTTON, [this, edit_btn, filament_idx](wxCommandEvent) {
+        auto menu = p->plater->filament_action_menu(filament_idx);
+        wxPoint pt { 0, edit_btn->GetSize().GetHeight() + 10 };
+        pt = edit_btn->ClientToScreen(pt);
+        pt = wxGetApp().mainframe->ScreenToClient(pt);
+        p->m_menu_filament_id = filament_idx;
+        p->plater->PopupMenu(menu, (int) pt.x, pt.y);
+    });
+
+
     combobox->edit_btn = edit_btn;
 
     combo_and_btn_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()) - FromDIP(2)); // ElementSpacing - 2 (from combo box))
@@ -1243,7 +1628,7 @@ void Sidebar::remove_unused_filament_combos(const size_t current_extruder_count)
     }
 }
 
-void Sidebar::update_all_preset_comboboxes()
+void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 {
     PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
     const auto print_tech = preset_bundle.printers.get_edited_preset().printer_technology();
@@ -1253,34 +1638,116 @@ void Sidebar::update_all_preset_comboboxes()
     auto p_mainframe = wxGetApp().mainframe;
     auto cfg = preset_bundle.printers.get_edited_preset().config;
 
+    const auto& appconfig = wxGetApp().app_config;
+
+    bool use_new_connection = appconfig->get("use_new_connect") == "true";
+
+    // 隐藏所有按钮（使用 combo 内部的按钮）
+    p->combo_printer->set_show_machine_connecting_button(false);
+    p->combo_printer->set_show_connection_button(false);
+
     if (preset_bundle.use_bbl_network()) {
         //only show connection button for not-BBL printer
-        connection_btn->Hide();
+        // connection_btn->Hide(); // 已在上面隐藏
         //only show sync-ams button for BBL printer
         ams_btn->Show();
         //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
-        connection_btn->Show();
+        // connection_btn->Hide(); // 已在上面隐藏
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
-        wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
-        wxString apikey;
-        if(url.empty())
-            url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
-        else {
-            if (!url.Lower().starts_with("http"))
-                url = wxString::Format("http://%s", url);
-            const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
-            if (cfg.has("printhost_apikey") && (host_type != htSimplyPrint))
-                apikey = cfg.opt_string("printhost_apikey");
-            print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate : MainFrame::PrintSelectType::eSendGcode;
+
+        const auto& edit_preset = preset_bundle.printers.get_edited_preset();
+
+        std::string local_name = "";
+        if (edit_preset.is_system) {
+            local_name = edit_preset.name;
+        } else {
+            const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
+            if (base_preset)
+                local_name = base_preset->name;
+            else
+                local_name = "";
         }
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
 
-        p_mainframe->load_printer_url(url, apikey);
+        // Snapmaker U1
+        std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
+        bool        is_test          = (test_preset_name == local_name);
 
 
-        p_mainframe->set_print_button_to_default(print_btn_type);
+        static bool is_sm_page = false;
+
+        if (!use_new_connection && !is_test && reload_printer_view) {
+
+            p->combo_printer->set_show_connection_button(true);
+            wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
+            wxString apikey;
+            if (url.empty()) {
+                // url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
+                std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
+                url                  = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
+            }
+            else {
+                if (!url.Lower().starts_with("http"))
+                    url = wxString::Format("http://%s", url);
+                const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
+                if (cfg.has("printhost_apikey") && (host_type != htSimplyPrint))
+                    apikey = cfg.opt_string("printhost_apikey");
+                print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
+                                                                 MainFrame::PrintSelectType::eSendGcode;
+
+                if (url.find("127.0.0.1") != std::string::npos) {
+                    // 加载二代机页面
+                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=3");
+                }
+            }
+            
+            p_mainframe->load_printer_url(url, apikey);
+            is_sm_page = false;
+
+            p_mainframe->set_print_button_to_default(print_btn_type);
+        } else {
+            print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
+                                                             MainFrame::PrintSelectType::eSendGcode;
+            p_mainframe->set_print_button_to_default(print_btn_type);
+
+            auto devices = wxGetApp().app_config->get_devices();
+            std::string preset_name = "";
+            for (const auto& device : devices) {
+                if (device.connected) {
+                    preset_name = device.preset_name;
+                    break;
+                }
+            }
+
+            if (preset_name != "") {
+                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), '('), preset_name.end());
+                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
+
+                if (local_name == preset_name) {
+                    p->combo_printer->set_show_machine_connecting_button(true);
+                }
+            }
+            else {
+                // 未连接机器
+                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                                  "/web/flutter_web/index.html?path=2");
+                auto real_url = wxGetApp().get_international_url(url);
+                
+                if (!is_sm_page && reload_printer_view) {
+                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                    is_sm_page = true;
+                }
+                    
+            }
+
+            if (!p->combo_printer->get_show_machine_connecting_button() && !is_test) {
+                p->combo_printer->set_show_connection_button(true);
+            }
+        }
 
     }
 
@@ -1292,7 +1759,7 @@ void Sidebar::update_all_preset_comboboxes()
         p->m_filament_icon->SetBitmap_("filament");
     }
 
-    show_SEMM_buttons(cfg.opt_bool("single_extruder_multi_material"));
+    show_SEMM_buttons(/*cfg.opt_bool("single_extruder_multi_material")*/true);
 
     //p->m_staticText_filament_settings->Update();
 
@@ -1300,24 +1767,44 @@ void Sidebar::update_all_preset_comboboxes()
         m_bed_type_list->Enable();
         // Orca: don't update bed type if loading project
         if (!p->plater->is_loading_project()) {
-            auto str_bed_type = wxGetApp().app_config->get_printer_setting(wxGetApp().preset_bundle->printers.get_selected_preset_name(),
-                                                                           "curr_bed_type");
-            if (!str_bed_type.empty()) {
+            std::string printer_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+            auto str_bed_type = wxGetApp().app_config->get_printer_setting(printer_name, "curr_bed_type");
+            
+            BedType bed_type_to_use;
+            bool is_first_time = str_bed_type.empty();
+            
+            if (!is_first_time) {
+                // This printer has saved bed type configuration
                 int bed_type_value = atoi(str_bed_type.c_str());
-                if (bed_type_value <= 0 || bed_type_value >= btCount) {
-                    bed_type_value = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
-                }
-
-                m_bed_type_list->SelectAndNotify(bed_type_value - 1);
+                if (bed_type_value == 0)
+                    bed_type_value = 1;
+                bed_type_to_use = (BedType)bed_type_value;
             } else {
-                BedType bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
-                m_bed_type_list->SelectAndNotify((int) bed_type - 1);
+                // Orca: First time using this printer, get default bed type
+                bed_type_to_use = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
+                
+                // Orca: Save to app_config immediately to prevent bed type inheritance
+                wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
+                wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
             }
+            
+            // Orca: Update proj_config directly to avoid callback context issues
+            wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type_to_use));
+            
+            // Orca: Update UI without triggering callback to avoid unintended side effects
+            // The callback should only be triggered by user manual changes, not by preset switching
+            m_bed_type_list->SetSelection((int)bed_type_to_use - 1);
         }
     } else {
-        // m_bed_type_list->SelectAndNotify(btPEI - 1);
-        BedType bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
-        m_bed_type_list->SelectAndNotify((int) bed_type - 1);
+        // Orca: 不支持多床型时，从配置读取默认床型
+        BedType default_bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
+        
+        // Orca: 即使不支持多床型，也需要保存床型到 project_config，确保数据一致性
+        wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(default_bed_type));
+        
+        // Orca: combobox don't have the btDefault option, so we need to -1
+        // Orca: use Select instead of SelectAndNotify to avoid overwriting printer settings when switching printers
+        m_bed_type_list->Select((int)default_bed_type - 1);
         m_bed_type_list->Disable();
     }
 
@@ -1333,11 +1820,15 @@ void Sidebar::update_all_preset_comboboxes()
             cb->update();
     }
 
-    if (p->combo_printer)
+    if (p->combo_printer){
         p->combo_printer->update();
+        update_printer_thumbnail();
+    }
+        
 
     // Orca:: show device tab based on vendor type
-    p_mainframe->show_device(preset_bundle.use_bbl_device_tab());
+    
+    p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !use_new_connection);
     p_mainframe->m_tabpanel->SetSelection(p_mainframe->m_tabpanel->GetSelection());
 }
 
@@ -1397,6 +1888,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
     case Preset::TYPE_PRINTER:
     {
+        // update_nozzle_settings();
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
 
@@ -1671,22 +2163,111 @@ void Sidebar::add_filament() {
     add_custom_filament(new_col);
 }
 
-void Sidebar::delete_filament() {
-    if (p->combos_filament.size() <= 1) return;
+void Sidebar::on_filaments_delete(size_t filament_id)
+{
+    auto& choices = combos_filament();
 
+    if (filament_id >= choices.size())
+        return;
+
+    if (choices.size() == 1)
+        choices[0]->GetDropDown().Invalidate();
+
+    wxWindowUpdateLocker noUpdates_scrolled_panel(this);
+
+    // delete UI item
+    if (filament_id < p->combos_filament.size()) {
+        const int last            = p->combos_filament.size() - 1;
+        auto      sizer_filaments = this->p->sizer_filaments->GetItem(last % 2)->GetSizer();
+        sizer_filaments->Remove(last / 2);
+
+        PlaterPresetComboBox* to_delete_combox = p->combos_filament[filament_id];
+        (*p->combos_filament[last]).Destroy();
+        p->combos_filament.pop_back();
+
+        // BBS:  filament double columns
+        auto sizer_filaments0 = this->p->sizer_filaments->GetItem((size_t) 0)->GetSizer();
+        auto sizer_filaments1 = this->p->sizer_filaments->GetItem(1)->GetSizer();
+        if (p->combos_filament.size() < 2) {
+            sizer_filaments1->Clear();
+        } else {
+            size_t c0 = sizer_filaments0->GetChildren().GetCount();
+            size_t c1 = sizer_filaments1->GetChildren().GetCount();
+            if (c0 < c1)
+                sizer_filaments1->Remove(c1 - 1);
+            else if (c0 > c1)
+                sizer_filaments1->AddStretchSpacer(1);
+        }
+    }
+
+    auto sizer = p->m_panel_filament_title->GetSizer();
+    if (p->m_flushing_volume_btn != nullptr && sizer != nullptr) {
+        if (p->combos_filament.size() > 1)
+            sizer->Show(p->m_flushing_volume_btn);
+        else
+            sizer->Hide(p->m_flushing_volume_btn);
+    }
+
+    for (size_t idx = filament_id; idx < p->combos_filament.size(); ++idx) {
+        p->combos_filament[idx]->update();
+    }
+
+    Layout();
+    p->m_panel_filament_title->Refresh();
+    update_ui_from_settings();
+    dynamic_filament_list.update();
+}
+
+void Sidebar::edit_filament() {
+    p->editing_filament = -1;
+    if (p->m_menu_filament_id >= 0 && p->m_menu_filament_id < p->combos_filament.size() &&
+        p->combos_filament[p->m_menu_filament_id]->switch_to_tab())
+        p->editing_filament = p->m_menu_filament_id; // sync with TabPresetComboxBox's m_filament_idx
+}
+
+
+
+void Sidebar::change_filament(size_t from_id, size_t to_id)
+{
+    delete_filament(from_id, int(to_id));
+}
+
+void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
+{
+    if (p->combos_filament.size() <= 1) return;
+    wxBusyCursor busy;
     size_t filament_count = p->combos_filament.size() - 1;
-    if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_count) || (filament_count == 1)) {
+
+    if (filament_id == size_t(-2)) {
+        filament_id = p->m_menu_filament_id;
+    }
+    if (filament_id == size_t(-1)) {
+        filament_id = filament_count;
+    }
+
+    if (filament_id > filament_count)
+        return;
+
+    if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_id) || (filament_id == 0)) {
         wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", true);
     }
 
-    if (p->editing_filament >= filament_count) {
+    if (p->editing_filament == filament_id || p->editing_filament >= filament_count) {
         p->editing_filament = -1;
     }
 
-    wxGetApp().preset_bundle->set_num_filaments(filament_count);
-    wxGetApp().plater()->on_filaments_change(filament_count);
+    wxGetApp().preset_bundle->update_num_filaments(filament_id);
+    wxGetApp().plater()->get_partplate_list().on_filament_deleted(filament_count, filament_id);
+       
+
+    // wxGetApp().plater()->on_filaments_change(filament_count);
+    wxGetApp().plater()->on_filaments_delete(filament_count, filament_id,
+                                             replace_filament_id > (int) filament_id ? (replace_filament_id - 1) : replace_filament_id);
+    // wxGetApp().plater()->sidebar().on_filaments_delete(filament_id);
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+
+    wxGetApp().plater()->update();
 }
 
 void Sidebar::add_custom_filament(wxColour new_col) {
@@ -1839,7 +2420,7 @@ void Sidebar::sync_ams_list()
     wxGetApp().app_config ->set("ams_filament_ids", p->ams_list_device, ams_filament_ids);
     if (unknowns > 0) {
         MessageDialog dlg(this,
-            _L("There are some unknown filaments mapped to generic preset. Please update Orca Slicer or restart Orca Slicer to check if there is an update to system presets."),
+            _L("There are some unknown filaments mapped to generic preset. Please update Snapmaker Orca or restart Orca Slicer to check if there is an update to system presets."),
             _L("Sync filaments with AMS"), wxOK);
         dlg.ShowModal();
     }
@@ -1888,6 +2469,156 @@ void Sidebar::update_dynamic_filament_list()
 {
     dynamic_filament_list.update();
     dynamic_filament_list_1_based.update();
+}
+
+void Sidebar::update_nozzle_settings(bool switch_machine)
+{
+    if (!p->m_nozzle_notebook)
+        return;
+
+    // Get new nozzle count
+    auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(
+        wxGetApp().preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+    size_t new_nozzle_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
+
+    // Clear existing pages and controls
+    p->m_nozzle_notebook->DeleteAllPages();
+    p->m_nozzle_diameter_lists.clear();
+    p->m_nozzle_edit_btns.clear();
+
+    // Recreate pages for new nozzle count
+    // Create tabs for each nozzle
+    for (size_t i = 0; i < new_nozzle_count; i++) {
+        wxPanel* nozzle_panel = new wxPanel(p->m_nozzle_notebook, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                            wxTAB_TRAVERSAL | wxBORDER_NONE);
+        // nozzle_panel->SetBackgroundColour(wxColour(255, 255, 255));
+
+        wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);
+
+        // Add diameter label and combobox
+        wxBoxSizer*   diameter_sizer = new wxBoxSizer(wxHORIZONTAL);
+        wxStaticText* diameter_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Diameter"));
+        bool          is_dark        = wxGetApp().app_config->get("dark_color_mode") == "1";
+        if (!is_dark) {
+            diameter_label->SetForegroundColour(wxColor(0, 0, 0));
+        }
+        else {
+            diameter_label->SetForegroundColour(wxColor(194, 194, 194));
+        }
+        
+        diameter_label->SetFont(Label::Body_14);
+
+        ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
+                                                nullptr, wxCB_READONLY);
+        
+
+        if (!wxGetApp().preset_bundle->printers.get_edited_preset().is_system) {
+            auto diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
+            diameter_combo->AppendString(diameter);
+            diameter_combo->Enable(false);
+        } else {
+            auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
+            if (diameters.size() < 2) {
+                diameter_combo->Enable(false);
+
+            }
+            for (auto& diameter : diameters) {
+                wxString str = diameter + "mm";
+                diameter_combo->AppendString(str);
+            }
+        }
+        
+        
+        diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
+            auto diameter = diameter_combo->GetValue().substr(0, 3);
+            auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
+            if (preset == nullptr) {
+                MessageDialog dlg(nullptr, _L(""), _L(""));
+                dlg.ShowModal();
+                return false;
+            }
+            preset->is_visible = true; // force visible
+            
+            for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
+                // 当前原则上不支持两个头使用不同的喷嘴型号
+                p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+            }
+
+            return wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+        });
+        
+        auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
+        
+        diameter_combo->SetValue(diam_str + "mm");
+
+        p->m_nozzle_diameter_lists.push_back(diameter_combo);
+
+        diameter_sizer->AddSpacer(15);
+        diameter_sizer->Add(diameter_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
+        diameter_sizer->AddSpacer(10);
+        diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
+
+        // 删除Flow相关控件
+
+        // Add edit button
+        ScalableButton* edit_btn = new ScalableButton(nozzle_panel, wxID_ANY, "edit");
+        if (is_dark) {
+            edit_btn->SetBackgroundColour(wxColour(45, 45, 49));
+        }
+        else {
+            edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
+        }
+
+        
+        edit_btn->SetToolTip(_L("Click to edit nozzle settings"));
+
+        edit_btn->Bind(wxEVT_BUTTON, [this, i, new_nozzle_count](wxCommandEvent&) {
+            p->editing_filament = -1;
+            wxGetApp().params_dialog()->Show();
+            wxGetApp().get_tab(Preset::TYPE_PRINTER)->activate_option("", "Extruder " + std::to_string(i + 1));
+        });
+
+        p->m_nozzle_edit_btns.push_back(edit_btn);
+
+        tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
+        tab_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10)); // 添加右边距
+
+        nozzle_panel->SetSizer(tab_sizer);
+
+        // Add tab
+        wxString tab_name = "";
+        switch (new_nozzle_count)
+        {
+        case 1:
+        {
+            tab_name = _L("Nozzle");
+            break;
+        }
+        case 2:
+        {
+            if (i == 0)
+                tab_name = _L("Left Nozzle");
+            else
+                tab_name = _L("Right Nozzle");
+
+            break;
+        }
+        default:
+        {
+            tab_name = wxString(_L("Nozzle")) + wxString::Format(" %d", i + 1);
+        }
+            
+        }
+        p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
+    }
+
+    p->m_nozzle_notebook->Layout();
+
+    if (switch_machine) {
+        p->combo_printer->SetFocus();
+    } else {
+        p->combo_printer->GetParent()->SetFocus();
+    }
 }
 
 ObjectList* Sidebar::obj_list()
@@ -2051,6 +2782,39 @@ Search::OptionsSearcher& Sidebar::get_searcher()
 std::string& Sidebar::get_search_line()
 {
     return p->searcher.search_string();
+}
+
+void Sidebar::update_printer_thumbnail()
+{
+    auto& preset_bundle = wxGetApp().preset_bundle;
+    Preset & selected_preset = preset_bundle->printers.get_edited_preset();
+
+    auto        inherit    = selected_preset.inherits();
+    std::string model_name = inherit == "" ? selected_preset.name : inherit;
+    std::string png_name   = "";
+    std::string vendor     = model_name.substr(0, model_name.find_first_of(" "));
+    if (model_name.find("Snapmaker") != std::string::npos) {
+        png_name = model_name.substr(0, model_name.find_last_of("(") - 1);
+    } else {
+        png_name = "printer_placeholder";
+    }
+    png_name += "_cover.png";
+
+    boost::filesystem::path(resources_dir()) / "profile" / vendor / png_name;
+    std::string printer_type    = selected_preset.get_current_printer_type(preset_bundle);
+
+    try {
+        p->image_printer->SetBitmap(create_scaled_bitmap(png_name, this, 48));
+    }
+    catch (std::exception& e) {
+        p->image_printer->SetBitmap(create_scaled_bitmap("printer_placeholder", this, 48));
+    }
+    
+
+    /*if (printer_thumbnails.find(printer_type) != printer_thumbnails.end())
+        p->image_printer->SetBitmap(create_scaled_bitmap(, this, 48));
+    else
+        p->image_printer->SetBitmap(create_scaled_bitmap("printer_placeholder", this, 48));*/
 }
 
 void Sidebar::auto_calc_flushing_volumes(const int modify_id)
@@ -3819,7 +4583,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         load_type  = static_cast<LoadType>(std::stoi(import_project_action));
 
                     // BBS: version check
-                    Semver app_version = *(Semver::parse(SoftFever_VERSION));
+                    Semver app_version = *(Semver::parse(Snapmaker_VERSION));
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
                         load_config = false;
@@ -3842,9 +4606,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     //     q->select_plate(0);
                     //     if (load_type != LoadType::LoadGeometry) {
                     //         if (en_3mf_file_type == En3mfType::From_BBS)
-                    //             show_info(q, _L("The 3mf is generated by old Orca Slicer, load geometry data only."), _L("Load 3mf"));
+                    //             show_info(q, _L("The 3mf is generated by old Snapmaker Orca, load geometry data only."), _L("Load 3mf"));
                     //         else
-                    //             show_info(q, _L("The 3mf is not supported by OrcaSlicer, load geometry data only."), _L("Load 3mf"));
+                    //             show_info(q, _L("The 3mf is not supported by Snapmaker_Orca, load geometry data only."), _L("Load 3mf"));
                     //     }
                     //     for (ModelObject *model_object : model.objects) {
                     //         model_object->config.reset();
@@ -3852,8 +4616,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     //         for (ModelVolume *model_volume : model_object->volumes) model_volume->config.reset();
                     //     }
                     // }
-                    // Orca: check if the project is created with OrcaSlicer 2.3.1-alpha and use the sparse infill rotation template for non-safe infill patterns
-                    else if (load_config && (file_version < app_version) && file_version == Semver("2.3.1-alpha")) {
+                    // Orca: check if the project is created with Snapmaker Orca 2.2.0-alpha and use the sparse infill rotation template for non-safe infill patterns
+                    else if (false) {
                         if (!config_loaded.opt_string("sparse_infill_rotate_template").empty()) {
                             const auto _sparse_infill_pattern =
                                 config_loaded.option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->value;
@@ -3876,7 +4640,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             }
                         }
 
-                    } else if (load_config && (file_version > app_version)) {
+                    } else if (false) {
                         if (config_substitutions.unrecogized_keys.size() > 0) {
                             wxString text  = wxString::Format(_L("The 3mf's version %s is newer than %s's version %s, found following unrecognized keys:"),
                                                              file_version.to_string(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string());
@@ -3900,7 +4664,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
                         else {
                             //if the minor version is not matched
-                            if (file_version.min() != app_version.min()) {
+                            if (/*file_version.min() != app_version.min()*/ false) {
                                 wxString text  = wxString::Format(_L("The 3mf's version %s is newer than %s's version %s, Suggest to upgrade your software."),
                                                  file_version.to_string(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string());
                                 text += "\n";
@@ -6547,6 +7311,12 @@ void Plater::priv::on_combobox_select(wxCommandEvent &evt)
     PlaterPresetComboBox* preset_combo_box = dynamic_cast<PlaterPresetComboBox*>(evt.GetEventObject());
     if (preset_combo_box) {
         this->on_select_preset(evt);
+        sidebar->update_printer_thumbnail();
+
+        Preset::Type preset_type = preset_combo_box->get_type();
+        if (preset_type == Preset::TYPE_PRINTER) {
+            sidebar->update_nozzle_settings(true);
+        }
     }
     else {
         this->on_select_bed_type(evt);
@@ -6574,7 +7344,16 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
 
         if (new_bed_type != btCount) {
             BedType old_bed_type = proj_config.opt_enum<BedType>("curr_bed_type");
-            if (old_bed_type != new_bed_type) {
+            
+            // Orca: Check if we need to force save even when old_bed_type == new_bed_type
+            // This handles the case where it's the first time using this printer and the default
+            // bed type happens to match the current proj_config value (inherited from previous printer)
+            std::string printer_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+            auto saved_bed_type_str = wxGetApp().app_config->get_printer_setting(printer_name, "curr_bed_type");
+            
+            // Execute full update flow if bed type changed OR first time configuring this printer
+            // (even if values happen to be equal, we need to update global config, invalidate slices, etc.)
+            if (old_bed_type != new_bed_type || saved_bed_type_str.empty()) {
                 proj_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(new_bed_type));
 
                 wxGetApp().plater()->update_project_dirty_from_presets();
@@ -6674,6 +7453,16 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
                 preset_name = physical_printers.get_selected_printer_preset_name();
             else
                 physical_printers.unselect_printer();
+
+            if (marker == PresetComboBox::LABEL_ITEM_PRINTER_MODELS) {
+                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset(preset_name, {});
+                if (preset == nullptr) {
+                    MessageDialog dlg(this->sidebar, _L(""), _L(""));
+                    dlg.ShowModal();
+                }
+                preset->is_visible = true; // force visible
+                preset_name = preset->name;
+            }
         }
         //BBS
         //wxWindowUpdateLocker noUpdates1(sidebar->print_panel());
@@ -7150,7 +7939,7 @@ void Plater::priv::on_action_add(SimpleEvent&)
     if (q != nullptr) {
         //q->add_model();
         //BBS open file in toolbar add
-        q->add_file();
+        q->add_model();
     }
 }
 
@@ -7313,7 +8102,8 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
     sidebar_layout.show = new_sel == MainFrame::tp3DEditor || new_sel == MainFrame::tpPreview;
     update_sidebar();
     int old_sel = e.GetOldSelection();
-    if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor) {
+    if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor &&
+        wxGetApp().app_config->get("use_new_connect") != "true") {
         if (!wxGetApp().getAgent()) {
             e.Veto();
             BOOST_LOG_TRIVIAL(info) << boost::format("skipped tab switch from %1% to %2%, lack of network plugins") % old_sel % new_sel;
@@ -7328,7 +8118,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             if (main_frame->m_printer_view && url.empty()) {
                 // It's missing_connection page, reload so that we can replay the gif image
-                main_frame->m_printer_view->reload();
+                // main_frame->m_printer_view->reload();
             }
         }
     }
@@ -7843,7 +8633,7 @@ void Plater::priv::set_project_name(const wxString& project_name)
     m_project_name = project_name;
     //update topbar title
 #ifdef __WINDOWS__
-    wxGetApp().mainframe->SetTitle(m_project_name + " - OrcaSlicer");
+    wxGetApp().mainframe->SetTitle(m_project_name + " - Snapmaker Orca");
     wxGetApp().mainframe->topbar()->SetTitle(m_project_name);
 #else
     wxGetApp().mainframe->SetTitle(m_project_name);
@@ -8799,7 +9589,7 @@ void Plater::priv::bring_instance_forward() const
         BOOST_LOG_TRIVIAL(debug) << "Couldnt bring instance forward - mainframe is null";
         return;
     }
-    BOOST_LOG_TRIVIAL(debug) << "Orca Slicer window going forward";
+    BOOST_LOG_TRIVIAL(debug) << "Snapmaker Orca window going forward";
     //this code maximize app window on Fedora
     {
         main_frame->Iconize(false);
@@ -9352,7 +10142,7 @@ void Plater::import_model_id(wxString download_info)
                         error);
 
                     if (retry_count == max_retries) {
-                        msg = _L("Importing to Orca Slicer failed. Please download the file and manually import it.");
+                        msg = _L("Importing to Snapmaker Orca failed. Please download the file and manually import it.");
                         cont = false;
                     }
                 })
@@ -10807,7 +11597,7 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     SetBackgroundColour(m_def_color);
 
     // icon
-    std::string icon_path = (boost::format("%1%/images/OrcaSlicerTitle.ico") % resources_dir()).str();
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);
@@ -12801,11 +13591,178 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 {
     // if physical_printer is selected, send gcode for this printer
     // DynamicPrintConfig* physical_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
+
+    // 校验机型
+    auto devices = wxGetApp().app_config->get_devices();
+    std::string connect_preset = "";
+    for (const auto device : devices) {
+        if (device.connected) {
+            connect_preset = device.preset_name;
+        }
+    }
+
+    auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+
+    bool islegal = true;
+    std::string c_preset = "";
+    if (current_preset.is_system) {
+        c_preset = current_preset.name;
+    } else {
+        auto base_preset = wxGetApp().preset_bundle->printers.get_preset_base(current_preset);
+        c_preset         = base_preset->name;
+    }
+
+    c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), '('), c_preset.end());
+    c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), ')'), c_preset.end());
+
+    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), '('), connect_preset.end());
+    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), ')'), connect_preset.end());
+
+    islegal = (c_preset == connect_preset);
+
+   /* if (!islegal) {
+        MessageDialog msg_window(nullptr,
+                                 _L(" Your connected machine is ") + (connect_preset == "" ? "Unknown" : connect_preset) + _L("\nYour model's preset is ") + c_preset + _L("\nDo you want to continue?"),
+                                 L("machine check"),
+                                 wxICON_QUESTION | wxOK);
+        int res = msg_window.ShowModal();
+        if (res != wxID_OK) {
+            return;
+        }
+    }*/
+
+
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
     if (! physical_printer_config || p->model.objects.empty())
         return;
 
-    PrintHostJob upload_job(physical_printer_config);
+    PrintHostJob upload_job;
+
+    // Snapmaker U1
+    const auto preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+    std::string local_name = "";
+    if (preset.is_system) {
+        local_name = preset.name;
+    } else {
+        const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(preset);
+        local_name              = base_preset->name;
+    }
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+
+
+    /*if (wxGetApp().app_config->get("use_new_connect") == "true") {
+        upload_job = PrintHostJob(wxGetApp().get_host_config());
+    } */
+    
+    // if (local_name == "Snapmaker U1 0.4 nozzle" && devices.size() == 0) {
+    //     MessageDialog msg_window(nullptr, _L("You don't have active machine, do you want to add one?"), _L("Info"), wxICON_QUESTION | wxOK | wxCANCEL);
+
+    //     int           res = msg_window.ShowModal();
+    //     if (res == wxID_OK) {
+    //         wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
+    //         auto view = wxGetApp().mainframe->m_printer_view;
+    //         if (view) {
+    //             json msg;
+    //             msg["head"] = json::object();
+    //             json payload = json::object();
+    //             payload["cmd"] = "devicepage_add_device";
+    //             payload["method"] = "call_flutter";
+    //             payload["params"] = json::object();
+    //             msg["payload"]    = payload;
+
+    //             std::string str_msg = msg.dump(4, ' ', true);
+    //             view->sendMessage(str_msg);
+    //         }
+    //     }
+    //     return;
+    // }
+
+    if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
+        // 先不创建job，直接创建上传 / 上传下载对话框
+        // 获取默认文件名
+        // Obtain default output path
+        fs::path default_output_file;
+        try {
+            // Update the background processing, so that the placeholder parser will get the correct values for the ouput file template.
+            // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
+            unsigned int state = this->p->update_restart_background_process(false, false);
+            if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
+                return;
+            default_output_file = this->p->background_process.output_filepath_for_project("");
+        } catch (const Slic3r::PlaceholderParserError& ex) {
+            // Show the error with monospaced font.
+            show_error(this, ex.what(), true);
+            return;
+        } catch (const std::exception& ex) {
+            show_error(this, ex.what(), false);
+            return;
+        }
+        default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
+        if (use_3mf) {
+            default_output_file.replace_extension("3mf");
+        }
+
+        // 获取文件路径
+        auto file_path = get_partplate_list().get_curr_plate()->get_tmp_gcode_path();
+        upload_job.upload_data.source_path = file_path;
+        upload_job.upload_data.upload_path = default_output_file;
+
+        // 选择上传 or 打印
+        // Repetier specific: Query the server for the list of file groups.
+        wxArrayString groups;
+
+        // PrusaLink specific: Query the server for the list of file groups.
+        wxArrayString storage_paths;
+        wxArrayString storage_names;
+
+        auto                config = get_app_config();
+        PrintHostSendDialog dlg(default_output_file, PrintHostPostUploadAction::StartPrint, groups, storage_paths, storage_names,
+                                config->get_bool("open_device_tab_post_upload"));
+        dlg.init();
+        if (dlg.ShowModal() == wxID_CANCEL) {
+            // 如果用户取消操作，直接返回
+            return;
+        }
+        config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());
+        upload_job.switch_to_device_tab    = dlg.switch_to_device_tab();
+        upload_job.upload_data.upload_path = dlg.filename();
+        upload_job.upload_data.post_action = dlg.post_action();
+        upload_job.upload_data.group       = dlg.group();
+        upload_job.upload_data.storage     = dlg.storage();
+
+
+        WebPreprintDialog* dialog = new WebPreprintDialog();
+        dialog->set_swtich_to_device(dlg.switch_to_device_tab());
+        dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
+        dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
+        dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+        bool res = dialog->run();
+
+        // wxGetApp().mainframe->m_printer_view->reload();
+
+        if (dialog->is_finish()) {
+            wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
+        }
+
+        delete dialog;
+
+        return;
+    }
+    else {
+        upload_job = PrintHostJob(physical_printer_config);
+    }
+
+    //if (wxGetApp().app_config->get("use_new_connect") == "true") {
+    //    /*std::shared_ptr<PrintHost> temp;
+    //    wxGetApp().get_connect_host(temp);
+    //    upload_job.printhost = std::unique_ptr<PrintHost>(temp.get());*/
+    //    upload_job = PrintHostJob(wxGetApp().get_host_config());
+    //} else {
+    //    upload_job = PrintHostJob(physical_printer_config); //
+    //}
+    
+
     if (upload_job.empty())
         return;
 
@@ -12853,58 +13810,40 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         }
     }
 
-    {
-        auto        preset_bundle = wxGetApp().preset_bundle;
-        const auto  opt           = physical_printer_config->option<ConfigOptionEnum<PrintHostType>>("host_type");
-        const auto  host_type     = opt != nullptr ? opt->value : htElegooLink;
-        auto        config        = get_app_config();
+    auto config = get_app_config();
+    PrintHostSendDialog dlg(default_output_file, upload_job.printhost->get_post_upload_actions(), groups, storage_paths, storage_names, config->get_bool("open_device_tab_post_upload"));
+    dlg.init();
+    if (dlg.ShowModal() == wxID_OK) {
+        config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());
+        upload_job.switch_to_device_tab    = dlg.switch_to_device_tab();
+        upload_job.upload_data.upload_path = dlg.filename();
+        upload_job.upload_data.post_action = dlg.post_action();
+        upload_job.upload_data.group       = dlg.group();
+        upload_job.upload_data.storage     = dlg.storage();
 
-        std::unique_ptr<PrintHostSendDialog> pDlg;
-        if (host_type == htElegooLink) {
-            pDlg = std::make_unique<ElegooPrintHostSendDialog>(default_output_file, upload_job.printhost->get_post_upload_actions(), groups,
-                                                               storage_paths, storage_names,
-                                                               config->get_bool("open_device_tab_post_upload"));
-        } else {
-            pDlg = std::make_unique<PrintHostSendDialog>(default_output_file, upload_job.printhost->get_post_upload_actions(), groups,
-                                                         storage_paths, storage_names, config->get_bool("open_device_tab_post_upload"));
+        // Show "Is printer clean" dialog for PrusaConnect - Upload and print.
+        if (std::string(upload_job.printhost->get_name()) == "PrusaConnect" && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
+            GUI::MessageDialog dlg(nullptr, _L("Is the printer ready? Is the print sheet in place, empty and clean?"), _L("Upload and Print"), wxOK | wxCANCEL);
+            if (dlg.ShowModal() != wxID_OK)
+                return;
         }
 
-        pDlg->init();
-        if (pDlg->ShowModal() != wxID_OK) {
-            return;
+        if (use_3mf) {
+            // Process gcode
+            const int result = send_gcode(plate_idx, nullptr);
+
+            if (result < 0) {
+                wxString msg = _L("Abnormal print file data. Please slice again");
+                show_error(this, msg, false);
+                return;
+            }
+
+            upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
+
         }
 
-        config->set_bool("open_device_tab_post_upload", pDlg->switch_to_device_tab());
-        // PrintHostUpload upload_data;
-        upload_job.switch_to_device_tab    = pDlg->switch_to_device_tab();
-        upload_job.upload_data.upload_path = pDlg->filename();
-        upload_job.upload_data.post_action = pDlg->post_action();
-        upload_job.upload_data.group       = pDlg->group();
-        upload_job.upload_data.storage     = pDlg->storage();
-        upload_job.upload_data.extended_info = pDlg->extendedInfo();
+        p->export_gcode(fs::path(), false, std::move(upload_job));
     }
-
-    // Show "Is printer clean" dialog for PrusaConnect - Upload and print.
-    if (std::string(upload_job.printhost->get_name()) == "PrusaConnect" && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
-        GUI::MessageDialog dlg(nullptr, _L("Is the printer ready? Is the print sheet in place, empty and clean?"), _L("Upload and Print"), wxOK | wxCANCEL);
-        if (dlg.ShowModal() != wxID_OK)
-            return;
-    }
-
-    if (use_3mf) {
-        // Process gcode
-        const int result = send_gcode(plate_idx, nullptr);
-
-        if (result < 0) {
-            wxString msg = _L("Abnormal print file data. Please slice again");
-            show_error(this, msg, false);
-            return;
-        }
-
-        upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
-    }
-
-    p->export_gcode(fs::path(), false, std::move(upload_job));
 }
 int Plater::send_gcode(int plate_idx, Export3mfProgressFn proFn)
 {
@@ -13113,6 +14052,64 @@ bool Plater::search_string_getter(int idx, const char** label, const char** tool
 
     return false;
 }
+
+void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int replace_filament_id)
+{
+    // only update elements in plater
+    update_filament_colors_in_full_config();
+
+    // update fisrt print sequence and other layer sequence
+    // move to partplate->on_filament_deleted
+    /*Slic3r::GUI::PartPlateList &plate_list = get_partplate_list();
+    for (int i = 0; i < plate_list.get_plate_count(); ++i) {
+        PartPlate *part_plate = plate_list.get_plate(i);
+        part_plate->update_first_layer_print_sequence_when_delete_filament(filament_id);
+    }*/
+
+    // update mmu info
+    for (ModelObject* mo : wxGetApp().model().objects) {
+        for (ModelVolume* mv : mo->volumes) {
+            mv->update_extruder_count_when_delete_filament(num_filaments, filament_id + 1,
+                                                           replace_filament_id + 1); // this function is 1 base
+        }
+    }
+
+    // update UI
+    sidebar().on_filaments_delete(filament_id);
+
+    // update global support filament
+    static const char* keys[] = {"support_filament", "support_interface_filament"};
+    for (auto key : keys)
+        if (p->config->has(key)) {
+            if (p->config->opt_int(key) == filament_id + 1)
+                (*(p->config)).erase(key);
+            else {
+                int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
+                (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
+            }
+        }
+
+    // update object/volume/support(object and volume) filament id
+    sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
+
+    // update customize gcode
+    for (auto item = p->model.plates_custom_gcodes.begin(); item != p->model.plates_custom_gcodes.end(); ++item) {
+        auto iter = std::remove_if(item->second.gcodes.begin(), item->second.gcodes.end(), [filament_id](const CustomGCode::Item& gcode_item) {
+            return (gcode_item.type == CustomGCode::Type::ToolChange && gcode_item.extruder == filament_id + 1);
+        });
+        if (replace_filament_id == -1)
+            item->second.gcodes.erase(iter, item->second.gcodes.end());
+        else if (iter != item->second.gcodes.end()) {
+            iter->extruder = replace_filament_id + 1;
+        }
+
+        for (auto& item : item->second.gcodes) {
+            if (item.type == CustomGCode::Type::ToolChange && item.extruder > filament_id)
+                item.extruder--;
+        }
+    }
+}
+
 
 // BBS.
 void Plater::on_filaments_change(size_t num_filaments)
@@ -13370,6 +14367,18 @@ std::vector<std::string> Plater::get_colors_for_color_print(const GCodeProcessor
     }
 
     return colors;
+}
+
+void Plater::set_global_filament_map(const std::vector<int>& filament_map)
+{
+    auto& project_config                                            = wxGetApp().preset_bundle->project_config;
+    project_config.option<ConfigOptionInts>("filament_map")->values = filament_map;
+}
+
+std::vector<int> Plater::get_global_filament_map() const
+{
+    auto& project_config = wxGetApp().preset_bundle->project_config;
+    return project_config.option<ConfigOptionInts>("filament_map")->values;
 }
 
 wxWindow* Plater::get_select_machine_dialog()
@@ -14791,6 +15800,7 @@ wxMenu* Plater::default_menu()          { return p->menus.default_menu();       
 wxMenu* Plater::instance_menu()         { return p->menus.instance_menu();          }
 wxMenu* Plater::layer_menu()            { return p->menus.layer_menu();             }
 wxMenu* Plater::multi_selection_menu()  { return p->menus.multi_selection_menu();   }
+wxMenu* Plater::filament_action_menu(int active_filament_menu_id) { return p->menus.filament_action_menu(active_filament_menu_id); }
 int     Plater::GetPlateIndexByRightMenuInLeftUI() { return p->m_is_RightClickInLeftUI; }
 void    Plater::SetPlateIndexByRightMenuInLeftUI(int index) { p->m_is_RightClickInLeftUI = index; }
 SuppressBackgroundProcessingUpdate::SuppressBackgroundProcessingUpdate() :

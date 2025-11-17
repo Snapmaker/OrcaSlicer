@@ -226,19 +226,56 @@ int PresetComboBox::update_ams_color()
 {
     if (m_filament_idx < 0) return -1;
     int idx = selected_ams_filament();
+
+    auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+
+    int real_idx = -1;
+    int tmp      = idx;
+    if (tmp >= 0) {
+        for (auto iter = filaments.begin(); iter != filaments.end(); ++iter) {
+            if (tmp == 0) {
+                real_idx = iter->first;
+                break;
+            }
+
+            tmp--;
+        }
+    }
+    
+
+    auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    if (real_idx >= 0) {
+        filament_extruder_map[m_filament_idx] = real_idx;
+    } else {
+        if (filament_extruder_map.count(m_filament_idx)) {
+            filament_extruder_map.erase(m_filament_idx);
+        }
+    }
+
     std::string color;
     if (idx < 0) {
         auto *preset = m_collection->find_preset(Preset::remove_suffix_modified(GetLabel().ToUTF8().data()));
         if (preset) color = preset->config.opt_string("default_filament_colour", 0u);
         if (color.empty()) return -1;
     } else {
-        auto &ams_list = wxGetApp().preset_bundle->filament_ams_list;
-        auto  iter     = ams_list.find(idx);
-        if (iter == ams_list.end()) {
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": ams %1% out of range %2%") % idx % ams_list.size();
-            return -1;
+        if (wxGetApp().preset_bundle->machine_filaments.size() > 0) {
+            auto iter = wxGetApp().preset_bundle->machine_filaments.begin();
+            for (size_t i = 0; iter != wxGetApp().preset_bundle->machine_filaments.end() && i < idx; ++i) {
+                ++iter;
+            }
+            if (iter == wxGetApp().preset_bundle->machine_filaments.end()) {
+                return -1;
+            }
+            color = iter->second.second;
+        } else {
+            auto& ams_list = wxGetApp().preset_bundle->filament_ams_list;
+            auto  iter     = ams_list.find(idx);
+            if (iter == ams_list.end()) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": ams %1% out of range %2%") % idx % ams_list.size();
+                return -1;
+            }
+            color = iter->second.opt_string("filament_colour", 0u);
         }
-        color = iter->second.opt_string("filament_colour", 0u);
     }
     DynamicPrintConfig *cfg        = &wxGetApp().preset_bundle->project_config;
     auto colors = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone());
@@ -376,6 +413,13 @@ void PresetComboBox::update(std::string select_preset_name)
 
     update_selection();
     Thaw();
+}
+
+bool PresetComboBox::is_selected_printer_model()
+{
+    auto selected_item = this->GetSelection();
+    auto marker = reinterpret_cast<Marker>(this->GetClientData(selected_item));
+    return marker == LABEL_ITEM_PRINTER_MODELS;
 }
 
 void PresetComboBox::show_all(bool show_all)
@@ -654,9 +698,22 @@ bool PresetComboBox::selection_is_changed_according_to_physical_printers()
 // ---------------------------------
 
 PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset_type) :
-    PresetComboBox(parent, preset_type, wxSize(25 * wxGetApp().em_unit(), 30 * wxGetApp().em_unit() / 10))
+    PresetComboBox(parent, preset_type, wxSize(25 * wxGetApp().em_unit(), 30 * wxGetApp().em_unit() / 10)),
+    m_connection_icon(this, "monitor_signal_strong", 16),
+    m_machine_connecting_icon(this, "monitor_machine_working", 16),
+    m_edit_icon(this, "edit", 16)
 {
     GetDropDown().SetUseContentWidth(true,true);
+    
+    // 对于打印机类型的combo box，绑定自定义绘制和鼠标事件
+    if (m_type == Preset::TYPE_PRINTER) {
+        Bind(wxEVT_PAINT, &PlaterPresetComboBox::paintEvent, this);
+        Bind(wxEVT_LEFT_DOWN, &PlaterPresetComboBox::onMouseLeftDown, this);
+        Bind(wxEVT_LEFT_UP, &PlaterPresetComboBox::onMouseLeftUp, this);
+        Bind(wxEVT_ENTER_WINDOW, &PlaterPresetComboBox::onMouseEnter, this);
+        Bind(wxEVT_LEAVE_WINDOW, &PlaterPresetComboBox::onMouseLeave, this);
+        Bind(wxEVT_MOTION, &PlaterPresetComboBox::onMouseMove, this);
+    }
 
     if (m_type == Preset::TYPE_FILAMENT)
     {
@@ -717,6 +774,13 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
                 // get current color
                 DynamicPrintConfig* cfg = &wxGetApp().preset_bundle->project_config;
                 auto colors = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone());
+
+                // clear filament_extruder_map
+                auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+                if (filament_extruder_map.count(m_filament_idx)) {
+                    filament_extruder_map.erase(m_filament_idx);
+                }
+
                 wxColour clr(colors->values[m_filament_idx]);
                 if (!clr.IsOk())
                     clr = wxColour(0, 0, 0); // Don't set alfa to transparence
@@ -983,6 +1047,8 @@ void PlaterPresetComboBox::update()
     //BBS: add project embedded presets logic
     std::map<wxString, wxBitmap*>  project_embedded_presets;
     std::map<wxString, wxBitmap *> system_presets;
+    std::map<wxString, wxBitmap*>   machine_filament_presets;
+    std::unordered_set<std::string> system_printer_models;
     std::map<wxString, wxString>   preset_descriptions;
 
     //BBS:  move system to the end
@@ -1024,12 +1090,21 @@ void PlaterPresetComboBox::update()
         wxBitmap* bmp = get_bmp(preset);
         assert(bmp);
 
-        const wxString name = get_preset_name(preset);
+        wxString name = get_preset_name(preset);
         preset_descriptions.emplace(name, from_u8(preset.description));
 
         if (preset.is_default || preset.is_system) {
             //BBS: move system to the end
-            system_presets.emplace(name, bmp);
+            if (m_type == Preset::TYPE_PRINTER) {
+                auto printer_model = preset.config.opt_string("printer_model");
+                name = from_u8(printer_model);
+                if (system_printer_models.count(printer_model) == 0) {
+                    system_presets.emplace(name, bmp);
+                    system_printer_models.insert(printer_model);
+                }
+            } else {
+                system_presets.emplace(name, bmp);
+            }
             if (is_selected) {
                 tooltip = get_tooltip(preset);
                 selected_system_preset = name;
@@ -1065,6 +1140,40 @@ void PlaterPresetComboBox::update()
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
         add_ams_filaments(into_u8(selected_user_preset), true);
 
+    if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
+        set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
+        auto&       filaments         = m_collection->get_presets();
+        auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
+        m_first_ams_filament          = GetCount();
+
+        size_t count = 0;
+
+        for (auto iter = machine_filaments.begin(); iter != machine_filaments.end();) {
+            std::string filament_name = iter->second.first;
+            auto        item_iter          = std::find_if(filaments.begin(), filaments.end(),
+                                                     [&filament_name, this](auto& f) { return f.name == filament_name; });
+
+            if (item_iter == filaments.end()) {
+                item_iter = std::find_if(filaments.begin(), filaments.end(),
+                                    [&filament_name, this](auto& f) { return f.name == filament_name + " @U1"; });
+            }
+
+            if (item_iter != filaments.end()) {
+                const_cast<Preset&>(*item_iter).is_visible = true;
+                auto     color                        = iter->second.second;
+                auto     name                         = std::to_string(iter->first + 1);
+                wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
+                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + count);
+                ++count;
+                ++iter;
+            } else {
+                iter = machine_filaments.erase(iter);
+            }
+        }
+
+        m_last_ams_filament = GetCount();
+    }
+
     //BBS: add project embedded preset logic
     if (!project_embedded_presets.empty())
     {
@@ -1088,6 +1197,9 @@ void PlaterPresetComboBox::update()
         set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
         for (std::map<wxString, wxBitmap*>::iterator it = system_presets.begin(); it != system_presets.end(); ++it) {
             SetItemTooltip(Append(it->first, *it->second), preset_descriptions[it->first]);
+            if (m_type != Preset::TYPE_FILAMENT) {
+                set_label_marker(GetCount() - 1, LABEL_ITEM_PRINTER_MODELS);
+            }
             validate_selection(it->first == selected_system_preset);
         }
     }
@@ -1162,6 +1274,305 @@ void PlaterPresetComboBox::msw_rescale()
     // BBS
     if (edit_btn != nullptr)
         edit_btn->msw_rescale();
+    
+    // 重新缩放按钮图标
+    m_connection_icon.msw_rescale();
+    m_machine_connecting_icon.msw_rescale();
+    m_edit_icon.msw_rescale();
+}
+
+// 设置按钮显示状态
+void PlaterPresetComboBox::set_show_connection_button(bool show)
+{
+    if (m_show_connection_button != show) {
+        m_show_connection_button = show;
+        Refresh();
+    }
+}
+
+void PlaterPresetComboBox::set_show_machine_connecting_button(bool show)
+{
+    if (m_show_machine_connecting_button != show) {
+        m_show_machine_connecting_button = show;
+        Refresh();
+    }
+}
+
+void PlaterPresetComboBox::set_show_edit_button(bool show)
+{
+    if (m_show_edit_button != show) {
+        m_show_edit_button = show;
+        Refresh();
+    }
+}
+
+// 绑定按钮事件处理函数
+void PlaterPresetComboBox::bind_connection_button_handler(std::function<void()> handler)
+{
+    m_connection_btn_handler = handler;
+}
+
+void PlaterPresetComboBox::bind_machine_connecting_button_handler(std::function<void()> handler)
+{
+    m_machine_connecting_btn_handler = handler;
+}
+
+void PlaterPresetComboBox::bind_edit_button_handler(std::function<void()> handler)
+{
+    m_edit_btn_handler = handler;
+}
+
+void PlaterPresetComboBox::set_connection_tooltip(const wxString& tooltip)
+{
+    m_connection_tooltip = tooltip;
+}
+
+void PlaterPresetComboBox::set_machine_connecting_tooltip(const wxString& tooltip)
+{
+    m_machine_connecting_tooltip = tooltip;
+}
+
+// 计算各个区域的矩形
+wxRect PlaterPresetComboBox::get_machine_connecting_btn_rect() const
+{
+    if (!m_show_machine_connecting_button)
+        return wxRect();
+    
+    wxSize size = GetSize();
+    wxSize icon_size = m_machine_connecting_icon.GetBmpSize();
+    int x = 5 + 16 + 6; // 下拉箭头后（机器名称左边，间距从4改为6）
+    int y = (size.y - icon_size.y) / 2;
+    return wxRect(x, y, icon_size.x, icon_size.y);
+}
+
+wxRect PlaterPresetComboBox::get_edit_btn_rect() const
+{
+    if (!m_show_edit_button)
+        return wxRect();
+    
+    wxSize size = GetSize();
+    wxSize icon_size = m_edit_icon.GetBmpSize();
+    
+    // 编辑按钮在 connection_btn 的左边
+    int right_offset = 8; // 右边距
+    if (m_show_connection_button) {
+        right_offset += 16 + 8; // connection_btn 宽度 + 增加间距
+    }
+    
+    int x = size.x - icon_size.x - right_offset;
+    int y = (size.y - icon_size.y) / 2;
+    return wxRect(x, y, icon_size.x, icon_size.y);
+}
+
+wxRect PlaterPresetComboBox::get_connection_btn_rect() const
+{
+    if (!m_show_connection_button)
+        return wxRect();
+    
+    wxSize size = GetSize();
+    wxSize icon_size = m_connection_icon.GetBmpSize();
+    int x = size.x - icon_size.x - 8; // 最右侧
+    int y = (size.y - icon_size.y) / 2;
+    return wxRect(x, y, icon_size.x, icon_size.y);
+}
+
+wxRect PlaterPresetComboBox::get_dropdown_rect() const
+{
+    wxSize size = GetSize();
+    return wxRect(0, 0, 25, size.y); // 左侧25px为下拉箭头区域
+}
+
+// 自定义绘制
+void PlaterPresetComboBox::paintEvent(wxPaintEvent& evt)
+{
+    if (m_type == Preset::TYPE_PRINTER) {
+        wxPaintDC dc(this);
+        render(dc);
+    } else {
+        evt.Skip();
+    }
+}
+
+void PlaterPresetComboBox::render(wxDC& dc)
+{
+    int states = state_handler.states();
+    wxSize size = GetSize();
+    
+    // 1. 绘制背景和边框
+    StaticBox::render(dc);
+    
+    // 2. 绘制下拉箭头（左侧）
+    // 使用 create_scaled_bitmap 创建下拉箭头图标
+    wxBitmap dropdown_bmp = create_scaled_bitmap("drop_down", nullptr, 16);
+    if (dropdown_bmp.IsOk()) {
+        int x = 5;
+        int y = (size.y - 16) / 2;
+        dc.DrawBitmap(dropdown_bmp, wxPoint(x, y));
+    }
+    
+    int left_offset = 5 + 16 + 6; // 下拉箭头后的起始位置（间距从4改为6）
+    
+    // 3. 绘制 machine_connecting_btn（在机器名称左边）
+    if (m_show_machine_connecting_button && m_machine_connecting_icon.bmp().IsOk()) {
+        wxRect rect = get_machine_connecting_btn_rect();
+        dc.DrawBitmap(m_machine_connecting_icon.bmp(), wxPoint(rect.x, rect.y));
+        left_offset += m_machine_connecting_icon.GetBmpSize().x + 6;
+    }
+    
+    // 4. 绘制机器名称
+    auto text = GetLabel();
+    if (!text.IsEmpty()) {
+        dc.SetFont(GetFont());
+        dc.SetTextForeground(StateColor::darkModeColorFor(wxColour(38, 46, 48)));
+        
+        // 计算可用宽度（需要为右侧按钮预留空间）
+        int right_reserve = 8; // 基础右边距
+        if (m_show_edit_button) {
+            right_reserve += 16 + 4; // 编辑按钮 + 间距
+        }
+        if (m_show_connection_button) {
+            right_reserve += 16 + 8; // connection_btn + 增加间距
+        }
+        
+        int available_width = size.x - left_offset - right_reserve;
+        
+        wxSize text_size = dc.GetTextExtent(text);
+        if (text_size.x > available_width) {
+            text = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, available_width);
+        }
+        
+        int text_x = left_offset;
+        int text_y = (size.y - text_size.y) / 2;
+        dc.DrawText(text, wxPoint(text_x, text_y));
+    }
+    
+    // 5. 绘制编辑按钮（在 connection_btn 左边）
+    if (m_show_edit_button && m_edit_icon.bmp().IsOk()) {
+        wxRect rect = get_edit_btn_rect();
+        dc.DrawBitmap(m_edit_icon.bmp(), wxPoint(rect.x, rect.y));
+    }
+    
+    // 6. 绘制 connection_btn（最右侧）
+    if (m_show_connection_button && m_connection_icon.bmp().IsOk()) {
+        wxRect rect = get_connection_btn_rect();
+        dc.DrawBitmap(m_connection_icon.bmp(), wxPoint(rect.x, rect.y));
+    }
+}
+
+// 鼠标事件处理
+void PlaterPresetComboBox::onMouseLeftDown(wxMouseEvent& evt)
+{
+    wxPoint pos = evt.GetPosition();
+    
+    // 检查是否点击了编辑按钮
+    if (m_show_edit_button && get_edit_btn_rect().Contains(pos)) {
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了连接按钮
+    if (m_show_connection_button && get_connection_btn_rect().Contains(pos)) {
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了machine_connecting按钮
+    if (m_show_machine_connecting_button && get_machine_connecting_btn_rect().Contains(pos)) {
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 其他区域，允许触发下拉菜单
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseLeftUp(wxMouseEvent& evt)
+{
+    wxPoint pos = evt.GetPosition();
+    
+    // 检查是否点击了编辑按钮
+    if (m_show_edit_button && get_edit_btn_rect().Contains(pos)) {
+        if (m_edit_btn_handler) {
+            m_edit_btn_handler();
+        }
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了连接按钮
+    if (m_show_connection_button && get_connection_btn_rect().Contains(pos)) {
+        if (m_connection_btn_handler) {
+            m_connection_btn_handler();
+        }
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 检查是否点击了machine_connecting按钮
+    if (m_show_machine_connecting_button && get_machine_connecting_btn_rect().Contains(pos)) {
+        if (m_machine_connecting_btn_handler) {
+            m_machine_connecting_btn_handler();
+        }
+        evt.StopPropagation(); // 阻止事件传播，防止触发下拉框
+        return;
+    }
+    
+    // 其他区域，触发下拉菜单
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseEnter(wxMouseEvent& evt)
+{
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseLeave(wxMouseEvent& evt)
+{
+    if (m_hover_state != HoverState::NONE) {
+        m_hover_state = HoverState::NONE;
+        Refresh();
+    }
+    evt.Skip();
+}
+
+void PlaterPresetComboBox::onMouseMove(wxMouseEvent& evt)
+{
+    wxPoint pos = evt.GetPosition();
+    HoverState new_state = HoverState::NONE;
+    
+    // 检查鼠标位置
+    if (m_show_edit_button && get_edit_btn_rect().Contains(pos)) {
+        new_state = HoverState::EDIT_BTN;
+        // 清除tooltip
+        SetToolTip("");
+    } else if (m_show_connection_button && get_connection_btn_rect().Contains(pos)) {
+        new_state = HoverState::CONNECTION_BTN;
+        // 显示连接按钮tooltip
+        if (!m_connection_tooltip.IsEmpty()) {
+            SetToolTip(m_connection_tooltip);
+        }
+    } else if (m_show_machine_connecting_button && get_machine_connecting_btn_rect().Contains(pos)) {
+        new_state = HoverState::MACHINE_CONNECTING_BTN;
+        // 显示机器连接按钮tooltip
+        if (!m_machine_connecting_tooltip.IsEmpty()) {
+            SetToolTip(m_machine_connecting_tooltip);
+        }
+    } else if (get_dropdown_rect().Contains(pos)) {
+        new_state = HoverState::DROPDOWN;
+        // 清除tooltip
+        SetToolTip("");
+    } else {
+        // 清除tooltip
+        SetToolTip("");
+    }
+    
+    // 如果状态改变，触发重绘
+    if (new_state != m_hover_state) {
+        m_hover_state = new_state;
+        Refresh();
+    }
+    
+    evt.Skip();
 }
 
 
@@ -1236,6 +1647,7 @@ void TabPresetComboBox::update()
     std::map<wxString, std::pair<wxBitmap*, bool>>  project_embedded_presets;
     //BBS:  move system to the end
     std::map<wxString, std::pair<wxBitmap*, bool>>  system_presets;
+    std::map<wxString, std::pair<wxBitmap*, bool>> machine_filament_presets;
     std::map<wxString, wxString>                    preset_descriptions;
 
     wxString selected = "";
@@ -1298,6 +1710,54 @@ void TabPresetComboBox::update()
 
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
         add_ams_filaments(into_u8(selected));
+    
+    if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
+        set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
+        auto& filaments         = m_collection->get_presets();
+        auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
+        m_first_ams_filament    = GetCount();
+
+        size_t count = 0;
+
+        for (auto iter = machine_filaments.begin(); iter != machine_filaments.end();) {
+            std::string filament_name = iter->second.first;
+            auto        item_iter     = std::find_if(filaments.begin(), filaments.end(),
+                                                     [&filament_name, this](auto& f) { return f.name == filament_name; });
+
+            if (item_iter == filaments.end()) {
+                item_iter = std::find_if(filaments.begin(), filaments.end(),
+                                         [&filament_name, this](auto& f) { return f.name == filament_name + " @U1"; });
+            }
+
+            if (item_iter != filaments.end()) {
+                const_cast<Preset&>(*item_iter).is_visible = true;
+                auto     color                             = iter->second.second;
+                auto     name                              = std::to_string(iter->first + 1);
+                wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
+                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + count);
+                ++count;
+                ++iter;
+            } else {
+                iter = machine_filaments.erase(iter);
+            }
+        }
+
+        m_last_ams_filament = GetCount();
+    }
+
+    /*machine_filament_presets[presets[1].name] = {get_bmp(presets[15]), true};
+    machine_filament_presets[presets[2].name] = {get_bmp(presets[16]), true};
+    if (!machine_filament_presets.empty()) {
+        set_label_marker(Append(separator(L("Machine presets")), wxNullBitmap));
+        for (auto it = machine_filament_presets.begin(); it != machine_filament_presets.end(); ++it) {
+            int item_id = Append(it->first, *it->second.first);
+            SetItemTooltip(item_id, preset_descriptions[it->first]);
+            bool is_enabled = it->second.second;
+            if (!is_enabled)
+                set_label_marker(item_id, LABEL_ITEM_DISABLED);
+            validate_selection(it->first == selected);
+        }
+    }*/
 
     //BBS: add project embedded preset logic
     if (!project_embedded_presets.empty())

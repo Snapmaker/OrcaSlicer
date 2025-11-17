@@ -30,6 +30,35 @@ using namespace nlohmann;
 
 namespace Slic3r {
 
+struct DeviceInfo {
+    std::string ip;
+    std::string dev_id;
+    std::string dev_name;
+    std::string model_name;
+    std::string preset_name;  // 关联的打印机预设名称
+    bool        connected;
+	std::string img;
+	std::vector<std::string> nozzle_sizes;
+    std::string              sn;
+    int              protocol;
+    std::string              api_key;
+    std::string              user;
+    std::string              password;
+    std::string              ca;
+    std::string              cert;
+    std::string              key;
+    std::string              clientId;
+    int              port;
+    std::string              link_mode;
+    std::string              userid;
+    std::string              id;
+
+
+    
+    // 用于JSON序列化
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key,
+		user, password, ca, cert, key, clientId, port, link_mode, userid, id)
+};
 
 // Connected LAN mode BambuLab printer
 struct BBLocalMachine
@@ -294,7 +323,7 @@ public:
 
 	// Get the Slic3r version check url.
 	// This returns a hardcoded string unless it is overriden by "version_check_url" in the ini file.
-	std::string 		version_check_url() const;
+	std::string 		version_check_url(bool stable_only = false) const;
 
 	// Get the Orca profile update url.
 	std::string 		profile_update_url() const;
@@ -339,9 +368,21 @@ public:
 	bool get_mouse_device_invert_roll(const std::string& name, bool& invert) const
 		{ return get_3dmouse_device_numeric_value(name, "invert_roll", invert); }
 
+	void update_filament_names(json& j);
+
 	static const std::string SECTION_FILAMENTS;
     static const std::string SECTION_MATERIALS;
     static const std::string SECTION_EMBOSS_STYLE;
+
+    // 添加设备相关的方法
+    void save_device_info(const DeviceInfo& device);
+    void remove_device_info(const std::string& dev_id);
+    std::vector<DeviceInfo> get_devices() const;
+    bool get_device_info(const std::string& dev_id, DeviceInfo& info) const;
+    void                    clear_device_info();
+
+	void clear_filament_extruder_map();
+    std::unordered_map<int, int>& get_filament_extruder_map_ref();
 
 private:
 	template<typename T>
@@ -383,6 +424,15 @@ private:
 	std::vector<PrinterCaliInfo>								m_printer_cali_infos;
 
 	std::map<std::string, BBLocalMachine>						m_local_machines;
+
+    // 添加耗材名称映射表
+    static const std::map<std::string, std::string> filament_name_map;
+
+    // 添加设备信息存储
+    std::vector<DeviceInfo> m_device_list;
+
+	// 耗材喷嘴映射表
+    std::unordered_map<int, int> filament_extruder_map;
 };
 
 } // namespace Slic3r

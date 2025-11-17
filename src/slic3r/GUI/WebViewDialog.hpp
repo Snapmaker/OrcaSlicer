@@ -40,7 +40,7 @@ public:
     virtual ~WebViewPanel();
 
     void load_url(wxString& url);
-
+    void reload();
     void UpdateState();
     void OnIdle(wxIdleEvent& evt);
     void OnUrl(wxCommandEvent& evt);
@@ -104,6 +104,9 @@ public:
     int  get_model_mall_detail_url(std::string *url, std::string id);
 
     void update_mode();
+
+    wxWebView* getWebView() { return m_browser; }
+
 private:
 
     wxWebView* m_browser;

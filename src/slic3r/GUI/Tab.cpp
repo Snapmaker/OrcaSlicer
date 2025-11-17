@@ -794,42 +794,6 @@ void Tab::decorate()
             tt = &m_tt_white_bullet;
         }
 
-        if (opt.first == "compatible_prints" || opt.first == "compatible_printers") {
-            bool sys_page      = true;
-            bool modified_page = false;
-            if (m_type == Slic3r::Preset::TYPE_PRINTER) {
-                sys_page      = m_presets->get_selected_preset_parent() != nullptr;
-                modified_page = false;
-            } else {
-                if (opt.first == "compatible_prints") {
-                    get_sys_and_mod_flags("compatible_prints", sys_page, modified_page);
-                    // Don't call for "compatible_printers"
-                } else if (opt.first == "compatible_printers") {
-                    get_sys_and_mod_flags("compatible_printers", sys_page, modified_page);
-                    if (m_type == Slic3r::Preset::TYPE_FILAMENT || m_type == Slic3r::Preset::TYPE_SLA_MATERIAL) {
-                        get_sys_and_mod_flags("compatible_prints", sys_page, modified_page);
-                    }
-                }
-            }
-            if (!sys_page) {
-                is_nonsys_value = true;
-                sys_icon        = m_bmp_non_system;
-                sys_tt          = m_tt_non_system;
-
-                if (!modified_page)
-                    color = &m_default_text_clr;
-                else
-                    color = &m_modified_label_clr;
-            }
-
-            if (!modified_page) {
-                is_modified_value = false;
-                icon              = &m_bmp_white_bullet;
-                tt                = &m_tt_white_bullet;
-            }
-
-        }
-
         if (option_without_field) {
             if (Line* line = get_line(opt.first)) {
                 line->set_undo_bitmap(icon);
@@ -1748,6 +1712,17 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             std::string new_color = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
             new_colors.push_back(new_color);
         }
+        if (wxGetApp().preset_bundle->printers.get_edited_preset().name.find("Snapmaker U1") != std::string::npos) {
+            if (old_filament_size > num_extruder) {
+                num_extruder = old_filament_size;
+                new_colors.clear();
+                for (int i = 0; i < old_filament_size; ++i) {
+                    wxColour    new_col   = Plater::get_next_color_for_filament();
+                    std::string new_color = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+                    new_colors.push_back(new_color);
+                }
+            }
+        } 
         wxGetApp().preset_bundle->set_num_filaments(num_extruder, new_colors);
         wxGetApp().plater()->on_filaments_change(num_extruder);
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
@@ -2015,29 +1990,27 @@ void Tab::update_preset_description_line()
     }
 
     if (preset.is_default || preset.is_system)
-        description_line += "\n\t" + _(L("It can't be deleted or modified.")) +
-                            "\n\t" + _(L("Any modifications should be saved as a new preset inherited from this one.")) +
-                            "\n\t" + _(L("To do that please specify a new name for the preset."));
+        description_line += "\n\t" + _(L("It can't be deleted or modified.")) + "\n\t" +
+                            _(L("Any modifications should be saved as a new preset inherited from this one.")) + "\n\t" +
+                            _(L("To do that please specify a new name for the preset."));
 
-    if (parent && parent->vendor)
-    {
+    if (parent && parent->vendor) {
         description_line += "\n\n" + _(L("Additional information:")) + "\n";
         description_line += "\t" + _(L("vendor")) + ": " + (m_type == Slic3r::Preset::TYPE_PRINTER ? "\n\t\t" : "") + parent->vendor->name +
                             ", ver: " + parent->vendor->config_version.to_string();
         if (m_type == Slic3r::Preset::TYPE_PRINTER) {
-            const std::string &printer_model = preset.config.opt_string("printer_model");
-            if (! printer_model.empty())
+            const std::string& printer_model = preset.config.opt_string("printer_model");
+            if (!printer_model.empty())
                 description_line += "\n\n\t" + _(L("printer model")) + ": \n\t\t" + printer_model;
             switch (preset.printer_technology()) {
-            case ptFFF:
-            {
-                //FIXME add prefered_sla_material_profile for SLA
-                const std::string              &default_print_profile = preset.config.opt_string("default_print_profile");
-                const std::vector<std::string> &default_filament_profiles = preset.config.option<ConfigOptionStrings>("default_filament_profile")->values;
+            case ptFFF: {
+                // FIXME add prefered_sla_material_profile for SLA
+                const std::string&              default_print_profile = preset.config.opt_string("default_print_profile");
+                const std::vector<std::string>& default_filament_profiles =
+                    preset.config.option<ConfigOptionStrings>("default_filament_profile")->values;
                 if (!default_print_profile.empty())
                     description_line += "\n\n\t" + _(L("default print profile")) + ": \n\t\t" + default_print_profile;
-                if (!default_filament_profiles.empty())
-                {
+                if (!default_filament_profiles.empty()) {
                     description_line += "\n\n\t" + _(L("default filament profile")) + ": \n\t\t";
                     for (auto& profile : default_filament_profiles) {
                         if (&profile != &*default_filament_profiles.begin())
@@ -2047,25 +2020,22 @@ void Tab::update_preset_description_line()
                 }
                 break;
             }
-            case ptSLA:
-            {
-                //FIXME add prefered_sla_material_profile for SLA
-                const std::string &default_sla_material_profile = preset.config.opt_string("default_sla_material_profile");
+            case ptSLA: {
+                // FIXME add prefered_sla_material_profile for SLA
+                const std::string& default_sla_material_profile = preset.config.opt_string("default_sla_material_profile");
                 if (!default_sla_material_profile.empty())
                     description_line += "\n\n\t" + _(L("default SLA material profile")) + ": \n\t\t" + default_sla_material_profile;
 
-                const std::string &default_sla_print_profile = preset.config.opt_string("default_sla_print_profile");
+                const std::string& default_sla_print_profile = preset.config.opt_string("default_sla_print_profile");
                 if (!default_sla_print_profile.empty())
                     description_line += "\n\n\t" + _(L("default SLA print profile")) + ": \n\t\t" + default_sla_print_profile;
                 break;
             }
             default: break;
             }
-        }
-        else if (!preset.alias.empty())
-        {
-            description_line += "\n\n\t" + _(L("full profile name"))     + ": \n\t\t" + preset.name;
-            description_line += "\n\t"   + _(L("symbolic profile name")) + ": \n\t\t" + preset.alias;
+        } else if (!preset.alias.empty()) {
+            description_line += "\n\n\t" + _(L("full profile name")) + ": \n\t\t" + preset.name;
+            description_line += "\n\t" + _(L("symbolic profile name")) + ": \n\t\t" + preset.alias;
         }
     }
 
@@ -2073,8 +2043,8 @@ void Tab::update_preset_description_line()
 
     if (m_detach_preset_btn)
         m_detach_preset_btn->Show(parent && parent->is_system && !preset.is_default);
-    //BBS: GUI refactor
-    //Layout();
+    // BBS: GUI refactor
+    // Layout();
     m_parent->Layout();
 }
 
@@ -2224,16 +2194,13 @@ void TabPrint::build()
         optgroup->append_single_option_line("detect_thin_wall", "strength_settings_walls#detect-thin-wall");
 
         optgroup = page->new_optgroup(L("Top/bottom shells"), L"param_shell");
-
-        optgroup->append_single_option_line("top_shell_layers", "strength_settings_top_bottom_shells#shell-layers");
-        optgroup->append_single_option_line("top_shell_thickness", "strength_settings_top_bottom_shells#shell-thickness");
-        optgroup->append_single_option_line("top_surface_density", "strength_settings_top_bottom_shells#surface-density");
-        optgroup->append_single_option_line("top_surface_pattern", "strength_settings_top_bottom_shells#surface-pattern");
-        optgroup->append_single_option_line("bottom_shell_layers", "strength_settings_top_bottom_shells#shell-layers");
-        optgroup->append_single_option_line("bottom_shell_thickness", "strength_settings_top_bottom_shells#shell-thickness");
-        optgroup->append_single_option_line("bottom_surface_density", "strength_settings_top_bottom_shells#surface-density");
-        optgroup->append_single_option_line("bottom_surface_pattern", "strength_settings_top_bottom_shells#surface-pattern");
-        optgroup->append_single_option_line("top_bottom_infill_wall_overlap", "strength_settings_top_bottom_shells#infillwall-overlap");
+        optgroup->append_single_option_line("top_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
+        optgroup->append_single_option_line("top_shell_layers");
+        optgroup->append_single_option_line("top_shell_thickness");
+        optgroup->append_single_option_line("bottom_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
+        optgroup->append_single_option_line("bottom_shell_layers");
+        optgroup->append_single_option_line("bottom_shell_thickness");
+        optgroup->append_single_option_line("top_bottom_infill_wall_overlap");
 
         optgroup = page->new_optgroup(L("Infill"), L"param_infill");
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
@@ -2292,7 +2259,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("support_interface_speed", "speed_settings_other_layers_speed#support-interface");
         optgroup = page->new_optgroup(L("Overhang speed"), L"param_overhang_speed", 15);
         optgroup->append_single_option_line("enable_overhang_speed", "speed_settings_overhang_speed#slow-down-for-overhang");
-
         optgroup->append_single_option_line("slowdown_for_curled_perimeters", "speed_settings_overhang_speed#slow-down-for-curled-perimeters");
         Line line = { L("Overhang speed"), L("This is the speed for various overhang degrees. Overhang degrees are expressed as a percentage of line width. 0 speed means no slowing down for the overhang degree range and wall speed is used") };
         line.label_path = "slow-down-for-overhang";
@@ -2436,6 +2402,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("standby_temperature_delta", "multimaterial_settings_ooze_prevention#temperature-variation");
         optgroup->append_single_option_line("preheat_time", "multimaterial_settings_ooze_prevention#preheat-time");
         optgroup->append_single_option_line("preheat_steps", "multimaterial_settings_ooze_prevention#preheat-steps");
+        optgroup->append_single_option_line("delta_temperature", "multimaterial_settings_ooze_prevention#delta-temperature");
 
         optgroup = page->new_optgroup(L("Flush options"), L"param_flush");
         optgroup->append_single_option_line("flush_into_infill", "multimaterial_settings_flush_options#flush-into-objects-infill");
@@ -3314,7 +3281,9 @@ void TabFilament::add_filament_overrides_page()
                                         "filament_wipe_distance",
                                         "filament_retract_before_wipe",
                                         "filament_long_retractions_when_cut",
-                                        "filament_retraction_distances_when_cut"
+                                        "filament_retraction_distances_when_cut",
+                                        "filament_retract_length_toolchange",
+                                        "filament_retract_restart_extra_toolchange"
                                         //SoftFever
                                         // "filament_seam_gap"
                                      })
@@ -3353,7 +3322,9 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                                             "filament_wipe_distance",
                                             "filament_retract_before_wipe",
                                             "filament_long_retractions_when_cut",
-                                            "filament_retraction_distances_when_cut"
+                                            "filament_retraction_distances_when_cut",
+                                            "filament_retract_length_toolchange",
+                                            "filament_retract_restart_extra_toolchange"
                                             //SoftFever
                                             // "filament_seam_gap"
                                         };
@@ -3759,26 +3730,40 @@ void TabFilament::toggle_options()
     {
         bool pa = m_config->opt_bool("enable_pressure_advance", 0);
         toggle_option("pressure_advance", pa);
-
-        //Orca: Enable the plates that should be visible when multi bed support is enabled or a BBL printer is selected; otherwise, enable only the plate visible for the selected bed type.
-        DynamicConfig& proj_cfg               = m_preset_bundle->project_config;
-        std::string    bed_temp_1st_layer_key = "";
-        if (proj_cfg.has("curr_bed_type"))
-        {
-            bed_temp_1st_layer_key = get_bed_temp_1st_layer_key(proj_cfg.opt_enum<BedType>("curr_bed_type"));
-        }
-
-        const std::vector<std::string> bed_temp_keys = {"supertack_plate_temp_initial_layer", "cool_plate_temp_initial_layer",
-                                                        "textured_cool_plate_temp_initial_layer", "eng_plate_temp_initial_layer",
-                                                        "textured_plate_temp_initial_layer", "hot_plate_temp_initial_layer"};
-
-        bool support_multi_bed_types = std::find(bed_temp_keys.begin(), bed_temp_keys.end(), bed_temp_1st_layer_key) ==
-                                           bed_temp_keys.end() ||
-                                       is_BBL_printer || cfg.opt_bool("support_multi_bed_types");
-
-        for (const auto& key : bed_temp_keys)
-        {
-            toggle_line(key, support_multi_bed_types || bed_temp_1st_layer_key == key);
+        
+        // BBS: 控制床温选项的显示
+        auto support_multi_bed_types = is_BBL_printer || cfg.opt_bool("support_multi_bed_types");
+        if (support_multi_bed_types) {
+            // 支持多床型：显示所有床温选项
+            toggle_line("supertack_plate_temp_initial_layer", true);
+            toggle_line("cool_plate_temp", true);
+            toggle_line("cool_plate_temp_initial_layer", true);
+            toggle_line("cool_plate_temp", true);
+            toggle_line("textured_cool_plate_temp_initial_layer", true);
+            toggle_line("textured_cool_plate_temp", true);
+            toggle_line("eng_plate_temp_initial_layer", true);
+            toggle_line("eng_plate_temp", true);
+            toggle_line("hot_plate_temp_initial_layer", true);
+            toggle_line("hot_plate_temp", true);
+            toggle_line("textured_plate_temp_initial_layer", true);
+            toggle_line("textured_plate_temp", true);
+        } else {
+            // 不支持多床型：只显示当前选择的床型
+            
+            BedType curr_bed_type = m_preset_bundle->printers.get_edited_preset().get_default_bed_type(m_preset_bundle);
+           
+            toggle_line("supertack_plate_temp_initial_layer", curr_bed_type == btSuperTack);
+            toggle_line("supertack_plate_temp", curr_bed_type == btSuperTack);
+            toggle_line("cool_plate_temp_initial_layer", curr_bed_type == btPC);
+            toggle_line("cool_plate_temp", curr_bed_type == btPC);
+            toggle_line("textured_cool_plate_temp_initial_layer", curr_bed_type == btPCT);
+            toggle_line("textured_cool_plate_temp", curr_bed_type == btPCT);
+            toggle_line("eng_plate_temp_initial_layer", curr_bed_type == btEP);
+            toggle_line("eng_plate_temp", curr_bed_type == btEP);
+            toggle_line("hot_plate_temp_initial_layer", curr_bed_type == btPEI);
+            toggle_line("hot_plate_temp", curr_bed_type == btPEI);
+            toggle_line("textured_plate_temp_initial_layer", curr_bed_type == btPTE);
+            toggle_line("textured_plate_temp", curr_bed_type == btPTE);
         }
 
 
@@ -3924,7 +3909,6 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("gcode_flavor");
         optgroup->append_single_option_line("pellet_modded_printer", "pellet-flow-coefficient");
         optgroup->append_single_option_line("bbl_use_printhost");
-        optgroup->append_single_option_line("scan_first_layer");
         optgroup->append_single_option_line("disable_m73");
         option = optgroup->get_option("thumbnails");
         option.opt.full_width = true;
@@ -4000,7 +3984,7 @@ void TabPrinter::build_fff()
 
     const int gcode_field_height = 15; // 150
     const int notes_field_height = 25; // 250
-    page = add_options_page(L("Machine G-code"), "custom-gcode_gcode"); // ORCA: icon only visible on placeholders
+    page = add_options_page(L("Machine gcode"), "custom-gcode_gcode"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Machine start G-code"), L"param_gcode", 0);
         optgroup->m_on_change = [this, &optgroup_title = optgroup->title](const t_config_option_key& opt_key, const boost::any& value) {
             validate_custom_gcode_cb(this, optgroup_title, opt_key, value);
@@ -4430,6 +4414,22 @@ if (is_marlin_flavor)
         optgroup = page->new_optgroup(L("Wipe tower"), "param_tower");
         optgroup->append_single_option_line("purge_in_prime_tower", "semm");
         optgroup->append_single_option_line("enable_filament_ramming", "semm");
+        optgroup->append_single_option_line("ramming_line_width_ratio");
+        optgroup->append_single_option_line("enable_change_pressure_when_wiping");
+        optgroup->append_single_option_line("ramming_pressure_advance_value");
+
+         // 添加依赖关系处理
+        optgroup->m_on_change = [this, optgroup](t_config_option_key opt_key, boost::any value) {
+            if (opt_key == "enable_change_pressure_when_wiping") {
+                bool enable_pressure = boost::any_cast<bool>(value);
+                // 根据enable_change_pressure_when_wiping的值来启用/禁用ramming_pressure_advance_value
+                optgroup->enable_field("ramming_pressure_advance_value", enable_pressure);
+            }
+            
+            // 调用原有的更新逻辑
+            update_dirty();
+            on_value_change(opt_key, value);
+        };
 
 
         optgroup = page->new_optgroup(L("Single extruder multi-material parameters"), "param_settings");
@@ -4443,6 +4443,8 @@ if (is_marlin_flavor)
         optgroup->append_single_option_line("machine_load_filament_time");
         optgroup->append_single_option_line("machine_unload_filament_time");
         optgroup->append_single_option_line("machine_tool_change_time");
+        optgroup->append_single_option_line("tool_change_temprature_wait");
+
         m_pages.insert(m_pages.end() - n_after_single_extruder_MM, page);
     }
 
@@ -4528,6 +4530,7 @@ if (is_marlin_flavor)
                 optgroup->append_single_option_line("retract_lift_enforce", "", extruder_idx);
                 optgroup->append_single_option_line("z_hop_types", "", extruder_idx);
                 optgroup->append_single_option_line("z_hop", "", extruder_idx);
+                optgroup->append_single_option_line("z_hop_when_prime", "", extruder_idx);
                 optgroup->append_single_option_line("travel_slope", "", extruder_idx);
                 optgroup->append_single_option_line("retract_lift_above", "", extruder_idx);
                 optgroup->append_single_option_line("retract_lift_below", "", extruder_idx);
@@ -5302,13 +5305,37 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         // check if there is something in the cache to move to the new selected preset
         apply_config_from_cache();
 
-        // Orca: update presets for the selected printer
-        if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
-            m_preset_bundle->update_selections(*wxGetApp().app_config);
-            wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
-        }
+        size_t old_filament_count = m_preset_bundle->filament_presets.size();
+
         load_current_preset();
 
+        // Orca: update presets for the selected printer
+        if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
+            /*m_preset_bundle->update_selections(*wxGetApp().app_config);
+            int extruders_count =
+                m_preset_bundle->printers.get_edited_preset().config.opt<ConfigOptionFloats>("nozzle_diameter")->values.size();
+            bool support_multi_material =
+                m_preset_bundle->printers.get_edited_preset().config.opt<ConfigOptionBool>("single_extruder_multi_material")->getBool();
+
+            if (!support_multi_material) {
+                m_preset_bundle->set_num_filaments(extruders_count);
+            } 
+            wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());*/
+
+            if (preset_name.find("Snapmaker U1") != std::string::npos) {
+                m_preset_bundle->update_selections(*wxGetApp().app_config);
+                if (old_filament_count > m_preset_bundle->filament_presets.size()) {
+                    m_preset_bundle->filament_presets.resize(old_filament_count, m_preset_bundle->filament_presets[0]);
+                }
+                wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
+            } else {
+                m_preset_bundle->update_selections(*wxGetApp().app_config);
+                wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
+            }
+
+            
+            
+        }
 
         if (delete_third_printer) {
             wxGetApp().CallAfter([filament_presets, process_presets]() {
@@ -5356,6 +5383,12 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection* presets /*= nullptr
     if (presets == nullptr) presets = m_presets;
 
     UnsavedChangesDialog dlg(m_type, presets, new_printer_name, no_transfer);
+    
+    if (dlg.getUpdateItemCount() == 0) {
+        // no need to save
+        return true;
+    }
+
     if (dlg.ShowModal() == wxID_CANCEL)
         return false;
 
@@ -6335,12 +6368,9 @@ void Page::update_visibility(ConfigOptionMode mode, bool update_contolls_visibil
 #ifdef __WXMSW__
     if (!m_show) return;
     // BBS: fix field control position
-    wxTheApp->CallAfter([wp=std::weak_ptr<Page>(shared_from_this())]() {
-        auto page = wp.lock();
-        if (!page)
-            return;
-
-        for (auto group : page->m_optgroups) {
+    auto groups = this->m_optgroups;
+    wxTheApp->CallAfter([groups]() {
+        for (auto group : groups) {
             if (group->custom_ctrl) group->custom_ctrl->fixup_items_positions();
         }
     });

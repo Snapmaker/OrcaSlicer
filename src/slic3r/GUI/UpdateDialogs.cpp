@@ -100,6 +100,9 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 	auto  title = force_before_wizard ? _L("Configuration update") : _L("Configuration update");
 	SetTitle(title);
 
+	std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
+
     SetBackgroundColour(*wxWHITE);
     wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);
     auto        m_line_top   = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
@@ -111,7 +114,7 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
     m_sizer_body->Add(0, 0, 0, wxLEFT, FromDIP(38));
 
-    auto sm    = create_scaled_bitmap("OrcaSlicer", nullptr, 70);
+    auto sm    = create_scaled_bitmap("Snapmaker_Orca", nullptr, 70);
     auto brand = new wxStaticBitmap(this, wxID_ANY, sm, wxDefaultPosition, wxSize(FromDIP(70), FromDIP(70)));
 
     m_sizer_body->Add(brand, 0, wxALL, 0);
@@ -188,6 +191,9 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
 
     for (const auto &update : updates) {
+        auto* versions = new wxBoxSizer(wxVERTICAL);
+        wxStaticText* changelog_textctrl = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, wxEmptyString, wxDefaultPosition,
+                                                            wxSize(FromDIP(560), -1));
         auto *flex = new wxFlexGridSizer(2, 0, FromDIP(15));
 
         auto *text_vendor = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, update.vendor);
@@ -214,17 +220,15 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
 			//auto change_log = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, from_u8(update.change_log), wxDefaultPosition, wxDefaultSize); 
 			changelog_textctrl->SetLabel(changelog_textctrl->GetLabel() + wxString::Format("%s\n", from_u8(update.change_log)));
+
+		content_sizer->Add(versions);
+
+		////BBS: use changelog string instead of url
+        if (changelog_textctrl)
+            content_sizer->Add(changelog_textctrl, 1, wxEXPAND | wxTOP, FromDIP(30));
     }
 
-	content_sizer->Add(versions);
-
 	
-
-    ////BBS: use changelog string instead of url
-    if (changelog_textctrl) 
-		content_sizer->Add(changelog_textctrl, 1, wxEXPAND | wxTOP, FromDIP(30));
-
-
 	m_butto_ok->Bind(wxEVT_BUTTON, [this](const wxCommandEvent &) { EndModal(wxID_OK); });
 	m_button_cancel->Bind(wxEVT_BUTTON, [this](const wxCommandEvent &) { EndModal(wxID_CLOSE); });
 

@@ -99,10 +99,10 @@ enum class ERescaleTarget
 };
 
 #ifdef __APPLE__
-class OrcaSlicerTaskBarIcon : public wxTaskBarIcon
+class Snapmaker_OrcaTaskBarIcon : public wxTaskBarIcon
 {
 public:
-    OrcaSlicerTaskBarIcon(wxTaskBarIconType iconType = wxTBI_DEFAULT_TYPE) : wxTaskBarIcon(iconType) {}
+    Snapmaker_OrcaTaskBarIcon(wxTaskBarIconType iconType = wxTBI_DEFAULT_TYPE) : wxTaskBarIcon(iconType) {}
     wxMenu *CreatePopupMenu() override {
         wxMenu *menu = new wxMenu;
         if (wxGetApp().app_config->get("single_instance") == "false") {
@@ -153,7 +153,7 @@ static wxIcon main_frame_icon(GUI_App::EAppMode app_mode)
     }
     return wxIcon(path, wxBITMAP_TYPE_ICO);
 #else // _WIN32
-    return wxIcon(Slic3r::var("OrcaSlicer_128px.png"), wxBITMAP_TYPE_PNG);
+    return wxIcon(Slic3r::var("Snapmaker_Orca_128px.png"), wxBITMAP_TYPE_PNG);
 #endif // _WIN32
 }
 
@@ -255,8 +255,8 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     switch (wxGetApp().get_app_mode()) {
     default:
     case GUI_App::EAppMode::Editor:
-        m_taskbar_icon = std::make_unique<OrcaSlicerTaskBarIcon>(wxTBI_DOCK);
-        m_taskbar_icon->SetIcon(wxIcon(Slic3r::var("OrcaSlicer-mac_256px.ico"), wxBITMAP_TYPE_ICO), "OrcaSlicer");
+        m_taskbar_icon = std::make_unique<Snapmaker_OrcaTaskBarIcon>(wxTBI_DOCK);
+        m_taskbar_icon->SetIcon(wxIcon(Slic3r::var("Snapmaker_Orca-mac_256px.ico"), wxBITMAP_TYPE_ICO), "Snapmaker Orca");
         break;
     case GUI_App::EAppMode::GCodeViewer:
         break;
@@ -1473,9 +1473,31 @@ bool MainFrame::can_send_gcode() const
 {
     if (m_plater && !m_plater->model().objects.empty())
     {
-        auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-        if (const auto *print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
-            return !print_host_opt->value.empty();
+        auto        devices     = wxGetApp().app_config->get_devices();
+        std::string preset_name = "Snapmaker U1 0.4 nozzle";
+        const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+
+        std::string local_name = "";
+        if (edit_preset.is_system) {
+            local_name = edit_preset.name;
+        } else {
+            const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(edit_preset);
+            local_name              = base_preset->name;
+        }
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
+        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
+        if (local_name == preset_name) {
+            return true;
+        }
+
+        if (wxGetApp().app_config->get("use_new_connect") == "true") {
+            return true;
+        } else {
+            auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            if (const auto* print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
+                return !print_host_opt->value.empty();
+        }
+        
     }
     return true;
 }
@@ -1711,7 +1733,7 @@ wxBoxSizer* MainFrame::create_side_tools()
                 p->append_button(export_gcode_btn);
             }
             else {
-                //Orca Slicer Buttons
+                //Snapmaker Orca Buttons
                 SideButton* print_plate_btn = new SideButton(p, _L("Print plate"), "");
                 print_plate_btn->SetCornerRadius(0);
 
@@ -2216,7 +2238,7 @@ static wxMenu* generate_help_menu()
         });
 
     // Report a bug
-    //append_menu_item(helpMenu, wxID_ANY, _L("Report Bug(TODO)"), _L("Report a bug of OrcaSlicer"),
+    //append_menu_item(helpMenu, wxID_ANY, _L("Report Bug(TODO)"), _L("Report a bug of Snapmaker Orca"),
     //    [](wxCommandEvent&) {
     //        //TODO
     //    });
@@ -2227,6 +2249,14 @@ static wxMenu* generate_help_menu()
         }, "", nullptr, []() {
             return true;
         });
+
+    append_menu_item(helpMenu, wxID_ANY, _L("Import Profile"), _L("Import Profile"), [](wxCommandEvent&) {
+        wxGetApp().import_presets();
+    });
+
+    append_menu_item(helpMenu, wxID_ANY, _L("Import Web Resource"), _L("Import Web Resource"), [](wxCommandEvent&) {
+        wxGetApp().import_flutter_web();
+    });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Open Network Test"), _L("Open Network Test"), [](wxCommandEvent&) {
             NetworkTestDialog dlg(wxGetApp().mainframe);
@@ -2332,7 +2362,7 @@ void MainFrame::init_menubar_as_editor()
 
         // Recent Project
         wxMenu* recent_projects_menu = new wxMenu();
-        wxMenuItem* recent_projects_submenu = append_submenu(fileMenu, recent_projects_menu, wxID_ANY, _L("Recent files"), "");
+        wxMenuItem* recent_projects_submenu = append_submenu(fileMenu, recent_projects_menu, wxID_ANY, _L("Recent projects"), "");
         m_recent_projects.UseMenu(recent_projects_menu);
         Bind(wxEVT_MENU, [this](wxCommandEvent& evt) {
             size_t file_id = evt.GetId() - wxID_FILE1;
@@ -2379,7 +2409,7 @@ void MainFrame::init_menubar_as_editor()
 #ifndef __APPLE__
         append_menu_item(import_menu, wxID_ANY, _L("Import 3MF/STL/STEP/SVG/OBJ/AMF") + dots + "\t" + ctrl + "I", _L("Load a model"),
             [this](wxCommandEvent&) { if (m_plater) {
-            m_plater->add_file();
+            m_plater->add_model();
         } }, "menu_import", nullptr,
             [this](){return can_add_models(); }, this);
 #else
@@ -2832,13 +2862,13 @@ void MainFrame::init_menubar_as_editor()
 
 #ifdef __APPLE__
     wxString about_title = wxString::Format(_L("&About %s"), SLIC3R_APP_FULL_NAME);
-    //auto about_item = new wxMenuItem(parent_menu, OrcaSlicerMenuAbout + bambu_studio_id_base, about_title, "");
+    //auto about_item = new wxMenuItem(parent_menu, Snapmaker_OrcaMenuAbout + bambu_studio_id_base, about_title, "");
         //parent_menu->Bind(wxEVT_MENU, [this, bambu_studio_id_base](wxEvent& event) {
         //    switch (event.GetId() - bambu_studio_id_base) {
-        //        case OrcaSlicerMenuAbout:
+        //        case Snapmaker_OrcaMenuAbout:
         //            Slic3r::GUI::about();
         //            break;
-        //        case OrcaSlicerMenuPreferences:
+        //        case Snapmaker_OrcaMenuPreferences:
         //            CallAfter([this] {
         //                PreferencesDialog dlg(this);
         //                dlg.ShowModal();
@@ -3164,6 +3194,12 @@ void MainFrame::set_max_recent_count(int max)
         wxGetApp().app_config->set_recent_projects(recent_projects);
         wxGetApp().app_config->save();
         m_webview->SendRecentList(-1);
+
+        // wcp 订阅
+        json data;
+        wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
+        wxGetApp().recent_file_notify(data);
+        
     }
 }
 
@@ -3668,7 +3704,22 @@ void MainFrame::add_to_recent_projects(const wxString& filename)
         }
         wxGetApp().app_config->set_recent_projects(recent_projects);
         m_webview->SendRecentList(0);
+
+        // wcp 订阅
+        json data;
+        wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
+        wxGetApp().recent_file_notify(data);
     }
+}
+
+std::string MainFrame::FileHistory::GetThumbnailUrl_str(int index) const 
+{
+    if (m_thumbnails[index].empty())
+        return "";
+    std::stringstream ss;
+    ss << "data:image/png;base64,";
+    ss << wxBase64Encode(m_thumbnails[index].data(), m_thumbnails[index].size());
+    return ss.str();
 }
 
 std::wstring MainFrame::FileHistory::GetThumbnailUrl(int index) const
@@ -3725,6 +3776,38 @@ inline void MainFrame::FileHistory::SetMaxFiles(int max)
         RemoveFileFromHistory(--numFiles);
 }
 
+void MainFrame::get_recent_projects(nlohmann::json& data, int images) {
+    for (size_t i = 0; i < m_recent_projects.GetCount(); ++i) {
+        json item;
+        std::string proj    = m_recent_projects.GetHistoryFile(i).ToStdString(wxConvUTF8);
+        
+        item["project_name"] = proj.substr(proj.find_last_of("/\\") + 1);
+        item["path"]  = proj;
+        boost::system::error_code ec;
+        std::time_t               t;
+        try {
+            t = boost::filesystem::last_write_time(proj, ec);
+        }
+        catch (std::exception& e) {
+            std::string e_msg = e.what();
+            BOOST_LOG_TRIVIAL(error) << e.what(); 
+        }        
+        if (!ec) {
+            std::string time = wxDateTime(t).FormatISOCombined(' ').ToStdString();
+            item["time"]      = time;
+            if (i <= images) {
+
+                auto thumbnail = m_recent_projects.GetThumbnailUrl_str(i);
+                if (!thumbnail.empty())
+                    item["image"] = thumbnail;
+            }
+        } else {
+            item["time"] = "File is missing";
+        }
+        data.push_back(item);
+    }
+}
+
 void MainFrame::get_recent_projects(boost::property_tree::wptree &tree, int images)
 {
     for (size_t i = 0; i < m_recent_projects.GetCount(); ++i) {
@@ -3773,8 +3856,39 @@ void MainFrame::open_recent_project(size_t file_id, wxString const & filename)
             }
             wxGetApp().app_config->set_recent_projects(recent_projects);
             m_webview->SendRecentList(-1);
+
+            // wcp 订阅
+            json data;
+            wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
+            wxGetApp().recent_file_notify(data);
         }
     }
+}
+
+void MainFrame::sm_remove_recent_project(wxString const& filename) {
+    size_t file_id = -1;
+    if (filename.IsEmpty())
+        while (m_recent_projects.GetCount() > 0)
+            m_recent_projects.RemoveFileFromHistory(0);
+    else
+        file_id = m_recent_projects.FindFileInHistory(filename);
+
+    if (file_id != size_t(-1))
+        m_recent_projects.RemoveFileFromHistory(file_id);
+
+    std::vector<std::string> recent_projects;
+    size_t                   count = m_recent_projects.GetCount();
+    for (size_t i = 0; i < count; ++i) {
+        recent_projects.push_back(into_u8(m_recent_projects.GetHistoryFile(i)));
+    }
+    wxGetApp().app_config->set_recent_projects(recent_projects);
+
+    // wcp 订阅
+    json data;
+    wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
+    wxGetApp().recent_file_notify(data);
+    
+
 }
 
 void MainFrame::remove_recent_project(size_t file_id, wxString const &filename)
@@ -3796,6 +3910,11 @@ void MainFrame::remove_recent_project(size_t file_id, wxString const &filename)
     }
     wxGetApp().app_config->set_recent_projects(recent_projects);
     m_webview->SendRecentList(-1);
+
+    // wcp 订阅
+    json data;
+    wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
+    wxGetApp().recent_file_notify(data);
 }
 
 void MainFrame::load_url(wxString url)
@@ -3972,7 +4091,7 @@ SettingsDialog::SettingsDialog(MainFrame* mainframe)
         SetIcon(wxIcon(szExeFileName, wxBITMAP_TYPE_ICO));
     }
 #else
-    SetIcon(wxIcon(var("OrcaSlicer_128px.png"), wxBITMAP_TYPE_PNG));
+    SetIcon(wxIcon(var("Snapmaker_Orca_128px.png"), wxBITMAP_TYPE_PNG));
 #endif // _WIN32
 
     //just hide the Frame on closing

@@ -43,11 +43,11 @@ static std::vector<std::string> s_project_options {
     "flush_multiplier",
 };
 
-//Orca: add custom as default
-const char *PresetBundle::ORCA_DEFAULT_BUNDLE = "Custom";
-const char *PresetBundle::ORCA_DEFAULT_PRINTER_MODEL = "MyKlipper 0.4 nozzle";
-const char *PresetBundle::ORCA_DEFAULT_PRINTER_VARIANT = "0.4";
-const char *PresetBundle::ORCA_DEFAULT_FILAMENT = "Generic PLA @System";
+// SM_FEATURE: add Snapmaker machine as default
+const char* PresetBundle::SM_BUNDLE = "Snapmaker";
+const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker U1(0.4 nozzle)";
+const char* PresetBundle::SM_DEFAULT_PRINTER_VARIANT = "0.4";
+const char* PresetBundle::SM_DEFAULT_FILAMENT        = "Snapmaker PLA SnapSpeed";
 const char *PresetBundle::ORCA_FILAMENT_LIBRARY = "OrcaFilamentLibrary";
 
 PresetBundle::PresetBundle()
@@ -172,6 +172,7 @@ void PresetBundle::setup_directories()
         data_dir / "ota",
 		data_dir / PRESET_SYSTEM_DIR,
         data_dir / PRESET_USER_DIR,
+        data_dir / PRESET_WEB_DIR,
         // Store the print/filament/printer presets at the same location as the upstream Slic3r.
         //data_dir / PRESET_SYSTEM_DIR / PRESET_PRINT_NAME,
         //data_dir / PRESET_SYSTEM_DIR / PRESET_FILAMENT_NAME,
@@ -368,7 +369,7 @@ bool PresetBundle::use_bbl_device_tab() {
 
 bool PresetBundle::backup_user_folder() const
 {
-    const std::string backup_folderpath = data_dir() + "/" + (boost::format("user_backup-v%1%") % SoftFever_VERSION).str();
+    const std::string backup_folderpath = data_dir() + "/" + (boost::format("user_backup-v%1%") % Snapmaker_VERSION).str();
 
     // Check if backup file already exists
     if (boost::filesystem::exists(boost::filesystem::path(backup_folderpath)))
@@ -1118,7 +1119,7 @@ void PresetBundle::remove_users_preset(AppConfig &config, std::map<std::string, 
     }
 
     if (need_reset_printer_preset) {
-        std::string default_printer_model = ORCA_DEFAULT_PRINTER_MODEL;
+        std::string default_printer_model = SM_DEFAULT_PRINTER_MODEL;
         std::string default_printer_name;
         for (auto it = printers.begin(); it != printers.end(); it++) {
             if (it->config.has("printer_model")) {
@@ -1833,6 +1834,29 @@ void PresetBundle::export_selections(AppConfig &config)
 }
 
 // BBS
+void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
+{
+    unsigned old_filament_count = this->filament_presets.size();
+    assert(to_del_flament_id < old_filament_count);
+    filament_presets.erase(filament_presets.begin() + to_del_filament_id);
+
+    ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
+
+    if (filament_color->values.size() > to_del_filament_id) {
+        filament_color->values.erase(filament_color->values.begin() + to_del_filament_id);
+    } else {
+        filament_color->values.resize(to_del_filament_id);
+    }
+
+    if (ams_multi_color_filment.size() > to_del_filament_id) {
+        ams_multi_color_filment.erase(ams_multi_color_filment.begin() + to_del_filament_id);
+    } else {
+        ams_multi_color_filment.resize(to_del_filament_id);
+    }
+
+    update_multi_material_filament_presets(to_del_filament_id);
+}
+
 void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> new_colors) {
     int old_filament_count = this->filament_presets.size();
     if (n > old_filament_count && old_filament_count != 0)
@@ -2051,6 +2075,37 @@ bool PresetBundle::check_filament_temp_equation_by_printer_type_and_nozzle_for_m
         }
     }
     return is_equation;
+}
+
+Preset *PresetBundle::get_similar_printer_preset(std::string printer_model, std::string printer_variant)
+{
+    if (printer_model.empty())
+        printer_model = printers.get_selected_preset().config.opt_string("printer_model");
+    auto printer_variant_old = printers.get_selected_preset().config.opt_string("printer_variant");
+    std::map<std::string, Preset*> printer_presets;
+    for (auto &preset : printers.m_presets) {
+        if (printer_variant.empty() && !preset.is_system)
+            continue;
+        if (preset.config.opt_string("printer_model") == printer_model)
+            printer_presets.insert({preset.name, &preset});
+    }
+    if (printer_presets.empty())
+        return nullptr;
+    auto prefer_printer = printers.get_selected_preset().name;
+    if (!printer_variant.empty())
+        boost::replace_all(prefer_printer, printer_variant_old, printer_variant);
+    else if (auto n = prefer_printer.find(printer_variant_old); n != std::string::npos)
+        prefer_printer = printer_model + " " + printer_variant_old + prefer_printer.substr(n + printer_variant_old.length());
+    if (auto iter = printer_presets.find(prefer_printer); iter != printer_presets.end()) {
+        return iter->second;
+    }
+    if (printer_variant.empty())
+        printer_variant = printer_variant_old;
+    for (auto& preset : printer_presets) {
+        if (preset.second->config.opt_string("printer_variant") == printer_variant)
+            return preset.second;
+    }
+    return printer_presets.begin()->second;
 }
 
 //BBS: check whether this is the only edited filament
@@ -3156,7 +3211,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
     return std::make_pair(std::move(substitutions), presets_loaded);
 }
 
-void PresetBundle::update_multi_material_filament_presets()
+void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filament_id)
 {
     if (printers.get_edited_preset().printer_technology() != ptFFF)
         return;

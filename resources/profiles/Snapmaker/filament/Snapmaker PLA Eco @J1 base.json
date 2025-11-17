@@ -1,0 +1,17 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "false",
+  "name": "Snapmaker PLA Eco @J1 base",
+  "filament_id": "3383257822",
+  "inherits": "fdm_filament_pla_eco",
+  "filament_end_gcode": [
+    ""
+  ],
+  "filament_density": [
+    "1.26"
+  ],
+  "filament_max_volumetric_speed": [
+    "12"
+  ]
+}

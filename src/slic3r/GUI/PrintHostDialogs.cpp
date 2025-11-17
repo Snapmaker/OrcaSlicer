@@ -28,6 +28,7 @@
 #include "NotificationManager.hpp"
 #include "ExtraRenderers.hpp"
 #include "format.hpp"
+#include "WebPreprintDialog.hpp"
 
 namespace fs = boost::filesystem;
 
@@ -50,6 +51,7 @@ PrintHostSendDialog::PrintHostSendDialog(const fs::path &path, PrintHostPostUplo
     , m_path(path)
     , m_post_actions(post_actions)
     , m_storage_names(storage_names)
+    , m_ori_file_path(path)
 {
 #ifdef __APPLE__
     txt_filename->OSXDisableAllSmartSubstitutions();
@@ -61,10 +63,11 @@ void PrintHostSendDialog::init()
     const auto& storage_paths = m_paths;
     const auto& post_actions = m_post_actions;
     const auto& storage_names = m_storage_names;
+    m_switch_to_device_tab = true;
 
     const AppConfig* app_config = wxGetApp().app_config;
 
-    auto *label_dir_hint = new wxStaticText(this, wxID_ANY, _L("Use forward slashes ( / ) as a directory separator if needed."));
+    auto *label_dir_hint = new wxStaticText(this, wxID_ANY, _L("Please do not include the special characters #, *, and ;in filenames."));
     label_dir_hint->Wrap(CONTENT_WIDTH * wxGetApp().em_unit());
 
     content_sizer->Add(txt_filename, 0, wxEXPAND);
@@ -109,7 +112,8 @@ void PrintHostSendDialog::init()
 
     txt_filename->SetValue(recent_path);
 
-    auto checkbox_sizer = new wxBoxSizer(wxHORIZONTAL);
+
+    /*auto checkbox_sizer = new wxBoxSizer(wxHORIZONTAL);
     auto checkbox       = new ::CheckBox(this, wxID_APPLY);
     checkbox->SetValue(m_switch_to_device_tab);
     checkbox->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) {
@@ -123,12 +127,21 @@ void PrintHostSendDialog::init()
     checkbox_text->SetFont(::Label::Body_13);
     checkbox_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
     content_sizer->Add(checkbox_sizer);
-    content_sizer->AddSpacer(VERT_SPACING);
-
+    content_sizer->AddSpacer(VERT_SPACING);*/
+    
     if (size_t extension_start = recent_path.find_last_of('.'); extension_start != std::string::npos)
         m_valid_suffix = recent_path.substr(extension_start);
     // .gcode suffix control
     auto validate_path = [this](const wxString &path) -> bool {
+        // BBS: 检查文件名是否包含特殊字符
+        if (path.find_first_of("#*;") != wxString::npos) {
+            MessageDialog msg_window(this, 
+                wxString::Format(_L("The filename '%s' contains special characters (#, *, or ;) which may cause issues.Do you wish to continue?"), path), 
+                wxString(SLIC3R_APP_NAME), wxYES | wxNO | wxICON_WARNING);
+            if (msg_window.ShowModal() == wxID_NO)
+                return false;
+        }
+        
         if (! path.Lower().EndsWith(m_valid_suffix.Lower())) {
             MessageDialog msg_wingow(this, wxString::Format(_L("Upload filename doesn't end with \"%s\". Do you wish to continue?"), m_valid_suffix), wxString(SLIC3R_APP_NAME), wxYES | wxNO);
             if (msg_wingow.ShowModal() == wxID_NO)

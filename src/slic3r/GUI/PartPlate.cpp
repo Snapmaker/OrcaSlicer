@@ -62,8 +62,8 @@ static const int PARTPLATE_TEXT_OFFSET_X2 = 1;
 static const int PARTPLATE_TEXT_OFFSET_Y = 1;
 static const int PARTPLATE_PLATENAME_OFFSET_Y  = 10;
 
-const float WIPE_TOWER_DEFAULT_X_POS = 165.;
-const float WIPE_TOWER_DEFAULT_Y_POS = 250.;  // Max y
+const float WIPE_TOWER_DEFAULT_X_POS = 13.;
+const float WIPE_TOWER_DEFAULT_Y_POS = 234.5;  // Max y
 
 const float I3_WIPE_TOWER_DEFAULT_X_POS = 0.;
 const float I3_WIPE_TOWER_DEFAULT_Y_POS = 250.; // Max y
@@ -3121,6 +3121,84 @@ void PartPlate::print() const
 	return;
 }
 
+void PartPlate::clear_filament_map()
+{
+    if (m_config.has("filament_map"))
+        m_config.erase("filament_map");
+}
+
+void PartPlate::on_extruder_count_changed(int extruder_count)
+{
+    if (extruder_count < 2) {
+        std::vector<int> f_map = wxGetApp().plater()->get_global_filament_map();
+        std::fill(f_map.begin(), f_map.end(), 1);
+        wxGetApp().plater()->set_global_filament_map(f_map);
+        // clear filament map and mode in single extruder mode
+        clear_filament_map();
+        // clear_filament_map_mode();
+        //  do not clear mode now, reset to default mode
+        m_config.option<ConfigOptionEnum<FilamentMapMode>>("filament_map_mode", true)->value = FilamentMapMode::fmmAutoForFlush;
+    }
+}
+
+void PartPlate::set_filament_count(int filament_count)
+{
+    if (m_config.has("filament_map")) {
+        std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
+        filament_maps.resize(filament_count, 1);
+    }
+}
+
+void PartPlate::on_filament_added()
+{
+    if (m_config.has("filament_map")) {
+        std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
+        filament_maps.push_back(1);
+    }
+}
+
+void PartPlate::update_first_layer_print_sequence_when_delete_filament(size_t filament_id)
+{
+    auto other_layers_seqs = get_other_layers_print_sequence();
+    if (!other_layers_seqs.empty()) {
+        bool need_update_data = false;
+        for (auto& other_layers_seq : other_layers_seqs) {
+            std::vector<int>& orders = other_layers_seq.second;
+            orders.erase(std::remove_if(orders.begin(), orders.end(), [filament_id](int n) { return n == filament_id + 1; }), orders.end());
+            for (auto& order : orders) {
+                order = order > filament_id ? order - 1 : order;
+            }
+            need_update_data = true;
+        }
+        if (need_update_data)
+            set_other_layers_print_sequence(other_layers_seqs);
+    }
+
+    ConfigOptionInts* op_print_sequence_1st = m_config.option<ConfigOptionInts>("first_layer_print_sequence");
+    if (!op_print_sequence_1st)
+        return;
+
+    std::vector<int>& print_sequence_1st = op_print_sequence_1st->values;
+    if (print_sequence_1st.size() == 0 || print_sequence_1st[0] == 0)
+        return;
+
+    print_sequence_1st.erase(std::remove_if(print_sequence_1st.begin(), print_sequence_1st.end(),
+                                            [filament_id](int n) { return n == filament_id + 1; }),
+                             print_sequence_1st.end());
+    for (auto& order : print_sequence_1st) {
+        order = order > filament_id ? order - 1 : order;
+    }
+}
+
+void PartPlate::on_filament_deleted(int filament_count, int filament_id)
+{
+    if (m_config.has("filament_map")) {
+        std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
+        filament_maps.erase(filament_maps.begin() + filament_id);
+    }
+    update_first_layer_print_sequence_when_delete_filament(filament_id);
+}
+
 /* PartPlate List related functions*/
 PartPlateList::PartPlateList(int width, int depth, int height, Plater* platerObj, Model* modelObj, PrinterTechnology tech)
 	:m_plate_width(width), m_plate_depth(depth), m_plate_height(height), m_plater(platerObj), m_model(modelObj), printer_technology(tech),
@@ -3546,7 +3624,10 @@ void PartPlateList::reset(bool do_init)
 
 	//m_plate_list.clear();
 
-	if (do_init)
+	if (do_init) {
+        init();
+        m_plate_list[0]->set_filament_count(m_filament_count);
+	}
 		init();
 
 	return;
@@ -3558,6 +3639,8 @@ void PartPlateList::reinit()
 	clear(true, true);
 
 	init();
+
+	m_plate_list[0]->set_filament_count(m_filament_count);
 
 	//reset plate 0's position
 	Vec2d pos = compute_shape_position(0, m_plate_cols);
@@ -3606,6 +3689,8 @@ int PartPlateList::create_plate(bool adjust_position)
 		plate->set_print(print, gcode, m_print_index);
 		m_print_index++;
 	}
+
+	plate->set_filament_count(m_filament_count);
 
 	plate->set_index(new_index);
 	Vec2d pos = compute_shape_position(new_index, cols);
@@ -5617,6 +5702,42 @@ void PartPlateList::load_cali_textures()
 	}
 	PartPlateList::is_load_cali_texture = true;
 }
+
+//void PartPlateList::on_extruder_count_changed(int extruder_count)
+//{
+//    for (unsigned int i = 0; i < (unsigned int) m_plate_list.size(); ++i) {
+//        m_plate_list[i]->on_extruder_count_changed(extruder_count);
+//    }
+//    BOOST_LOG_TRIVIAL(info) << boost::format("%1%: extruder_count=%2%") % __FUNCTION__ % extruder_count;
+//}
+//
+//void PartPlateList::set_filament_count(int filament_count)
+//{
+//    m_filament_count = filament_count;
+//    for (unsigned int i = 0; i < (unsigned int) m_plate_list.size(); ++i) {
+//        m_plate_list[i]->set_filament_count(filament_count);
+//    }
+//    BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%") % __FUNCTION__ % filament_count;
+//}
+//
+//void PartPlateList::on_filament_added(int filament_count)
+//{
+//    m_filament_count++;
+//    for (unsigned int i = 0; i < (unsigned int) m_plate_list.size(); ++i) {
+//        m_plate_list[i]->on_filament_added();
+//    }
+//    BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%") % __FUNCTION__ % filament_count;
+//}
+
+void PartPlateList::on_filament_deleted(int filament_count, int filament_id)
+{
+    m_filament_count--;
+    for (unsigned int i = 0; i < (unsigned int) m_plate_list.size(); ++i) {
+        m_plate_list[i]->on_filament_deleted(filament_count, filament_id);
+    }
+    BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%, filament_id=%3%") % __FUNCTION__ % filament_count % filament_id;
+}
+
 
 }//end namespace GUI
 }//end namespace slic3r

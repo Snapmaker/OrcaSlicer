@@ -184,7 +184,7 @@ Http::priv::priv(const std::string &url)
     set_timeout_max(DEFAULT_TIMEOUT_MAX);
 	::curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, log_trace);
 	::curl_easy_setopt(curl, CURLOPT_URL, url.c_str());   // curl makes a copy internally
-	::curl_easy_setopt(curl, CURLOPT_USERAGENT, SLIC3R_APP_NAME "/" SoftFever_VERSION);
+	::curl_easy_setopt(curl, CURLOPT_USERAGENT, SLIC3R_APP_NAME "/" SLIC3R_VERSION);
 	::curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, &error_buffer.front());
 #ifdef __WINDOWS__
 	::curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_MAX_TLSv1_2);
@@ -887,5 +887,39 @@ std::ostream& operator<<(std::ostream &os, const Http::Progress &progress)
 	return os;
 }
 
+std::string Http::encode_url_path(const std::string& url)
+{
+    size_t protocol_end = url.find("://");
+    if (protocol_end == std::string::npos) {
+        return url;
+    }
+
+    // 找到域名结束的位置（第一个斜杠）
+    size_t domain_end = url.find("/", protocol_end + 3);
+    if (domain_end == std::string::npos) {
+        return url;
+    }
+
+    // 分割 URL
+    std::string protocol_domain = url.substr(0, domain_end);
+    std::string path            = url.substr(domain_end);
+
+    // 只对路径部分进行编码
+    CURL*       curl = curl_easy_init();
+    std::string encoded_path;
+    if (curl) {
+        char* encoded = curl_easy_escape(curl, path.c_str(), path.length());
+        if (encoded) {
+            encoded_path = encoded;
+            curl_free(encoded);
+        }
+        curl_easy_cleanup(curl);
+    }
+
+    // 替换编码后的斜杠为实际的斜杠
+    boost::replace_all(encoded_path, "%2F", "/");
+
+    return protocol_domain + encoded_path;
+}
 
 }

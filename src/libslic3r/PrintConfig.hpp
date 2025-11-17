@@ -57,7 +57,7 @@ enum class NoiseType {
 };
 
 enum PrintHostType {
-    htPrusaLink, htPrusaConnect, htOctoPrint, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htESP3D, htCrealityPrint, htObico, htFlashforge, htSimplyPrint, htElegooLink
+    htPrusaLink, htPrusaConnect, htOctoPrint, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htESP3D, htCrealityPrint, htObico, htFlashforge, htSimplyPrint, htElegooLink, htMoonRaker_mqtt, htMoonRaker, 
 };
 
 enum AuthorizationType {
@@ -335,6 +335,13 @@ enum ZHopType {
     zhtSlope,
     zhtSpiral,
     zhtCount
+};
+
+enum FilamentMapMode {
+    fmmAutoForFlush,
+    fmmAutoForMatch,
+    fmmManual,
+    fmmDefault
 };
 
 enum NozzleVolumeType {
@@ -1193,6 +1200,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBools,               long_retractions_when_cut))
     ((ConfigOptionFloats,              z_hop))
     // BBS
+    ((ConfigOptionBools,               z_hop_when_prime))
     ((ConfigOptionEnumsGeneric,        z_hop_types))
     ((ConfigOptionFloats,              travel_slope))
     ((ConfigOptionFloats,              retract_lift_above))
@@ -1240,6 +1248,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               extra_loading_move))
     ((ConfigOptionFloat,               machine_load_filament_time))
     ((ConfigOptionFloat,               machine_tool_change_time))
+    ((ConfigOptionBool,                tool_change_temprature_wait))
     ((ConfigOptionFloat,               machine_unload_filament_time))
     ((ConfigOptionFloats,              filament_loading_speed))
     ((ConfigOptionFloats,              filament_loading_speed_start))
@@ -1258,6 +1267,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,              filament_stamping_distance))
     ((ConfigOptionBool,                purge_in_prime_tower))
     ((ConfigOptionBool,                enable_filament_ramming))
+    ((ConfigOptionFloat,                ramming_line_width_ratio))
+    ((ConfigOptionBool,                enable_change_pressure_when_wiping))
+    ((ConfigOptionFloat,                ramming_pressure_advance_value))
     ((ConfigOptionBool,                support_multi_bed_types))
 
     // Small Area Infill Flow Compensation
@@ -1358,6 +1370,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              spiral_starting_flow_ratio))
     ((ConfigOptionInt,                standby_temperature_delta))
     ((ConfigOptionFloat,                preheat_time))
+    ((ConfigOptionInt,                delta_temperature))
     ((ConfigOptionInt,                preheat_steps))
     ((ConfigOptionInts,               nozzle_temperature))
     ((ConfigOptionBools,              wipe))

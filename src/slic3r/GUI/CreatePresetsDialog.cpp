@@ -140,7 +140,7 @@ static const std::unordered_map<std::string, std::vector<std::string>> printer_m
      {"Snapmaker",         {"Snapmaker J1",                 "Snapmaker A250",               "Snapmaker A350",               "Snapmaker A250 Dual",          "Snapmaker A350 Dual",
                             "Snapmaker A250 QSKit",         "Snapmaker A350 QSKit",         "Snapmaker A250 BKit",          "Snapmaker A350 BKit",          "Snapmaker A250 QS+B Kit",
                             "Snapmaker A350 QS+B Kit",      "Snapmaker A250 Dual QSKit",    "Snapmaker A350 Dual QSKit",    "Snapmaker A250 Dual BKit",     "Snapmaker A350 Dual BKit",
-                            "Snapmaker A250 Dual QS+B Kit", "Snapmaker A350 Dual QS+B Kit", "Snapmaker Artisan"}},
+                            "Snapmaker A250 Dual QS+B Kit", "Snapmaker A350 Dual QS+B Kit", "Snapmaker Artisan", "Snapmaker U1"}},
      {"Sovol",             {"Sovol SV01 Pro",      "Sovol SV02",          "Sovol SV05",          "Sovol SV06",          "Sovol SV06 Plus",
                             "Sovol SV06 ACE",      "Sovol SV06 Plus ACE", "Sovol SV07",          "Sovol SV07 Plus",     "Sovol SV08"}},
      {"Thinker X400",      {"Thinker X400"}},
@@ -585,24 +585,20 @@ static char* read_json_file(const std::string &preset_path)
 }
 
 static std::string get_printer_nozzle_diameter(std::string printer_name) {
-    // Create a lowercase version of the printer_name for case-insensitive search
-    std::string printer_name_lower = printer_name;
-    std::transform(printer_name_lower.begin(), printer_name_lower.end(), printer_name_lower.begin(), ::tolower);
-
-    size_t index = printer_name_lower.find(" nozzle)");
+    size_t index = printer_name.find(" nozzle)");
     if (std::string::npos == index) {
-        size_t index = printer_name_lower.find(" nozzle");
+        size_t index = printer_name.find(" nozzle");
         if (std::string::npos == index) {
             return "";
         }
-        std::string nozzle = printer_name_lower.substr(0, index);
+        std::string nozzle           = printer_name.substr(0, index);
         size_t      last_space_index = nozzle.find_last_of(" ");
         if (std::string::npos == index) {
             return "";
         }
         return nozzle.substr(last_space_index + 1);
     } else {
-        std::string nozzle = printer_name_lower.substr(0, index);
+        std::string nozzle = printer_name.substr(0, index);
         size_t      last_bracket_index = nozzle.find_last_of("(");
         if (std::string::npos == index) {
             return "";
@@ -642,6 +638,9 @@ CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent)
 
 	this->SetBackgroundColour(*wxWHITE);
     this->SetSize(wxSize(FromDIP(600), FromDIP(480)));
+
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
 	wxBoxSizer *m_main_sizer = new wxBoxSizer(wxVERTICAL);
     // top line
@@ -756,8 +755,17 @@ wxBoxSizer *CreateFilamentPresetDialog::create_vendor_item()
     std::sort(string_vendors.begin(), string_vendors.end(), caseInsensitiveCompare);
 
     wxArrayString choices;
+    bool          hasSnapmaker = false;
     for (const std::string &vendor : string_vendors) {
+        if (vendor == "Snapmaker") {
+            hasSnapmaker = true;
+            continue;
+        }
         choices.push_back(wxString(vendor)); // Convert std::string to wxString before adding
+    }
+
+    if (hasSnapmaker) {
+        choices.Insert(wxString("Snapmaker"), 0);
     }
 
     wxBoxSizer *vendor_sizer   = new wxBoxSizer(wxHORIZONTAL);
@@ -1228,11 +1236,20 @@ wxArrayString CreateFilamentPresetDialog::get_filament_preset_choices()
             if (m_public_name_to_filament_id_map.find(public_name) != m_public_name_to_filament_id_map.end()) {
                 suffix++;
                 m_public_name_to_filament_id_map[public_name + "_" + std::to_string(suffix)] = preset.first;
-                choices.Add(public_name + "_" + std::to_string(suffix));
+                if (public_name.find("Snapmaker") != std::string::npos) {
+                    choices.Insert(public_name + "_" + std::to_string(suffix), 0);
+                } else {
+                    choices.Add(public_name + "_" + std::to_string(suffix));
+                }
+                
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " add filament choice: " << choices.back();
             } else {
                 m_public_name_to_filament_id_map[public_name] = preset.first;
-                choices.Add(public_name);
+                if (public_name.find("Snapmaker") != std::string::npos) {
+                    choices.Insert(public_name, 0);
+                } else {
+                    choices.Add(public_name);
+                }
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " add filament choice: " << choices.back();
             }
         }
@@ -3196,6 +3213,8 @@ CreatePresetSuccessfulDialog::CreatePresetSuccessfulDialog(wxWindow *parent, con
 {
     this->SetBackgroundColour(*wxWHITE);
     this->SetSize(wxSize(FromDIP(450), FromDIP(200)));
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     wxBoxSizer *m_main_sizer = new wxBoxSizer(wxVERTICAL);
     // top line
@@ -4136,8 +4155,7 @@ void ExportConfigsDialog::data_init()
         Preset *new_filament_preset = new Preset(filament_preset);
         const Preset *base_filament_preset = preset_bundle.filaments.get_preset_base(*new_filament_preset);
 
-        if (base_filament_preset == nullptr) {
-            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " Failed to find base preset";
+        if (!base_filament_preset) {
             continue;
         }
         std::string filament_preset_name = base_filament_preset->name;
@@ -4158,6 +4176,9 @@ EditFilamentPresetDialog::EditFilamentPresetDialog(wxWindow *parent, Filamentinf
 
     this->SetBackgroundColour(*wxWHITE);
     this->SetMinSize(wxSize(FromDIP(600), -1));
+
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     m_main_sizer = new wxBoxSizer(wxVERTICAL);
     // top line
@@ -4565,6 +4586,9 @@ CreatePresetForPrinterDialog::CreatePresetForPrinterDialog(wxWindow *parent, std
     get_visible_printer_and_compatible_filament_presets();
 
     this->SetBackgroundColour(*wxWHITE);
+
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     wxBoxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
     // top line

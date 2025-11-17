@@ -246,11 +246,11 @@ if [[ -n "${BUILD_ORCA}" ]] ; then
     else
         cmake --build build --config Release --target OrcaSlicer
     fi
-    echo "Building OrcaSlicer_profile_validator .."
+    echo "Building Snapmaker_Orca_profile_validator .."
     if [[ -n "${BUILD_DEBUG}" ]] ; then
-        cmake --build build --config Debug --target OrcaSlicer_profile_validator
+        cmake --build build --config Debug --target Snapmaker_Orca_profile_validator
     else
-        cmake --build build --config Release --target OrcaSlicer_profile_validator
+        cmake --build build --config Release --target Snapmaker_Orca_profile_validator
     fi
     ./scripts/run_gettext.sh
     echo "done"

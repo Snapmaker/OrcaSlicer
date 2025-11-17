@@ -585,7 +585,7 @@ void PrintConfigDef::init_common_params()
 
     def = this->add("print_host", coString);
     def->label = L("Hostname, IP or URL");
-    def->tooltip = L("Orca Slicer can upload G-code files to a printer host. This field should contain "
+    def->tooltip = L("Snapmaker Orca can upload G-code files to a printer host. This field should contain "
         "the hostname, IP address or URL of the printer host instance. "
         "Print host behind HAProxy with basic auth enabled can be accessed by putting the user name and password into the URL "
         "in the following format: https://username:password@your-octopi-address/");
@@ -684,7 +684,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("reduce_crossing_wall", coBool);
     def->label = L("Avoid crossing walls");
     def->category = L("Quality");
-    def->tooltip = L("Detour to avoid traveling across walls, which may cause blobs on the surface.");
+    def->tooltip = L("Detour and avoid to travel across wall which may cause blob on surface");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -1764,6 +1764,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back("4");
     def->enum_labels.push_back("5");
     def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt{0});
 
     def = this->add("extruder_clearance_height_to_rod", coFloat);
     def->label = L("Height to rod");
@@ -1817,7 +1818,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L(
         "This option sets the max point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the "
         "entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be "
-        "set appropriately. OrcaSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
+        "set appropriately. Snapmaker_Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
         "points. This information can usually be obtained from your printer manufacturer. The default setting is (99999, 99999), which "
         "means there are no limits, thus allowing probing across the entire bed.");
     def->sidetext = "mm";	// milimeters, don't need translation
@@ -2002,6 +2003,18 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "#F2754E" });
 
+    def           = this->add("thumb0", coStrings);
+    def->label    = L("small thumb");
+    def->tooltip  = L("first small thumb");
+    def->mode     = comSimple;
+    def->set_default_value(new ConfigOptionString{""});
+
+    def          = this->add("thumb1", coStrings);
+    def->label   = L("big thumb");
+    def->tooltip = L("first big thumb");
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionString{""});
+
     // PS
     def = this->add("filament_notes", coStrings);
     def->label = L("Filament notes");
@@ -2057,6 +2070,12 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat { 0. });
+
+    def = this->add("tool_change_temprature_wait", coBool);
+    def->label = L("Wait for the temperature when changing tools");
+    def->tooltip = L("It will use the M109 instead of M104 T[target] after changing tools if this is set to true");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
 
 
     def = this->add("filament_diameter", coFloats);
@@ -2201,7 +2220,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Minimal purge on wipe tower");
     def->tooltip = L("After a tool change, the exact position of the newly loaded filament inside "
                      "the nozzle may not be known, and the filament pressure is likely not yet stable. "
-                     "Before purging the print head into an infill or a sacrificial object, Orca Slicer will always prime "
+                     "Before purging the print head into an infill or a sacrificial object, Snapmaker Orca will always prime "
                      "this amount of material into the wipe tower to produce successive infill or sacrificial object extrusions reliably.");
     def->sidetext = u8"mm³";	// cubic milimeters, don't need translation
     def->min = 0;
@@ -3889,7 +3908,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("host_type", coEnum);
     def->label = L("Host Type");
-    def->tooltip = L("Orca Slicer can upload G-code files to a printer host. This field must contain "
+    def->tooltip = L("Snapmaker Orca can upload G-code files to a printer host. This field must contain "
                    "the kind of the host.");
     def->enum_keys_map = &ConfigOptionEnum<PrintHostType>::get_enum_values();
     def->enum_values.push_back("prusalink");
@@ -4094,7 +4113,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("If you want to process the output G-code through custom scripts, "
                    "just list their absolute paths here. Separate multiple scripts with a semicolon. "
                    "Scripts will be passed the absolute path to the G-code file as the first argument, "
-                   "and they can access the Orca Slicer config settings by reading environment variables.");
+                   "and they can access the Snapmaker Orca config settings by reading environment variables.");
     def->gui_flags = "serialized";
     def->multiline = true;
     def->full_width = true;
@@ -4240,7 +4259,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloats {18});
 
     def = this->add("retract_length_toolchange", coFloats);
-    def->label = L("Length");
+    def->label = L("Retraction Length (Toolchange)");
     //def->full_label = L("Retraction Length (Toolchange)");
     def->full_label = "Retraction Length (Toolchange)";
     //def->tooltip = L("When retraction is triggered before changing tool, filament is pulled back "
@@ -4291,6 +4310,11 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Spiral"));
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnumsGeneric{ ZHopType::zhtSlope });
+
+    def = this->add("z_hop_when_prime", coBools);
+    def->label = L("Z hop when moving to tower");
+    def->mode  = comAdvanced;
+    def->set_default_value(new ConfigOptionBools{true});
 
     def = this->add("travel_slope", coFloats);
     def->label = L("Traveling angle");
@@ -4774,6 +4798,18 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(30.0));
 
+
+    def = this->add("delta_temperature", coInt);
+    def->label = L("Preheat delta temperature");
+    def->tooltip = L("Allow user to set the Preheat temperature. If target temperature is 220 and Preheat delta temperature is -30, then "
+                     "the preheat temperature will be 190");
+    def->sidetext = "∆°C";
+    def->min     = -50;
+    def->max     = 50;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+
     def = this->add("preheat_steps", coInt);
     def->label = L("Preheat steps");
     def->tooltip = L("Insert multiple preheat commands (e.g. M104.1). Only useful for Prusa XL. For other printers, please set it to 1.");
@@ -4828,6 +4864,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("ramming_line_width_ratio", coFloat);
+    def->label = L("Ramming line width ratio");
+    def->tooltip = L(
+        "This is used to decide the line width of wipe tower when ramming, ramming line width = [this ratio] * extruder * 1.25");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.0));
+
+    def = this->add("enable_change_pressure_when_wiping", coBool);
+    def->label = L("Enable change pressure advance when wiping");
+    def->tooltip = L("If it's set to false, the pressure advance value will not be changed.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("ramming_pressure_advance_value", coFloat);
+    def->label = L("Pressure advance value when ramming");
+    def->tooltip = L("Set_Pressure_advance [this value] when ramming on wipe tower");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
 
     def = this->add("wipe_tower_no_sparse_layers", coBool);
     def->label = L("No sparse layers (beta)");
@@ -6030,7 +6084,9 @@ void PrintConfigDef::init_fff_params()
         // percents
         "retract_before_wipe",
         "long_retractions_when_cut",
-        "retraction_distances_when_cut"
+        "retraction_distances_when_cut",
+        "retract_length_toolchange",
+        "retract_restart_extra_toolchange"
         }) {
         auto it_opt = options.find(opt_key);
         assert(it_opt != options.end());
@@ -6076,7 +6132,7 @@ void PrintConfigDef::init_extruder_option_keys()
     // ConfigOptionFloats, ConfigOptionPercents, ConfigOptionBools, ConfigOptionStrings
     m_extruder_option_keys = {
         "nozzle_diameter", "min_layer_height", "max_layer_height", "extruder_offset",
-        "retraction_length", "z_hop", "z_hop_types", "travel_slope", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
+        "retraction_length", "z_hop", "z_hop_types", "z_hop_when_prime", "travel_slope", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "extruder_colour",
         "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"
@@ -6099,7 +6155,10 @@ void PrintConfigDef::init_extruder_option_keys()
         "wipe",
         "wipe_distance",
         "z_hop",
-        "z_hop_types"
+        "z_hop_types",
+        "z_hop_when_prime",
+        "retract_length_toolchange",
+        "retract_restart_extra_toolchange"
     };
     assert(std::is_sorted(m_extruder_retract_keys.begin(), m_extruder_retract_keys.end()));
 }
@@ -6130,7 +6189,9 @@ void PrintConfigDef::init_filament_option_keys()
         "wipe",
         "wipe_distance",
         "z_hop",
-        "z_hop_types"
+        "z_hop_types",
+        "retract_length_toolchange",
+        "retract_restart_extra_toolchange",
     };
     assert(std::is_sorted(m_filament_retract_keys.begin(), m_filament_retract_keys.end()));
 }
@@ -6923,7 +6984,6 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "extruder_type",
         "internal_bridge_support_thickness","extruder_clearance_max_radius", "top_area_threshold", "reduce_wall_solid_infill","filament_load_time","filament_unload_time",
         "smooth_coefficient", "overhang_totally_speed", "silent_mode",
-        "overhang_speed_classic",
     };
 
     if (ignore.find(opt_key) != ignore.end()) {
@@ -7054,6 +7114,14 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             // if (!this->has("support_interface_filament"))
             //     this->option("support_interface_filament", true)->setInt(extruder);
         }
+    }
+
+    if (this->has("wipe_tower_filament")) {
+        // If invalid, replace with 0.
+        int extruder      = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
+        int num_extruders = this->opt<ConfigOptionFloats>("nozzle_diameter")->size();
+        if (extruder < 0 || extruder > num_extruders)
+            this->option("wipe_tower_filament")->setInt(0);
     }
 
     if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))
@@ -7894,8 +7962,8 @@ CLIMiscConfigDef::CLIMiscConfigDef()
 
     def = this->add("config_compatibility", coEnum);
     def->label = L("Forward-compatibility rule when loading configurations from config files and project files (3MF, AMF).");
-    def->tooltip = L("This version of OrcaSlicer may not understand configurations produced by the newest OrcaSlicer versions. "
-                     "For example, newer OrcaSlicer may extend the list of supported firmware flavors. One may decide to "
+    def->tooltip = L("This version of Snapmaker_Orca may not understand configurations produced by the newest OrcaSlicer versions. "
+                     "For example, newer  may extend the list of supported firmware flavors. One may decide to "
                      "bail out or to substitute an unknown value with a default silently or verbosely.");
     def->enum_keys_map = &ConfigOptionEnum<ForwardCompatibilitySubstitutionRule>::get_enum_values();
     def->enum_values.push_back("disable");
@@ -7971,7 +8039,7 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def = this->add("single_instance", coBool);
     def->label = L("Single instance mode");
     def->tooltip = L("If enabled, the command line arguments are sent to an existing instance of GUI OrcaSlicer, "
-                     "or an existing OrcaSlicer window is activated. "
+                     "or an existing Snapmaker_Orca window is activated. "
                      "Overrides the \"single_instance\" configuration value from application preferences.");*/
 
 /*
@@ -8388,7 +8456,7 @@ static std::map<t_custom_gcode_key, t_config_option_keys> s_CustomGcodeSpecificP
                                "new_retract_length_toolchange", "old_filament_e_feedrate", "old_filament_temp", "old_retract_length",
                                "old_retract_length_toolchange", "relative_e_axis", "second_flush_volume", "toolchange_count", "toolchange_z",
                                "travel_point_1_x", "travel_point_1_y", "travel_point_2_x", "travel_point_2_y", "travel_point_3_x",
-                               "travel_point_3_y", "x_after_toolchange", "y_after_toolchange", "z_after_toolchange"}},
+                               "travel_point_3_y", "x_after_toolchange", "y_after_toolchange", "z_after_toolchange", "next_wipe_x", "next_wipe_y"}},
     {"change_extrusion_role_gcode", {"layer_num", "layer_z", "extrusion_role", "last_extrusion_role"}},
     {"printing_by_object_gcode",    {}},
     {"machine_pause_gcode",         {}},
@@ -8430,29 +8498,31 @@ CustomGcodeSpecificConfigDef::CustomGcodeSpecificConfigDef()
     new_def("relative_e_axis", coBool, "Relative e-axis", "Indicates if relative positioning is being used.");
     new_def("toolchange_count", coInt, "Toolchange count", "The number of toolchanges throught the print.");
     new_def("fan_speed", coNone, "", ""); //Option is no longer used and is zeroed by placeholder parser for compatability
-    new_def("old_retract_length", coFloat, "Old retract length", "The retraction length of the previous filament.");
-    new_def("new_retract_length", coFloat, "New retract length", "The retraction lenght of the new filament.");
-    new_def("old_retract_length_toolchange", coFloat, "Old retract length toolchange", "The toolchange retraction length of the previous filament.");
-    new_def("new_retract_length_toolchange", coFloat, "New retract length toolchange", "The toolchange retraction length of the new filament.");
-    new_def("old_filament_temp", coInt, "Old filament temp", "The old filament temp.");
-    new_def("new_filament_temp", coInt, "New filament temp", "The new filament temp.");
-    new_def("x_after_toolchange", coFloat, "X after toolchange", "The X pos after toolchange.");
-    new_def("y_after_toolchange", coFloat, "Y after toolchange", "The Y pos after toolchange.");
-    new_def("z_after_toolchange", coFloat, "Z after toolchange", "The Z pos after toolchange.");
-    new_def("first_flush_volume", coFloat, "First flush volume", "The first flush volume.");
-    new_def("second_flush_volume", coFloat, "Second flush volume", "The second flush volume.");
-    new_def("old_filament_e_feedrate", coInt, "Old filament e feedrate", "The old filament extruder feedrate.");
-    new_def("new_filament_e_feedrate", coInt, "New filament e feedrate", "The new filament extruder feedrate.");
-    new_def("travel_point_1_x", coFloat, "Travel point 1 X", "The travel point 1 X.");
-    new_def("travel_point_1_y", coFloat, "Travel point 1 Y", "The travel point 1 Y.");
-    new_def("travel_point_2_x", coFloat, "Travel point 2 X", "The travel point 2 X.");
-    new_def("travel_point_2_y", coFloat, "Travel point 2 Y", "The travel point 2 Y.");
-    new_def("travel_point_3_x", coFloat, "Travel point 3 X", "The travel point 3 X.");
-    new_def("travel_point_3_y", coFloat, "Travel point 3 Y", "The travel point 3 Y.");
-    new_def("flush_length_1", coFloat, "Flush Length 1", "The first flush length.");
-    new_def("flush_length_2", coFloat, "Flush Length 2", "The second flush length.");
-    new_def("flush_length_3", coFloat, "Flush Length 3", "The third flush length.");
-    new_def("flush_length_4", coFloat, "Flush Length 4", "The fourth flush length.");
+    new_def("old_retract_length", coFloat, "Old retract length", "The retraction length of the previous filament");
+    new_def("new_retract_length", coFloat, "New retract length", "The retraction lenght of the new filament");
+    new_def("old_retract_length_toolchange", coFloat, "Old retract length toolchange", "The toolchange retraction length of the previous filament");
+    new_def("new_retract_length_toolchange", coFloat, "New retract length toolchange", "The toolchange retraction length of the new filament");
+    new_def("old_filament_temp", coInt, "Old filament temp", "The old filament temp");
+    new_def("new_filament_temp", coInt, "New filament temp", "The new filament temp");
+    new_def("x_after_toolchange", coFloat, "X after toolchange", "The x pos after toolchange");
+    new_def("y_after_toolchange", coFloat, "Y after toolchange", "The y pos after toolchange");
+    new_def("z_after_toolchange", coFloat, "Z after toolchange", "The z pos after toolchange");
+    new_def("first_flush_volume", coFloat, "First flush volume", "The first flush volume");
+    new_def("second_flush_volume", coFloat, "Second flush volume", "The second flush volume");
+    new_def("old_filament_e_feedrate", coInt, "Old filament e feedrate", "The old filament extruder feedrate");
+    new_def("new_filament_e_feedrate", coInt, "New filament e feedrate", "The new filament extruder feedrate");
+    new_def("travel_point_1_x", coFloat, "Travel point 1 x", "The travel point 1 x");
+    new_def("travel_point_1_y", coFloat, "Travel point 1 y", "The travel point 1 y");
+    new_def("travel_point_2_x", coFloat, "Travel point 2 x", "The travel point 2 x");
+    new_def("travel_point_2_y", coFloat, "Travel point 2 y", "The travel point 2 y");
+    new_def("travel_point_3_x", coFloat, "Travel point 3 x", "The travel point 3 x");
+    new_def("travel_point_3_y", coFloat, "Travel point 3 y", "The travel point 3 y");
+    new_def("flush_length_1", coFloat, "Flush Length 1", "The first flush length");
+    new_def("flush_length_2", coFloat, "Flush Length 2", "The second flush length");
+    new_def("flush_length_3", coFloat, "Flush Length 3", "The third flush length");
+    new_def("flush_length_4", coFloat, "Flush Length 4", "The fourth flush length");
+    new_def("next_wipe_x", coFloat, "Next Wipe X", "For Snapmaker Artision, next x after toolchange");
+    new_def("next_wipe_y", coFloat, "Next Wipe Y", "For Snapmaker Artision, next y after toolchange");
 
 // change_extrusion_role_gcode
     std::string extrusion_role_types = "Possible Values:\n[\"Perimeter\", \"ExternalPerimeter\", "

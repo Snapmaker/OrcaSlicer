@@ -379,13 +379,13 @@ The process is the same if you want to add a new brand filament profile into the
 #### Example
 
 ```shell
-./OrcaSlicer_profile_validator -p ~/codes/OrcaSlicer/resources/profiles -l 2 -v Custom
+./Snapmaker_Orca_profile_validator -p ~/codes/OrcaSlicer/resources/profiles -l 2 -v Custom
 ```
 
 #### Sample result with errors
 
 ```shell
-PS D:\codes\OrcaSlicer> ."D:/codes/OrcaSlicer/build/src/Release/OrcaSlicer_profile_validator.exe" --path d:\codes\OrcaSlicer\resources\profiles -l 2 -v Custom
+PS D:\codes\OrcaSlicer> ."D:/codes/OrcaSlicer/build/src/Release/Snapmaker_Orca_profile_validator.exe" --path d:\codes\OrcaSlicer\resources\profiles -l 2 -v Custom
 [2024-02-28 21:23:06.102138] [0x0000a4e8] [error]   Slic3r::ConfigBase::load_from_json: parse d:\codes\OrcaSlicer\resources\profiles/Custom/machine/fdm_klipper_common.json got a nlohmann::detail::parse_error, reason = [json.exception.parse_error.101] parse error at line 9, column 38: syntax error while parsing object - unexpected string literal; expected '}'
 ...
 Validation failed
@@ -394,12 +394,12 @@ Validation failed
 #### Sample result with success
 
 ```shell
-PS D:\codes\OrcaSlicer\build\src\RelWithDebInfo> ."D:/codes/OrcaSlicer/build/src/Release/OrcaSlicer_profile_validator.exe" --path d:\codes\OrcaSlicer\resources\profiles -l 2 -v Custom
+PS D:\codes\OrcaSlicer\build\src\RelWithDebInfo> ."D:/codes/OrcaSlicer/build/src/Release/Snapmaker_Orca_profile_validator.exe" --path d:\codes\OrcaSlicer\resources\profiles -l 2 -v Custom
 Validation completed successfully
 ```
 
 > [!WARNING]
-> Use `OrcaSlicer_profile_validator` on Ubuntu and `OrcaSlicer_profile_validator.exe` on Windows.
+> Use `Snapmaker_Orca_profile_validator` on Ubuntu and `Snapmaker_Orca_profile_validator.exe` on Windows.
 
 ---
 

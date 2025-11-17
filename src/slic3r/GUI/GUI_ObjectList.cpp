@@ -132,7 +132,7 @@ ObjectList::ObjectList(wxWindow* parent) :
 
 #ifdef __linux__
     // Temporary fix for incorrect dark mode application regarding list item's text color.
-    // See: https://github.com/SoftFever/OrcaSlicer/issues/2086
+    // See: https://github.com/SoftFever/Snapmaker_Orca/issues/2086
     this->SetForegroundColour(*wxBLACK);
 #endif
 
@@ -430,6 +430,7 @@ void ObjectList::create_objects_ctrl()
         return m_objects_model->GetDefaultExtruderIdx(GetSelection());
     });
     bmp_choice_renderer->set_has_default_extruder([this]() {
+        return true;
         return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
                m_objects_model->GetItemType(GetSelection()) == itLayer;
     });
@@ -681,8 +682,8 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
         auto object = (*m_objects)[i];
         wxString extruder;
         if (!object->config.has("extruder") || size_t(object->config.extruder()) > filaments_count) {
-            extruder = "1";
-            object->config.set_key_value("extruder", new ConfigOptionInt(1));
+            extruder = "0";
+            object->config.set_key_value("extruder", new ConfigOptionInt(0));
         }
         else {
             extruder = wxString::Format("%d", object->config.extruder());
@@ -839,6 +840,132 @@ void ObjectList::selected_object(ObjectDataViewModelNode* item)
     select_item(wxDataViewItem(item));
     ensure_current_item_visible();
     selection_changed();
+}
+
+void ObjectList::update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id)
+{
+    int replace_filament_id = replace_id == -1 ? 1 : (replace_id + 1);
+    for (size_t i = 0; i < m_objects->size(); ++i) {
+        wxDataViewItem item = m_objects_model->GetItemById(i);
+        if (!item)
+            continue;
+
+        auto     object = (*m_objects)[i];
+        wxString extruder;
+        if (!object->config.has("extruder")) {
+            extruder = std::to_string(1);
+            object->config.set_key_value("extruder", new ConfigOptionInt(1));
+        } else if (size_t(object->config.extruder()) == filament_id + 1) {
+            extruder = std::to_string(replace_filament_id);
+            object->config.set_key_value("extruder", new ConfigOptionInt(replace_filament_id));
+        } else {
+            int new_extruder = object->config.extruder() > filament_id ? object->config.extruder() - 1 : object->config.extruder();
+            extruder         = wxString::Format("%d", new_extruder);
+            object->config.set_key_value("extruder", new ConfigOptionInt(new_extruder));
+        }
+        m_objects_model->SetExtruder(extruder, item);
+
+        static const char* keys[] = {"support_filament", "support_interface_filament"};
+        for (auto key : keys) {
+            if (object->config.has(key)) {
+                if (object->config.opt_int(key) == filament_id + 1)
+                    object->config.erase(key);
+                else {
+                    int new_value = object->config.opt_int(key) > filament_id ? object->config.opt_int(key) - 1 :
+                                                                                object->config.opt_int(key);
+                    object->config.set_key_value(key, new ConfigOptionInt(new_value));
+                }
+            }
+        }
+
+        // if (object->volumes.size() > 1) {
+        for (size_t id = 0; id < object->volumes.size(); id++) {
+            item = m_objects_model->GetItemByVolumeId(i, id);
+            if (!item)
+                continue;
+
+            for (auto key : keys) {
+                if (object->volumes[id]->config.has(key)) {
+                    if (object->volumes[id]->config.opt_int(key) == filament_id + 1)
+                        object->volumes[id]->config.erase(key);
+                    else {
+                        int new_value = object->volumes[id]->config.opt_int(key) > filament_id ?
+                                            object->volumes[id]->config.opt_int(key) - 1 :
+                                            object->volumes[id]->config.opt_int(key);
+                        object->config.set_key_value(key, new ConfigOptionInt(new_value));
+                    }
+                }
+            }
+
+            if (!object->volumes[id]->config.has("extruder")) {
+                continue;
+            } else if (size_t(object->volumes[id]->config.extruder()) == filament_id + 1) {
+                object->volumes[id]->config.set_key_value("extruder", new ConfigOptionInt(replace_filament_id));
+            } else {
+                int new_extruder = object->volumes[id]->config.extruder() > filament_id ? object->volumes[id]->config.extruder() - 1 :
+                                                                                          object->volumes[id]->config.extruder();
+                extruder         = wxString::Format("%d", new_extruder);
+                object->volumes[id]->config.set_key_value("extruder", new ConfigOptionInt(new_extruder));
+            }
+
+            m_objects_model->SetExtruder(extruder, item);
+        }
+        //}
+
+        item                                 = m_objects_model->GetItemById(i);
+        ObjectDataViewModelNode* object_node = static_cast<ObjectDataViewModelNode*>(item.GetID());
+        if (object_node->GetChildCount() == 0)
+            continue;
+
+        // update height_range
+        for (size_t i = 0; i < object_node->GetChildCount(); i++) {
+            ObjectDataViewModelNode* layer_root_node = object_node->GetNthChild(i);
+            if (layer_root_node->GetType() != ItemType::itLayerRoot)
+                continue;
+            for (size_t j = 0; j < layer_root_node->GetChildCount(); j++) {
+                ObjectDataViewModelNode* layer_node = layer_root_node->GetNthChild(j);
+                auto                     layer_item = wxDataViewItem((void*) layer_root_node->GetNthChild(j));
+                if (!layer_item)
+                    continue;
+                auto l_iter = object->layer_config_ranges.find(layer_node->GetLayerRange());
+                if (l_iter != object->layer_config_ranges.end()) {
+                    auto& layer_range_item = *(l_iter);
+                    if (layer_range_item.second.has("extruder") && layer_range_item.second.option("extruder")->getInt() == filament_id + 1) {
+                        int new_extruder = replace_id == -1 ? 0 : (replace_id + 1);
+                        extruder         = wxString::Format("%d", new_extruder);
+                        layer_range_item.second.set("extruder", new_extruder);
+                    } else {
+                        int layer_filament_id = layer_range_item.second.option("extruder")->getInt();
+                        int new_extruder      = layer_filament_id > filament_id ? layer_filament_id - 1 : layer_filament_id;
+                        extruder              = wxString::Format("%d", new_extruder);
+                        layer_range_item.second.set("extruder", new_extruder);
+                    }
+                    m_objects_model->SetExtruder(extruder, layer_item);
+                }
+            }
+        }
+    }
+}
+
+
+void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t filament_id,
+                                                                          size_t filaments_count,
+                                                                          int    replace_filament_id)
+{
+    m_prevent_update_filament_in_config = true;
+
+    // BBS: update extruder values even when filaments_count is 1, because it may be reduced from value greater than 1
+    if (m_objects)
+        update_filament_values_for_items_when_delete_filament(filament_id, replace_filament_id);
+
+    update_filament_colors();
+
+    // set show/hide for this column
+    set_filament_column_hidden(filaments_count == 1);
+    // a workaround for a wrong last column width updating under OSX
+    GetColumn(colEditing)->SetWidth(25);
+
+    m_prevent_update_filament_in_config = false;
 }
 
 void ObjectList::update_objects_list_filament_column(size_t filaments_count)
@@ -2307,7 +2434,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
     new_volume->name = into_u8(name);
     // set a default extruder value, since user can't add it manually
     // BBS
-    new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
+    new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
     new_object->invalidate_bounding_box();
     new_object->translate(-bb.center());
 
@@ -2440,7 +2567,7 @@ void ObjectList::del_settings_from_config(const wxDataViewItem& parent_item)
 
     take_snapshot("Delete Settings");
 
-    int extruder = m_config->has("extruder") ? m_config->extruder() : -1;
+    int extruder = m_config->has("extruder") ? m_config->extruder() : 0;
 
     coordf_t layer_height = 0.0;
     if (is_layer_settings)
@@ -2573,7 +2700,7 @@ bool ObjectList::del_subobject_from_object(const int obj_idx, const int idx, con
                         int extruder_id = last_volume->config.opt_int("extruder");
                         object->config.set("extruder", extruder_id);
                     }
-                    wxString extruder = object->config.has("extruder") ? wxString::Format("%d", object->config.extruder()) : _devL("1");
+                    wxString extruder = object->config.has("extruder") ? wxString::Format("%d", object->config.extruder()) : _devL("0");
                     m_objects_model->SetExtruder(extruder, obj_item);
                 }
                 // add settings to the object, if it has them
@@ -2661,6 +2788,7 @@ void ObjectList::split()
 
 void ObjectList::merge(bool to_multipart_object)
 {
+    wxBusyCursor wait;
     // merge selected objects to the multipart object
     if (to_multipart_object) {
         auto get_object_idxs = [this](std::vector<int>& obj_idxs, wxDataViewItemArray& sels)
@@ -2809,6 +2937,14 @@ void ObjectList::merge(bool to_multipart_object)
                 {
                     new_volume->config.assign_config(volume->config);
                 }
+                auto option = new_volume->config.option("extruder");
+                if (!option) {
+                    auto opt = object->config.option("extruder");
+                    if (opt) {
+                        new_volume->config.set_key_value("extruder", new ConfigOptionInt(opt->getInt()));
+                    }
+                }
+
 
                 new_volume->mmu_segmentation_facets.assign(std::move(volume->mmu_segmentation_facets));
             }
@@ -5736,7 +5872,8 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
         int new_extruder = extruder;
         if (extruder == 0) {
             if (type & itObject) {
-                new_extruder = 1;
+                // 跟全局保持一致
+                new_extruder = 0;
             }
             else if ((type & itVolume) && (m_objects_model->GetVolumeType(sel_item) == ModelVolumeType::MODEL_PART)) {
                 new_extruder = m_objects_model->GetExtruderNumber(m_objects_model->GetParent(sel_item));
@@ -5748,6 +5885,12 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
             config.set("extruder", new_extruder);
         else
             config.set_key_value("extruder", new ConfigOptionInt(new_extruder));
+        
+        // config.set("sparse_infill_filament", new_extruder);
+        // config.set("solid_infill_filament", new_extruder);
+        // config.set("wall_filament", new_extruder);
+
+        wxGetApp().obj_list()->update_selections();
 
         // for object, clear all its part volume's extruder config
         if (type & itObject) {

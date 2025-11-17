@@ -175,10 +175,13 @@ private:
         return m_filpar[0].filament_area; // all extruders are assumed to have the same filament diameter at this point
     }
 
-
+	bool   m_change_pressure         = true;
+    float  m_change_pressure_value   = 0.0;
+    float  m_ramming_width_ratio     = 2.0;
 	bool   m_semm               = true; // Are we using a single extruder multimaterial printer?
 	bool   m_enable_filament_ramming = true;
 	bool   m_is_mk4mmu3         = false;
+	std::string m_printer_model;    // Printer model name (e.g., "Snapmaker U1")
     Vec2f  m_wipe_tower_pos; 			// Left front corner of the wipe tower in mm.
 	float  m_wipe_tower_width; 			// Width of the wipe tower.
 	float  m_wipe_tower_depth 	= 0.f; 	// Depth of the wipe tower

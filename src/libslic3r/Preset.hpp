@@ -16,6 +16,7 @@
 #include "ProjectTask.hpp"
 
 //BBS: change system directories
+#define PRESET_WEB_DIR         "web"
 #define PRESET_SYSTEM_DIR      "system"
 #define PRESET_USER_DIR        "user"
 #define PRESET_FILAMENT_NAME    "filament"
@@ -35,6 +36,7 @@
 
 
 //BBS: add json support
+#define BBL_JSON_KEY_MIN_VERSION    "min_version"
 #define BBL_JSON_KEY_VERSION        "version"
 #define BBL_JSON_KEY_IS_CUSTOM      "is_custom_defined"
 #define BBL_JSON_KEY_URL            "url"
@@ -83,6 +85,9 @@ enum ConfigFileType
 
 //BBS: add a function to load the version from xxx.json
 extern Semver get_version_from_json(std::string file_path);
+
+extern Semver get_min_version_from_json(std::string file_path);
+
 //BBS: add a function to load the key-values from xxx.json
 extern int get_values_from_json(std::string file_path, std::vector<std::string>& keys, std::map<std::string, std::string>& key_values);
 
@@ -612,6 +617,9 @@ public:
     // Orca: find preset, if not found, keep searching in the renamed history. This is function should only be used when find
     // system(parent) presets for custom preset.
     Preset* find_preset2(const std::string& name, bool auto_match = true);
+
+    std::vector<std::string> diameters_of_selected_printer();
+
     const Preset* find_preset2(const std::string& name, bool auto_match = true) const
     {
         return const_cast<PresetCollection*>(this)->find_preset2(name, auto_match);

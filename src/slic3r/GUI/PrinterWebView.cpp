@@ -14,6 +14,7 @@
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include <wx/webview.h>
+#include "slic3r/GUI/SSWCP.hpp"
 
 namespace pt = boost::property_tree;
 
@@ -35,6 +36,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this);
     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
+    m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterWebView::OnScriptMessage, this, m_browser->GetId());
 
     SetSizer(topsizer);
 
@@ -64,6 +66,9 @@ PrinterWebView::~PrinterWebView()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Start";
     SetEvtHandlerEnabled(false);
+    SSWCP::on_webview_delete(m_browser);
+
+    wxGetApp().fltviews().remove_printer_view(this);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " End";
 }
@@ -77,24 +82,18 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
         return;
     m_apikey = apikey;
     m_apikey_sent = false;
-
-    if (this->IsShown()) {
-        m_url_deferred.clear();
-        m_browser->LoadURL(url);
+    
+    if (url.find("path=2") != std::string::npos) {
+        wxGetApp().fltviews().add_printer_view(this, url, apikey);
     } else {
-        m_url_deferred = url;
+        wxGetApp().fltviews().remove_printer_view(this);
     }
+
+    m_browser->LoadURL(url);
+
+    m_browser->Show();
     //m_browser->SetFocus();
     UpdateState();
-}
-
-bool PrinterWebView::Show(bool show)
-{
-    if (show && !m_url_deferred.empty()) {
-        m_browser->LoadURL(m_url_deferred);
-        m_url_deferred.clear();
-    }
-    return wxPanel::Show(show);
 }
 
 void PrinterWebView::reload()
@@ -102,9 +101,20 @@ void PrinterWebView::reload()
     m_browser->Reload();
 }
 
+bool PrinterWebView::isSnapmakerPage()
+{
+    auto url = m_browser->GetCurrentURL();
+    return (url.find("flutter_web") != std::string::npos);
+}
+
+void PrinterWebView::sendMessage(const std::string& msg) {
+    WebView::RunScript(m_browser, msg);
+}
+
 void PrinterWebView::update_mode()
 {
-    m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
+    // m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
+    m_browser->EnableAccessToDevTools(true);
 }
 
 /**
@@ -182,6 +192,17 @@ void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
         return;
     SendAPIKey();
 }
+
+void PrinterWebView::OnScriptMessage(wxWebViewEvent& evt) {
+    BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << evt.GetString().ToUTF8().data();
+
+    if (wxGetApp().get_mode() == comDevelop)
+        wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
+
+    // test
+    SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
+}
+
 
 } // GUI
 } // Slic3r

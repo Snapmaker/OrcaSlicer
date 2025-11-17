@@ -366,6 +366,9 @@ void OtherLayersSeqPanel::sync_layers_print_seq(int selection, const std::vector
 PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title, bool only_layer_seq, const wxPoint& pos, const wxSize& size, long style)
 :DPIDialog(parent, wxID_ANY, title, pos, size, style)
 {
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
+
     SetBackgroundColour(*wxWHITE);
     wxBoxSizer* m_sizer_main = new wxBoxSizer(wxVERTICAL);
     auto m_line_top = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(650), -1));
@@ -611,6 +614,9 @@ std::vector<int> PlateSettingsDialog::get_first_layer_print_seq()
 PlateNameEditDialog::PlateNameEditDialog(wxWindow *parent, wxWindowID id, const wxString &title, const wxPoint &pos, const wxSize &size, long style)
     : DPIDialog(parent, id, title, pos, size, style)
 {
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
+
     SetBackgroundColour(*wxWHITE);
     wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);
     auto        m_line_top   = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(400), -1));

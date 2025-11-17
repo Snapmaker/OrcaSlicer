@@ -31,7 +31,7 @@ namespace Slic3r {
 namespace GUI {
 
 
-class PrinterWebView : public wxPanel {
+class PrinterWebView : public wxPanel{
 public:
     PrinterWebView(wxWindow *parent);
     virtual ~PrinterWebView();
@@ -41,10 +41,11 @@ public:
     void OnClose(wxCloseEvent& evt);
     void OnError(wxWebViewEvent& evt);
     void OnLoaded(wxWebViewEvent& evt);
+    void OnScriptMessage(wxWebViewEvent& evt);
     void reload();
     void update_mode();
-
-    bool Show(bool show = true) override;
+    bool isSnapmakerPage();
+    void sendMessage(const std::string& msg);
 
 private:
     void SendAPIKey();
@@ -53,8 +54,6 @@ private:
     long m_zoomFactor;
     wxString m_apikey;
     bool m_apikey_sent;
-
-    wxString m_url_deferred;
 
     // DECLARE_EVENT_TABLE()
 };

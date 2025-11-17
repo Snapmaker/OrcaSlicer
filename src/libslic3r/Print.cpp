@@ -164,6 +164,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "slow_down_layer_time",
         "standby_temperature_delta",
         "preheat_time",
+        "delta_temperature",
         "preheat_steps",
         "machine_start_gcode",
         "filament_start_gcode",
@@ -479,6 +480,13 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
                     extruders.push_back((unsigned int)(item.extruder - 1));
             }
         }
+    }
+
+    // The wipe tower extruder can also be set. When the wipe tower is enabled and it will be generated,
+    // append its extruder into the list too.
+    if (has_wipe_tower() && config().wipe_tower_filament != 0 && extruders.size() > 1) {
+        assert(config().wipe_tower_filament > 0 && config().wipe_tower_filament < int(config().nozzle_diameter.size()));
+        extruders.emplace_back(config().wipe_tower_filament - 1); // the config value is 1-based
     }
 
     sort_remove_duplicates(extruders);

@@ -258,12 +258,14 @@ else ()
         else()
             set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
         endif()
+        # Create symlink for macOS bundle Resources directory
+        # Remove existing Resources if it exists (could be from previous build), then create symlink
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND sh -c "rm -rf \"$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources\" || true"
+            COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
+            COMMENT "Symlinking the resources directory into the build tree"
+            VERBATIM)
     endif()
-    add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
-        COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
-        COMMENT "Symlinking the resources directory into the build tree"
-        VERBATIM)
 endif ()
 
 # Slic3r binary install target. Default build type is release in case no CMAKE_BUILD_TYPE is provided.

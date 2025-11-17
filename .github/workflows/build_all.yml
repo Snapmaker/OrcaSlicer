@@ -70,7 +70,7 @@ jobs:
   flatpak:
     name: "Flatpak"
     concurrency:
-      group: flatpak-${{ github.event.pull_request.number || github.ref }}
+      group: flatpak-${{ matrix.variant.arch }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48

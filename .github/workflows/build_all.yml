@@ -109,7 +109,7 @@ jobs:
     - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
       with:
         bundle: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
-        manifest-path: scripts/flatpak/io.github.softfever.Snapmaker_Orca.yml
+        manifest-path: scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
         cache: true
         arch: ${{ matrix.variant.arch }}
         upload-artifact: false
@@ -119,11 +119,11 @@ jobs:
         name: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
         path: '/__w/Snapmaker_Orca/Snapmaker_Orca/Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak'
     - name: Deploy Flatpak to nightly release
-      if: ${{github.ref == 'refs/heads/main'}}
+      if: ${{github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'}}
       uses: WebFreak001/deploy-nightly@v3.2.0
       with:
-        upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/137995723/assets{?name,label}
-        release_id: 137995723
+        upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+        release_id: 169912305
         asset_path: /__w/Snapmaker_Orca/Snapmaker_Orca/Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
         asset_name: Snapmaker_Orca-Linux-flatpak_nightly_${{ matrix.variant.arch }}.flatpak
         asset_content_type: application/octet-stream

@@ -26,7 +26,7 @@ Visit our GitHub Releases page for the latest stable version of Snapmaker Slicer
 
 **Mac**:
 1. Download the DMG for your computer: `arm64` version for Apple Silicon and `x86_64` for Intel CPU.  
-2. Drag OrcaSlicer.app to Application folder. 
+2. Drag Snapmaker_Orca.app to Application folder. 
 3. *If you want to run a build from a PR, you also need to follow the instructions below:*  
     <details quarantine>
     - Option 1 (You only need to do this once. After that the app can be opened normally.):
@@ -34,9 +34,9 @@ Visit our GitHub Releases page for the latest stable version of Snapmaker Slicer
       - Step 2: A warning window will pop up, click _Open_  
       
     - Option 2:  
-      Execute this command in terminal: `xattr -dr com.apple.quarantine /Applications/OrcaSlicer.app`
+      Execute this command in terminal: `xattr -dr com.apple.quarantine /Applications/Snapmaker_Orca.app`
       ```console
-          softfever@mac:~$ xattr -dr com.apple.quarantine /Applications/OrcaSlicer.app
+          softfever@mac:~$ xattr -dr com.apple.quarantine /Applications/Snapmaker_Orca.app
       ```
     - Option 3:  
         - Step 1: open the app, a warning window will pop up  
@@ -63,8 +63,8 @@ Visit our GitHub Releases page for the latest stable version of Snapmaker Slicer
   - run `build_release_macos.sh`
   - To build and debug in Xcode:
       - run `Xcode.app`
-      - open ``build_`arch`/OrcaSlicer.Xcodeproj``
-      - menu bar: Product => Scheme => OrcaSlicer
+      - open ``build_`arch`/Snapmaker_Orca.Xcodeproj``
+      - menu bar: Product => Scheme => Snapmaker_Orca
       - menu bar: Product => Scheme => Edit Scheme...
           - Run => Info tab => Build Configuration: `RelWithDebInfo`
           - Run => Options tab => Document Versions: uncheck `Allow debugging when browsing versions`
@@ -89,16 +89,16 @@ resolution: 0.1
 
 
 ## Some background
-Snapmaker Orca is originally forked from OrcaSlicer.
+Snapmaker Orca is originally forked from Snapmaker_Orca.
 
-OrcaSlicer is originally forked from Bambu Studio, it was previously known as BambuStudio-SoftFever.
+Snapmaker_Orca is originally forked from Bambu Studio, it was previously known as BambuStudio-SoftFever.
 Bambu Studio is forked from [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research, which is from [Slic3r](https://github.com/Slic3r/Slic3r) by Alessandro Ranellucci and the RepRap community. 
 Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill
 Orca Slicer's logo is designed by community member Justin Levine(@freejstnalxndr)  
 
 
 # License
-Snapmaker Orca is licensed under the GNU Affero General Public License, version 3. Orca Slicer is based on OrcaSlicer by SoftFever
+Snapmaker Orca is licensed under the GNU Affero General Public License, version 3. Orca Slicer is based on Snapmaker_Orca by SoftFever
 
 Orca Slicer is licensed under the GNU Affero General Public License, version 3. Orca Slicer is based on Bambu Studio by BambuLab.
 

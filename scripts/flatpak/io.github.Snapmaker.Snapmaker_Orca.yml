@@ -1,10 +1,10 @@
-app-id: io.github.softfever.OrcaSlicer
+app-id: io.github.softfever.Snapmaker_Orca
 runtime: org.gnome.Platform
 runtime-version: "47"
 sdk: org.gnome.Sdk
 command: entrypoint
 separate-locales: true
-rename-icon: OrcaSlicer 
+rename-icon: Snapmaker_Orca 
 finish-args:
   - --share=ipc
   - --socket=x11
@@ -15,8 +15,8 @@ finish-args:
   - --filesystem=/run/media
   - --filesystem=/media
   - --filesystem=/run/spnav.sock:ro
-  # Allow OrcaSlicer to talk to other instances
-  - --talk-name=io.github.softfever.OrcaSlicer.InstanceCheck.*
+  # Allow Snapmaker_Orca to talk to other instances
+  - --talk-name=io.github.softfever.Snapmaker_Orca.InstanceCheck.*
   - --system-talk-name=org.freedesktop.UDisks2
   - --env=SPNAV_SOCKET=/run/spnav.sock
 
@@ -140,13 +140,13 @@ modules:
     
     sources:
       # -
-      # Section bellow fetches all OrcaSlicer dependencies before the build process and stores them in external-packages/*/* .
+      # Section bellow fetches all Snapmaker_Orca dependencies before the build process and stores them in external-packages/*/* .
       # -DDEP_DOWNLOAD_DIR is set in the build process which has to match with dest.
       #
-      # NOTE: The url, dest folder name and sha256 must match from OrcaSlicer's cmake scripts and folder names in OrcaSlicer/deps/
+      # NOTE: The url, dest folder name and sha256 must match from Snapmaker_Orca's cmake scripts and folder names in Snapmaker_Orca/deps/
       # -
       
-      # OrcaSlicer Source Archive
+      # Snapmaker_Orca Source Archive
       - type: dir 
         path: ../../
 
@@ -257,7 +257,7 @@ modules:
         dest: external-packages/libnoise
         sha256: 96ffd6cc47898dd8147aab53d7d1b1911b507d9dbaecd5613ca2649468afd8b6
 
-  - name: OrcaSlicer 
+  - name: Snapmaker_Orca 
     buildsystem: simple
     build-commands:
       - |
@@ -274,7 +274,7 @@ modules:
           -DBBL_RELEASE_TO_PUBLIC=1 \
           -DCMAKE_PREFIX_PATH=/app \
           -DCMAKE_INSTALL_PREFIX=/app
-        CXXFLAGS=-std=gnu++20 cmake --build build_flatpak --target OrcaSlicer -j$FLATPAK_BUILDER_N_JOBS
+        CXXFLAGS=-std=gnu++20 cmake --build build_flatpak --target Snapmaker_Orca -j$FLATPAK_BUILDER_N_JOBS
         ./scripts/run_gettext.sh
         CXXFLAGS=-std=gnu++20 cmake --build build_flatpak --target install -j$FLATPAK_BUILDER_N_JOBS
 
@@ -284,28 +284,28 @@ modules:
     post-install:
 
       - | # Desktop Integration files
-        install -Dm644 -t /app/share/icons/hicolor/scalable/apps/ resources/images/OrcaSlicer.svg
+        install -Dm644 -t /app/share/icons/hicolor/scalable/apps/ resources/images/Snapmaker_Orca.svg
         install -Dm644 ${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml
-        mv /app/share/applications/OrcaSlicer.desktop /app/share/applications/${FLATPAK_ID}.desktop
+        mv /app/share/applications/Snapmaker_Orca.desktop /app/share/applications/${FLATPAK_ID}.desktop
         desktop-file-edit --set-key=Exec --set-value="entrypoint %U" /app/share/applications/${FLATPAK_ID}.desktop
         install -Dm755 entrypoint /app/bin
         install -Dm755 umount /app/bin
 
     sources:
       # -
-      # Section bellow fetches all OrcaSlicer dependencies before the build process and stores them in external-packages/*/* .
+      # Section bellow fetches all Snapmaker_Orca dependencies before the build process and stores them in external-packages/*/* .
       # -DDEP_DOWNLOAD_DIR is set in the build process which has to match with dest.
       #
-      # NOTE: The url, dest folder name and sha256 must match from OrcaSlicer's cmake scripts and folder names in OrcaSlicer/deps/
+      # NOTE: The url, dest folder name and sha256 must match from Snapmaker_Orca's cmake scripts and folder names in Snapmaker_Orca/deps/
       # -
 
-      # OrcaSlicer Source Archive
+      # Snapmaker_Orca Source Archive
       - type: dir 
         path: ../../
 
       # AppData metainfo for Gnome Software & Co.
       - type: file
-        path: io.github.softfever.OrcaSlicer.metainfo.xml
+        path: io.github.softfever.Snapmaker_Orca.metainfo.xml
 
       # start-up script
       - type: file

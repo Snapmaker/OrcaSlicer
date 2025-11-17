@@ -796,7 +796,7 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
 endfunction()
 
 
-# libslic3r, OrcaSlicer GUI and the OrcaSlicer executable.
+# libslic3r, Snapmaker_Orca GUI and the Snapmaker_Orca executable.
 add_subdirectory(deps_src)
 add_subdirectory(src)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Snapmaker_Orca_app_gui)

@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop">
-    <id>io.github.softfever.OrcaSlicer</id>
-    <launchable type="desktop-id">io.github.softfever.OrcaSlicer.desktop</launchable>
+    <id>io.github.softfever.Snapmaker_Orca</id>
+    <launchable type="desktop-id">io.github.Snapmaker.Snapmaker_Orca.desktop</launchable>
     <provides>
-        <id>io.github.softfever.OrcaSlicer.desktop</id>
+        <id>io.github.Snapmaker.Snapmaker_Orca.desktop</id>
     </provides>
-    <name>OrcaSlicer</name>
+    <name>Snapmaker_Orca</name>
     <!-- hehe hadess @ppd 
     ... seriously though, thanks -->
     <summary>Get even more perfect prints!</summary>
     <developer_name>SoftFever</developer_name>
-    <url type="homepage">https://github.com/SoftFever/OrcaSlicer</url>
+    <url type="homepage">https://github.com/Snapmaker/OrcaSlicer</url>
     <url type="help">https://github.com/SoftFever/OrcaSlicer/wiki</url>
-    <url type="bugtracker">https://github.com/SoftFever/OrcaSlicer/issues/</url>
+    <url type="bugtracker">https://github.com/Snapamker/OrcaSlicer/issues/</url>
     <url type="donation">https://ko-fi.com/SoftFever</url>
     <metadata_license>0BSD</metadata_license>
     <project_license>AGPL-3.0-only</project_license>

@@ -96,7 +96,7 @@ jobs:
     - uses: actions/checkout@v5
     - name: Get the version and date
       run: |
-        ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
+        ver_pure=$(grep 'set(Snapmaker_VERSION' version.inc | cut -d '"' -f2)
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
           ver="PR-${{ github.event.number }}"
         else

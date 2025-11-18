@@ -116,18 +116,47 @@ jobs:
         cache: true
         arch: ${{ matrix.variant.arch }}
         upload-artifact: false
+    - name: Find Flatpak bundle file
+      id: find_bundle
+      working-directory: ${{ github.workspace }}
+      run: |
+        BUNDLE_NAME="Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak"
+        # Try multiple possible locations
+        if [ -f "$BUNDLE_NAME" ]; then
+          BUNDLE_PATH="$(pwd)/$BUNDLE_NAME"
+        elif [ -f "/__w/Snapmaker_Orca/Snapmaker_Orca/$BUNDLE_NAME" ]; then
+          BUNDLE_PATH="/__w/Snapmaker_Orca/Snapmaker_Orca/$BUNDLE_NAME"
+        else
+          # Search in current directory and subdirectories
+          FOUND=$(find . -name "$BUNDLE_NAME" -type f | head -1)
+          if [ -z "$FOUND" ]; then
+            echo "Error: Could not find $BUNDLE_NAME"
+            echo "Searching for any .flatpak files:"
+            find . -name "*.flatpak" -type f || true
+            exit 1
+          fi
+          # Convert relative path to absolute
+          BUNDLE_PATH="$(cd "$(dirname "$FOUND")" && pwd)/$(basename "$FOUND")"
+        fi
+        echo "path=$BUNDLE_PATH" >> $GITHUB_OUTPUT
+        echo "Found bundle at: $BUNDLE_PATH"
+        ls -lh "$BUNDLE_PATH" || true
+      shell: bash
+
     - name: Upload artifacts Flatpak
       uses: actions/upload-artifact@v4
       with:
         name: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
-        path: '/__w/Snapmaker_Orca/Snapmaker_Orca/Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak'
+        path: ${{ steps.find_bundle.outputs.path }}
+        if-no-files-found: error
+
     - name: Deploy Flatpak to nightly release
       if: ${{github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'}}
       uses: WebFreak001/deploy-nightly@v3.2.0
       with:
         upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
         release_id: 169912305
-        asset_path: /__w/Snapmaker_Orca/Snapmaker_Orca/Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
+        asset_path: ${{ steps.find_bundle.outputs.path }}
         asset_name: Snapmaker_Orca-Linux-flatpak_nightly_${{ matrix.variant.arch }}.flatpak
         asset_content_type: application/octet-stream
         max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted

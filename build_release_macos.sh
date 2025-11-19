@@ -272,7 +272,7 @@ function build_universal() {
     echo "Universal binary created at $UNIVERSAL_APP"
     
     # Create universal binary for profile validator if it exists
-    if [ -f "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ] && \
+    if [ -f "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ] && \
        [ -f "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
         echo "Creating universal binary for Snapmaker_Orca_profile_validator..."
         UNIVERSAL_VALIDATOR_APP="$PROJECT_BUILD_DIR/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"

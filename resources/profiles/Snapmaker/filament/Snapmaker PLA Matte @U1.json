@@ -27,7 +27,7 @@
         "0"
     ],
     "additional_cooling_fan_speed": [
-        "70"
+        "80"
     ],
     "chamber_temperature": [
         "0"
@@ -99,7 +99,7 @@
         "; filament end gcode \n"
     ],
     "filament_flow_ratio": [
-        "1.01"
+        "1"
     ],
     "filament_is_support": [
         "0"
@@ -114,7 +114,7 @@
         "nil"
     ],
     "filament_max_volumetric_speed": [
-        "20"
+        "22"
     ],
     "filament_minimal_purge_on_wipe_tower": [
         "15"
@@ -223,10 +223,10 @@
     ],
     "is_custom_defined": "0",
     "nozzle_temperature": [
-        "220"
+        "215"
     ],
     "nozzle_temperature_initial_layer": [
-        "220"
+        "215"
     ],
     "nozzle_temperature_range_high": [
         "240"
@@ -274,12 +274,12 @@
         "40"
     ],
     "textured_plate_temp": [
-        "55"
+        "65"
     ],
     "textured_plate_temp_initial_layer": [
-        "55"
+        "65"
     ],
     "filament_retract_length_toolchange": [
-        "10"
+        "5"
     ]
 }

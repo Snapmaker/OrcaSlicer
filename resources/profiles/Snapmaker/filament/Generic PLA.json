@@ -34,5 +34,11 @@
     ],
     "filament_retract_length_toolchange": [
         "10"
+    ],
+    "textured_plate_temp": [
+        "65"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "65"
     ]
 }

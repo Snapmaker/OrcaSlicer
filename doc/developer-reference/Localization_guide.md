@@ -22,7 +22,7 @@ Full manual for GNUgettext can be seen here: [http://www.gnu.org/software/gettex
 
 ### Scenario 2. How do I add a new language support
 
-1. Get file OrcaSlicer.pot here :
+1. Get file Snapmaker_Orca.pot here :
    [https://github.com/softfever/OrcaSlicer/tree/master/localization/i18n](https://github.com/softfever/OrcaSlicer/tree/master/localization/i18n)
 2. Open it in PoEdit for "Create new translation"
 3. Select Translation Language (for example French).
@@ -53,7 +53,7 @@ If you add new file resource, add it to the list of files containing macro `L()`
 2. Create template file(*.POT) with GNUgettext command:
 
     ```shell
-    xgettext --keyword=L --add-comments=TRN --from-code=UTF-8 --debug -o OrcaSlicer.pot -f list.txt
+    xgettext --keyword=L --add-comments=TRN --from-code=UTF-8 --debug -o Snapmaker_Orca.pot -f list.txt
     ```
 
     Use flag `--from-code=UTF-8` to specify that the source strings are in UTF-8 encoding

@@ -9,12 +9,12 @@ for %%a in (%*) do (
 )
 
 if %FULL_MODE%==1 (
-    .\tools\xgettext.exe --keyword=L --keyword=_L --keyword=_u8L --keyword=L_CONTEXT:1,2c --keyword=_L_PLURAL:1,2 --add-comments=TRN --from-code=UTF-8 --no-location --debug --boost -f ./localization/i18n/list.txt -o ./localization/i18n/OrcaSlicer.pot
+    .\tools\xgettext.exe --keyword=L --keyword=_L --keyword=_u8L --keyword=L_CONTEXT:1,2c --keyword=_L_PLURAL:1,2 --add-comments=TRN --from-code=UTF-8 --no-location --debug --boost -f ./localization/i18n/list.txt -o ./localization/i18n/Snapmaker_Orca.pot
     python scripts/HintsToPot.py ./resources ./localization/i18n
 )
 REM Print the current directory
 echo %cd%
-set pot_file="./localization/i18n/OrcaSlicer.pot"
+set pot_file="./localization/i18n/Snapmaker_Orca.pot"
 
 REM Run the script for each .po file
 for /r "./localization/i18n/" %%f in (*.po) do (

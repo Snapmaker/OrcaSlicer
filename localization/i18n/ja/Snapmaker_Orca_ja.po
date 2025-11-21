@@ -298,13 +298,13 @@ msgid "Frustum"
 msgstr "Frustum"
 
 msgid "Square"
-msgstr "Square"
+msgstr "四角形"
 
 msgid "Hexagon"
-msgstr "Hexagon"
+msgstr "六角形"
 
 msgid "Keep orientation"
-msgstr "Keep orientation"
+msgstr "パーツの向きを維持"
 
 msgid "Place on cut"
 msgstr "Place on cut"
@@ -328,7 +328,7 @@ msgstr "形状"
 #. Size in emboss direction
 #. TRN - Input label. Be short as possible
 msgid "Depth"
-msgstr "Depth"
+msgstr "深さ"
 
 msgid "Groove"
 msgstr "Groove"
@@ -368,22 +368,22 @@ msgid "Move cut plane"
 msgstr "カット面の移動"
 
 msgid "Mode"
-msgstr "Mode"
+msgstr "モード"
 
 msgid "Change cut mode"
 msgstr "カットモード変更"
 
 msgid "Tolerance"
-msgstr "Tolerance"
+msgstr "隙間の間隔"
 
 msgid "Drag"
 msgstr "Drag"
 
 msgid "Draw cut line"
-msgstr ""
+msgstr "カットラインを描く"
 
 msgid "Left click"
-msgstr "Left click"
+msgstr "左クリック"
 
 msgid "Add connector"
 msgstr "Add connector"
@@ -392,19 +392,19 @@ msgid "Right click"
 msgstr "Right click"
 
 msgid "Remove connector"
-msgstr "Remove connector"
+msgstr "継ぎ手を削除"
 
 msgid "Move connector"
-msgstr "Move connector"
+msgstr "継ぎ手を移動"
 
 msgid "Add connector to selection"
-msgstr "Add connector to selection"
+msgstr "継ぎ手を選択リストに追加"
 
 msgid "Remove connector from selection"
-msgstr "Remove connector from selection"
+msgstr "継ぎ手を選択リストから削除"
 
 msgid "Select all connectors"
-msgstr "Select all connectors"
+msgstr "すべての継ぎ手を選択"
 
 msgid "Cut"
 msgstr "カット"
@@ -456,10 +456,10 @@ msgid "Reset cutting plane"
 msgstr "カット面をリセット"
 
 msgid "Edit connectors"
-msgstr "Edit connectors"
+msgstr "継ぎ手を編集"
 
 msgid "Add connectors"
-msgstr "Add connectors"
+msgstr "継ぎ手を追加"
 
 msgid "Reset cut"
 msgstr "カットをリセット"
@@ -468,19 +468,19 @@ msgid "Reset cutting plane and remove connectors"
 msgstr "カット面をリセットし、コネクターを削除"
 
 msgid "Upper part"
-msgstr "Upper part"
+msgstr "上側の部品"
 
 msgid "Lower part"
-msgstr "Lower part"
+msgstr "下側の部品"
 
 msgid "Keep"
-msgstr "Keep"
+msgstr "維持"
 
 msgid "Flip"
-msgstr "Flip"
+msgstr "ひっくり返す"
 
 msgid "After cut"
-msgstr "After cut"
+msgstr "カット後"
 
 msgid "Cut to parts"
 msgstr "パーツに割り切る"
@@ -492,7 +492,7 @@ msgid "Warning"
 msgstr "警告"
 
 msgid "Invalid connectors detected"
-msgstr "Invalid connectors detected"
+msgstr "無効な継ぎ手が見つかりました"
 
 #, c-format, boost-format
 msgid "%1$d connector is out of cut contour"
@@ -640,7 +640,7 @@ msgid "Text Gap"
 msgstr "Text Gap"
 
 msgid "Angle"
-msgstr "Angle"
+msgstr "角度"
 
 msgid ""
 "Embeded\n"
@@ -660,7 +660,7 @@ msgid "Shift + Mouse move up or down"
 msgstr "Shift + Mouse move up or down"
 
 msgid "Rotate text"
-msgstr "Rotate text"
+msgstr "文字を回転"
 
 msgid "Text shape"
 msgstr "文字形状"
@@ -8513,7 +8513,7 @@ msgid "Resume Printing(problem solved)"
 msgstr "Resume Printing (problem solved)"
 
 msgid "Stop Printing"
-msgstr "Stop Printing"
+msgstr "印刷停止"
 
 msgid "Check Assistant"
 msgstr "Check Assistant"
@@ -8522,7 +8522,7 @@ msgid "Filament Extruded, Continue"
 msgstr "Filament Extruded, Continue"
 
 msgid "Not Extruded Yet, Retry"
-msgstr "Not Extruded Yet, Retry"
+msgstr "まだ押し出されていません、再試行"
 
 msgid "Finished, Continue"
 msgstr "Finished, Continue"

@@ -17,12 +17,14 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <boost/filesystem.hpp>
 
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Zipper.hpp"
 
 #include "Tab.hpp"
 #include "ProgressStatusBar.hpp"
@@ -49,6 +51,9 @@
 
 #include <fstream>
 #include <string_view>
+#include <iomanip>
+#include <sstream>
+#include <ctime>
 
 #include "GUI_App.hpp"
 #include "UnsavedChangesDialog.hpp"
@@ -2231,6 +2236,9 @@ static wxMenu* generate_help_menu()
     // Open Config Folder
     append_menu_item(helpMenu, wxID_ANY, _L("Show Configuration Folder"), _L("Show Configuration Folder"),
         [](wxCommandEvent&) { Slic3r::GUI::desktop_open_datadir_folder(); });
+    // Export Logs
+    append_menu_item(helpMenu, wxID_ANY, _L("Export Logs"), _L("Export application logs as ZIP file"),
+        [](wxCommandEvent&) { wxGetApp().mainframe->export_logs(); });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Show Tip of the Day"), _L("Show Tip of the Day"), [](wxCommandEvent&) {
         wxGetApp().plater()->get_dailytips()->open();
@@ -3994,6 +4002,84 @@ void MainFrame::show_sync_dialog()
     SimpleEvent* evt = new SimpleEvent(EVT_SYNC_CLOUD_PRESET);
     wxQueueEvent(this, evt);
 }
+
+void MainFrame::export_logs()
+{
+    // 1. Get log folder path
+    auto log_folder = boost::filesystem::path(data_dir()) / "log";
+
+    // 2. Check if log folder exists
+    if (!boost::filesystem::exists(log_folder) || boost::filesystem::is_empty(log_folder)) {
+        MessageDialog dlg(this, _L("No logs found."), _L("Export Logs"), wxOK | wxICON_INFORMATION);
+        dlg.ShowModal();
+        return;
+    }
+
+    // 3. Show save file dialog
+    std::time_t t = std::time(0);
+    std::tm* now_time = std::localtime(&t);
+    std::stringstream buf;
+    buf << std::put_time(now_time, "logs_%Y%m%d_%H%M%S.zip");
+    wxString default_filename = from_u8(buf.str());
+
+    wxFileDialog dlg(
+        this,
+        _L("Save logs as ZIP file"),
+        wxEmptyString,
+        default_filename,
+        "ZIP files (*.zip)|*.zip",
+        wxFD_SAVE | wxFD_OVERWRITE_PROMPT
+    );
+
+    if (dlg.ShowModal() != wxID_OK)
+        return;
+
+    wxString zip_path = dlg.GetPath();
+
+    // 4. Create ZIP file and add all logs
+    try {
+        Zipper zipper(into_u8(zip_path), Zipper::TIGHT_COMPRESSION);
+
+        // Iterate through log directory
+        for (auto& entry : boost::filesystem::directory_iterator(log_folder)) {
+            if (boost::filesystem::is_regular_file(entry.path())) {
+                std::string filename = entry.path().filename().string();
+
+                // Read file content
+                std::ifstream file(entry.path().string(), std::ios::binary);
+                if (!file.is_open()) {
+                    BOOST_LOG_TRIVIAL(warning) << "Failed to open log file: " << entry.path().string();
+                    continue;
+                }
+
+                std::string content((std::istreambuf_iterator<char>(file)),
+                                   std::istreambuf_iterator<char>());
+                file.close();
+
+                // Add to ZIP
+                zipper.add_entry(filename, content.c_str(), content.size());
+            }
+        }
+
+        zipper.finalize();
+
+        // 5. Show success message
+        MessageDialog success_dlg(this,
+            _L("Logs exported successfully."),
+            _L("Export Logs"),
+            wxOK | wxICON_INFORMATION);
+        success_dlg.ShowModal();
+
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to export logs: " << e.what();
+        MessageDialog error_dlg(this,
+            wxString::Format(_L("Failed to export logs: %s"), e.what()),
+            _L("Export Logs"),
+            wxOK | wxICON_ERROR);
+        error_dlg.ShowModal();
+    }
+}
+
 
 void MainFrame::update_side_preset_ui()
 {

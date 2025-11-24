@@ -1501,9 +1501,61 @@ void AppConfig::clear_filament_extruder_map()
     filament_extruder_map.clear();
 }
 
-std::unordered_map<int, int>& AppConfig::get_filament_extruder_map_ref() 
+std::unordered_map<int, int>& AppConfig::get_filament_extruder_map_ref()
 {
     return filament_extruder_map;
+}
+
+// 保存 filament_extruder_map 到配置存储
+void AppConfig::save_filament_extruder_map()
+{
+    // 先清除旧的映射数据
+    auto it = m_storage.find("filament_extruder_map");
+    if (it != m_storage.end()) {
+        it->second.clear();
+    }
+
+    // 保存新的映射数据
+    for (const auto& pair : filament_extruder_map) {
+        std::string key = "filament_" + std::to_string(pair.first);
+        std::string value = std::to_string(pair.second);
+        m_storage["filament_extruder_map"][key] = value;
+    }
+}
+
+// 从配置存储加载 filament_extruder_map
+void AppConfig::load_filament_extruder_map()
+{
+    filament_extruder_map.clear();
+
+    auto it = m_storage.find("filament_extruder_map");
+    if (it == m_storage.end()) {
+        return;  // 没有保存的映射数据
+    }
+
+    for (const auto& pair : it->second) {
+        // 解析 key（格式：filament_N）
+        if (pair.first.substr(0, 9) == "filament_") {
+            try {
+                int filament_idx = std::stoi(pair.first.substr(9));
+                int extruder_idx = std::stoi(pair.second);
+                filament_extruder_map[filament_idx] = extruder_idx;
+            } catch (...) {
+                // 解析失败，跳过这条记录
+            }
+        }
+    }
+}
+
+// 获取耗材对应的物理挤出机 ID
+int AppConfig::get_physical_extruder_for_filament(int filament_idx) const
+{
+    auto it = filament_extruder_map.find(filament_idx);
+    if (it != filament_extruder_map.end()) {
+        return it->second;
+    }
+    // 没有映射时，返回耗材索引本身（1:1 映射）
+    return filament_idx;
 }
 
 const std::map<std::string, std::string> AppConfig::filament_name_map = {

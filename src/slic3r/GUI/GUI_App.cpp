@@ -2093,6 +2093,8 @@ void GUI_App::init_app_config()
             m_config_corrupted = true;
 
         }
+        // SM Orca: 加载耗材-挤出机映射
+        app_config->load_filament_extruder_map();
         // Save orig_version here, so its empty if no app_config existed before this run.
         m_last_config_version = app_config->orig_version();//parse_semver_from_ini(app_config->config_path());
     }
@@ -2840,8 +2842,11 @@ bool GUI_App::on_init_inner()
             update_publish_status();
         }
 
-        if (m_post_initialized && app_config->dirty())
+        if (m_post_initialized && app_config->dirty()) {
+            // SM Orca: 保存耗材-挤出机映射
+            app_config->save_filament_extruder_map();
             app_config->save();
+        }
 
     });
 

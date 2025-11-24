@@ -2361,15 +2361,16 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 
         // calculate the volumetric speed of outer wall. Ignore per-object setting and multi-filament, and just use the default setting
         {
-
+            // SM Orca: 使用物理挤出机的喷嘴直径
+            int physical_extruder_id = m_writer.get_physical_extruder(initial_non_support_extruder_id);
             float filament_max_volumetric_speed = m_config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(initial_non_support_extruder_id);
-            const double nozzle_diameter = m_config.nozzle_diameter.get_at(initial_non_support_extruder_id);
+            const double nozzle_diameter = m_config.nozzle_diameter.get_at(physical_extruder_id);
             float outer_wall_line_width = print.default_region_config().get_abs_value("outer_wall_line_width", nozzle_diameter);
             if (outer_wall_line_width == 0.0) {
                 float default_line_width =  print.default_object_config().get_abs_value("line_width", nozzle_diameter);
                 outer_wall_line_width = default_line_width == 0.0 ? nozzle_diameter : default_line_width;
             }
-            Flow outer_wall_flow = Flow(outer_wall_line_width, m_config.layer_height, m_config.nozzle_diameter.get_at(initial_non_support_extruder_id));
+            Flow outer_wall_flow = Flow(outer_wall_line_width, m_config.layer_height, m_config.nozzle_diameter.get_at(physical_extruder_id));
             float outer_wall_speed = print.default_region_config().outer_wall_speed.value;
             outer_wall_volumetric_speed = outer_wall_speed * outer_wall_flow.mm3_per_mm();
             if (outer_wall_volumetric_speed > filament_max_volumetric_speed)
@@ -6538,6 +6539,11 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     DynamicConfig dyn_config;
     dyn_config.set_key_value("previous_extruder", new ConfigOptionInt(previous_extruder_id));
     dyn_config.set_key_value("next_extruder", new ConfigOptionInt((int)extruder_id));
+    // SM Orca: 添加物理挤出机ID，用于耗材-挤出机映射
+    int next_physical_extruder = m_writer.get_physical_extruder(extruder_id);
+    int previous_physical_extruder = (previous_extruder_id >= 0) ? m_writer.get_physical_extruder(previous_extruder_id) : -1;
+    dyn_config.set_key_value("next_physical_extruder", new ConfigOptionInt(next_physical_extruder));
+    dyn_config.set_key_value("previous_physical_extruder", new ConfigOptionInt(previous_physical_extruder));
     dyn_config.set_key_value("layer_num", new ConfigOptionInt(m_layer_index));
     dyn_config.set_key_value("layer_z", new ConfigOptionFloat(print_z));
     dyn_config.set_key_value("max_layer_z", new ConfigOptionFloat(m_max_layer_z));
@@ -6742,7 +6748,8 @@ Point GCode::gcode_to_point(const Vec2d &point) const
     Vec2d pt = point - m_origin;
     if (const Extruder *extruder = m_writer.extruder(); extruder)
         // This function may be called at the very start from toolchange G-code when the extruder is not assigned yet.
-        pt += m_config.extruder_offset.get_at(extruder->id());
+        // SM Orca: 使用物理挤出机的偏移
+        pt += m_config.extruder_offset.get_at(m_writer.get_physical_extruder(extruder->id()));
     return scaled<coord_t>(pt);
         
 }

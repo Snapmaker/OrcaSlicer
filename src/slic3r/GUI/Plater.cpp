@@ -44,6 +44,7 @@
 #include <wx/clrpicker.h>
 #include <wx/tokenzr.h>
 #include <wx/aui/aui.h>
+#include <wx/choice.h>  // For wxChoice (extruder selector)
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Format/STL.hpp"
@@ -607,6 +608,7 @@ struct Sidebar::priv
     wxPanel *scrolled;
     PlaterPresetComboBox *combo_print;
     std::vector<PlaterPresetComboBox*> combos_filament;
+    std::vector<wxChoice*> extruder_selectors;  // 挤出机选择器数组
     int editing_filament = -1;
     wxBoxSizer *sizer_filaments;
     PlaterPresetComboBox *combo_sla_print;
@@ -1389,6 +1391,55 @@ Sidebar::Sidebar(Plater *parent)
     }
     combo_and_btn_sizer->Add(p->combos_filament[0], 1, wxALL | wxEXPAND, FromDIP(2))->SetMinSize({-1, FromDIP(30) });
 
+    // 为第一个耗材添加挤出机选择下拉框
+    wxChoice* extruder_selector = new wxChoice(p->m_panel_filament_content, wxID_ANY);
+
+    // SM Orca: 获取打印机的挤出机数量（通过 nozzle_diameter 数组大小）
+    const DynamicPrintConfig& config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    int extruder_count = 1;  // 默认值
+    if (config.has("nozzle_diameter")) {
+        const ConfigOptionFloats* nozzle_diameter = config.option<ConfigOptionFloats>("nozzle_diameter");
+        if (nozzle_diameter) {
+            extruder_count = static_cast<int>(nozzle_diameter->values.size());
+            BOOST_LOG_TRIVIAL(info) << "First filament: Detected " << extruder_count << " extruders from nozzle_diameter config";
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "First filament: nozzle_diameter option exists but is null";
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << "First filament: nozzle_diameter config not found";
+    }
+
+    // 填充选项：1号头、2号头、3号头、4号头...
+    for (int i = 0; i < extruder_count; i++) {
+        extruder_selector->Append(wxString::Format(_L("%d号头"), i + 1));
+    }
+
+    // 默认选择第一个挤出机（索引 0）
+    auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    int default_extruder = 0;  // 第一个耗材默认映射到第一个挤出机
+    if (filament_extruder_map.count(0)) {
+        default_extruder = filament_extruder_map[0];
+    }
+    if (default_extruder < extruder_count) {
+        extruder_selector->SetSelection(default_extruder);
+    } else {
+        extruder_selector->SetSelection(0);
+    }
+
+    // 绑定选择事件
+    extruder_selector->Bind(wxEVT_CHOICE, [](wxCommandEvent& evt) {
+        int selected_extruder = evt.GetSelection();
+        auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+        filament_extruder_map[0] = selected_extruder;
+        BOOST_LOG_TRIVIAL(info) << "Filament 0 mapped to extruder " << selected_extruder;
+    });
+
+    // 添加到布局
+    combo_and_btn_sizer->Add(extruder_selector, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()) - FromDIP(2));
+
+    // 保存到数组
+    p->extruder_selectors.push_back(extruder_selector);
+
     /*ScalableButton* edit_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "edit");
     edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
     edit_btn->SetToolTip(_L("Click to edit preset"));*/
@@ -1552,6 +1603,58 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
     (*combo)->clr_picker->SetLabel(wxString::Format("%d", filament_idx + 1));
     combo_and_btn_sizer->Add((*combo)->clr_picker, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()) - FromDIP(2)); // ElementSpacing - 2 (from combo box))
     combo_and_btn_sizer->Add(*combo, 1, wxALL | wxEXPAND, FromDIP(2))->SetMinSize({-1, FromDIP(30)});
+
+    // 添加挤出机选择下拉框
+    wxChoice* extruder_selector = new wxChoice(p->m_panel_filament_content, wxID_ANY);
+
+    // SM Orca: 获取打印机的挤出机数量（通过 nozzle_diameter 数组大小）
+    const DynamicPrintConfig& config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    int extruder_count = 1;  // 默认值
+    if (config.has("nozzle_diameter")) {
+        const ConfigOptionFloats* nozzle_diameter = config.option<ConfigOptionFloats>("nozzle_diameter");
+        if (nozzle_diameter) {
+            extruder_count = static_cast<int>(nozzle_diameter->values.size());
+            BOOST_LOG_TRIVIAL(info) << "Filament " << filament_idx << ": Detected " << extruder_count << " extruders from nozzle_diameter config";
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "Filament " << filament_idx << ": nozzle_diameter option exists but is null";
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << "Filament " << filament_idx << ": nozzle_diameter config not found";
+    }
+
+    // 填充选项：1号头、2号头、3号头、4号头...
+    for (int i = 0; i < extruder_count; i++) {
+        extruder_selector->Append(wxString::Format(_L("%d号头"), i + 1));
+    }
+
+    // 默认选择映射到同索引的挤出机
+    auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    int default_extruder = filament_idx;  // 默认是 1:1 映射
+    if (filament_extruder_map.count(filament_idx)) {
+        default_extruder = filament_extruder_map[filament_idx];
+    }
+    if (default_extruder < extruder_count) {
+        extruder_selector->SetSelection(default_extruder);
+    } else {
+        extruder_selector->SetSelection(0);  // 如果超出范围，默认选择第一个
+    }
+
+    // 绑定选择事件
+    extruder_selector->Bind(wxEVT_CHOICE, [filament_idx](wxCommandEvent& evt) {
+        int selected_extruder = evt.GetSelection();
+        auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+        filament_extruder_map[filament_idx] = selected_extruder;
+        BOOST_LOG_TRIVIAL(info) << "Filament " << filament_idx << " mapped to extruder " << selected_extruder;
+    });
+
+    // 添加到布局
+    combo_and_btn_sizer->Add(extruder_selector, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::ElementSpacing()) - FromDIP(2));
+
+    // 保存到数组
+    if (filament_idx >= p->extruder_selectors.size()) {
+        p->extruder_selectors.resize(filament_idx + 1, nullptr);
+    }
+    p->extruder_selectors[filament_idx] = extruder_selector;
 
     /* BBS hide del_btn
     ScalableButton* del_btn = new ScalableButton(p->m_panel_filament_content, wxID_ANY, "delete_filament");
@@ -1895,6 +1998,9 @@ void Sidebar::update_presets(Preset::Type preset_type)
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
 
+        // SM Orca: 更新挤出机选择器（当打印机配置改变时）
+        update_extruder_selectors();
+
         /* update bed shape */
         Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
         if (printer_tab) {
@@ -2160,6 +2266,53 @@ void Sidebar::on_filaments_change(size_t num_filaments)
     update_dynamic_filament_list();
 }
 
+// 更新挤出机选择器（当打印机配置改变时调用）
+void Sidebar::update_extruder_selectors()
+{
+    // SM Orca: 获取打印机的挤出机数量（通过 nozzle_diameter 数组大小）
+    const DynamicPrintConfig& config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    int extruder_count = 1;  // 默认值
+    if (config.has("nozzle_diameter")) {
+        const ConfigOptionFloats* nozzle_diameter = config.option<ConfigOptionFloats>("nozzle_diameter");
+        if (nozzle_diameter) {
+            extruder_count = static_cast<int>(nozzle_diameter->values.size());
+            BOOST_LOG_TRIVIAL(info) << "update_extruder_selectors: Detected " << extruder_count << " extruders from nozzle_diameter config";
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "update_extruder_selectors: nozzle_diameter option exists but is null";
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << "update_extruder_selectors: nozzle_diameter config not found";
+    }
+
+    auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+
+    // 更新所有挤出机选择器
+    for (size_t i = 0; i < p->extruder_selectors.size(); i++) {
+        wxChoice* selector = p->extruder_selectors[i];
+        if (selector == nullptr) continue;
+
+        // 保存当前选择
+        int current_selection = selector->GetSelection();
+
+        // 清空并重新填充选项
+        selector->Clear();
+        for (int j = 0; j < extruder_count; j++) {
+            selector->Append(wxString::Format(_L("%d号头"), j + 1));
+        }
+
+        // 恢复选择（如果有效）
+        if (current_selection >= 0 && current_selection < extruder_count) {
+            selector->SetSelection(current_selection);
+        } else {
+            // 如果之前的选择超出范围，重置为 0 并更新映射
+            selector->SetSelection(0);
+            filament_extruder_map[i] = 0;
+        }
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "Updated extruder selectors for " << extruder_count << " extruders";
+}
+
 void Sidebar::add_filament() {
     if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER) return;
     wxColour    new_col        = Plater::get_next_color_for_filament();
@@ -2187,6 +2340,12 @@ void Sidebar::on_filaments_delete(size_t filament_id)
         PlaterPresetComboBox* to_delete_combox = p->combos_filament[filament_id];
         (*p->combos_filament[last]).Destroy();
         p->combos_filament.pop_back();
+
+        // 同时清理对应的挤出机选择器
+        if (last < p->extruder_selectors.size() && p->extruder_selectors[last] != nullptr) {
+            p->extruder_selectors[last]->Destroy();
+            p->extruder_selectors.pop_back();
+        }
 
         // BBS:  filament double columns
         auto sizer_filaments0 = this->p->sizer_filaments->GetItem((size_t) 0)->GetSizer();

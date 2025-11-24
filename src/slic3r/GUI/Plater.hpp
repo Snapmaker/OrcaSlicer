@@ -164,6 +164,8 @@ public:
     // Orca
     void show_SEMM_buttons(bool bshow);
     void update_dynamic_filament_list();
+    // 更新挤出机选择器（当打印机配置改变时调用）
+    void update_extruder_selectors();
 
     void update_nozzle_settings(bool switch_machine = false);
 

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(if [ ! -d \"docs\" ])",
+      "Bash(then mkdir docs)",
+      "Bash(else echo \"docs 目录已存在\")",
+      "Bash(fi)",
+      "Bash(./build_release_vs2022.bat slicer)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

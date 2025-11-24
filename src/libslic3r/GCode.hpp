@@ -197,6 +197,9 @@ public:
     //BBS: set offset for gcode writer
     void set_gcode_offset(double x, double y) { m_writer.set_xy_offset(x, y); m_processor.set_xy_offset(x, y);}
 
+    // SM Orca: 设置耗材-挤出机映射
+    void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_writer.set_filament_extruder_map(map); }
+
     // Exported for the helper classes (OozePrevention, Wipe) and for the Perl binding for unit tests.
     const Vec2d&    origin() const { return m_origin; }
     void            set_origin(const Vec2d &pointf);

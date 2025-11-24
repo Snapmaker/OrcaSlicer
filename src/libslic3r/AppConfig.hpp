@@ -383,6 +383,11 @@ public:
 
 	void clear_filament_extruder_map();
     std::unordered_map<int, int>& get_filament_extruder_map_ref();
+    // 保存和加载 filament_extruder_map
+    void save_filament_extruder_map();
+    void load_filament_extruder_map();
+    // 获取耗材对应的物理挤出机 ID（如果没有映射，返回耗材索引本身）
+    int get_physical_extruder_for_filament(int filament_idx) const;
 
 private:
 	template<typename T>

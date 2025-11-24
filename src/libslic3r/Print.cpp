@@ -504,8 +504,11 @@ unsigned int Print::num_object_instances() const
 double Print::max_allowed_layer_height() const
 {
     double nozzle_diameter_max = 0.;
-    for (unsigned int extruder_id : this->extruders())
-        nozzle_diameter_max = std::max(nozzle_diameter_max, m_config.nozzle_diameter.get_at(extruder_id));
+    for (unsigned int extruder_id : this->extruders()) {
+        // SM Orca: 使用物理挤出机的喷嘴直径
+        int physical_extruder = get_physical_extruder(extruder_id);
+        nozzle_diameter_max = std::max(nozzle_diameter_max, m_config.nozzle_diameter.get_at(physical_extruder));
+    }
     return nozzle_diameter_max;
 }
 
@@ -1183,10 +1186,13 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     if (this->has_wipe_tower() && ! m_objects.empty()) {
         // Make sure all extruders use same diameter filament and have the same nozzle diameter
         // EPSILON comparison is used for nozzles and 10 % tolerance is used for filaments
-        double first_nozzle_diam = m_config.nozzle_diameter.get_at(extruders.front());
+        // SM Orca: 使用物理挤出机的喷嘴直径
+        int first_physical = get_physical_extruder(extruders.front());
+        double first_nozzle_diam = m_config.nozzle_diameter.get_at(first_physical);
         double first_filament_diam = m_config.filament_diameter.get_at(extruders.front());
         for (const auto& extruder_idx : extruders) {
-            double nozzle_diam = m_config.nozzle_diameter.get_at(extruder_idx);
+            int physical_extruder = get_physical_extruder(extruder_idx);
+            double nozzle_diam = m_config.nozzle_diameter.get_at(physical_extruder);
             double filament_diam = m_config.filament_diameter.get_at(extruder_idx);
             if (nozzle_diam - EPSILON > first_nozzle_diam || nozzle_diam + EPSILON < first_nozzle_diam
                 || std::abs((filament_diam - first_filament_diam) / first_filament_diam) > 0.1) {
@@ -1292,7 +1298,9 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 		double min_nozzle_diameter = std::numeric_limits<double>::max();
 		double max_nozzle_diameter = 0;
 		for (unsigned int extruder_id : extruders) {
-			double dmr = m_config.nozzle_diameter.get_at(extruder_id);
+			// SM Orca: 使用物理挤出机的喷嘴直径
+			int physical_extruder = get_physical_extruder(extruder_id);
+			double dmr = m_config.nozzle_diameter.get_at(physical_extruder);
 			min_nozzle_diameter = std::min(min_nozzle_diameter, dmr);
 			max_nozzle_diameter = std::max(max_nozzle_diameter, dmr);
 		}
@@ -1380,9 +1388,11 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 size_t first_layer_extruder = object->config().raft_layers == 1
                     ? object->config().support_interface_filament-1
                     : object->config().support_filament-1;
+                // SM Orca: 使用物理挤出机的喷嘴直径
+                int physical_extruder = get_physical_extruder(first_layer_extruder);
                 first_layer_min_nozzle_diameter = (first_layer_extruder == size_t(-1)) ?
                     min_nozzle_diameter :
-                    m_config.nozzle_diameter.get_at(first_layer_extruder);
+                    m_config.nozzle_diameter.get_at(physical_extruder);
             } else {
                 // if we don't have raft layers, any nozzle diameter is potentially used in first layer
                 first_layer_min_nozzle_diameter = min_nozzle_diameter;
@@ -1700,11 +1710,14 @@ Flow Print::brim_flow() const
        extruders and take the one with, say, the smallest index.
        The same logic should be applied to the code that selects the extruder during G-code
        generation as well. */
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = m_print_regions.front()->config().wall_filament - 1;
+    int physical_extruder = get_physical_extruder(filament_idx);
     return Flow::new_from_config_width(
         frPerimeter,
         // Flow::new_from_config_width takes care of the percent to value substitution
 		width,
-        (float)m_config.nozzle_diameter.get_at(m_print_regions.front()->config().wall_filament-1),
+        (float)m_config.nozzle_diameter.get_at(physical_extruder),
 		(float)this->skirt_first_layer_height());
 }
 
@@ -1719,11 +1732,14 @@ Flow Print::skirt_flow() const
        extruders and take the one with, say, the smallest index;
        The same logic should be applied to the code that selects the extruder during G-code
        generation as well. */
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = m_objects.front()->config().support_filament - 1;
+    int physical_extruder = get_physical_extruder(filament_idx);
     return Flow::new_from_config_width(
         frPerimeter,
         // Flow::new_from_config_width takes care of the percent to value substitution
 		width,
-		(float)m_config.nozzle_diameter.get_at(m_objects.front()->config().support_filament-1),
+		(float)m_config.nozzle_diameter.get_at(physical_extruder),
 		(float)this->skirt_first_layer_height());
 }
 
@@ -2241,6 +2257,8 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     //BBS: compute plate offset for gcode-generator
     const Vec3d origin = this->get_plate_origin();
     gcode.set_gcode_offset(origin(0), origin(1));
+    // SM Orca: 设置耗材-挤出机映射
+    gcode.set_filament_extruder_map(m_filament_extruder_map);
     gcode.do_export(this, path.c_str(), result, thumbnail_cb);
 
     //BBS

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-#  OrcaSlicer gettext
+#  Snapmaker_Orca gettext
 #  Created by SoftFever on 27/5/23.
 #
 
@@ -26,12 +26,12 @@ do
     dir=${dir%*/}      # remove the trailing "/"
     lang=${dir##*/}    # extract the language identifier
 
-    if [ -f "$dir/OrcaSlicer_${lang}.po" ]; then
+    if [ -f "$dir/Snapmaker_Orca_${lang}.po" ]; then
         if $FULL_MODE; then
-            msgmerge -N -o "$dir/OrcaSlicer_${lang}.po" "$dir/OrcaSlicer_${lang}.po" "$pot_file"
+            msgmerge -N -o "$dir/Snapmaker_Orca_${lang}.po" "$dir/Snapmaker_Orca_${lang}.po" "$pot_file"
         fi
         mkdir -p "resources/i18n/${lang}"
-        if ! msgfmt --check-format -o "resources/i18n/${lang}/OrcaSlicer.mo" "$dir/OrcaSlicer_${lang}.po"; then
+        if ! msgfmt --check-format -o "resources/i18n/${lang}/Snapmaker_Orca.mo" "$dir/Snapmaker_Orca_${lang}.po"; then
             echo "Error encountered with msgfmt command for language ${lang}."
             exit 1  # Exit the script with an error status
         fi

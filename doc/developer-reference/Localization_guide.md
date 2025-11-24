@@ -18,7 +18,7 @@ Full manual for GNUgettext can be seen here: [http://www.gnu.org/software/gettex
 2. Open this file in PoEdit as "Edit a translation"
 3. Apply your corrections to the translation
 4. Push changed OrcaSlicer_xx.po into the original folder
-5. copy OrcaSlicer_xx.mo into resources/i18n/xx and rename it to OrcaSlicer.mo, then push the changed file.
+5. copy OrcaSlicer_xx.mo into resources/i18n/xx and rename it to Snapmaker_Orca.mo, then push the changed file.
 
 ### Scenario 2. How do I add a new language support
 
@@ -31,7 +31,7 @@ Notice. When the translation is complete you need to:
     - Rename the file to OrcaSlicer_fr.po
     - Click "Save file" button. OrcaSlicer_fr.mo will be created immediately
     - Bambu_Studio_fr.po needs to be copied into the sub-folder fr of [https://github.com/softfever/OrcaSlicer/tree/master/localization/i18n](https://github.com/softfever/OrcaSlicer/tree/master/localization/i18n), and be pushed
-    - copy OrcaSlicer_xx.mo into resources/i18n/xx and rename it to OrcaSlicer.mo, then push the changed file.
+    - copy OrcaSlicer_xx.mo into resources/i18n/xx and rename it to Snapmaker_Orca.mo, then push the changed file.
 ( name of folder "fr" means "French" - the translation language).
 
 ### Scenario 3. How do I add a new text resource when implementing a feature to OrcaSlicer
@@ -90,7 +90,7 @@ When you have Catalog to translation open POT or PO file in PoEdit and start tra
 
 - We recommend using _PoEdit_ application for translation (as described above). It will help you eliminate most punctuation errors and will show you strings with "random" translations (if the fuzzy parameter was used).
 
-- To check how the translated text looks on the UI elements, test it :) If you use _PoEdit_, all you need to do is save the file. At this point, a MO file will be created. Rename it OrcaSlicer.mo, and you can run OrcaSlicer (see above).
+- To check how the translated text looks on the UI elements, test it :) If you use _PoEdit_, all you need to do is save the file. At this point, a MO file will be created. Rename it Snapmaker_Orca.mo, and you can run OrcaSlicer (see above).
 
 - If you see an encoding error (garbage characters instead of Unicode) somewhere in OrcaSlicer, report it. It is likely not a problem of your translation, but a bug in the software.
 

@@ -1,5 +1,5 @@
 @echo off
-REM OrcaSlicer gettext
+REM Snapmaker_Orca gettext
 REM Created by SoftFever on 27/5/23.
 
 REM Check for --full argument
@@ -26,10 +26,10 @@ goto :eof
     set "file=%~1"
     set "dir=%~dp1"
     set "name=%~n1"
-    set "lang=%name:OrcaSlicer_=%"
+    set "lang=%name:Snapmaker_Orca_=%"
     if %FULL_MODE%==1 (
         .\tools\msgmerge.exe -N -o "%file%" "%file%" "%pot_file%"
     )
     if not exist "./resources/i18n/%lang%" mkdir "./resources/i18n/%lang%"
-    .\tools\msgfmt.exe --check-format -o "./resources/i18n/%lang%/OrcaSlicer.mo" "%file%"
+    .\tools\msgfmt.exe --check-format -o "./resources/i18n/%lang%/Snapmaker_Orca.mo" "%file%"
 goto :eof

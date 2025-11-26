@@ -122,6 +122,7 @@ public:
 
     // SM Orca: 设置耗材-挤出机映射
     void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
+    const std::unordered_map<int, int>& get_filament_extruder_map() const { return m_filament_extruder_map; }  // SM Orca: 获取映射表
     // SM Orca: 获取物理挤出机ID（如果没有映射，返回耗材ID本身）
     int get_physical_extruder(int filament_idx) const {
         auto it = m_filament_extruder_map.find(filament_idx);

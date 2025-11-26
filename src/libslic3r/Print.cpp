@@ -2258,7 +2258,12 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     const Vec3d origin = this->get_plate_origin();
     gcode.set_gcode_offset(origin(0), origin(1));
     // SM Orca: 设置耗材-挤出机映射
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Print::export_gcode - Setting filament_extruder_map to GCode, mapping size: " << m_filament_extruder_map.size();
+    for (const auto& pair : m_filament_extruder_map) {
+        BOOST_LOG_TRIVIAL(info) << "  SM Orca: Print mapping: filament " << pair.first << " -> extruder " << pair.second;
+    }
     gcode.set_filament_extruder_map(m_filament_extruder_map);
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Print::export_gcode - Mapping set to GCode object, calling do_export";
     gcode.do_export(this, path.c_str(), result, thumbnail_cb);
 
     //BBS
@@ -2986,6 +2991,8 @@ void Print::export_gcode_from_previous_file(const std::string& file, GCodeProces
         GCodeProcessor::s_IsBBLPrinter = is_BBL_printer();
         const Vec3d origin = this->get_plate_origin();
         processor.set_xy_offset(origin(0), origin(1));
+        // SM Orca: 设置耗材到物理挤出机的映射
+        processor.set_filament_extruder_map(m_filament_extruder_map);
         //processor.enable_producers(true);
         processor.process_file(file);
 

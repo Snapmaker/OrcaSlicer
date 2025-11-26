@@ -3234,6 +3234,11 @@ void PartPlateList::init()
 	{
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
+		// SM Orca: 为新创建的Print对象设置耗材-挤出机映射
+		auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+		print->set_filament_extruder_map(filament_extruder_map);
+		BOOST_LOG_TRIVIAL(info) << "SM Orca: PartPlateList::init - Set filament_extruder_map to new Print, mapping size: " << filament_extruder_map.size();
+
 		m_print_list.emplace(m_print_index, print);
 		m_gcode_result_list.emplace(m_print_index, gcode);
 		first_plate->set_print(print, gcode, m_print_index);
@@ -3684,6 +3689,11 @@ int PartPlateList::create_plate(bool adjust_position)
 	{
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
+		// SM Orca: 为新创建的Print对象设置耗材-挤出机映射
+		auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+		print->set_filament_extruder_map(filament_extruder_map);
+		BOOST_LOG_TRIVIAL(info) << "SM Orca: PartPlateList::create_plate - Set filament_extruder_map to new Print, mapping size: " << filament_extruder_map.size();
+
 		m_print_list.emplace(m_print_index, print);
 		m_gcode_result_list.emplace(m_print_index, gcode);
 		plate->set_print(print, gcode, m_print_index);
@@ -5239,6 +5249,11 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 		//can not find, create a new one
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
+		// SM Orca: 为新创建的Print对象设置耗材-挤出机映射
+		auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+		print->set_filament_extruder_map(filament_extruder_map);
+		BOOST_LOG_TRIVIAL(info) << "SM Orca: PartPlateList::load_from_3mf - Set filament_extruder_map to new Print, mapping size: " << filament_extruder_map.size();
+
 		m_print_list.emplace(m_print_index, print);
 		m_gcode_result_list.emplace(m_print_index, gcode);
 		m_plate_list[i]->set_print(print, gcode, m_print_index);

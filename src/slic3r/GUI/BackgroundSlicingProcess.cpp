@@ -240,7 +240,12 @@ void BackgroundSlicingProcess::process_fff()
 		// SM Orca: 在导出 GCode 前设置耗材-挤出机映射
 		{
 			auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+			BOOST_LOG_TRIVIAL(info) << "SM Orca: BackgroundSlicingProcess::process_fff - Setting filament_extruder_map to Print, mapping size: " << filament_extruder_map.size();
+			for (const auto& pair : filament_extruder_map) {
+				BOOST_LOG_TRIVIAL(info) << "  SM Orca: BackgroundProcess mapping: filament " << pair.first << " -> extruder " << pair.second;
+			}
 			m_fff_print->set_filament_extruder_map(filament_extruder_map);
+			BOOST_LOG_TRIVIAL(info) << "SM Orca: BackgroundSlicingProcess::process_fff - Mapping set to Print object successfully";
 		}
 		m_fff_print->export_gcode(m_temp_output_path, m_gcode_result, [this](const ThumbnailsParams& params) { return this->render_thumbnails(params); });
 		if(m_fff_print->is_BBL_printer())

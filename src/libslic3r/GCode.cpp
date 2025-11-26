@@ -22,6 +22,7 @@
 #include "Time.hpp"
 #include "GCode/ExtrusionProcessor.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <chrono>
@@ -457,7 +458,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         Vec2f wipe_tower_offset   = tcr.priming ? Vec2f::Zero() : m_wipe_tower_pos;
         float wipe_tower_rotation = tcr.priming ? 0.f : alpha;
 
-        std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
+        std::string tcr_rotated_gcode = post_process_wipe_tower_moves(gcodegen, tcr, wipe_tower_offset, wipe_tower_rotation);
 
         // BBS: add partplate logic
         Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
@@ -730,7 +731,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         gcodegen.m_next_wipe_x = transformed_pos(0);
         gcodegen.m_next_wipe_y = transformed_pos(1);
 
-        std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
+        std::string tcr_rotated_gcode = post_process_wipe_tower_moves(gcodegen, tcr, wipe_tower_offset, wipe_tower_rotation);
 
         gcode += gcodegen.writer().unlift(); // Make sure there is no z-hop (in most cases, there isn't).
 
@@ -837,13 +838,16 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
 
     // This function postprocesses gcode_original, rotates and moves all G1 extrusions and returns resulting gcode
     // Starting position has to be supplied explicitely (otherwise it would fail in case first G1 command only contained one coordinate)
-    std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const
+    std::string WipeTowerIntegration::post_process_wipe_tower_moves(GCode& gcodegen, const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const
     {
         Vec2f extruder_offset;
         if (m_single_extruder_multi_material)
             extruder_offset = m_extruder_offsets[0].cast<float>();
-        else
-            extruder_offset = m_extruder_offsets[tcr.initial_tool].cast<float>();
+        else {
+            // SM Orca: 使用物理挤出机ID，不是耗材ID
+            int physical_extruder = gcodegen.writer().get_physical_extruder(tcr.initial_tool);
+            extruder_offset = m_extruder_offsets[physical_extruder].cast<float>();
+        }
 
         std::istringstream gcode_str(tcr.gcode);
         std::string gcode_out;
@@ -903,17 +907,21 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             if (line == "[change_filament_gcode]") {
                 // BBS
                 if (!m_single_extruder_multi_material) {
-                    extruder_offset = m_extruder_offsets[tcr.new_tool].cast<float>();
+                    // SM Orca: 使用物理挤出机ID，不是耗材ID
+                    int physical_extruder_new = gcodegen.writer().get_physical_extruder(tcr.new_tool);
+                    int physical_extruder_initial = gcodegen.writer().get_physical_extruder(tcr.initial_tool);
+                    Vec2f new_extruder_offset = m_extruder_offsets[physical_extruder_new].cast<float>();
 
                     // If the extruder offset changed, add an extra move so everything is continuous
-                    if (extruder_offset != m_extruder_offsets[tcr.initial_tool].cast<float>()) {
+                    if (new_extruder_offset != m_extruder_offsets[physical_extruder_initial].cast<float>()) {
                         std::ostringstream oss;
                         oss << std::fixed << std::setprecision(3)
-                            << "G1 X" << transformed_pos.x() - extruder_offset.x()
-                            << " Y" << transformed_pos.y() - extruder_offset.y()
+                            << "G1 X" << transformed_pos.x() - new_extruder_offset.x()
+                            << " Y" << transformed_pos.y() - new_extruder_offset.y()
                             << "\n";
                         gcode_out += oss.str();
                     }
+                    extruder_offset = new_extruder_offset;
                 }
             }
         }
@@ -1589,7 +1597,20 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
 //    DoExport::update_print_estimated_times_stats(m_processor, print->m_print_statistics);
     DoExport::update_print_estimated_stats(m_processor, m_writer.extruders(), print->m_print_statistics, print->config());
     if (result != nullptr) {
+        // SM Orca: 记录移动赋值前的状态
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Before move assignment - result=" << result
+            << ", result->extruders_count=" << result->extruders_count
+            << ", result->filament_diameters.size()=" << result->filament_diameters.size()
+            << ", processor.result().extruders_count=" << m_processor.result().extruders_count
+            << ", processor.result().filament_diameters.size()=" << m_processor.result().filament_diameters.size();
+
         *result = std::move(m_processor.extract_result());
+
+        // SM Orca: 记录移动赋值后的状态
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: After move assignment - result=" << result
+            << ", result->extruders_count=" << result->extruders_count
+            << ", result->filament_diameters.size()=" << result->filament_diameters.size();
+
         // set the filename to the correct value
         result->filename = path;
     }
@@ -1846,7 +1867,16 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 {
     PROFILE_FUNC();
 
+    // SM Orca: 在 apply_config 之前先设置耗材-挤出机映射表（从writer获取）
+    const auto& writer_mapping = m_writer.get_filament_extruder_map();
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCode::_do_export - Setting filament_extruder_map to processor BEFORE init, mapping size: " << writer_mapping.size();
+    for (const auto& pair : writer_mapping) {
+        BOOST_LOG_TRIVIAL(info) << "  SM Orca: Writer mapping: filament " << pair.first << " -> extruder " << pair.second;
+    }
+    m_processor.set_filament_extruder_map(writer_mapping);
+
     // modifies m_silent_time_estimator_enabled
+    // 现在 init_gcode_processor 调用 apply_config 时，映射表已经设置好了
     DoExport::init_gcode_processor(print.config(), m_processor, m_silent_time_estimator_enabled);
     const bool is_bbl_printers = print.is_BBL_printer();
     m_calib_config.clear();
@@ -6738,8 +6768,37 @@ std::string GCode::set_object_info(Print *print) {
 // convert a model-space scaled point into G-code coordinates
 Vec2d GCode::point_to_gcode(const Point &point) const
 {
-    Vec2d extruder_offset = EXTRUDER_CONFIG(extruder_offset);
-    return unscale(point) + m_origin - extruder_offset;
+    // SM Orca: 无条件诊断 - 检查是否被调用
+    static std::atomic<int> call_count{0};
+    int this_call = ++call_count;
+    if (this_call <= 5 || (m_writer.extruder() && m_writer.extruder()->id() >= 12)) {
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: point_to_gcode called #" << this_call
+            << " extruder=" << (m_writer.extruder() ? m_writer.extruder()->id() : -1)
+            << " point=(" << point.x() << ", " << point.y() << ")";
+    }
+
+    // SM Orca: 使用物理挤出机ID获取offset，与gcode_to_point保持一致
+    Vec2d extruder_offset = Vec2d::Zero();
+    if (const Extruder *extruder = m_writer.extruder(); extruder) {
+        extruder_offset = m_config.extruder_offset.get_at(m_writer.get_physical_extruder(extruder->id()));
+    }
+
+    Vec2d result = unscale(point) + m_origin - extruder_offset;
+
+    // SM Orca: 诊断NaN问题
+    if (std::isnan(result.x()) || std::isinf(result.x()) || std::isnan(result.y()) || std::isinf(result.y())) {
+        Vec2d unscaled_val = unscale(point);
+        BOOST_LOG_TRIVIAL(error) << "SM Orca: point_to_gcode produced NaN/inf"
+            << " extruder=" << (m_writer.extruder() ? m_writer.extruder()->id() : -1)
+            << " physical_extruder=" << (m_writer.extruder() ? m_writer.get_physical_extruder(m_writer.extruder()->id()) : -1)
+            << " point=(" << point.x() << ", " << point.y() << ")"
+            << " unscaled=(" << unscaled_val.x() << ", " << unscaled_val.y() << ")"
+            << " m_origin=(" << m_origin.x() << ", " << m_origin.y() << ")"
+            << " extruder_offset=(" << extruder_offset.x() << ", " << extruder_offset.y() << ")"
+            << " result=(" << result.x() << ", " << result.y() << ")";
+    }
+
+    return result;
 }
 
 // convert a model-space scaled point into G-code coordinates

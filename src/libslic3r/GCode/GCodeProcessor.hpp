@@ -677,6 +677,8 @@ class Print;
         EPositioningType m_global_positioning_type;
         EPositioningType m_e_local_positioning_type;
         std::vector<Vec3f> m_extruder_offsets;
+        // SM Orca: 耗材到物理挤出机的映射
+        std::unordered_map<int, int> m_filament_extruder_map;
         GCodeFlavor m_flavor;
         float       m_nozzle_volume;
         AxisCoords m_start_position; // mm
@@ -776,6 +778,24 @@ class Print;
 
         void apply_config(const PrintConfig& config);
         void set_print(Print* print) { m_print = print; }
+        // SM Orca: 设置耗材到物理挤出机的映射
+        void set_filament_extruder_map(const std::unordered_map<int, int>& map) {
+            m_filament_extruder_map = map;
+            BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessor::set_filament_extruder_map - Received mapping with size: " << map.size();
+            for (const auto& pair : map) {
+                BOOST_LOG_TRIVIAL(info) << "  SM Orca: Processor mapping: filament " << pair.first << " -> extruder " << pair.second;
+            }
+        }
+        int get_physical_extruder(int filament_idx) const {
+            auto it = m_filament_extruder_map.find(filament_idx);
+            int result = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
+            if (it != m_filament_extruder_map.end()) {
+                BOOST_LOG_TRIVIAL(debug) << "SM Orca: GCodeProcessor::get_physical_extruder(" << filament_idx << ") = " << result << " (from mapping)";
+            } else {
+                BOOST_LOG_TRIVIAL(warning) << "SM Orca: GCodeProcessor::get_physical_extruder(" << filament_idx << ") = " << result << " (fallback: no mapping found, mapping size=" << m_filament_extruder_map.size() << ")";
+            }
+            return result;
+        }
         void enable_stealth_time_estimator(bool enabled);
         bool is_stealth_time_estimator_enabled() const {
             return m_time_processor.machines[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].enabled;

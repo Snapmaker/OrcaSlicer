@@ -114,7 +114,7 @@ private:
     std::string append_tcr2(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
 
     // Postprocesses gcode: rotates and moves G1 extrusions and returns result
-    std::string post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const;
+    std::string post_process_wipe_tower_moves(GCode& gcodegen, const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const;
     // Left / right edges of the wipe tower, for the planning of wipe moves.
     const float                                                  m_left;
     const float                                                  m_right;

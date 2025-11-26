@@ -942,6 +942,13 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     //BBS: add logs
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": gcode result %1%, new id %2%, gcode file %3% ") % (&gcode_result) % m_last_result_id % gcode_result.filename;
 
+    // SM Orca: 记录result的数组大小信息
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeViewer::load - gcode_result=" << (&gcode_result)
+        << ", extruders_count=" << gcode_result.extruders_count
+        << ", filament_diameters.size()=" << gcode_result.filament_diameters.size()
+        << ", filament_densities.size()=" << gcode_result.filament_densities.size()
+        << ", filament_costs.size()=" << gcode_result.filament_costs.size();
+
     // release gpu memory, if used
     reset();
 
@@ -4171,9 +4178,35 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
         ImGui::Separator();
     };
     auto get_used_filament_from_volume = [this, imperial_units, &filament_diameters, &filament_densities](double volume, int extruder_id) {
+        // SM Orca: 边界检查和数值验证
+        if (extruder_id < 0 || extruder_id >= static_cast<int>(filament_diameters.size()) ||
+            extruder_id >= static_cast<int>(filament_densities.size())) {
+            BOOST_LOG_TRIVIAL(error) << "SM Orca: CRITICAL - GCodeViewer extruder_id " << extruder_id
+                << " out of bounds (diameters size=" << filament_diameters.size()
+                << ", densities size=" << filament_densities.size() << "). This should never happen!";
+            // 使用索引0的值作为紧急回退（而不是硬编码1.75）
+            double diameter = !filament_diameters.empty() ? filament_diameters[0] : 1.75;
+            double density = !filament_densities.empty() ? filament_densities[0] : 1.25;
+            double koef = imperial_units ? 1.0 / GizmoObjectManipulation::in_to_mm : 0.001;
+            return std::make_pair(koef * volume / (PI * sqr(0.5 * diameter)), volume * density * 0.001);
+        }
+
+        double diameter = filament_diameters[extruder_id];
+        double density = filament_densities[extruder_id];
+
+        // SM Orca: 防止除零和NaN
+        if (diameter <= 0.0 || std::isnan(diameter)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: GCodeViewer - Invalid diameter " << diameter << " for extruder " << extruder_id;
+            diameter = 1.75;
+        }
+        if (density <= 0.0 || std::isnan(density)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: GCodeViewer - Invalid density " << density << " for extruder " << extruder_id;
+            density = 1.25;
+        }
+
         double koef = imperial_units ? 1.0 / GizmoObjectManipulation::in_to_mm : 0.001;
-        std::pair<double, double> ret = { koef * volume / (PI * sqr(0.5 * filament_diameters[extruder_id])),
-                                            volume * filament_densities[extruder_id] * 0.001 };
+        std::pair<double, double> ret = { koef * volume / (PI * sqr(0.5 * diameter)),
+                                            volume * density * 0.001 };
         return ret;
     };
 
@@ -4641,9 +4674,35 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
 
     // get used filament (meters and grams) from used volume in respect to the active extruder
     auto get_used_filament_from_volume = [this, imperial_units](double volume, int extruder_id) {
+        // SM Orca: 边界检查和数值验证
+        if (extruder_id < 0 || extruder_id >= static_cast<int>(m_filament_diameters.size()) ||
+            extruder_id >= static_cast<int>(m_filament_densities.size())) {
+            BOOST_LOG_TRIVIAL(error) << "SM Orca: CRITICAL - GCodeViewer extruder_id " << extruder_id
+                << " out of bounds (member: diameters size=" << m_filament_diameters.size()
+                << ", densities size=" << m_filament_densities.size() << "). This should never happen!";
+            // 使用索引0的值作为紧急回退（而不是硬编码1.75）
+            double diameter = !m_filament_diameters.empty() ? m_filament_diameters[0] : 1.75;
+            double density = !m_filament_densities.empty() ? m_filament_densities[0] : 1.25;
+            double koef = imperial_units ? 1.0 / GizmoObjectManipulation::in_to_mm : 0.001;
+            return std::make_pair(koef * volume / (PI * sqr(0.5 * diameter)), volume * density * 0.001);
+        }
+
+        double diameter = m_filament_diameters[extruder_id];
+        double density = m_filament_densities[extruder_id];
+
+        // SM Orca: 防止除零和NaN
+        if (diameter <= 0.0 || std::isnan(diameter)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: GCodeViewer - Invalid diameter " << diameter << " for extruder " << extruder_id << " (member)";
+            diameter = 1.75;
+        }
+        if (density <= 0.0 || std::isnan(density)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: GCodeViewer - Invalid density " << density << " for extruder " << extruder_id << " (member)";
+            density = 1.25;
+        }
+
         double koef = imperial_units ? 1.0 / GizmoObjectManipulation::in_to_mm : 0.001;
-        std::pair<double, double> ret = { koef * volume / (PI * sqr(0.5 * m_filament_diameters[extruder_id])),
-                                          volume * m_filament_densities[extruder_id] * 0.001 };
+        std::pair<double, double> ret = { koef * volume / (PI * sqr(0.5 * diameter)),
+                                          volume * density * 0.001 };
         return ret;
     };
 

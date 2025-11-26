@@ -582,8 +582,34 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     std::vector<float>        m_filament_diameters          = result->filament_diameters;
     std::vector<float>        m_filament_densities          = result->filament_densities;
     auto get_used_filament_from_volume = [m_filament_diameters, m_filament_densities](double volume, int extruder_id) {
-        double                    koef = 0.001;
-        std::pair<double, double> ret = {koef * volume / (PI * sqr(0.5 * m_filament_diameters[extruder_id])), volume * m_filament_densities[extruder_id] * 0.001};
+        // SM Orca: 边界检查和数值验证
+        if (extruder_id < 0 || extruder_id >= static_cast<int>(m_filament_diameters.size()) ||
+            extruder_id >= static_cast<int>(m_filament_densities.size())) {
+            BOOST_LOG_TRIVIAL(error) << "SM Orca: CRITICAL - bbs_3mf extruder_id " << extruder_id
+                << " out of bounds (diameters size=" << m_filament_diameters.size()
+                << ", densities size=" << m_filament_densities.size() << "). This should never happen!";
+            // 使用索引0的值作为紧急回退（而不是硬编码1.75）
+            double diameter = !m_filament_diameters.empty() ? m_filament_diameters[0] : 1.75;
+            double density = !m_filament_densities.empty() ? m_filament_densities[0] : 1.25;
+            double koef = 0.001;
+            return std::make_pair(koef * volume / (PI * sqr(0.5 * diameter)), volume * density * 0.001);
+        }
+
+        double diameter = m_filament_diameters[extruder_id];
+        double density = m_filament_densities[extruder_id];
+
+        // SM Orca: 防止除零和NaN
+        if (diameter <= 0.0 || std::isnan(diameter)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: bbs_3mf - Invalid diameter " << diameter << " for extruder " << extruder_id;
+            diameter = 1.75;
+        }
+        if (density <= 0.0 || std::isnan(density)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: bbs_3mf - Invalid density " << density << " for extruder " << extruder_id;
+            density = 1.25;
+        }
+
+        double koef = 0.001;
+        std::pair<double, double> ret = {koef * volume / (PI * sqr(0.5 * diameter)), volume * density * 0.001};
         return ret;
     };
 

@@ -1393,6 +1393,8 @@ Sidebar::Sidebar(Plater *parent)
 
     // 为第一个耗材添加挤出机选择下拉框
     wxChoice* extruder_selector = new wxChoice(p->m_panel_filament_content, wxID_ANY);
+    // SM Orca: 设置合理的最大宽度，避免占用过多空间
+    extruder_selector->SetMaxSize(wxSize(FromDIP(55), -1));
 
     // SM Orca: 获取打印机的挤出机数量（通过 nozzle_diameter 数组大小）
     const DynamicPrintConfig& config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -1419,19 +1421,36 @@ Sidebar::Sidebar(Plater *parent)
     int default_extruder = 0;  // 第一个耗材默认映射到第一个挤出机
     if (filament_extruder_map.count(0)) {
         default_extruder = filament_extruder_map[0];
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: First filament: Found existing mapping (filament 0 -> extruder " << default_extruder << ")";
+    } else {
+        // SM Orca: 如果映射表中没有条目，添加默认映射
+        filament_extruder_map[0] = default_extruder;
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: First filament: Initialized default mapping (filament 0 -> extruder 0)";
     }
     if (default_extruder < extruder_count) {
         extruder_selector->SetSelection(default_extruder);
     } else {
         extruder_selector->SetSelection(0);
+        // SM Orca: 如果默认值超出范围，更新映射表
+        filament_extruder_map[0] = 0;
+        BOOST_LOG_TRIVIAL(warning) << "SM Orca: First filament: Default extruder " << default_extruder << " out of range, reset to 0";
+    }
+
+    // SM Orca: 打印当前映射表状态
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: First filament mapping table after initialization (size=" << filament_extruder_map.size() << "):";
+    for (const auto& pair : filament_extruder_map) {
+        BOOST_LOG_TRIVIAL(info) << "  filament " << pair.first << " -> extruder " << pair.second;
     }
 
     // 绑定选择事件
-    extruder_selector->Bind(wxEVT_CHOICE, [](wxCommandEvent& evt) {
+    extruder_selector->Bind(wxEVT_CHOICE, [this](wxCommandEvent& evt) {
         int selected_extruder = evt.GetSelection();
         auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
         filament_extruder_map[0] = selected_extruder;
         BOOST_LOG_TRIVIAL(info) << "Filament 0 mapped to extruder " << selected_extruder;
+        // SM Orca: 触发重新切片
+        p->plater->get_partplate_list().invalid_all_slice_result();
+        p->plater->update();
     });
 
     // 添加到布局
@@ -1606,6 +1625,8 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
 
     // 添加挤出机选择下拉框
     wxChoice* extruder_selector = new wxChoice(p->m_panel_filament_content, wxID_ANY);
+    // SM Orca: 设置合理的最大宽度，避免占用过多空间
+    extruder_selector->SetMaxSize(wxSize(FromDIP(55), -1));
 
     // SM Orca: 获取打印机的挤出机数量（通过 nozzle_diameter 数组大小）
     const DynamicPrintConfig& config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -1627,24 +1648,44 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
         extruder_selector->Append(wxString::Format(_L("%d号头"), i + 1));
     }
 
-    // 默认选择映射到同索引的挤出机
+    // 默认选择映射到同索引的挤出机（循环分配）
     auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
-    int default_extruder = filament_idx;  // 默认是 1:1 映射
+    int default_extruder = (extruder_count > 0) ? (filament_idx % extruder_count) : 0;  // 循环分配到物理挤出机
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Filament " << filament_idx << ": Calculated default_extruder = " << filament_idx << " % " << extruder_count << " = " << default_extruder;
+
     if (filament_extruder_map.count(filament_idx)) {
         default_extruder = filament_extruder_map[filament_idx];
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Filament " << filament_idx << ": Found existing mapping (filament " << filament_idx << " -> extruder " << default_extruder << ")";
+    } else {
+        // SM Orca: 如果映射表中没有条目，添加默认映射
+        filament_extruder_map[filament_idx] = default_extruder;
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Filament " << filament_idx << ": Initialized default mapping (filament " << filament_idx << " -> extruder " << default_extruder << ")";
     }
     if (default_extruder < extruder_count) {
         extruder_selector->SetSelection(default_extruder);
     } else {
-        extruder_selector->SetSelection(0);  // 如果超出范围，默认选择第一个
+        // SM Orca: 如果超出范围，使用循环分配
+        default_extruder = (extruder_count > 0) ? (filament_idx % extruder_count) : 0;
+        extruder_selector->SetSelection(default_extruder);
+        filament_extruder_map[filament_idx] = default_extruder;
+        BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << filament_idx << ": Default extruder out of range, using modulo: " << default_extruder;
+    }
+
+    // SM Orca: 打印当前映射表状态
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Filament " << filament_idx << " mapping table after initialization (size=" << filament_extruder_map.size() << "):";
+    for (const auto& pair : filament_extruder_map) {
+        BOOST_LOG_TRIVIAL(info) << "  filament " << pair.first << " -> extruder " << pair.second;
     }
 
     // 绑定选择事件
-    extruder_selector->Bind(wxEVT_CHOICE, [filament_idx](wxCommandEvent& evt) {
+    extruder_selector->Bind(wxEVT_CHOICE, [this, filament_idx](wxCommandEvent& evt) {
         int selected_extruder = evt.GetSelection();
         auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
         filament_extruder_map[filament_idx] = selected_extruder;
         BOOST_LOG_TRIVIAL(info) << "Filament " << filament_idx << " mapped to extruder " << selected_extruder;
+        // SM Orca: 触发重新切片
+        p->plater->get_partplate_list().invalid_all_slice_result();
+        p->plater->update();
     });
 
     // 添加到布局
@@ -1714,10 +1755,25 @@ void Sidebar::remove_unused_filament_combos(const size_t current_extruder_count)
         return;
     while (p->combos_filament.size() > current_extruder_count) {
         const int last = p->combos_filament.size() - 1;
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Removing filament combo and extruder selector at index " << last;
+
         auto sizer_filaments = this->p->sizer_filaments->GetItem(last % 2)->GetSizer();
         sizer_filaments->Remove(last / 2);
         (*p->combos_filament[last]).Destroy();
         p->combos_filament.pop_back();
+
+        // SM Orca: 同时删除对应的挤出机选择器
+        if (last < p->extruder_selectors.size() && p->extruder_selectors[last] != nullptr) {
+            BOOST_LOG_TRIVIAL(info) << "SM Orca: Destroying extruder selector at index " << last;
+            p->extruder_selectors[last]->Destroy();
+            p->extruder_selectors[last] = nullptr;
+        }
+    }
+
+    // SM Orca: 清理extruder_selectors数组中的空指针
+    while (!p->extruder_selectors.empty() && p->extruder_selectors.back() == nullptr) {
+        p->extruder_selectors.pop_back();
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Removed null extruder selector from array, new size: " << p->extruder_selectors.size();
     }
     // BBS:  filament double columns
     auto sizer_filaments0 = this->p->sizer_filaments->GetItem((size_t)0)->GetSizer();
@@ -2285,11 +2341,35 @@ void Sidebar::update_extruder_selectors()
     }
 
     auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    size_t num_filaments = p->combos_filament.size();
+
+    BOOST_LOG_TRIVIAL(info) << "update_extruder_selectors: num_filaments=" << num_filaments
+                            << ", extruder_selectors.size()=" << p->extruder_selectors.size();
+
+    // SM Orca: 删除多余的选择器（如果选择器数量大于耗材数量）
+    while (p->extruder_selectors.size() > num_filaments) {
+        size_t last_idx = p->extruder_selectors.size() - 1;
+        if (p->extruder_selectors[last_idx] != nullptr) {
+            BOOST_LOG_TRIVIAL(info) << "Destroying excess extruder selector at index " << last_idx;
+            p->extruder_selectors[last_idx]->Destroy();
+        }
+        p->extruder_selectors.pop_back();
+    }
+
+    // SM Orca: 确保选择器数组大小匹配耗材数量
+    if (p->extruder_selectors.size() < num_filaments) {
+        BOOST_LOG_TRIVIAL(warning) << "Extruder selectors size (" << p->extruder_selectors.size()
+                                    << ") is less than filament count (" << num_filaments << "), resizing...";
+        p->extruder_selectors.resize(num_filaments, nullptr);
+    }
 
     // 更新所有挤出机选择器
-    for (size_t i = 0; i < p->extruder_selectors.size(); i++) {
+    for (size_t i = 0; i < num_filaments; i++) {
         wxChoice* selector = p->extruder_selectors[i];
-        if (selector == nullptr) continue;
+        if (selector == nullptr) {
+            BOOST_LOG_TRIVIAL(warning) << "Extruder selector for filament " << i << " is null, skipping";
+            continue;
+        }
 
         // 保存当前选择
         int current_selection = selector->GetSelection();
@@ -2310,7 +2390,27 @@ void Sidebar::update_extruder_selectors()
         }
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Updated extruder selectors for " << extruder_count << " extruders";
+    BOOST_LOG_TRIVIAL(info) << "Updated extruder selectors for " << extruder_count << " extruders, " << num_filaments << " filaments";
+
+    // SM Orca: 强制刷新整个布局层级
+    if (p->sizer_filaments) {
+        p->sizer_filaments->Layout();
+    }
+    if (p->m_panel_filament_content) {
+        p->m_panel_filament_content->Layout();
+        p->m_panel_filament_content->Refresh();
+        p->m_panel_filament_content->Update();
+    }
+
+    // 刷新整个 Sidebar
+    this->Layout();
+    this->Refresh();
+
+    // 刷新 scrolled panel
+    if (p->scrolled) {
+        p->scrolled->Layout();
+        p->scrolled->FitInside();
+    }
 }
 
 void Sidebar::add_filament() {
@@ -11468,6 +11568,9 @@ void Plater::load_gcode(const wxString& filename)
     try
     {
         GCodeProcessor::s_IsBBLPrinter = wxGetApp().preset_bundle->is_bbl_vendor();
+        // SM Orca: 设置耗材到物理挤出机的映射
+        auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+        processor.set_filament_extruder_map(filament_extruder_map);
         processor.process_file(filename.ToUTF8().data());
     }
     catch (const std::exception& ex)
@@ -11492,8 +11595,26 @@ void Plater::load_gcode(const wxString& filename)
     double total_cost = 0.0;
     for (auto volume : ps.total_volumes_per_extruder) {
         size_t extruder_id = volume.first;
-        double density = current_result->filament_densities.at(extruder_id);
-        double cost = current_result->filament_costs.at(extruder_id);
+
+        // SM Orca: 边界检查 - 确保extruder_id在有效范围内
+        if (extruder_id >= current_result->filament_densities.size() ||
+            extruder_id >= current_result->filament_costs.size()) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Plater - Filament " << extruder_id
+                << " out of bounds (sizes: density=" << current_result->filament_densities.size()
+                << ", cost=" << current_result->filament_costs.size() << "), skipping cost calculation";
+            continue;
+        }
+
+        double density = current_result->filament_densities[extruder_id];
+        double cost = current_result->filament_costs[extruder_id];
+
+        // SM Orca: 数值验证 - 防止NaN传播
+        if (density <= 0.0 || std::isnan(density) || cost < 0.0 || std::isnan(cost)) {
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Plater - Invalid density (" << density
+                << ") or cost (" << cost << ") for filament " << extruder_id << ", skipping";
+            continue;
+        }
+
         double weight = volume.second * density * 0.001;
         total_cost += weight * cost * 0.001;
     }
@@ -13590,6 +13711,28 @@ void Plater::reslice()
         _calib_pa_pattern_gen_gcode();
     }
 
+    // SM Orca: 在切片前，将AppConfig的映射表传递给所有Print对象
+    const auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Plater::reslice - Setting filament_extruder_map to Print objects, mapping size: " << filament_extruder_map.size();
+    for (const auto& pair : filament_extruder_map) {
+        BOOST_LOG_TRIVIAL(info) << "  SM Orca: Filament " << pair.first << " -> extruder " << pair.second;
+    }
+    for (PartPlate* plate : p->partplate_list.get_plate_list()) {
+        if (plate) {
+            PrintBase* print = nullptr;
+            GCodeResult* result = nullptr;
+            int index = -1;
+            plate->get_print(&print, &result, &index);
+            if (print) {
+                // 尝试转换为Print类型（FFF打印）
+                if (Print* fff_print = dynamic_cast<Print*>(print)) {
+                    fff_print->set_filament_extruder_map(filament_extruder_map);
+                    BOOST_LOG_TRIVIAL(info) << "SM Orca: Set mapping to FFF print on plate " << plate->get_index();
+                }
+            }
+        }
+    }
+
     if (printer_technology() == ptSLA) {
         for (auto& object : model().objects)
             if (object->sla_points_status == sla::PointsStatus::NoPoints)
@@ -14460,6 +14603,11 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         // Orca: update when *_filament changed
         else if (opt_key == "support_interface_filament" || opt_key == "support_filament" || opt_key == "wall_filament" ||
                  opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
+            update_scheduled = true;
+        }
+        // SM Orca: 当nozzle_diameter变化时，更新挤出机选择器
+        else if (opt_key == "nozzle_diameter") {
+            p->sidebar->update_extruder_selectors();
             update_scheduled = true;
         }
     }

@@ -520,27 +520,30 @@ struct FileWildcards {
 };
 
 static const FileWildcards file_wildcards_by_type[FT_SIZE] = {
-    /* FT_STEP */    { "STEP files"sv,      { ".stp"sv, ".step"sv } },
-    /* FT_STL */     { "STL files"sv,       { ".stl"sv } },
-    /* FT_OBJ */     { "OBJ files"sv,       { ".obj"sv } },
-    /* FT_AMF */     { "AMF files"sv,       { ".amf"sv, ".zip.amf"sv, ".xml"sv } },
-    /* FT_3MF */     { "3MF files"sv,       { ".3mf"sv } },
-    /* FT_GCODE */   { "G-code files"sv,    { ".gcode"sv, ".3mf"sv } },
+    /* FT_STEP */ {"STEP files"sv, {".stp"sv, ".step"sv}},
+    /* FT_STL */ {"STL files"sv, {".stl"sv}},
+    /* FT_OBJ */ {"OBJ files"sv, {".obj"sv}},
+    /* FT_AMF */ {"AMF files"sv, {".amf"sv, ".zip.amf"sv, ".xml"sv}},
+    /* FT_3MF */ {"3MF files"sv, {".3mf"sv}},
+    /* FT_GCODE_3MF */ {"Gcode 3MF files"sv, {".gcode.3mf"sv}},
+    /* FT_GCODE */ {"G-code files"sv, {".gcode"sv}},
 #ifdef __APPLE__
     /* FT_MODEL */
-    {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".usd"sv, ".usda"sv, ".usdc"sv, ".usdz"sv, ".abc"sv, ".ply"sv}},
+    {"Supported files"sv,
+     {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".usd"sv, ".usda"sv, ".usdc"sv, ".usdz"sv, ".abc"sv,
+      ".ply"sv}},
 #else
     /* FT_MODEL */
     {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv}},
 #endif
-    /* FT_ZIP */     { "ZIP files"sv,       { ".zip"sv } },
-    /* FT_PROJECT */ { "Project files"sv,   { ".3mf"sv} },
-    /* FT_GALLERY */ { "Known files"sv,     { ".stl"sv, ".obj"sv } },
+    /* FT_ZIP */ {"ZIP files"sv, {".zip"sv}},
+    /* FT_PROJECT */ {"Project files"sv, {".3mf"sv}},
+    /* FT_GALLERY */ {"Known files"sv, {".stl"sv, ".obj"sv}},
 
-    /* FT_INI */     { "INI files"sv,       { ".ini"sv } },
-    /* FT_SVG */     { "SVG files"sv,       { ".svg"sv } },
-    /* FT_TEX */     { "Texture"sv,         { ".png"sv, ".svg"sv } },
-    /* FT_SL1 */     { "Masked SLA files"sv, { ".sl1"sv, ".sl1s"sv } },
+    /* FT_INI */ {"INI files"sv, {".ini"sv}},
+    /* FT_SVG */ {"SVG files"sv, {".svg"sv}},
+    /* FT_TEX */ {"Texture"sv, {".png"sv, ".svg"sv}},
+    /* FT_SL1 */ {"Masked SLA files"sv, {".sl1"sv, ".sl1s"sv}},
 };
 
 // This function produces a Win32 file dialog file template mask to be consumed by wxWidgets on all platforms.

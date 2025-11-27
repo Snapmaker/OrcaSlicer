@@ -2793,8 +2793,8 @@ msgstr "Snapmaker Orca est sous licence "
 msgid "GNU Affero General Public License, version 3"
 msgstr "GNU Affero Licence Publique Générale, version 3"
 
-msgid "Snapmaker Orca is Based on Orca Slicer"
-msgstr "Snapmaker Orca is Based on Orca Slicer"
+msgid "Snapmaker Orca is Based on Snapmaker Orca"
+msgstr "Snapmaker Orca is Based on Snapmaker Orca"
 msgid "Libraries"
 msgstr "Bibliothèques"
 

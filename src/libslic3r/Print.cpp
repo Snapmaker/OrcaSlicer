@@ -2354,7 +2354,9 @@ void Print::_make_skirt()
         extruders_e_per_mm.reserve(set_extruders.size());
         for (auto &extruder_id : set_extruders) {
             extruders.push_back(extruder_id);
-            extruders_e_per_mm.push_back(Extruder((unsigned int)extruder_id, &m_config, m_config.single_extruder_multi_material).e_per_mm(mm3_per_mm));
+            // SM Orca: 创建 Extruder 对象时传递物理挤出机ID
+            int physical_extruder_id = get_physical_extruder(extruder_id);
+            extruders_e_per_mm.push_back(Extruder((unsigned int)extruder_id, physical_extruder_id, &m_config, m_config.single_extruder_multi_material).e_per_mm(mm3_per_mm));
         }
     }
 
@@ -2754,8 +2756,11 @@ void Print::_make_wipe_tower()
         // wipe_tower.set_zhop();
 
         // Set the extruder & material properties at the wipe tower object.
-        for (size_t i = 0; i < number_of_extruders; ++i)
-            wipe_tower.set_extruder(i, m_config);
+        // SM Orca: 传递物理挤出机ID以支持耗材-挤出机映射
+        for (size_t i = 0; i < number_of_extruders; ++i) {
+            int physical_extruder = get_physical_extruder(i);
+            wipe_tower.set_extruder(i, physical_extruder, m_config);
+        }
 
         // BBS: remove priming logic
         // m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(
@@ -2850,8 +2855,11 @@ void Print::_make_wipe_tower()
         // wipe_tower.set_zhop();
 
         // Set the extruder & material properties at the wipe tower object.
-        for (size_t i = 0; i < number_of_extruders; ++i)
-            wipe_tower.set_extruder(i, m_config);
+        // SM Orca: 传递物理挤出机ID以支持耗材-挤出机映射
+        for (size_t i = 0; i < number_of_extruders; ++i) {
+            int physical_extruder = get_physical_extruder(i);
+            wipe_tower.set_extruder(i, physical_extruder, m_config);
+        }
 
         m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(
             wipe_tower.prime((float)this->skirt_first_layer_height(), m_wipe_tower_data.tool_ordering.all_extruders(), false));

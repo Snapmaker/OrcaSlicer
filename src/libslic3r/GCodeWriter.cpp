@@ -49,8 +49,11 @@ void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
     m_extruder = nullptr; // this points to object inside `m_extruders`, so should be cleared too
     m_extruders.clear();
     m_extruders.reserve(extruder_ids.size());
-    for (unsigned int extruder_id : extruder_ids)
-        m_extruders.emplace_back(Extruder(extruder_id, &this->config, config.single_extruder_multi_material.value));
+    // SM Orca: 创建 Extruder 对象时传递物理挤出机ID
+    for (unsigned int extruder_id : extruder_ids) {
+        int physical_extruder_id = get_physical_extruder(extruder_id);
+        m_extruders.emplace_back(Extruder(extruder_id, physical_extruder_id, &this->config, config.single_extruder_multi_material.value));
+    }
     
     /*  we enable support for multiple extruder if any extruder greater than 0 is used
         (even if prints only uses that one) since we need to output Tx commands

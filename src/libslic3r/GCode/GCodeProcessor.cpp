@@ -853,32 +853,37 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         // SM Orca: 使用物理挤出机ID来访问offset，并确保不越界
         int physical_extruder = get_physical_extruder(i);
 
-        // 边界检查：如果超出范围，使用模运算映射到有效范围
-        if (physical_extruder >= static_cast<int>(physical_extruder_count)) {
-            physical_extruder = physical_extruder % static_cast<int>(physical_extruder_count);
-            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " physical extruder " << get_physical_extruder(i) << " out of bounds, using modulo: " << physical_extruder;
+        // SM Orca: 边界检查 - 如果映射的物理挤出机超出范围，回退到1:1映射
+        if (physical_extruder < 0 || physical_extruder >= static_cast<int>(physical_extruder_count)) {
+            BOOST_LOG_TRIVIAL(error) << "SM Orca: Filament " << i
+                                     << " maps to invalid physical extruder " << physical_extruder
+                                     << " (valid range: 0-" << (physical_extruder_count - 1) << ")";
+            // 使用filament index作为fallback（1:1映射），如果也越界则使用0
+            physical_extruder = (i < physical_extruder_count) ? static_cast<int>(i) : 0;
+            BOOST_LOG_TRIVIAL(error) << "  SM Orca: Using fallback physical extruder " << physical_extruder;
         }
 
         m_extruder_offsets[i]           = to_3d(config.extruder_offset.get_at(physical_extruder).cast<float>().eval(), 0.f);
         m_extruder_colors[i]            = static_cast<unsigned char>(i);
 
         // SM Orca: 安全读取温度配置（使用最后有效值作为回退）
-        if (i < temp_initial_count) {
-            m_extruder_temps_first_layer_config[i] = static_cast<int>(config.nozzle_temperature_initial_layer.get_at(i));
+        // 温度是挤出机属性，使用 physical_extruder 而不是 filament index
+        if (physical_extruder < static_cast<int>(temp_initial_count)) {
+            m_extruder_temps_first_layer_config[i] = static_cast<int>(config.nozzle_temperature_initial_layer.get_at(physical_extruder));
         } else {
             int fallback = temp_initial_count > 0 ?
                 static_cast<int>(config.nozzle_temperature_initial_layer.get_at(temp_initial_count - 1)) : 210;
             m_extruder_temps_first_layer_config[i] = fallback;
-            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " initial layer temperature not configured, using " << fallback;
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " (physical extruder " << physical_extruder << ") initial layer temperature not configured, using " << fallback;
         }
 
-        if (i < temp_count) {
-            m_extruder_temps_config[i] = static_cast<int>(config.nozzle_temperature.get_at(i));
+        if (physical_extruder < static_cast<int>(temp_count)) {
+            m_extruder_temps_config[i] = static_cast<int>(config.nozzle_temperature.get_at(physical_extruder));
         } else {
             int fallback = temp_count > 0 ?
                 static_cast<int>(config.nozzle_temperature.get_at(temp_count - 1)) : 210;
             m_extruder_temps_config[i] = fallback;
-            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " temperature not configured, using " << fallback;
+            BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " (physical extruder " << physical_extruder << ") temperature not configured, using " << fallback;
         }
 
         if (m_extruder_temps_config[i] == 0) {
@@ -3861,17 +3866,21 @@ void GCodeProcessor::process_G29(const GCodeReader::GCodeLine& line)
 
 void GCodeProcessor::process_G10(const GCodeReader::GCodeLine& line)
 {
+    // SM Orca: 回抽参数是挤出机属性，使用 physical_extruder
+    int physical_extruder = get_physical_extruder(m_extruder_id);
     GCodeReader::GCodeLine g10;
-    g10.set(Axis::E, -this->m_parser.config().retraction_length.get_at(m_extruder_id));
-    g10.set(Axis::F,  this->m_parser.config().retraction_speed.get_at(m_extruder_id) * 60);
+    g10.set(Axis::E, -this->m_parser.config().retraction_length.get_at(physical_extruder));
+    g10.set(Axis::F,  this->m_parser.config().retraction_speed.get_at(physical_extruder) * 60);
     process_G1(g10);
 }
 
 void GCodeProcessor::process_G11(const GCodeReader::GCodeLine& line)
 {
+    // SM Orca: 回抽参数是挤出机属性，使用 physical_extruder
+    int physical_extruder = get_physical_extruder(m_extruder_id);
     GCodeReader::GCodeLine g11;
-    g11.set(Axis::E, this->m_parser.config().retraction_length.get_at(m_extruder_id) + this->m_parser.config().retract_restart_extra.get_at(m_extruder_id));
-    g11.set(Axis::F, this->m_parser.config().deretraction_speed.get_at(m_extruder_id) * 60);
+    g11.set(Axis::E, this->m_parser.config().retraction_length.get_at(physical_extruder) + this->m_parser.config().retract_restart_extra.get_at(physical_extruder));
+    g11.set(Axis::F, this->m_parser.config().deretraction_speed.get_at(physical_extruder) * 60);
     process_G1(g11);
 }
 

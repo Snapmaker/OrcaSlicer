@@ -668,18 +668,20 @@ WipeTower::WipeTower(const PrintConfig& config, int plate_idx, Vec3d plate_origi
 
 
 
-void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
+void WipeTower::set_extruder(size_t idx, int physical_extruder, const PrintConfig& config)
 {
     //while (m_filpar.size() < idx+1)   // makes sure the required element is in the vector
     m_filpar.push_back(FilamentParameters());
 
+    // SM Orca: 耗材属性使用 idx (filament index)
     m_filpar[idx].material = config.filament_type.get_at(idx);
     // m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
     m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
     // BBS
     m_filpar[idx].is_support = config.filament_is_support.get_at(idx);
-    m_filpar[idx].nozzle_temperature = config.nozzle_temperature.get_at(idx);
-    m_filpar[idx].nozzle_temperature_initial_layer = config.nozzle_temperature_initial_layer.get_at(idx);
+    // SM Orca: 温度是挤出机属性，使用 physical_extruder
+    m_filpar[idx].nozzle_temperature = config.nozzle_temperature.get_at(physical_extruder);
+    m_filpar[idx].nozzle_temperature_initial_layer = config.nozzle_temperature_initial_layer.get_at(physical_extruder);
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
     // Otherwise, the defaults will be used to turn off the SE stuff.
@@ -698,7 +700,8 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
 #endif
 
     m_filpar[idx].filament_area = float((M_PI/4.f) * pow(config.filament_diameter.get_at(idx), 2)); // all extruders are assumed to have the same filament diameter at this point
-    float nozzle_diameter = float(config.nozzle_diameter.get_at(idx));
+    // SM Orca: 喷嘴直径是挤出机属性，使用 physical_extruder
+    float nozzle_diameter = float(config.nozzle_diameter.get_at(physical_extruder));
     m_filpar[idx].nozzle_diameter = nozzle_diameter; // to be used in future with (non-single) multiextruder MM
 
     float max_vol_speed = float(config.filament_max_volumetric_speed.get_at(idx));

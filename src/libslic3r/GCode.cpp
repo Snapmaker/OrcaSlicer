@@ -523,20 +523,23 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
             {
                 GCodeWriter     &gcode_writer = gcodegen.m_writer;
                 FullPrintConfig &full_config  = gcodegen.m_config;
-                float old_retract_length = gcode_writer.extruder() != nullptr ? full_config.retraction_length.get_at(previous_extruder_id) :
-                                                                                0;
-                float new_retract_length = full_config.retraction_length.get_at(new_extruder_id);
-                float old_retract_length_toolchange = gcode_writer.extruder() != nullptr ?
-                                                          full_config.retract_length_toolchange.get_at(previous_extruder_id) :
-                                                          0;
-                float new_retract_length_toolchange = full_config.retract_length_toolchange.get_at(new_extruder_id);
-                int   old_filament_temp             = gcode_writer.extruder() != nullptr ?
-                                                          (gcodegen.on_first_layer() ?
-                                                               full_config.nozzle_temperature_initial_layer.get_at(previous_extruder_id) :
-                                                               full_config.nozzle_temperature.get_at(previous_extruder_id)) :
-                                                          210;
-                int   new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_extruder_id) :
-                                                                      full_config.nozzle_temperature.get_at(new_extruder_id);
+                // SM Orca: 计算物理挤出机ID用于参数查询
+                int previous_physical_extruder = (previous_extruder_id >= 0) ? gcode_writer.get_physical_extruder(previous_extruder_id) : -1;
+                int new_physical_extruder = gcode_writer.get_physical_extruder(new_extruder_id);
+                // SM Orca: 回抽和温度是挤出机属性，使用 physical_extruder
+                float old_retract_length = (gcode_writer.extruder() != nullptr && previous_physical_extruder >= 0) ?
+                                           full_config.retraction_length.get_at(previous_physical_extruder) : 0;
+                float new_retract_length = full_config.retraction_length.get_at(new_physical_extruder);
+                float old_retract_length_toolchange = (gcode_writer.extruder() != nullptr && previous_physical_extruder >= 0) ?
+                                                      full_config.retract_length_toolchange.get_at(previous_physical_extruder) : 0;
+                float new_retract_length_toolchange = full_config.retract_length_toolchange.get_at(new_physical_extruder);
+                int   old_filament_temp             = (gcode_writer.extruder() != nullptr && previous_physical_extruder >= 0) ?
+                                                      (gcodegen.on_first_layer() ?
+                                                           full_config.nozzle_temperature_initial_layer.get_at(previous_physical_extruder) :
+                                                           full_config.nozzle_temperature.get_at(previous_physical_extruder)) :
+                                                      210;
+                int   new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_physical_extruder) :
+                                                                      full_config.nozzle_temperature.get_at(new_physical_extruder);
                 Vec3d nozzle_pos        = gcode_writer.get_position();
 
                 float purge_volume  = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume);
@@ -1867,12 +1870,21 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 {
     PROFILE_FUNC();
 
-    // SM Orca: 在 apply_config 之前先设置耗材-挤出机映射表（从writer获取）
-    const auto& writer_mapping = m_writer.get_filament_extruder_map();
-    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCode::_do_export - Setting filament_extruder_map to processor BEFORE init, mapping size: " << writer_mapping.size();
-    for (const auto& pair : writer_mapping) {
-        BOOST_LOG_TRIVIAL(info) << "  SM Orca: Writer mapping: filament " << pair.first << " -> extruder " << pair.second;
+    // SM Orca: 确保GCodeWriter有正确的映射表（从Print获取并设置到writer）
+    const auto& print_mapping = print.get_filament_extruder_map();
+    if (!print_mapping.empty()) {
+        m_writer.set_filament_extruder_map(print_mapping);
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: GCode::_do_export - Set filament_extruder_map from Print to writer, size: " << print_mapping.size();
+        for (const auto& pair : print_mapping) {
+            BOOST_LOG_TRIVIAL(info) << "  SM Orca: Print mapping: filament " << pair.first << " -> extruder " << pair.second;
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: GCode::_do_export - No filament_extruder_map from Print (using default 1:1 mapping)";
     }
+
+    // SM Orca: 从GCodeWriter获取映射表并传递给GCodeProcessor
+    const auto& writer_mapping = m_writer.get_filament_extruder_map();
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCode::_do_export - Setting filament_extruder_map to processor, mapping size: " << writer_mapping.size();
     m_processor.set_filament_extruder_map(writer_mapping);
 
     // modifies m_silent_time_estimator_enabled
@@ -6520,13 +6532,18 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     if (m_ooze_prevention.enable && m_writer.extruder() != nullptr)
         gcode += m_ooze_prevention.pre_toolchange(*this);
 
+    // SM Orca: 计算物理挤出机ID，用于耗材-挤出机映射
+    // 需要在参数查询之前计算，因为挤出机属性（温度、回抽等）应该从物理挤出机获取
+    int next_physical_extruder = m_writer.get_physical_extruder(extruder_id);
+
     // BBS
-    float new_retract_length = m_config.retraction_length.get_at(extruder_id);
-    float new_retract_length_toolchange = m_config.retract_length_toolchange.get_at(extruder_id);
-    int new_filament_temp = this->on_first_layer() ? m_config.nozzle_temperature_initial_layer.get_at(extruder_id): m_config.nozzle_temperature.get_at(extruder_id);
+    // 回抽和温度是挤出机属性，使用 physical_extruder
+    float new_retract_length = m_config.retraction_length.get_at(next_physical_extruder);
+    float new_retract_length_toolchange = m_config.retract_length_toolchange.get_at(next_physical_extruder);
+    int new_filament_temp = this->on_first_layer() ? m_config.nozzle_temperature_initial_layer.get_at(next_physical_extruder): m_config.nozzle_temperature.get_at(next_physical_extruder);
     // BBS: if print_z == 0 use first layer temperature
     if (abs(print_z) < EPSILON)
-        new_filament_temp = m_config.nozzle_temperature_initial_layer.get_at(extruder_id);
+        new_filament_temp = m_config.nozzle_temperature_initial_layer.get_at(next_physical_extruder);
 
     Vec3d nozzle_pos = m_writer.get_position();
     float old_retract_length, old_retract_length_toolchange, wipe_volume;
@@ -6535,6 +6552,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     float filament_area = float((M_PI / 4.f) * pow(m_config.filament_diameter.get_at(extruder_id), 2));
     //BBS: add handling for filament change in start gcode
     int previous_extruder_id = -1;
+    int previous_physical_extruder = -1;  // SM Orca: 前一个物理挤出机ID
     if (m_writer.extruder() != nullptr || m_start_gcode_filament != -1) {
         std::vector<float> flush_matrix(cast<float>(m_config.flush_volumes_matrix.values));
         const unsigned int number_of_extruders = (unsigned int)(sqrt(flush_matrix.size()) + EPSILON);
@@ -6544,9 +6562,11 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             assert(m_start_gcode_filament < number_of_extruders);
 
         previous_extruder_id = m_writer.extruder() != nullptr ? m_writer.extruder()->id() : m_start_gcode_filament;
-        old_retract_length = m_config.retraction_length.get_at(previous_extruder_id);
-        old_retract_length_toolchange = m_config.retract_length_toolchange.get_at(previous_extruder_id);
-        old_filament_temp = this->on_first_layer()? m_config.nozzle_temperature_initial_layer.get_at(previous_extruder_id) : m_config.nozzle_temperature.get_at(previous_extruder_id);
+        previous_physical_extruder = m_writer.get_physical_extruder(previous_extruder_id);  // SM Orca: 计算前一个物理挤出机
+        // SM Orca: 回抽和温度是挤出机属性，使用 physical_extruder
+        old_retract_length = m_config.retraction_length.get_at(previous_physical_extruder);
+        old_retract_length_toolchange = m_config.retract_length_toolchange.get_at(previous_physical_extruder);
+        old_filament_temp = this->on_first_layer()? m_config.nozzle_temperature_initial_layer.get_at(previous_physical_extruder) : m_config.nozzle_temperature.get_at(previous_physical_extruder);
         //Orca: always calculate wipe volume and hence provide correct flush_length, so that MMU devices with cutter and purge bin (e.g. ERCF_v2 with a filament cutter or Filametrix can take advantage of it)
         wipe_volume = flush_matrix[previous_extruder_id * number_of_extruders + extruder_id];
         wipe_volume *= m_config.flush_multiplier;
@@ -6569,9 +6589,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     DynamicConfig dyn_config;
     dyn_config.set_key_value("previous_extruder", new ConfigOptionInt(previous_extruder_id));
     dyn_config.set_key_value("next_extruder", new ConfigOptionInt((int)extruder_id));
-    // SM Orca: 添加物理挤出机ID，用于耗材-挤出机映射
-    int next_physical_extruder = m_writer.get_physical_extruder(extruder_id);
-    int previous_physical_extruder = (previous_extruder_id >= 0) ? m_writer.get_physical_extruder(previous_extruder_id) : -1;
+    // SM Orca: 物理挤出机ID在前面已经计算过了
     dyn_config.set_key_value("next_physical_extruder", new ConfigOptionInt(next_physical_extruder));
     dyn_config.set_key_value("previous_physical_extruder", new ConfigOptionInt(previous_physical_extruder));
     dyn_config.set_key_value("layer_num", new ConfigOptionInt(m_layer_index));

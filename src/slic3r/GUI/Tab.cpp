@@ -3296,7 +3296,14 @@ void TabFilament::add_filament_overrides_page()
         optgroup->append_line(line);
     };
 
-    const int extruder_idx = 0; // #ys_FIXME
+    // SM Orca: 获取逻辑filament槽位编号（0, 1, 2, 3），而不是preset索引
+    int filament_idx = m_presets_choice->get_filament_idx();
+    int extruder_idx = wxGetApp().app_config->get_physical_extruder_for_filament(filament_idx);
+    if (extruder_idx < 0) {
+        BOOST_LOG_TRIVIAL(warning) << "SM Orca: add_filament_overrides_page - No mapping for filament slot " << filament_idx << ", using fallback";
+        extruder_idx = filament_idx;  // 1:1 fallback
+    }
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: add_filament_overrides_page - filament slot " << filament_idx << " → extruder " << extruder_idx;
 
     for (const std::string opt_key : {  "filament_retraction_length",
                                         "filament_z_hop",
@@ -3362,7 +3369,14 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                                             // "filament_seam_gap"
                                         };
 
-    const int extruder_idx = 0; // #ys_FIXME
+    // SM Orca: 获取逻辑filament槽位编号（0, 1, 2, 3），而不是preset索引
+    int filament_idx = m_presets_choice->get_filament_idx();
+    int extruder_idx = wxGetApp().app_config->get_physical_extruder_for_filament(filament_idx);
+    if (extruder_idx < 0) {
+        BOOST_LOG_TRIVIAL(warning) << "SM Orca: update_filament_overrides_page - No mapping for filament slot " << filament_idx << ", using fallback";
+        extruder_idx = filament_idx;  // 1:1 fallback
+    }
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: update_filament_overrides_page - filament slot " << filament_idx << " → extruder " << extruder_idx;
 
     const bool have_retract_length = m_config->option("filament_retraction_length")->is_nil() ||
                                      m_config->opt_float("filament_retraction_length", extruder_idx) > 0;
@@ -3392,9 +3406,27 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
             toggle_line(opt_key, filament_enabled && machine_enabled);
             field->toggle(is_checked && filament_enabled && machine_enabled);
         } else {
+            // SM Orca: 添加诊断日志for critical参数
+            if (opt_key == "filament_retract_length_toolchange") {
+                bool is_nil = m_config->option(opt_key)->is_nil();
+                BOOST_LOG_TRIVIAL(info) << "SM Orca: " << opt_key << " is_nil=" << is_nil << ", is_checked=" << is_checked;
+            }
+
             if (!is_checked) {
                 const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
                 boost::any printer_config_value = optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
+
+                // SM Orca: 记录设置的N/A值（仅针对关键参数）
+                if (opt_key == "filament_retract_length_toolchange") {
+                    if (printer_config_value.type() == typeid(ConfigOptionFloats*)) {
+                        ConfigOptionFloats* floats = boost::any_cast<ConfigOptionFloats*>(printer_config_value);
+                        if (!floats->values.empty() && extruder_idx < floats->values.size()) {
+                            BOOST_LOG_TRIVIAL(info) << "SM Orca: Setting " << opt_key << " N/A value from extruder "
+                                                    << extruder_idx << ": " << floats->values[extruder_idx];
+                        }
+                    }
+                }
+
                 field->update_na_value(printer_config_value);
                 field->set_value(printer_config_value, false);
             }

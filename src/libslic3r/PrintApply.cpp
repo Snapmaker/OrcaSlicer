@@ -216,13 +216,56 @@ static bool custom_per_printz_gcodes_tool_changes_differ(const std::vector<Custo
 	return false;
 }
 
+// SM Orca: Apply physical extruder mapping to filament parameters without overrides
+// For each filament slot, if no override is provided, inherit from the mapped physical extruder
+static void apply_physical_extruder_defaults(
+    ConfigOption* target,
+    const ConfigOption* filament_overrides,
+    const ConfigOption* extruder_defaults,
+    const std::unordered_map<int, int>& filament_extruder_map)
+{
+    if (!target->is_vector() || !extruder_defaults->is_vector())
+        return;
+
+    auto* target_vec = dynamic_cast<ConfigOptionVectorBase*>(target);
+    auto* extruder_vec = dynamic_cast<const ConfigOptionVectorBase*>(extruder_defaults);
+    const ConfigOptionVectorBase* override_vec = filament_overrides ?
+        dynamic_cast<const ConfigOptionVectorBase*>(filament_overrides) : nullptr;
+
+    if (!target_vec || !extruder_vec)
+        return;
+
+    size_t num_filaments = target_vec->size();
+
+    for (size_t filament_idx = 0; filament_idx < num_filaments; ++filament_idx) {
+        // Check if this filament has an override
+        bool has_override = false;
+        if (override_vec && filament_idx < override_vec->size()) {
+            has_override = override_vec->nullable() ? !override_vec->is_nil(filament_idx) : true;
+        }
+
+        // If no override, inherit from the mapped physical extruder
+        if (!has_override) {
+            auto map_it = filament_extruder_map.find(filament_idx);
+            int physical_extruder_idx = (map_it != filament_extruder_map.end()) ?
+                map_it->second : filament_idx;
+
+            if (physical_extruder_idx < extruder_vec->size()) {
+                target_vec->set_at(extruder_vec, filament_idx, physical_extruder_idx);
+            }
+        }
+    }
+}
+
 // Collect changes to print config, account for overrides of extruder retract values by filament presets.
 //BBS: add plate index
+// SM Orca: add filament_extruder_map for physical extruder mapping
 static t_config_option_keys print_config_diffs(
     const PrintConfig        &current_config,
     const DynamicPrintConfig &new_full_config,
     DynamicPrintConfig       &filament_overrides,
-    int plate_index)
+    int plate_index,
+    const std::unordered_map<int, int> &filament_extruder_map)
 {
     const std::vector<std::string> &extruder_retract_keys = print_config_def.extruder_retract_keys();
     const std::string               filament_prefix       = "filament_";
@@ -249,6 +292,13 @@ static t_config_option_keys print_config_diffs(
                 if (!((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
                     && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)) // ugly code, remove it later if firmware supports
                     opt_copy->apply_override(opt_new_filament);
+
+                // SM Orca: Apply physical extruder mapping for slots without overrides
+                bool is_extruder_retract_param = (iter != extruder_retract_keys.end());
+                if (is_extruder_retract_param && !filament_extruder_map.empty()) {
+                    apply_physical_extruder_defaults(opt_copy, opt_new_filament, opt_new, filament_extruder_map);
+                }
+
                 bool changed = *opt_old != *opt_copy;
                 if (changed)
                     print_diff.emplace_back(opt_key);
@@ -260,6 +310,19 @@ static t_config_option_keys print_config_diffs(
                     filament_overrides.set_key_value(opt_key, opt_copy);
                 } else
                     delete opt_copy;
+            }
+        } else if (iter != extruder_retract_keys.end() && !filament_extruder_map.empty()) {
+            // SM Orca: No filament override exists, but this is an extruder retract parameter
+            // Apply physical extruder mapping to inherit from correct extruders
+            auto opt_copy = opt_new->clone();
+            apply_physical_extruder_defaults(opt_copy, nullptr, opt_new, filament_extruder_map);
+
+            bool changed = *opt_old != *opt_copy;
+            if (changed) {
+                print_diff.emplace_back(opt_key);
+                filament_overrides.set_key_value(opt_key, opt_copy);
+            } else {
+                delete opt_copy;
             }
         } else if (*opt_new != *opt_old) {
             //BBS: add plate_index logic for wipe_tower_x/wipe_tower_y
@@ -1131,7 +1194,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // Find modified keys of the various configs. Resolve overrides extruder retract values by filament profiles.
     DynamicPrintConfig   filament_overrides;
     //BBS: add plate index
-    t_config_option_keys print_diff       = print_config_diffs(m_config, new_full_config, filament_overrides, this->m_plate_index);
+    // SM Orca: Pass filament_extruder_map to apply physical extruder mapping
+    t_config_option_keys print_diff       = print_config_diffs(m_config, new_full_config, filament_overrides, this->m_plate_index, m_filament_extruder_map);
     t_config_option_keys full_config_diff = full_print_config_diffs(m_full_print_config, new_full_config, this->m_plate_index);
     // Collect changes to object and region configs.
     t_config_option_keys object_diff      = m_default_object_config.diff(new_full_config);

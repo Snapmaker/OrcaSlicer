@@ -11,7 +11,8 @@ class GCodeConfig;
 class Extruder
 {
 public:
-    Extruder(unsigned int id, GCodeConfig *config, bool share_extruder);
+    // SM Orca: 添加 physical_extruder_id 参数用于支持耗材-挤出机映射
+    Extruder(unsigned int id, unsigned int physical_extruder_id, GCodeConfig *config, bool share_extruder);
     virtual ~Extruder() {}
 
     void   reset() {
@@ -28,6 +29,8 @@ public:
     }
 
     unsigned int id() const { return m_id; }
+    // SM Orca: 获取物理挤出机ID
+    unsigned int physical_extruder_id() const { return m_physical_extruder_id; }
 
     double extrude(double dE);
     double retract(double length, double restart_extra);
@@ -75,12 +78,14 @@ public:
 
 private:
     // Private constructor to create a key for a search in std::set.
-    Extruder(unsigned int id) : m_id(id) {}
+    Extruder(unsigned int id) : m_id(id), m_physical_extruder_id(id) {}
 
     // Reference to GCodeWriter instance owned by GCodeWriter.
     GCodeConfig *m_config;
-    // Print-wide global ID of this extruder.
+    // Print-wide global ID of this extruder (filament index).
     unsigned int m_id;
+    // SM Orca: 物理挤出机ID，用于查询挤出机属性（温度、回抽等）
+    unsigned int m_physical_extruder_id;
     // Current state of the extruder axis, may be resetted if use_relative_e_distances.
     double       m_E;
     // Current state of the extruder tachometer, used to output the extruded_volume() and used_filament() statistics.

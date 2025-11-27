@@ -6,13 +6,14 @@ namespace Slic3r {
 double Extruder::m_share_E = 0.;
 double Extruder::m_share_retracted = 0.;
 
-Extruder::Extruder(unsigned int id, GCodeConfig *config, bool share_extruder) :
+Extruder::Extruder(unsigned int id, unsigned int physical_extruder_id, GCodeConfig *config, bool share_extruder) :
     m_id(id),
+    m_physical_extruder_id(physical_extruder_id),
     m_config(config),
     m_share_extruder(share_extruder)
 {
     reset();
-    
+
     // cache values that are going to be called often
     m_e_per_mm3 = this->filament_flow_ratio();
     m_e_per_mm3 /= this->filament_crossection();
@@ -157,24 +158,25 @@ double Extruder::filament_flow_ratio() const
 }
 
 // Return a "retract_before_wipe" percentage as a factor clamped to <0, 1>
+// SM Orca: 回抽相关参数是挤出机属性，使用 m_physical_extruder_id
 double Extruder::retract_before_wipe() const
 {
-    return std::min(1., std::max(0., m_config->retract_before_wipe.get_at(m_id) * 0.01));
+    return std::min(1., std::max(0., m_config->retract_before_wipe.get_at(m_physical_extruder_id) * 0.01));
 }
 
 double Extruder::retraction_length() const
 {
-    return m_config->retraction_length.get_at(m_id);
+    return m_config->retraction_length.get_at(m_physical_extruder_id);
 }
 
 double Extruder::retract_lift() const
 {
-    return m_config->z_hop.get_at(m_id);
+    return m_config->z_hop.get_at(m_physical_extruder_id);
 }
 
 int Extruder::retract_speed() const
 {
-    return int(floor(m_config->retraction_speed.get_at(m_id)+0.5));
+    return int(floor(m_config->retraction_speed.get_at(m_physical_extruder_id)+0.5));
 }
 
 bool Extruder::use_firmware_retraction() const
@@ -184,28 +186,28 @@ bool Extruder::use_firmware_retraction() const
 
 int Extruder::deretract_speed() const
 {
-    int speed = int(floor(m_config->deretraction_speed.get_at(m_id)+0.5));
+    int speed = int(floor(m_config->deretraction_speed.get_at(m_physical_extruder_id)+0.5));
     return (speed > 0) ? speed : this->retract_speed();
 }
 
 double Extruder::retract_restart_extra() const
 {
-    return m_config->retract_restart_extra.get_at(m_id);
+    return m_config->retract_restart_extra.get_at(m_physical_extruder_id);
 }
 
 double Extruder::retract_length_toolchange() const
 {
-    return m_config->retract_length_toolchange.get_at(m_id);
+    return m_config->retract_length_toolchange.get_at(m_physical_extruder_id);
 }
 
 double Extruder::retract_restart_extra_toolchange() const
 {
-    return m_config->retract_restart_extra_toolchange.get_at(m_id);
+    return m_config->retract_restart_extra_toolchange.get_at(m_physical_extruder_id);
 }
 
 double Extruder::travel_slope() const
 {
-    return m_config->travel_slope.get_at(m_id) * PI / 180;
+    return m_config->travel_slope.get_at(m_physical_extruder_id) * PI / 180;
 }
 
 }

@@ -13711,7 +13711,7 @@ void Plater::reslice()
         _calib_pa_pattern_gen_gcode();
     }
 
-    // SM Orca: 在切片前，将AppConfig的映射表传递给所有Print对象
+    // SM Orca: 在切片前，将AppConfig的映射表传递给所有Print对象，并检测映射变化
     const auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
     BOOST_LOG_TRIVIAL(info) << "SM Orca: Plater::reslice - Setting filament_extruder_map to Print objects, mapping size: " << filament_extruder_map.size();
     for (const auto& pair : filament_extruder_map) {
@@ -13726,8 +13726,22 @@ void Plater::reslice()
             if (print) {
                 // 尝试转换为Print类型（FFF打印）
                 if (Print* fff_print = dynamic_cast<Print*>(print)) {
+                    // SM Orca: 获取旧的映射表，检测是否有变化
+                    const auto& old_map = fff_print->get_filament_extruder_map();
+                    bool map_changed = (old_map != filament_extruder_map);
+
+                    // 设置新的映射表
                     fff_print->set_filament_extruder_map(filament_extruder_map);
                     BOOST_LOG_TRIVIAL(info) << "SM Orca: Set mapping to FFF print on plate " << plate->get_index();
+
+                    // SM Orca: 如果映射表改变，强制invalidate GCode导出步骤
+                    // 因为filament_extruder_map不是PrintConfig的一部分，Print::apply()检测不到变化
+                    // 需要显式触发invalidation以确保使用新映射重新生成GCode
+                    if (map_changed) {
+                        BOOST_LOG_TRIVIAL(info) << "SM Orca: filament_extruder_map changed on plate " << plate->get_index()
+                                                 << ", invalidating GCode export to force regeneration";
+                        fff_print->set_gcode_file_invalidated();
+                    }
                 }
             }
         }

@@ -344,6 +344,9 @@ public:
     // Set a single vector item from either a scalar option or the first value of a vector option.vector of ConfigOptions.
     // This function is useful to split values from multiple extrder / filament settings into separate configurations.
     virtual void set_at(const ConfigOption *rhs, size_t i, size_t j) = 0;
+    // SM Orca: Copy a single element from source vector at src_idx to this vector at dst_idx
+    // This function is useful for applying physical extruder mapping to filament parameters
+    virtual void set_at(const ConfigOptionVectorBase* source, size_t dst_idx, size_t src_idx) = 0;
     // Resize the vector of values, copy the newly added values from opt_default if provided.
     virtual void resize(size_t n, const ConfigOption *opt_default = nullptr) = 0;
     // Clear the values vector.
@@ -429,6 +432,26 @@ public:
             this->values[i] = static_cast<const ConfigOptionSingle<T>*>(rhs)->value;
         else
             throw ConfigurationError("ConfigOptionVector::set_at(): Assigning an incompatible type");
+    }
+
+    // SM Orca: Copy a single element from source vector at src_idx to this vector at dst_idx
+    // Used for applying physical extruder mapping to filament parameters
+    void set_at(const ConfigOptionVectorBase* source, size_t dst_idx, size_t src_idx) override
+    {
+        auto* src_typed = dynamic_cast<const ConfigOptionVector<T>*>(source);
+        if (!src_typed || src_idx >= src_typed->size() || dst_idx >= this->size())
+            return;
+
+        // Handle nullable vectors - only copy if source value is not nil
+        if (this->nullable() && src_typed->nullable()) {
+            if (!src_typed->is_nil(src_idx)) {
+                this->values[dst_idx] = src_typed->values[src_idx];
+            }
+        } else if (!src_typed->nullable()) {
+            // Source is not nullable, always copy
+            this->values[dst_idx] = src_typed->values[src_idx];
+        }
+        // If source is nullable and value is nil, don't copy (keep existing value)
     }
 
     const T& get_at(size_t i) const

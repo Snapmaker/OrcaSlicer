@@ -3,7 +3,9 @@
     "allow": [
       "Bash(taskkill:*)",
       "Bash(dir /O-D /B C:UsersAdministratorAppDataRoamingSnapmaker_Orca*.gcode)",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "Bash(git checkout:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

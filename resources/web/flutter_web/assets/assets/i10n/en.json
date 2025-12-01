@@ -248,6 +248,7 @@
   "Flow Calibration": "Flow Calibration",
   "Time-Lapse Photography": "Time-Lapse Photography",
   "Start Print": "Start Print",
+  "layer": "layer",
 
   "dialog_device_control_modify_heated_bed_temperature_tips": "Heated bed temperature must be set between 0°C and 100°C",
   "dialog_device_control_modify_print_speed_tips": "Print speed must be set between 50% and 150%",

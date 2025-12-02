@@ -521,6 +521,20 @@
   "delete_confirm_yes": "确认",
   "delete_confirm_no": "取消",
   "connect_devcice_fail_tip_format": "连接{}失败，请重新选择设备并连接",
+  "time_lapse_video_loaded_failed": "延时摄影视频加载失败",
+  "time_lapse video_export_format": "延时摄影视频已导出 {} ",
+  "time_lapse_video_export_button_text_format": "导出 ({})",
+  "time_lapse_video_delete_button_text_format": "删除 ({})",
+
+  "delete_time_lapse_title": "删除延时摄影视频",
+  "delete_time_lapse_desc": "确定要删除这个视频吗？",
+  "delete_time_lapse_success": "删除视频成功",
+  "delete_time_lapse_failed_format": "删除视频失败 {}",
+  "time_lapse_video_downloaded_success_format": "视频 {} 已下载",
+  "time_lapse_video_downloaded_success_2_format": "视频 {} 已下载，但导出视频到相册失败",
+  "time_lapse_video_start_downloading": "正在下载视频……",
+  "time_lapse_video_export_video_failed": "导出视频失败",
+
 
   "Check": "查看",
   "default_exception_title": "异常",

@@ -291,6 +291,20 @@
   "delete_confirm_yes": "Confirm Delete",
   "delete_confirm_no": "Cancel",
   "connect_devcice_fail_tip_format": "Connect {} failed, please reselect your device and connect.",
+  "time_lapse_video_loaded_failed": "Time Lapse Video loaded failed.",
+  "time_lapse video_export_format": "Time Lapse Video {} exported.",
+  "time_lapse_video_export_button_text_format": "Export ({})",
+  "time_lapse_video_delete_button_text_format": "Delete ({})",
+
+  "delete_time_lapse_title": "Delete Time-lapse Video",
+  "delete_time_lapse_desc": "Do you want to delete this video?",
+  "delete_time_lapse_success": "Delete video success",
+  "delete_time_lapse_failed_format": "Delete video failed {}",
+  "time_lapse_video_downloaded_success_format": "Video {} downloaded",
+  "time_lapse_video_downloaded_success_2_format": "Video {} downloaded，but export video failed",
+  "time_lapse_video_start_downloading": "Start downloading...",
+  "time_lapse_video_export_video_failed": "Export video failed",
+
 
   "Check": "Check",
   "default_exception_title": "Exception",

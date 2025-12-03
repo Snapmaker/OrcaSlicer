@@ -2694,6 +2694,7 @@ bool PresetCollection::update_dirty()
 {
     bool was_dirty = this->get_selected_preset().is_dirty;
     bool is_dirty  = current_is_dirty();
+
     this->get_selected_preset().is_dirty = is_dirty;
     this->get_edited_preset().is_dirty = is_dirty;
 

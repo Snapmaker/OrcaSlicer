@@ -89,6 +89,7 @@ public:
 	size_t		iconID() const { return m_iconID; }
 	void		set_config(DynamicPrintConfig* config_in) { m_config = config_in; }
 	void		reload_config();
+	void		reload_config(const std::string& skip_opt_key);
     void        update_visibility(ConfigOptionMode mode, bool update_contolls_visibility);
     void        activate(ConfigOptionMode mode, std::function<void()> throw_if_canceled);
     void        clear();
@@ -301,6 +302,9 @@ public:
     int                 m_update_cnt = 0;
 
 	SwitchButton *		m_mode_view = nullptr;
+
+	// SM Orca: 追踪当前正在通过 on_value_change 修改的字段，防止 reload_config 覆盖用户刚设置的值
+	std::string			m_currently_changing_opt_key;
 
 public:
 	// BBS

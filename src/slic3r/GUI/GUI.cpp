@@ -110,7 +110,8 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 
         if (config.def()->get(opt_key)->type == coBools && config.def()->get(opt_key)->nullable) {
             ConfigOptionBoolsNullable* vec_new = new ConfigOptionBoolsNullable{ boost::any_cast<unsigned char>(value) };
-            config.option<ConfigOptionBoolsNullable>(opt_key)->set_at(vec_new, opt_index, 0);
+            // SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+            config.option<ConfigOptionBoolsNullable>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, 0);
             return;
         }
 
@@ -136,12 +137,15 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 		}
 		case coPercents:{
 			ConfigOptionPercents* vec_new = new ConfigOptionPercents{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new, opt_index, opt_index);
+			// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+			config.option<ConfigOptionPercents>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, opt_index);
 			break;
 		}
 		case coFloats:{
 			ConfigOptionFloats* vec_new = new ConfigOptionFloats{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new, opt_index, opt_index);
+			// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+			// 避免调用set_at(const ConfigOptionVectorBase*, size_t, size_t)版本
+			config.option<ConfigOptionFloats>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, opt_index);
  			break;
 		}
 		case coString:
@@ -167,7 +171,8 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			}
 			else{
 				ConfigOptionStrings* vec_new = new ConfigOptionStrings{ boost::any_cast<std::string>(value) };
-				config.option<ConfigOptionStrings>(opt_key)->set_at(vec_new, opt_index, 0);
+				// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+				config.option<ConfigOptionStrings>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, 0);
 			}
 			}
 			break;
@@ -176,14 +181,16 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			break;
 		case coBools:{
 			ConfigOptionBools* vec_new = new ConfigOptionBools{ boost::any_cast<unsigned char>(value) != 0 };
-			config.option<ConfigOptionBools>(opt_key)->set_at(vec_new, opt_index, 0);
+			// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+			config.option<ConfigOptionBools>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, 0);
 			break;}
 		case coInt:
 			config.set_key_value(opt_key, new ConfigOptionInt(boost::any_cast<int>(value)));
 			break;
 		case coInts:{
 			ConfigOptionInts* vec_new = new ConfigOptionInts{ boost::any_cast<int>(value) };
-			config.option<ConfigOptionInts>(opt_key)->set_at(vec_new, opt_index, 0);
+			// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+			config.option<ConfigOptionInts>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, 0);
 			}
 			break;
 		case coEnum:{
@@ -196,7 +203,8 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 		case coEnums:{
 			ConfigOptionEnumsGeneric* vec_new = new ConfigOptionEnumsGeneric{ boost::any_cast<int>(value) };
 			if (config.has(opt_key))
-				config.option<ConfigOptionEnumsGeneric>(opt_key)->set_at(vec_new, opt_index, 0);
+				// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+				config.option<ConfigOptionEnumsGeneric>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, 0);
 			}
 			break;
 		case coPoint:{
@@ -209,7 +217,8 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 				break;
 			}
 			ConfigOptionPoints* vec_new = new ConfigOptionPoints{ boost::any_cast<Vec2d>(value) };
-			config.option<ConfigOptionPoints>(opt_key)->set_at(vec_new, opt_index, 0);
+			// SM Orca: FIX - 显式转换为ConfigOption*以调用正确的重载版本
+			config.option<ConfigOptionPoints>(opt_key)->set_at(static_cast<const ConfigOption*>(vec_new), opt_index, 0);
 			}
 			break;
 		case coNone:

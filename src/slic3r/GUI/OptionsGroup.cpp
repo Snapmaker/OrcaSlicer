@@ -90,7 +90,7 @@ const t_field& OptionsGroup::build_field(const t_config_option_key& id, const Co
     }
     // Grab a reference to fields for convenience
     const t_field& field = m_fields[id];
-	field->m_on_change = [this](const std::string& opt_id, const boost::any& value) {
+	field->m_on_change = [this, id](const std::string& opt_id, const boost::any& value) {
 			//! This function will be called from Field.
 			//! Call OptionGroup._on_change(...)
 			if (!m_disabled)
@@ -727,6 +727,11 @@ void ConfigOptionsGroup::on_kill_focus(const std::string& opt_key)
 
 void ConfigOptionsGroup::reload_config()
 {
+	reload_config("");
+}
+
+void ConfigOptionsGroup::reload_config(const std::string& skip_opt_key)
+{
 	for (auto &kvp : m_opt_map) {
 		// Name of the option field (name of the configuration key, possibly suffixed with '#' and the index of a scalar inside a vector.
 		const std::string &opt_id    = kvp.first;
@@ -735,6 +740,12 @@ void ConfigOptionsGroup::reload_config()
 		// index in the vector option, zero for scalars
 		int 			   opt_index = kvp.second.second;
 		const ConfigOptionDef &option = m_options.at(opt_id).opt;
+
+		// SM Orca: 如果当前 opt_id 正在被修改，跳过 reload 以避免覆盖用户刚设置的值
+		if (!skip_opt_key.empty() && opt_id == skip_opt_key) {
+			continue;
+		}
+
 		this->set_value(opt_id, config_value(opt_key, opt_index, option.gui_flags == "serialized"));
 	}
 }

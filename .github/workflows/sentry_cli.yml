@@ -40,13 +40,22 @@ jobs:
         shell: pwsh
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_LOG_LEVEL: debug
         run: |
-          $pdbArchive = Get-ChildItem -Path ./symbols -Filter "*.7z" -File | Select-Object -First 1
-          if ($pdbArchive) {
-            Write-Host "Uploading PDB archive: $($pdbArchive.FullName)"
-            sentry-cli.exe --auth-token $env:SENTRY_AUTH_TOKEN upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" "$($pdbArchive.FullName)" 2>&1 | Out-Host
+          $pdbFiles = Get-ChildItem -Path ./symbols -Filter "*.pdb" -File -Recurse
+          if ($pdbFiles.Count -gt 0) {
+            Write-Host "Found $($pdbFiles.Count) PDB file(s) to upload:"
+            $pdbFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
+            Write-Host ""
+            Write-Host "Starting Sentry upload with debug logging..."
+            sentry-cli.exe --log-level=debug --auth-token $env:SENTRY_AUTH_TOKEN upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" ./symbols 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::Sentry upload failed with exit code $LASTEXITCODE"
+              exit $LASTEXITCODE
+            }
           } else {
-            Write-Host "No PDB archive found in symbols folder"
+            Write-Host "::error::No PDB files found in symbols folder"
+            Get-ChildItem -Path ./symbols -Recurse | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
             exit 1
           }
 

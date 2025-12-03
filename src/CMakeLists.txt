@@ -183,7 +183,11 @@ if (WIN32)
     target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
-    target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry)
+    if (SLIC3R_SENTRY)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry)
+    else()
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly)
+    endif()
 endif ()
 
 # Link the resources dir to where Slic3r GUI expects it

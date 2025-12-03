@@ -315,7 +315,7 @@ if (NOT OPENSSL_FOUND OR NOT CURL_FOUND)
 endif ()
 
 set(SENTRY_PKG "")
-if (NOT SENTRY_FOUND)
+if (SLIC3R_SENTRY AND NOT SENTRY_FOUND)
     include(Sentry/Sentry.cmake)
     set(SENTRY_PKG dep_Sentry)
 endif()

@@ -1167,7 +1167,7 @@ void Tab::load_config(const DynamicPrintConfig& config)
 void Tab::reload_config()
 {
     if (m_active_page)
-        m_active_page->reload_config();
+        m_active_page->reload_config(m_currently_changing_opt_key);
 }
 
 void Tab::update_mode()
@@ -1394,6 +1394,19 @@ static wxString pad_combo_value_for_config(const DynamicPrintConfig &config)
 
 void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 {
+    // SM Orca: RAII守卫 - 设置当前正在修改的字段，防止 reload_config 覆盖
+    struct ChangeGuard {
+        Tab* tab;
+        ChangeGuard(Tab* t, const std::string& key) : tab(t) {
+            tab->m_currently_changing_opt_key = key;
+            BOOST_LOG_TRIVIAL(info) << "[ON_VALUE_CHANGE] Setting m_currently_changing_opt_key=" << key;
+        }
+        ~ChangeGuard() {
+            BOOST_LOG_TRIVIAL(info) << "[ON_VALUE_CHANGE] Clearing m_currently_changing_opt_key (was " << tab->m_currently_changing_opt_key << ")";
+            tab->m_currently_changing_opt_key.clear();
+        }
+    } guard(this, opt_key);
+
     if (wxGetApp().plater() == nullptr) {
         return;
     }
@@ -1775,7 +1788,14 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
+    // SM Orca: 调试日志 - 准备调用update()
+    BOOST_LOG_TRIVIAL(warning) << "[ON_VALUE_CHANGE] About to call update() for opt_key=" << opt_key;
+
     update();
+
+    // SM Orca: 调试日志 - update()完成
+    BOOST_LOG_TRIVIAL(warning) << "[ON_VALUE_CHANGE] update() completed for opt_key=" << opt_key;
+
     if(m_active_page)
         m_active_page->update_visibility(m_mode, true);
     m_page_view->GetParent()->Layout();
@@ -6404,8 +6424,13 @@ Page::Page(wxWindow* parent, const wxString& title, int iconID, wxPanel* tab_own
 
 void Page::reload_config()
 {
+    reload_config("");
+}
+
+void Page::reload_config(const std::string& skip_opt_key)
+{
     for (auto group : m_optgroups)
-        group->reload_config();
+        group->reload_config(skip_opt_key);
 }
 
 void Page::update_visibility(ConfigOptionMode mode, bool update_contolls_visibility)
@@ -6559,8 +6584,15 @@ ConfigOptionsGroupShp Page::new_optgroup(const wxString &title, const wxString &
         //! Using of CallAfter is redundant.
         //! And in some cases it causes update() function to be recalled again
 //!        wxTheApp->CallAfter([this, opt_key, value]() {
+            // SM Orca: 设置保护标志，防止 reload_config 覆盖用户刚设置的值
+            // 必须在 update_dirty() 之前设置，因为 update_dirty() 可能触发 reload_config()
+            static_cast<Tab*>(tab)->m_currently_changing_opt_key = opt_key;
+
             static_cast<Tab*>(tab)->update_dirty();
             static_cast<Tab*>(tab)->on_value_change(opt_key, value);
+
+            // SM Orca: 清除保护标志
+            static_cast<Tab*>(tab)->m_currently_changing_opt_key.clear();
 //!        });
     };
 

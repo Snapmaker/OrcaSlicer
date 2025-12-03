@@ -287,6 +287,7 @@ public:
 	void		back_to_config_value(const DynamicPrintConfig& config, const std::string& opt_key);
     void		on_kill_focus(const std::string& opt_key) override;
 	void		reload_config();
+	void		reload_config(const std::string& skip_opt_key);
     // return value shows visibility : false => all options are hidden
     void        Hide();
     void        Show(const bool show);

@@ -18,6 +18,8 @@ jobs:
   build_orca:
     name: Build Snapmaker_Orca
     runs-on: ${{ inputs.os }}
+    outputs:
+      release: ${{ steps.set_release.outputs.release || steps.set_release_win.outputs.release }}
     env:
       date:
       ver:
@@ -75,6 +77,21 @@ jobs:
           echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           echo "date=$date" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
           echo "date: ${{ env.date }} version: ${{ env.ver }}"
+        shell: pwsh
+
+      - name: Set release output (non-Windows)
+        id: set_release
+        if: inputs.os != 'windows-latest'
+        run: |
+          echo "release=$ver" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Set release output (Windows)
+        id: set_release_win
+        if: inputs.os == 'windows-latest'
+        run: |
+          $release = $env:ver
+          Write-Output ("release=$release") | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
 #   Mac

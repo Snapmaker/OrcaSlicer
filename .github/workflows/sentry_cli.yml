@@ -1,0 +1,57 @@
+name: Upload Debug Symbols to Sentry
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+        description: "Target OS: windows-latest, macos-14, ubuntu-20.04, ubuntu-24.04"
+      pdb-artifact-name:
+        required: false
+        type: string
+        description: "Artifact name for Windows PDB archive (e.g., 'PDB')"
+      release:
+        required: true
+        type: string
+        description: "Release version/tag"
+
+jobs:
+  upload_symbols:
+    name: Upload Debug Symbols to Sentry
+    runs-on: ${{ inputs.os }}
+    steps:
+      # ==================== Windows ====================
+      - name: "[Windows] Install sentry-cli via choco"
+        if: inputs.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install sentry-cli -y -y 2>&1 | Out-Null
+
+      - name: "[Windows] Download PDB artifact"
+        if: inputs.os == 'windows-latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.pdb-artifact-name }}
+          path: ./symbols
+
+      - name: "[Windows] Upload PDB to Sentry (sentry-cli)"
+        if: inputs.os == 'windows-latest'
+        shell: pwsh
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          $pdbArchive = Get-ChildItem -Path ./symbols -Filter "*.7z" -File | Select-Object -First 1
+          if ($pdbArchive) {
+            Write-Host "Uploading PDB archive: $($pdbArchive.FullName)"
+            sentry-cli.exe --auth-token $env:SENTRY_AUTH_TOKEN upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" "$($pdbArchive.FullName)" 2>&1 | Out-Host
+          } else {
+            Write-Host "No PDB archive found in symbols folder"
+            exit 1
+          }
+
+      # ==================== macOS ====================
+
+
+      # ==================== Linux ====================
+

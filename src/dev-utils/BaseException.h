@@ -26,6 +26,4 @@ protected:
 	boost::nowide::ofstream *output_file;
 };
 
-#define SET_DEFULTER_HANDLER() SetUnhandledExceptionFilter(CBaseException::UnhandledExceptionFilter)
-
 #define SET_DEFAUL_EXCEPTION() _set_se_translator(CBaseException::STF)

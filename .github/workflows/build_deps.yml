@@ -150,3 +150,14 @@ jobs:
       os: ${{ inputs.os }}
       arch: ${{ inputs.arch }}
     secrets: inherit
+
+  upload_symbols:
+    name: Upload Debug Symbols to Sentry
+    needs: [build_orca]
+    if: ${{ !cancelled() && needs.build_orca.result == 'success' }}
+    uses: ./.github/workflows/sentry_cli.yml
+    with:
+      os: ${{ inputs.os }}
+      pdb-artifact-name: PDB
+      release: ${{ github.sha }}
+    secrets: inherit

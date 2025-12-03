@@ -6268,63 +6268,6 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 }
 
 
-//BBS: dump stack debug codes, don't delete currently
-//#include <dbghelp.h>
-//#pragma comment(lib, "version.lib")
-//#pragma comment( lib, "dbghelp.lib" )
-/*DWORD main_thread_id;
-std::string TraceStack()
-{
-    static const int MAX_STACK_FRAMES = 16;
-
-    void* pStack[MAX_STACK_FRAMES];
-
-    HANDLE process = GetCurrentProcess();
-    SymInitialize(process, NULL, TRUE);
-    WORD frames = CaptureStackBackTrace(0, MAX_STACK_FRAMES, pStack, NULL);
-
-    std::ostringstream oss;
-    oss << "stack traceback: frames="<< frames << std::endl;
-    for (WORD i = 0; i < frames; ++i) {
-        DWORD64 address = (DWORD64)(pStack[i]);
-
-        DWORD64 displacementSym = 0;
-        char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR)];
-        PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)buffer;
-        pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-        pSymbol->MaxNameLen = MAX_SYM_NAME;
-
-        DWORD displacementLine = 0;
-        IMAGEHLP_LINE64 line;
-        //SymSetOptions(SYMOPT_LOAD_LINES);
-        line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-
-        if (SymFromAddr(process, address, &displacementSym, pSymbol)
-            && SymGetLineFromAddr64(process, address, &displacementLine, &line)) {
-            oss << "\t" << pSymbol->Name << " at " << line.FileName << ":" << line.LineNumber << "(0x" << std::hex << pSymbol->Address << std::dec << ")" << std::endl;
-        }
-        else {
-            oss << "\terror: " << GetLastError() << std::endl;
-        }
-    }
-    return oss.str();
-}
-
-LONG WINAPI VectoredExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo)
-{
-    std::ofstream f;
-
-    DWORD cur_thread_id = GetCurrentThreadId();
-    f.open("VectoredExceptionHandler.txt", std::ios::out | std::ios::app);
-    f << "main thread id="<<main_thread_id<<", current thread_id="<< cur_thread_id << std::endl;
-    f << std::hex << pExceptionInfo->ExceptionRecord->ExceptionCode << std::endl;
-    f << TraceStack();
-    f.flush();
-    f.close();
-
-    return EXCEPTION_CONTINUE_SEARCH;
-}*/
-
 #if defined(_MSC_VER) || defined(__MINGW32__)
 extern "C" {
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
@@ -6337,13 +6280,6 @@ extern "C" {
         for (size_t i = 0; i < argc; ++ i)
             argv_ptrs[i] = argv_narrow[i].data();
 
-//BBS: register default exception handler
-#if BBL_RELEASE_TO_PUBLIC
-        SET_DEFULTER_HANDLER();
-#else
-        //AddVectoredExceptionHandler(1, CBaseException::UnhandledExceptionFilter);
-        SET_DEFULTER_HANDLER();
-#endif
         std::set_new_handler([]() {
             int *a = nullptr;
             *a     = 0;

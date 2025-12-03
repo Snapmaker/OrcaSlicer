@@ -314,6 +314,12 @@ if (NOT OPENSSL_FOUND OR NOT CURL_FOUND)
     set(CURL_PKG dep_CURL)
 endif ()
 
+set(SENTRY_PKG "")
+if (NOT SENTRY_FOUND)
+    include(Sentry/Sentry.cmake)
+    set(SENTRY_PKG dep_Sentry)
+endif()
+
 set(JPEG_PKG "")
 if (NOT JPEG_FOUND)
     include(JPEG/JPEG.cmake)
@@ -355,6 +361,7 @@ set(_dep_list
     dep_TBB
     ${OPENSSL_PKG}
     ${CURL_PKG}
+    ${SENTRY_PKG}
     ${WXWIDGETS_PKG}
     dep_Cereal
     dep_NLopt

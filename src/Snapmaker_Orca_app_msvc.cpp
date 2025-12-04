@@ -7,7 +7,7 @@
 #include <shellapi.h>
 #include <wchar.h>
 #include <shlobj.h>
-#include "sentry.h"
+#include "sentry_wrapper/SentryWrapper.hpp"
 
 #ifdef SLIC3R_GUI
 extern "C" {
@@ -33,14 +33,7 @@ __declspec(dllexport) int   AmdPowerXpressRequestHighPerformance = 0;
 #include <boost/asio/ip/host_name.hpp>
 #include <stdio.h>
 
-static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_value_t event, void* closure)
-{
-    (void) uctx;
-    (void) closure;
-
-    // tell the backend to retain the event
-    return event;
-}
+using namespace Slic3r;
 
 #ifdef SLIC3R_GUI
 class OpenGLVersionCheck
@@ -218,91 +211,6 @@ typedef int(__stdcall* Slic3rMainFunc)(int argc, wchar_t** argv);
 Slic3rMainFunc Snapmaker_Orca_main = nullptr;
 }
 
-void initSentry()
-{
-    sentry_options_t* options = sentry_options_new();
-    {
-#ifdef WIN32
-        std::string dsn = std::string("https://c74b617c2aedc291444d3a238d23e780@o4508125599563776.ingest.us.sentry.io/4510425163956224");
-
-        sentry_options_set_dsn(options, dsn.c_str());
-
-        wchar_t exeDir[MAX_PATH];
-        ::GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
-        std::wstring wsExeDir(exeDir);
-        int          nPos     = wsExeDir.find_last_of('\\');
-        std::wstring wsDmpDir = wsExeDir.substr(0, nPos + 1);
-
-        std::wstring handlerDir = wsDmpDir + L"crashpad_handler.exe";
-        wsDmpDir += L"dump";
-
-        auto wstringTostring = [](std::wstring wTmpStr) -> std::string {
-            std::string resStr = std::string();
-            int         len    = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-
-            if (len <= 0)
-                return std::string();
-            std::string desStr(len, 0);
-
-            WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, &desStr[0], len, nullptr, nullptr);
-
-            resStr = desStr;
-
-            return resStr;
-        };
-
-        std::string desDir = wstringTostring(handlerDir);
-        if (!desDir.empty())
-            sentry_options_set_handler_path(options, desDir.c_str());
-        desDir = wstringTostring(wsDmpDir);
-        desDir                        = wstringTostring(wsDmpDir);
-        wchar_t appDataPath[MAX_PATH] = {0};
-        auto    hr                    = SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appDataPath);
-        char*   path                  = new char[MAX_PATH];
-        size_t  pathLength;
-        wcstombs_s(&pathLength, path, MAX_PATH, appDataPath, MAX_PATH);
-        std::string filePath = path;
-        std::string appName  = "\\" + std::string("Snapmaker_Orca\\");
-        filePath             = filePath + appName;
-
-        if (!filePath.empty())
-            sentry_options_set_database_path(options, filePath.c_str());
-#endif
-        std::string softVersion = "snapmaker_orca_2.2.0_beta2";
-        // Snapmaker_VERSION
-        sentry_options_set_release(options, softVersion.c_str());
-
-#if defined(_DEBUG) || !defined(NDEBUG)
-        sentry_options_set_debug(options, 1);
-#else
-        sentry_options_set_debug(options, 0);
-#endif
-        // release version environment(Testing/production/development/Staging)
-        sentry_options_set_environment(options, "develop");
-        sentry_options_set_auto_session_tracking(options, false);
-        sentry_options_set_symbolize_stacktraces(options, true);
-        sentry_options_set_on_crash(options, on_crash_callback, NULL);
-        // Enable before_send hook for filtering sensitive data
-        sentry_options_set_before_send(options, NULL, NULL);
-
-        // Ensure all events and crashes are captured (sample rate 100%)
-        sentry_options_set_sample_rate(options, 1.0);        // Capture 100% of events
-        sentry_options_set_traces_sample_rate(options, 1.0); // Capture 100% of traces
-
-        sentry_init(options);
-        sentry_start_session();
-
-        DWORD processID = GetCurrentProcessId();
-        sentry_set_tag("PID", std::to_string(processID).c_str());
-
-        auto pcName = boost::asio::ip::host_name();
-        // auto macAddress = getMacAddress();
-
-        sentry_set_tag("computer_name", pcName.c_str());
-        // sentry_set_tag("mac_address", macAddress.c_str());
-    }
-}
-
 extern "C" {
 #ifdef SLIC3R_WRAPPER_NOCONSOLE
 int APIENTRY wWinMain(HINSTANCE /* hInstance */, HINSTANCE /* hPrevInstance */, PWSTR /* lpCmdLine */, int /* nCmdShow */)
@@ -318,16 +226,10 @@ int wmain(int argc, wchar_t** argv)
     // the application will be killed even if "Ignore" button is pressed.
     _set_error_mode(_OUT_TO_MSGBOX);
 
-#if defined(_DEBUG) || !defined(NDEBUG)
-    SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER) ExceptionCrashHandler);
-#else
-    // Initialize Sentry for crash reporting in Release builds
     initSentry();
-#endif
 
     std::vector<wchar_t*> argv_extended;
     argv_extended.emplace_back(argv[0]);
-
 #ifdef SLIC3R_WRAPPER_GCODEVIEWER
     wchar_t gcodeviewer_param[] = L"--gcodeviewer";
     argv_extended.emplace_back(gcodeviewer_param);
@@ -390,7 +292,7 @@ int wmain(int argc, wchar_t** argv)
     HINSTANCE hInstance_Slic3r = LoadLibraryExW(path_to_slic3r, nullptr, 0);
     if (hInstance_Slic3r == nullptr) {
         printf("Snapmaker_Orca.dll was not loaded, error=%d\n", GetLastError());
-        sentry_close();
+        exitSentry();
         return -1;
     }
 
@@ -406,13 +308,13 @@ int wmain(int argc, wchar_t** argv)
         );
     if (Snapmaker_Orca_main == nullptr) {
         printf("could not locate the function Snapmaker_Orca_main in Snapmaker_Orca.dll\n");
-        sentry_close();
+        exitSentry();
         return -1;
     }
 
     // argc minus the trailing nullptr of the argv
     auto res = Snapmaker_Orca_main((int) argv_extended.size() - 1, argv_extended.data());
-    sentry_close();
+    exitSentry();
     return res;
 }
 }

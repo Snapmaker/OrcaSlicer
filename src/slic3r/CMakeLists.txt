@@ -737,3 +737,9 @@ endif ()
 
 # Add a definition so that we can tell we are compiling slic3r.
 target_compile_definitions(libslic3r_gui PRIVATE SLIC3R_CURRENTLY_COMPILING_GUI_MODULE)
+
+# Sentry crash reporting integration
+if (SLIC3R_SENTRY)
+    target_compile_definitions(libslic3r_gui PUBLIC SLIC3R_SENTRY)
+    target_link_libraries(libslic3r_gui sentry::sentry)
+endif()

@@ -35,6 +35,26 @@ jobs:
           name: ${{ inputs.pdb-artifact-name }}
           path: ./symbols
 
+      - name: "[Windows] Extract PDB archive"
+        if: inputs.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem -Path ./symbols -Filter "*.7z" -File | Select-Object -First 1
+          if ($archive) {
+            Write-Host "Found archive: $($archive.FullName)"
+            Write-Host "Extracting to ./symbols/extracted ..."
+            7z x "$($archive.FullName)" -o"./symbols/extracted" -y
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::Failed to extract archive with exit code $LASTEXITCODE"
+              exit $LASTEXITCODE
+            }
+            Write-Host "Extraction complete. Contents:"
+            Get-ChildItem -Path ./symbols/extracted -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
+          } else {
+            Write-Host "No .7z archive found, assuming PDB files are already extracted"
+            Get-ChildItem -Path ./symbols -Recurse | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
+          }
+
       - name: "[Windows] Upload PDB to Sentry (sentry-cli)"
         if: inputs.os == 'windows-latest'
         shell: pwsh
@@ -42,19 +62,25 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_LOG_LEVEL: debug
         run: |
-          $pdbFiles = Get-ChildItem -Path ./symbols -Filter "*.pdb" -File -Recurse
+          # Determine upload path - prefer extracted folder if it exists
+          $uploadPath = "./symbols"
+          if (Test-Path "./symbols/extracted") {
+            $uploadPath = "./symbols/extracted"
+          }
+          
+          $pdbFiles = Get-ChildItem -Path $uploadPath -Filter "*.pdb" -File -Recurse
           if ($pdbFiles.Count -gt 0) {
-            Write-Host "Found $($pdbFiles.Count) PDB file(s) to upload:"
+            Write-Host "Found $($pdbFiles.Count) PDB file(s) to upload from $uploadPath :"
             $pdbFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
             Write-Host ""
             Write-Host "Starting Sentry upload with debug logging..."
-            sentry-cli.exe --log-level=debug --auth-token $env:SENTRY_AUTH_TOKEN upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" ./symbols 2>&1 | Out-Host
+            sentry-cli.exe --log-level=debug --auth-token $env:SENTRY_AUTH_TOKEN upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" $uploadPath 2>&1 | Out-Host
             if ($LASTEXITCODE -ne 0) {
               Write-Host "::error::Sentry upload failed with exit code $LASTEXITCODE"
               exit $LASTEXITCODE
             }
           } else {
-            Write-Host "::error::No PDB files found in symbols folder"
+            Write-Host "::error::No PDB files found in $uploadPath"
             Get-ChildItem -Path ./symbols -Recurse | ForEach-Object { Write-Host "  Found: $($_.FullName)" }
             exit 1
           }

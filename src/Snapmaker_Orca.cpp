@@ -33,6 +33,10 @@
 using namespace nlohmann;
 #endif
 
+#ifdef SLIC3R_SENTRY
+#include "sentry_wrapper/SentryWrapper.hpp"
+#endif
+
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/nowide/args.hpp>
@@ -6291,6 +6295,12 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
-    return CLI().run(argc, argv);
+    initSentry();
+
+    auto res = CLI().run(argc, argv);
+
+    exitSentry();
+
+    return res;
 }
 #endif /* _MSC_VER */

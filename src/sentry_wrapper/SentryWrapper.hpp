@@ -19,7 +19,7 @@ namespace Slic3r {
     };
 
 	void sentryReportLog(SENTRY_LOG_LEVEL   logLevel,
-                        const std::string& logContent,
+                         const std::string& logContent,
                          const std::string& funcModule  = "",
                          const std::string& logTagKey   = "",
                          const std::string& logTagValue = "",

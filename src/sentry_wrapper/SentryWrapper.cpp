@@ -10,14 +10,19 @@
 
 #ifdef SLIC3R_SENTRY
 #include "sentry.h"
+#endif
 
 #ifdef _WIN32
 #include <Windows.h>
 #include <shlobj.h>
 #endif
 
+#ifdef __APPLE__
+#include <unistd.h>
+#include <mach-o/dyld.h>
 #endif
 
+#include <cstdlib>
 #include <atomic>
 
 namespace Slic3r {
@@ -36,41 +41,60 @@ static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_va
 void initSentryEx()
 {
     sentry_options_t* options = sentry_options_new();
+    std::string       dsn     = "";
     {
-#ifdef WIN32
+#ifdef __APPLE__
+
+        std::string dsn = std::string("https://ac473187efb8877f36bd31694ffd5dec@o4508125599563776.ingest.us.sentry.io/4510425212059648");
+
+#elif _WIN32
         std::string dsn = std::string("https://c74b617c2aedc291444d3a238d23e780@o4508125599563776.ingest.us.sentry.io/4510425163956224");
-
+#endif
         sentry_options_set_dsn(options, dsn.c_str());
+        std::string handlerDir  = "";
+        std::string dataBaseDir = "";
 
+#ifdef __APPLE__
+
+        char     exe_path[PATH_MAX] = {0};
+        uint32_t buf_size           = PATH_MAX;
+
+        if (_NSGetExecutablePath(exe_path, &buf_size) != 0) {
+            throw std::runtime_error("Buffer too small for executable path");
+        }
+
+        // Get the directory containing the executable, not the executable path itself
+        boost::filesystem::path exe_dir = boost::filesystem::path(exe_path).parent_path();
+        handlerDir                      = (exe_dir / "crashpad_handler").string();
+
+        const char* home_env = getenv("HOME");
+
+        dataBaseDir = home_env;
+        dataBaseDir = dataBaseDir + "/Library/Application Support/Snapmaker_Orca/SentryData";
+#elif _WIN32
         wchar_t exeDir[MAX_PATH];
         ::GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
         std::wstring wsExeDir(exeDir);
         int          nPos     = wsExeDir.find_last_of('\\');
         std::wstring wsDmpDir = wsExeDir.substr(0, nPos + 1);
-
-        std::wstring handlerDir = wsDmpDir + L"crashpad_handler.exe";
+        std::wstring desDir   = wsDmpDir + L"crashpad_handler.exe";
         wsDmpDir += L"dump";
 
         auto wstringTostring = [](std::wstring wTmpStr) -> std::string {
             std::string resStr = std::string();
             int         len    = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-
             if (len <= 0)
                 return std::string();
+
             std::string desStr(len, 0);
-
             WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, &desStr[0], len, nullptr, nullptr);
-
             resStr = desStr;
 
             return resStr;
         };
 
-        std::string desDir = wstringTostring(handlerDir);
-        if (!desDir.empty())
-            sentry_options_set_handler_path(options, desDir.c_str());
-        desDir                        = wstringTostring(wsDmpDir);
-        desDir                        = wstringTostring(wsDmpDir);
+        handlerDir = wstringTostring(desDir);
+
         wchar_t appDataPath[MAX_PATH] = {0};
         auto    hr                    = SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appDataPath);
         char*   path                  = new char[MAX_PATH];
@@ -78,13 +102,16 @@ void initSentryEx()
         wcstombs_s(&pathLength, path, MAX_PATH, appDataPath, MAX_PATH);
         std::string filePath = path;
         std::string appName  = "\\" + std::string("Snapmaker_Orca\\");
-        filePath             = filePath + appName;
-
-        if (!filePath.empty())
-            sentry_options_set_database_path(options, filePath.c_str());
+        dataBaseDir          = filePath + appName;
 #endif
+
+        if (!handlerDir.empty())
+            sentry_options_set_handler_path(options, handlerDir.c_str());
+
+        if (!dataBaseDir.empty())
+            sentry_options_set_database_path(options, dataBaseDir.c_str());
+
         std::string softVersion = "snapmaker_orca_2.2.0_beta2";
-        // Snapmaker_VERSION
         sentry_options_set_release(options, softVersion.c_str());
 
 #if defined(_DEBUG) || !defined(NDEBUG)
@@ -92,17 +119,16 @@ void initSentryEx()
 #else
         sentry_options_set_debug(options, 0);
 #endif
-        // release version environment(Testing/production/development/Staging)
+
         sentry_options_set_environment(options, "develop");
-        sentry_options_set_auto_session_tracking(options, false);
-        sentry_options_set_symbolize_stacktraces(options, true);
+
+        sentry_options_set_auto_session_tracking(options, 0);
+        sentry_options_set_symbolize_stacktraces(options, 1);
         sentry_options_set_on_crash(options, on_crash_callback, NULL);
-        // Enable before_send hook for filtering sensitive data
         sentry_options_set_before_send(options, NULL, NULL);
 
-        // Ensure all events and crashes are captured (sample rate 100%)
-        sentry_options_set_sample_rate(options, 1.0);        // Capture 100% of events
-        sentry_options_set_traces_sample_rate(options, 1.0); // Capture 100% of traces
+        sentry_options_set_sample_rate(options, 1.0);
+        sentry_options_set_traces_sample_rate(options, 1.0);
 
         sentry_init(options);
         sentry_start_session();

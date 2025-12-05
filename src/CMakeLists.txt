@@ -117,7 +117,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in 
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp)
 else ()
-    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
+    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp)
 endif ()
 
 if (MINGW)
@@ -159,6 +159,8 @@ target_link_libraries(Snapmaker_Orca libslic3r_gui)
         target_link_libraries(Snapmaker_Orca ws2_32 uxtheme setupapi)
     elseif (APPLE)
         target_link_libraries(Snapmaker_Orca "-framework OpenGL")
+        # Link Sentry for crash reporting on macOS
+        target_link_libraries(Snapmaker_Orca sentry::sentry)
     else ()
         target_link_libraries(Snapmaker_Orca -ldl)
     endif ()
@@ -246,6 +248,16 @@ else ()
             COMMAND ln -sf Snapmaker_Orca snapmaker-orca
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
             VERBATIM)
+        # Copy Sentry crashpad_handler to executable directory for non-bundle builds (e.g., Xcode debugging)
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND sh -c "if [ -f '${CMAKE_PREFIX_PATH}/bin/crashpad_handler' ]; then cp -f '${CMAKE_PREFIX_PATH}/bin/crashpad_handler' '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' && codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' 2>/dev/null || true; fi"
+            COMMENT "Copying crashpad_handler for Sentry crash reporting"
+            VERBATIM)
+        # Copy libsentry.dylib to executable directory for non-bundle builds
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND sh -c "if [ -f '${CMAKE_PREFIX_PATH}/lib/libsentry.dylib' ]; then cp -f '${CMAKE_PREFIX_PATH}/lib/libsentry.dylib' '$<TARGET_FILE_DIR:Snapmaker_Orca>/libsentry.dylib' && codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/libsentry.dylib' 2>/dev/null || true; fi"
+            COMMENT "Copying libsentry.dylib for Sentry crash reporting"
+            VERBATIM)
     else ()
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
@@ -277,6 +289,21 @@ else ()
             COMMAND sh -c "rm -rf \"$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources\" || true"
             COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
             COMMENT "Symlinking the resources directory into the build tree"
+            VERBATIM)
+        # Copy Sentry crashpad_handler to MacOS directory (same directory as executable)
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND sh -c "if [ -f '${CMAKE_PREFIX_PATH}/bin/crashpad_handler' ]; then cp -f '${CMAKE_PREFIX_PATH}/bin/crashpad_handler' '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' && codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler'; fi"
+            COMMENT "Copying and signing crashpad_handler for Sentry crash reporting"
+            VERBATIM)
+        # Copy libsentry.dylib to Frameworks directory
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND sh -c "if [ -f '${CMAKE_PREFIX_PATH}/lib/libsentry.dylib' ]; then mkdir -p '$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks' && cp -f '${CMAKE_PREFIX_PATH}/lib/libsentry.dylib' '$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/libsentry.dylib' && codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/libsentry.dylib'; fi"
+            COMMENT "Copying and signing libsentry.dylib for Sentry crash reporting"
+            VERBATIM)
+        # Update the rpath for libsentry.dylib
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true            
+            COMMENT "Updating rpath for libsentry.dylib"
             VERBATIM)
     endif()
 endif ()

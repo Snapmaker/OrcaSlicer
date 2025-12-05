@@ -159,8 +159,6 @@ target_link_libraries(Snapmaker_Orca libslic3r_gui)
         target_link_libraries(Snapmaker_Orca ws2_32 uxtheme setupapi)
     elseif (APPLE)
         target_link_libraries(Snapmaker_Orca "-framework OpenGL")
-        # Link Sentry for crash reporting on macOS
-        target_link_libraries(Snapmaker_Orca sentry::sentry)
     else ()
         target_link_libraries(Snapmaker_Orca -ldl)
     endif ()

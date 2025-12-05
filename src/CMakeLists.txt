@@ -115,7 +115,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.manifest @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
 if (WIN32)
-    add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h)
+    add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp)
 else ()
     add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
 endif ()
@@ -168,6 +168,12 @@ target_link_libraries(Snapmaker_Orca libslic3r_gui)
     #endif ()
 endif ()
 
+# Sentry crash reporting integration
+if (SLIC3R_SENTRY)
+    target_compile_definitions(Snapmaker_Orca PUBLIC SLIC3R_SENTRY)
+    target_link_libraries(Snapmaker_Orca sentry::sentry)
+endif()
+
 # On Windows, a shim application is required to produce a console / non console version of the Slic3r application.
 # Also the shim may load the Mesa software OpenGL renderer if the default renderer does not support OpenGL 2.0 and higher.
 if (WIN32)
@@ -175,7 +181,7 @@ if (WIN32)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -municode")
     endif()
 
-    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
+    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
     # Generate debug symbols even in release mode.
     if(MSVC)
         target_link_options(Snapmaker_Orca_app_gui PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")
@@ -183,7 +189,14 @@ if (WIN32)
     target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
-    target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly)
+    if (SLIC3R_SENTRY)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry)
+    else()
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly)
+    endif()
+    if (SLIC3R_SENTRY)
+        target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE SLIC3R_SENTRY)
+    endif()
 endif ()
 
 # Link the resources dir to where Slic3r GUI expects it

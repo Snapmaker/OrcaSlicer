@@ -99,6 +99,14 @@ option(SLIC3R_MSVC_COMPILE_PARALLEL "Compile on Visual Studio in parallel" 1)
 option(SLIC3R_MSVC_PDB          "Generate PDB files on MSVC in Release mode" 1)
 option(SLIC3R_PERL_XS           "Compile XS Perl module and enable Perl unit and integration tests" 0)
 option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
+
+# Sentry crash reporting - enabled only on Windows by default
+if (WIN32)
+    set(SLIC3R_SENTRY_DEFAULT ON)
+else()
+    set(SLIC3R_SENTRY_DEFAULT OFF)
+endif()
+option(SLIC3R_SENTRY            "Enable Sentry crash reporting SDK" ${SLIC3R_SENTRY_DEFAULT})
 # If SLIC3R_FHS is 1 -> SLIC3R_DESKTOP_INTEGRATION is always 0, othrewise variable.
 CMAKE_DEPENDENT_OPTION(SLIC3R_DESKTOP_INTEGRATION "Allow perfoming desktop integration during runtime" 1 "NOT SLIC3R_FHS" 0)
 
@@ -534,6 +542,9 @@ find_package(TBB REQUIRED)
 
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
+if (SLIC3R_SENTRY)
+    find_package(Sentry REQUIRED)
+endif()
 find_package(Freetype REQUIRED)
 
 
@@ -542,6 +553,24 @@ target_link_libraries(libcurl INTERFACE CURL::libcurl)
 
 find_package(ZLIB REQUIRED)
 target_link_libraries(libcurl INTERFACE ZLIB::ZLIB)
+
+if (SLIC3R_SENTRY)
+    add_library(sentry INTERFACE)
+    target_link_libraries(sentry INTERFACE sentry::sentry)
+
+    # Add sentry library directory and link sentry.lib explicitly for Windows
+    if (WIN32 AND CMAKE_PREFIX_PATH)
+        # Try to find sentry.lib in the install prefix
+        file(GLOB _sentry_lib "${CMAKE_PREFIX_PATH}/lib/sentry.lib")
+        if (_sentry_lib)
+            target_link_directories(sentry INTERFACE "${CMAKE_PREFIX_PATH}/lib")
+            target_link_libraries(sentry INTERFACE "sentry.lib")
+            message(STATUS "Found sentry.lib at: ${CMAKE_PREFIX_PATH}/lib")
+        else()
+            message(WARNING "sentry.lib not found in ${CMAKE_PREFIX_PATH}/lib. Sentry SDK may not have been built yet.")
+        endif()
+    endif()
+endif()
 
 # Fixing curl's cmake config script bugs
 if (NOT WIN32)
@@ -727,6 +756,14 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
         DESTINATION ${_out_dir})
 
+    # Copy Sentry and Crashpad artifacts if they were built by deps
+    if (SLIC3R_SENTRY AND EXISTS "${CMAKE_PREFIX_PATH}/bin/sentry.dll")
+        file(COPY "${CMAKE_PREFIX_PATH}/bin/sentry.dll"
+                  "${CMAKE_PREFIX_PATH}/bin/crashpad_handler.exe"
+            DESTINATION ${_out_dir}
+        )
+    endif()
+
     file(COPY ${CMAKE_PREFIX_PATH}/bin/occt/TKBO.dll
             ${CMAKE_PREFIX_PATH}/bin/occt/TKBRep.dll
             ${CMAKE_PREFIX_PATH}/bin/occt/TKCAF.dll
@@ -792,6 +829,16 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
 
         PARENT_SCOPE
     )
+
+    # Add Sentry DLLs to the output list if Sentry is enabled
+    if (SLIC3R_SENTRY)
+        set(${output_dlls}
+            ${${output_dlls}}
+            ${_out_dir}/sentry.dll
+            ${_out_dir}/crashpad_handler.exe
+            PARENT_SCOPE
+        )
+    endif()
 
 endfunction()
 

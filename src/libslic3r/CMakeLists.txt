@@ -511,7 +511,8 @@ endif ()
 encoding_check(libslic3r)
 
 target_compile_definitions(libslic3r PUBLIC -DUSE_TBB -DTBB_USE_CAPTURED_EXCEPTION=0)
-target_include_directories(libslic3r PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+# Make source directory PUBLIC so other modules (like libslic3r_gui) can include headers like SentryWrapper.hpp
+target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
@@ -610,3 +611,9 @@ endif()
 if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)
     add_precompiled_header(libslic3r pchheader.hpp FORCEINCLUDE)
 endif ()
+
+# Sentry crash reporting integration
+if (SLIC3R_SENTRY)
+    target_compile_definitions(libslic3r PUBLIC SLIC3R_SENTRY)
+    target_link_libraries(libslic3r PUBLIC sentry::sentry)
+endif()

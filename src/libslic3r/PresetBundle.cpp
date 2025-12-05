@@ -1837,7 +1837,7 @@ void PresetBundle::export_selections(AppConfig &config)
 void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
 {
     unsigned old_filament_count = this->filament_presets.size();
-    assert(to_del_flament_id < old_filament_count);
+    assert(to_del_filament_id < old_filament_count);
     filament_presets.erase(filament_presets.begin() + to_del_filament_id);
 
     ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");

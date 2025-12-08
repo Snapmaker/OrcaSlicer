@@ -4,6 +4,7 @@
 #include "MainFrame.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
+#include "sentry_wrapper/SentryWrapper.hpp"
 #include <algorithm>
 #include <iterator>
 #include <exception>
@@ -450,8 +451,45 @@ void SSWCP_Instance::process() {
         sw_SubscribeCacheKey();
     } else if (m_cmd == "sw_UnsubscribeCacheKeys") {
         sw_UnsubscribeCacheKeys();
+    } else if (m_cmd == "sw_UploadEvent"){
+        sw_UploadEvent();
     }
     else {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_UploadEvent() {
+    try {
+        if(!m_param_data.count("traceId")){
+            handle_general_fail(-1, "param [traceId] required!");
+            return;
+        }
+
+        if(!m_param_data.count("level")){
+            handle_general_fail(-1, "param [level] required!");
+            return;
+        }
+
+        if(!m_param_data.count("content")){
+            handle_general_fail(-1, "param [content] required!");
+            return;
+        }
+
+        std::string traceId = m_param_data["traceId"].get<std::string>();
+        int level = m_param_data["level"].get<int>();
+
+        std::string content = m_param_data["content"].get<std::string>();
+
+        std::string funcModule = m_param_data.count("funcModule") ? m_param_data["funcModule"].get<std::string>() : "";
+        std::string tagKey = m_param_data.count("tagKey") ? m_param_data["tagKey"].get<std::string>() : "";
+        std::string tagValue = m_param_data.count("tagValue") ? m_param_data["tagValue"].get<std::string>() : "";
+
+        
+        sentryReportLog(SENTRY_LOG_LEVEL(level), content, funcModule, tagKey, tagValue, traceId);
+        
+    }
+    catch (std::exception& e) {
         handle_general_fail();
     }
 }

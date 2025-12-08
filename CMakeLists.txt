@@ -808,7 +808,8 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
          DESTINATION ${_out_dir})
 
-    set(${output_dlls}
+    # Build the DLL list in a local variable first
+    set(_dll_list
         ${_out_dir}/libgmp-10.dll
         ${_out_dir}/libmpfr-4.dll
         ${_out_dir}/WebView2Loader.dll
@@ -841,19 +842,18 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         ${_out_dir}/TKXSBase.dll
 
         ${_out_dir}/freetype.dll
-
-        PARENT_SCOPE
     )
 
-    # Add Sentry DLLs to the output list if Sentry is enabled
+    # Add Sentry DLLs to the list if Sentry is enabled
     if (SLIC3R_SENTRY)
-        set(${output_dlls}
-            ${${output_dlls}}
+        list(APPEND _dll_list
             ${_out_dir}/sentry.dll
             ${_out_dir}/crashpad_handler.exe
-            PARENT_SCOPE
         )
     endif()
+
+    # Set the output variable in parent scope (only once, with complete list)
+    set(${output_dlls} ${_dll_list} PARENT_SCOPE)
 
 endfunction()
 

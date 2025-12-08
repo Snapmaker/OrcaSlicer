@@ -1583,10 +1583,21 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                      .set_retries(3)
                                      .set_timeout(last_time >= 0.0 ? last_time/1000 : 20)
                                      .on_reply([weak_self, unique_key](BonjourReply&& reply) {
+                                         // Check if application is still alive before processing
+                                         if (!GUI_App::m_app_alive.load()) {
+                                             return;
+                                         }
+                                         
                                          auto self = weak_self.lock();
                                          if(!self || self->is_stop()){
                                             return;
                                          }
+                                         
+                                         // Double check application is still alive after locking
+                                         if (!GUI_App::m_app_alive.load()) {
+                                             return;
+                                         }
+                                         
                                          json machine_data;
 
                                          std::string hostname = reply.hostname;
@@ -1641,10 +1652,16 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              size_t      vendor_pos    = machine_type.find_first_of(" ");
                                              if (vendor_pos != std::string::npos) {
                                                  std::string vendor = machine_type.substr(0, vendor_pos);
-                                                 std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" +
-                                                                             vendor + "/" + machine_type + "_cover.png";
-
-                                                 machine_data["cover"] = machine_cover;
+                                                 // Check application is still alive before accessing wxGetApp()
+                                                 if (GUI_App::m_app_alive.load()) {
+                                                     try {
+                                                         std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" +
+                                                                                     vendor + "/" + machine_type + "_cover.png";
+                                                         machine_data["cover"] = machine_cover;
+                                                     } catch (...) {
+                                                         // Application is shutting down, skip setting cover
+                                                     }
+                                                 }
                                              }
                                          } else {
                                              // test
@@ -1666,6 +1683,11 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              machine_data["region"] = reply.txt_data["region"];
                                          }
 
+                                         // Final check before adding to list
+                                         if (!GUI_App::m_app_alive.load() || !self || self->is_stop()) {
+                                             return;
+                                         }
+
                                          json machine_object;
                                          if (machine_data.count("unique_value")) {
                                              self->add_machine_to_list(machine_object);
@@ -1677,13 +1699,26 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                          
                                      })
                                      .on_complete([weak_self]() {
-                                         wxGetApp().CallAfter([weak_self]() {
-                                             auto self = weak_self.lock();
-                                             if (self) {
-                                                 self->onOneEngineEnd();
-                                             }
-                                             
-                                         });
+                                         // Check if application is still alive before scheduling callback
+                                         if (!GUI_App::m_app_alive.load()) {
+                                             return;
+                                         }
+                                         
+                                         try {
+                                             wxGetApp().CallAfter([weak_self]() {
+                                                 // Check again inside the callback
+                                                 if (!GUI_App::m_app_alive.load()) {
+                                                     return;
+                                                 }
+                                                 
+                                                 auto self = weak_self.lock();
+                                                 if (self && !self->is_stop()) {
+                                                     self->onOneEngineEnd();
+                                                 }
+                                             });
+                                         } catch (...) {
+                                             // Application is shutting down, ignore the callback
+                                         }
                                      })
                                      .lookup();
                 }

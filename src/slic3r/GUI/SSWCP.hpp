@@ -169,6 +169,9 @@ private:
     // orca log
     void sw_FileLog();
 
+    // Sentry
+    void sw_UploadEvent();
+
 
 public:
     // 抽象工具类函数

@@ -3,7 +3,9 @@ name: Only_Win
 on:
   push:
     branches:
-     - alves/*
+     - main
+     - 2.2.0
+     - release/*
     paths:
      - 'deps/**'
      - 'src/**'
@@ -16,7 +18,9 @@ on:
 
   pull_request:
     branches:
-     - alves/*
+     - main
+     - 2.2.0
+     - release/*
     paths:
      - 'deps/**'
      - 'src/**'

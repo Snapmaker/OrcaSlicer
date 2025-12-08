@@ -68,11 +68,20 @@
             {
               "serie": "Terra",
               "description": ""
+            },
+            {
+              "serie": "Sonic",
+              "description": ""
             }
           ]
         },
         {
           "material": "PETG",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "ABS",
           "description": "",
           "series": []
         }
@@ -116,6 +125,10 @@
           "series": [
             {
               "serie": "95A",
+              "description": ""
+            },
+            {
+              "serie": "90A",
               "description": ""
             }
           ]

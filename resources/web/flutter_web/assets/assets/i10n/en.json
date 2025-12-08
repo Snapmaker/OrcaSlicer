@@ -93,7 +93,8 @@
   "Create New Project": "NewProject",
   "Waiting for device authorization": "Waiting for device authorization...",
   "Device connect error, please return to device page and connect again.": "Device connect error, please return to device page and connect again.",
-
+  "The device authorization has expired to reinitiate the connection.": "The device authorization has expired to reinitiate the connection.",
+  "Unknown error, please check the device and try again.": "Unknown error, please check the device and try again.",
   "System": "System",
   "Simplified Chinese": "Simplified Chinese",
   "English": "English",

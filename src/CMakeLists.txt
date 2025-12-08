@@ -222,20 +222,28 @@ if (WIN32)
             )
         endforeach ()
 
-        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
-        elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_Release)
-        else()
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
-        endif()
+        # For multi-config generators (Visual Studio), copy DLLs for all configurations
+        foreach (CONF ${CMAKE_CONFIGURATION_TYPES})
+            if ("${CONF}" STREQUAL "Debug")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "d" output_dlls_Debug)
+            else()
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_Release)
+            endif()
+        endforeach ()
     else ()
+        # Single-config generators (Ninja, Makefiles)
         file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/resources" WIN_RESOURCES_SYMLINK)
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             COMMAND if not exist "${WIN_RESOURCES_SYMLINK}" "(" mklink /J "${WIN_RESOURCES_SYMLINK}" "${SLIC3R_RESOURCES_DIR_WIN}" ")"
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM
         )
+        # Copy DLLs for single-config generators
+        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+        else()
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "${CMAKE_BUILD_TYPE}" "" output_dlls_Release)
+        endif()
     endif ()
 
 

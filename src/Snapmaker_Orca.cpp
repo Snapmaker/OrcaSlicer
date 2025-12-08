@@ -33,9 +33,9 @@
 using namespace nlohmann;
 #endif
 
-#ifdef SLIC3R_SENTRY
+
 #include "sentry_wrapper/SentryWrapper.hpp"
-#endif
+
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>

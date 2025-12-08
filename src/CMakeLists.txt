@@ -237,13 +237,6 @@ if (WIN32)
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM
         )
-        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
-        elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_Release)
-        else()
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
-        endif()
     endif ()
 
 

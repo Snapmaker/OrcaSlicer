@@ -1,4 +1,4 @@
-name: Build all
+name: Only_Mac
 
 on:
   push:
@@ -49,7 +49,7 @@ concurrency:
 
 jobs:
   build_all:
-    name: Build All
+    name: Only_Mac
     strategy:
       fail-fast: false
       matrix:

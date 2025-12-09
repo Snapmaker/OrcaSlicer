@@ -117,7 +117,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in 
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp)
 else ()
-    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
+    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp)
 endif ()
 
 if (MINGW)
@@ -222,20 +222,33 @@ if (WIN32)
             )
         endforeach ()
 
-        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
-        elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_Release)
-        else()
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
-        endif()
+        # For multi-config generators (Visual Studio), copy DLLs for all configurations
+        foreach (CONF ${CMAKE_CONFIGURATION_TYPES})
+            if ("${CONF}" STREQUAL "Debug")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "d" output_dlls_Debug)
+            elseif ("${CONF}" STREQUAL "Release")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_Release)
+            elseif ("${CONF}" STREQUAL "RelWithDebInfo")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_RelWithDebInfo)
+            else()
+                # MinSizeRel or other configs
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" _unused_dlls)
+            endif()
+        endforeach ()
     else ()
+        # Single-config generators (Ninja, Makefiles)
         file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/resources" WIN_RESOURCES_SYMLINK)
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             COMMAND if not exist "${WIN_RESOURCES_SYMLINK}" "(" mklink /J "${WIN_RESOURCES_SYMLINK}" "${SLIC3R_RESOURCES_DIR_WIN}" ")"
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM
         )
+        # Copy DLLs for single-config generators
+        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+        else()
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "${CMAKE_BUILD_TYPE}" "" output_dlls_Release)
+        endif()
     endif ()
 
 
@@ -246,6 +259,20 @@ else ()
             COMMAND ln -sf Snapmaker_Orca snapmaker-orca
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
             VERBATIM)
+        # Copy Sentry crashpad_handler to executable directory for non-bundle builds (e.g., Xcode debugging)
+        if (SLIC3R_SENTRY)
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/bin/crashpad_handler" "$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' 2>/dev/null || true"
+                COMMENT "Copying crashpad_handler for Sentry crash reporting"
+                VERBATIM)
+            # Copy libsentry.dylib to executable directory for non-bundle builds
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/lib/libsentry.dylib" "$<TARGET_FILE_DIR:Snapmaker_Orca>/libsentry.dylib"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/libsentry.dylib' 2>/dev/null || true"
+                COMMENT "Copying libsentry.dylib for Sentry crash reporting"
+                VERBATIM)
+        endif()
     else ()
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
@@ -278,6 +305,26 @@ else ()
             COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM)
+        # Copy Sentry crashpad_handler to MacOS directory (same directory as executable)
+        if (SLIC3R_SENTRY)
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/bin/crashpad_handler" "$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' 2>/dev/null || true"
+                COMMENT "Copying and signing crashpad_handler for Sentry crash reporting"
+                VERBATIM)
+            # Copy libsentry.dylib to Frameworks directory
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/lib/libsentry.dylib" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/libsentry.dylib"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/libsentry.dylib' 2>/dev/null || true"
+                COMMENT "Copying and signing libsentry.dylib for Sentry crash reporting"
+                VERBATIM)
+            # Update the rpath for libsentry.dylib
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true            
+                COMMENT "Updating rpath for libsentry.dylib"
+                VERBATIM)
+        endif()
     endif()
 endif ()
 

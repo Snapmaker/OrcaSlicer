@@ -543,7 +543,12 @@ find_package(TBB REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
 if (SLIC3R_SENTRY)
-    find_package(Sentry REQUIRED)
+    find_package(Sentry QUIET)
+    if (NOT Sentry_FOUND)
+        message(WARNING "Sentry SDK not found. SLIC3R_SENTRY will be disabled. "
+                        "Build deps with Sentry support or use -DSLIC3R_SENTRY=OFF")
+        set(SLIC3R_SENTRY OFF CACHE BOOL "Enable Sentry crash reporting SDK" FORCE)
+    endif()
 endif()
 find_package(Freetype REQUIRED)
 
@@ -569,7 +574,17 @@ if (SLIC3R_SENTRY)
         else()
             message(WARNING "sentry.lib not found in ${CMAKE_PREFIX_PATH}/lib. Sentry SDK may not have been built yet.")
         endif()
-    endif()
+    	elseif (APPLE AND CMAKE_PREFIX_PATH)
+		# Try to find libsentry.dylib in the install prefix for macOS
+		file(GLOB _sentry_lib "${CMAKE_PREFIX_PATH}/lib/libsentry.dylib")
+		if (_sentry_lib)
+			target_link_directories(sentry INTERFACE "${CMAKE_PREFIX_PATH}/lib")
+			target_link_libraries(sentry INTERFACE "sentry")
+			message(STATUS "Found libsentry.dylib at: ${CMAKE_PREFIX_PATH}/lib")
+		else()
+			message(WARNING "libsentry.dylib not found in ${CMAKE_PREFIX_PATH}/lib. Sentry SDK may not have been built yet.")
+		endif()
+	endif()
 endif()
 
 # Fixing curl's cmake config script bugs
@@ -793,7 +808,8 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
          DESTINATION ${_out_dir})
 
-    set(${output_dlls}
+    # Build the DLL list in a local variable first
+    set(_dll_list
         ${_out_dir}/libgmp-10.dll
         ${_out_dir}/libmpfr-4.dll
         ${_out_dir}/WebView2Loader.dll
@@ -826,19 +842,18 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         ${_out_dir}/TKXSBase.dll
 
         ${_out_dir}/freetype.dll
-
-        PARENT_SCOPE
     )
 
-    # Add Sentry DLLs to the output list if Sentry is enabled
+    # Add Sentry DLLs to the list if Sentry is enabled
     if (SLIC3R_SENTRY)
-        set(${output_dlls}
-            ${${output_dlls}}
+        list(APPEND _dll_list
             ${_out_dir}/sentry.dll
             ${_out_dir}/crashpad_handler.exe
-            PARENT_SCOPE
         )
     endif()
+
+    # Set the output variable in parent scope (only once, with complete list)
+    set(${output_dlls} ${_dll_list} PARENT_SCOPE)
 
 endfunction()
 

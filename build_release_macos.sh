@@ -222,15 +222,83 @@ function build_slicer() {
         # delete .DS_Store file
         find "./Snapmaker Orca.app/" -name '.DS_Store' -delete
 
-         # Copy Snapmaker_Orca_profile_validator.app if it exists
-            if [ -f "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-                echo "Copying Snapmaker_Orca_profile_validator.app..."
-                rm -rf ./Snapmaker_Orca_profile_validator.app
-                cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app" ./Snapmaker_Orca_profile_validator.app
-                # delete .DS_Store file
-                find ./Snapmaker_Orca_profile_validator.app/ -name '.DS_Store' -delete
+        # Copy Sentry crashpad_handler and libsentry.dylib for crash reporting
+        CRASHPAD_HANDLER="${DEPS}/usr/local/bin/crashpad_handler"
+        LIBSENTRY="${DEPS}/usr/local/lib/libsentry.dylib"
+        APP_MACOS_DIR='./Snapmaker Orca.app/Contents/MacOS'
+        APP_FRAMEWORKS_DIR='./Snapmaker Orca.app/Contents/Frameworks'
+        EXECUTABLE="${APP_MACOS_DIR}/Snapmaker_Orca"
+        
+        if [ -f "${CRASHPAD_HANDLER}" ]; then
+            echo "Copying crashpad_handler to app bundle..."
+            cp -f "${CRASHPAD_HANDLER}" "${APP_MACOS_DIR}/crashpad_handler"
+            # Sign crashpad_handler
+            codesign --force --sign - "${APP_MACOS_DIR}/crashpad_handler" 2>/dev/null || true
+        else
+            echo "Warning: crashpad_handler not found at ${CRASHPAD_HANDLER}"
+        fi
+        
+        if [ -f "${LIBSENTRY}" ]; then
+            echo "Copying libsentry.dylib to Frameworks..."
+            mkdir -p "${APP_FRAMEWORKS_DIR}"
+            cp -f "${LIBSENTRY}" "${APP_FRAMEWORKS_DIR}/libsentry.dylib"
+            # Sign libsentry.dylib
+            codesign --force --sign - "${APP_FRAMEWORKS_DIR}/libsentry.dylib" 2>/dev/null || true
+            
+            # Update rpath in Snapmaker_Orca to use @executable_path relative path
+            if [ -f "${EXECUTABLE}" ]; then
+                echo "Updating libsentry.dylib rpath in Snapmaker_Orca..."
+                install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "${EXECUTABLE}" 2>/dev/null || true
+                # Re-sign the executable after modification
+                codesign --force --sign - "${EXECUTABLE}" 2>/dev/null || true
             fi
-        )
+        else
+            echo "Warning: libsentry.dylib not found at ${LIBSENTRY}"
+        fi
+
+        # Copy Snapmaker_Orca_profile_validator.app if it exists
+        if [ -f "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            echo "Copying Snapmaker_Orca_profile_validator.app..."
+            rm -rf ./Snapmaker_Orca_profile_validator.app
+            cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app" ./Snapmaker_Orca_profile_validator.app
+            # delete .DS_Store file
+            find ./Snapmaker_Orca_profile_validator.app/ -name '.DS_Store' -delete
+        fi
+
+        # Generate dSYM debug symbols for Sentry crash reporting
+        if [ "$SLIC3R_SENTRY" = "1" ]; then
+            echo "Generating dSYM debug symbols..."
+            DSYM_DIR="./dSYM"
+            mkdir -p "${DSYM_DIR}"
+            
+            # Generate dSYM for main app
+            if [ -f "${APP_MACOS_DIR}/Snapmaker_Orca" ]; then
+                echo "Generating dSYM for Snapmaker_Orca..."
+                dsymutil "${APP_MACOS_DIR}/Snapmaker_Orca" -o "${DSYM_DIR}/Snapmaker_Orca.dSYM"
+            fi
+            
+            # Generate dSYM for crashpad_handler if it exists
+            if [ -f "${APP_MACOS_DIR}/crashpad_handler" ]; then
+                echo "Generating dSYM for crashpad_handler..."
+                dsymutil "${APP_MACOS_DIR}/crashpad_handler" -o "${DSYM_DIR}/crashpad_handler.dSYM"
+            fi
+            
+            # Generate dSYM for libsentry.dylib if it exists
+            if [ -f "${APP_FRAMEWORKS_DIR}/libsentry.dylib" ]; then
+                echo "Generating dSYM for libsentry.dylib..."
+                dsymutil "${APP_FRAMEWORKS_DIR}/libsentry.dylib" -o "${DSYM_DIR}/libsentry.dSYM"
+            fi
+            
+            # Generate dSYM for profile_validator if it exists
+            if [ -f "./Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+                echo "Generating dSYM for Snapmaker_Orca_profile_validator..."
+                dsymutil "./Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" -o "${DSYM_DIR}/Snapmaker_Orca_profile_validator.dSYM"
+            fi
+            
+            echo "dSYM files generated in ${DSYM_DIR}"
+            ls -la "${DSYM_DIR}"
+        fi
+    )
 
     # extract version
     # export ver=$(grep '^#define Snapmaker_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
@@ -271,6 +339,41 @@ function build_universal() {
         
     echo "Universal binary created at $UNIVERSAL_APP"
     
+    # Create universal crashpad_handler if both architectures have it
+    CRASHPAD_ARM64="${PROJECT_DIR}/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
+    CRASHPAD_X86="${PROJECT_DIR}/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
+    CRASHPAD_UNIVERSAL="${UNIVERSAL_APP}/Contents/MacOS/crashpad_handler"
+    if [ -f "${CRASHPAD_ARM64}" ] && [ -f "${CRASHPAD_X86}" ]; then
+        echo "Creating universal crashpad_handler..."
+        lipo -create "${CRASHPAD_X86}" "${CRASHPAD_ARM64}" -output "${CRASHPAD_UNIVERSAL}"
+        codesign --force --sign - "${CRASHPAD_UNIVERSAL}" 2>/dev/null || true
+    elif [ -f "${CRASHPAD_ARM64}" ]; then
+        cp -f "${CRASHPAD_ARM64}" "${CRASHPAD_UNIVERSAL}"
+        codesign --force --sign - "${CRASHPAD_UNIVERSAL}" 2>/dev/null || true
+    fi
+    
+    # Create universal libsentry.dylib if both architectures have it
+    LIBSENTRY_ARM64="${PROJECT_DIR}/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/Frameworks/libsentry.dylib"
+    LIBSENTRY_X86="${PROJECT_DIR}/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/Frameworks/libsentry.dylib"
+    LIBSENTRY_UNIVERSAL="${UNIVERSAL_APP}/Contents/Frameworks/libsentry.dylib"
+    if [ -f "${LIBSENTRY_ARM64}" ] && [ -f "${LIBSENTRY_X86}" ]; then
+        echo "Creating universal libsentry.dylib..."
+        mkdir -p "${UNIVERSAL_APP}/Contents/Frameworks"
+        lipo -create "${LIBSENTRY_X86}" "${LIBSENTRY_ARM64}" -output "${LIBSENTRY_UNIVERSAL}"
+        codesign --force --sign - "${LIBSENTRY_UNIVERSAL}" 2>/dev/null || true
+    elif [ -f "${LIBSENTRY_ARM64}" ]; then
+        mkdir -p "${UNIVERSAL_APP}/Contents/Frameworks"
+        cp -f "${LIBSENTRY_ARM64}" "${LIBSENTRY_UNIVERSAL}"
+        codesign --force --sign - "${LIBSENTRY_UNIVERSAL}" 2>/dev/null || true
+    fi
+    
+    # Update rpath in universal Snapmaker_Orca
+    if [ -f "${LIBSENTRY_UNIVERSAL}" ]; then
+        echo "Updating libsentry.dylib rpath in universal Snapmaker_Orca..."
+        install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "${UNIVERSAL_APP}/${BINARY_PATH}" 2>/dev/null || true
+        codesign --force --sign - "${UNIVERSAL_APP}/${BINARY_PATH}" 2>/dev/null || true
+    fi
+    
     # Create universal binary for profile validator if it exists
     if [ -f "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ] && \
        [ -f "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
@@ -289,6 +392,40 @@ function build_universal() {
             -output "$UNIVERSAL_VALIDATOR_APP/$VALIDATOR_BINARY_PATH"
             
         echo "Universal binary for Snapmaker_Orca_profile_validator created at $UNIVERSAL_VALIDATOR_APP"
+    fi
+    
+    # Generate dSYM for universal binary if Sentry is enabled
+    if [ "$SLIC3R_SENTRY" = "1" ]; then
+        echo "Generating dSYM for universal binary..."
+        DSYM_DIR="$PROJECT_BUILD_DIR/Snapmaker_Orca/dSYM"
+        mkdir -p "${DSYM_DIR}"
+        
+        # Generate dSYM for universal main app
+        if [ -f "$UNIVERSAL_APP/$BINARY_PATH" ]; then
+            echo "Generating dSYM for universal Snapmaker_Orca..."
+            dsymutil "$UNIVERSAL_APP/$BINARY_PATH" -o "${DSYM_DIR}/Snapmaker_Orca.dSYM"
+        fi
+        
+        # Generate dSYM for universal crashpad_handler if it exists
+        if [ -f "$UNIVERSAL_APP/Contents/MacOS/crashpad_handler" ]; then
+            echo "Generating dSYM for universal crashpad_handler..."
+            dsymutil "$UNIVERSAL_APP/Contents/MacOS/crashpad_handler" -o "${DSYM_DIR}/crashpad_handler.dSYM"
+        fi
+        
+        # Generate dSYM for universal libsentry.dylib if it exists
+        if [ -f "$UNIVERSAL_APP/Contents/Frameworks/libsentry.dylib" ]; then
+            echo "Generating dSYM for universal libsentry.dylib..."
+            dsymutil "$UNIVERSAL_APP/Contents/Frameworks/libsentry.dylib" -o "${DSYM_DIR}/libsentry.dSYM"
+        fi
+        
+        # Generate dSYM for universal profile_validator if it exists
+        if [ -f "$UNIVERSAL_VALIDATOR_APP/$VALIDATOR_BINARY_PATH" ]; then
+            echo "Generating dSYM for universal Snapmaker_Orca_profile_validator..."
+            dsymutil "$UNIVERSAL_VALIDATOR_APP/$VALIDATOR_BINARY_PATH" -o "${DSYM_DIR}/Snapmaker_Orca_profile_validator.dSYM"
+        fi
+        
+        echo "Universal dSYM files generated in ${DSYM_DIR}"
+        ls -la "${DSYM_DIR}"
     fi
 }
 

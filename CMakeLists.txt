@@ -103,6 +103,8 @@ option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
 # Sentry crash reporting - enabled only on Windows by default
 if (WIN32)
     set(SLIC3R_SENTRY_DEFAULT ON)
+elseif (APPLE)
+    set(SLIC3R_SENTRY_DEFAULT ON)
 else()
     set(SLIC3R_SENTRY_DEFAULT OFF)
 endif()

@@ -137,6 +137,7 @@ void initSentryEx()
 
         sentry_init(options);
         sentry_start_session();
+        sentryReportLog(SENTRY_LOG_INFO, "init sentry successful", "initSentry module");
     }
 }
 

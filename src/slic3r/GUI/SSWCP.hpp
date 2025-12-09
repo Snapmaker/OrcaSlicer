@@ -169,6 +169,10 @@ private:
     // orca log
     void sw_FileLog();
 
+    // open browser
+    void sw_OpenBrowser();
+    void sw_OpenOrcaWebview();
+
     // Sentry
     void sw_UploadEvent();
 

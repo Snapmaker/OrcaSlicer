@@ -28,6 +28,7 @@
 #include "slic3r/GUI/WebPresetDialog.hpp"
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
+#include "slic3r/GUI/WebUrlDialog.hpp"
 
 #include "miniz/miniz.h"
 #include "slic3r/Utils/MQTT.hpp"
@@ -451,8 +452,12 @@ void SSWCP_Instance::process() {
         sw_SubscribeCacheKey();
     } else if (m_cmd == "sw_UnsubscribeCacheKeys") {
         sw_UnsubscribeCacheKeys();
-    } else if (m_cmd == "sw_UploadEvent"){
+    } else if (m_cmd == "sw_UploadEvent") {
         sw_UploadEvent();
+    } else if (m_cmd == "sw_OpenOrcaWebview") {
+        sw_OpenOrcaWebview();
+    } else if (m_cmd == "sw_OpenBrowser") {
+        sw_OpenBrowser();
     }
     else {
         handle_general_fail();
@@ -487,7 +492,58 @@ void SSWCP_Instance::sw_UploadEvent() {
 
         
         sentryReportLog(SENTRY_LOG_LEVEL(level), content, funcModule, tagKey, tagValue, traceId);
+
+        send_to_js();
+        finish_job();
         
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_OpenBrowser() {
+    try {
+        std::string url = m_param_data.count("url") ? m_param_data["url"].get<std::string>() : "";
+        wxString wx_url  = wxString::FromUTF8(url);
+
+        std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+        wxGetApp().CallAfter([wx_url, weak_self]() {
+            auto self = weak_self.lock();
+            if (!self) {
+                return;
+            }
+            bool res = wxLaunchDefaultBrowser(wx_url);
+            if (!res) {
+                self->handle_general_fail(-1, "Open browser failed");
+            } else {
+                self->send_to_js();
+                self->finish_job();
+            }
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_Instance::sw_OpenOrcaWebview() {
+    try {
+        std::string url = m_param_data.count("url") ? m_param_data["url"].get<std::string>() : "";
+        wxString wx_url = wxString::FromUTF8(url);
+
+        std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+        wxGetApp().CallAfter([wx_url, weak_self]() {
+            auto self = weak_self.lock();
+            if (!self) {
+                return;
+            }
+            auto dialog = new WebUrlDialog();
+            dialog->load_url(wx_url);
+            self->send_to_js();
+            self->finish_job();
+            dialog->Show();
+        });
     }
     catch (std::exception& e) {
         handle_general_fail();

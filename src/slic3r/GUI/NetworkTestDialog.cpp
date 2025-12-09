@@ -7,8 +7,11 @@
 #include "I18N.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "libslic3r/AppConfig.hpp"
-#include <boost/asio/ip/address.hpp>
+#include <wx/regex.h>
+#include <boost/asio.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/log/trivial.hpp>
+#include <chrono>
 
 namespace Slic3r {
 namespace GUI {
@@ -73,12 +76,21 @@ wxBoxSizer* NetworkTestDialog::create_top_sizer(wxWindow* parent)
 	line_sizer->Add(btn_download_log, 0, wxALL, 5);
 	btn_download_log->Hide();
 
+	btn_clear_log = new Button(this, _L("Clear Log"));
+    btn_clear_log->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	line_sizer->Add(btn_clear_log, 0, wxALL, 5);
+
 	btn_start->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
 			start_all_job();
 		});
 	btn_start_sequence->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
 			start_all_job_sequence();
 		});
+	btn_clear_log->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
+		if (txt_log) {
+			txt_log->Clear();
+		}
+	});
 	sizer->Add(line_sizer, 0, wxEXPAND, 5);
 	return sizer;
 }
@@ -161,6 +173,33 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 	text_bing_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
 	text_bing_val->Wrap(-1);
 	grid_sizer->Add(text_bing_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	// LAN Device Test
+	btn_lan_mqtt = new Button(this, _L("Test LAN Device"));
+    btn_lan_mqtt->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	grid_sizer->Add(btn_lan_mqtt, 0, wxEXPAND | wxALL, 5);
+
+	text_lan_mqtt_title = new wxStaticText(this, wxID_ANY, _L("Test LAN Device:"), wxDefaultPosition, wxDefaultSize, 0);
+	text_lan_mqtt_title->Wrap(-1);
+	grid_sizer->Add(text_lan_mqtt_title, 0, wxALIGN_RIGHT | wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	text_lan_mqtt_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
+	text_lan_mqtt_val->Wrap(-1);
+	grid_sizer->Add(text_lan_mqtt_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	// Cloud Server Test
+	btn_cloud_mqtt = new Button(this, _L("Test Cloud Server"));
+    btn_cloud_mqtt->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	grid_sizer->Add(btn_cloud_mqtt, 0, wxEXPAND | wxALL, 5);
+
+	text_cloud_mqtt_title = new wxStaticText(this, wxID_ANY, _L("Test Cloud Server:"), wxDefaultPosition, wxDefaultSize, 0);
+	text_cloud_mqtt_title->Wrap(-1);
+	grid_sizer->Add(text_cloud_mqtt_title, 0, wxALIGN_RIGHT | wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	text_cloud_mqtt_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
+	text_cloud_mqtt_val->Wrap(-1);
+	grid_sizer->Add(text_cloud_mqtt_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
 	sizer->Add(grid_sizer, 1, wxEXPAND, 5);
 
 	btn_link->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
@@ -169,6 +208,14 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 
 	btn_bing->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
 		start_test_bing_thread();
+	});
+
+	btn_lan_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+		start_test_lan_mqtt_thread();
+	});
+
+	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+		start_test_cloud_mqtt_thread();
 	});
 
 	return sizer;
@@ -187,7 +234,9 @@ wxBoxSizer* NetworkTestDialog::create_result_sizer(wxWindow* parent)
 
 NetworkTestDialog::~NetworkTestDialog()
 {
-    ;
+	m_closing.store(true);
+	m_download_cancel = true;
+	cleanup_threads();
 }
 
 void NetworkTestDialog::init_bind()
@@ -197,6 +246,10 @@ void NetworkTestDialog::init_bind()
 			text_link_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_BING_JOB) {
 			text_bing_val->SetLabelText(evt.GetString());
+		} else if (evt.GetInt() == TEST_LAN_MQTT_JOB) {
+			text_lan_mqtt_val->SetLabelText(evt.GetString());
+		} else if (evt.GetInt() == TEST_CLOUD_MQTT_JOB) {
+			text_cloud_mqtt_val->SetLabelText(evt.GetString());
 		}
 
 		std::time_t t = std::time(0);
@@ -205,7 +258,9 @@ void NetworkTestDialog::init_bind()
 		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
 		wxString info = wxString::Format("%s:", buf.str()) + evt.GetString() + "\n";
 		try {
-			txt_log->AppendText(info);
+			if (!m_closing.load() && txt_log) {
+				txt_log->AppendText(info);
+			}
 		}
 		catch (std::exception& e) {
 			BOOST_LOG_TRIVIAL(error) << "Unkown Exception in print_log, exception=" << e.what();
@@ -240,31 +295,77 @@ void NetworkTestDialog::start_all_job()
 {
 	start_test_github_thread();
 	start_test_bing_thread();
+	start_test_lan_mqtt_thread();
+	start_test_cloud_mqtt_thread();
 }
 
 void NetworkTestDialog::start_all_job_sequence()
 {
-	m_sequence_job = new boost::thread([this] {
-		update_status(-1, "start_test_sequence");
+	if (m_sequence_job != nullptr) {
+		update_status(-1, "Sequence test already running, please wait...");
+		return;
+	}
+
+	// 在序列测试开始前，先弹出输入框获取局域网设备IP
+	wxTextEntryDialog dlg(this,
+		_L("Please enter the LAN device IP address for testing (leave empty to skip):"),
+		_L("LAN Device Test - Sequence Mode"),
+		"192.168.1.1",
+		wxOK | wxCANCEL);
+
+	wxString device_ip;
+	if (dlg.ShowModal() == wxID_OK) {
+		device_ip = dlg.GetValue().Trim();
+	}
+
+	m_sequence_job = new boost::thread([this, device_ip] {
+		update_status(-1, "========================================");
+		update_status(-1, "Start sequence test (single-thread mode)");
+		update_status(-1, "========================================");
+		update_status(-1, "");
+
         start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
-        if (m_closing) return;
+        if (m_closing.load()) return;
+
+		update_status(-1, "");
 		start_test_url(TEST_ORCA_JOB, "Snapmaker Orca(GitHub)", "https://github.com/Snapmaker/OrcaSlicer");
-		if (m_closing) return;
-		update_status(-1, "end_test_sequence");
+		if (m_closing.load()) return;
+
+		// 如果用户输入了局域网设备IP，则进行测试
+		if (!device_ip.IsEmpty()) {
+			update_status(-1, "");
+			start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
+			if (m_closing.load()) return;
+		}
+
+		// 测试云服务器
+		wxString cloud_server = get_cloud_server_address();
+		if (!cloud_server.IsEmpty()) {
+			update_status(-1, "");
+			start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
+		}
+		if (m_closing.load()) return;
+
+		update_status(-1, "");
+		update_status(-1, "========================================");
+		update_status(-1, "Sequence test completed");
+		update_status(-1, "========================================");
 	});
 }
 
 void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 {
-	m_in_testing[job] = true;
-	wxString info = wxString::Format("test %s start...", name);
+	m_in_testing[job].store(true);
 
+	update_status(-1, "");
+	update_status(-1, "========================================");
+	wxString info = wxString::Format("test %s start...", name);
 	update_status(job, info);
 
 	Slic3r::Http http = Slic3r::Http::get(url.ToStdString());
 	info = wxString::Format("[test %s]: url=%s", name,url);
-
     update_status(-1, info);
+	update_status(-1, "");
 
     int result = -1;
 	http.timeout_max(10)
@@ -287,30 +388,385 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
         this->update_status(job, wxString::Format("test %s failed", name));
         this->update_status(-1, info);
 	}).perform_sync();
+
 	if (result == 0) {
         update_status(job, wxString::Format("test %s ok", name));
     }
-	m_in_testing[job] = false;
+
+	update_status(-1, "========================================");
+	update_status(-1, "");
+	m_in_testing[job].store(false);
 }
 
 void NetworkTestDialog::start_test_ping_thread()
 {
 	test_job[TEST_PING_JOB] = new boost::thread([this] {
-		m_in_testing[TEST_PING_JOB] = true;
+		m_in_testing[TEST_PING_JOB].store(true);
 
-		m_in_testing[TEST_PING_JOB] = false;
+		m_in_testing[TEST_PING_JOB].store(false);
+	});
+}
+
+void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
+{
+	update_status(-1, "");
+	update_status(-1, wxString::Format("Starting ping test to %s...", server));
+
+	try {
+#ifdef _WIN32
+		// Windows: ping -n 4 <server>
+		wxString ping_cmd = wxString::Format("ping -n 4 %s", server);
+#else
+		// Linux/Mac: ping -c 4 <server>
+		wxString ping_cmd = wxString::Format("ping -c 4 %s", server);
+#endif
+
+		// 执行ping命令 - 使用wxEXEC_NODISABLE和wxEXEC_HIDE_CONSOLE避免影响主线程
+		wxArrayString output;
+		wxArrayString errors;
+
+		// 添加标志：不禁用窗口，隐藏控制台窗口
+		long exec_flags = wxEXEC_SYNC | wxEXEC_NODISABLE;
+#ifdef _WIN32
+		exec_flags |= wxEXEC_HIDE_CONSOLE;  // Windows下隐藏cmd窗口
+#endif
+
+		long result = wxExecute(ping_cmd, output, errors, exec_flags);
+
+		if (result == 0 && output.GetCount() > 0) {
+			// 解析ping输出（不输出每一行，减少UI更新）
+			bool found_rtt = false;
+			wxString rtt_info;
+			int received = 0;
+			int sent = 4;
+
+			for (size_t i = 0; i < output.GetCount(); i++) {
+				wxString line = output[i];
+
+				// 完全不输出ping详细日志，只解析数据
+
+#ifdef _WIN32
+				// Windows格式: "平均 = XXXms" 或 "Average = XXXms"
+				if (line.Contains("Average") || line.Contains("平均")) {
+					found_rtt = true;
+					rtt_info = line;
+				}
+				// 统计成功次数: "已接收 = X" 或 "Received = X"
+				if (line.Contains("Received") || line.Contains("已接收")) {
+					int pos_received = line.Find("Received");
+					if (pos_received == wxNOT_FOUND) {
+						pos_received = line.Find("已接收");
+					}
+
+					if (pos_received != wxNOT_FOUND) {
+						int pos_equal = line.find('=', pos_received);
+						if (pos_equal != wxNOT_FOUND) {
+							wxString after_equal = line.Mid(pos_equal + 1).Trim(false);
+							wxString num_str;
+							for (size_t j = 0; j < after_equal.Length(); j++) {
+								if (wxIsdigit(after_equal[j])) {
+									num_str += after_equal[j];
+								} else {
+									break;
+								}
+							}
+							long val;
+							if (!num_str.IsEmpty() && num_str.ToLong(&val)) {
+								received = val;
+							}
+						}
+					}
+				}
+#else
+				// Linux/Mac格式: "rtt min/avg/max/mdev = 1.234/5.678/9.012/1.234 ms"
+				if (line.Contains("rtt") && line.Contains("avg")) {
+					found_rtt = true;
+					rtt_info = line;
+				}
+				// 统计格式: "4 packets transmitted, 4 received"
+				if (line.Contains("packets transmitted") && line.Contains("received")) {
+					int pos_received = line.Find(" received");
+					if (pos_received != wxNOT_FOUND) {
+						wxString before = line.Mid(0, pos_received);
+						wxString num_str;
+						for (int j = before.Length() - 1; j >= 0; j--) {
+							if (wxIsdigit(before[j])) {
+								num_str = before[j] + num_str;
+							} else if (!num_str.IsEmpty()) {
+								break;
+							}
+						}
+						long val;
+						if (!num_str.IsEmpty() && num_str.ToLong(&val)) {
+							received = val;
+						}
+					}
+				}
+#endif
+			}
+
+			// 计算丢包率
+			int packet_loss = ((sent - received) * 100) / sent;
+
+			// 一次性输出所有结果，减少UI更新次数
+			wxString summary = "\n";
+			if (found_rtt) {
+				summary += wxString::Format("✓ Ping RTT: %s\n", rtt_info);
+				summary += wxString::Format("Packet loss: %d%% (%d/%d received)\n", packet_loss, received, sent);
+			} else {
+				summary += "⚠ Ping completed but could not parse RTT\n";
+			}
+
+			if (received > 0) {
+				summary += wxString::Format("✓ Ping test successful (%d/%d packets)", received, sent);
+			} else {
+				summary += "✗ Ping test failed - 100% packet loss";
+			}
+
+			update_status(-1, summary);
+
+		} else {
+			wxString error_summary = "\n✗ Ping command failed or timed out";
+			for (size_t i = 0; i < errors.GetCount(); i++) {
+				error_summary += wxString::Format("\nError: %s", errors[i]);
+			}
+			update_status(-1, error_summary);
+		}
+
+	} catch (const std::exception& e) {
+		update_status(-1, wxString::Format("\nPing exception: %s", e.what()));
+	} catch (...) {
+		update_status(-1, "\nPing test failed: unknown error");
+	}
+}
+
+void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString server, int port)
+{
+	m_in_testing[job].store(true);
+
+	// 添加分隔空行
+	update_status(-1, "");
+	update_status(-1, "========================================");
+
+	wxString info = wxString::Format("test %s start...", name);
+	update_status(job, info);
+
+	try {
+		info = wxString::Format("[test %s]: server=%s, port=%d", name, server, port);
+		update_status(-1, info);
+		update_status(-1, ""); // 空行
+
+		// ============================================
+		// 第一步: Ping测试 - 测量网络层RTT
+		// ============================================
+		update_status(-1, "--- Step 1: Network Layer Test (ICMP Ping) ---");
+		start_test_ping(server, job);
+
+		if (m_closing.load()) {
+			m_in_testing[job].store(false);
+			return;
+		}
+
+		// 添加步骤间空行
+		update_status(-1, "");
+
+		// ============================================
+		// 第二步: TCP连接测试 - 验证服务可用性
+		// ============================================
+		update_status(-1, "--- Step 2: Transport Layer Test (TCP Connection) ---");
+
+		// 记录开始时间
+		auto start_time = std::chrono::high_resolution_clock::now();
+
+		boost::asio::io_context io_context;
+		boost::asio::ip::tcp::socket socket(io_context);
+		boost::asio::ip::tcp::resolver resolver(io_context);
+
+		bool success = false;
+		std::string error_msg;
+
+		try {
+			// 解析主机名
+			auto resolve_start = std::chrono::high_resolution_clock::now();
+			boost::asio::ip::tcp::resolver::results_type endpoints;
+
+			try {
+				endpoints = resolver.resolve(server.ToStdString(), std::to_string(port));
+				auto resolve_end = std::chrono::high_resolution_clock::now();
+				auto resolve_time = std::chrono::duration_cast<std::chrono::milliseconds>(resolve_end - resolve_start).count();
+
+				update_status(-1, wxString::Format("DNS resolve time: %lld ms", resolve_time));
+			} catch (const boost::system::system_error& e) {
+				error_msg = wxString::Format("DNS resolve failed: %s", e.what()).ToStdString();
+				throw;
+			}
+
+			// 连接到服务器
+			auto connect_start = std::chrono::high_resolution_clock::now();
+			boost::system::error_code ec;
+
+			// 尝试连接到所有解析出的endpoint
+			bool connected = false;
+			for (auto& endpoint : endpoints) {
+				if (m_closing.load()) break;
+
+				socket.close(ec);
+				socket.connect(endpoint, ec);
+
+				if (!ec) {
+					connected = true;
+					auto connect_end = std::chrono::high_resolution_clock::now();
+					auto connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
+
+					update_status(job, wxString::Format("test %s connected", name));
+					update_status(-1, wxString::Format("✓ TCP connection established in %lld ms", connect_time));
+					break;
+				}
+			}
+
+			if (!connected) {
+				error_msg = wxString::Format("Connection failed: %s", ec.message()).ToStdString();
+				throw boost::system::system_error(ec);
+			}
+
+			// 计算总时间
+			auto end_time = std::chrono::high_resolution_clock::now();
+			auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+
+			update_status(-1, wxString::Format("Total test time: %lld ms", total_time));
+
+			// 添加空行
+			update_status(-1, "");
+			update_status(-1, "--- Test Summary ---");
+			update_status(-1, wxString::Format("✓ Network Layer: Ping test completed (see RTT above)"));
+			update_status(-1, wxString::Format("✓ Transport Layer: TCP port %d is open and accepting connections", port));
+			update_status(job, wxString::Format("test %s ok", name));
+
+			success = true;
+
+			// 关闭连接
+			socket.close(ec);
+
+		} catch (const boost::system::system_error& e) {
+			if (error_msg.empty()) {
+				error_msg = e.what();
+			}
+			update_status(-1, "");
+			update_status(-1, wxString::Format("✗ TCP connection error: %s", error_msg));
+			update_status(job, wxString::Format("test %s failed", name));
+		} catch (const std::exception& e) {
+			update_status(-1, "");
+			update_status(-1, wxString::Format("Exception: %s", e.what()));
+			update_status(job, wxString::Format("test %s failed", name));
+		}
+
+	} catch (...) {
+		update_status(-1, "");
+		update_status(job, wxString::Format("test %s failed: unknown error", name));
+	}
+
+	update_status(-1, "========================================");
+	update_status(-1, ""); // 测试结束后的空行
+	m_in_testing[job].store(false);
+}
+
+void NetworkTestDialog::start_test_lan_mqtt_thread()
+{
+	if (m_in_testing[TEST_LAN_MQTT_JOB].load()) {
+		return;
+	}
+
+	// 弹出对话框让用户输入IP地址
+	wxTextEntryDialog dlg(this,
+		_L("Please enter the device IP address:"),
+		_L("LAN Device Test"),
+		"192.168.1.1",
+		wxOK | wxCANCEL);
+
+	if (dlg.ShowModal() != wxID_OK) {
+		return;
+	}
+
+	wxString device_ip = dlg.GetValue().Trim();
+	if (device_ip.IsEmpty()) {
+		update_status(TEST_LAN_MQTT_JOB, "Invalid IP address");
+		return;
+	}
+
+	if (test_job[TEST_LAN_MQTT_JOB] != nullptr && test_job[TEST_LAN_MQTT_JOB]->joinable()) {
+		test_job[TEST_LAN_MQTT_JOB]->join();
+		delete test_job[TEST_LAN_MQTT_JOB];
+		test_job[TEST_LAN_MQTT_JOB] = nullptr;
+	}
+
+	test_job[TEST_LAN_MQTT_JOB] = new boost::thread([this, device_ip] {
+		// 测试局域网设备 - 端口默认1884
+		start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
+	});
+}
+
+wxString NetworkTestDialog::get_cloud_server_address()
+{
+	auto app_config = wxGetApp().app_config;
+	std::string region = app_config->get("region");
+    if (region == "China")
+        return "a1su7rk2r6cmbq.ats.iot.cn-north-1.amazonaws.com.cn";
+    else
+        return "a1pr8yczi3n0se-ats.iot.us-west-1.amazonaws.com";
+}
+
+void NetworkTestDialog::start_test_cloud_mqtt_thread()
+{
+	if (m_in_testing[TEST_CLOUD_MQTT_JOB].load()) {
+		return;
+	}
+
+	wxString cloud_server = get_cloud_server_address();
+
+	if (cloud_server.IsEmpty()) {
+		update_status(TEST_CLOUD_MQTT_JOB, "Cloud server not configured");
+		update_status(-1, "Please configure cloud server address in get_cloud_server_address()");
+		return;
+	}
+
+	if (test_job[TEST_CLOUD_MQTT_JOB] != nullptr && test_job[TEST_CLOUD_MQTT_JOB]->joinable()) {
+		test_job[TEST_CLOUD_MQTT_JOB]->join();
+		delete test_job[TEST_CLOUD_MQTT_JOB];
+		test_job[TEST_CLOUD_MQTT_JOB] = nullptr;
+	}
+
+	test_job[TEST_CLOUD_MQTT_JOB] = new boost::thread([this, cloud_server] {
+		// 测试云服务器 - 使用telnet方式，端口8883
+		start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
 	});
 }
 void NetworkTestDialog::start_test_github_thread()
 {
-    if (m_in_testing[TEST_ORCA_JOB])
+    if (m_in_testing[TEST_ORCA_JOB].load())
         return;
+
+	if (test_job[TEST_ORCA_JOB] != nullptr && test_job[TEST_ORCA_JOB]->joinable()) {
+		test_job[TEST_ORCA_JOB]->join();
+		delete test_job[TEST_ORCA_JOB];
+		test_job[TEST_ORCA_JOB] = nullptr;
+	}
+
     test_job[TEST_ORCA_JOB] = new boost::thread([this] {
         start_test_url(TEST_ORCA_JOB, "Snapmaker Orca(GitHub)", "https://github.com/Snapmaker/OrcaSlicer");
     });
 }
+
 void NetworkTestDialog::start_test_bing_thread()
 {
+	if (m_in_testing[TEST_BING_JOB].load())
+		return;
+
+	if (test_job[TEST_BING_JOB] != nullptr && test_job[TEST_BING_JOB]->joinable()) {
+		test_job[TEST_BING_JOB]->join();
+		delete test_job[TEST_BING_JOB];
+		test_job[TEST_BING_JOB] = nullptr;
+	}
+
     test_job[TEST_BING_JOB] = new boost::thread([this] {
         start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
     });
@@ -319,14 +775,8 @@ void NetworkTestDialog::start_test_bing_thread()
 void NetworkTestDialog::on_close(wxCloseEvent& event)
 {
 	m_download_cancel = true;
-	m_closing = true;
-	for (int i = 0; i < TEST_JOB_MAX; i++) {
-		if (test_job[i]) {
-			test_job[i]->join();
-			test_job[i] = nullptr;
-		}
-	}
-
+	m_closing.store(true);
+	cleanup_threads();
 	event.Skip();
 }
 
@@ -340,7 +790,7 @@ void NetworkTestDialog::set_default()
 {
 	for (int i = 0; i < TEST_JOB_MAX; i++) {
 		test_job[i] = nullptr;
-		m_in_testing[i] = false;
+		m_in_testing[i].store(false);
 	}
 
 	m_sequence_job = nullptr;
@@ -350,8 +800,10 @@ void NetworkTestDialog::set_default()
 	txt_dns_info_value->SetLabelText(get_dns_info());
 	text_link_val->SetLabelText(NA_STR);
 	text_bing_val->SetLabelText(NA_STR);
+	text_lan_mqtt_val->SetLabelText(NA_STR);
+	text_cloud_mqtt_val->SetLabelText(NA_STR);
 	m_download_cancel = false;
-	m_closing = false;
+	m_closing.store(false);
 }
 
 
@@ -366,6 +818,41 @@ void NetworkTestDialog::update_status(int job_id, wxString info)
 	evt->SetString(info);
 	evt->SetInt(job_id);
 	wxQueueEvent(this, evt);
+}
+
+void NetworkTestDialog::cleanup_threads()
+{
+	// Clean up test job threads
+	for (int i = 0; i < TEST_JOB_MAX; i++) {
+		if (test_job[i] != nullptr) {
+			if (test_job[i]->joinable()) {
+				// Try to join with a short timeout (200ms)
+				// If thread is blocked in wxExecute, don't wait indefinitely
+				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(200))) {
+					// Thread didn't finish in time, detach it to avoid blocking
+					// The thread will check m_closing and exit safely
+					test_job[i]->detach();
+					BOOST_LOG_TRIVIAL(warning) << "Thread " << i << " didn't finish in time, detached";
+				}
+			}
+			delete test_job[i];
+			test_job[i] = nullptr;
+		}
+	}
+
+	// Clean up sequence job thread
+	if (m_sequence_job != nullptr) {
+		if (m_sequence_job->joinable()) {
+			// Try to join with a short timeout (200ms)
+			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(200))) {
+				// Thread didn't finish in time, detach it
+				m_sequence_job->detach();
+				BOOST_LOG_TRIVIAL(warning) << "Sequence job thread didn't finish in time, detached";
+			}
+		}
+		delete m_sequence_job;
+		m_sequence_job = nullptr;
+	}
 }
 
 

@@ -37,6 +37,8 @@ enum TestJob {
 	TEST_BING_JOB = 0,
 	TEST_ORCA_JOB = 1,
 	TEST_PING_JOB,
+	TEST_LAN_MQTT_JOB,
+	TEST_CLOUD_MQTT_JOB,
 	TEST_JOB_MAX
 };
 
@@ -46,6 +48,7 @@ protected:
 	Button* btn_start;
 	Button* btn_start_sequence;
 	Button* btn_download_log;
+	Button* btn_clear_log;
 	wxStaticText* text_basic_info;
 	wxStaticText* text_version_title;
 	wxStaticText* text_version_val;
@@ -59,6 +62,12 @@ protected:
 	Button*     btn_bing;
 	wxStaticText* text_bing_title;
 	wxStaticText* text_bing_val;
+	Button*     btn_lan_mqtt;
+	wxStaticText* text_lan_mqtt_title;
+	wxStaticText* text_lan_mqtt_val;
+	Button*     btn_cloud_mqtt;
+	wxStaticText* text_cloud_mqtt_title;
+	wxStaticText* text_cloud_mqtt_val;
 	wxStaticText* text_ping_title;
 	wxStaticText* text_ping_value;
 	wxStaticText* text_result;
@@ -71,9 +80,9 @@ protected:
 
 	boost::thread* test_job[TEST_JOB_MAX];
 	boost::thread* m_sequence_job { nullptr };
-	bool		   m_in_testing[TEST_JOB_MAX];
+	std::atomic<bool> m_in_testing[TEST_JOB_MAX];
 	bool           m_download_cancel = false;
-	bool           m_closing = false;
+	std::atomic<bool> m_closing{false};
 
 	void init_bind();
 
@@ -94,12 +103,21 @@ public:
 	void start_test_bing_thread();
 	void start_test_github_thread();
 	void start_test_ping_thread();
+	void start_test_lan_mqtt_thread();
+	void start_test_cloud_mqtt_thread();
 
 	void start_test_url(TestJob job, wxString name, wxString url);
+	void start_test_telnet(TestJob job, wxString name, wxString server, int port);
+	void start_test_ping(wxString server, TestJob job);
 
 	void on_close(wxCloseEvent& event);
 
 	void update_status(int job_id, wxString info);
+
+	wxString get_cloud_server_address();
+
+private:
+	void cleanup_threads();
 };
 
 } // namespace GUI

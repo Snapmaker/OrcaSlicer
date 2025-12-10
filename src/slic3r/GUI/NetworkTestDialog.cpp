@@ -256,7 +256,7 @@ void NetworkTestDialog::init_bind()
 		std::tm* now_time = std::localtime(&t);
 		std::stringstream buf;
 		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
-		wxString info = wxString::Format("%s:", buf.str()) + evt.GetString() + "\n";
+		wxString info = wxString(buf.str()) + ": " + evt.GetString() + "\n";
 		try {
 			if (!m_closing.load() && txt_log) {
 				txt_log->AppendText(info);
@@ -359,11 +359,11 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 
 	update_status(-1, "");
 	update_status(-1, "========================================");
-	wxString info = wxString::Format("test %s start...", name);
+	wxString info = "test " + name + " start...";
 	update_status(job, info);
 
 	Slic3r::Http http = Slic3r::Http::get(url.ToStdString());
-	info = wxString::Format("[test %s]: url=%s", name,url);
+	info = "[test " + name + "]: url=" + url;
     update_status(-1, info);
 	update_status(-1, "");
 
@@ -380,17 +380,17 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 			}
 		})
 		.on_ip_resolve([this,name,job](std::string ip) {
-			wxString ip_report = wxString::Format("test %s ip resolved = %s", name, ip);
+			wxString ip_report = "test " + name + " ip resolved = " + wxString::FromUTF8(ip);
 			update_status(job, ip_report);
 		})
 		.on_error([this,name,job](std::string body, std::string error, unsigned int status) {
-		wxString info = wxString::Format("status=%u, body=%s, error=%s", status, body, error);
-        this->update_status(job, wxString::Format("test %s failed", name));
+		wxString info = wxString::Format("status=%u, body=", status) + wxString::FromUTF8(body) + ", error=" + wxString::FromUTF8(error);
+        this->update_status(job, "test " + name + " failed");
         this->update_status(-1, info);
 	}).perform_sync();
 
 	if (result == 0) {
-        update_status(job, wxString::Format("test %s ok", name));
+        update_status(job, "test " + name + " ok");
     }
 
 	update_status(-1, "========================================");
@@ -410,15 +410,15 @@ void NetworkTestDialog::start_test_ping_thread()
 void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 {
 	update_status(-1, "");
-	update_status(-1, wxString::Format("Starting ping test to %s...", server));
+	update_status(-1, "Starting ping test to " + server + "...");
 
 	try {
 #ifdef _WIN32
 		// Windows: ping -n 4 <server>
-		wxString ping_cmd = wxString::Format("ping -n 4 %s", server);
+		wxString ping_cmd = "ping -n 4 " + server;
 #else
 		// Linux/Mac: ping -c 4 <server>
-		wxString ping_cmd = wxString::Format("ping -c 4 %s", server);
+		wxString ping_cmd = "ping -c 4 " + server;
 #endif
 
 		// 执行ping命令 - 使用wxEXEC_NODISABLE和wxEXEC_HIDE_CONSOLE避免影响主线程
@@ -446,34 +446,89 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 				// 完全不输出ping详细日志，只解析数据
 
 #ifdef _WIN32
-				// Windows格式: "平均 = XXXms" 或 "Average = XXXms"
-				if (line.Contains("Average") || line.Contains("平均")) {
-					found_rtt = true;
-					rtt_info = line;
-				}
-				// 统计成功次数: "已接收 = X" 或 "Received = X"
-				if (line.Contains("Received") || line.Contains("已接收")) {
-					int pos_received = line.Find("Received");
-					if (pos_received == wxNOT_FOUND) {
-						pos_received = line.Find("已接收");
+				// Windows: 通用解析（支持所有语言）
+
+				// 策略1: 查找统计行（包含多个 "= 数字" 的模式）
+				// 这一行通常是：数据包: 已发送 = 4，已接收 = 4，丢失 = 0
+				// 或：Packets: Sent = 4, Received = 4, Lost = 0
+				// 特征：一行中有至少3个 "= 数字" 模式
+				if (received == 0 && line.Contains("=") && !line.Contains("TTL")) {
+					// 提取所有 "= 数字" 模式
+					wxArrayString numbers;
+					size_t pos = 0;
+					while (pos < line.Length()) {
+						// 查找等号
+						size_t eq_pos = line.find('=', pos);
+						if (eq_pos == wxString::npos) break;
+
+						// 跳过等号后的空格
+						size_t num_start = eq_pos + 1;
+						while (num_start < line.Length() &&
+						       (line[num_start] == ' ' || line[num_start] == '\t')) {
+							num_start++;
+						}
+
+						// 提取数字
+						wxString num_str;
+						size_t num_pos = num_start;
+						while (num_pos < line.Length() && wxIsdigit(line[num_pos])) {
+							num_str += line[num_pos];
+							num_pos++;
+						}
+
+						if (!num_str.IsEmpty()) {
+							numbers.Add(num_str);
+						}
+
+						pos = num_pos + 1;
 					}
 
-					if (pos_received != wxNOT_FOUND) {
-						int pos_equal = line.find('=', pos_received);
-						if (pos_equal != wxNOT_FOUND) {
-							wxString after_equal = line.Mid(pos_equal + 1).Trim(false);
-							wxString num_str;
-							for (size_t j = 0; j < after_equal.Length(); j++) {
-								if (wxIsdigit(after_equal[j])) {
-									num_str += after_equal[j];
-								} else {
+					// 统计行特征：至少有3个数字（sent, received, lost）
+					// 第2个数字是received（已接收）
+					if (numbers.GetCount() >= 3) {
+						long val;
+						if (numbers[1].ToLong(&val)) {
+							received = val;
+						}
+					}
+				}
+
+				// 策略2: 查找平均RTT行（包含 "平均" 或 "Average" 或多个ms）
+				// 格式：最短 = 42ms，最长 = 45ms，平均 = 43ms
+				// 或：Minimum = 42ms, Maximum = 45ms, Average = 43ms
+				if (!found_rtt) {
+					// 检查是否是平均/Average行（包含多个ms的行）
+					int ms_count = 0;
+					size_t search_pos = 0;
+					while ((search_pos = line.find("ms", search_pos)) != wxString::npos) {
+						ms_count++;
+						search_pos += 2;
+					}
+
+					// 如果一行中有3个ms，很可能是RTT统计行
+					// 提取最后一个数字作为平均RTT（避免显示乱码）
+					if (ms_count >= 3) {
+						wxString avg_rtt;
+						// 从后往前找最后一个 "数字ms" 模式
+						for (int i = line.Length() - 1; i >= 1; i--) {
+							if (line[i] == 's' && line[i-1] == 'm') {
+								// 找到ms，往前提取数字
+								wxString num_str;
+								int j = i - 2;
+								while (j >= 0 && (wxIsdigit(line[j]) || line[j] == '.')) {
+									num_str = line[j] + num_str;
+									j--;
+								}
+								if (!num_str.IsEmpty()) {
+									avg_rtt = num_str;
 									break;
 								}
 							}
-							long val;
-							if (!num_str.IsEmpty() && num_str.ToLong(&val)) {
-								received = val;
-							}
+						}
+
+						if (!avg_rtt.IsEmpty()) {
+							found_rtt = true;
+							rtt_info = avg_rtt + "ms (average)";
 						}
 					}
 				}
@@ -510,31 +565,40 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 
 			// 一次性输出所有结果，减少UI更新次数
 			wxString summary = "\n";
-			if (found_rtt) {
-				summary += wxString::Format("✓ Ping RTT: %s\n", rtt_info);
-				summary += wxString::Format("Packet loss: %d%% (%d/%d received)\n", packet_loss, received, sent);
-			} else {
-				summary += "⚠ Ping completed but could not parse RTT\n";
-			}
 
-			if (received > 0) {
-				summary += wxString::Format("✓ Ping test successful (%d/%d packets)", received, sent);
+			// 检查是否成功解析
+			bool parse_success = (found_rtt || received > 0);
+
+			if (parse_success) {
+				// 成功解析了ping结果
+				if (found_rtt) {
+					summary += "[OK] Ping RTT: " + rtt_info + "\n";
+				}
+				summary += wxString::Format("Packet loss: %d%% (%d/%d received)\n", packet_loss, received, sent);
+
+				if (received > 0) {
+					summary += wxString::Format("[OK] Ping test successful (%d/%d packets)", received, sent);
+				} else {
+					summary += "[FAIL] Ping test failed - 100% packet loss";
+				}
 			} else {
-				summary += "✗ Ping test failed - 100% packet loss";
+				// 无法解析ping输出
+				summary += "[WARN] Cannot parse ping output - unusual format\n";
+				summary += "[INFO] TCP connection test can still verify network connectivity";
 			}
 
 			update_status(-1, summary);
 
 		} else {
-			wxString error_summary = "\n✗ Ping command failed or timed out";
+			wxString error_summary = "\n[FAIL] Ping command failed or timed out";
 			for (size_t i = 0; i < errors.GetCount(); i++) {
-				error_summary += wxString::Format("\nError: %s", errors[i]);
+				error_summary += "\nError: " + errors[i];
 			}
 			update_status(-1, error_summary);
 		}
 
 	} catch (const std::exception& e) {
-		update_status(-1, wxString::Format("\nPing exception: %s", e.what()));
+		update_status(-1, wxString("\nPing exception: ") + wxString(e.what()));
 	} catch (...) {
 		update_status(-1, "\nPing test failed: unknown error");
 	}
@@ -548,11 +612,11 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 	update_status(-1, "");
 	update_status(-1, "========================================");
 
-	wxString info = wxString::Format("test %s start...", name);
+	wxString info = "test " + name + " start...";
 	update_status(job, info);
 
 	try {
-		info = wxString::Format("[test %s]: server=%s, port=%d", name, server, port);
+		info = "[test " + name + "]: server=" + server + wxString::Format(", port=%d", port);
 		update_status(-1, info);
 		update_status(-1, ""); // 空行
 
@@ -597,7 +661,7 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 
 				update_status(-1, wxString::Format("DNS resolve time: %lld ms", resolve_time));
 			} catch (const boost::system::system_error& e) {
-				error_msg = wxString::Format("DNS resolve failed: %s", e.what()).ToStdString();
+				error_msg = (wxString("DNS resolve failed: ") + wxString(e.what())).ToStdString();
 				throw;
 			}
 
@@ -618,14 +682,14 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 					auto connect_end = std::chrono::high_resolution_clock::now();
 					auto connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
 
-					update_status(job, wxString::Format("test %s connected", name));
-					update_status(-1, wxString::Format("✓ TCP connection established in %lld ms", connect_time));
+					update_status(job, "test " + name + " connected");
+					update_status(-1, wxString::Format("[OK] TCP connection established in %lld ms", connect_time));
 					break;
 				}
 			}
 
 			if (!connected) {
-				error_msg = wxString::Format("Connection failed: %s", ec.message()).ToStdString();
+				error_msg = (wxString("Connection failed: ") + wxString(ec.message())).ToStdString();
 				throw boost::system::system_error(ec);
 			}
 
@@ -638,9 +702,9 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 			// 添加空行
 			update_status(-1, "");
 			update_status(-1, "--- Test Summary ---");
-			update_status(-1, wxString::Format("✓ Network Layer: Ping test completed (see RTT above)"));
-			update_status(-1, wxString::Format("✓ Transport Layer: TCP port %d is open and accepting connections", port));
-			update_status(job, wxString::Format("test %s ok", name));
+			update_status(-1, "[OK] Network Layer: Ping test completed (see RTT above)");
+			update_status(-1, wxString::Format("[OK] Transport Layer: TCP port %d is open and accepting connections", port));
+			update_status(job, "test " + name + " ok");
 
 			success = true;
 
@@ -652,17 +716,17 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 				error_msg = e.what();
 			}
 			update_status(-1, "");
-			update_status(-1, wxString::Format("✗ TCP connection error: %s", error_msg));
-			update_status(job, wxString::Format("test %s failed", name));
+			update_status(-1, "[FAIL] TCP connection error: " + wxString::FromUTF8(error_msg));
+			update_status(job, "test " + name + " failed");
 		} catch (const std::exception& e) {
 			update_status(-1, "");
-			update_status(-1, wxString::Format("Exception: %s", e.what()));
-			update_status(job, wxString::Format("test %s failed", name));
+			update_status(-1, wxString("Exception: ") + wxString(e.what()));
+			update_status(job, "test " + name + " failed");
 		}
 
 	} catch (...) {
 		update_status(-1, "");
-		update_status(job, wxString::Format("test %s failed: unknown error", name));
+		update_status(job, "test " + name + " failed: unknown error");
 	}
 
 	update_status(-1, "========================================");

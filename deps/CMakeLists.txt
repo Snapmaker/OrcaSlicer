@@ -63,7 +63,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # Sentry crash reporting - enabled only on Windows by default
-if (WIN32)
+if (WIN32 OR APPLE)
     set(SLIC3R_SENTRY_DEFAULT ON)
 else()
     set(SLIC3R_SENTRY_DEFAULT OFF)

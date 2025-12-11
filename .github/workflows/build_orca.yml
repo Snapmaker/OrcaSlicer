@@ -210,7 +210,7 @@ jobs:
         with:
           name: dSYM_Mac_${{ env.ver }}
           path: ${{ github.workspace }}/build/universal/Snapmaker_Orca/dSYM
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
       - name: Deploy Mac release
         if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'

@@ -20,6 +20,8 @@
 #ifdef __APPLE__
 #include <unistd.h>
 #include <mach-o/dyld.h>
+#include <libgen.h>
+#include <string.h>
 #endif
 
 #include <cstdlib>
@@ -64,8 +66,11 @@ void initSentryEx()
         }
 
         // Get the directory containing the executable, not the executable path itself
-        boost::filesystem::path exe_dir = boost::filesystem::path(exe_path).parent_path();
-        handlerDir                      = (exe_dir / "crashpad_handler").string();
+        // Use dirname() to get parent directory (need to copy string as dirname may modify it)
+        char exe_path_copy[PATH_MAX];
+        strncpy(exe_path_copy, exe_path, PATH_MAX);
+        char* exe_dir = dirname(exe_path_copy);
+        handlerDir = std::string(exe_dir) + "/crashpad_handler";
 
         const char* home_env = getenv("HOME");
 
@@ -132,6 +137,7 @@ void initSentryEx()
 
         sentry_init(options);
         sentry_start_session();
+        
     }
 }
 

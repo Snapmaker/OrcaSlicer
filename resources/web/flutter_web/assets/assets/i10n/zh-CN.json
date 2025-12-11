@@ -86,6 +86,8 @@
   "Connect": "连接",
   "Connecting...": "连接中...",
   "Connecting": "连接中...",
+  "Disconnecting...": "断开连接中...",
+  "Disconnecting": "断开连接中...",
   "Uploading...": "上传中...",
   "Uploading": "上传中...",
 

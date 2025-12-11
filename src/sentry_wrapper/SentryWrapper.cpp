@@ -26,10 +26,24 @@
 
 #include <cstdlib>
 #include <atomic>
+#include <random>
 
 namespace Slic3r {
 
 #ifdef SLIC3R_SENTRY
+
+#define SENTRY_EVENT_TRACE "trace"
+#define SENTRY_EVENT_DEBUG "info"
+#define SENTRY_EVENT_INFO "debug"
+#define SENTRY_EVENT_WARNING "warning"
+#define SENTRY_EVENT_ERROR "error"
+#define SENTRY_EVENT_FATAL "fatal"
+
+#define MACHINE_MODULE "Moonraker_Mqtt"
+
+#define SENTRY_KEY_LEVEL "level"
+
+
 
 static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_value_t event, void* closure)
 {
@@ -38,6 +52,60 @@ static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_va
 
     // tell the backend to retain the event
     return event;
+}
+
+static sentry_value_t before_send(sentry_value_t event, void* hint, void* data)
+{
+    sentry_value_t level_val = sentry_value_get_by_key(event, SENTRY_KEY_LEVEL);
+
+    std::string    eventLevel = sentry_value_as_string(sentry_value_get_by_key(event, SENTRY_KEY_LEVEL));
+
+    //module name
+    sentry_value_t logger_val = sentry_value_get_by_key(event, "logger");
+    std::string    logger     = sentry_value_as_string(logger_val);        
+
+    if (MACHINE_MODULE == logger)
+    {
+        srand((unsigned int) time(0));
+        int random_num = rand() % 100;
+        int randNumber = rand() % 100 + 1;
+        if (randNumber < 85) 
+        {
+            sentry_value_decref(event);
+            return sentry_value_new_null();
+        }
+        else
+        {
+            return event;
+        }
+    }
+
+    if (SENTRY_EVENT_FATAL == eventLevel ||
+        SENTRY_EVENT_ERROR == eventLevel || 
+        SENTRY_EVENT_TRACE == eventLevel)
+    {
+        return event;
+    } 
+    else if (SENTRY_EVENT_WARNING == eventLevel) 
+    {
+        srand((unsigned int) time(0));
+        int random_num = rand() % 100;
+        int randNumber = rand() % 100 + 1;
+        if (randNumber > 5) 
+        {
+            sentry_value_decref(event);
+            return sentry_value_new_null();
+        } 
+        else 
+        {
+            return event;
+        }
+    }
+
+    //info trace debug not report
+    sentry_value_decref(event);        
+    return sentry_value_new_null();
+
 }
 
 void initSentryEx()
@@ -130,7 +198,7 @@ void initSentryEx()
         sentry_options_set_auto_session_tracking(options, 0);
         sentry_options_set_symbolize_stacktraces(options, 1);
         sentry_options_set_on_crash(options, on_crash_callback, NULL);
-        sentry_options_set_before_send(options, NULL, NULL);
+        sentry_options_set_before_send(options, before_send, NULL);
 
         sentry_options_set_sample_rate(options, 1.0);
         sentry_options_set_traces_sample_rate(options, 1.0);
@@ -138,6 +206,7 @@ void initSentryEx()
         sentry_init(options);
         sentry_start_session();
         
+        sentryReportLog(SENTRY_LOG_ERROR, "init sentry error", "initSentry module");
     }
 }
 
@@ -181,9 +250,13 @@ void sentryReportLogEx(SENTRY_LOG_LEVEL   logLevel,
                                                            funcModule.c_str(), 
                                                            logContent.c_str()
     );
+     
+     if (!logTraceId.empty())
+     {
+         sentry_value_t tags = sentry_value_get_by_key(event, "snapmaker_tags");
+         sentry_value_set_by_key(tags, "snapmaker_trace_id", sentry_value_new_string(logTraceId.c_str()));
+     }
 
-    if (!logTraceId.empty())
-        sentry_set_trace(logTraceId.c_str(), "");
 
     if (!logTagKey.empty())
         sentry_set_tag(logTagKey.c_str(), logTagValue.c_str());

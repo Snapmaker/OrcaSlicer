@@ -20,7 +20,7 @@ on:
         required: false
         type: boolean
       force-build:
-        required: true
+        required: false
         type: boolean
 
 jobs:

@@ -200,6 +200,32 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 	text_cloud_mqtt_val->Wrap(-1);
 	grid_sizer->Add(text_cloud_mqtt_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
 
+	// Login API Test
+	btn_login_api = new Button(this, _L("Test Login API"));
+    btn_login_api->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	grid_sizer->Add(btn_login_api, 0, wxEXPAND | wxALL, 5);
+
+	text_login_api_title = new wxStaticText(this, wxID_ANY, _L("Test Login API:"), wxDefaultPosition, wxDefaultSize, 0);
+	text_login_api_title->Wrap(-1);
+	grid_sizer->Add(text_login_api_title, 0, wxALIGN_RIGHT | wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	text_login_api_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
+	text_login_api_val->Wrap(-1);
+	grid_sizer->Add(text_login_api_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	// Upload API Test
+	btn_upload_api = new Button(this, _L("Test Upload API"));
+    btn_upload_api->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	grid_sizer->Add(btn_upload_api, 0, wxEXPAND | wxALL, 5);
+
+	text_upload_api_title = new wxStaticText(this, wxID_ANY, _L("Test Upload API:"), wxDefaultPosition, wxDefaultSize, 0);
+	text_upload_api_title->Wrap(-1);
+	grid_sizer->Add(text_upload_api_title, 0, wxALIGN_RIGHT | wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	text_upload_api_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
+	text_upload_api_val->Wrap(-1);
+	grid_sizer->Add(text_upload_api_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
 	sizer->Add(grid_sizer, 1, wxEXPAND, 5);
 
 	btn_link->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
@@ -216,6 +242,14 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 
 	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
 		start_test_cloud_mqtt_thread();
+	});
+
+	btn_login_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+		start_test_login_api_thread();
+	});
+
+	btn_upload_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+		start_test_upload_api_thread();
 	});
 
 	return sizer;
@@ -250,6 +284,10 @@ void NetworkTestDialog::init_bind()
 			text_lan_mqtt_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_CLOUD_MQTT_JOB) {
 			text_cloud_mqtt_val->SetLabelText(evt.GetString());
+		} else if (evt.GetInt() == TEST_LOGIN_API_JOB) {
+			text_login_api_val->SetLabelText(evt.GetString());
+		} else if (evt.GetInt() == TEST_UPLOAD_API_JOB) {
+			text_upload_api_val->SetLabelText(evt.GetString());
 		}
 
 		std::time_t t = std::time(0);
@@ -297,6 +335,8 @@ void NetworkTestDialog::start_all_job()
 	start_test_bing_thread();
 	start_test_lan_mqtt_thread();
 	start_test_cloud_mqtt_thread();
+	start_test_login_api_thread();
+	start_test_upload_api_thread();
 }
 
 void NetworkTestDialog::start_all_job_sequence()
@@ -346,6 +386,20 @@ void NetworkTestDialog::start_all_job_sequence()
 		}
 		if (m_closing.load()) return;
 
+		// 测试登录API
+		update_status(-1, "");
+		auto app_config = wxGetApp().app_config;
+		std::string region = app_config->get("region");
+		wxString login_api_url = (region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+		if (m_closing.load()) return;
+
+		// 测试上传API
+		update_status(-1, "");
+		wxString upload_api_url = (region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+		if (m_closing.load()) return;
+
 		update_status(-1, "");
 		update_status(-1, "========================================");
 		update_status(-1, "Sequence test completed");
@@ -369,9 +423,13 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 
     int result = -1;
 	http.timeout_max(10)
-		.on_complete([this, &result](std::string body, unsigned status) {
+		.on_complete([this, &result, job](std::string body, unsigned status) {
 			try {
 				if (status == 200) {
+					result = 0;
+				}
+				// Upload API: 403 is OK (HTTPS resource with permission check)
+				else if (job == TEST_UPLOAD_API_JOB && status == 403) {
 					result = 0;
 				}
 			}
@@ -384,6 +442,11 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 			update_status(job, ip_report);
 		})
 		.on_error([this,name,job](std::string body, std::string error, unsigned int status) {
+		// Upload API: 403 is OK (HTTPS resource with permission check)
+		if (job == TEST_UPLOAD_API_JOB && status == 403) {
+			this->update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
+			return;
+		}
 		wxString info = wxString::Format("status=%u, body=", status) + wxString::FromUTF8(body) + ", error=" + wxString::FromUTF8(error);
         this->update_status(job, "test " + name + " failed");
         this->update_status(-1, info);
@@ -668,6 +731,7 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 			// 连接到服务器
 			auto connect_start = std::chrono::high_resolution_clock::now();
 			boost::system::error_code ec;
+			long long connect_time = 0;
 
 			// 尝试连接到所有解析出的endpoint
 			bool connected = false;
@@ -680,7 +744,7 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 				if (!ec) {
 					connected = true;
 					auto connect_end = std::chrono::high_resolution_clock::now();
-					auto connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
+					connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
 
 					update_status(job, "test " + name + " connected");
 					update_status(-1, wxString::Format("[OK] TCP connection established in %lld ms", connect_time));
@@ -699,12 +763,36 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 
 			update_status(-1, wxString::Format("Total test time: %lld ms", total_time));
 
+			// Calculate connection quality grade based on RTT
+			int grade;
+			wxString grade_desc;
+			wxString grade_icon;
+
+			if (connect_time <= 100) {
+				grade = 1;
+				grade_desc = "Excellent";
+				grade_icon = "[Level 1]";
+			} else if (connect_time <= 500) {
+				grade = 2;
+				grade_desc = "Good";
+				grade_icon = "[Level 2]";
+			} else if (connect_time <= 1000) {
+				grade = 3;
+				grade_desc = "Fair";
+				grade_icon = "[Level 3]";
+			} else {
+				grade = 4;
+				grade_desc = "Poor";
+				grade_icon = "[Level 4]";
+			}
+
 			// 添加空行
 			update_status(-1, "");
 			update_status(-1, "--- Test Summary ---");
 			update_status(-1, "[OK] Network Layer: Ping test completed (see RTT above)");
 			update_status(-1, wxString::Format("[OK] Transport Layer: TCP port %d is open and accepting connections", port));
-			update_status(job, "test " + name + " ok");
+			update_status(-1, wxString::Format("Connection Quality: %s %s (RTT: %lld ms)", grade_icon, grade_desc, connect_time));
+			update_status(job, wxString::Format("test %s ok (%s - %s, RTT: %lld ms)", name, grade_icon, grade_desc, connect_time));
 
 			success = true;
 
@@ -717,16 +805,19 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 			}
 			update_status(-1, "");
 			update_status(-1, "[FAIL] TCP connection error: " + wxString::FromUTF8(error_msg));
-			update_status(job, "test " + name + " failed");
+			update_status(-1, "Connection Quality: [Level 5] Failed (timeout or unreachable)");
+			update_status(job, "test " + name + " failed ([Level 5] - timeout or unreachable)");
 		} catch (const std::exception& e) {
 			update_status(-1, "");
 			update_status(-1, wxString("Exception: ") + wxString(e.what()));
-			update_status(job, "test " + name + " failed");
+			update_status(-1, "Connection Quality: [Level 5] Failed (exception)");
+			update_status(job, "test " + name + " failed ([Level 5] - exception)");
 		}
 
 	} catch (...) {
 		update_status(-1, "");
-		update_status(job, "test " + name + " failed: unknown error");
+		update_status(-1, "Connection Quality: [Level 5] Failed (unknown error)");
+		update_status(job, "test " + name + " failed ([Level 5] - unknown error)");
 	}
 
 	update_status(-1, "========================================");
@@ -836,6 +927,44 @@ void NetworkTestDialog::start_test_bing_thread()
     });
 }
 
+void NetworkTestDialog::start_test_login_api_thread()
+{
+    if (m_in_testing[TEST_LOGIN_API_JOB].load())
+        return;
+
+	if (test_job[TEST_LOGIN_API_JOB] != nullptr && test_job[TEST_LOGIN_API_JOB]->joinable()) {
+		test_job[TEST_LOGIN_API_JOB]->join();
+		delete test_job[TEST_LOGIN_API_JOB];
+		test_job[TEST_LOGIN_API_JOB] = nullptr;
+	}
+
+	test_job[TEST_LOGIN_API_JOB] = new boost::thread([this] {
+		auto app_config = wxGetApp().app_config;
+		std::string region = app_config->get("region");
+		wxString login_api_url = (region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+	});
+}
+
+void NetworkTestDialog::start_test_upload_api_thread()
+{
+    if (m_in_testing[TEST_UPLOAD_API_JOB].load())
+        return;
+
+	if (test_job[TEST_UPLOAD_API_JOB] != nullptr && test_job[TEST_UPLOAD_API_JOB]->joinable()) {
+		test_job[TEST_UPLOAD_API_JOB]->join();
+		delete test_job[TEST_UPLOAD_API_JOB];
+		test_job[TEST_UPLOAD_API_JOB] = nullptr;
+	}
+
+	test_job[TEST_UPLOAD_API_JOB] = new boost::thread([this] {
+		auto app_config = wxGetApp().app_config;
+		std::string region = app_config->get("region");
+		wxString upload_api_url = (region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+	});
+}
+
 void NetworkTestDialog::on_close(wxCloseEvent& event)
 {
 	m_download_cancel = true;
@@ -866,6 +995,8 @@ void NetworkTestDialog::set_default()
 	text_bing_val->SetLabelText(NA_STR);
 	text_lan_mqtt_val->SetLabelText(NA_STR);
 	text_cloud_mqtt_val->SetLabelText(NA_STR);
+	text_login_api_val->SetLabelText(NA_STR);
+	text_upload_api_val->SetLabelText(NA_STR);
 	m_download_cancel = false;
 	m_closing.store(false);
 }

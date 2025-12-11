@@ -257,7 +257,7 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
 
 wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWindow *parent, wxString tooltip, std::vector<wxString> vlist)
 {
-    std::vector<wxString> local_regions = {"Asia-Pacific", "China", "Europe", "North America", "Others"};
+    std::vector<wxString> local_regions = {"Asia-Pacific", "Chinese Mainland", "Europe", "North America", "Others"};
 
     wxBoxSizer *m_sizer_combox = new wxBoxSizer(wxHORIZONTAL);
     m_sizer_combox->Add(0, 0, 0, wxEXPAND | wxLEFT, 23);
@@ -1097,7 +1097,7 @@ wxWindow* PreferencesDialog::create_general_page()
     std::sort(language_infos.begin(), language_infos.end(), [](const wxLanguageInfo *l, const wxLanguageInfo *r) { return l->Description < r->Description; });
     auto item_language = create_item_language_combobox(_L("Language"), page, _L("Language"), 50, "language", language_infos);
 
-    std::vector<wxString> Regions         = {_L("Asia-Pacific"), _L("China"), _L("Europe"), _L("North America"), _L("Others")};
+    std::vector<wxString> Regions         = {_L("Asia-Pacific"), _L("Chinese Mainland"), _L("Europe"), _L("North America"), _L("Others")};
     auto                  item_region= create_item_region_combobox(_L("Login Region"), page, _L("Login Region"), Regions);
 
     // SM Beta: temporarily open the item_stealth_mode and close the network plugin

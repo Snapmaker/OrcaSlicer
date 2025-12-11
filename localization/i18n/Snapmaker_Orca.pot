@@ -6121,7 +6121,7 @@ msgstr ""
 msgid "Asia-Pacific"
 msgstr ""
 
-msgid "China"
+msgid "Chinese Mainland"
 msgstr ""
 
 msgid "Europe"

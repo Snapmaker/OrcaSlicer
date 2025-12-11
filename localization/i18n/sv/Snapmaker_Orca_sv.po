@@ -6437,8 +6437,8 @@ msgstr "Allmänna inställningar"
 msgid "Asia-Pacific"
 msgstr "Asien-Stillahavsområdet"
 
-msgid "China"
-msgstr "Kina"
+msgid "Chinese Mainland"
+msgstr "kinesiska fastlandet"
 
 msgid "Europe"
 msgstr "Europa"

@@ -6597,8 +6597,8 @@ msgstr "Загальні налаштування"
 msgid "Asia-Pacific"
 msgstr "Азіатсько-Тихоокеанський регіон"
 
-msgid "China"
-msgstr "Китай"
+msgid "Chinese Mainland"
+msgstr "Китайський материк"
 
 msgid "Europe"
 msgstr "Європа"

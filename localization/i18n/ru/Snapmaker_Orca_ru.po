@@ -6666,8 +6666,8 @@ msgstr "Общие настройки"
 msgid "Asia-Pacific"
 msgstr "Азиатско-Тихоокеанский"
 
-msgid "China"
-msgstr "Китай"
+msgid "Chinese Mainland"
+msgstr "Континентальный Китай"
 
 msgid "Europe"
 msgstr "Европа"

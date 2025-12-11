@@ -6663,8 +6663,8 @@ msgstr "Configuración General"
 msgid "Asia-Pacific"
 msgstr "Asia-Pacífico"
 
-msgid "China"
-msgstr "China"
+msgid "Chinese Mainland"
+msgstr "China continental"
 
 msgid "Europe"
 msgstr "Europa"

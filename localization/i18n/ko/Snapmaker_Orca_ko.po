@@ -6428,8 +6428,8 @@ msgstr "일반 설정"
 msgid "Asia-Pacific"
 msgstr "아시아 태평양"
 
-msgid "China"
-msgstr "중국"
+msgid "Chinese Mainland"
+msgstr "중국 대륙"
 
 msgid "Europe"
 msgstr "유럽"

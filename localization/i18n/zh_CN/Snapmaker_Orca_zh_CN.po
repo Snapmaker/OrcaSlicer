@@ -6346,8 +6346,8 @@ msgstr "通用设置"
 msgid "Asia-Pacific"
 msgstr "亚太"
 
-msgid "China"
-msgstr "中国"
+msgid "Chinese Mainland"
+msgstr "中国大陆"
 
 msgid "Europe"
 msgstr "欧洲"

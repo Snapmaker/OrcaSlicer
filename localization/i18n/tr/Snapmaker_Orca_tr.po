@@ -6533,8 +6533,8 @@ msgstr "Genel Ayarlar"
 msgid "Asia-Pacific"
 msgstr "Asya Pasifik"
 
-msgid "China"
-msgstr "Çin"
+msgid "Chinese Mainland"
+msgstr "Çin ana karası"
 
 msgid "Europe"
 msgstr "Avrupa"

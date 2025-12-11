@@ -6474,8 +6474,8 @@ msgstr "Általános beállítások"
 msgid "Asia-Pacific"
 msgstr "Ázsia-Csendes-óceáni térség"
 
-msgid "China"
-msgstr "Kína"
+msgid "Chinese Mainland"
+msgstr "Kínai szárazföld"
 
 msgid "Europe"
 msgstr "Európa"

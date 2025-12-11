@@ -1272,7 +1272,7 @@ std::string AppConfig::get_country_code()
 // #if !BBL_RELEASE_TO_PUBLIC
 //     if (is_engineering_region()) { return region; }
 // #endif
-    if (region == "CHN" || region == "China")
+    if (region == "CHN" || region == "Chinese Mainland")
         return "CN";
     else if (region == "USA")
         return "US";

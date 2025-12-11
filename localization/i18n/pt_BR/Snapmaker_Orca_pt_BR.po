@@ -6605,8 +6605,8 @@ msgstr "Configurações Gerais"
 msgid "Asia-Pacific"
 msgstr "Ásia-Pacífico"
 
-msgid "China"
-msgstr "China"
+msgid "Chinese Mainland"
+msgstr "China continental"
 
 msgid "Europe"
 msgstr "Europa"

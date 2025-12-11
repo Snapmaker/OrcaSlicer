@@ -6618,8 +6618,8 @@ msgstr "Configuració general"
 msgid "Asia-Pacific"
 msgstr "Àsia-Pacífic"
 
-msgid "China"
-msgstr "Xina"
+msgid "Chinese Mainland"
+msgstr "Xina continental"
 
 msgid "Europe"
 msgstr "Europa"

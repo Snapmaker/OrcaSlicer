@@ -6532,8 +6532,8 @@ msgstr "Algemene instellingen"
 msgid "Asia-Pacific"
 msgstr "Azië-Pacific"
 
-msgid "China"
-msgstr "China"
+msgid "Chinese Mainland"
+msgstr "Vasteland van China"
 
 msgid "Europe"
 msgstr "Europa"

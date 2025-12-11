@@ -6389,8 +6389,8 @@ msgstr "一般設定"
 msgid "Asia-Pacific"
 msgstr "アジア太平洋地域"
 
-msgid "China"
-msgstr "中国"
+msgid "Chinese Mainland"
+msgstr "中国大陸"
 
 msgid "Europe"
 msgstr "ヨーロッパ地域"

@@ -6424,8 +6424,8 @@ msgstr "General Settings"
 msgid "Asia-Pacific"
 msgstr "Asia-Pacific"
 
-msgid "China"
-msgstr "China"
+msgid "Chinese Mainland"
+msgstr "Chinese Mainland"
 
 msgid "Europe"
 msgstr "Europe"

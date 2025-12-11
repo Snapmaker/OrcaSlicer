@@ -6477,8 +6477,8 @@ msgstr "Obecná nastavení"
 msgid "Asia-Pacific"
 msgstr "Asie-Pacifik"
 
-msgid "China"
-msgstr "Čína"
+msgid "Chinese Mainland"
+msgstr "Pevninská Čína"
 
 msgid "Europe"
 msgstr "Evropa"

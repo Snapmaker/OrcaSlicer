@@ -276,6 +276,8 @@ NetworkTestDialog::~NetworkTestDialog()
 void NetworkTestDialog::init_bind()
 {
 	Bind(EVT_UPDATE_RESULT, [this](wxCommandEvent& evt) {
+		if (m_closing.load()) return;
+
 		if (evt.GetInt() == TEST_ORCA_JOB) {
 			text_link_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_BING_JOB) {
@@ -424,6 +426,7 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
     int result = -1;
 	http.timeout_max(10)
 		.on_complete([this, &result, job](std::string body, unsigned status) {
+			if (m_closing.load()) return;
 			try {
 				if (status == 200) {
 					result = 0;
@@ -438,10 +441,12 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 			}
 		})
 		.on_ip_resolve([this,name,job](std::string ip) {
+			if (m_closing.load()) return;
 			wxString ip_report = "test " + name + " ip resolved = " + wxString::FromUTF8(ip);
 			update_status(job, ip_report);
 		})
 		.on_error([this,name,job](std::string body, std::string error, unsigned int status) {
+		if (m_closing.load()) return;
 		// Upload API: 403 is OK (HTTPS resource with permission check)
 		if (job == TEST_UPLOAD_API_JOB && status == 403) {
 			this->update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
@@ -1009,6 +1014,7 @@ void NetworkTestDialog::on_dpi_changed(const wxRect &suggested_rect)
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
+	if (m_closing.load()) return;
 	auto evt = new wxCommandEvent(EVT_UPDATE_RESULT, this->GetId());
 	evt->SetString(info);
 	evt->SetInt(job_id);

@@ -159,5 +159,6 @@ jobs:
     with:
       os: ${{ inputs.os }}
       pdb-artifact-name: PDB
-      release: ${{ github.sha }}
+      dsym-artifact-name: ${{ inputs.os == 'macos-14' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
+      release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

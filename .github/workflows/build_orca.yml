@@ -204,6 +204,14 @@ jobs:
           path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
           if-no-files-found: ignore
 
+      - name: Upload dSYM artifacts mac
+        if: inputs.os == 'macos-14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dSYM_Mac_${{ env.ver }}
+          path: ${{ github.workspace }}/build/universal/Snapmaker_Orca/dSYM
+          if-no-files-found: ignore
+
       - name: Deploy Mac release
         if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
         uses: WebFreak001/deploy-nightly@v3.2.0

@@ -90,11 +90,38 @@ jobs:
           }
 
       # ==================== macOS ====================
-      - name: "[macOS] Install sentry-cli via brew"
+      - name: "[macOS] Install sentry-cli"
         if: inputs.os == 'macos-14'
         run: |
-          brew install getsentry/tap/sentry-cli || true
-          sentry-cli --version
+          # Try multiple installation methods for reliability
+          # Method 1: Official install script (most reliable)
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Installing sentry-cli via official script..."
+            curl -sL https://sentry.io/get-cli/ | bash || true
+          fi
+          
+          # Method 2: npm fallback
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Official script failed, trying npm..."
+            npm install -g @sentry/cli || true
+          fi
+          
+          # Method 3: Direct binary download fallback
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "npm failed, downloading binary directly..."
+            SENTRY_CLI_VERSION=$(curl -s https://api.github.com/repos/getsentry/sentry-cli/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            curl -sL "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal" -o /usr/local/bin/sentry-cli
+            chmod +x /usr/local/bin/sentry-cli
+          fi
+          
+          # Verify installation
+          if command -v sentry-cli &> /dev/null; then
+            echo "sentry-cli installed successfully:"
+            sentry-cli --version
+          else
+            echo "::error::Failed to install sentry-cli via all methods"
+            exit 1
+          fi
 
       - name: "[macOS] Download dSYM artifact"
         if: inputs.os == 'macos-14'

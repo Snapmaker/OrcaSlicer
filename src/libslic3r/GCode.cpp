@@ -6373,11 +6373,11 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         methods even if we performed wipe, since this will ensure the entire retraction
         length is honored in case wipe path was too short.  */
 
-    // Snapmaker U1
-    std::string printer_model = this->m_curr_print->m_config.printer_model.value;
-    if (printer_model == "Snapmaker U1" && toolchange) {
-        gcode += "M400\n";
-    }
+    // // Snapmaker U1
+    // std::string printer_model = this->m_curr_print->m_config.printer_model.value;
+    // if (printer_model == "Snapmaker U1" && toolchange) {
+    //     gcode += "M400\n";
+    // }
      if ((!this->on_first_layer()  || this->config().bottom_surface_pattern != InfillPattern::ipHilbertCurve) &&
 	    (role != erTopSolidInfill || this->config().top_surface_pattern    != InfillPattern::ipHilbertCurve)){
             gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();

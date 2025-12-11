@@ -101,7 +101,7 @@ option(SLIC3R_PERL_XS           "Compile XS Perl module and enable Perl unit and
 option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
 
 # Sentry crash reporting - enabled only on Windows by default
-if (WIN32)
+if (WIN32 OR APPLE)
     set(SLIC3R_SENTRY_DEFAULT ON)
 else()
     set(SLIC3R_SENTRY_DEFAULT OFF)

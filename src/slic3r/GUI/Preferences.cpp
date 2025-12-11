@@ -1020,10 +1020,6 @@ wxBoxSizer* PreferencesDialog::create_item_link_association(wxWindow* parent, wx
 PreferencesDialog::PreferencesDialog(wxWindow *parent, wxWindowID id, const wxString &title, const wxPoint &pos, const wxSize &size, long style)
     : DPIDialog(parent, id, _L("Preferences"), pos, size, style)
 {
-    wxPanel* pPanel = new wxPanel();
-    delete pPanel;
-    delete pPanel;
-
     SetBackgroundColour(*wxWHITE);
     create();
     wxGetApp().UpdateDlgDarkUI(this);

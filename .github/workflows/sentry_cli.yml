@@ -149,7 +149,11 @@ jobs:
             done
             echo ""
             echo "Starting Sentry upload with debug logging..."
-            sentry-cli --log-level=debug --auth-token "$SENTRY_AUTH_TOKEN" upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" --release "${{ inputs.release }}" ./symbols
+            # upload-dif does not support --release flag, it auto-associates with releases
+            sentry-cli --log-level=debug --auth-token "$SENTRY_AUTH_TOKEN" upload-dif \
+              --org "${{ secrets.SENTRY_ORG }}" \
+              --project "${{ secrets.SENTRY_PROJECT }}" \              
+              ./symbols
             if [ $? -ne 0 ]; then
               echo "::error::Sentry upload failed with exit code $?"
               exit 1

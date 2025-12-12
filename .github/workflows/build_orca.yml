@@ -13,6 +13,10 @@ on:
         arch:
           required: false
           type: string
+      outputs:
+        release:
+          description: "Release version/tag for the build"
+          value: ${{ jobs.build_orca.outputs.release }}
 
 jobs:
   build_orca:

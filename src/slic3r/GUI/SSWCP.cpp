@@ -3024,8 +3024,11 @@ void SSWCP_MachineOption_Instance::sw_CameraStartMonitor() {
 
             int interval = m_param_data.count("interval") ? m_param_data["interval"].get<int>() : 2;
 
+            bool expect_pw  =  m_param_data.count("expect_pw") ? m_param_data["expect_pw"].get<bool>() : false;
+
+
             auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-            host->async_camera_start(domain, interval, [weak_self](const json& response) {
+            host->async_camera_start(domain, interval, expect_pw, [weak_self](const json& response) {
                 auto self = weak_self.lock();
                 if (self) {
                     SSWCP_Instance::on_mqtt_msg_arrived(self, response); 

@@ -1,12 +1,12 @@
 {
     "type": "machine",
     "setting_id": "1591507869",
-    "name": "Snapmaker U1 (0.4 nozzle)",
+    "name": "Snapmaker U1 (0.6 nozzle)",
     "from": "system",
     "instantiation": "true",
     "inherits": "fdm_U1",
     "printer_model": "Snapmaker U1",
-    "printer_variant": "0.4",
+    "printer_variant": "0.6",
     "auxiliary_fan": "1",
     "change_filament_gcode": "; Change Tool[previous_extruder] -> Tool[next_extruder] (layer [layer_num])\n{\nlocal max_speed_toolchange = 350.0;\nlocal wait_for_extruder_temp = true;\nposition[2] = position[2] + 2.0;\nlocal speed_toolchange = max_speed_toolchange;\nif travel_speed < max_speed_toolchange then\n      speed_toolchange = travel_speed;\nendif\n\"G91\nG1 Z1.5 F1800\nG90\n\";\n\"G1 F\" + (speed_toolchange * 60) + \"\n\";\nif wait_for_extruder_temp and not((layer_num < 0) and (next_extruder == initial_tool)) then\n      \"\n\";\n      \"; \" + layer_num + \"\n\";\n      if layer_num == 0 then\n            \"M109 S\" + first_layer_temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      else\n            \"M109 S\" + temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      endif\nendif\n\"T\" + next_extruder + \"\n\";\nif filament_type[next_extruder] == \"PVA\" then\n\"SET_VELOCITY_LIMIT ACCEL=3000\n\";\nelse\nendif\nif previous_extruder != next_extruder and initial_extruder != next_extruder then\n\"SM_PRINT_PREEXTRUDE_FILAMENT INDEX=\" + next_extruder + \"\n\";\nendif\n\"G90\n\";\n}",
     "deretraction_speed": [
@@ -63,10 +63,10 @@
         "0.08"
     ],
     "nozzle_diameter": [
-        "0.4",
-        "0.4",
-        "0.4",
-        "0.4"
+        "0.6",
+        "0.6",
+        "0.6",
+        "0.6"
     ],
     "nozzle_type": "stainless_steel",
     "printable_area": [

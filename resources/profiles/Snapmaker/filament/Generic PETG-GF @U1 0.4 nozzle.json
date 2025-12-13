@@ -1,0 +1,50 @@
+{
+    "type": "filament",
+    "name": "Generic PETG-GF @U1 0.4 nozzle",
+    "inherits": "Generic PETG-GF @base",
+    "from": "system",
+    "setting_id": "GFSG50_022",
+    "instantiation": "true",
+    "fan_cooling_layer_time": [
+        "30"
+    ],
+    "fan_max_speed": [
+        "40"
+    ],
+    "fan_min_speed": [
+        "5"
+    ],
+    "filament_max_volumetric_speed": [
+        "10"
+    ],
+    "overhang_fan_speed": [
+        "100"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "filament_end_gcode": [
+        ""
+    ],
+    "filament_start_gcode": [
+        ""
+    ],
+    "filament_vendor": [
+        "Generic"
+    ],
+    "pressure_advance": [
+        "0.03"
+    ],
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_volume": [
+        "5"
+    ],
+    "filament_retract_length_toolchange": [
+        "10"
+    ]
+}

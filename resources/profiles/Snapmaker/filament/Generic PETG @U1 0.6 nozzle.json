@@ -1,0 +1,56 @@
+{
+    "type": "filament",
+    "name": "Generic PETG test @U1 0.6 nozzle",
+    "inherits": "Generic PETG @base",
+    "from": "system",
+    "setting_id": "GFSG00_01",
+    "instantiation": "true",
+    "filament_max_volumetric_speed": [
+        "12"
+    ],
+    "filament_long_retractions_when_cut": [
+        "1"
+    ],
+    "filament_retraction_distances_when_cut": [
+        "18"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.6 nozzle)"
+    ],
+    "filament_end_gcode": [
+        ""
+    ],
+    "filament_start_gcode": [
+        ""
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_flow": [
+        "20"
+    ],
+    "filament_multitool_ramming_volume": [
+        "5"
+    ],
+    "filament_minimal_purge_on_wipe_tower": [
+        "50"
+    ],
+    "hot_plate_temp": [
+        "80"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "80"
+    ],
+    "pressure_advance": [
+        "0.04"
+    ],
+    "filament_vendor": [
+        "Generic"
+    ],
+    "filament_retract_length_toolchange": [
+        "10"
+    ]
+}

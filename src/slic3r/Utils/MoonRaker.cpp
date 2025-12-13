@@ -2266,7 +2266,7 @@ void Moonraker_Mqtt::async_machine_files_directory(const std::string& path, bool
     }
 }
 
-void Moonraker_Mqtt::async_camera_start(const std::string& domain, int interval, std::function<void(const nlohmann::json& response)> callback) {
+void Moonraker_Mqtt::async_camera_start(const std::string& domain, int interval, bool expect_pw, std::function<void(const nlohmann::json& response)> callback) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始启动摄像头监控，域名: " << domain;
     wcp_loger.add_log("开始启动摄像头监控，域名: " + domain, false, "", "Moonraker_Mqtt", "info");

@@ -2275,6 +2275,7 @@ void Moonraker_Mqtt::async_camera_start(const std::string& domain, int interval,
     json params;
     params["domain"]     = domain;
     params["interval"] = interval;
+    params["expect_pw"] = expect_pw;
 
     if (!send_to_request(method, params, true, callback,
                          [callback, &wcp_loger]() {

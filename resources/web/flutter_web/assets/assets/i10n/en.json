@@ -736,5 +736,9 @@
   "error_0001053100000007_title": "System Anomaly",
   "error_0001053100000007_desc": "Cloud print file download failed. Check your network connection and retry. If issue persists, contact technical support.",
   "error_0001053100000008_title": "System Anomaly",
-  "error_0001053100000008_desc": "USB flash drive read anomaly. Ensure the USB flash drive is properly connected and retry. If issue persists, contact technical support."
+  "error_0001053100000008_desc": "USB flash drive read anomaly. Ensure the USB flash drive is properly connected and retry. If issue persists, contact technical support.",
+  "camera_turn_off_countdown": "Camera turn-off countdown",
+  "continue_camera": "Continue",
+    "camera_auto_shutdown_message": "The camera has been unused for a long time. To reduce power consumption, it has automatically shut down.",
+  "got_it": "Got it"
 }

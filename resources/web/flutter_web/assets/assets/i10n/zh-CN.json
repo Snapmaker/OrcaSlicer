@@ -106,7 +106,12 @@
   "Authorizing timeout!": "授权超时!",
 
   "Network connection failed. Please check your network connection.": "网络连接失败，请检查您的网络连接",
-  
+  "Monitoring resource load failed, please try again later.": "监控资源加载失败，请稍后重试",
+  "Server internal error, please try again later.": "服务器内部错误，请稍后重试",
+  "Start monitoring timeout, please try again later.": "启动监控超时，请稍后重试",
+  "Failed to start monitoring. Please try again later.": "启动监控失败，请稍后重试",
+  "Other error, please try again later.": "其他错误，请稍后重试",
+
   "Set led failed": "设置LED失败",
   "Set led success": "设置LED成功",
 
@@ -199,7 +204,7 @@
 
   "Refresh completed": "刷新完成",
   "Refresh failed": "刷新失败",
-  
+
   "User not logged in": "用户未登录",
 
   "Not logged in account": "未登录账户",
@@ -501,6 +506,9 @@
   "dialog_filament_type_not_match_tips": "此喷嘴耗材类型与模型预设耗材类型不匹配，请更换该喷嘴耗材类型或更改预设耗材类型",
   "dialog_filament_type_none_tips": "未识别到耗材，请在设备上挂载耗材或编辑耗材信息",
   "Features are under development, please stay tuned": "功能开发中, 敬请期待",
+
+  "File uploaded successfully": "文件上传成功",
+  "close this page": "关闭此页面",
 
   "No time-lapse video": "暂无延时摄影视频",
 
@@ -966,5 +974,9 @@
   "error_0001053100000007_title": "系统异常",
   "error_0001053100000007_desc": "云打印文件下载失败。请确保网络连接正常，然后重试。若仍出现异常，请联系技术支持。",
   "error_0001053100000008_title": "系统异常",
-  "error_0001053100000008_desc": "U 盘读取异常。请确保 U 盘连接正常，然后重试。若仍出现异常，请联系技术支持。"
+  "error_0001053100000008_desc": "U 盘读取异常。请确保 U 盘连接正常，然后重试。若仍出现异常，请联系技术支持。",
+  "camera_turn_off_countdown": "摄像机关闭倒计时",
+  "continue_camera": "继续播放",
+  "camera_auto_shutdown_message": "摄像头长时间未使用，为了节省电量，已自动关闭。",
+  "got_it": "知道了"
 }

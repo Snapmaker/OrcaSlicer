@@ -204,7 +204,7 @@ void initSentryEx()
         sentry_init(options);
         sentry_start_session();
         
-        sentryReportLog(SENTRY_LOG_ERROR, "init sentry error", "initSentry module");
+        //sentryReportLog(SENTRY_LOG_ERROR, "init sentry error", "initSentry module");
     }
 }
 

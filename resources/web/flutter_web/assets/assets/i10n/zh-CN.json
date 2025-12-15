@@ -978,5 +978,6 @@
   "camera_turn_off_countdown": "摄像机关闭倒计时",
   "continue_camera": "继续播放",
   "camera_auto_shutdown_message": "摄像头长时间未使用，为了节省电量，已自动关闭。",
-  "got_it": "知道了"
+  "got_it": "知道了",
+  "monitoring_module_hibernated": "提示：监控模块已休眠，点击播放按钮即可唤醒"
 }

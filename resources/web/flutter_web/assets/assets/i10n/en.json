@@ -740,5 +740,6 @@
   "camera_turn_off_countdown": "Camera turn-off countdown",
   "continue_camera": "Continue",
     "camera_auto_shutdown_message": "The camera has been unused for a long time. To reduce power consumption, it has automatically shut down.",
-  "got_it": "Got it"
+  "got_it": "Got it",
+  "monitoring_module_hibernated": "Note : Monitoring Module hibernated. Click Play to wake it up."
 }

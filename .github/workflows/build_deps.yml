@@ -115,7 +115,7 @@ jobs:
             tar -czvf OrcaSlicer_dep_ubuntu_$(date +"%Y%m%d").tar.gz destdir
 
 
-      # Upload Artifacts
+      # Upload Artifacts (commented out to reduce artifact storage usage)
       # - name: Upload Mac ${{ inputs.arch }} artifacts
       #   if: inputs.os == 'macos-14'
       #   uses: actions/upload-artifact@v4
@@ -123,21 +123,21 @@ jobs:
       #     name: OrcaSlicer_dep_mac_${{ env.date }}
       #     path: ${{ github.workspace }}/deps/build/OrcaSlicer_dep*.tar.gz
 
-      - name: Upload Windows artifacts
-        if: inputs.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: OrcaSlicer_dep_win64_${{ env.date }}
-          path: ${{ github.workspace }}/deps/build/OrcaSlicer_dep*.zip
+      # - name: Upload Windows artifacts
+      #   if: inputs.os == 'windows-latest'
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: OrcaSlicer_dep_win64_${{ env.date }}
+      #     path: ${{ github.workspace }}/deps/build/OrcaSlicer_dep*.zip
 
-      - name: Upload Ubuntu artifacts
-        if: ${{ ! env.ACT && inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04' }}
-        env:
-          ubuntu-ver: ${{ (inputs.os == 'ubuntu-20.04' && '2004') || (inputs.os == 'ubuntu-24.04' && '2404') || '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: OrcaSlicer_dep_ubuntu_${{ env.ubuntu-ver }}_${{ env.date }}
-          path: ${{ github.workspace }}/deps/build/OrcaSlicer_dep_ubuntu_*.tar.gz
+      # - name: Upload Ubuntu artifacts
+      #   if: ${{ ! env.ACT && inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04' }}
+      #   env:
+      #     ubuntu-ver: ${{ (inputs.os == 'ubuntu-20.04' && '2004') || (inputs.os == 'ubuntu-24.04' && '2404') || '' }}
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: OrcaSlicer_dep_ubuntu_${{ env.ubuntu-ver }}_${{ env.date }}
+      #     path: ${{ github.workspace }}/deps/build/OrcaSlicer_dep_ubuntu_*.tar.gz
 
   build_orca:
     name: Build Snapmaker_Orca
@@ -159,5 +159,6 @@ jobs:
     with:
       os: ${{ inputs.os }}
       pdb-artifact-name: PDB
-      release: ${{ github.sha }}
+      dsym-artifact-name: ${{ inputs.os == 'macos-14' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
+      release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

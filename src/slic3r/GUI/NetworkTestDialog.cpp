@@ -200,6 +200,32 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 	text_cloud_mqtt_val->Wrap(-1);
 	grid_sizer->Add(text_cloud_mqtt_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
 
+	// Login API Test
+	btn_login_api = new Button(this, _L("Test Login API"));
+    btn_login_api->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	grid_sizer->Add(btn_login_api, 0, wxEXPAND | wxALL, 5);
+
+	text_login_api_title = new wxStaticText(this, wxID_ANY, _L("Test Login API:"), wxDefaultPosition, wxDefaultSize, 0);
+	text_login_api_title->Wrap(-1);
+	grid_sizer->Add(text_login_api_title, 0, wxALIGN_RIGHT | wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	text_login_api_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
+	text_login_api_val->Wrap(-1);
+	grid_sizer->Add(text_login_api_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	// Upload API Test
+	btn_upload_api = new Button(this, _L("Test Upload API"));
+    btn_upload_api->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+	grid_sizer->Add(btn_upload_api, 0, wxEXPAND | wxALL, 5);
+
+	text_upload_api_title = new wxStaticText(this, wxID_ANY, _L("Test Upload API:"), wxDefaultPosition, wxDefaultSize, 0);
+	text_upload_api_title->Wrap(-1);
+	grid_sizer->Add(text_upload_api_title, 0, wxALIGN_RIGHT | wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
+	text_upload_api_val = new wxStaticText(this, wxID_ANY, _L("N/A"), wxDefaultPosition, wxDefaultSize, 0);
+	text_upload_api_val->Wrap(-1);
+	grid_sizer->Add(text_upload_api_val, 0, wxALL | wxALIGN_CENTER_VERTICAL, 5);
+
 	sizer->Add(grid_sizer, 1, wxEXPAND, 5);
 
 	btn_link->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
@@ -216,6 +242,14 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 
 	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
 		start_test_cloud_mqtt_thread();
+	});
+
+	btn_login_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+		start_test_login_api_thread();
+	});
+
+	btn_upload_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
+		start_test_upload_api_thread();
 	});
 
 	return sizer;
@@ -242,6 +276,8 @@ NetworkTestDialog::~NetworkTestDialog()
 void NetworkTestDialog::init_bind()
 {
 	Bind(EVT_UPDATE_RESULT, [this](wxCommandEvent& evt) {
+		if (m_closing.load()) return;
+
 		if (evt.GetInt() == TEST_ORCA_JOB) {
 			text_link_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_BING_JOB) {
@@ -250,13 +286,17 @@ void NetworkTestDialog::init_bind()
 			text_lan_mqtt_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_CLOUD_MQTT_JOB) {
 			text_cloud_mqtt_val->SetLabelText(evt.GetString());
+		} else if (evt.GetInt() == TEST_LOGIN_API_JOB) {
+			text_login_api_val->SetLabelText(evt.GetString());
+		} else if (evt.GetInt() == TEST_UPLOAD_API_JOB) {
+			text_upload_api_val->SetLabelText(evt.GetString());
 		}
 
 		std::time_t t = std::time(0);
 		std::tm* now_time = std::localtime(&t);
 		std::stringstream buf;
 		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
-		wxString info = wxString::Format("%s:", buf.str()) + evt.GetString() + "\n";
+		wxString info = wxString(buf.str()) + ": " + evt.GetString() + "\n";
 		try {
 			if (!m_closing.load() && txt_log) {
 				txt_log->AppendText(info);
@@ -297,6 +337,8 @@ void NetworkTestDialog::start_all_job()
 	start_test_bing_thread();
 	start_test_lan_mqtt_thread();
 	start_test_cloud_mqtt_thread();
+	start_test_login_api_thread();
+	start_test_upload_api_thread();
 }
 
 void NetworkTestDialog::start_all_job_sequence()
@@ -346,6 +388,20 @@ void NetworkTestDialog::start_all_job_sequence()
 		}
 		if (m_closing.load()) return;
 
+		// 测试登录API
+		update_status(-1, "");
+		auto app_config = wxGetApp().app_config;
+		std::string region = app_config->get("region");
+		wxString login_api_url = (region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+		if (m_closing.load()) return;
+
+		// 测试上传API
+		update_status(-1, "");
+		wxString upload_api_url = (region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+		if (m_closing.load()) return;
+
 		update_status(-1, "");
 		update_status(-1, "========================================");
 		update_status(-1, "Sequence test completed");
@@ -359,19 +415,24 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 
 	update_status(-1, "");
 	update_status(-1, "========================================");
-	wxString info = wxString::Format("test %s start...", name);
+	wxString info = "test " + name + " start...";
 	update_status(job, info);
 
 	Slic3r::Http http = Slic3r::Http::get(url.ToStdString());
-	info = wxString::Format("[test %s]: url=%s", name,url);
+	info = "[test " + name + "]: url=" + url;
     update_status(-1, info);
 	update_status(-1, "");
 
     int result = -1;
 	http.timeout_max(10)
-		.on_complete([this, &result](std::string body, unsigned status) {
+		.on_complete([this, &result, job](std::string body, unsigned status) {
+			if (m_closing.load()) return;
 			try {
 				if (status == 200) {
+					result = 0;
+				}
+				// Upload API: 403 is OK (HTTPS resource with permission check)
+				else if (job == TEST_UPLOAD_API_JOB && status == 403) {
 					result = 0;
 				}
 			}
@@ -380,17 +441,24 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 			}
 		})
 		.on_ip_resolve([this,name,job](std::string ip) {
-			wxString ip_report = wxString::Format("test %s ip resolved = %s", name, ip);
+			if (m_closing.load()) return;
+			wxString ip_report = "test " + name + " ip resolved = " + wxString::FromUTF8(ip);
 			update_status(job, ip_report);
 		})
 		.on_error([this,name,job](std::string body, std::string error, unsigned int status) {
-		wxString info = wxString::Format("status=%u, body=%s, error=%s", status, body, error);
-        this->update_status(job, wxString::Format("test %s failed", name));
+		if (m_closing.load()) return;
+		// Upload API: 403 is OK (HTTPS resource with permission check)
+		if (job == TEST_UPLOAD_API_JOB && status == 403) {
+			this->update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
+			return;
+		}
+		wxString info = wxString::Format("status=%u, body=", status) + wxString::FromUTF8(body) + ", error=" + wxString::FromUTF8(error);
+        this->update_status(job, "test " + name + " failed");
         this->update_status(-1, info);
 	}).perform_sync();
 
 	if (result == 0) {
-        update_status(job, wxString::Format("test %s ok", name));
+        update_status(job, "test " + name + " ok");
     }
 
 	update_status(-1, "========================================");
@@ -410,15 +478,15 @@ void NetworkTestDialog::start_test_ping_thread()
 void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 {
 	update_status(-1, "");
-	update_status(-1, wxString::Format("Starting ping test to %s...", server));
+	update_status(-1, "Starting ping test to " + server + "...");
 
 	try {
 #ifdef _WIN32
 		// Windows: ping -n 4 <server>
-		wxString ping_cmd = wxString::Format("ping -n 4 %s", server);
+		wxString ping_cmd = "ping -n 4 " + server;
 #else
 		// Linux/Mac: ping -c 4 <server>
-		wxString ping_cmd = wxString::Format("ping -c 4 %s", server);
+		wxString ping_cmd = "ping -c 4 " + server;
 #endif
 
 		// 执行ping命令 - 使用wxEXEC_NODISABLE和wxEXEC_HIDE_CONSOLE避免影响主线程
@@ -446,34 +514,89 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 				// 完全不输出ping详细日志，只解析数据
 
 #ifdef _WIN32
-				// Windows格式: "平均 = XXXms" 或 "Average = XXXms"
-				if (line.Contains("Average") || line.Contains("平均")) {
-					found_rtt = true;
-					rtt_info = line;
-				}
-				// 统计成功次数: "已接收 = X" 或 "Received = X"
-				if (line.Contains("Received") || line.Contains("已接收")) {
-					int pos_received = line.Find("Received");
-					if (pos_received == wxNOT_FOUND) {
-						pos_received = line.Find("已接收");
+				// Windows: 通用解析（支持所有语言）
+
+				// 策略1: 查找统计行（包含多个 "= 数字" 的模式）
+				// 这一行通常是：数据包: 已发送 = 4，已接收 = 4，丢失 = 0
+				// 或：Packets: Sent = 4, Received = 4, Lost = 0
+				// 特征：一行中有至少3个 "= 数字" 模式
+				if (received == 0 && line.Contains("=") && !line.Contains("TTL")) {
+					// 提取所有 "= 数字" 模式
+					wxArrayString numbers;
+					size_t pos = 0;
+					while (pos < line.Length()) {
+						// 查找等号
+						size_t eq_pos = line.find('=', pos);
+						if (eq_pos == wxString::npos) break;
+
+						// 跳过等号后的空格
+						size_t num_start = eq_pos + 1;
+						while (num_start < line.Length() &&
+						       (line[num_start] == ' ' || line[num_start] == '\t')) {
+							num_start++;
+						}
+
+						// 提取数字
+						wxString num_str;
+						size_t num_pos = num_start;
+						while (num_pos < line.Length() && wxIsdigit(line[num_pos])) {
+							num_str += line[num_pos];
+							num_pos++;
+						}
+
+						if (!num_str.IsEmpty()) {
+							numbers.Add(num_str);
+						}
+
+						pos = num_pos + 1;
 					}
 
-					if (pos_received != wxNOT_FOUND) {
-						int pos_equal = line.find('=', pos_received);
-						if (pos_equal != wxNOT_FOUND) {
-							wxString after_equal = line.Mid(pos_equal + 1).Trim(false);
-							wxString num_str;
-							for (size_t j = 0; j < after_equal.Length(); j++) {
-								if (wxIsdigit(after_equal[j])) {
-									num_str += after_equal[j];
-								} else {
+					// 统计行特征：至少有3个数字（sent, received, lost）
+					// 第2个数字是received（已接收）
+					if (numbers.GetCount() >= 3) {
+						long val;
+						if (numbers[1].ToLong(&val)) {
+							received = val;
+						}
+					}
+				}
+
+				// 策略2: 查找平均RTT行（包含 "平均" 或 "Average" 或多个ms）
+				// 格式：最短 = 42ms，最长 = 45ms，平均 = 43ms
+				// 或：Minimum = 42ms, Maximum = 45ms, Average = 43ms
+				if (!found_rtt) {
+					// 检查是否是平均/Average行（包含多个ms的行）
+					int ms_count = 0;
+					size_t search_pos = 0;
+					while ((search_pos = line.find("ms", search_pos)) != wxString::npos) {
+						ms_count++;
+						search_pos += 2;
+					}
+
+					// 如果一行中有3个ms，很可能是RTT统计行
+					// 提取最后一个数字作为平均RTT（避免显示乱码）
+					if (ms_count >= 3) {
+						wxString avg_rtt;
+						// 从后往前找最后一个 "数字ms" 模式
+						for (int i = line.Length() - 1; i >= 1; i--) {
+							if (line[i] == 's' && line[i-1] == 'm') {
+								// 找到ms，往前提取数字
+								wxString num_str;
+								int j = i - 2;
+								while (j >= 0 && (wxIsdigit(line[j]) || line[j] == '.')) {
+									num_str = line[j] + num_str;
+									j--;
+								}
+								if (!num_str.IsEmpty()) {
+									avg_rtt = num_str;
 									break;
 								}
 							}
-							long val;
-							if (!num_str.IsEmpty() && num_str.ToLong(&val)) {
-								received = val;
-							}
+						}
+
+						if (!avg_rtt.IsEmpty()) {
+							found_rtt = true;
+							rtt_info = avg_rtt + "ms (average)";
 						}
 					}
 				}
@@ -510,31 +633,40 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 
 			// 一次性输出所有结果，减少UI更新次数
 			wxString summary = "\n";
-			if (found_rtt) {
-				summary += wxString::Format("✓ Ping RTT: %s\n", rtt_info);
-				summary += wxString::Format("Packet loss: %d%% (%d/%d received)\n", packet_loss, received, sent);
-			} else {
-				summary += "⚠ Ping completed but could not parse RTT\n";
-			}
 
-			if (received > 0) {
-				summary += wxString::Format("✓ Ping test successful (%d/%d packets)", received, sent);
+			// 检查是否成功解析
+			bool parse_success = (found_rtt || received > 0);
+
+			if (parse_success) {
+				// 成功解析了ping结果
+				if (found_rtt) {
+					summary += "[OK] Ping RTT: " + rtt_info + "\n";
+				}
+				summary += wxString::Format("Packet loss: %d%% (%d/%d received)\n", packet_loss, received, sent);
+
+				if (received > 0) {
+					summary += wxString::Format("[OK] Ping test successful (%d/%d packets)", received, sent);
+				} else {
+					summary += "[FAIL] Ping test failed - 100% packet loss";
+				}
 			} else {
-				summary += "✗ Ping test failed - 100% packet loss";
+				// 无法解析ping输出
+				summary += "[WARN] Cannot parse ping output - unusual format\n";
+				summary += "[INFO] TCP connection test can still verify network connectivity";
 			}
 
 			update_status(-1, summary);
 
 		} else {
-			wxString error_summary = "\n✗ Ping command failed or timed out";
+			wxString error_summary = "\n[FAIL] Ping command failed or timed out";
 			for (size_t i = 0; i < errors.GetCount(); i++) {
-				error_summary += wxString::Format("\nError: %s", errors[i]);
+				error_summary += "\nError: " + errors[i];
 			}
 			update_status(-1, error_summary);
 		}
 
 	} catch (const std::exception& e) {
-		update_status(-1, wxString::Format("\nPing exception: %s", e.what()));
+		update_status(-1, wxString("\nPing exception: ") + wxString(e.what()));
 	} catch (...) {
 		update_status(-1, "\nPing test failed: unknown error");
 	}
@@ -548,11 +680,11 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 	update_status(-1, "");
 	update_status(-1, "========================================");
 
-	wxString info = wxString::Format("test %s start...", name);
+	wxString info = "test " + name + " start...";
 	update_status(job, info);
 
 	try {
-		info = wxString::Format("[test %s]: server=%s, port=%d", name, server, port);
+		info = "[test " + name + "]: server=" + server + wxString::Format(", port=%d", port);
 		update_status(-1, info);
 		update_status(-1, ""); // 空行
 
@@ -597,13 +729,14 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 
 				update_status(-1, wxString::Format("DNS resolve time: %lld ms", resolve_time));
 			} catch (const boost::system::system_error& e) {
-				error_msg = wxString::Format("DNS resolve failed: %s", e.what()).ToStdString();
+				error_msg = (wxString("DNS resolve failed: ") + wxString(e.what())).ToStdString();
 				throw;
 			}
 
 			// 连接到服务器
 			auto connect_start = std::chrono::high_resolution_clock::now();
 			boost::system::error_code ec;
+			long long connect_time = 0;
 
 			// 尝试连接到所有解析出的endpoint
 			bool connected = false;
@@ -616,16 +749,16 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 				if (!ec) {
 					connected = true;
 					auto connect_end = std::chrono::high_resolution_clock::now();
-					auto connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
+					connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
 
-					update_status(job, wxString::Format("test %s connected", name));
-					update_status(-1, wxString::Format("✓ TCP connection established in %lld ms", connect_time));
+					update_status(job, "test " + name + " connected");
+					update_status(-1, wxString::Format("[OK] TCP connection established in %lld ms", connect_time));
 					break;
 				}
 			}
 
 			if (!connected) {
-				error_msg = wxString::Format("Connection failed: %s", ec.message()).ToStdString();
+				error_msg = (wxString("Connection failed: ") + wxString(ec.message())).ToStdString();
 				throw boost::system::system_error(ec);
 			}
 
@@ -635,12 +768,36 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 
 			update_status(-1, wxString::Format("Total test time: %lld ms", total_time));
 
+			// Calculate connection quality grade based on RTT
+			int grade;
+			wxString grade_desc;
+			wxString grade_icon;
+
+			if (connect_time <= 100) {
+				grade = 1;
+				grade_desc = "Excellent";
+				grade_icon = "[Level 1]";
+			} else if (connect_time <= 500) {
+				grade = 2;
+				grade_desc = "Good";
+				grade_icon = "[Level 2]";
+			} else if (connect_time <= 1000) {
+				grade = 3;
+				grade_desc = "Fair";
+				grade_icon = "[Level 3]";
+			} else {
+				grade = 4;
+				grade_desc = "Poor";
+				grade_icon = "[Level 4]";
+			}
+
 			// 添加空行
 			update_status(-1, "");
 			update_status(-1, "--- Test Summary ---");
-			update_status(-1, wxString::Format("✓ Network Layer: Ping test completed (see RTT above)"));
-			update_status(-1, wxString::Format("✓ Transport Layer: TCP port %d is open and accepting connections", port));
-			update_status(job, wxString::Format("test %s ok", name));
+			update_status(-1, "[OK] Network Layer: Ping test completed (see RTT above)");
+			update_status(-1, wxString::Format("[OK] Transport Layer: TCP port %d is open and accepting connections", port));
+			update_status(-1, wxString::Format("Connection Quality: %s %s (RTT: %lld ms)", grade_icon, grade_desc, connect_time));
+			update_status(job, wxString::Format("test %s ok (%s - %s, RTT: %lld ms)", name, grade_icon, grade_desc, connect_time));
 
 			success = true;
 
@@ -652,17 +809,20 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 				error_msg = e.what();
 			}
 			update_status(-1, "");
-			update_status(-1, wxString::Format("✗ TCP connection error: %s", error_msg));
-			update_status(job, wxString::Format("test %s failed", name));
+			update_status(-1, "[FAIL] TCP connection error: " + wxString::FromUTF8(error_msg));
+			update_status(-1, "Connection Quality: [Level 5] Failed (timeout or unreachable)");
+			update_status(job, "test " + name + " failed ([Level 5] - timeout or unreachable)");
 		} catch (const std::exception& e) {
 			update_status(-1, "");
-			update_status(-1, wxString::Format("Exception: %s", e.what()));
-			update_status(job, wxString::Format("test %s failed", name));
+			update_status(-1, wxString("Exception: ") + wxString(e.what()));
+			update_status(-1, "Connection Quality: [Level 5] Failed (exception)");
+			update_status(job, "test " + name + " failed ([Level 5] - exception)");
 		}
 
 	} catch (...) {
 		update_status(-1, "");
-		update_status(job, wxString::Format("test %s failed: unknown error", name));
+		update_status(-1, "Connection Quality: [Level 5] Failed (unknown error)");
+		update_status(job, "test " + name + " failed ([Level 5] - unknown error)");
 	}
 
 	update_status(-1, "========================================");
@@ -772,6 +932,44 @@ void NetworkTestDialog::start_test_bing_thread()
     });
 }
 
+void NetworkTestDialog::start_test_login_api_thread()
+{
+    if (m_in_testing[TEST_LOGIN_API_JOB].load())
+        return;
+
+	if (test_job[TEST_LOGIN_API_JOB] != nullptr && test_job[TEST_LOGIN_API_JOB]->joinable()) {
+		test_job[TEST_LOGIN_API_JOB]->join();
+		delete test_job[TEST_LOGIN_API_JOB];
+		test_job[TEST_LOGIN_API_JOB] = nullptr;
+	}
+
+	test_job[TEST_LOGIN_API_JOB] = new boost::thread([this] {
+		auto app_config = wxGetApp().app_config;
+		std::string region = app_config->get("region");
+		wxString login_api_url = (region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+	});
+}
+
+void NetworkTestDialog::start_test_upload_api_thread()
+{
+    if (m_in_testing[TEST_UPLOAD_API_JOB].load())
+        return;
+
+	if (test_job[TEST_UPLOAD_API_JOB] != nullptr && test_job[TEST_UPLOAD_API_JOB]->joinable()) {
+		test_job[TEST_UPLOAD_API_JOB]->join();
+		delete test_job[TEST_UPLOAD_API_JOB];
+		test_job[TEST_UPLOAD_API_JOB] = nullptr;
+	}
+
+	test_job[TEST_UPLOAD_API_JOB] = new boost::thread([this] {
+		auto app_config = wxGetApp().app_config;
+		std::string region = app_config->get("region");
+		wxString upload_api_url = (region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+	});
+}
+
 void NetworkTestDialog::on_close(wxCloseEvent& event)
 {
 	m_download_cancel = true;
@@ -802,6 +1000,8 @@ void NetworkTestDialog::set_default()
 	text_bing_val->SetLabelText(NA_STR);
 	text_lan_mqtt_val->SetLabelText(NA_STR);
 	text_cloud_mqtt_val->SetLabelText(NA_STR);
+	text_login_api_val->SetLabelText(NA_STR);
+	text_upload_api_val->SetLabelText(NA_STR);
 	m_download_cancel = false;
 	m_closing.store(false);
 }
@@ -814,6 +1014,7 @@ void NetworkTestDialog::on_dpi_changed(const wxRect &suggested_rect)
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
+	if (m_closing.load()) return;
 	auto evt = new wxCommandEvent(EVT_UPDATE_RESULT, this->GetId());
 	evt->SetString(info);
 	evt->SetInt(job_id);

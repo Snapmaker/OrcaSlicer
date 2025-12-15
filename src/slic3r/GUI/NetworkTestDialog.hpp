@@ -39,6 +39,8 @@ enum TestJob {
 	TEST_PING_JOB,
 	TEST_LAN_MQTT_JOB,
 	TEST_CLOUD_MQTT_JOB,
+	TEST_LOGIN_API_JOB,
+	TEST_UPLOAD_API_JOB,
 	TEST_JOB_MAX
 };
 
@@ -68,6 +70,12 @@ protected:
 	Button*     btn_cloud_mqtt;
 	wxStaticText* text_cloud_mqtt_title;
 	wxStaticText* text_cloud_mqtt_val;
+	Button*     btn_login_api;
+	wxStaticText* text_login_api_title;
+	wxStaticText* text_login_api_val;
+	Button*     btn_upload_api;
+	wxStaticText* text_upload_api_title;
+	wxStaticText* text_upload_api_val;
 	wxStaticText* text_ping_title;
 	wxStaticText* text_ping_value;
 	wxStaticText* text_result;
@@ -105,6 +113,8 @@ public:
 	void start_test_ping_thread();
 	void start_test_lan_mqtt_thread();
 	void start_test_cloud_mqtt_thread();
+	void start_test_login_api_thread();
+	void start_test_upload_api_thread();
 
 	void start_test_url(TestJob job, wxString name, wxString url);
 	void start_test_telnet(TestJob job, wxString name, wxString server, int port);

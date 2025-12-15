@@ -1,0 +1,77 @@
+{
+    "type": "filament",
+    "name": "Generic TPU 95A HF @U1 0.4 nozzle",
+    "inherits": "Generic TPU 95A HF @base",
+    "from": "system",
+    "setting_id": "GFSU00_00",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ],
+    "additional_cooling_fan_speed": [
+        "70"
+    ],
+    "enable_pressure_advance": [
+        "1"
+    ],
+    "filament_deretraction_speed": [
+        "nil"
+    ],
+    "filament_end_gcode": [
+        ""
+    ],
+    "filament_max_volumetric_speed": [
+        "10.5"
+    ],
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_flow": [
+        "10"
+    ],
+    "filament_multitool_ramming_volume": [
+        "0.1"
+    ],
+    "filament_retraction_length": [
+        "1.5"
+    ],
+    "filament_retraction_speed": [
+        "nil"
+    ],
+    "filament_start_gcode": [
+        ""
+    ],
+    "pressure_advance": [
+        "0.15"
+    ],
+    "fan_cooling_layer_time": [
+        "40"
+    ],
+    "fan_max_speed": [
+        "50"
+    ],
+    "fan_min_speed": [
+        "10"
+    ],
+    "filament_minimal_purge_on_wipe_tower": [
+        "60"
+    ],
+    "filament_retract_length_toolchange": [
+        "4"
+    ],
+    "filament_vendor": [
+        "Generic"
+    ],
+    "nozzle_temperature": [
+        "235"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "235"
+    ],
+    "overhang_fan_threshold": [
+        "25%"
+    ],
+    "slow_down_layer_time": [
+        "10"
+    ]
+}

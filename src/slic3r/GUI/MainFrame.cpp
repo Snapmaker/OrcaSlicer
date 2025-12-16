@@ -1030,6 +1030,8 @@ void MainFrame::get_local_webview_version()
 
     std::ifstream json_file(versionFilePath);
     if (!json_file.is_open()) {
+    std::ifstream json_file(versionFilePath);
+        BOOST_LOG_TRIVIAL(error) << "check flutter version error with file path:" << versionFilePath;
         return;
     }
     nlohmann::json json_data;

@@ -153,7 +153,7 @@ void PrintHostSendDialog::init()
 
     auto* btn_ok = add_button(wxID_OK, true, _L("Upload"));
     btn_ok->Bind(wxEVT_BUTTON, [this, validate_path](wxCommandEvent&) {
-        sentryReportLog(SENTRY_LOG_TRACE, "", BP_UPLOAD);
+        sentryReportLog(SENTRY_LOG_TRACE, BP_UPLOAD, BP_UPLOAD);
         if (validate_path(txt_filename->GetValue())) {
             post_upload_action = PrintHostPostUploadAction::None;
             EndDialog(wxID_OK);
@@ -174,7 +174,7 @@ void PrintHostSendDialog::init()
     if (post_actions.has(PrintHostPostUploadAction::StartPrint)) {
         auto* btn_print = add_button(wxID_YES, false, _L("Upload and Print"));
         btn_print->Bind(wxEVT_BUTTON, [this, validate_path](wxCommandEvent&) {
-            sentryReportLog(SENTRY_LOG_TRACE, "", BP_UPLOAD_AND_PRINT);
+            sentryReportLog(SENTRY_LOG_TRACE, BP_UPLOAD_AND_PRINT, BP_UPLOAD_AND_PRINT);
             if (validate_path(txt_filename->GetValue())) {
                 post_upload_action = PrintHostPostUploadAction::StartPrint;
                 EndDialog(wxID_OK);

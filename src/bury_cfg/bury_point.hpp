@@ -3,9 +3,10 @@
 #include <string>
 #include <iostream>
 
+#define BURY_POINT "bury_point"
+
 #define BP_START_SOFT "bury_point_start_soft"
-#define BP_SOFT_START_TIME "soft_start_time"
-#define BP_SOFT_END_TIME "soft_end_time"
+#define BP_SOFT_WORKS_TIME "soft_works_time"
 
 #define BP_DEIVCE_CONNECT "bury_point_device_connect"
 #define BP_CONNECT_DEVICE_ID "device_id"
@@ -28,12 +29,17 @@
 #define BP_COLOR_PAINTING "bury_point_color_painting"
 
 #define BP_VIDEO_ABNORMAL "bury_point_video_abnormal"
+
+#define BP_SLICE_DURATION "bury_point_slice_duration"
+#define BP_SLICE_DURATION_TIME "slice_duration_time"
+
 //webview bury point
 
 
 
 	static bool isAgreeSlice = false;
     extern std::string get_timestamp_seconds();
-
+    extern long long   get_time_timestamp();
+    extern std::string get_works_time(const uint64_t& timestamp);
 
 #endif

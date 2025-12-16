@@ -57,14 +57,15 @@ static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_va
 static sentry_value_t before_send(sentry_value_t event, void* hint, void* data)
 {
     sentry_value_t level_val = sentry_value_get_by_key(event, SENTRY_KEY_LEVEL);
+    std::string    levelName  = sentry_value_as_string(level_val);
 
     std::string    eventLevel = sentry_value_as_string(sentry_value_get_by_key(event, SENTRY_KEY_LEVEL));
 
     //module name
-    sentry_value_t logger_val = sentry_value_get_by_key(event, "logger");
-    std::string    logger     = sentry_value_as_string(logger_val);        
+    sentry_value_t moduleValue = sentry_value_get_by_key(event, "logger");
+    std::string    moduleName  = sentry_value_as_string(moduleValue);        
 
-    if (MACHINE_MODULE == logger)
+    if (MACHINE_MODULE == moduleName)
     {
         srand((unsigned int) time(0));
         int random_num = rand() % 100;
@@ -255,6 +256,8 @@ void sentryReportLogEx(SENTRY_LOG_LEVEL   logLevel,
          sentry_value_set_by_key(tags, "snapmaker_trace_id", sentry_value_new_string(logTraceId.c_str()));
      }
 
+    if (SENTRY_LEVEL_TRACE == sentry_msg_level)
+         sentry_set_tag(BURY_POINT, "snapmaker_bury_point");
 
     if (!logTagKey.empty())
         sentry_set_tag(logTagKey.c_str(), logTagValue.c_str());

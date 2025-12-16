@@ -156,6 +156,9 @@
 #include "CloneDialog.hpp"
 #include "WebPreprintDialog.hpp"
 
+#include "sentry_wrapper/sentryWrapper.hpp"
+#include <chrono>
+
 using boost::optional;
 namespace fs = boost::filesystem;
 using Slic3r::_3DScene;
@@ -3088,6 +3091,9 @@ struct Plater::priv
     bool                        show_render_statistic_dialog{ false };
     bool                        show_wireframe{ false };
     bool                        wireframe_enabled{ true };
+
+    std::chrono::steady_clock::time_point m_slice_start_time;
+    bool                                  m_slice_timing_active = false;
 
     static const std::regex pattern_bundle;
     static const std::regex pattern_3mf;
@@ -7649,6 +7655,9 @@ void Plater::priv::on_export_finished(wxCommandEvent& evt)
 
 void Plater::priv::on_slicing_began()
 {
+    if(!m_slice_timing_active)
+        m_slice_start_time    = std::chrono::steady_clock::now();
+    m_slice_timing_active = true;
     clear_warnings();
     notification_manager->close_notification_of_type(NotificationType::SignDetected);
     notification_manager->close_notification_of_type(NotificationType::ExportFinished);
@@ -7733,6 +7742,31 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     //BBS: add project slice logic
     bool is_finished = !m_slice_all || (m_cur_slice_plate == (partplate_list.get_plate_count() - 1));
 
+    {
+        if (m_slice_timing_active) {
+            auto end_time    = std::chrono::steady_clock::now();
+            auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - m_slice_start_time).count();
+            uint64_t timess      = duration_ms;
+            if (evt.cancelled()) {
+                BOOST_LOG_TRIVIAL(info) << "Slicing cancelled after " << duration_ms << " ms";
+                m_slice_start_time    = {};
+                m_slice_timing_active = false;
+            } else if (evt.error())
+            {
+                m_slice_start_time    = {};
+                m_slice_timing_active = false; 
+            }
+            else if (is_finished && evt.finished())
+            {
+                auto strTime = get_works_time(duration_ms);
+                auto slice_time = BP_SLICE_DURATION_TIME + std::string(":") + strTime;
+                sentryReportLog(SENTRY_LOG_TRACE, slice_time, BP_SLICE_DURATION);
+
+                m_slice_start_time    = {};
+                m_slice_timing_active = false; 
+            }
+        }
+    }
     //BBS: slice .gcode.3mf file related logic, assign is_finished again
     bool only_has_gcode_need_preview = false;
     auto plate_list = this->partplate_list.get_plate_list();
@@ -7751,6 +7785,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     // At this point of time the thread should be either finished or canceled,
     // so the following call just confirms, that the produced data were consumed.
     this->background_process.stop();
+    if (m_slice_timing_active && !this->background_process.running()) 
+    {
+        if (evt.cancelled() || evt.error()) {
+            m_slice_start_time    = {};
+            m_slice_timing_active = false;
+        }
+    }
     notification_manager->set_slicing_progress_export_possible();
 
     // Reset the "export G-code path" name, so that the automatic background processing will be enabled again.

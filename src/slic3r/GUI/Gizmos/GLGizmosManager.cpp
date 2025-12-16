@@ -352,7 +352,7 @@ bool GLGizmosManager::open_gizmo(EType type)
         m_parent.post_event(SimpleEvent(wxEVT_PAINT));
 #endif
         if (EType::MmSegmentation == type)
-            sentryReportLog(SENTRY_LOG_TRACE, "", BP_COLOR_PAINTING);
+            sentryReportLog(SENTRY_LOG_TRACE, BP_COLOR_PAINTING, BP_COLOR_PAINTING);
         return true;
     }
     return false;

@@ -264,6 +264,7 @@ public:
 	void        update_title_colour_after_set_title();
     void        show_option(bool show);
     void        init_tabpanel();
+    void        get_local_webview_version();
     void        create_preset_tabs();
     //BBS: GUI refactor
     void        add_created_tab(Tab* panel, const std::string& bmp_name = "");

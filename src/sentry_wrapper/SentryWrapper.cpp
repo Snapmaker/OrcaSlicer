@@ -296,5 +296,13 @@ void sentryReportLog(SENTRY_LOG_LEVEL   logLevel,
 #endif
 }
 
+void set_sentry_tags(const std::string& tag_key, const std::string& tag_value)
+{
+#ifdef SLIC3R_SENTRY
+    if (!tag_key.empty())
+        sentry_set_tag(tag_key.c_str(), tag_value.c_str());
+#endif
+}
+
 } // namespace Slic3r
 

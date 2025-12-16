@@ -21,7 +21,7 @@ long long get_time_timestamp()
 {
     auto now = std::chrono::system_clock::now();
 
-    auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 
     return timestamp;
 }

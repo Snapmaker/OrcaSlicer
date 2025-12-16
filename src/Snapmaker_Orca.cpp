@@ -6296,9 +6296,12 @@ extern "C" {
 int main(int argc, char **argv)
 {
     initSentry();
-
+    std::string softStartTime = BP_SOFT_START_TIME+ ":" + get_timestamp_seconds();
+    sentryReportLog(SENTRY_LOG_TRACE, softStartTime, BP_START_SOFT);
     auto res = CLI().run(argc, argv);
 
+    std::string softEndTime = BP_SOFT_END_TIME + ":" + get_timestamp_seconds();
+    sentryReportLog(SENTRY_LOG_TRACE, softEndTime, BP_START_SOFT);
     exitSentry();
 
     return res;

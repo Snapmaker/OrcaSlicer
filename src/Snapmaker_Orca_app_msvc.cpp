@@ -227,6 +227,8 @@ int wmain(int argc, wchar_t** argv)
     _set_error_mode(_OUT_TO_MSGBOX);
 
     initSentry();
+    std::string softStartTime = BP_SOFT_START_TIME + std::string(":") + get_timestamp_seconds();
+    sentryReportLog(SENTRY_LOG_TRACE, softStartTime, BP_START_SOFT);
 
     std::vector<wchar_t*> argv_extended;
     argv_extended.emplace_back(argv[0]);
@@ -292,6 +294,8 @@ int wmain(int argc, wchar_t** argv)
     HINSTANCE hInstance_Slic3r = LoadLibraryExW(path_to_slic3r, nullptr, 0);
     if (hInstance_Slic3r == nullptr) {
         printf("Snapmaker_Orca.dll was not loaded, error=%d\n", GetLastError());
+        std::string softEndTime = BP_SOFT_END_TIME + std::string(":") + get_timestamp_seconds();
+        sentryReportLog(SENTRY_LOG_TRACE, softEndTime, BP_START_SOFT);
         exitSentry();
         return -1;
     }
@@ -308,12 +312,16 @@ int wmain(int argc, wchar_t** argv)
         );
     if (Snapmaker_Orca_main == nullptr) {
         printf("could not locate the function Snapmaker_Orca_main in Snapmaker_Orca.dll\n");
+        std::string softEndTime = BP_SOFT_END_TIME + std::string(":") + get_timestamp_seconds();
+        sentryReportLog(SENTRY_LOG_TRACE, softEndTime, BP_START_SOFT);
         exitSentry();
         return -1;
     }
 
     // argc minus the trailing nullptr of the argv
     auto res = Snapmaker_Orca_main((int) argv_extended.size() - 1, argv_extended.data());
+    std::string softEndTime = BP_SOFT_END_TIME + std::string(":") + get_timestamp_seconds();
+    sentryReportLog(SENTRY_LOG_TRACE, softEndTime, BP_START_SOFT);
     exitSentry();
     return res;
 }

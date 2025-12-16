@@ -25,6 +25,7 @@
 
 #include <sstream>
 #include <slic3r/GUI/Widgets/WebView.hpp>
+#include "sentry_wrapper/SentryWrapper.hpp"
 using namespace std;
 
 using namespace nlohmann;
@@ -198,11 +199,13 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
             http.header("Authorization",token);
             http.on_complete([&](std::string body, unsigned status) {
                     if (status == 200) {
+                        std::string user_id = "";
                         json response = json::parse(body);
                         if (response.count("data")) {
                             json data = response["data"];
                             if (data.count("id")) {
                                 wxGetApp().sm_get_userinfo()->set_user_id(std::to_string(data["id"].get<int>()));
+                                user_id = std::to_string(data["id"].get<int>());
                             }
                             if (data.count("nickname")) {
                                 wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
@@ -214,13 +217,15 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                                 wxGetApp().sm_get_userinfo()->set_user_account(data["account"].get<std::string>());
                             }
                         }
-
+                        string userInfo = BP_LOGIN_USER_ID + std::string(":") + user_id;
+                        sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
-                   
+                    std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status);
+                    sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
                 })
                 .perform_sync(); 
         });

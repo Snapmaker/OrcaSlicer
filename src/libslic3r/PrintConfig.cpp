@@ -5742,6 +5742,20 @@ void PrintConfigDef::init_fff_params()
     def->min = 0.;
     def->set_default_value(new ConfigOptionFloat(3.));
 
+    def = this->add("prime_tower_brim_chamfer", coBool);
+    def->label = L("Brim chamfer");
+    def->tooltip = L("Enable gradual layer-by-layer reduction of the brim, creating a chamfered/tapered effect that reduces from full width on the first layer to zero over approximately 7 layers.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("prime_tower_brim_chamfer_max_width", coFloat);
+    def->label = L("Max chamfer width");
+    def->tooltip = L("Maximum width of the chamfer zone from the tower perimeter. The brim chamfer will be limited to this width regardless of the configured brim width.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->mode = comDevelop;
+    def->min = 0.;
+    def->set_default_value(new ConfigOptionFloat(4.0));
+
     def = this->add("wipe_tower_cone_angle", coFloat);
     def->label = L("Stabilization cone apex angle");
     def->tooltip = L("Angle at the apex of the cone that is used to stabilize the wipe tower. "

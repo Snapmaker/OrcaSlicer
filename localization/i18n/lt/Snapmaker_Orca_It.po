@@ -7613,7 +7613,7 @@ msgstr "Keičiama programos kalba"
 msgid "Asia-Pacific"
 msgstr "Azija-Ramusis vandenynas"
 
-msgid "China"
+msgid "Chinese Mainland"
 msgstr "Kinija"
 
 msgid "Europe"

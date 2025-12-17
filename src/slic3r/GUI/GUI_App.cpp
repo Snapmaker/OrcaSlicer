@@ -993,6 +993,8 @@ void GUI_App::post_init()
         CallAfter([this] {
             bool cw_showed = this->config_wizard_startup();
 
+            SSWCP_MqttAgent_Instance::m_dialog = new WebPresetDialog(this);
+
             std::string http_url = get_http_url(app_config->get_country_code());
             std::string language = GUI::into_u8(current_language_code());
             std::string network_ver = Slic3r::NetworkAgent::get_version();
@@ -3219,7 +3221,7 @@ void GUI_App::update_publish_status()
 
 bool GUI_App::has_model_mall()
 {
-    if (auto cc = app_config->get_region(); cc == "CNH" || cc == "China" || cc == "")
+    if (auto cc = app_config->get_region(); cc == "CNH" || cc == "Chinese Mainland" || cc == "")
         return false;
     return true;
 }

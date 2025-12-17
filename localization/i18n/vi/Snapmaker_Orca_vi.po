@@ -7493,7 +7493,7 @@ msgstr "Đang thay đổi ngôn ngữ ứng dụng"
 msgid "Asia-Pacific"
 msgstr "Châu Á-Thái Bình Dương"
 
-msgid "China"
+msgid "Chinese Mainland"
 msgstr "Trung Quốc"
 
 msgid "Europe"

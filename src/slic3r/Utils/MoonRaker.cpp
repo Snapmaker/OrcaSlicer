@@ -2368,6 +2368,33 @@ void Moonraker_Mqtt::async_upload_camera_timelapse(const nlohmann::json& targets
     }
 }
 
+// 获取延时摄影列表
+void Moonraker_Mqtt::async_get_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始请求获取延时摄影文件列表";
+    wcp_loger.add_log("开始请求获取延时摄影文件列表", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "camera.get_timelapse_instance";
+
+    json params = json::object();
+
+    params = targets;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 请求获取延时摄影文件列表超时";
+                             wcp_loger.add_log("请求获取延时摄影文件列表超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求获取延时摄影文件列表失败";
+        wcp_loger.add_log("发送请求获取延时摄影文件列表失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
 // 请求删除延时摄影文件
 void Moonraker_Mqtt::async_delete_camera_timelapse(const nlohmann::json&                               targets,
                                                    std::function<void(const nlohmann::json& response)> callback)
@@ -2390,8 +2417,35 @@ void Moonraker_Mqtt::async_delete_camera_timelapse(const nlohmann::json&        
                              callback(res);
                          }) &&
         callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求上传删除摄影文件失败";
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求删除延时摄影文件失败";
         wcp_loger.add_log("发送请求删除延时摄影文件失败", false, "", "Moonraker_Mqtt", "error");
+        callback(json::value_t::null);
+    }
+}
+
+// 请求缺陷检测配置
+void Moonraker_Mqtt::async_defect_detaction_config(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)> callback)
+{
+    auto& wcp_loger = GUI::WCP_Logger::getInstance();
+    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 开始请求缺陷检测配置";
+    wcp_loger.add_log("开始请求缺陷检测配置", false, "", "Moonraker_Mqtt", "info");
+    std::string method = "printer.defect_detection.config";
+
+    json params = json::object();
+
+    params = targets;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback, &wcp_loger]() {
+                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 请求缺陷检测配置超时";
+                             wcp_loger.add_log("请求缺陷检测配置超时", false, "", "Moonraker_Mqtt", "warning");
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送请求缺陷检测配置失败";
+        wcp_loger.add_log("发送请求缺陷检测配置失败", false, "", "Moonraker_Mqtt", "error");
         callback(json::value_t::null);
     }
 }

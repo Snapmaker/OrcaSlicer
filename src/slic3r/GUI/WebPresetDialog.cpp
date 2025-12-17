@@ -181,8 +181,10 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
     // Connect the idle events
     // Bind(wxEVT_IDLE, &WebPresetDialog::OnIdle, this);
     // Bind(wxEVT_CLOSE_WINDOW, &WebPresetDialog::OnClose, this);
-
-    LoadProfile();
+    std::thread* load_thread = new std::thread([this]() {
+            LoadProfile();
+    });
+    // LoadProfile();
 
     // UI
     SetStartPage(BBL_REGION);
@@ -743,77 +745,6 @@ int WebPresetDialog::SaveProfile()
     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");
 
     m_MainPtr->app_config->save();
-
-    // Load BBS Conf
-    /*wxString strConfPath = wxGetApp().app_config->config_path();
-    json     jCfg;
-    std::ifstream(w2s(strConfPath)) >> jCfg;
-
-    //model
-    jCfg["models"] = json::array();
-    int nM         = m_ProfileJson["model"].size();
-    int nModelChoose    = 0;
-    for (int m = 0; m < nM; m++)
-    {
-        json amodel = m_ProfileJson["model"][m];
-
-        amodel["nozzle_diameter"] = amodel["nozzle_selected"];
-        amodel.erase("nozzle_selected");
-        amodel.erase("preview");
-        amodel.erase("sub_path");
-        amodel.erase("cover");
-        amodel.erase("materials");
-
-        std::string ss = amodel["nozzle_diameter"];
-        if (ss.compare("") != 0) {
-            nModelChoose++;
-            jCfg["models"].push_back(amodel);
-        }
-    }
-    if (nModelChoose == 0)
-        jCfg.erase("models");
-
-    if (nModelChoose > 0) {
-        // filament
-        jCfg["filaments"] = json::array();
-        for (auto it = m_ProfileJson["filament"].begin(); it != m_ProfileJson["filament"].end(); ++it) {
-            if (it.value()["selected"] == 1) { jCfg["filaments"].push_back(it.key()); }
-        }
-
-        // Preset
-        jCfg["presets"]["filaments"] = json::array();
-        jCfg["presets"]["filaments"].push_back(jCfg["filaments"][0]);
-
-        std::string PresetMachine  = m_ProfileJson["machine"][0]["name"];
-        jCfg["presets"]["machine"] = PresetMachine;
-
-        int nTotal = m_ProfileJson["process"].size();
-        int nSet   = nTotal / 2;
-        if (nSet > 0) nSet--;
-
-        std::string sMode          = m_ProfileJson["process"][nSet]["name"];
-        jCfg["presets"]["process"] = sMode;
-
-    } else {
-        jCfg["presets"]["filaments"] = json::array();
-        jCfg["presets"]["filaments"].push_back("Default Filament");
-
-        jCfg["presets"]["machine"] = "Default Printer";
-
-        jCfg["presets"]["process"] = "Default Setting";
-    }
-
-    std::string sOut = jCfg.dump(4, ' ', false);
-
-    std::ofstream output_file(w2s(strConfPath));
-    output_file << sOut;
-    output_file.close();
-
-    //Copy Profiles
-    if (bbl_bundle_rsrc)
-    {
-        CopyDir(rsrc_vendor_dir,vendor_dir);
-    }*/
 
     std::string strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
 

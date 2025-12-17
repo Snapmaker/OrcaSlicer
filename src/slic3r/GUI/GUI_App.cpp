@@ -6,7 +6,7 @@
 #include "slic3r/GUI/UserManager.hpp"
 #include "slic3r/GUI/TaskManager.hpp"
 #include "format.hpp"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 #include "Downloader.hpp"
 
 #include "slic3r/GUI/WebUrlDialog.hpp"

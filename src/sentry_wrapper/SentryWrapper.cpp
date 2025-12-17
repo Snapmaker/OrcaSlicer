@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <atomic>
 #include <random>
+#include "common_func/common_func.hpp"
 
 namespace Slic3r {
 
@@ -193,6 +194,7 @@ void initSentryEx()
 #endif
 
         sentry_options_set_environment(options, "develop");
+        //sentry_options_set_environment(options, "Release");
 
         sentry_options_set_auto_session_tracking(options, 0);
         sentry_options_set_symbolize_stacktraces(options, 1);
@@ -201,6 +203,12 @@ void initSentryEx()
 
         sentry_options_set_sample_rate(options, 1.0);
         sentry_options_set_traces_sample_rate(options, 1.0);
+
+        sentry_set_tag("version", Snapmaker_VERSION);
+
+        std::string flutterVersion = common::get_flutter_version();
+        if (!flutterVersion.empty())
+            set_sentry_tags("flutter_version", flutterVersion);
 
         sentry_init(options);
         sentry_start_session();

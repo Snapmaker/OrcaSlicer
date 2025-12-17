@@ -91,7 +91,6 @@ bool WCP_Logger::set_level(wxString& level)
     }
 }
 
-std::string WCP_Logger::get_pc_name() { return boost::asio::ip::host_name(); }
 
 // Add a log message to the queue
 void WCP_Logger::add_log(const wxString& content, bool is_web = false, wxString time = "", wxString module = "Default", wxString level = "debug")

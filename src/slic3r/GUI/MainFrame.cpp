@@ -72,9 +72,9 @@
 #include <dbt.h>
 #include <shlobj.h>
 #include <shellapi.h>
-#include "sentry_wrapper/SentryWrapper.hpp"
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
+#include "sentry_wrapper/SentryWrapper.hpp"
 
 
 namespace Slic3r {
@@ -1008,41 +1008,6 @@ void MainFrame::show_option(bool show)
         }
     }
 }
-void MainFrame::get_local_webview_version()
-{
-    std::string versionFilePath = "";
-
-#ifdef _WIN32
-    wchar_t appDataPath[MAX_PATH] = {0};
-    auto    hr                    = SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appDataPath);
-    char*   path                  = new char[MAX_PATH];
-    size_t  pathLength;
-    wcstombs_s(&pathLength, path, MAX_PATH, appDataPath, MAX_PATH);
-    std::string filePath = path;
-    versionFilePath      = filePath + "\\" + std::string("Snapmaker_Orca\\web\\flutter_web\\version.json");
-#elif __APPLE__
-    const char* home_env = getenv("HOME");
-    versionFilePath      = home_env;
-    versionFilePath      = versionFilePath + "/Library/Application Support/Snapmaker_Orca/web/flutter_web/version.json";
-#else
-
-#endif
-
-    std::ifstream json_file(versionFilePath);
-    if (!json_file.is_open()) {
-    std::ifstream json_file(versionFilePath);
-        BOOST_LOG_TRIVIAL(error) << "check flutter version error with file path:" << versionFilePath;
-        return;
-    }
-    nlohmann::json json_data;
-    json_file >> json_data;
-    std::string str_version = json_data["version"]; 
-    std::string str_build_number = json_data["build_number"]; 
-
-    std::string tag = std::string("flutter_version: ") + str_version + std::string("  ") + std::string("build_number: ") + str_build_number;
-    set_sentry_tags("flutter_version", tag);
-
-}
 
 void MainFrame::init_tabpanel() {
     // wxNB_NOPAGETHEME: Disable Windows Vista theme for the Notebook background. The theme performance is terrible on
@@ -1126,7 +1091,6 @@ void MainFrame::init_tabpanel() {
         m_param_panel = new ParamsPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBK_LEFT | wxTAB_TRAVERSAL);
       
     }
-    get_local_webview_version();
     m_plater = new Plater(this, this);
     m_plater->SetBackgroundColour(*wxWHITE);
     m_plater->Hide();

@@ -1,7 +1,7 @@
 #ifndef _libslic3r_h_
 #define _libslic3r_h_
 
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 #define SLIC3R_APP_FULL_NAME "Snapmaker Orca"
 #define GCODEVIEWER_APP_NAME "Snapmaker_Orca G-code Viewer"
 #define GCODEVIEWER_APP_KEY  "Snapmaker_OrcaGcodeViewer"

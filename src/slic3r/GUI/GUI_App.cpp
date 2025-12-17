@@ -120,7 +120,7 @@
 #include "PrivacyUpdateDialog.hpp"
 #include "ModelMall.hpp"
 #include "HintNotification.hpp"
-
+#include "bury_cfg/bury_point.hpp"
 //#ifdef WIN32
 //#include "BaseException.h"
 //#endif
@@ -3754,6 +3754,9 @@ if (res) {
     } catch (std::exception &) {
         // wxMessageBox(e.what(), "", MB_OK);
     }
+    auto isAgree = wxGetApp().app_config->get("snapmaker_privacy_policy", "isagree");
+
+    set_privacy_policy(isAgree == "true");    
 }
 
 void GUI_App::ShowDownNetPluginDlg() {
@@ -7059,6 +7062,9 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         mainframe->refresh_plugin_tips();
         // BBS: remove SLA related message
     }
+    auto isAgree = wxGetApp().app_config->get("snapmaker_privacy_policy", "isagree");
+
+    set_privacy_policy(isAgree == "true");    
 
     return res;
 }

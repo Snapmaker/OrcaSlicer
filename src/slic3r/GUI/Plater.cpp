@@ -7746,7 +7746,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (m_slice_timing_active) {
             auto end_time    = std::chrono::steady_clock::now();
             auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - m_slice_start_time).count();
-            uint64_t timess      = duration_ms;
+            auto timess      = duration_ms;
             if (evt.cancelled()) {
                 BOOST_LOG_TRIVIAL(info) << "Slicing cancelled after " << duration_ms << " ms";
                 m_slice_start_time    = {};

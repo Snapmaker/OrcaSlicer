@@ -2,6 +2,7 @@
 #define _BURY_POINT_hpp_
 #include <string>
 #include <iostream>
+#include <atomic>
 
 #define BURY_POINT "bury_point"
 
@@ -37,9 +38,12 @@
 
 
 
-	static bool isAgreeSlice = false;
+	static std::atomic<bool> isAgreeSlice = true;
+
+    bool               get_privacy_policy();
+    void               set_privacy_policy(bool isAgree);
     extern std::string get_timestamp_seconds();
     extern long long   get_time_timestamp();
-    extern std::string get_works_time(const uint64_t& timestamp);
+    extern std::string get_works_time(const long long& timestamp);
 
 #endif

@@ -588,6 +588,14 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
             this->Close();
         } else if (strCmd == "save_region") {
             m_Region = j["region"];
+            m_ProfileJson["region"] = m_Region;
+        }
+        else if (strCmd == "common_openurl") {
+           
+            std::string url = j["url"];
+            if (!url.empty()) {
+                wxLaunchDefaultBrowser(url);
+            }
         } else if (strCmd == "network_plugin_install") {
             std::string sAction = j["data"]["action"];
 

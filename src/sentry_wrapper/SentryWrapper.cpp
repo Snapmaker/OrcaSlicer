@@ -57,6 +57,12 @@ static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_va
 
 static sentry_value_t before_send(sentry_value_t event, void* hint, void* data)
 {
+    if (!get_privacy_policy())
+    {
+        sentry_value_decref(event);
+        return sentry_value_new_null();
+    }
+
     sentry_value_t level_val = sentry_value_get_by_key(event, SENTRY_KEY_LEVEL);
     std::string    levelName  = sentry_value_as_string(level_val);
 

@@ -176,6 +176,9 @@ private:
     // Sentry
     void sw_UploadEvent();
 
+    // open network dialog
+    void sw_OpenNetworkDialog();
+
 
 public:
     // 抽象工具类函数

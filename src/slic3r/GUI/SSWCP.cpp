@@ -22,6 +22,7 @@
 #include <boost/property_tree/json_parser.hpp>
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
+#include "NetworkTestDialog.hpp"
 
 #include "MoonRaker.hpp"
 
@@ -458,6 +459,8 @@ void SSWCP_Instance::process() {
         sw_OpenOrcaWebview();
     } else if (m_cmd == "sw_OpenBrowser") {
         sw_OpenBrowser();
+    } else if (m_cmd == "sw_OpenNetworkDialog"){
+        sw_OpenNetworkDialog();
     }
     else {
         handle_general_fail();
@@ -501,6 +504,23 @@ void SSWCP_Instance::sw_UploadEvent() {
         handle_general_fail();
     }
 }
+
+
+void SSWCP_Instance::sw_OpenNetworkDialog() {
+    try {
+        send_to_js();
+        finish_job();
+
+        wxGetApp().CallAfter([]() {
+            NetworkTestDialog dlg(wxGetApp().mainframe);
+            dlg.ShowModal();
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 
 void SSWCP_Instance::sw_OpenBrowser() {
     try {

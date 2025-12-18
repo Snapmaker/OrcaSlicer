@@ -46,6 +46,7 @@ public:
     void update_mode();
     bool isSnapmakerPage();
     void sendMessage(const std::string& msg);
+    wxWebView* get_browser() const { return m_browser; }
 
 private:
     void SendAPIKey();

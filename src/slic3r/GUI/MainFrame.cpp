@@ -1058,6 +1058,46 @@ void MainFrame::init_tabpanel() {
         }
 #endif
 
+        // Notify WCP page state change subscribers
+        static int prev_monitored_tab = -1;
+
+        // Send "inactive" to previous tab if leaving a monitored tab
+        if (prev_monitored_tab == tpHome && sel != tpHome) {
+            // Leaving homepage
+            if (m_webview) {
+                wxWebView* home_webview = m_webview->getWebView();
+                wxGetApp().page_state_notify_webview(home_webview, "inactive");
+            }
+        } else if (prev_monitored_tab == tpMonitor && sel != tpMonitor) {
+            // Leaving device page (PrinterWebView)
+            if (m_printer_view) {
+                wxWebView* printer_webview = m_printer_view->get_browser();
+                wxGetApp().page_state_notify_webview(printer_webview, "inactive");
+            }
+        }
+
+        // Send "active" to current tab if entering a monitored tab
+        if (sel == tpHome) {
+            // Entering homepage
+            if (m_webview) {
+                wxWebView* home_webview = m_webview->getWebView();
+                wxGetApp().page_state_notify_webview(home_webview, "active");
+            }
+            prev_monitored_tab = tpHome;
+        } else if (sel == tpMonitor) {
+            // Entering device page (PrinterWebView)
+            if (m_printer_view) {
+                wxWebView* printer_webview = m_printer_view->get_browser();
+                wxGetApp().page_state_notify_webview(printer_webview, "active");
+            }
+            prev_monitored_tab = tpMonitor;
+        } else {
+            // Update prev_monitored_tab only when leaving a monitored tab
+            if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor) {
+                prev_monitored_tab = -1;
+            }
+        }
+
         if (panel)
             panel->SetFocus();
 

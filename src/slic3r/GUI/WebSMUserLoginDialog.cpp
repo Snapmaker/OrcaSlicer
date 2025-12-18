@@ -48,8 +48,8 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
         TargetUrl     = "https://id.snapmaker.com?from=orca";
         LogoutUrl     = "https://id.snapmaker.com/logout?from=orca";
         m_hostUrl     = "https://id.snapmaker.com";
-        m_accountUrl  = "https://account.snapmaker.com";
-        m_userInfoUrl = "https://account.snapmaker.com/api/common/accounts/current";
+        m_accountUrl  = "https://id.snapmaker.com";
+        m_userInfoUrl = "https://id.snapmaker.com/api/common/accounts/current";
         m_home_url    = "https://www.snapmaker.com/";
     } else {
         TargetUrl     = "https://id.snapmaker.cn?from=orca";

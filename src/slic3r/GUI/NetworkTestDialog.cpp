@@ -392,13 +392,13 @@ void NetworkTestDialog::start_all_job_sequence()
 		update_status(-1, "");
 		auto app_config = wxGetApp().app_config;
 		std::string region = app_config->get("region");
-		wxString login_api_url = (region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+		wxString login_api_url = (region == "Chinese Mainland" || region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
 		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
 		if (m_closing.load()) return;
 
 		// 测试上传API
 		update_status(-1, "");
-		wxString upload_api_url = (region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+		wxString upload_api_url = (region == "Chinese Mainland" || region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
 		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
 		if (m_closing.load()) return;
 
@@ -869,7 +869,7 @@ wxString NetworkTestDialog::get_cloud_server_address()
 {
 	auto app_config = wxGetApp().app_config;
 	std::string region = app_config->get("region");
-    if (region == "China")
+    if (region == "Chinese Mainland")
         return "a1su7rk2r6cmbq.ats.iot.cn-north-1.amazonaws.com.cn";
     else
         return "a1pr8yczi3n0se-ats.iot.us-west-1.amazonaws.com";
@@ -946,7 +946,7 @@ void NetworkTestDialog::start_test_login_api_thread()
 	test_job[TEST_LOGIN_API_JOB] = new boost::thread([this] {
 		auto app_config = wxGetApp().app_config;
 		std::string region = app_config->get("region");
-		wxString login_api_url = (region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+		wxString login_api_url = (region == "Chinese Mainland") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
 		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
 	});
 }
@@ -965,7 +965,7 @@ void NetworkTestDialog::start_test_upload_api_thread()
 	test_job[TEST_UPLOAD_API_JOB] = new boost::thread([this] {
 		auto app_config = wxGetApp().app_config;
 		std::string region = app_config->get("region");
-		wxString upload_api_url = (region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+		wxString upload_api_url = (region == "Chinese Mainland") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
 		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
 	});
 }

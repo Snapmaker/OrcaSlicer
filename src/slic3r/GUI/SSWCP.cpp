@@ -23,6 +23,7 @@
 #include <boost/asio/ip/host_name.hpp>
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
+#include "NetworkTestDialog.hpp"
 
 #include "MoonRaker.hpp"
 
@@ -460,6 +461,8 @@ void SSWCP_Instance::process() {
         sw_OpenOrcaWebview();
     } else if (m_cmd == "sw_OpenBrowser") {
         sw_OpenBrowser();
+    } else if (m_cmd == "sw_OpenNetworkDialog"){
+        sw_OpenNetworkDialog();
     }
     else {
         handle_general_fail();
@@ -503,6 +506,23 @@ void SSWCP_Instance::sw_UploadEvent() {
         handle_general_fail();
     }
 }
+
+
+void SSWCP_Instance::sw_OpenNetworkDialog() {
+    try {
+        send_to_js();
+        finish_job();
+
+        wxGetApp().CallAfter([]() {
+            NetworkTestDialog dlg(wxGetApp().mainframe);
+            dlg.ShowModal();
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 
 void SSWCP_Instance::sw_OpenBrowser() {
     try {
@@ -1978,8 +1998,12 @@ void SSWCP_MachineOption_Instance::process()
         sw_UploadCameraTimelapse();
     } else if (m_cmd == "sw_DeleteCameraTimelapse") {
         sw_DeleteCameraTimelapse();
+    } else if (m_cmd == "sw_GetTimelapseInstance") {
+        sw_GetTimelapseInstance();
     } else if (m_cmd == "sw_ServerClientManagerSetUserinfo") {
         sw_ServerClientManagerSetUserinfo();
+    } else if (m_cmd == "sw_DefectDetactionConfig"){
+        sw_DefectDetactionConfig();
     }
     
     else {
@@ -3562,6 +3586,30 @@ void SSWCP_MachineOption_Instance::sw_UploadCameraTimelapse()
     }
 }
 
+void SSWCP_MachineOption_Instance::sw_GetTimelapseInstance()
+{
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_get_timelapse_instance(m_param_data, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
 {
     try {
@@ -3575,6 +3623,29 @@ void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
 
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
         host->async_delete_camera_timelapse(m_param_data, [weak_self](const json& response) {
+            auto self = weak_self.lock();
+            if (self) {
+                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+            }
+        });
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_MachineOption_Instance::sw_DefectDetactionConfig()
+{ 
+    try {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+
+        if (!host) {
+            handle_general_fail(-1, "Connection lost!");
+            return;
+        }
+
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        host->async_defect_detaction_config(m_param_data, [weak_self](const json& response) {
             auto self = weak_self.lock();
             if (self) {
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
@@ -3845,521 +3916,7 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
 }
 
 void SSWCP_MachineConnect_Instance::sw_connect() {
-    try {
-        // 兼容第三方机器连接
-        if (m_param_data.count("from_homepage") && m_param_data["from_homepage"].get<bool>() && m_param_data.count("sn") &&
-            m_param_data["sn"].get<std::string>() == "-1") {
-
-            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-
-            wxGetApp().CallAfter([weak_self]() {
-                // 从首页触发的请求，没有sn的一律认为是第三方机器
-                auto        self   = weak_self.lock();
-                if (!self) {
-                    return;
-                }
-                std::string dev_id = self->m_param_data.count("dev_id") ? self->m_param_data["dev_id"].get<std::string>() : "";
-                if (dev_id == "") {
-                    // 失败
-                    self->handle_general_fail();
-                    return;
-                }
-
-                auto cfg = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
-                auto devices = wxGetApp().app_config->get_devices();
-                for (const auto& device : devices) {
-                    if (device.dev_id == dev_id) {
-                        cfg->option<ConfigOptionEnum<PrintHostType>>("host_type")->value = PrintHostType(device.protocol);
-                        cfg->set("print_host", device.ip);
-                        cfg->set("printhost_apikey", device.api_key);
-                        break;
-                    }
-                }
-
-                SMPhysicalPrinterDialog dialog = SMPhysicalPrinterDialog(wxGetApp().mainframe->plater()->GetParent());
-                dialog.ShowModal();
-
-                if (!dialog.m_connected) {
-                    self->handle_general_fail();
-                } 
-            });
-           
-        } 
-        else {
-            if (m_param_data.count("ip")) {
-                std::string ip = m_param_data["ip"].get<std::string>();
-
-                int port = -1;
-                if (m_param_data.count("port") && m_param_data["port"].is_number_integer()) {
-                    port = m_param_data["port"].get<int>();
-                }
-
-                // test
-                if (port == -1 || port == 1883) {
-                    port = 1884;
-                }
-                
-
-                std::string protocol = "moonraker";
-                if (m_param_data.count("protocol") && m_param_data["protocol"].is_string()) {
-                    protocol = m_param_data["protocol"].get<std::string>();
-                }
-
-                auto config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-
-                PrintHostType type = PrintHostType::htMoonRaker_mqtt;
-                // todo : 增加输入与type的映射
-
-                config.option<ConfigOptionEnum<PrintHostType>>("host_type")->value = type;
-
-                config.set("print_host", ip + (port == -1 ? "" : ":" + std::to_string(port)));
-
-                std::shared_ptr<PrintHost> host(PrintHost::get_print_host(&config));
-                wxGetApp().set_connect_host(host);
-                wxGetApp().set_host_config(config);
-
-                json connect_params;
-                if (m_param_data.count("sn") && m_param_data["sn"].is_string()) {
-                    connect_params["sn"] = m_param_data["sn"].get<std::string>();
-                }
-
-
-                // 序列化参数
-                if (m_param_data.count("code"))
-                    connect_params["code"] = m_param_data["code"];
-
-                if (m_param_data.count("ca"))
-                    connect_params["ca"] = m_param_data["ca"];
-
-                if (m_param_data.count("cert"))
-                    connect_params["cert"] = m_param_data["cert"];
-
-                if (m_param_data.count("key"))
-                    connect_params["key"] = m_param_data["key"];
-
-                if (m_param_data.count("user"))
-                    connect_params["user"] = m_param_data["user"];
-
-                if (m_param_data.count("password"))
-                    connect_params["password"] = m_param_data["password"];
-
-                if (m_param_data.count("port"))
-                    connect_params["port"] = m_param_data["port"];
-
-                if (m_param_data.count("clientId"))
-                    connect_params["clientId"] = m_param_data["clientId"];
-
-                std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
-                connect_params["link_mode"] = link_mode;
-
-                std::string id = m_param_data.count("id") ? m_param_data["id"].get<std::string>() : "";
-                std::string userid = m_param_data.count("userid") ? m_param_data["userid"].get<std::string>() : "";
-
-                if (!host) {
-                    // 错误处理
-                    finish_job();
-                } else {
-                    auto weak_self     = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-                    //设置断联回调
-                    m_work_thread = std::thread([weak_self, host, connect_params, link_mode, id, userid] {
-                        auto     self = weak_self.lock();
-                        wxString msg = "";
-                        json     params;
-                        host->set_connection_lost([&host]() {
-                            SSWCP_Instance::m_first_connected = true;
-                            wxGetApp().CallAfter([&host]() {
-                                wxGetApp().app_config->set("use_new_connect", "false");
-                                auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
-                                p_config->set("print_host", "");
-                                wxGetApp().set_connect_host(nullptr);
-                                wxString msg = "";
-                                json     params;
-                                host->disconnect(msg, params);
-                                
-
-                                auto devices = wxGetApp().app_config->get_devices();
-                                for (size_t i = 0; i < devices.size(); ++i) {
-                                    if (devices[i].connected) {
-                                        devices[i].connected = false;
-                                        wxGetApp().app_config->save_device_info(devices[i]);
-                                        break;
-                                    }
-                                }
-
-                                // 更新卡片
-                                json param;
-                                param["command"]       = "local_devices_arrived";
-                                param["sequece_id"]    = "10001";
-                                param["data"]          = devices;
-                                std::string logout_cmd = param.dump();
-                                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                                GUI::wxGetApp().run_script(strJS);
-
-                                // wcp订阅
-                                json data = devices;
-                                wxGetApp().device_card_notify(data);
-
-                                /*MessageDialog msg_window(nullptr, " " + _L("Connection Lost !") + "\n", _L("Machine Disconnected"),
-                                                         wxICON_QUESTION | wxOK);
-                                msg_window.ShowModal();*/
-
-                                wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-                                
-                            });
-                        });
-                        bool     res = host->connect(msg, connect_params);
-
-                        std::string ip_port = host->get_host();
-                        if (res) {
-                            int         pos = ip_port.find(':');
-                            std::string ip  = ip_port;
-                            if (pos != std::string::npos) {
-                                ip = ip_port.substr(0, pos);
-                            }
-
-                            // 更新其他设备连接状态为断开
-                            auto devices = wxGetApp().app_config->get_devices();
-                            for (size_t i = 0; i < devices.size(); ++i) {
-                                if (devices[i].connected) {
-                                    devices[i].connected = false;
-                                    wxGetApp().app_config->save_device_info(devices[i]);
-                                    break;
-                                }
-                            }
-
-                            // 查询机器的机型和喷嘴信息
-                            std::string              machine_type = "";
-                            std::vector<std::string> nozzle_diameters;
-                            std::string              device_name = "";
-
-                            std::shared_ptr<PrintHost> host = nullptr;
-                            wxGetApp().get_connect_host(host);
-
-                            if (!host->check_sn_arrived()) {
-                                wxGetApp().CallAfter([ip]() {
-                                    MessageDialog msg_window(nullptr, ip + " " + _L("connected unseccessfully !") + "\n", _L("Failed"),
-                                                             wxICON_QUESTION | wxOK);
-                                    msg_window.ShowModal();
-                                    std::shared_ptr<PrintHost> host = nullptr;
-                                    wxGetApp().get_connect_host(host);
-                                    wxString msg = "";
-                                    host->disconnect(msg, {});
-                                });
-
-                                auto self = weak_self.lock();
-                                if (!self) {
-                                    return;
-                                }
-                                self->m_status = 1;
-                                self->m_msg    = "sn is not exist";
-
-                                self->send_to_js();
-                                self->finish_job();
-                                return;
-                            }
-
-                            if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type != "") {
-                                wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params,nozzle_diameters, device_name, id, userid]() {
-                                    // 查询成功
-                                    DeviceInfo info;
-                                    info.ip        = ip;
-                                    info.dev_id    = host->get_sn() != "" ? host->get_sn() : ip;
-                                    info.dev_name  = ip;
-                                    info.connected = true;
-                                    info.link_mode = link_mode;
-                                    info.id        = id;
-                                    info.userid    = userid;
-                                    ;
-
-                                    info.model_name = machine_type;
-                                    info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
-                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                        std::string sn = host->get_sn();
-                                        info.sn        = connect_params["sn"].get<std::string>();
-                                        if (sn != "" && sn != info.sn) {
-                                            info.sn = sn;
-                                        }
-                                        info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                        info.dev_id   = info.sn != "" ? info.sn : info.ip;
-                                    }
-
-                                    if (device_name != "") {
-                                        info.dev_name = device_name;
-                                    }
-
-                                    size_t vendor_pos = machine_type.find_first_of(" ");
-                                    if (vendor_pos != std::string::npos) {
-                                        std::string vendor        = machine_type.substr(0, vendor_pos);
-                                        std::string machine_cover = LOCALHOST_URL +
-                                                                    std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                                                                    "/profiles/" + vendor + "/" + machine_type + "_cover.png";
-                                        info.img = machine_cover;
-                                    }
-
-                                    auto auth_info = host->get_auth_info();
-                                    try {
-                                        info.ca       = auth_info["ca"];
-                                        info.cert     = auth_info["cert"];
-                                        info.key      = auth_info["key"];
-                                        info.user     = auth_info["user"];
-                                        info.password = auth_info["password"];
-                                        info.port     = auth_info["port"];
-                                        info.clientId = auth_info["clientId"];
-                                    } catch (std::exception& e) {}
-
-                                    DeviceInfo query_info;
-                                    bool       exist = wxGetApp().app_config->get_device_info(info.dev_id, query_info);
-                                    if (nozzle_diameters.empty()) {
-                                        if (exist) {
-                                            query_info.connected = true;
-                                            wxGetApp().app_config->save_device_info(query_info);
-                                        } else {
-                                            wxGetApp().app_config->save_device_info(info);
-                                            MessageDialog msg_window(nullptr,
-                                                                     ip + " " + _L("The target machine model has been detected as") + "" +
-                                                                         machine_type + "\n" + _L("Please bind the nozzle information") +
-                                                                         "\n",
-                                                                     _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
-                                            msg_window.ShowModal();
-
-                                            auto dialog          = WebPresetDialog(&wxGetApp());
-                                            dialog.m_bind_nozzle = true;
-                                            dialog.m_device_id   = ip;
-                                            dialog.run();
-                                        }
-
-                                    } else {
-                                        info.nozzle_sizes = nozzle_diameters;
-                                        info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
-                                        wxGetApp().app_config->save_device_info(info);
-
-                                        auto dialog        = WebPresetDialog(&wxGetApp());
-                                        dialog.m_device_id = ip;
-
-                                        // 检查是否该预设已经选入系统
-                                        int  nModel = m_ProfileJson["model"].size();
-                                        bool isFind = false;
-                                        for (int m = 0; m < nModel; m++) {
-                                            if (m_ProfileJson["model"][m]["model"].get<std::string>() == info.model_name) {
-                                                // 绑定的预设已被选入系统
-                                                isFind = true;
-                                                std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"].get<std::string>();
-                                                std::string se_nozz_selected = nozzle_diameters[0];
-                                                if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
-                                                    nozzle_selected += ";" + se_nozz_selected;
-                                                    m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
-                                                }
-
-                                                break;
-                                            }
-                                        }
-
-                                        if (!isFind) {
-                                            json new_item;
-                                            new_item["vendor"]          = "Snapmaker";
-                                            new_item["model"]           = info.model_name;
-                                            new_item["nozzle_selected"] = nozzle_diameters[0];
-                                            m_ProfileJson["model"].push_back(new_item);
-                                        }
-
-                                        wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-
-                                        dialog.SaveProfile();
-                                        bool flag = false;
-                                        dialog.apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
-                                                            flag);
-                                        wxGetApp().update_mode();
-                                    }
-                                });
-                            } else {
-                                wxGetApp().CallAfter([connect_params, ip, host, link_mode, id, userid]() {
-                                    // 是否为连接过的设备
-                                    DeviceInfo  query_info;
-                                    std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
-                                    if (wxGetApp().app_config->get_device_info(dev_id, query_info)) {
-                                        query_info.connected = true;
-                                        wxGetApp().app_config->save_device_info(query_info);
-                                    } else {
-                                        auto machine_ip_type = MachineIPType::getInstance();
-                                        if (machine_ip_type) {
-                                            std::string machine_type = "";
-                                            if (machine_ip_type->get_machine_type(ip, machine_type)) {
-                                                // 已经发现过的机型信息
-                                                // test
-                                                if (machine_type == "lava" || machine_type == "Snapmaker test") {
-                                                    machine_type = "Snapmaker U1";
-                                                }
-
-                                                DeviceInfo info;
-                                                host->get_auth_info();
-                                                auto auth_info = host->get_auth_info();
-                                                try {
-                                                    info.ca       = auth_info["ca"];
-                                                    info.cert     = auth_info["cert"];
-                                                    info.key      = auth_info["key"];
-                                                    info.user     = auth_info["user"];
-                                                    info.password = auth_info["password"];
-                                                    info.port     = auth_info["port"];
-                                                    info.clientId = auth_info["clientId"];
-                                                } catch (std::exception& e) {}
-                                                info.ip         = ip;
-                                                info.dev_id     = dev_id;
-                                                info.dev_name   = ip;
-                                                info.connected  = true;
-                                                info.model_name = machine_type;
-                                                info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
-                                                info.link_mode  = link_mode;
-                                                info.id         = id;
-                                                info.userid     = userid;
-                                                if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                                    info.sn       = connect_params["sn"].get<std::string>();
-                                                    info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                                    info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
-                                                }
-
-                                                size_t vendor_pos = machine_type.find_first_of(" ");
-                                                if (vendor_pos != std::string::npos) {
-                                                    std::string vendor        = machine_type.substr(0, vendor_pos);
-                                                    std::string machine_cover = LOCALHOST_URL +
-                                                                                std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                                                                                "/profiles/" + vendor + "/" + machine_type + "_cover.png";
-                                                    info.img = machine_cover;
-                                                }
-
-                                                wxGetApp().app_config->save_device_info(info);
-                                                // todo 绑定喷嘴
-
-                                                MessageDialog msg_window(nullptr,
-                                                                         ip + " " + _L("The target machine model has been detected as") +
-                                                                             " " + machine_type + "\n" +
-                                                                             _L("Please bind the nozzle information") + "\n",
-                                                                         _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
-                                                msg_window.ShowModal();
-                                                auto dialog          = WebPresetDialog(&wxGetApp());
-                                                dialog.m_bind_nozzle = true;
-                                                dialog.m_device_id   = ip;
-                                                dialog.run();
-
-                                                if (info.nozzle_sizes.empty())
-                                                    info.nozzle_sizes.push_back("0.4");
-
-                                                info.preset_name = machine_type + " (" + info.nozzle_sizes[0] + " nozzle)";
-
-                                                wxGetApp().app_config->save_device_info(info);
-                                            } else {
-                                                DeviceInfo info;
-                                                auto       auth_info = host->get_auth_info();
-                                                try {
-                                                    info.ca       = auth_info["ca"];
-                                                    info.cert     = auth_info["cert"];
-                                                    info.key      = auth_info["key"];
-                                                    info.user     = auth_info["user"];
-                                                    info.password = auth_info["password"];
-                                                    info.port     = auth_info["port"];
-                                                    info.clientId = auth_info["clientId"];
-                                                } catch (std::exception& e) {}
-                                                info.ip        = ip;
-                                                info.dev_id    = dev_id;
-                                                info.dev_name  = ip;
-                                                info.connected = true;
-                                                info.link_mode = link_mode;
-                                                info.id        = id;
-                                                info.userid    = id;
-                                                info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
-                                                if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                                    info.sn       = connect_params["sn"].get<std::string>();
-                                                    info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                                    info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
-                                                }
-                                                wxGetApp().app_config->save_device_info(info);
-                                                MessageDialog msg_window(
-                                                    nullptr,
-                                                    ip + " " + _L("The target machine model has not been detected. Please bind manually."),
-                                                    _L("Machine Bind"), wxICON_QUESTION | wxOK);
-                                                msg_window.ShowModal();
-                                                auto dialog        = WebPresetDialog(&wxGetApp());
-                                                dialog.m_device_id = info.dev_id;
-                                                dialog.run();
-                                            }
-                                        }
-                                    }
-                                });
-                                
-                            }
-
-                            wxGetApp().CallAfter([weak_self]() {
-                                // 更新首页设备卡片
-                                auto devices = wxGetApp().app_config->get_devices();
-
-                                json param;
-                                param["command"]       = "local_devices_arrived";
-                                param["sequece_id"]    = "10001";
-                                param["data"]          = devices;
-                                std::string logout_cmd = param.dump();
-                                wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                                GUI::wxGetApp().run_script(strJS);
-
-                                // wcp订阅
-                                json data = devices;
-                                wxGetApp().device_card_notify(data);
-
-                                /*MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine
-                                Connected"), wxICON_QUESTION | wxOK); msg_window.ShowModal();*/
-
-                                auto dialog = wxGetApp().get_web_device_dialog();
-                                if (dialog) {
-                                    dialog->EndModal(1);
-                                }
-
-                                wxGetApp().app_config->set("use_new_connect", "true");
-                                wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-                                wxGetApp().mainframe->m_print_enable = true;
-                                wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
-                                // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
-
-                                if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
-                                    auto real_url = wxGetApp().get_international_url(url);
-                                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
-                                } else {
-                                    wxGetApp().mainframe->m_printer_view->reload();
-                                }
-
-                                auto self = weak_self.lock();
-                                if (!self) {
-                                    return;
-                                }
-                                self->send_to_js();
-                                self->finish_job();
-                            });
-
-                        } else {
-                            wxGetApp().CallAfter([ip_port]() {
-                                MessageDialog msg_window(nullptr, ip_port + " " + _L("connected unseccessfully !") + "\n", _L("Failed"),
-                                                         wxICON_QUESTION | wxOK);
-                                msg_window.ShowModal();
-                            });
-                            if (self) {
-                                self->m_status = 1;
-                                self->m_msg    = msg.c_str();
-                            }
-                        }
-                        if (self) {
-                            self->send_to_js();
-                            self->finish_job();
-                        }
-                    });
-                }
-
-            } else {
-                // 错误处理
-                finish_job();
-            }
-        }
-        
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
+    
 }
 
 void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
@@ -4853,6 +4410,7 @@ std::unordered_map<wxWebView*, std::pair<std::string, std::shared_ptr<MqttClient
 std::mutex                                          SSWCP_MqttAgent_Instance::m_engine_map_mtx;
 std::map<std::pair<std::string, wxWebView*>, std::string>   SSWCP_MqttAgent_Instance::m_subscribe_map;
 std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> SSWCP_MqttAgent_Instance::m_subscribe_instance_map;
+WebPresetDialog*                                                                    SSWCP_MqttAgent_Instance::m_dialog = nullptr;
 
 void SSWCP_MqttAgent_Instance::process()
 {
@@ -5605,10 +5163,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                                          _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
                                                 msg_window.ShowModal();
 
-                                                auto dialog          = WebPresetDialog(&wxGetApp());
-                                                dialog.m_bind_nozzle = true;
-                                                dialog.m_device_id   = ip;
-                                                dialog.run();
+                                                m_dialog->m_bind_nozzle = true;
+                                                m_dialog->m_device_id  = ip;
+                                                m_dialog->run();
                                             }
 
                                         } else {
@@ -5616,8 +5173,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
                                             wxGetApp().app_config->save_device_info(info);
 
-                                            auto dialog        = WebPresetDialog(&wxGetApp());
-                                            dialog.m_device_id = ip;
+                                            m_dialog->m_device_id = ip;
 
                                             // 检查是否该预设已经选入系统
                                             int  nModel = m_ProfileJson["model"].size();
@@ -5648,9 +5204,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                                             wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
 
-                                            dialog.SaveProfile();
+                                            m_dialog->SaveProfile();
                                             bool flag = false;
-                                            dialog.apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
+                                            m_dialog->apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
                                                                 flag);
                                             wxGetApp().update_mode();
                                         }
@@ -5722,10 +5278,10 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                                                  _L("Please bind the nozzle information") + "\n",
                                                                              _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
                                                     msg_window.ShowModal();
-                                                    auto dialog          = WebPresetDialog(&wxGetApp());
-                                                    dialog.m_bind_nozzle = true;
-                                                    dialog.m_device_id   = ip;
-                                                    dialog.run();
+
+                                                    m_dialog->m_bind_nozzle = true;
+                                                    m_dialog->m_device_id   = ip;
+                                                    m_dialog->run();
 
                                                     if (info.nozzle_sizes.empty())
                                                         info.nozzle_sizes.push_back("0.4");
@@ -5765,9 +5321,9 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                             _L("The target machine model has not been detected. Please bind manually."),
                                                         _L("Machine Bind"), wxICON_QUESTION | wxOK);
                                                     msg_window.ShowModal();
-                                                    auto dialog        = WebPresetDialog(&wxGetApp());
-                                                    dialog.m_device_id = info.dev_id;
-                                                    dialog.run();
+
+                                                    m_dialog->m_device_id = info.dev_id;
+                                                    m_dialog->run();
                                                 }
                                             }
                                         }
@@ -6026,7 +5582,9 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_UpdateMachineFilamentInfo",
     "sw_UploadCameraTimelapse",
     "sw_DeleteCameraTimelapse",
-    "sw_ServerClientManagerSetUserinfo"
+    "sw_GetTimelapseInstance",
+    "sw_ServerClientManagerSetUserinfo",
+    "sw_DefectDetactionConfig"
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
@@ -6083,6 +5641,7 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
 // Handle incoming web messages
 void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
     try {
+
         if (!webview) {
             return;
         }

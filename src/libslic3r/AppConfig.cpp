@@ -686,6 +686,16 @@ std::string AppConfig::load()
         return err.what();
     }
 
+    // Convert "China" to "Chinese Mainland" for region parameter
+    auto it_app = m_storage.find("app");
+    if (it_app != m_storage.end()) {
+        auto it_region = it_app->second.find("region");
+        if (it_region != it_app->second.end() && it_region->second == "China") {
+            it_region->second = "Chinese Mainland";
+            m_dirty = true;
+        }
+    }
+
     // Figure out if datadir has legacy presets
     auto ini_ver = Semver::parse(get("version"));
     m_legacy_datadir = false;
@@ -1324,7 +1334,7 @@ std::string AppConfig::get_country_code()
 // #if !BBL_RELEASE_TO_PUBLIC
 //     if (is_engineering_region()) { return region; }
 // #endif
-    if (region == "CHN" || region == "China")
+    if (region == "CHN" || region == "Chinese Mainland" || region == "China")
         return "CN";
     else if (region == "USA")
         return "US";

@@ -176,6 +176,9 @@ private:
     // Sentry
     void sw_UploadEvent();
 
+    // open network dialog
+    void sw_OpenNetworkDialog();
+
 
 public:
     // 抽象工具类函数
@@ -238,6 +241,7 @@ private:
 };
 
 // mqtt-agent
+class WebPresetDialog;
 class SSWCP_MqttAgent_Instance : public SSWCP_Instance
 {
 public:
@@ -261,6 +265,8 @@ public:
 
     static std::map<std::pair<std::string, wxWebView*>, std::string> m_subscribe_map;          // ((event_id, webview), topic)
     static std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> m_subscribe_instance_map; // ((event_id, webview), instance)
+
+    static WebPresetDialog* m_dialog;
 
 public:
     bool validate_id(const std::string& id);
@@ -304,7 +310,6 @@ private:
 
     static void mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client);
 
-    
 };
 
 // Instance class for handling machine discovery
@@ -411,6 +416,9 @@ private:
     void sw_GetFileListPage();
     void sw_UploadCameraTimelapse();
     void sw_DeleteCameraTimelapse();
+    void sw_GetTimelapseInstance();
+
+    void sw_DefectDetactionConfig();
 
 
     // Download machine file

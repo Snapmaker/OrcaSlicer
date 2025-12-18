@@ -156,7 +156,7 @@
 #include "CloneDialog.hpp"
 #include "WebPreprintDialog.hpp"
 
-#include "sentry_wrapper/sentryWrapper.hpp"
+#include "sentry_wrapper/SentryWrapper.hpp"
 #include <chrono>
 
 using boost::optional;

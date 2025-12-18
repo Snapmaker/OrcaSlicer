@@ -4280,6 +4280,66 @@ void SSWCP_MachineManage_Instance::sw_SubscribeLocalDevices()
     }
 }
 
+// SSWCP_PageStateChange_Instance
+void SSWCP_PageStateChange_Instance::process()
+{
+    if (m_event_id != "") {
+        json header;
+        send_to_js();
+
+        m_header.clear();
+        m_header["event_id"] = m_event_id;
+    }
+
+    if (m_cmd == "sw_SubscribePageStateChange") {
+        sw_SubscribePageStateChange();
+    } else if (m_cmd == "sw_UnsubscribePageStateChange") {
+        sw_UnsubscribePageStateChange();
+    } else {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_PageStateChange_Instance::sw_SubscribePageStateChange()
+{
+    try {
+        auto self = shared_from_this();
+        wxGetApp().m_page_state_subscribers[m_webview] = self;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
+void SSWCP_PageStateChange_Instance::sw_UnsubscribePageStateChange()
+{
+    try {
+        auto& page_state_map = wxGetApp().m_page_state_subscribers;
+        std::string event_id = m_param_data.count("event_id") ? m_param_data["event_id"].get<std::string>() : "";
+
+        for (auto iter = page_state_map.begin(); iter != page_state_map.end();) {
+            if (iter->first == m_webview) {
+                auto ptr = iter->second.lock();
+                if (ptr) {
+                    if (event_id == "" || (event_id != "" && event_id == ptr->m_event_id)) {
+                        iter = page_state_map.erase(iter);
+                    } else {
+                        iter++;
+                    }
+                } else {
+                    iter = page_state_map.erase(iter);
+                }
+            } else {
+                iter++;
+            }
+        }
+
+        send_to_js();
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
+
 void SSWCP_MachineManage_Instance::sw_AddDevice()
 {
     try {
@@ -5606,6 +5666,10 @@ std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"
 };
 
+std::unordered_set<std::string> SSWCP::m_page_state_cmd_list = {
+    "sw_SubscribePageStateChange", "sw_UnsubscribePageStateChange"
+};
+
 std::unordered_set<std::string> SSWCP::m_mqtt_agent_cmd_list = {
     "sw_create_mqtt_client", "sw_mqtt_connect", "sw_mqtt_disconnect", "sw_mqtt_subscribe", "sw_mqtt_unpublish", "sw_mqtt_publish", "sw_mqtt_set_engine"
 };
@@ -5626,6 +5690,8 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
         instance = std::make_shared<SSWCP_UserLogin_Instance>(cmd, header, data, event_id, webview);
     } else if (m_machine_manage_cmd_list.find(cmd) != m_machine_manage_cmd_list.end()) {
         instance = std::make_shared<SSWCP_MachineManage_Instance>(cmd, header, data, event_id, webview);
+    } else if (m_page_state_cmd_list.find(cmd) != m_page_state_cmd_list.end()) {
+        instance = std::make_shared<SSWCP_PageStateChange_Instance>(cmd, header, data, event_id, webview);
     } else if(m_mqtt_agent_cmd_list.find(cmd) != m_mqtt_agent_cmd_list.end()) {
         instance = std::make_shared<SSWCP_MqttAgent_Instance>(cmd, header, data, event_id, webview);
     }
@@ -5798,6 +5864,15 @@ void SSWCP::on_webview_delete(wxWebView* view)
     for (auto iter = cache_map.begin(); iter != cache_map.end();) {
         if (iter->first.first == view) {
             iter = cache_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& page_state_map = wxGetApp().m_page_state_subscribers;
+    for (auto iter = page_state_map.begin(); iter != page_state_map.end();) {
+        if (iter->first == view) {
+            iter = page_state_map.erase(iter);
         } else {
             iter++;
         }

@@ -482,6 +482,26 @@ private:
     void sw_DeleteDevices();
 };
 
+// Instance class for page state change subscription
+class SSWCP_PageStateChange_Instance : public SSWCP_Instance
+{
+public:
+    SSWCP_PageStateChange_Instance(std::string cmd, const json& header, const json& data,
+                                    std::string event_id, wxWebView* webview)
+        : SSWCP_Instance(cmd, header, data, event_id, webview)
+    {
+        m_type = COMMON;
+    }
+
+    ~SSWCP_PageStateChange_Instance() {}
+
+    void process() override;
+
+private:
+    void sw_SubscribePageStateChange();
+    void sw_UnsubscribePageStateChange();
+};
+
 // Instance class for Snapmaker user login
 class SSWCP_UserLogin_Instance : public SSWCP_Instance
 {
@@ -589,6 +609,7 @@ private:
     static std::unordered_set<std::string> m_login_cmd_list; // homepage login commands
     static std::unordered_set<std::string> m_machine_manage_cmd_list; // homepage machine manage commands;
     static std::unordered_set<std::string> m_mqtt_agent_cmd_list; // mqtt-agent commands;
+    static std::unordered_set<std::string> m_page_state_cmd_list; // page state change commands;
 
     static TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> m_instance_list;  // Active instances
     static constexpr std::chrono::milliseconds DEFAULT_INSTANCE_TIMEOUT{80000}; // Default timeout (8s)

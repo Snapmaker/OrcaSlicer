@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <atomic>
 #include <random>
+#include "common_func/common_func.hpp"
 
 namespace Slic3r {
 
@@ -56,15 +57,22 @@ static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_va
 
 static sentry_value_t before_send(sentry_value_t event, void* hint, void* data)
 {
+    if (!get_privacy_policy())
+    {
+        sentry_value_decref(event);
+        return sentry_value_new_null();
+    }
+
     sentry_value_t level_val = sentry_value_get_by_key(event, SENTRY_KEY_LEVEL);
+    std::string    levelName  = sentry_value_as_string(level_val);
 
     std::string    eventLevel = sentry_value_as_string(sentry_value_get_by_key(event, SENTRY_KEY_LEVEL));
 
     //module name
-    sentry_value_t logger_val = sentry_value_get_by_key(event, "logger");
-    std::string    logger     = sentry_value_as_string(logger_val);        
+    sentry_value_t moduleValue = sentry_value_get_by_key(event, "logger");
+    std::string    moduleName  = sentry_value_as_string(moduleValue);        
 
-    if (MACHINE_MODULE == logger)
+    if (MACHINE_MODULE == moduleName)
     {
         srand((unsigned int) time(0));
         int random_num = rand() % 100;
@@ -192,6 +200,7 @@ void initSentryEx()
 #endif
 
         sentry_options_set_environment(options, "develop");
+        //sentry_options_set_environment(options, "Release");
 
         sentry_options_set_auto_session_tracking(options, 0);
         sentry_options_set_symbolize_stacktraces(options, 1);
@@ -200,6 +209,12 @@ void initSentryEx()
 
         sentry_options_set_sample_rate(options, 1.0);
         sentry_options_set_traces_sample_rate(options, 1.0);
+
+        sentry_set_tag("version", Snapmaker_VERSION);
+
+        std::string flutterVersion = common::get_flutter_version();
+        if (!flutterVersion.empty())
+            set_sentry_tags("flutter_version", flutterVersion);
 
         sentry_init(options);
         sentry_start_session();
@@ -255,6 +270,8 @@ void sentryReportLogEx(SENTRY_LOG_LEVEL   logLevel,
          sentry_value_set_by_key(tags, "snapmaker_trace_id", sentry_value_new_string(logTraceId.c_str()));
      }
 
+    if (SENTRY_LEVEL_TRACE == sentry_msg_level)
+         sentry_set_tag(BURY_POINT, "snapmaker_bury_point");
 
     if (!logTagKey.empty())
         sentry_set_tag(logTagKey.c_str(), logTagValue.c_str());
@@ -290,6 +307,14 @@ void sentryReportLog(SENTRY_LOG_LEVEL   logLevel,
 {
 #ifdef SLIC3R_SENTRY
     sentryReportLogEx(logLevel, logContent, funcModule, logTagKey, logTagValue, logTraceId);
+#endif
+}
+
+void set_sentry_tags(const std::string& tag_key, const std::string& tag_value)
+{
+#ifdef SLIC3R_SENTRY
+    if (!tag_key.empty())
+        sentry_set_tag(tag_key.c_str(), tag_value.c_str());
 #endif
 }
 

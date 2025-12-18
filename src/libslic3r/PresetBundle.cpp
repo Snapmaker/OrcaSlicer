@@ -6,7 +6,7 @@
 #include "Utils.hpp"
 #include "Model.hpp"
 #include "format.hpp"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 
 #include <algorithm>
 #include <set>

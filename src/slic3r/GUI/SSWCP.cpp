@@ -20,6 +20,7 @@
 #include <boost/nowide/convert.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
+#include <boost/asio/ip/host_name.hpp>
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include "NetworkTestDialog.hpp"
@@ -90,6 +91,7 @@ bool WCP_Logger::set_level(wxString& level)
         return false;
     }
 }
+
 
 // Add a log message to the queue
 void WCP_Logger::add_log(const wxString& content, bool is_web = false, wxString time = "", wxString module = "Default", wxString level = "debug")

@@ -1,3 +1,25 @@
+
+#Title {
+	height: auto;
+	min-height: 60px;
+	padding: 12px 25px;
+	box-sizing: border-box;
+}
+
+#Title div {
+	font-size: 16px;
+	line-height: 24px;
+	word-wrap: break-word;
+	white-space: normal;
+	text-align: center;
+}
+
+
+#Content {
+	flex: 1;
+	height: auto;
+}
+
 .PolicyArea
 {
 	background-color: #4A4A51;	

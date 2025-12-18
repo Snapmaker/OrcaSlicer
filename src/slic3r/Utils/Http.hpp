@@ -9,7 +9,7 @@
 #include <boost/filesystem/fstream.hpp>
 
 #include "libslic3r/Exception.hpp"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 
 #define MAX_SIZE_TO_FILE    3*1024
 

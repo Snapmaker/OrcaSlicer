@@ -10,7 +10,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 
 #include <wx/sizer.h>
 #include <wx/toolbar.h>
@@ -492,6 +492,15 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
             this->Close();
         } else if (strCmd == "save_region") {
             m_Region = j["region"];
+            m_ProfileJson["region"] = m_Region;
+        }
+        else if (strCmd == "common_openurl") {
+            
+            std::string url = j["url"];
+            std::string local = j["local"];
+            if (!url.empty()) {
+                wxLaunchDefaultBrowser(url);
+            }
         }
         else if (strCmd == "network_plugin_install") {
             std::string sAction = j["data"]["action"];
@@ -617,7 +626,7 @@ int GuideFrame::SaveProfile()
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "1");
     // } else
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "0");
-
+    m_MainPtr->app_config->set("snapmaker_privacy_policy", "isagree", PrivacyUse);
     m_MainPtr->app_config->set("region", m_Region);
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 

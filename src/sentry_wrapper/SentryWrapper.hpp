@@ -2,6 +2,7 @@
 #define slic3r_SentryWrapper_hpp_
 
 #include <string>
+#include "bury_cfg/bury_point.hpp"
 
 namespace Slic3r {
 
@@ -24,6 +25,8 @@ namespace Slic3r {
                          const std::string& logTagKey   = "",
                          const std::string& logTagValue = "",
                          const std::string& logTraceId = "");  
+
+    void set_sentry_tags(const std::string& tag_key,const std::string& tag_value);
     } // namespace Slic3r
 
 #endif // slic3r_SentryWrapper_hpp_

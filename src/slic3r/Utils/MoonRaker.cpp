@@ -28,6 +28,7 @@
 #include "slic3r/GUI/WebPreprintDialog.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
 
+#include "sentry_wrapper/SentryWrapper.hpp"
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -2287,6 +2288,7 @@ void Moonraker_Mqtt::async_camera_start(const std::string& domain, int interval,
         callback) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送启动摄像头监控请求失败";
         wcp_loger.add_log("发送启动摄像头监控请求失败", false, "", "Moonraker_Mqtt", "error");
+        sentryReportLog(SENTRY_LOG_TRACE, "open video cmd error", BP_VIDEO_ABNORMAL);
         callback(json::value_t::null);
     }
 }
@@ -2336,6 +2338,7 @@ void Moonraker_Mqtt::async_canmera_stop(const std::string& domain, std::function
         callback) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 发送停止摄像头监控请求失败";
         wcp_loger.add_log("发送停止摄像头监控请求失败", false, "", "Moonraker_Mqtt", "error");
+        sentryReportLog(SENTRY_LOG_TRACE, "stop video cmd error", BP_VIDEO_ABNORMAL);
         callback(json::value_t::null);
     }
 }

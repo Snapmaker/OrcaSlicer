@@ -72,9 +72,9 @@
 #include <dbt.h>
 #include <shlobj.h>
 #include <shellapi.h>
-#include "sentry_wrapper/SentryWrapper.hpp"
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
+#include "sentry_wrapper/SentryWrapper.hpp"
 
 
 namespace Slic3r {
@@ -1089,8 +1089,8 @@ void MainFrame::init_tabpanel() {
         });
         m_tabpanel->AddPage(m_webview, "", "tab_home_active", "tab_home_active", false);
         m_param_panel = new ParamsPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBK_LEFT | wxTAB_TRAVERSAL);
+      
     }
-
     m_plater = new Plater(this, this);
     m_plater->SetBackgroundColour(*wxWHITE);
     m_plater->Hide();

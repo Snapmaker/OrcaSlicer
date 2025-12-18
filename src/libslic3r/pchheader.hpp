@@ -125,7 +125,7 @@
 #include "SVG.hpp"
 
 #include "libslic3r.h"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 
 #include <Shiny/Shiny.h>
 

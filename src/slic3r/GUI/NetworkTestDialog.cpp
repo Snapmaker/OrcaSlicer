@@ -773,15 +773,15 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 			wxString grade_desc;
 			wxString grade_icon;
 
-			if (connect_time <= 100) {
+			if (connect_time <= 50) {
 				grade = 1;
 				grade_desc = "Excellent";
 				grade_icon = "[Level 1]";
-			} else if (connect_time <= 500) {
+			} else if (connect_time <= 100) {
 				grade = 2;
 				grade_desc = "Good";
 				grade_icon = "[Level 2]";
-			} else if (connect_time <= 1000) {
+			} else if (connect_time <= 400) {
 				grade = 3;
 				grade_desc = "Fair";
 				grade_icon = "[Level 3]";

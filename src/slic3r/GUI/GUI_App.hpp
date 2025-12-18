@@ -833,6 +833,7 @@ public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_page_state_subscribers;
 
     struct CachePairCompare
     {
@@ -847,6 +848,7 @@ public:
     void recent_file_notify(const json& res);
     void user_login_notify(const json& res);
     void device_card_notify(const json& res);
+    void page_state_notify_webview(wxWebView* webview, const std::string& state);
     void cache_notify(const std::string& key, const json& res);
 
 

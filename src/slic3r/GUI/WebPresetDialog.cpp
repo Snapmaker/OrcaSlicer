@@ -181,10 +181,8 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
     // Connect the idle events
     // Bind(wxEVT_IDLE, &WebPresetDialog::OnIdle, this);
     // Bind(wxEVT_CLOSE_WINDOW, &WebPresetDialog::OnClose, this);
-    std::thread* load_thread = new std::thread([this]() {
-            LoadProfile();
-    });
-    // LoadProfile();
+
+    LoadProfile();
 
     // UI
     SetStartPage(BBL_REGION);

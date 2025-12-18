@@ -18775,6 +18775,9 @@ msgstr ""
 msgid "More Colors"
 msgstr ""
 
+msgid "Warning: Printing by object with caution. This function may cause the print head to collide with printed parts during switching."
+msgstr "警告：谨慎使用逐件打印，该功能可能会导致打印头切换时与打印件碰撞。"
+
 #: resources/data/hints.ini: [hint:Precise wall]
 msgid ""
 "Precise wall\n"

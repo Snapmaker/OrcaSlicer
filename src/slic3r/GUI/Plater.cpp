@@ -4924,6 +4924,30 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
                     }
                     if (!silence) wxGetApp().app_config->update_config_dir(path.parent_path().string());
+
+                    // BBS: Check for Snapmaker U1 + Print by Object warning after loading 3mf config
+                    if (load_config && is_project_file) {
+                        auto print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                        auto printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+
+                        auto print_seq_opt = print_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+                        auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+
+                        if (print_seq_opt && printer_model_opt &&
+                            print_seq_opt->value == PrintSequence::ByObject &&
+                            !printer_model_opt->value.empty()) {
+                            std::string printer_model = printer_model_opt->value;
+                            bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") &&
+                                                   boost::icontains(printer_model, "U1");
+
+                            if (is_snapmaker_u1) {
+                                if (q->get_notification_manager()) {
+                                    std::string warning_text = _u8L("Warning: Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
+                                    q->get_notification_manager()->push_plater_error_notification(warning_text);
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 // BBS: add plate data related logic

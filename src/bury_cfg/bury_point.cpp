@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <sstream>
 
+static std::atomic<bool> isAgreeSlice(true);
 bool get_privacy_policy() 
 {
     return isAgreeSlice; 

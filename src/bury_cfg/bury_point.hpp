@@ -4,6 +4,16 @@
 #include <iostream>
 #include <atomic>
 
+#ifdef _WIN32
+    #ifdef BURY_EXPORTS
+        #define BURY_API __declspec(dllexport)
+    #else
+        #define BURY_API __declspec(dllimport)
+    #endif
+#else
+    #define BURY_API  extern
+#endif
+
 #define BURY_POINT "bury_point"
 
 #define BP_START_SOFT "bury_point_start_soft"
@@ -36,14 +46,10 @@
 
 //webview bury point
 
-
-
-	static std::atomic<bool> isAgreeSlice = true;
-
-    bool               get_privacy_policy();
-    void               set_privacy_policy(bool isAgree);
-    extern std::string get_timestamp_seconds();
-    extern long long   get_time_timestamp();
-    extern std::string get_works_time(const long long& timestamp);
+    BURY_API bool               get_privacy_policy();
+    BURY_API void               set_privacy_policy(bool isAgree);
+    BURY_API std::string get_timestamp_seconds();
+    BURY_API long long   get_time_timestamp();
+    BURY_API std::string get_works_time(const long long& timestamp);
 
 #endif

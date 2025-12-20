@@ -107,8 +107,26 @@
 
   "Authorizing timeout!": "授权超时!",
 
-  "Network connection failed. Please check your network connection.": "网络连接失败，请检查您的网络连接",
+  "Server internal error, please try again later.": "服务器内部错误，请稍后重试",
+  "Start monitoring timeout, please try again later.": "启动监控超时，请稍后重试",
+
+  "Other error, please try again later.": "其他错误，请稍后重试",
+
+  "Camera start failed": "摄像头开启失败",
+  "Camera started successfully": "摄像头开启成功",
+  
+  "Camera stop failed": "摄像头关闭失败",
+  
+  "Method not found": "设备未实现此功能",
+
+  "Camera loading failed. Please try again.": "摄像头加载失败，请重试",
+  "Camera request has been rejected. Please try again.": "摄像头请求被拒绝，请重试",
+  "The image upload failed. Please try again.": "画面上传失败，请重试",
+
   "Unable to obtain device resources, please try again later.": "无法获取设备资源，请稍后再试",
+
+  "Request timeout, please try again later.": "请求超时，请稍后重试",
+
   "Set led failed": "设置LED失败",
   "Set led success": "设置LED成功",
 
@@ -203,7 +221,7 @@
 
   "Refresh completed": "刷新完成",
   "Refresh failed": "刷新失败",
-  
+
   "User not logged in": "用户未登录",
 
   "Not logged in account": "未登录账户",
@@ -289,7 +307,9 @@
   "Cannot get connected machine info, please check the device and try again.": "无法获取设备信息，请检查设备并重试",
   "Timeout: Cannot get file filament mapping": "无法获取文件耗材映射信息",
   "Cannot load file content": "无法加载文件内容",
+  "uploadFile requires the printer to be online, currently the printer is not online": "上传文件需要设备在线，当前设备不在线",
 
+  
   "Confirm": "确认",
   "device_input_pin_code_desc": "请输入PIN码.",
   "device_input_pin_code_tips_desc": "请输入8位PIN码",
@@ -408,6 +428,7 @@
   "Flow Calibration": "流量校准",
   "Time-Lapse Photography": "延时摄影",
   "Start Print": "开始打印",
+  "layer": "层",
   "Preferences": "偏好设置",
 
   "dialog_device_control_modify_heated_bed_temperature_tips": "温度必须在0°C到100°C之间",
@@ -479,10 +500,13 @@
   "dialog_file_upload_success_to_device_tips": "文件{}已上传到设备，发起打印...",
   "dialog_file_upload_success_to_cloud_tips": "文件{}已上传到云服务，发起打印...",
   "dialog_file_send_success_to_device_tips": "文件{}已发送成功到设备",
-  "cancel_print_confirm_title": "提示",
+
   "cancel_print_confirm_message": "您确认要终止本次打印任务么？",
-  "cancel_print_confirm_yes": "确认",
-  "cancel_print_confirm_no": "取消",
+
+  "Tips": "提示",
+  "close_led_confirm_message": "设备已开启 AI 监控 ，关闭 LED 会影响检测效果。确定关闭吗？",
+
+  "No printing information": "暂无打印信息",
 
   "Refresh More": "刷新更多",
   "downloading_desc_format": "{}，下载中...({}%)",
@@ -505,6 +529,10 @@
   "dialog_filament_type_not_match_tips": "此喷嘴耗材类型与模型预设耗材类型不匹配，请更换该喷嘴耗材类型或更改预设耗材类型",
   "dialog_filament_type_none_tips": "未识别到耗材，请在设备上挂载耗材或编辑耗材信息",
   "Features are under development, please stay tuned": "功能开发中, 敬请期待",
+
+  "File uploaded successfully": "文件上传成功",
+  "close this page": "关闭此页面",
+
   "The device failed to upload the model file. Please check the device network and upload it again.": "设备上传模型文件失败，请检查设备网络并重新上传",
   "The device is currently processing the offline state, please check the device and try again.": "当前设备处于离线状态，请检查设备并重试",
   "No time-lapse video": "暂无延时摄影视频",
@@ -521,13 +549,27 @@
   "this command requires the printer to be online, currently the printer is not online": "当前设备不在线",
   "Bind device failed, please check if pin code is correct.": "绑定失败，可能是 PIN 码输入错误或者是 PIN 码检测失败",
   "Bind device failed, please check if device locale setting is not same as client.": "绑定失败，软件与设备区域设置不一致",
+
   "delete_selected_files_confirm_title": "确认删除选中文件",
   "delete_selected_files_confirm_message": "确定要删除选中的文件吗？此操作无法撤销。",
   "clear_all_files_confirm_title": "确认清空所有文件",
   "clear_all_files_confirm_message": "确定要清空所有最近文件吗？此操作无法撤销。",
-  "delete_confirm_yes": "确认",
-  "delete_confirm_no": "取消",
+  "Confirm Delete": "确认",
   "connect_devcice_fail_tip_format": "连接{}失败，请重新选择设备并连接",
+  "time_lapse_video_loaded_failed": "延时摄影视频加载失败",
+  "time_lapse video_export_format": "延时摄影视频已导出 {} ",
+  "time_lapse_video_export_button_text_format": "导出 ({})",
+  "time_lapse_video_delete_button_text_format": "删除 ({})",
+
+  "delete_time_lapse_title": "删除延时摄影视频",
+  "delete_time_lapse_desc": "确定要删除这个视频吗？",
+  "delete_time_lapse_success": "删除视频成功",
+  "delete_time_lapse_failed_format": "删除视频失败 {}",
+  "time_lapse_video_downloaded_success_format": "视频 {} 已下载",
+  "time_lapse_video_downloaded_success_2_format": "视频 {} 已下载，但导出视频到相册失败",
+  "time_lapse_video_start_downloading": "正在下载视频……",
+  "time_lapse_video_export_video_failed": "导出视频失败",
+
 
   "Check": "查看",
   "default_exception_title": "异常",
@@ -959,5 +1001,10 @@
   "error_0001053100000007_title": "系统异常",
   "error_0001053100000007_desc": "云打印文件下载失败。请确保网络连接正常，然后重试。若仍出现异常，请联系技术支持。",
   "error_0001053100000008_title": "系统异常",
-  "error_0001053100000008_desc": "U 盘读取异常。请确保 U 盘连接正常，然后重试。若仍出现异常，请联系技术支持。"
+  "error_0001053100000008_desc": "U 盘读取异常。请确保 U 盘连接正常，然后重试。若仍出现异常，请联系技术支持。",
+  "camera_turn_off_countdown": "摄像机关闭倒计时",
+  "continue_camera": "继续播放",
+  "camera_auto_shutdown_message": "摄像头长时间未使用，为了节省电量，已自动关闭。",
+  "got_it": "知道了",
+  "monitoring_module_hibernated": "提示：监控模块已休眠，点击播放按钮即可唤醒"
 }

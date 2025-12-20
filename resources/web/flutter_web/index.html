@@ -60,15 +60,31 @@
         sequence_id: 1222222,
         command: "homepage_test_browser",
         params: {
-          url: "https://snapmaker.com", 
-          title: "Snapmaker",
+          url: "http://localhost:7357/?locale=zh-cn-CN&dark_model=1&path=/",
         },
       });
        // 调用 window.postMessage 传递消息给 flutter
       window.wx &&  window.wx.postMessage(message); // 调用 window.postMessage 传递消息给 原生系统
       ///模拟收到响应结果5000
       if(!window.wx) {
-        // 我不能发现 window.wx 
+        // 我不能发现 window.wx
+        console.log('i dont find window.wx, so i simulate a return by postMessage, message: ', message)
+      }
+    }
+
+    function open_snapmaker_browser() {
+      const message = JSON.stringify({
+        sequence_id: 1222222,
+        command: "sw_OpenBrowser",
+        params: {
+          url: "http://localhost:7357/?locale=zh-cn-CN&dark_model=1&path=/",
+        },
+      });
+       // 调用 window.postMessage 传递消息给 flutter
+      window.wx &&  window.wx.postMessage(message); // 调用 window.postMessage 传递消息给 原生系统
+      ///模拟收到响应结果5000
+      if(!window.wx) {
+        // 我不能发现 window.wx
         console.log('i dont find window.wx, so i simulate a return by postMessage, message: ', message)
       }
     }

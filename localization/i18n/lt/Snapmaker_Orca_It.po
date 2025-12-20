@@ -7614,7 +7614,7 @@ msgid "Asia-Pacific"
 msgstr "Azija-Ramusis vandenynas"
 
 msgid "Chinese Mainland"
-msgstr "Kinija"
+msgstr "Kinijos žemynas"
 
 msgid "Europe"
 msgstr "Europa"

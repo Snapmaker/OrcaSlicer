@@ -2103,6 +2103,43 @@ msgstr ""
 msgid "Merge with"
 msgstr ""
 
+msgid "Import Profile"
+msgstr ""
+
+msgid "Import Web Resource"
+msgstr ""
+
+msgid "The following profiles could not be imported due to outdated versions."
+msgstr ""
+
+msgid "This web resouce could not be imported due to outdated versions."
+msgstr ""
+
+msgid "Import Failed"
+msgstr ""
+
+msgid "Please choose a system profile package file:"
+msgstr ""
+
+msgid "Please choose a web resource package file:"
+msgstr ""
+
+msgid "Updating the web resources requires application restart."
+msgstr ""
+
+msgid "Updating the system resources requires application restart."
+msgstr ""
+
+msgid "Print Preprocessing"
+msgstr ""
+
+msgid "Pretreat the uploaded content"
+msgstr ""
+
+msgid "Wait for the temperature when changing tools"
+msgstr ""
+
+
 msgid "Select All"
 msgstr ""
 

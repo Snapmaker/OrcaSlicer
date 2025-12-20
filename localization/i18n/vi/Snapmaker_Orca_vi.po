@@ -7494,7 +7494,7 @@ msgid "Asia-Pacific"
 msgstr "Châu Á-Thái Bình Dương"
 
 msgid "Chinese Mainland"
-msgstr "Trung Quốc"
+msgstr "Đại Lục Trung Quốc"
 
 msgid "Europe"
 msgstr "Châu Âu"

@@ -2128,7 +2128,43 @@ msgid "Delete this filament"
 msgstr ""
 
 msgid "Merge with"
-msgstr ""
+msgstr "合并到"
+
+msgid "Import Profile"
+msgstr "导入预设包"
+
+msgid "Import Web Resource"
+msgstr "导入web资源包"
+
+msgid "The following profiles could not be imported due to outdated versions."
+msgstr "以下预设由于版本较低，未被导入"
+
+msgid "This web resouce could not be imported due to outdated versions."
+msgstr "该web资源包由于版本较低，未被导入"
+
+msgid "Import Failed"
+msgstr "导入失败"
+
+msgid "Please choose a system profile package file:"
+msgstr "请选择系统预设包："
+
+msgid "Please choose a web resource package file:"
+msgstr "请选择web资源包："
+
+msgid "Updating the web resources requires application restart."
+msgstr "当前需要重启以使web资源包生效"
+
+msgid "Updating the system resources requires application restart."
+msgstr "当前需要重启以使预设生效"
+
+msgid  "Print Preprocessing"
+msgstr "打印预处理"
+
+msgid "Pretreat the uploaded content"
+msgstr "上传预处理"
+
+msgid "Wait for the temperature when changing tools"
+msgstr "换头时等待温度达标"
 
 msgid "Select All"
 msgstr "全选"

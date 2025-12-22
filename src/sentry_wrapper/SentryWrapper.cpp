@@ -199,8 +199,8 @@ void initSentryEx()
         sentry_options_set_debug(options, 0);
 #endif
 
-        sentry_options_set_environment(options, "develop");
-        //sentry_options_set_environment(options, "Release");
+        // sentry_options_set_environment(options, "develop");
+        sentry_options_set_environment(options, "Release");
 
         sentry_options_set_auto_session_tracking(options, 0);
         sentry_options_set_symbolize_stacktraces(options, 1);

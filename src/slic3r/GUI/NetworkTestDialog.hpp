@@ -29,6 +29,7 @@
 #include <time.h>
 #include <vector>
 #include <algorithm>
+#include <memory>
 
 namespace Slic3r { 
 namespace GUI {
@@ -47,6 +48,8 @@ enum TestJob {
 class NetworkTestDialog : public DPIDialog
 {
 protected:
+	std::shared_ptr<NetworkTestDialog> self_ptr;
+	std::weak_ptr<NetworkTestDialog> weak_this;
 	Button* btn_start;
 	Button* btn_start_sequence;
 	Button* btn_download_log;

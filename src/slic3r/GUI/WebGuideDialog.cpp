@@ -684,28 +684,28 @@ int GuideFrame::SaveProfile()
     m_appconfig_new.set_vendors(empty_vendor_map);
     {
         std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
-        for (auto it = m_ProfileJson["model"].begin(); it != m_ProfileJson["model"].end(); ++it)
-    {
-        if (it.value().is_object()) {
-            json temp_model = it.value();
-            std::string model_name = temp_model["model"];
-            std::string vendor_name = temp_model["vendor"];
-            std::string selected = temp_model["nozzle_selected"];
-            boost::trim(selected);
-            std::string nozzle;
-            while (selected.size() > 0) {
-                auto pos = selected.find(';');
-                if (pos != std::string::npos) {
-                    nozzle   = selected.substr(0, pos);
-                    m_appconfig_new.set_variant(vendor_name, model_name, nozzle, "true");
-                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("vendor_name %1%, model_name %2%, nozzle %3% selected")%vendor_name %model_name %nozzle;
-                    selected = selected.substr(pos + 1);
-                    boost::trim(selected);
-                }
-                else {
-                    m_appconfig_new.set_variant(vendor_name, model_name, selected, "true");
-                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("vendor_name %1%, model_name %2%, nozzle %3% selected")%vendor_name %model_name %selected;
-                    break;
+        for (auto it = m_ProfileJson["model"].begin(); it != m_ProfileJson["model"].end(); ++it) {
+            if (it.value().is_object()) {
+                json temp_model = it.value();
+                std::string model_name = temp_model["model"];
+                std::string vendor_name = temp_model["vendor"];
+                std::string selected = temp_model["nozzle_selected"];
+                boost::trim(selected);
+                std::string nozzle;
+                while (selected.size() > 0) {
+                    auto pos = selected.find(';');
+                    if (pos != std::string::npos) {
+                        nozzle   = selected.substr(0, pos);
+                        m_appconfig_new.set_variant(vendor_name, model_name, nozzle, "true");
+                        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("vendor_name %1%, model_name %2%, nozzle %3% selected")%vendor_name %model_name %nozzle;
+                        selected = selected.substr(pos + 1);
+                        boost::trim(selected);
+                    }
+                    else {
+                        m_appconfig_new.set_variant(vendor_name, model_name, selected, "true");
+                        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("vendor_name %1%, model_name %2%, nozzle %3% selected")%vendor_name %model_name %selected;
+                        break;
+                    }
                 }
             }
         }

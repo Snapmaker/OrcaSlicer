@@ -29,6 +29,9 @@
     "filament_end_gcode": [
         ""
     ],
+    "filament_type": [
+        "PETG-HF"
+    ],
     "filament_max_volumetric_speed": [
         "20"
     ],

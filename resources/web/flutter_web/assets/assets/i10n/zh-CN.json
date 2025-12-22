@@ -72,7 +72,8 @@
       "contact_support": "联系客服",
       "reselect": "重新选择",
       "resend": "重新发送",
-      "check_device": "检查设备"
+      "check_device": "检查设备",
+      "check_network": "检查网络"
     }
   },
   "title": "发现设备",

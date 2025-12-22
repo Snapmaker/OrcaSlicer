@@ -72,7 +72,8 @@
       "contact_support": "Contact Support",
       "reselect": "Reselect",
       "resend": "Resend",
-      "check_device": "Check Device"
+      "check_device": "Check Device",
+      "check_network": "Check Network"
     }
   },
   "title": "Discovery Device",

@@ -27,6 +27,10 @@ NetworkTestDialog::NetworkTestDialog(wxWindow* parent, wxWindowID id, const wxSt
             wxSize(1000, 700),
             /*wxCAPTION*/wxDEFAULT_DIALOG_STYLE|wxMAXIMIZE_BOX|wxMINIMIZE_BOX|wxRESIZE_BORDER)
 {
+	// Create a self-managing shared_ptr for weak_ptr support
+	// Note: This creates a self-reference, so we need to break it in destructor
+	self_ptr = std::shared_ptr<NetworkTestDialog>(this, [](NetworkTestDialog*) { /* custom deleter - do nothing, object is stack-allocated */ });
+	weak_this = self_ptr;
     this->SetBackgroundColour(wxColour(255, 255, 255));
 
 	this->SetSizeHints(wxDefaultSize, wxDefaultSize);
@@ -80,15 +84,21 @@ wxBoxSizer* NetworkTestDialog::create_top_sizer(wxWindow* parent)
     btn_clear_log->SetStyle(ButtonStyle::Regular, ButtonType::Window);
 	line_sizer->Add(btn_clear_log, 0, wxALL, 5);
 
-	btn_start->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
-			start_all_job();
+	btn_start->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent &evt) {
+			if (auto self = weak_this.lock()) {
+				self->start_all_job();
+			}
 		});
-	btn_start_sequence->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
-			start_all_job_sequence();
+	btn_start_sequence->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent &evt) {
+			if (auto self = weak_this.lock()) {
+				self->start_all_job_sequence();
+			}
 		});
-	btn_clear_log->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
-		if (txt_log) {
-			txt_log->Clear();
+	btn_clear_log->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent &evt) {
+		if (auto self = weak_this.lock()) {
+			if (self->txt_log) {
+				self->txt_log->Clear();
+			}
 		}
 	});
 	sizer->Add(line_sizer, 0, wxEXPAND, 5);
@@ -228,28 +238,40 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 
 	sizer->Add(grid_sizer, 1, wxEXPAND, 5);
 
-	btn_link->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-		start_test_github_thread();
+	btn_link->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
+		if (auto self = weak_this.lock()) {
+			self->start_test_github_thread();
+		}
 	});
 
-	btn_bing->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-		start_test_bing_thread();
+	btn_bing->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
+		if (auto self = weak_this.lock()) {
+			self->start_test_bing_thread();
+		}
 	});
 
-	btn_lan_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-		start_test_lan_mqtt_thread();
+	btn_lan_mqtt->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
+		if (auto self = weak_this.lock()) {
+			self->start_test_lan_mqtt_thread();
+		}
 	});
 
-	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-		start_test_cloud_mqtt_thread();
+	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
+		if (auto self = weak_this.lock()) {
+			self->start_test_cloud_mqtt_thread();
+		}
 	});
 
-	btn_login_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-		start_test_login_api_thread();
+	btn_login_api->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
+		if (auto self = weak_this.lock()) {
+			self->start_test_login_api_thread();
+		}
 	});
 
-	btn_upload_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) {
-		start_test_upload_api_thread();
+	btn_upload_api->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
+		if (auto self = weak_this.lock()) {
+			self->start_test_upload_api_thread();
+		}
 	});
 
 	return sizer;
@@ -271,25 +293,28 @@ NetworkTestDialog::~NetworkTestDialog()
 	m_closing.store(true);
 	m_download_cancel = true;
 	cleanup_threads();
+	// Break the self-reference to avoid issues
+	self_ptr.reset();
 }
 
 void NetworkTestDialog::init_bind()
 {
-	Bind(EVT_UPDATE_RESULT, [this](wxCommandEvent& evt) {
-		if (m_closing.load()) return;
+	Bind(EVT_UPDATE_RESULT, [weak_this = weak_this](wxCommandEvent& evt) {
+		auto self = weak_this.lock();
+		if (!self || self->m_closing.load()) return;
 
 		if (evt.GetInt() == TEST_ORCA_JOB) {
-			text_link_val->SetLabelText(evt.GetString());
+			self->text_link_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_BING_JOB) {
-			text_bing_val->SetLabelText(evt.GetString());
+			self->text_bing_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_LAN_MQTT_JOB) {
-			text_lan_mqtt_val->SetLabelText(evt.GetString());
+			self->text_lan_mqtt_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_CLOUD_MQTT_JOB) {
-			text_cloud_mqtt_val->SetLabelText(evt.GetString());
+			self->text_cloud_mqtt_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_LOGIN_API_JOB) {
-			text_login_api_val->SetLabelText(evt.GetString());
+			self->text_login_api_val->SetLabelText(evt.GetString());
 		} else if (evt.GetInt() == TEST_UPLOAD_API_JOB) {
-			text_upload_api_val->SetLabelText(evt.GetString());
+			self->text_upload_api_val->SetLabelText(evt.GetString());
 		}
 
 		std::time_t t = std::time(0);
@@ -298,8 +323,8 @@ void NetworkTestDialog::init_bind()
 		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
 		wxString info = wxString(buf.str()) + ": " + evt.GetString() + "\n";
 		try {
-			if (!m_closing.load() && txt_log) {
-				txt_log->AppendText(info);
+			if (!self->m_closing.load() && self->txt_log) {
+				self->txt_log->AppendText(info);
 			}
 		}
 		catch (std::exception& e) {
@@ -360,52 +385,54 @@ void NetworkTestDialog::start_all_job_sequence()
 		device_ip = dlg.GetValue().Trim();
 	}
 
-	m_sequence_job = new boost::thread([this, device_ip] {
-		update_status(-1, "========================================");
-		update_status(-1, "Start sequence test (single-thread mode)");
-		update_status(-1, "========================================");
-		update_status(-1, "");
+	m_sequence_job = new boost::thread([weak_this = weak_this, device_ip] {
+		auto self = weak_this.lock();
+		if (!self) return;
+		self->update_status(-1, "========================================");
+		self->update_status(-1, "Start sequence test (single-thread mode)");
+		self->update_status(-1, "========================================");
+		self->update_status(-1, "");
 
-        start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
-        if (m_closing.load()) return;
+        self->start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
+        if (self->m_closing.load()) return;
 
-		update_status(-1, "");
-		start_test_url(TEST_ORCA_JOB, "Snapmaker Orca(GitHub)", "https://github.com/Snapmaker/OrcaSlicer");
-		if (m_closing.load()) return;
+		self->update_status(-1, "");
+		self->start_test_url(TEST_ORCA_JOB, "Snapmaker Orca(GitHub)", "https://github.com/Snapmaker/OrcaSlicer");
+		if (self->m_closing.load()) return;
 
 		// 如果用户输入了局域网设备IP，则进行测试
 		if (!device_ip.IsEmpty()) {
-			update_status(-1, "");
-			start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
-			if (m_closing.load()) return;
+			self->update_status(-1, "");
+			self->start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
+			if (self->m_closing.load()) return;
 		}
 
 		// 测试云服务器
-		wxString cloud_server = get_cloud_server_address();
+		wxString cloud_server = self->get_cloud_server_address();
 		if (!cloud_server.IsEmpty()) {
-			update_status(-1, "");
-			start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
+			self->update_status(-1, "");
+			self->start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
 		}
-		if (m_closing.load()) return;
+		if (self->m_closing.load()) return;
 
 		// 测试登录API
-		update_status(-1, "");
+		self->update_status(-1, "");
 		auto app_config = wxGetApp().app_config;
 		std::string region = app_config->get("region");
 		wxString login_api_url = (region == "Chinese Mainland" || region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
-		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
-		if (m_closing.load()) return;
+		self->start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+		if (self->m_closing.load()) return;
 
 		// 测试上传API
-		update_status(-1, "");
+		self->update_status(-1, "");
 		wxString upload_api_url = (region == "Chinese Mainland" || region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
-		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
-		if (m_closing.load()) return;
+		self->start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+		if (self->m_closing.load()) return;
 
-		update_status(-1, "");
-		update_status(-1, "========================================");
-		update_status(-1, "Sequence test completed");
-		update_status(-1, "========================================");
+		self->update_status(-1, "");
+		self->update_status(-1, "========================================");
+		self->update_status(-1, "Sequence test completed");
+		self->update_status(-1, "========================================");
 	});
 }
 
@@ -424,9 +451,11 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 	update_status(-1, "");
 
     int result = -1;
+	auto weak_self = weak_this;
 	http.timeout_max(10)
-		.on_complete([this, &result, job](std::string body, unsigned status) {
-			if (m_closing.load()) return;
+		.on_complete([weak_self, &result, job](std::string body, unsigned status) {
+			auto self = weak_self.lock();
+			if (!self || self->m_closing.load()) return;
 			try {
 				if (status == 200) {
 					result = 0;
@@ -440,21 +469,23 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 				;
 			}
 		})
-		.on_ip_resolve([this,name,job](std::string ip) {
-			if (m_closing.load()) return;
+		.on_ip_resolve([weak_self, name, job](std::string ip) {
+			auto self = weak_self.lock();
+			if (!self || self->m_closing.load()) return;
 			wxString ip_report = "test " + name + " ip resolved = " + wxString::FromUTF8(ip);
-			update_status(job, ip_report);
+			self->update_status(job, ip_report);
 		})
-		.on_error([this,name,job](std::string body, std::string error, unsigned int status) {
-		if (m_closing.load()) return;
+		.on_error([weak_self, name, job](std::string body, std::string error, unsigned int status) {
+		auto self = weak_self.lock();
+		if (!self || self->m_closing.load()) return;
 		// Upload API: 403 is OK (HTTPS resource with permission check)
 		if (job == TEST_UPLOAD_API_JOB && status == 403) {
-			this->update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
+			self->update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
 			return;
 		}
 		wxString info = wxString::Format("status=%u, body=", status) + wxString::FromUTF8(body) + ", error=" + wxString::FromUTF8(error);
-        this->update_status(job, "test " + name + " failed");
-        this->update_status(-1, info);
+        self->update_status(job, "test " + name + " failed");
+        self->update_status(-1, info);
 	}).perform_sync();
 
 	if (result == 0) {
@@ -468,10 +499,12 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 
 void NetworkTestDialog::start_test_ping_thread()
 {
-	test_job[TEST_PING_JOB] = new boost::thread([this] {
-		m_in_testing[TEST_PING_JOB].store(true);
+	test_job[TEST_PING_JOB] = new boost::thread([weak_this = weak_this] {
+		auto self = weak_this.lock();
+		if (!self) return;
+		self->m_in_testing[TEST_PING_JOB].store(true);
 
-		m_in_testing[TEST_PING_JOB].store(false);
+		self->m_in_testing[TEST_PING_JOB].store(false);
 	});
 }
 
@@ -859,9 +892,11 @@ void NetworkTestDialog::start_test_lan_mqtt_thread()
 		test_job[TEST_LAN_MQTT_JOB] = nullptr;
 	}
 
-	test_job[TEST_LAN_MQTT_JOB] = new boost::thread([this, device_ip] {
+	test_job[TEST_LAN_MQTT_JOB] = new boost::thread([weak_this = weak_this, device_ip] {
+		auto self = weak_this.lock();
+		if (!self) return;
 		// 测试局域网设备 - 端口默认1884
-		start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
+		self->start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
 	});
 }
 
@@ -895,9 +930,11 @@ void NetworkTestDialog::start_test_cloud_mqtt_thread()
 		test_job[TEST_CLOUD_MQTT_JOB] = nullptr;
 	}
 
-	test_job[TEST_CLOUD_MQTT_JOB] = new boost::thread([this, cloud_server] {
+	test_job[TEST_CLOUD_MQTT_JOB] = new boost::thread([weak_this = weak_this, cloud_server] {
+		auto self = weak_this.lock();
+		if (!self) return;
 		// 测试云服务器 - 使用telnet方式，端口8883
-		start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
+		self->start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
 	});
 }
 void NetworkTestDialog::start_test_github_thread()
@@ -911,8 +948,10 @@ void NetworkTestDialog::start_test_github_thread()
 		test_job[TEST_ORCA_JOB] = nullptr;
 	}
 
-    test_job[TEST_ORCA_JOB] = new boost::thread([this] {
-        start_test_url(TEST_ORCA_JOB, "Snapmaker Orca(GitHub)", "https://github.com/Snapmaker/OrcaSlicer");
+    test_job[TEST_ORCA_JOB] = new boost::thread([weak_this = weak_this] {
+        auto self = weak_this.lock();
+		if (!self) return;
+        self->start_test_url(TEST_ORCA_JOB, "Snapmaker Orca(GitHub)", "https://github.com/Snapmaker/OrcaSlicer");
     });
 }
 
@@ -927,8 +966,10 @@ void NetworkTestDialog::start_test_bing_thread()
 		test_job[TEST_BING_JOB] = nullptr;
 	}
 
-    test_job[TEST_BING_JOB] = new boost::thread([this] {
-        start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
+    test_job[TEST_BING_JOB] = new boost::thread([weak_this = weak_this] {
+        auto self = weak_this.lock();
+		if (!self) return;
+        self->start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
     });
 }
 
@@ -943,11 +984,13 @@ void NetworkTestDialog::start_test_login_api_thread()
 		test_job[TEST_LOGIN_API_JOB] = nullptr;
 	}
 
-	test_job[TEST_LOGIN_API_JOB] = new boost::thread([this] {
+	test_job[TEST_LOGIN_API_JOB] = new boost::thread([weak_this = weak_this] {
+		auto self = weak_this.lock();
+		if (!self) return;
 		auto app_config = wxGetApp().app_config;
 		std::string region = app_config->get("region");
 		wxString login_api_url = (region == "Chinese Mainland") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
-		start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+		self->start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
 	});
 }
 
@@ -962,11 +1005,13 @@ void NetworkTestDialog::start_test_upload_api_thread()
 		test_job[TEST_UPLOAD_API_JOB] = nullptr;
 	}
 
-	test_job[TEST_UPLOAD_API_JOB] = new boost::thread([this] {
+	test_job[TEST_UPLOAD_API_JOB] = new boost::thread([weak_this = weak_this] {
+		auto self = weak_this.lock();
+		if (!self) return;
 		auto app_config = wxGetApp().app_config;
 		std::string region = app_config->get("region");
 		wxString upload_api_url = (region == "Chinese Mainland") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
-		start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+		self->start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
 	});
 }
 

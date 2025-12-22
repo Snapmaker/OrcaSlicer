@@ -28,6 +28,7 @@
 #include "MoonRaker.hpp"
 
 #include "slic3r/GUI/WebPresetDialog.hpp"
+#include <mutex>
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 #include "slic3r/GUI/WebUrlDialog.hpp"
@@ -184,6 +185,7 @@ WCP_Logger::~WCP_Logger()
 }
 
 extern json m_ProfileJson;
+extern std::mutex m_ProfileJson_mutex;
 
 std::vector<std::string> load_thumbnails(const std::string& file, size_t image_count)
 {
@@ -5236,30 +5238,33 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             m_dialog->m_device_id = ip;
 
                                             // 检查是否该预设已经选入系统
-                                            int  nModel = m_ProfileJson["model"].size();
-                                            bool isFind = false;
-                                            for (int m = 0; m < nModel; m++) {
-                                                if (m_ProfileJson["model"][m]["model"].get<std::string>() == info.model_name) {
-                                                    // 绑定的预设已被选入系统
-                                                    isFind                      = true;
-                                                    std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"]
-                                                                                      .get<std::string>();
-                                                    std::string se_nozz_selected = nozzle_diameters[0];
-                                                    if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
-                                                        nozzle_selected += ";" + se_nozz_selected;
-                                                        m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
+                                            {
+                                                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+                                                int  nModel = m_ProfileJson["model"].size();
+                                                bool isFind = false;
+                                                for (int m = 0; m < nModel; m++) {
+                                                    if (m_ProfileJson["model"][m]["model"].get<std::string>() == info.model_name) {
+                                                        // 绑定的预设已被选入系统
+                                                        isFind                      = true;
+                                                        std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"]
+                                                                                              .get<std::string>();
+                                                        std::string se_nozz_selected = nozzle_diameters[0];
+                                                        if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
+                                                            nozzle_selected += ";" + se_nozz_selected;
+                                                            m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
+                                                        }
+
+                                                        break;
                                                     }
-
-                                                    break;
                                                 }
-                                            }
 
-                                            if (!isFind) {
-                                                json new_item;
-                                                new_item["vendor"]          = "Snapmaker";
-                                                new_item["model"]           = info.model_name;
-                                                new_item["nozzle_selected"] = nozzle_diameters[0];
-                                                m_ProfileJson["model"].push_back(new_item);
+                                                if (!isFind) {
+                                                    json new_item;
+                                                    new_item["vendor"]          = "Snapmaker";
+                                                    new_item["model"]           = info.model_name;
+                                                    new_item["nozzle_selected"] = nozzle_diameters[0];
+                                                    m_ProfileJson["model"].push_back(new_item);
+                                                }
                                             }
 
                                             wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(false);

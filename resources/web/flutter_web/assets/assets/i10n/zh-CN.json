@@ -431,6 +431,7 @@
   "Start Print": "开始打印",
   "layer": "层",
   "Preferences": "偏好设置",
+  "Send gcode failed, please try again later.": "发送指令失败，请稍后重试",
 
   "dialog_device_control_modify_heated_bed_temperature_tips": "温度必须在0°C到100°C之间",
   "dialog_device_control_modify_print_speed_tips": "打印速度必须在50%到150%之间",

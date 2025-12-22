@@ -1,6 +1,6 @@
 {
     "type": "filament",
-    "name": "Generic PETG HF @base",
+    "name": "Snapmaker PETG HF @base",
     "inherits": "fdm_filament_pet_generic",
     "from": "system",
     "filament_id": "GFG021",
@@ -10,9 +10,6 @@
     ],
     "cool_plate_temp_initial_layer": [
         "0"
-    ],
-    "filament_type": [
-        "PETG-HF"
     ],
     "eng_plate_temp": [
         "70"

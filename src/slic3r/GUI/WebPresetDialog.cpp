@@ -30,12 +30,14 @@
 #include <libslic3r/Utils.hpp>
 #include "CreatePresetsDialog.hpp"
 #include "slic3r/GUI/Tab.hpp"
+#include <mutex>
 
 using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
 
 extern json m_ProfileJson;
+extern std::mutex m_ProfileJson_mutex;
 extern void StringReplace(string& strBase, string strSrc, string strDes);
 
 static wxString update_custom_filaments()
@@ -112,7 +114,7 @@ static wxString update_custom_filaments()
 }
 
 WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
-    : DPIDialog((wxWindow*) (pGUI->mainframe), wxID_ANY, "Snapmaker Orca", wxDefaultPosition, wxDefaultSize, style), m_appconfig_new()
+    : DPIDialog((wxWindow*) (nullptr), wxID_ANY, "Snapmaker Orca", wxDefaultPosition, wxDefaultSize, style), m_appconfig_new()
 {
     SetBackgroundColour(*wxWHITE);
     // INI
@@ -424,7 +426,11 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
             m_Res["command"]     = "response_userguide_profile";
             m_Res["sequence_id"] = "10001";
 
-            json res_json = m_ProfileJson;
+            json res_json;
+            {
+                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+                res_json = m_ProfileJson;
+            }
 
             // 把所有的选中信息取消，换成当前连接的机器
             std::string model_name = "";
@@ -491,27 +497,30 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
         } else if (strCmd == "save_userguide_models") {
             json MSelected = j["data"];
 
-            int nModel = m_ProfileJson["model"].size();
-            bool isFind = false;
-            for (int m = 0; m < nModel; m++) {
-                if (m_ProfileJson["model"][m]["model"].get<std::string>() == MSelected.begin().value()["model"].get<std::string>()) {
-                    // 绑定的预设已被选入系统
-                    isFind = true;
-                    std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"].get<std::string>();
-                    std::string se_nozz_selected = MSelected.begin().value()["nozzle_diameter"].get<std::string>();
-                    if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
-                        nozzle_selected += ";" + se_nozz_selected;
-                        m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
-                    }
+            {
+                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+                int nModel = m_ProfileJson["model"].size();
+                bool isFind = false;
+                for (int m = 0; m < nModel; m++) {
+                    if (m_ProfileJson["model"][m]["model"].get<std::string>() == MSelected.begin().value()["model"].get<std::string>()) {
+                        // 绑定的预设已被选入系统
+                        isFind = true;
+                        std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"].get<std::string>();
+                        std::string se_nozz_selected = MSelected.begin().value()["nozzle_diameter"].get<std::string>();
+                        if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
+                            nozzle_selected += ";" + se_nozz_selected;
+                            m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
+                        }
 
-                    break;
+                        break;
+                    }
                 }
-            }
-            if (!isFind) {
-                json new_item;
-                new_item["model"] = MSelected.begin().value()["model"];
-                new_item["nozzle_selected"] = MSelected.begin().value()["nozzle_diameter"];
-                m_ProfileJson["model"].push_back(new_item);
+                if (!isFind) {
+                    json new_item;
+                    new_item["model"] = MSelected.begin().value()["model"];
+                    new_item["nozzle_selected"] = MSelected.begin().value()["nozzle_diameter"];
+                    m_ProfileJson["model"].push_back(new_item);
+                }
             }
 
             DeviceInfo info;
@@ -548,22 +557,29 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
             }
 
         } else if (strCmd == "save_userguide_filaments") {
-            // reset
-            for (auto it = m_ProfileJson["filament"].begin(); it != m_ProfileJson["filament"].end(); ++it) {
-                m_ProfileJson["filament"][it.key()]["selected"] = 0;
-            }
+            {
+                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+                // reset
+                for (auto it = m_ProfileJson["filament"].begin(); it != m_ProfileJson["filament"].end(); ++it) {
+                    m_ProfileJson["filament"][it.key()]["selected"] = 0;
+                }
 
-            json fSelected = j["data"]["filament"];
-            int  nF        = fSelected.size();
-            for (int m = 0; m < nF; m++) {
-                std::string fName = fSelected[m];
+                json fSelected = j["data"]["filament"];
+                int  nF        = fSelected.size();
+                for (int m = 0; m < nF; m++) {
+                    std::string fName = fSelected[m];
 
-                m_ProfileJson["filament"][fName]["selected"] = 1;
+                    m_ProfileJson["filament"][fName]["selected"] = 1;
+                }
             }
         } else if (strCmd == "user_guide_finish") {
             SaveProfile();
 
-            std::string oldregion = m_ProfileJson["region"];
+            std::string oldregion;
+            {
+                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+                oldregion = m_ProfileJson["region"];
+            }
             bool        bLogin    = false;
             if (m_Region != oldregion) {
                 AppConfig*    config       = GUI::wxGetApp().app_config;
@@ -590,7 +606,10 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
             this->Close();
         } else if (strCmd == "save_region") {
             m_Region = j["region"];
-            m_ProfileJson["region"] = m_Region;
+            {
+                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+                m_ProfileJson["region"] = m_Region;
+            }
         }
         else if (strCmd == "common_openurl") {
            
@@ -622,7 +641,10 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
         BOOST_LOG_TRIVIAL(trace) << "WebPresetDialog::OnScriptMessage;Error:" << e.what();
     }
 
-    wxString strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
+    {
+        std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+        wxString strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
+    }
 }
 
 void WebPresetDialog::RunScript(const wxString& javascript)
@@ -754,7 +776,11 @@ int WebPresetDialog::SaveProfile()
 
     m_MainPtr->app_config->save();
 
-    std::string strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
+    std::string strAll;
+    {
+        std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+        strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "before save to app_config: " << std::endl << strAll;
 
@@ -762,9 +788,12 @@ int WebPresetDialog::SaveProfile()
     const std::string&                 section_name = AppConfig::SECTION_FILAMENTS;
     std::map<std::string, std::string> section_new;
     m_appconfig_new.clear_section(section_name);
-    for (auto it = m_ProfileJson["filament"].begin(); it != m_ProfileJson["filament"].end(); ++it) {
-        if (it.value()["selected"] == 1) {
-            section_new[it.key()] = "true";
+    {
+        std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+        for (auto it = m_ProfileJson["filament"].begin(); it != m_ProfileJson["filament"].end(); ++it) {
+            if (it.value()["selected"] == 1) {
+                section_new[it.key()] = "true";
+            }
         }
     }
     m_appconfig_new.set_section(section_name, section_new);
@@ -772,7 +801,9 @@ int WebPresetDialog::SaveProfile()
     // set vendors to app_config
     Slic3r::AppConfig::VendorMap empty_vendor_map;
     m_appconfig_new.set_vendors(empty_vendor_map);
-    for (auto it = m_ProfileJson["model"].begin(); it != m_ProfileJson["model"].end(); ++it) {
+    {
+        std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+        for (auto it = m_ProfileJson["model"].begin(); it != m_ProfileJson["model"].end(); ++it) {
         if (it.value().is_object()) {
             json        temp_model  = it.value();
             std::string model_name  = temp_model["model"];
@@ -1121,6 +1152,7 @@ int WebPresetDialog::GetFilamentInfo(std::string VendorDirectory, json& pFilaLis
 
 int WebPresetDialog::LoadProfile()
 {
+    std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
     try {
         // wxString ExePath            = boost::dll::program_location().parent_path().string();
         // wxString TargetFolder       = ExePath + "\\resources\\profiles\\";

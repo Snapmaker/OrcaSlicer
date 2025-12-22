@@ -17,6 +17,7 @@
 #include "Utils.hpp"
 #include "PrintConfig.hpp"
 #include "Model.hpp"
+#include "Triangulation.hpp"
 #include "format.hpp"
 #include <float.h>
 
@@ -2820,6 +2821,15 @@ void Print::_make_wipe_tower()
         m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position(), wipe_tower.width(), wipe_tower.get_height(),
                                                   wipe_tower.get_layer_height(), m_wipe_tower_data.depth, m_wipe_tower_data.brim_width,
                                                   {scale_(origin.x()), scale_(origin.y())});
+
+        // Get wall type and rib parameters from config
+        std::string wall_type = "rectangle"; // BBL printers don't use rib
+        float rib_width = 0.f;
+        float rib_length = 0.f;
+
+        // Construct mesh for visualization
+        m_wipe_tower_data.construct_mesh(wipe_tower.width(), m_wipe_tower_data.depth, wipe_tower.get_height(), m_wipe_tower_data.brim_width,
+                                         wall_type, rib_width, rib_length);
     } else {
         // Initialize the wipe tower.
         WipeTower2 wipe_tower(m_config, m_default_region_config, m_plate_index, m_origin, wipe_volumes,
@@ -2910,6 +2920,20 @@ void Print::_make_wipe_tower()
                                                   m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
                                                   config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
                                                   {scale_(origin.x()), scale_(origin.y())});
+
+        // Get wall type and rib parameters from config
+        auto wall_type_opt = config().option<ConfigOptionEnum<WipeTowerWallType>>("wipe_tower_wall_type");
+        std::string wall_type = wall_type_opt ?
+            (wall_type_opt->value == wtwRib ? "rib" : "rectangle") : "rectangle";
+        float rib_width = config().wipe_tower_rib_width;
+        // Calculate rib_length as diagonal + extra_rib_length (match WipeTower2 behavior)
+        float diagonal_length = std::sqrt(m_wipe_tower_data.depth * m_wipe_tower_data.depth +
+                                          wipe_tower.width() * wipe_tower.width());
+        float rib_length = diagonal_length + config().wipe_tower_extra_rib_length;
+
+        // Construct mesh for visualization
+        m_wipe_tower_data.construct_mesh(wipe_tower.width(), m_wipe_tower_data.depth, wipe_tower.get_wipe_tower_height(), m_wipe_tower_data.brim_width,
+                                         wall_type, rib_width, rib_length);
     }
 }
 
@@ -4371,6 +4395,197 @@ PrintRegion *PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_reg
 int PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region_id(const LayerRangeRegions &layer_range) const
 {
     return this->parent_print_object_region(layer_range)->print_object_region_id();
+}
+
+// Helper function from WipeTower2 to generate rectangle around a line
+static Polygon generate_rectange(const Line& line, coord_t offset)
+{
+    Point p1 = line.a;
+    Point p2 = line.b;
+
+    double dx = p2.x() - p1.x();
+    double dy = p2.y() - p1.y();
+
+    double length = std::sqrt(dx * dx + dy * dy);
+
+    double ux = dx / length;
+    double uy = dy / length;
+
+    double vx = -uy;
+    double vy = ux;
+
+    double ox = vx * offset;
+    double oy = vy * offset;
+
+    Points rect;
+    rect.resize(4);
+    rect[0] = Point(p1.x() + ox, p1.y() + oy);
+    rect[1] = Point(p1.x() - ox, p1.y() - oy);
+    rect[2] = Point(p2.x() - ox, p2.y() - oy);
+    rect[3] = Point(p2.x() + ox, p2.y() + oy);
+
+    return Polygon(rect);
+}
+
+// Generate rib polygon for visualization (based on WipeTower2::generate_rib_polygon)
+static Polygon generate_rib_polygon_for_preview(float width, float depth, float rib_width, float rib_length)
+{
+    coord_t diagonal_width = scaled(rib_width) / 2;
+
+    // Create two diagonal lines
+    Line line_1(Point::new_scale(Vec2f{0, 0}), Point::new_scale(Vec2f{width, depth}));
+    Line line_2(Point::new_scale(Vec2f{width, 0}), Point::new_scale(Vec2f{0, depth}));
+
+    // Calculate extension length (unscaled, in mm)
+    float diagonal_extra_length = std::max(0.f, rib_length - (float)unscaled(line_1.length())) / 2.f;
+
+    // For preview, use bottom layer (z=0) which has maximum rib extension
+    // layer_factor = (max_height - 0) / max_height = 1.0, so we use full diagonal_extra_length
+
+    // Scale once to coord_t units (fix double scaling bug!)
+    coord_t diagonal_extra_length_scaled = scaled(diagonal_extra_length);
+
+    // Extend the lines (already scaled, don't scale again)
+    line_1.extend(diagonal_extra_length_scaled);
+    line_2.extend(diagonal_extra_length_scaled);
+
+    // Generate rectangles around the diagonal lines
+    Polygon poly_1 = generate_rectange(line_1, diagonal_width);
+    Polygon poly_2 = generate_rectange(line_2, diagonal_width);
+
+    // Create base rectangle
+    Polygon base_poly;
+    base_poly.points.push_back(Point::new_scale(Vec2f{0, 0}));
+    base_poly.points.push_back(Point::new_scale(Vec2f{width, 0}));
+    base_poly.points.push_back(Point::new_scale(Vec2f{width, depth}));
+    base_poly.points.push_back(Point::new_scale(Vec2f{0, depth}));
+
+    // Union all three polygons
+    Polygons unified = union_({poly_1, poly_2, base_poly});
+    return unified.empty() ? base_poly : unified.front();
+}
+
+// Helper function to generate rib tower 3D mesh from polygon
+static TriangleMesh make_rib_tower_mesh(const Polygon& bottom, const Polygon& top, float height)
+{
+    TriangleMesh res;
+    assert(bottom.points.size() == top.points.size());
+
+    int offset = bottom.points.size();
+    res.its.vertices.reserve(offset * 2);
+
+    // Triangulate bottom and top faces
+    auto faces_bottom = Triangulation::triangulate(bottom);
+    auto faces_top = Triangulation::triangulate(top);
+    res.its.indices.reserve(offset * 2 + faces_bottom.size() + faces_top.size());
+
+    // Add bottom face (inverted winding)
+    for (const auto &t : faces_bottom)
+        res.its.indices.push_back(stl_triangle_vertex_indices(t[1], t[0], t[2]));
+
+    // Add top face
+    for (const auto &t : faces_top)
+        res.its.indices.push_back(stl_triangle_vertex_indices(t[0] + offset, t[1] + offset, t[2] + offset));
+
+    // Add vertices
+    for (size_t i = 0; i < bottom.size(); i++)
+        res.its.vertices.push_back(stl_vertex(unscaled<float>(bottom[i][0]), unscaled<float>(bottom[i][1]), 0));
+    for (size_t i = 0; i < top.size(); i++)
+        res.its.vertices.push_back(stl_vertex(unscaled<float>(top[i][0]), unscaled<float>(top[i][1]), height));
+
+    // Add side faces
+    for (int i = 0; i < offset; i++) {
+        int a = i;
+        int b = (i + 1) % offset;
+        int c = i + offset;
+        int d = b + offset;
+        res.its.indices.push_back(stl_triangle_vertex_indices(a, b, c));
+        res.its.indices.push_back(stl_triangle_vertex_indices(d, c, b));
+    }
+
+    return res;
+}
+
+// Helper function to generate rib brim 3D mesh from polygon
+static TriangleMesh make_rib_brim_mesh(const Polygon& brim, float layer_height)
+{
+    TriangleMesh res;
+    int offset = brim.size();
+    res.its.vertices.reserve(brim.size() * 2);
+
+    // Triangulate bottom and top faces
+    auto faces = Triangulation::triangulate(brim);
+    res.its.indices.reserve(brim.size() * 2 + 2 * faces.size());
+
+    // Add bottom face (inverted winding)
+    for (const auto &t : faces)
+        res.its.indices.push_back(stl_triangle_vertex_indices(t[1], t[0], t[2]));
+
+    // Add top face
+    for (const auto &t : faces)
+        res.its.indices.push_back(stl_triangle_vertex_indices(t[0] + offset, t[1] + offset, t[2] + offset));
+
+    // Add vertices
+    for (size_t i = 0; i < brim.size(); i++)
+        res.its.vertices.push_back(stl_vertex(unscaled<float>(brim[i][0]), unscaled<float>(brim[i][1]), 0));
+    for (size_t i = 0; i < brim.size(); i++)
+        res.its.vertices.push_back(stl_vertex(unscaled<float>(brim[i][0]), unscaled<float>(brim[i][1]), layer_height));
+
+    // Add side faces
+    for (int i = 0; i < offset; i++) {
+        int a = i;
+        int b = (i + 1) % offset;
+        int c = i + offset;
+        int d = b + offset;
+        res.its.indices.push_back(stl_triangle_vertex_indices(a, b, c));
+        res.its.indices.push_back(stl_triangle_vertex_indices(d, c, b));
+    }
+
+    return res;
+}
+
+void WipeTowerData::construct_mesh(float width, float depth, float height, float brim_width,
+                                   const std::string& wall_type, float rib_width, float rib_length)
+{
+    wipe_tower_mesh_data = WipeTowerMeshData{};
+    float first_layer_height = 0.2f; // brim height
+
+    if (wall_type == "rib") {
+        // Rib tower: generate accurate rib polygon using the same algorithm as WipeTower2
+        Polygon bottom = generate_rib_polygon_for_preview(width, depth, rib_width, rib_length);
+
+        // For top polygon, we use the same shape (simplified - actual tower has varying rib lengths at different heights)
+        Polygon top = bottom;
+
+        // Generate meshes
+        wipe_tower_mesh_data->real_wipe_tower_mesh = make_rib_tower_mesh(bottom, top, height);
+
+        // Generate brim - offset the rib polygon
+        Polygons brim_polys = offset(bottom, scaled(brim_width));
+        if (!brim_polys.empty()) {
+            Polygon brim_poly = brim_polys.front();
+            wipe_tower_mesh_data->real_brim_mesh = make_rib_brim_mesh(brim_poly, first_layer_height);
+            wipe_tower_mesh_data->bottom = brim_poly;
+        } else {
+            // Fallback if offset fails
+            wipe_tower_mesh_data->real_brim_mesh = make_rib_brim_mesh(bottom, first_layer_height);
+            wipe_tower_mesh_data->bottom = bottom;
+        }
+
+    } else {
+        // Rectangle tower (existing code)
+        wipe_tower_mesh_data->real_wipe_tower_mesh = make_cube(width, depth, height);
+
+        wipe_tower_mesh_data->real_brim_mesh = make_cube(width + 2 * brim_width, depth + 2 * brim_width, first_layer_height);
+        wipe_tower_mesh_data->real_brim_mesh.translate({-brim_width, -brim_width, 0});
+
+        wipe_tower_mesh_data->bottom = {
+            scaled(Vec2f{-brim_width, -brim_width}),
+            scaled(Vec2f{width + brim_width, -brim_width}),
+            scaled(Vec2f{width + brim_width, depth + brim_width}),
+            scaled(Vec2f{-brim_width, depth + brim_width})
+        };
+    }
 }
 
 } // namespace Slic3r

@@ -2254,6 +2254,11 @@ void WipeTower2::plan_tower()
 				m_plan[i].depth = this_layer_depth;
 		}
 	}
+
+	// Force rib tower to be square (match BambuStudio behavior)
+	if (m_wall_type == 2) {  // wtwRib
+		m_wipe_tower_depth = std::max(m_wipe_tower_width, m_wipe_tower_depth);
+	}
 }
 
 void WipeTower2::save_on_last_wipe()

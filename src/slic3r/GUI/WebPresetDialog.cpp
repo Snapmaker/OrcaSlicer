@@ -112,7 +112,7 @@ static wxString update_custom_filaments()
 }
 
 WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
-    : DPIDialog((wxWindow*) (pGUI->mainframe), wxID_ANY, "Snapmaker Orca", wxDefaultPosition, wxDefaultSize, style), m_appconfig_new()
+    : DPIDialog((wxWindow*) (nullptr), wxID_ANY, "Snapmaker Orca", wxDefaultPosition, wxDefaultSize, style), m_appconfig_new()
 {
     SetBackgroundColour(*wxWHITE);
     // INI
@@ -393,6 +393,7 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
 {
     try {
         wxString strInput = evt.GetString();
+        wxString utf8_input = strInput.ToUTF8();
         BOOST_LOG_TRIVIAL(trace) << "WebPresetDialog::OnScriptMessage;OnRecv:" << strInput.c_str();
         json j = json::parse(strInput);
 

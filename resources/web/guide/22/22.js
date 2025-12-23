@@ -98,7 +98,7 @@ function SortUI()
 		if( fModel=='')
 		{
 			// Orca: hide
-			bFind=true;
+			// bFind=true;
 		}
 		else
 		{

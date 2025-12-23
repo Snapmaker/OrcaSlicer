@@ -293,6 +293,11 @@ NetworkTestDialog::~NetworkTestDialog()
 	m_closing.store(true);
 	m_download_cancel = true;
 	cleanup_threads();
+
+	// Small delay to allow any in-flight update_status calls to complete
+	// before destroying the shared_ptr control block
+	boost::this_thread::sleep_for(boost::chrono::milliseconds(50));
+
 	// Break the self-reference to avoid issues
 	self_ptr.reset();
 }
@@ -1059,11 +1064,27 @@ void NetworkTestDialog::on_dpi_changed(const wxRect &suggested_rect)
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
+	// Early exit if dialog is closing - don't access any members
 	if (m_closing.load()) return;
-	auto evt = new wxCommandEvent(EVT_UPDATE_RESULT, this->GetId());
-	evt->SetString(info);
-	evt->SetInt(job_id);
-	wxQueueEvent(this, evt);
+
+	// Use try-catch to protect against accessing destroyed dialog
+	try {
+		// Double check before creating event
+		if (m_closing.load()) return;
+
+		auto evt = new wxCommandEvent(EVT_UPDATE_RESULT, this->GetId());
+		evt->SetString(info);
+		evt->SetInt(job_id);
+
+		// Triple check before queuing - race condition window is very small
+		if (!m_closing.load()) {
+			wxQueueEvent(this, evt);
+		} else {
+			delete evt;
+		}
+	} catch (...) {
+		// Silently ignore if dialog was destroyed during operation
+	}
 }
 
 void NetworkTestDialog::cleanup_threads()
@@ -1072,11 +1093,11 @@ void NetworkTestDialog::cleanup_threads()
 	for (int i = 0; i < TEST_JOB_MAX; i++) {
 		if (test_job[i] != nullptr) {
 			if (test_job[i]->joinable()) {
-				// Try to join with a short timeout (200ms)
-				// If thread is blocked in wxExecute, don't wait indefinitely
-				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(200))) {
+				// Try to join with longer timeout (1000ms) to reduce chance of detach
+				// Threads should check m_closing and exit promptly
+				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(1000))) {
 					// Thread didn't finish in time, detach it to avoid blocking
-					// The thread will check m_closing and exit safely
+					// The thread will check m_closing and should exit safely
 					test_job[i]->detach();
 					BOOST_LOG_TRIVIAL(warning) << "Thread " << i << " didn't finish in time, detached";
 				}
@@ -1089,8 +1110,8 @@ void NetworkTestDialog::cleanup_threads()
 	// Clean up sequence job thread
 	if (m_sequence_job != nullptr) {
 		if (m_sequence_job->joinable()) {
-			// Try to join with a short timeout (200ms)
-			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(200))) {
+			// Try to join with longer timeout (1000ms)
+			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(1000))) {
 				// Thread didn't finish in time, detach it
 				m_sequence_job->detach();
 				BOOST_LOG_TRIVIAL(warning) << "Sequence job thread didn't finish in time, detached";

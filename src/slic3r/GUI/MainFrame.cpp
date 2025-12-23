@@ -889,7 +889,7 @@ void MainFrame::update_layout()
 }
 
 // Called when closing the application and when switching the application language.
-void MainFrame::shutdown()
+void MainFrame::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "MainFrame::shutdown enter";
     // BBS: backup
@@ -956,7 +956,7 @@ void MainFrame::shutdown()
     // to avoid any manipulations with them from App->wxEVT_IDLE after of the mainframe closing
     wxGetApp().tabs_list.clear();
     wxGetApp().model_tabs_list.clear();
-    wxGetApp().shutdown();
+    wxGetApp().shutdown(isRecreate);
     // BBS: why clear ?
     //wxGetApp().plater_ = nullptr;
 

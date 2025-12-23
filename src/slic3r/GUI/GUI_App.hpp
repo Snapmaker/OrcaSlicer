@@ -416,7 +416,7 @@ private:
     // Process command line parameters cached in this->init_params,
     // load configs, STLs etc.
     void            post_init();
-    void            shutdown();
+    void            shutdown(bool isRecreate = false);
     // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
     // Otherwise HTML formatted for the system info dialog.
     static std::string get_gl_info(bool for_github);

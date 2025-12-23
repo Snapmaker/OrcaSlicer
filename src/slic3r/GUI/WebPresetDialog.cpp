@@ -768,8 +768,8 @@ int WebPresetDialog::SaveProfile()
     // } else
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "0");
 
-    m_MainPtr->app_config->set("region", m_Region);
-    m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
+    // m_MainPtr->app_config->set("region", m_Region);
+    // m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 
     // finish
     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");

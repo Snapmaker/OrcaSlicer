@@ -44,6 +44,17 @@
 #define BP_SLICE_DURATION "bury_point_slice_duration"
 #define BP_SLICE_DURATION_TIME "slice_duration_time"
 
+#define BP_WEB_VIEW "bury_point_webview"
+
+#define BP_LOCAL_SERVER "bury_point_local_server"
+#define BP_LOCAL_SERVER_STATUS "bury_point_local_server_status"
+#define BP_LOCAL_SERVER_ERROR_CODE "bury_point_local_server_error_code"
+
+#define BP_LOCAL_SERVER "bury_point_local_server"
+#define BP_LOCAL_SERVER_ERR_CODE "bury_local_server_err_code"
+
+
+
 //webview bury point
 
     BURY_API bool               get_privacy_policy();

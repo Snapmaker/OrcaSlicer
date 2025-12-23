@@ -4,6 +4,7 @@
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
+#include  "sentry_wrapper/SentryWrapper.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -292,6 +293,7 @@ void HttpServer::start()
                 server_->io_service.run();
             } catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "HTTP server error: " << e.what();
+                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,std::string("HttpServer::start ") + e.what(), BP_LOCAL_SERVER);
                 start_http_server = false;
             }
         });
@@ -313,6 +315,8 @@ void HttpServer::start()
         
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
+        std::string error_msg = "Failed to start HTTP server on port " + std::to_string(port) + ": " + e.what();
+        Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, error_msg.c_str(), BP_LOCAL_SERVER);
         start_http_server = false;
         throw;
     }
@@ -460,6 +464,8 @@ void HttpServer::start_health_check()
                     BOOST_LOG_TRIVIAL(info) << "HTTP server restart completed by health check thread";
                 } catch (const std::exception& e) {
                     BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
+                    std::string error_msg = "HTTP server restart failed after health check on port " + std::to_string(port) + ": " + e.what();
+                    Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, error_msg.c_str(), BP_LOCAL_SERVER);
                 }
             } else if (start_http_server) {
                 BOOST_LOG_TRIVIAL(debug) << "HTTP server health check passed";
@@ -654,8 +660,10 @@ std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const 
                     user_avatar = user_j["avatar"].get<std::string>();
                 if (user_j.contains("account"))
                     user_account = user_j["account"].get<std::string>();
-            } catch (...) {
-                ;
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "Failed to parse user profile JSON: " << e.what();
+                std::string error_msg = "User profile JSON parse error: " + std::string(e.what());
+                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, error_msg.c_str(), BP_LOCAL_SERVER);
             }
             json j;
             j["data"]["refresh_token"]      = refresh_token;

@@ -16,6 +16,7 @@
 #include "wx/private/jsscriptwrapper.h"
 #endif
 
+#include "sentry_wrapper/SentryWrapper.hpp"
 #ifdef __WIN32__
 #include <WebView2.h>
 #include <Shellapi.h>
@@ -312,7 +313,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #endif
         webView->EnableContextMenu(true);
     } else {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": failed. Use fake web view.";
+        BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__ << ": failed. Use fake web view.";
+        Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "create webview fail and use fakewebview", BP_WEB_VIEW);
         webView = new FakeWebView;
     }
     webView->SetRefData(new WebViewRef(webView));

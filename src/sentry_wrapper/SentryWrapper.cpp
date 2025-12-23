@@ -210,15 +210,15 @@ void initSentryEx()
         sentry_options_set_sample_rate(options, 1.0);
         sentry_options_set_traces_sample_rate(options, 1.0);
 
-        sentry_set_tag("version", Snapmaker_VERSION);
+        sentry_init(options);
+        sentry_start_session();
+
+        sentry_set_tag("snapmaker_version", Snapmaker_VERSION);
 
         std::string flutterVersion = common::get_flutter_version();
         if (!flutterVersion.empty())
-            set_sentry_tags("flutter_version", flutterVersion);
+            sentry_set_tag("flutter_version", flutterVersion.c_str());
 
-        sentry_init(options);
-        sentry_start_session();
-        
         //sentryReportLog(SENTRY_LOG_ERROR, "init sentry error", "initSentry module");
     }
 }

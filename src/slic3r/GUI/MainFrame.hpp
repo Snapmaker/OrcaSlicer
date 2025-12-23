@@ -246,7 +246,7 @@ public:
     void update_layout();
 
 	// Called when closing the application and when switching the application language.
-	void 		shutdown();
+	void 		shutdown(bool isRecreate = false);
 
     Plater*     plater() { return m_plater; }
 

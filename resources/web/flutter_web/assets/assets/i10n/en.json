@@ -313,6 +313,9 @@
   "time_lapse_video_start_downloading": "Start downloading...",
   "time_lapse_video_export_video_failed": "Export video failed",
 
+  "Network may be unstable, device connection may be unreliable.": "Network may be unstable, device connection may be unreliable",
+  "network_unstable_partial_operation_failed": "Network unstable, partial operation may failed",
+
 
   "Check": "Check",
   "default_exception_title": "Exception",

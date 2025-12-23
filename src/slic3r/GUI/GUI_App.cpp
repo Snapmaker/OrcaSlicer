@@ -1122,7 +1122,7 @@ GUI_App::GUI_App()
     m_fltviews.set_app(this);
 }
 
-void GUI_App::shutdown()
+void GUI_App::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << "GUI_App::shutdown enter";
 
@@ -1156,7 +1156,7 @@ void GUI_App::shutdown()
     }
 
     // Delete WebPresetDialog to ensure proper cleanup
-    if (SSWCP_MqttAgent_Instance::m_dialog != nullptr) {
+    if (SSWCP_MqttAgent_Instance::m_dialog != nullptr && !isRecreate) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy WebPresetDialog");
         delete SSWCP_MqttAgent_Instance::m_dialog;
         SSWCP_MqttAgent_Instance::m_dialog = nullptr;
@@ -3614,7 +3614,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     update_http_extra_header();
 
-    mainframe->shutdown();
+    mainframe->shutdown(true);
+
     ProgressDialog dlg(msg_name, msg_name, 100, nullptr, wxPD_AUTO_HIDE);
     dlg.Pulse();
     dlg.Update(10, _L("Rebuild") + dots);

@@ -376,6 +376,9 @@
   "loading...": "加载中...",
   "Loading...": "加载中...",
   "Login...": "登录中...",
+  "Network may be unstable, device connection may be unreliable": "网络不稳定，设备连接可能不可靠",
+  "network_unstable_partial_operation_failed": "网络不稳定，部分操作可能失败",
+
 
   "Heated Bed Temp.": "热床温度",
   "Print Speed": "打印速度",

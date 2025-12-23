@@ -2308,9 +2308,25 @@ static wxMenu* generate_help_menu()
     });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Open Network Test"), _L("Open Network Test"), [](wxCommandEvent&) {
-            NetworkTestDialog dlg(wxGetApp().mainframe);
-            dlg.ShowModal();
-        });
+        // Use shared_ptr to manage dialog lifetime
+        auto dlg = std::make_shared<NetworkTestDialog>(wxGetApp().mainframe);
+        dlg->ShowModal();
+
+        // Keep dialog alive for 2 seconds after closing to allow background threads to finish
+        // Use a timer to delay the destruction
+        class DelayedReleaseTimer : public wxTimer {
+            std::shared_ptr<NetworkTestDialog> m_dialog;
+        public:
+            DelayedReleaseTimer(std::shared_ptr<NetworkTestDialog> dlg) : m_dialog(std::move(dlg)) {
+                StartOnce(5000); // 5 seconds delay
+            }
+            void Notify() override {
+                m_dialog.reset(); // Release the dialog
+                delete this; // Delete the timer itself
+            }
+        };
+        new DelayedReleaseTimer(dlg); // Timer will delete itself
+    });
 
     // About
 #ifndef __APPLE__

@@ -122,6 +122,8 @@ public:
 
     wxString    m_sm_user_agent;
     std::string m_editing_filament_id;
+
+    std::thread* m_load_thread = nullptr;
 };
 
 }} // namespace Slic3r::GUI

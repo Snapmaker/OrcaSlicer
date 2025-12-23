@@ -11,6 +11,9 @@
     "cool_plate_temp_initial_layer": [
         "0"
     ],
+    "filament_type": [
+        "PETG-HF"
+    ],
     "eng_plate_temp": [
         "70"
     ],

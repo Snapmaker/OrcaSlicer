@@ -72,7 +72,8 @@
       "contact_support": "Contact Support",
       "reselect": "Reselect",
       "resend": "Resend",
-      "check_device": "Check Device"
+      "check_device": "Check Device",
+      "check_network": "Check Network"
     }
   },
   "title": "Discovery Device",
@@ -252,6 +253,7 @@
   "Flow Calibration": "Flow Calibration",
   "Time-Lapse Photography": "Time-Lapse Photography",
   "Start Print": "Start Print",
+  "layer": "layer",
 
   "dialog_device_control_modify_heated_bed_temperature_tips": "Heated bed temperature must be set between 0°C and 100°C",
   "dialog_device_control_modify_print_speed_tips": "Print speed must be set between 50% and 150%",
@@ -264,10 +266,12 @@
   "bind_device_tip_format": "Confirm to bind the printer {} with the current account?",
   "Filament auto feed": "Filament auto feed",
   "Filament auto feed description": "Automatic Feeding\n· Insert the 3D printer filaments into the corresponding feeding port until the indicator light of the corresponding feeding port lights up. The device will pre-load the materials, and the feeding will be automatic when the printing starts.\nFilaments Information\n· Official 3D printer filaments information will be recognized by the device. For non-official filaments, the material information needs to be manually edited.\nAutomatic Resume Printing\n· When a filament break occurs during printing, if the device is equipped with the same brand, type, and color of filaments, the device will automatically resume printing.",
-  "cancel_print_confirm_title": "Tips",
+
   "cancel_print_confirm_message": "Cancel printing Do you want to cancel the printing task ? ",
-  "cancel_print_confirm_yes": "Confirm",
-  "cancel_print_confirm_no": "Cancel",
+ 
+
+  "Tips": "Tips",
+  "close_led_confirm_message": "AI monitoring is enabled. Turning off the LED may reduce detection accuracy. Turn it off anyway?",
 
   "Refresh More": "Refresh More",
   "downloading_desc_format": "{}，downloading...({}%)",
@@ -287,13 +291,28 @@
   "dialog_filament_type_not_match_tips": "This nozzle filament type does not match the preset filament type of the model. Please replace this nozzle filament type or change the preset filament type",
   "dialog_filament_type_none_tips": "Filaments were not identified. Please mount the filaments on the device or edit the filament information",
   "Features are under development, please stay tuned": "Features are under development, please stay tuned",
+  
   "delete_selected_files_confirm_title": "Confirm Delete Selected Files",
   "delete_selected_files_confirm_message": "Are you sure you want to delete the selected files? This action cannot be undone.",
   "clear_all_files_confirm_title": "Confirm Clear All Files",
   "clear_all_files_confirm_message": "Are you sure you want to clear all recent files? This action cannot be undone.",
-  "delete_confirm_yes": "Confirm Delete",
-  "delete_confirm_no": "Cancel",
+  "Confirm Delete": "Confirm Delete",
+
   "connect_devcice_fail_tip_format": "Connect {} failed, please reselect your device and connect.",
+  "time_lapse_video_loaded_failed": "Time Lapse Video loaded failed.",
+  "time_lapse video_export_format": "Time Lapse Video {} exported.",
+  "time_lapse_video_export_button_text_format": "Export ({})",
+  "time_lapse_video_delete_button_text_format": "Delete ({})",
+
+  "delete_time_lapse_title": "Delete Time-lapse Video",
+  "delete_time_lapse_desc": "Do you want to delete this video?",
+  "delete_time_lapse_success": "Delete video success",
+  "delete_time_lapse_failed_format": "Delete video failed {}",
+  "time_lapse_video_downloaded_success_format": "Video {} downloaded",
+  "time_lapse_video_downloaded_success_2_format": "Video {} downloaded，but export video failed",
+  "time_lapse_video_start_downloading": "Start downloading...",
+  "time_lapse_video_export_video_failed": "Export video failed",
+
 
   "Check": "Check",
   "default_exception_title": "Exception",
@@ -725,5 +744,10 @@
   "error_0001053100000007_title": "System Anomaly",
   "error_0001053100000007_desc": "Cloud print file download failed. Check your network connection and retry. If issue persists, contact technical support.",
   "error_0001053100000008_title": "System Anomaly",
-  "error_0001053100000008_desc": "USB flash drive read anomaly. Ensure the USB flash drive is properly connected and retry. If issue persists, contact technical support."
+  "error_0001053100000008_desc": "USB flash drive read anomaly. Ensure the USB flash drive is properly connected and retry. If issue persists, contact technical support.",
+  "camera_turn_off_countdown": "Camera turn-off countdown",
+  "continue_camera": "Continue",
+    "camera_auto_shutdown_message": "The camera has been unused for a long time. To reduce power consumption, it has automatically shut down.",
+  "got_it": "Got it",
+  "monitoring_module_hibernated": "Note : Monitoring Module hibernated. Click Play to wake it up."
 }

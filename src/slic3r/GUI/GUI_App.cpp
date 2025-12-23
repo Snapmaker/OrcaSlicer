@@ -1154,7 +1154,14 @@ void GUI_App::shutdown()
         delete web_preprint_dialog;
         web_preprint_dialog = nullptr;
     }
-   
+
+    // Delete WebPresetDialog to ensure proper cleanup
+    if (SSWCP_MqttAgent_Instance::m_dialog != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy WebPresetDialog");
+        delete SSWCP_MqttAgent_Instance::m_dialog;
+        SSWCP_MqttAgent_Instance::m_dialog = nullptr;
+    }
+
 
     if (m_is_recreating_gui) return;
     m_is_closing = true;

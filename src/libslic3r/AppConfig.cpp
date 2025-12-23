@@ -698,7 +698,7 @@ std::string AppConfig::load()
     auto it_app = m_storage.find("app");
     if (it_app != m_storage.end()) {
         auto it_region = it_app->second.find("region");
-        if (it_region != it_app->second.end() && it_region->second == "China") {
+        if (it_region != it_app->second.end() && (it_region->second == "China" || it_region->second == "")) {
             it_region->second = "Chinese Mainland";
             m_dirty = true;
         }

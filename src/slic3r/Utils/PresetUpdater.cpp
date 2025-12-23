@@ -1745,7 +1745,7 @@ void PresetUpdater::import_flutter_web()
 
         wxString message;
         if (!outdated_presets.empty()) {
-            message = _L("The following profiles could not be imported due to outdated versions.") + "\n";
+            message = _L("This web resouce could not be imported due to outdated versions.") + "\n";
             for (const auto& preset : outdated_presets) {
                 message += "• " + preset + "\n";
             }

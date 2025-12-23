@@ -3764,7 +3764,7 @@ if (res) {
     } catch (std::exception &) {
         // wxMessageBox(e.what(), "", MB_OK);
     }
-    auto isAgree = wxGetApp().app_config->get("snapmaker_privacy_policy", "isagree");
+    auto isAgree = wxGetApp().app_config->get("app", "isagree");
 
     set_privacy_policy(isAgree == "true");    
 }
@@ -7072,7 +7072,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         mainframe->refresh_plugin_tips();
         // BBS: remove SLA related message
     }
-    auto isAgree = wxGetApp().app_config->get("snapmaker_privacy_policy", "isagree");
+    auto isAgree = wxGetApp().app_config->get("app", "privacy_policy_isagree");
 
     set_privacy_policy(isAgree == "true");    
 

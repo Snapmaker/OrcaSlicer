@@ -648,7 +648,7 @@ int GuideFrame::SaveProfile()
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "1");
     // } else
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "0");
-    m_MainPtr->app_config->set("snapmaker_privacy_policy", "isagree", PrivacyUse);
+    m_MainPtr->app_config->set("app", "privacy_policy_isagree", PrivacyUse);
     m_MainPtr->app_config->set("region", m_Region);
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 

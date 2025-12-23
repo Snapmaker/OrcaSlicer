@@ -263,19 +263,19 @@ void sentryReportLogEx(SENTRY_LOG_LEVEL   logLevel,
                                                            funcModule.c_str(), 
                                                            logContent.c_str()
     );
-     
+
+    sentry_value_t tags  = sentry_value_new_object();
+
      if (!logTraceId.empty())
-     {
-         sentry_value_t tags = sentry_value_get_by_key(event, "snapmaker_tags");
          sentry_value_set_by_key(tags, "snapmaker_trace_id", sentry_value_new_string(logTraceId.c_str()));
-     }
 
     if (SENTRY_LEVEL_TRACE == sentry_msg_level)
-         sentry_set_tag(BURY_POINT, "snapmaker_bury_point");
-
+         sentry_value_set_by_key(tags, BURY_POINT, sentry_value_new_string("snapmaker_bury_point"));
+        
     if (!logTagKey.empty())
-        sentry_set_tag(logTagKey.c_str(), logTagValue.c_str());
+        sentry_value_set_by_key(tags, logTagKey.c_str(), sentry_value_new_string(logTagValue.c_str()));
 
+    sentry_value_set_by_key(event, "snapmaker_tags", tags);
     sentry_capture_event(event);
 }
 

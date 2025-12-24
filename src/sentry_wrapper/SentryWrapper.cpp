@@ -220,10 +220,6 @@ void initSentryEx()
         if (!machineID.empty())
             sentry_set_tag("machine_id", machineID.c_str());
 
-        std::string macAdress = common::getMacAddress();
-        if (!macAdress.empty())
-            sentry_set_tag("macaddress", macAdress.c_str());
-
         std::string pcName = common::get_pc_name();
         if (!pcName.empty())
             sentry_set_tag("pc_name", pcName.c_str());

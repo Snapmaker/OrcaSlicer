@@ -25,7 +25,6 @@ namespace common
 
 	std::string getMachineId();
 
-	std::string getMacAddress();
     } // namespace common
 
 #endif

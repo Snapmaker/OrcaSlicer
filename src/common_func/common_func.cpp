@@ -8,12 +8,12 @@
 #pragma comment(lib, "iphlpapi.lib")
 #elif __APPLE__
 #include <stdlib.h>
-#import <IOKit/IOKitLib.h>
+#include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
-#include <unistd.h>
-#include <dlfcn.h>
-
-#include <CoreServices/CoreServices.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/network/IONetworkInterface.h>
+#include <IOKit/network/IONetworkController.h>
+#include <AvailabilityMacros.h>
 #endif
 
 #include <fstream>
@@ -71,78 +71,6 @@ namespace common
 #endif // _WIN32
     return machineId;
     }
-
-    std::string getMacAddress()
-    {
-        std::string macAddress = std::string();
-
-#ifndef __APPLE__
-        ULONG ulBufferSize = 0;
-        DWORD dwResult     = ::GetAdaptersInfo(NULL, &ulBufferSize);
-        if (ERROR_BUFFER_OVERFLOW != dwResult) {
-            return std::string();
-        }
-
-        PIP_ADAPTER_INFO pAdapterInfo = (PIP_ADAPTER_INFO) new BYTE[ulBufferSize];
-        if (!pAdapterInfo) {
-            return std::string();
-        }
-
-        dwResult = ::GetAdaptersInfo(pAdapterInfo, &ulBufferSize);
-        if (ERROR_SUCCESS != dwResult) {
-            delete[] pAdapterInfo;
-            return std::string();
-        }
-
-        BYTE pMac[MAX_ADAPTER_ADDRESS_LENGTH] = {0};
-        int  nLen                             = MAX_ADAPTER_ADDRESS_LENGTH;
-
-        if (NULL != pAdapterInfo) {
-            PIP_ADDR_STRING pAddTemp = &(pAdapterInfo->IpAddressList);
-
-            if (NULL != pAddTemp) {
-                for (int i = 0; i < (int) pAdapterInfo->AddressLength; ++i) {
-                    pMac[i] = pAdapterInfo->Address[i];
-                }
-                nLen = pAdapterInfo->AddressLength;
-            }
-        }
-        delete[] pAdapterInfo;
-
-        auto Encode16 = [](const BYTE* buf, int len) -> std::wstring {
-            const WCHAR  strHex[] = L"0123456789ABCDEF";
-            std::wstring wstr;
-            wstr.resize(len * 2);
-            for (int i = 0; i < len; ++i) {
-                wstr[i * 2 + 0] = strHex[buf[i] >> 4];
-                wstr[i * 2 + 1] = strHex[buf[i] & 0xf];
-            }
-            return wstr;
-        };
-
-        auto wstringTostring = [](std::wstring wTmpStr) -> std::string {
-            std::string resStr = std::string();
-            int         len    = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-
-            if (len <= 0)
-                return std::string();
-            std::string desStr(len, 0);
-
-            WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, &desStr[0], len, nullptr, nullptr);
-
-            resStr = desStr;
-
-            return resStr;
-        };
-
-        std::wstring strMac = Encode16(pMac, nLen);
-        macAddress          = wstringTostring(strMac);
-#else
-        // todo get mac macaddress
-#endif
-        return macAddress;
-    }
-
 
     std::string get_flutter_version()
     {

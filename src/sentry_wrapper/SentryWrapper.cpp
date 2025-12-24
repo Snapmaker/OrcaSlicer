@@ -190,9 +190,6 @@ void initSentryEx()
         if (!dataBaseDir.empty())
             sentry_options_set_database_path(options, dataBaseDir.c_str());
 
-        std::string softVersion = "snapmaker_orca_2.2.0_beta2";
-        sentry_options_set_release(options, softVersion.c_str());
-
 #if defined(_DEBUG) || !defined(NDEBUG)
         sentry_options_set_debug(options, 1);
 #else
@@ -219,7 +216,17 @@ void initSentryEx()
         if (!flutterVersion.empty())
             sentry_set_tag("flutter_version", flutterVersion.c_str());
 
-        //sentryReportLog(SENTRY_LOG_ERROR, "init sentry error", "initSentry module");
+        std::string machineID = common::getMachineId();
+        if (!machineID.empty())
+            sentry_set_tag("machine_id", machineID.c_str());
+
+        std::string macAdress = common::getMacAddress();
+        if (!macAdress.empty())
+            sentry_set_tag("macaddress", macAdress.c_str());
+
+        std::string pcName = common::get_pc_name();
+        if (!pcName.empty())
+            sentry_set_tag("pc_name", pcName.c_str());
     }
 }
 

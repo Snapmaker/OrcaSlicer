@@ -224,7 +224,7 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
-                    std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status);
+                    std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) + "\n" + error + "\n" + body;
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
                 })
                 .perform_sync(); 

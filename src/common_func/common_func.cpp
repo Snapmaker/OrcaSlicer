@@ -8,6 +8,12 @@
 #pragma comment(lib, "iphlpapi.lib")
 #elif __APPLE__
 #include <stdlib.h>
+#import <IOKit/IOKitLib.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <unistd.h>
+#include <dlfcn.h>
+
+#include <CoreServices/CoreServices.h>
 #endif
 
 #include <fstream>

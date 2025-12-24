@@ -54,6 +54,12 @@
 #define BP_LOCAL_SERVER_ERR_CODE "bury_point_local_server_err_code"
 
 
+//device connect error info
+#define DEVICE_CONNECT_ERR "error_device_connect"
+#define DEVICE_SUBSCRIBE_ERR "error_device_subscribe"
+#define DEVICE_PBLISH_ERR "error_device_publish"
+#define DEVICE_SET_ENGINE_ERR "error_device_set_engine"
+
 
 //webview bury point
 

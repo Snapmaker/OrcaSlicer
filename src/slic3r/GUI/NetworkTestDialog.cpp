@@ -12,6 +12,12 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/log/trivial.hpp>
 #include <chrono>
+#include <vector>
+#include <cstdio>
+#include <memory>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 namespace Slic3r {
 namespace GUI {
@@ -522,22 +528,38 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 #ifdef _WIN32
 		// Windows: ping -n 4 <server>
 		wxString ping_cmd = "ping -n 4 " + server;
-#else
-		// Linux/Mac: ping -c 4 <server>
-		wxString ping_cmd = "ping -c 4 " + server;
-#endif
-
-		// 执行ping命令 - 使用wxEXEC_NODISABLE和wxEXEC_HIDE_CONSOLE避免影响主线程
+		// Windows 可以使用 wxExecute
 		wxArrayString output;
 		wxArrayString errors;
-
-		// 添加标志：不禁用窗口，隐藏控制台窗口
-		long exec_flags = wxEXEC_SYNC | wxEXEC_NODISABLE;
-#ifdef _WIN32
-		exec_flags |= wxEXEC_HIDE_CONSOLE;  // Windows下隐藏cmd窗口
-#endif
-
+		long exec_flags = wxEXEC_SYNC | wxEXEC_NODISABLE | wxEXEC_HIDE_CONSOLE;
 		long result = wxExecute(ping_cmd, output, errors, exec_flags);
+#else
+		// Linux/Mac: ping -c 4 <server>
+		// 使用 popen() 而不是 wxExecute，因为 wxExecute 在 macOS 上不能在异步线程中使用
+		std::string ping_cmd = "ping -c 4 " + server.ToStdString();
+		wxArrayString output;
+		long result = -1;
+		
+		FILE* pipe = popen(ping_cmd.c_str(), "r");
+		if (pipe != nullptr) {
+			char buffer[1024];
+			while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+				// 转换为 wxString 并添加到 output
+				wxString line = wxString::FromUTF8(buffer);
+				line.Trim();  // 移除换行符
+				if (!line.IsEmpty()) {
+					output.Add(line);
+				}
+			}
+			int pclose_result = pclose(pipe);
+			// pclose 返回的是命令的退出状态，需要检查 WEXITSTATUS
+			if (WIFEXITED(pclose_result)) {
+				result = WEXITSTATUS(pclose_result);
+			} else {
+				result = -1;
+			}
+		}
+#endif
 
 		if (result == 0 && output.GetCount() > 0) {
 			// 解析ping输出（不输出每一行，减少UI更新）
@@ -545,6 +567,9 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 			wxString rtt_info;
 			int received = 0;
 			int sent = 4;
+			
+			// macOS需要收集所有time值来计算平均值
+			std::vector<double> time_values;
 
 			for (size_t i = 0; i < output.GetCount(); i++) {
 				wxString line = output[i];
@@ -639,12 +664,62 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 					}
 				}
 #else
-				// Linux/Mac格式: "rtt min/avg/max/mdev = 1.234/5.678/9.012/1.234 ms"
-				if (line.Contains("rtt") && line.Contains("avg")) {
-					found_rtt = true;
-					rtt_info = line;
+				// macOS格式: "64 bytes from 13.35.32.150: icmp_seq=519 ttl=244 time=57.030 ms"
+				// 需要从每行提取 time=XX.XXX ms 并收集所有值
+				if (line.Contains("time=")) {
+					int time_pos = line.Find("time=");
+					if (time_pos != wxNOT_FOUND) {
+						wxString after_time = line.Mid(time_pos + 5);  // 跳过 "time="
+						wxString time_str;
+						// 提取数字（可能包含小数点）
+						for (size_t j = 0; j < after_time.Length(); j++) {
+							wxChar c = after_time[j];
+							if (wxIsdigit(c) || c == '.') {
+								time_str += c;
+							} else if (c == ' ' || c == 'm') {
+								// 遇到空格或 'm' (ms) 停止
+								break;
+							}
+						}
+						if (!time_str.IsEmpty()) {
+							double time_val;
+							if (time_str.ToDouble(&time_val)) {
+								time_values.push_back(time_val);
+								found_rtt = true;
+							}
+						}
+					}
 				}
-				// 统计格式: "4 packets transmitted, 4 received"
+				
+				// Linux格式: "rtt min/avg/max/mdev = 1.234/5.678/9.012/1.234 ms"
+				if (!found_rtt && line.Contains("rtt") && line.Contains("avg")) {
+					found_rtt = true;
+					// 提取平均值
+					int avg_pos = line.Find("avg");
+					if (avg_pos != wxNOT_FOUND) {
+						wxString after_avg = line.Mid(avg_pos + 3);
+						wxString num_str;
+						size_t i = 0;
+						// 跳过空格和等号
+						while (i < after_avg.Length() && (after_avg[i] == ' ' || after_avg[i] == '\t' || after_avg[i] == '=')) {
+							i++;
+						}
+						// 提取数字直到遇到斜杠或空格
+						while (i < after_avg.Length() && (wxIsdigit(after_avg[i]) || after_avg[i] == '.')) {
+							num_str += after_avg[i];
+							i++;
+						}
+						if (!num_str.IsEmpty()) {
+							rtt_info = num_str + "ms (average)";
+						} else {
+							rtt_info = line;
+						}
+					} else {
+						rtt_info = line;
+					}
+				}
+				
+				// 统计格式: "4 packets transmitted, 4 received" (Linux/macOS通用)
 				if (line.Contains("packets transmitted") && line.Contains("received")) {
 					int pos_received = line.Find(" received");
 					if (pos_received != wxNOT_FOUND) {
@@ -663,7 +738,45 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 						}
 					}
 				}
+				
+				// macOS 可能还有统计行: "round-trip min/avg/max/stddev = 1.234/5.678/9.012/1.234 ms"
+				if (!found_rtt && line.Contains("round-trip") && line.Contains("avg")) {
+					found_rtt = true;
+					int avg_pos = line.Find("avg");
+					if (avg_pos != wxNOT_FOUND) {
+						wxString after_avg = line.Mid(avg_pos + 3);
+						wxString num_str;
+						size_t i = 0;
+						while (i < after_avg.Length() && (after_avg[i] == ' ' || after_avg[i] == '\t' || after_avg[i] == '=')) {
+							i++;
+						}
+						while (i < after_avg.Length() && (wxIsdigit(after_avg[i]) || after_avg[i] == '.')) {
+							num_str += after_avg[i];
+							i++;
+							if (i < after_avg.Length() && after_avg[i] == '/') break;  // 遇到斜杠停止
+						}
+						if (!num_str.IsEmpty()) {
+							rtt_info = num_str + "ms (average)";
+						} else {
+							rtt_info = line;
+						}
+					} else {
+						rtt_info = line;
+					}
+				}
 #endif
+			}
+
+			// 如果收集了多个time值（macOS），计算平均值
+			if (!time_values.empty()) {
+				double sum = 0.0;
+				for (double val : time_values) {
+					sum += val;
+				}
+				double avg = sum / time_values.size();
+				rtt_info = wxString::Format("%.3fms (average from %zu samples)", avg, time_values.size());
+			} else if (found_rtt && rtt_info.IsEmpty()) {
+				rtt_info = "N/A";
 			}
 
 			// 计算丢包率
@@ -677,8 +790,8 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 
 			if (parse_success) {
 				// 成功解析了ping结果
-				if (found_rtt) {
-					summary += "[OK] Ping RTT: " + rtt_info + "\n";
+				if (found_rtt && !rtt_info.IsEmpty()) {
+					summary += "[OK] Ping round-trip time: " + rtt_info + "\n";
 				}
 				summary += wxString::Format("Packet loss: %d%% (%d/%d received)\n", packet_loss, received, sent);
 
@@ -697,9 +810,20 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 
 		} else {
 			wxString error_summary = "\n[FAIL] Ping command failed or timed out";
+#ifdef _WIN32
 			for (size_t i = 0; i < errors.GetCount(); i++) {
 				error_summary += "\nError: " + errors[i];
 			}
+#else
+			if (output.GetCount() > 0) {
+				error_summary += "\nOutput:\n";
+				for (size_t i = 0; i < output.GetCount() && i < 5; i++) {
+					error_summary += "  " + output[i] + "\n";
+				}
+			} else {
+				error_summary += "\nNo output from ping command";
+			}
+#endif
 			update_status(-1, error_summary);
 		}
 

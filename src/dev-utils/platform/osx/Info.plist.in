@@ -5,7 +5,7 @@
   <key>CFBundleExecutable</key>
   <string>@SLIC3R_APP_KEY@</string>
   <key>CFBundleGetInfoString</key>
-  <string>@SLIC3R_APP_NAME@ Copyright © 2024-2025 Snapmaker. All rights reserved.</string>
+  <string>@SLIC3R_APP_NAME@ Copyright © 2024-2026 Snapmaker. All rights reserved.</string>
   <key>CFBundleIconFile</key>
   <string>images/Snapmaker_Orca.icns</string>
   <key>CFBundleName</key>

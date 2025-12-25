@@ -749,7 +749,10 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         app_config->save();
 
         if (param == "privacy_policy_isagree")
-            set_privacy_policy(checkbox->GetValue());    
+            {
+                app_config->set("app", "privacy_policy_isagree", checkbox->GetValue());
+                set_privacy_policy(checkbox->GetValue());    
+            }
         // if (param == "staff_pick_switch") {
         //     bool pbool = app_config->get("staff_pick_switch") == "true";
         //     wxGetApp().switch_staff_pick(pbool);

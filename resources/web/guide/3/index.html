@@ -20,12 +20,15 @@
 </div>
 <div id="Content">
 	<div id="PolicyTxt" class="TextS2 TextArea1 ZScrol">
-<a class="trans" tid="t54">In the 3D Printing community, we learn from each other’s successes and failures to adjust our own slicing parameters and settings. Bambu Studio follows the same principle and uses machine learning to improve its performance from the successes and failures of the vast number of prints by our users. We are training Bambu Studio to be smarter by feeding them the real-world data. If you are willing, this service will access information from your error logs and usage logs, which may include information described in </a><a class="HyperLink trans" tid="t55" onClick="OpenPrivacyPolicy()">Privacy Policy</a><a class="trans" tid="t56">
-. We will not collect any Personal Data by which an individual can be identified directly or indirectly, including without limitation names, addresses, payment information, or phone numbers. By enabling this service, you agree to these terms and the statement about Privacy Policy.
-</a>
-<p class="trans" tid="t113" style="text-indent:2em;">You may change your choice in preference anytime.</p>
+<a class="trans" tid="t54"></a><a class="HyperLink trans" tid="t55" onClick="OpenPrivacyPolicy()"></a><a class="trans" tid="t56"></a><a class="HyperLink trans" tid="t_566" onClick="OpenCrossBorderNotice()"></a><a class="trans" tid="t_567"></a>
 	</div>
-<br/>	
+	<div id="AgreeArea" style="margin-top:10px;display:flex;flex-direction:column;">
+		<label style="display:flex;align-items:flex-start;cursor:pointer;">
+			<input type="checkbox" id="agreeCheckbox" style="width:13px;min-width:13px;margin-top:3px;margin-right:6px;" onchange="OnCheckboxChange()">
+			<span><a class="trans" tid="t57" style="margin-left:7px;"></a><a class="HyperLink trans" tid="t58" onClick="OpenCrossBorderNotice()"></a></span>
+		</label>
+		<p id="errorTip" class="trans" tid="t115" style="color:red;display:none;margin-top:5px;margin-left:0px;"></p>
+	</div>
 </div>		
 <div id="AcceptArea">
 	<div class="GrayBtn trans" tid="t8" id="PreBtn"  onclick="GotoBackPage()">Back</div>

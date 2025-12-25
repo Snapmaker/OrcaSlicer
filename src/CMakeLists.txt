@@ -96,7 +96,7 @@ if(ORCA_TOOLS)
             MACOSX_BUNDLE_BUNDLE_VERSION "${SLIC3R_VERSION}"
             MACOSX_BUNDLE_SHORT_VERSION_STRING "${SLIC3R_VERSION}"
             MACOSX_BUNDLE_IDENTIFIER "com.Snapmaker.Snapmaker_Orca.profile-validator"
-            MACOSX_BUNDLE_COPYRIGHT "© 2024 SoftFever"
+            MACOSX_BUNDLE_COPYRIGHT "Copyright © 2024-2025 Snapmaker. All rights reserved."
             MACOSX_BUNDLE_GUI_IDENTIFIER "com.Snapmaker.Snapmaker_Orca.profile-validator"
         )
     else()
@@ -294,7 +294,7 @@ else ()
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca"
             MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION}
-            MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
+            MACOSX_BUNDLE_COPYRIGHT "Copyright © 2024-2025 Snapmaker. All rights reserved.")
         # Get the bundle directory by going up from the executable to the .app bundle
         if (CMAKE_CONFIGURATION_TYPES)
             set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")

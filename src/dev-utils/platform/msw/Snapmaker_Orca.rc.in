@@ -1,6 +1,6 @@
 1 VERSIONINFO
-FILEVERSION @SLIC3R_VERSION@
-PRODUCTVERSION @SLIC3R_VERSION@
+FILEVERSION @SLIC3R_RC_VERSION@
+PRODUCTVERSION @SLIC3R_RC_VERSION@
 {
  BLOCK "StringFileInfo"
  {
@@ -12,8 +12,8 @@ PRODUCTVERSION @SLIC3R_VERSION@
    VALUE "ProductName", "@SLIC3R_APP_NAME@"
    VALUE "ProductVersion", "@SLIC3R_BUILD_ID@"
    VALUE "InternalName", "@SLIC3R_APP_NAME@"
-   VALUE "LegalCopyright", ""
-   VALUE "OriginalFilename", "snapmaker-orca.exe"
+   VALUE "LegalCopyright", "Copyright © 2024-2025 Snapmaker. All rights reserved."
+   VALUE "OriginalFilename", "Snapmaker_Orca.exe"
   }
  }
  BLOCK "VarFileInfo"

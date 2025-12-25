@@ -59,6 +59,14 @@ include("version.inc")
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
+# Set SLIC3R_BUILD_ID from Snapmaker_VERSION if not already defined
+if(NOT DEFINED SLIC3R_BUILD_ID OR SLIC3R_BUILD_ID STREQUAL "")
+    set(SLIC3R_BUILD_ID "${Snapmaker_VERSION}")
+endif()
+
+# Create Windows RC compatible version format (comma-separated: MAJOR,MINOR,PATCH,0)
+set(SLIC3R_RC_VERSION "${ORCA_VERSION_MAJOR},${ORCA_VERSION_MINOR},${ORCA_VERSION_PATCH},0")
+
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 

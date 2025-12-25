@@ -188,6 +188,8 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
     });
     // LoadProfile();
 
+    m_load_thread->detach();
+
     // UI
     SetStartPage(BBL_REGION);
 

@@ -57,11 +57,7 @@ static sentry_value_t on_crash_callback(const sentry_ucontext_t* uctx, sentry_va
 
 static sentry_value_t before_send(sentry_value_t event, void* hint, void* data)
 {
-    if (!get_privacy_policy())
-    {
-        sentry_value_decref(event);
-        return sentry_value_new_null();
-    }
+
 
     sentry_value_t level_val = sentry_value_get_by_key(event, SENTRY_KEY_LEVEL);
     std::string    levelName  = sentry_value_as_string(level_val);
@@ -86,6 +82,12 @@ static sentry_value_t before_send(sentry_value_t event, void* hint, void* data)
         {
             return event;
         }
+    }
+
+    if (!get_privacy_policy() && levelName == SENTRY_EVENT_TRACE) {
+        
+        sentry_value_decref(event);
+        return sentry_value_new_null();
     }
 
     if (SENTRY_EVENT_FATAL == eventLevel ||
@@ -190,9 +192,6 @@ void initSentryEx()
         if (!dataBaseDir.empty())
             sentry_options_set_database_path(options, dataBaseDir.c_str());
 
-        std::string softVersion = "snapmaker_orca_2.2.0_beta2";
-        sentry_options_set_release(options, softVersion.c_str());
-
 #if defined(_DEBUG) || !defined(NDEBUG)
         sentry_options_set_debug(options, 1);
 #else
@@ -219,7 +218,13 @@ void initSentryEx()
         if (!flutterVersion.empty())
             sentry_set_tag("flutter_version", flutterVersion.c_str());
 
-        //sentryReportLog(SENTRY_LOG_ERROR, "init sentry error", "initSentry module");
+        std::string machineID = common::getMachineId();
+        if (!machineID.empty())
+            sentry_set_tag("machine_id", machineID.c_str());
+
+        std::string pcName = common::get_pc_name();
+        if (!pcName.empty())
+            sentry_set_tag("pc_name", pcName.c_str());
     }
 }
 

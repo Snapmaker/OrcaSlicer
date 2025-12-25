@@ -34,6 +34,7 @@
 #include <libslic3r/Utils.hpp>
 #include "CreatePresetsDialog.hpp"
 #include <mutex>
+#include "bury_cfg/bury_point.hpp"
 
 using namespace nlohmann;
 
@@ -521,7 +522,7 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
             std::string url = j["url"];
             std::string local = j["local"];
             if (!url.empty()) {
-                wxLaunchDefaultBrowser(url);
+                wxLaunchDefaultBrowser(url.c_str());
             }
         }
         else if (strCmd == "network_plugin_install") {
@@ -648,7 +649,8 @@ int GuideFrame::SaveProfile()
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "1");
     // } else
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "0");
-    m_MainPtr->app_config->set("snapmaker_privacy_policy", "isagree", PrivacyUse);
+    m_MainPtr->app_config->set("app", "privacy_policy_isagree", PrivacyUse);
+    set_privacy_policy(PrivacyUse);
     m_MainPtr->app_config->set("region", m_Region);
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 

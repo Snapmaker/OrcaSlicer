@@ -19,6 +19,8 @@
 #include <wx/display.h>
 #include <map>
 
+#include "sentry_wrapper/SentryWrapper.hpp"
+
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
 #include "dark_mode.hpp"
@@ -746,6 +748,11 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
+        if (param == "privacy_policy_isagree")
+            {
+                app_config->set("app", "privacy_policy_isagree", checkbox->GetValue());
+                set_privacy_policy(checkbox->GetValue());    
+            }
         // if (param == "staff_pick_switch") {
         //     bool pbool = app_config->get("staff_pick_switch") == "true";
         //     wxGetApp().switch_staff_pick(pbool);
@@ -1285,6 +1292,22 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_darkmode = create_item_darkmode_checkbox(_L("Enable Dark mode"), page,_L("Enable Dark mode"), 50, "dark_color_mode");
 #endif
 
+    std::string enUrl = "https://www.snapmaker.com/privacy-policy";
+    std::string cnUrl = "https://www.snapmaker.cn/privacy-policy";
+    auto app_config   = wxGetApp().app_config;
+    std::string region = app_config->get("language");
+
+    auto title_user_experience = create_item_title(_L("User Experience"), page, _L("User Experience"));
+    auto item_priv_policy      = create_item_checkbox(_L("Join Customer Experience Improvement Program."), page, _L(""), 50, "privacy_policy_isagree");
+    wxHyperlinkCtrl* hyperlink = nullptr;
+    if (region.empty() || region != "zh_CN")
+        hyperlink = new wxHyperlinkCtrl(page, wxID_ANY, _L("What data would be collected?"), enUrl);
+    else
+        hyperlink = new wxHyperlinkCtrl(page, wxID_ANY, _L("What data would be collected?"), cnUrl);
+
+    hyperlink->SetFont(Label::Head_13);
+    item_priv_policy->Add(hyperlink, 0, wxALIGN_CENTER, 0);
+    
     auto title_develop_mode = create_item_title(_L("Develop mode"), page, _L("Develop mode"));
     auto item_develop_mode  = create_item_checkbox(_L("Develop mode"), page, _L("Develop mode"), 50, "developer_mode");
     auto item_skip_ams_blacklist_check  = create_item_checkbox(_L("Skip AMS blacklist check"), page, _L("Skip AMS blacklist check"), 50, "skip_ams_blacklist_check");
@@ -1364,6 +1387,9 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(title_develop_mode, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_develop_mode, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_skip_ams_blacklist_check, 0, wxTOP, FromDIP(3));
+    
+    sizer_page->Add(title_user_experience, 0, wxTOP, FromDIP(20));
+    sizer_page->Add(item_priv_policy, 0, wxTOP, FromDIP(3));    
 
     page->SetSizer(sizer_page);
     page->Layout();

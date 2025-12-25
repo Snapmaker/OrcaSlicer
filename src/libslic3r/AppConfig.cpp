@@ -89,13 +89,6 @@ bool AppConfig::get_stealth_mode()
         return true;
     }
 
-    auto isAgree = get("snapmaker_privacy_policy", "isagree");
-
-    if (isAgree.empty()) 
-    {
-        return true;
-    }
-
     return get_bool("stealth_mode");
 }
 

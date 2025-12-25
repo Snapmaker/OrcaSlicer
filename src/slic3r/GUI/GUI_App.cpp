@@ -3764,9 +3764,6 @@ if (res) {
     } catch (std::exception &) {
         // wxMessageBox(e.what(), "", MB_OK);
     }
-    auto isAgree = wxGetApp().app_config->get("snapmaker_privacy_policy", "isagree");
-
-    set_privacy_policy(isAgree == "true");    
 }
 
 void GUI_App::ShowDownNetPluginDlg() {
@@ -7072,7 +7069,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         mainframe->refresh_plugin_tips();
         // BBS: remove SLA related message
     }
-    auto isAgree = wxGetApp().app_config->get("snapmaker_privacy_policy", "isagree");
+    auto isAgree = wxGetApp().app_config->get("app", "privacy_policy_isagree");
 
     set_privacy_policy(isAgree == "true");    
 
@@ -7293,10 +7290,14 @@ void GUI_App::user_login_notify(const json& res)
 
 bool GUI_App::config_wizard_startup()
 {
+    auto isAgree = wxGetApp().app_config->get("app", "privacy_policy_isagree");
+    set_privacy_policy(isAgree == "true");   
+
     if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
         BOOST_LOG_TRIVIAL(info) << "run wizard...";
         run_wizard(ConfigWizard::RR_DATA_EMPTY);
         BOOST_LOG_TRIVIAL(info) << "finished run wizard";
+
         return true;
     } /*else if (get_app_config()->legacy_datadir()) {
         // Looks like user has legacy pre-vendorbundle data directory,
@@ -7308,6 +7309,13 @@ bool GUI_App::config_wizard_startup()
         run_wizard(ConfigWizard::RR_DATA_LEGACY);
         return true;
     }*/
+
+    if (isAgree.empty()) 
+    {
+        run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
+        return true;
+    }
+
     return false;
 }
 

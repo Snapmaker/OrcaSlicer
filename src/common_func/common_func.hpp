@@ -22,6 +22,9 @@ namespace common
 	std::string get_pc_name();
 
 	std::string get_flutter_version();
-} // namespace common
+
+	std::string getMachineId();
+
+    } // namespace common
 
 #endif

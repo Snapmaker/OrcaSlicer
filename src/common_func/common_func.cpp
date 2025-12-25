@@ -4,9 +4,16 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <Shlobj.h>
-
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
 #elif __APPLE__
 #include <stdlib.h>
+#include <IOKit/IOKitLib.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/network/IONetworkInterface.h>
+#include <IOKit/network/IONetworkController.h>
+#include <AvailabilityMacros.h>
 #endif
 
 #include <fstream>
@@ -17,6 +24,52 @@ namespace common
     std::string get_pc_name()
     { 
         return boost::asio::ip::host_name();
+    }
+
+    std::string getMachineId()
+    {
+    std::string machineId = std::string();
+#ifdef _WIN32
+
+    auto wstringTostring = [](std::wstring wTmpStr) -> std::string {
+        std::string resStr = std::string();
+        int         len    = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+
+        if (len <= 0)
+            return std::string();
+        std::string desStr(len, 0);
+
+        WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, &desStr[0], len, nullptr, nullptr);
+
+        resStr = desStr;
+
+        return resStr;
+    };
+
+    HKEY key = NULL;
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Cryptography", 0, KEY_READ | KEY_WOW64_64KEY, &key) == ERROR_SUCCESS) {
+        wchar_t buffer[1024];
+        memset(buffer, 0, sizeof(wchar_t) * 1024);
+        DWORD size = sizeof(buffer);
+        bool  ok   = (RegQueryValueEx(key, L"MachineGuid", NULL, NULL, (LPBYTE) buffer, &size) == ERROR_SUCCESS);
+        RegCloseKey(key);
+        if (ok) {
+            machineId = wstringTostring(buffer);
+        }
+    }
+
+#elif __APPLE__
+    FILE* fp = NULL;
+    char  buffer[1024];
+
+    memset(buffer, 0, 1024);
+    io_service_t service = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("IOPlatformExpertDevice"));
+    CFStringRef  strRef  = (CFStringRef) IORegistryEntryCreateCFProperty(service, CFSTR(kIOPlatformUUIDKey), kCFAllocatorDefault, 0);
+    CFStringGetCString(strRef, buffer, 1024, kCFStringEncodingMacRoman);
+    machineId = buffer;
+
+#endif // _WIN32
+    return machineId;
     }
 
     std::string get_flutter_version()

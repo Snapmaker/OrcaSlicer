@@ -4709,6 +4709,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
     try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
+
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_connect param [id] is required or wrong type"), DEVICE_CONNECT_ERR);
             return;
         }
 
@@ -4716,6 +4718,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
 
         if (!validate_id(id)) {
             handle_general_fail(-1, "id is illegal");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_connect id is illegal"),DEVICE_CONNECT_ERR);
             return;
         }
 
@@ -4807,6 +4810,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
     try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [id] is required or wrong type"), DEVICE_SUBSCRIBE_ERR);
             return;
         }
 
@@ -4814,11 +4818,13 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
 
         if (!validate_id(id)) {
             handle_general_fail(-1, "id is illegal");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe id is illegal with:")+id,DEVICE_SUBSCRIBE_ERR);
             return;
         }
 
         if (m_event_id == "") {
             handle_general_fail(-1, "event_id is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe event_id is required or wrong type with:") + id,DEVICE_SUBSCRIBE_ERR);
             return;
         }
 
@@ -4826,6 +4832,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
 
         if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
             handle_general_fail(-1, "param [topic] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [topic] is required or wrong type"),DEVICE_SUBSCRIBE_ERR);
             return;
         }
         std::string topic = m_param_data["topic"].get<std::string>();
@@ -4836,6 +4843,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
 
         if (!m_param_data.count("qos") || !m_param_data["qos"].is_number()) {
             handle_general_fail(-1, "param [qos] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [qos] is required or wrong type"), DEVICE_SUBSCRIBE_ERR);
             return;
         }
         int qos = m_param_data["qos"].get<int>();
@@ -4947,6 +4955,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
     try {
         if (!m_param_data.count("engine_id") || !m_param_data["engine_id"].is_string()) {
             handle_general_fail(-1, "param [engine_id] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [engine_id] is required or wrong type"),DEVICE_SET_ENGINE_ERR);
             return;
         }
 
@@ -4954,17 +4963,20 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
         if (!validate_id(engine_id)) {
             handle_general_fail(-1, "id is illegal");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine id is illegal with:") + engine_id, DEVICE_SET_ENGINE_ERR);
             return;
         }
 
         if (!m_param_data.count("ip") || !m_param_data["ip"].is_string()) {
             handle_general_fail(-1, "param [ip] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [ip] is required or wrong type"),DEVICE_SET_ENGINE_ERR);
             return;
         }
         std::string ip = m_param_data["ip"].get<std::string>();
 
         if (!m_param_data.count("port") || !m_param_data["port"].is_number()) {
             handle_general_fail(-1, "param [port] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [port] is required or wrong type"), DEVICE_SET_ENGINE_ERR);
             return;
         }
 
@@ -4991,6 +5003,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
             
             if (engine == nullptr) {
                 handle_general_fail(-1, "invalid engine");
+                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine invalid engine"),DEVICE_SET_ENGINE_ERR);
                 return;
             }
 
@@ -4999,6 +5012,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
             if (!engine->CheckConnected()) {
                 BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] 引擎连接状态异常";
                 handle_general_fail(-1, "engine connection lost");
+                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine engine connection lost"), DEVICE_SET_ENGINE_ERR);
                 return;
             }
             BOOST_LOG_TRIVIAL(info) << "[SSWCP_MqttAgent_Instance] 引擎连接状态正常";
@@ -5091,6 +5105,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                     if (!host) {
                         handle_general_fail(-1, "host created failed");
+                        Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine host created failed"), DEVICE_SET_ENGINE_ERR);
                         return;
                     } else {
                         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
@@ -5532,6 +5547,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
     try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish host created failed"), DEVICE_PBLISH_ERR);
             return;
         }
 
@@ -5539,23 +5555,27 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
 
         if (!validate_id(id)) {
             handle_general_fail(-1, "id is illegal");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish id is illegal"), DEVICE_PBLISH_ERR);
             return;
         }
 
         if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
             handle_general_fail(-1, "param [topic] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish param [topic] is required or wrong type"), DEVICE_PBLISH_ERR);
             return;
         }
         std::string topic = m_param_data["topic"].get<std::string>();
 
         if (!m_param_data.count("qos") || !m_param_data["qos"].is_number()) {
             handle_general_fail(-1, "param [qos] is required or wrong type");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish param [qos] is required or wrong type"), DEVICE_PBLISH_ERR);
             return;
         }
         int qos = m_param_data["qos"].get<int>();
 
         if (!m_param_data.count("payload") || !m_param_data["payload"].is_string()) {
             handle_general_fail(-1, "param [payload] required");
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish param [payload] required"), DEVICE_PBLISH_ERR);
             return;
         }
         std::string payload = m_param_data["payload"].get<std::string>();

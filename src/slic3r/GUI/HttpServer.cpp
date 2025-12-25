@@ -293,7 +293,7 @@ void HttpServer::start()
                 server_->io_service.run();
             } catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "HTTP server error: " << e.what();
-                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,std::string("HttpServer::start ") + e.what(), BP_LOCAL_SERVER);
+                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,std::string("bury_point_HttpServer::start ") + e.what(), BP_LOCAL_SERVER);
                 start_http_server = false;
             }
         });
@@ -315,7 +315,7 @@ void HttpServer::start()
         
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
-        std::string error_msg = "Failed to start HTTP server on port " + std::to_string(port) + ": " + e.what();
+        std::string error_msg = "bury_point_Failed to start HTTP server on port " + std::to_string(port) + ": " + e.what();
         Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, error_msg.c_str(), BP_LOCAL_SERVER);
         start_http_server = false;
         throw;
@@ -464,7 +464,7 @@ void HttpServer::start_health_check()
                     BOOST_LOG_TRIVIAL(info) << "HTTP server restart completed by health check thread";
                 } catch (const std::exception& e) {
                     BOOST_LOG_TRIVIAL(error) << "Failed to restart HTTP server: " << e.what();
-                    std::string error_msg = "HTTP server restart failed after health check on port " + std::to_string(port) + ": " + e.what();
+                    std::string error_msg = "bury_point_HTTP server restart failed after health check on port " + std::to_string(port) + ": " + e.what();
                     Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, error_msg.c_str(), BP_LOCAL_SERVER);
                 }
             } else if (start_http_server) {
@@ -662,7 +662,7 @@ std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const 
                     user_account = user_j["account"].get<std::string>();
             } catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "Failed to parse user profile JSON: " << e.what();
-                std::string error_msg = "User profile JSON parse error: " + std::string(e.what());
+                std::string error_msg = "bury_point_User profile JSON parse error: " + std::string(e.what());
                 Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, error_msg.c_str(), BP_LOCAL_SERVER);
             }
             json j;

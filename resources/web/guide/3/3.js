@@ -40,11 +40,27 @@ function GotoBackPage()
 
 function GotoNextPage()
 {
+	var checkbox = document.getElementById('agreeCheckbox');
+	var errorTip = document.getElementById('errorTip');
 	
+	if (!checkbox.checked) {
+		errorTip.style.display = 'block';
+		return;
+	}
+	
+	errorTip.style.display = 'none';
 	SendPrivacyChoice("agree");
-	
-	
 	window.location.href="../21/index.html";
+}
+
+function OnCheckboxChange()
+{
+	var checkbox = document.getElementById('agreeCheckbox');
+	var errorTip = document.getElementById('errorTip');
+	
+	if (checkbox.checked) {
+		errorTip.style.display = 'none';
+	}
 }
 
 
@@ -75,7 +91,7 @@ function OpenPrivacyPolicy()
 	var privacyUrl = "";
 	
 	
-	if(m_Region === "China") {
+	if(m_Region === "Chinese Mainland") {
 		privacyUrl = "https://www.snapmaker.cn/privacy-policy.html";
 	} else {
 		privacyUrl = "https://www.snapmaker.com/privacy-policy";
@@ -86,6 +102,25 @@ function OpenPrivacyPolicy()
 	tSend['sequence_id']=Math.round(new Date() / 1000);
 	tSend['command']="common_openurl";
 	tSend['url']=privacyUrl;
+	tSend['local']=m_Region
+	
+	SendWXMessage( JSON.stringify(tSend) );
+}
+
+function OpenCrossBorderNotice()
+{
+	var noticeUrl = "";
+	
+	if(m_Region === "Chinese Mainland") {
+		noticeUrl = "https://snapmaker.cn/personal-info-export";
+	} else {
+		noticeUrl = "https://www.snapmaker.com/personal-info-export";
+	}
+	
+	var tSend={};
+	tSend['sequence_id']=Math.round(new Date() / 1000);
+	tSend['command']="common_openurl";
+	tSend['url']=noticeUrl;
 	tSend['local']=m_Region
 	
 	SendWXMessage( JSON.stringify(tSend) );

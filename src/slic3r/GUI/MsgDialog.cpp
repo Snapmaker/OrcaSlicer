@@ -546,7 +546,7 @@ wxBoxSizer *Newer3mfVersionDialog::get_msg_sizer()
         
     } else {
         text1 = new wxStaticText(this, wxID_ANY, _L("The 3mf file version is newer than the current Snapmaker Orca version."));
-        wxStaticText *text2 = new wxStaticText(this, wxID_ANY, _L("Update your Snapmaker Orca could enable all functionality in the 3mf file."));
+        wxStaticText *text2 = new wxStaticText(this, wxID_ANY, _L("Updating your Snapmaker Orca could enable all functionality in the 3MF file."));
         horizontal_sizer->Add(text2, 0, wxEXPAND, 0);
     }
     Semver        app_version = *(Semver::parse(SLIC3R_VERSION));

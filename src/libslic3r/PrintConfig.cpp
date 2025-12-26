@@ -1806,7 +1806,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L(
         "This option sets the min point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the "
         "entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be "
-        "set appropriately. OrcaSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
+        "set appropriately. Snapmaker Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
         "points. This information can usually be obtained from your printer manufacturer. The default setting is (-99999, -99999), which "
         "means there are no limits, thus allowing probing across the entire bed.");
     def->sidetext = "mm";	// milimeters, don't need translation
@@ -8183,12 +8183,12 @@ ReadWriteSlicingStatesConfigDef::ReadWriteSlicingStatesConfigDef()
     def = this->add("position", coFloats);
     def->label = L("Position");
     def->tooltip = L("Position of the extruder at the beginning of the custom G-code block. If the custom G-code travels somewhere else, "
-                     "it should write to this variable so OrcaSlicer knows where it travels from when it gets control back.");
+                     "it should write to this variable so Snapmaker Orca knows where it travels from when it gets control back.");
 
     def = this->add("e_retracted", coFloats);
     def->label = L("Retraction");
     def->tooltip = L("Retraction state at the beginning of the custom G-code block. If the custom G-code moves the extruder axis, "
-                     "it should write to this variable so OrcaSlicer de-retracts correctly when it gets control back.");
+                     "it should write to this variable so Snapmaker Orca de-retracts correctly when it gets control back.");
 
     def = this->add("e_restart_extra", coFloats);
     def->label = L("Extra de-retraction");

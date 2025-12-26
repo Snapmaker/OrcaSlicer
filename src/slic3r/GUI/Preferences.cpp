@@ -1183,10 +1183,11 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_language = create_item_language_combobox(_L("Language"), page, _L("Language"), 50, "language", language_infos);
 
     std::vector<wxString> Regions         = {_L("Asia-Pacific"), _L("Chinese Mainland"), _L("Europe"), _L("North America"), _L("Others")};
-    auto                  item_region= create_item_region_combobox(_L("Login Region"), page, _L("Login Region"), Regions);
+    auto                  item_region= create_item_region_combobox(_L("Login region"), page, _L("Login region"), Regions);
 
     // SM Beta: temporarily open the item_stealth_mode and close the network plugin
     
+    /*auto item_stealth_mode = create_item_checkbox(_L("Stealth mode"), page, _L("This stops the transmission of data to Bambu's cloud services. Users who don't use BBL machines or use LAN mode only can safely turn on this function."), 50, "stealth_mode");
     /*auto item_stealth_mode = create_item_checkbox(_L("Stealth mode"), page, _L("This stops the transmission of data to Bambu's cloud services. Users who don't use BBL machines or use LAN mode only can safely turn on this function."), 50, "stealth_mode");
     auto item_enable_plugin = create_item_checkbox(_L("Enable network plugin"), page, _L("Enable network plugin"), 50, "installed_networking");
     auto item_legacy_network_plugin = create_item_checkbox(_L("Use legacy network plugin (Takes effect after restarting Orca)"), page, _L("Disable to use latest network plugin that supports new BambuLab firmwares."), 50, "legacy_networking");
@@ -1210,7 +1211,7 @@ wxWindow* PreferencesDialog::create_general_page()
             50, "single_instance");
 
     std::vector<wxString> DefaultPage = {_L("Home"), _L("Prepare")};
-    auto item_default_page = create_item_combobox(_L("Default Page"), page, _L("Set the page opened on startup."), "default_page", DefaultPage);
+    auto item_default_page = create_item_combobox(_L("Default page"), page, _L("Set the page opened on startup."), "default_page", DefaultPage);
 
     std::vector<wxString> CameraNavStyle = {_L("Default"), _L("Touchpad")};
     auto item_camera_navigation_style = create_item_combobox(_L("Camera style"), page, _L("Select camera navigation style.\nDefault: LMB+move for rotation, RMB/MMB+move for panning.\nTouchpad: Alt+move for rotation, Shift+move for panning."), "camera_navigation_style", CameraNavStyle);
@@ -1264,7 +1265,7 @@ wxWindow* PreferencesDialog::create_general_page()
 
     std::vector<wxString> projectLoadSettingsBehaviourOptions = {_L("Load All"), _L("Ask When Relevant"), _L("Always Ask"), _L("Load Geometry Only")};
     std::vector<string> projectLoadSettingsConfigOptions = { OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_ALL, OPTION_PROJECT_LOAD_BEHAVIOUR_ASK_WHEN_RELEVANT, OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK, OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_GEOMETRY };
-    auto item_project_load_behaviour = create_item_combobox(_L("Load Behaviour"), page, _L("Should printer/filament/process settings be loaded when opening a .3mf?"), SETTING_PROJECT_LOAD_BEHAVIOUR, projectLoadSettingsBehaviourOptions, projectLoadSettingsConfigOptions);
+    auto item_project_load_behaviour = create_item_combobox(_L("Load behaviour"), page, _L("Should printer/filament/process settings be loaded when opening a .3mf?"), SETTING_PROJECT_LOAD_BEHAVIOUR, projectLoadSettingsBehaviourOptions, projectLoadSettingsConfigOptions);
 
     auto item_max_recent_count = create_item_input(_L("Maximum recent files"), "", page, _L("Maximum count of recent files"), "max_recent_count", [](wxString value) {
         long max = 0;
@@ -1289,7 +1290,7 @@ wxWindow* PreferencesDialog::create_general_page()
     //dark mode
 #ifdef _WIN32
     auto title_darkmode = create_item_title(_L("Dark Mode"), page, _L("Dark Mode"));
-    auto item_darkmode = create_item_darkmode_checkbox(_L("Enable Dark mode"), page,_L("Enable dark mode"), 50, "dark_color_mode");
+    auto item_darkmode = create_item_darkmode_checkbox(_L("Enable dark mode"), page,_L("Enable dark mode"), 50, "dark_color_mode");
 #endif
 
     std::string enUrl = "https://www.snapmaker.com/privacy-policy";

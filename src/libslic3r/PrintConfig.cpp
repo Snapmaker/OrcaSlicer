@@ -602,7 +602,7 @@ void PrintConfigDef::init_common_params()
 
     def = this->add("printhost_apikey", coString);
     def->label = L("API Key / Password");
-    def->tooltip = L("Orca Slicer can upload G-code files to a printer host. This field should contain "
+    def->tooltip = L("Snapmaker Orca can upload G-code files to a printer host. This field should contain "
         "the API Key or the password required for authentication.");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
@@ -1806,7 +1806,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L(
         "This option sets the min point for the allowed bed mesh area. Due to the probe's XY offset, most printers are unable to probe the "
         "entire bed. To ensure the probe point does not go outside the bed area, the minimum and maximum points of the bed mesh should be "
-        "set appropriately. OrcaSlicer ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
+        "set appropriately. Snapmaker Orca ensures that adaptive_bed_mesh_min/adaptive_bed_mesh_max values do not exceed these min/max "
         "points. This information can usually be obtained from your printer manufacturer. The default setting is (-99999, -99999), which "
         "means there are no limits, thus allowing probing across the entire bed.");
     def->sidetext = "mm";	// milimeters, don't need translation
@@ -2515,7 +2515,7 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Strength");
     def->tooltip = L("Connect an infill line to an internal perimeter with a short segment of an additional perimeter. "
                      "If expressed as percentage (example: 15%) it is calculated over infill extrusion width. "
-                     "Orca Slicer tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment "
+                     "Snapmaker Orca tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment "
                      "shorter than infill_anchor_max is found, the infill line is connected to a perimeter segment at just one side "
                      "and the length of the perimeter segment taken is limited to this parameter, but no longer than anchor_length_max.\n"
                      "Set this parameter to zero to disable anchoring perimeters connected to a single infill line.");
@@ -2543,7 +2543,7 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Strength");
     def->tooltip = L("Connect an infill line to an internal perimeter with a short segment of an additional perimeter. "
                      "If expressed as percentage (example: 15%) it is calculated over infill extrusion width. "
-                     "Orca Slicer tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment "
+                     "Snapmaker Orca tries to connect two close infill lines to a short perimeter segment. If no such perimeter segment "
                      "shorter than this parameter is found, the infill line is connected to a perimeter segment at just one side "
                      "and the length of the perimeter segment taken is limited to infill_anchor, but no longer than this parameter.\n"
                      "If set to 0, the old algorithm for infill connection will be used, it should create the same result as with 1000 & 0.");
@@ -8183,12 +8183,12 @@ ReadWriteSlicingStatesConfigDef::ReadWriteSlicingStatesConfigDef()
     def = this->add("position", coFloats);
     def->label = L("Position");
     def->tooltip = L("Position of the extruder at the beginning of the custom G-code block. If the custom G-code travels somewhere else, "
-                     "it should write to this variable so OrcaSlicer knows where it travels from when it gets control back.");
+                     "it should write to this variable so Snapmaker Orca knows where it travels from when it gets control back.");
 
     def = this->add("e_retracted", coFloats);
     def->label = L("Retraction");
     def->tooltip = L("Retraction state at the beginning of the custom G-code block. If the custom G-code moves the extruder axis, "
-                     "it should write to this variable so OrcaSlicer de-retracts correctly when it gets control back.");
+                     "it should write to this variable so Snapmaker Orca de-retracts correctly when it gets control back.");
 
     def = this->add("e_restart_extra", coFloats);
     def->label = L("Extra de-retraction");

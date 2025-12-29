@@ -574,7 +574,8 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
         }
         bmp = m_bitmap_cache->insert(scaled_bitmap_name, bmps);
     }
-
+    if (!bmp)
+        return;
     node->SetBitmap(*bmp);
 }
 

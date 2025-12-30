@@ -175,6 +175,10 @@
   "Auto-reloading filament...": "Auto-reloading filament...",
   "Checking toolheads...": "Checking toolheads...",
   "Auto-loading filament...": "Auto-loading filament...",
+  "Auto-unloading filament...": "Auto-unloading filament...",
+  "Bed detecting...": "Bed detecting...",
+  "Homing Calibration...": "Homing Calibration...",
+  "Docking Coordinate Calibrating": "Docking Coordinate Calibrating",
   "Pre-extruding...": "Pre-extruding...",
   "Cleaning Nozzle 1 (1/4)": "Cleaning Nozzle 1 (1/4)",
   "Cleaning Nozzle 2 (2/4)": "Cleaning Nozzle 2 (2/4)",
@@ -198,6 +202,10 @@
   "Auto Loading": "Auto Loading",
   "Unloading": "Unloading",
   "Manual Loading": "Manual Loading",
+  "Extruder Docking Calibrating...": "Extruder Docking Calibrating...",
+  "Checking Extruder Park...": "Checking Extruder Park...",
+  "Checking Extruder Pick...": "Checking Extruder Pick...",
+
   "Heated Bed Temp.": "Heated Bed Temp.",
 
   "Print Speed": "Print Speed",

@@ -114,9 +114,6 @@ void session::read_first_line()
             headers.on_read_request_line(line);
             read_next_line();
         } else if (e != boost::asio::error::operation_aborted) {
-            BOOST_LOG_TRIVIAL(error) << "HttpServer read_first_line error: " << e.message();
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, 
-                std::string("HttpServer read_first_line failed: ") + e.message(), BP_LOCAL_SERVER);
             server.stop(self);
         }
     });

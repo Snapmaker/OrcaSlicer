@@ -598,7 +598,10 @@ if (APPLE)
 endif ()
 
 if (TARGET OpenVDB::openvdb)
-    target_link_libraries(libslic3r OpenVDB::openvdb)
+    target_link_libraries(libslic3r PRIVATE OpenVDB::openvdb)
+    if (TARGET Blosc::blosc)
+        target_link_libraries(libslic3r PUBLIC Blosc::blosc)
+    endif()
 endif()
 
 if(WIN32)

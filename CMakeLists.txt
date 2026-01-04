@@ -408,6 +408,10 @@ if(SLIC3R_STATIC)
     # Use boost libraries linked statically to the C++ runtime.
     # set(Boost_USE_STATIC_RUNTIME ON)
 endif()
+
+if(NOT Boost_USE_STATIC_LIBS)
+    add_definitions(-DBOOST_LOG_DYN_LINK)
+endif()
 #set(Boost_DEBUG ON)
 # set(Boost_COMPILER "-mgw81")
 # boost::process was introduced first in version 1.64.0,
@@ -422,7 +426,7 @@ if (APPLE)
     target_compile_definitions(boost_headeronly INTERFACE BOOST_ASIO_DISABLE_KQUEUE)
 endif()
 
-if(NOT SLIC3R_STATIC)
+if(NOT Boost_USE_STATIC_LIBS)
     target_compile_definitions(boost_headeronly INTERFACE BOOST_LOG_DYN_LINK)
 endif()
 

@@ -2420,6 +2420,10 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
                 // Use same epsilon as BuildVolume::all_paths_inside() for consistency
                 static constexpr const double epsilon = BuildVolume::BedEpsilon;
 
+                // Clear existing violations and populate with detailed info
+                auto& gcode_result_writable = const_cast<GCodeProcessorResult&>(gcode_result);
+                gcode_result_writable.boundary_violations.clear();
+
                 for (size_t i = first_print_move; i < gcode_result.moves.size(); ++i) {
                     const auto& move = gcode_result.moves[i];
 
@@ -2431,10 +2435,41 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
                             move.position.x() > bbox.max.x() + epsilon ||
                             move.position.y() < bbox.min.y() - epsilon ||
                             move.position.y() > bbox.max.y() + epsilon) {
+
+                            // Create detailed violation info
+                            GCodeProcessorResult::BoundaryViolationInfo violation;
+                            violation.violation_type = GCodeProcessorResult::BoundaryViolationType::TravelMove;
+                            violation.position = Vec3d(move.position.x(), move.position.y(), move.position.z());
+                            violation.print_z = move.position.z();
+                            violation.component_name = "Travel";
+
+                            // Determine which boundary was exceeded
+                            double dist_x_min = bbox.min.x() - move.position.x();
+                            double dist_x_max = move.position.x() - bbox.max.x();
+                            double dist_y_min = bbox.min.y() - move.position.y();
+                            double dist_y_max = move.position.y() - bbox.max.y();
+
+                            if (dist_x_min > 0) {
+                                violation.direction = GCodeProcessorResult::BoundaryDirection::X_Min;
+                                violation.distance_out = dist_x_min;
+                            } else if (dist_x_max > 0) {
+                                violation.direction = GCodeProcessorResult::BoundaryDirection::X_Max;
+                                violation.distance_out = dist_x_max;
+                            } else if (dist_y_min > 0) {
+                                violation.direction = GCodeProcessorResult::BoundaryDirection::Y_Min;
+                                violation.distance_out = dist_y_min;
+                            } else if (dist_y_max > 0) {
+                                violation.direction = GCodeProcessorResult::BoundaryDirection::Y_Max;
+                                violation.distance_out = dist_y_max;
+                            }
+
+                            gcode_result_writable.boundary_violations.push_back(violation);
+
                             violation_count++;
                             if (violation_count <= 3) {  // Log first 3
                                 BOOST_LOG_TRIVIAL(warning) << "Travel move #" << i
-                                    << " outside bounds: pos=(" << move.position.x()
+                                    << " outside bounds: " << violation.get_description()
+                                    << " at pos=(" << move.position.x()
                                     << ", " << move.position.y() << ", " << move.position.z() << ")";
                             }
                             has_travel_violations = true;

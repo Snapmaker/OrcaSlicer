@@ -2285,6 +2285,65 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
 
     //BBS
     result->conflict_result = m_conflict_result;
+
+    // BBS: Copy boundary violations from Print to GCodeProcessorResult
+    // This allows detailed violation information to be displayed in the GUI
+    if (!m_boundary_violations.empty()) {
+        result->boundary_violations.clear();
+        result->boundary_violations.reserve(m_boundary_violations.size());
+
+        for (const auto& conflict : m_boundary_violations) {
+            if (conflict.is_boundary_violation()) {
+                GCodeProcessorResult::BoundaryViolationInfo info;
+
+                // Map ConflictResult violation type to BoundaryViolationType
+                switch (static_cast<BoundaryValidator::ViolationType>(conflict.violation_type_int)) {
+                    case BoundaryValidator::ViolationType::SpiralLiftOutOfBounds:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::SpiralLift;
+                        info.component_name = "Spiral Lift";
+                        break;
+                    case BoundaryValidator::ViolationType::LazyLiftOutOfBounds:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::LazyLift;
+                        info.component_name = "Lazy Lift";
+                        break;
+                    case BoundaryValidator::ViolationType::WipeTowerOutOfBounds:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::WipeTower;
+                        info.component_name = "Wipe Tower";
+                        break;
+                    case BoundaryValidator::ViolationType::SkirtOutOfBounds:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Skirt;
+                        info.component_name = "Skirt";
+                        break;
+                    case BoundaryValidator::ViolationType::BrimOutOfBounds:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Brim;
+                        info.component_name = "Brim";
+                        break;
+                    case BoundaryValidator::ViolationType::SupportOutOfBounds:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Support;
+                        info.component_name = "Support";
+                        break;
+                    default:
+                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Unknown;
+                        break;
+                }
+
+                // Copy position and height
+                info.position = conflict.violation_position;
+                info.print_z = static_cast<float>(conflict._height);
+                info.layer_num = conflict.layer;
+
+                // Direction is not directly available in ConflictResult, leave as Unknown
+                info.direction = GCodeProcessorResult::BoundaryDirection::Unknown;
+                info.distance_out = 0.0;
+
+                result->boundary_violations.push_back(info);
+            }
+        }
+
+        BOOST_LOG_TRIVIAL(info) << "Copied " << result->boundary_violations.size()
+            << " boundary violations from Print to GCodeProcessorResult";
+    }
+
     return path.c_str();
 }
 

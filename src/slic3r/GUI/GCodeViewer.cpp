@@ -2399,6 +2399,57 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     {
         //BBS: use convex_hull for toolpath outside check
         m_contained_in_bed = build_volume.all_paths_inside(gcode_result, m_paths_bounding_box);
+
+        // BBS: Enhanced Travel move checking with smart filtering
+        // Skip initial setup moves (G28, G29) and only check moves during actual printing
+        if (m_contained_in_bed) {
+            // Find first extrusion move to determine where actual printing starts
+            size_t first_print_move = 0;
+            for (size_t i = 0; i < gcode_result.moves.size(); ++i) {
+                if (gcode_result.moves[i].type == EMoveType::Extrude &&
+                    gcode_result.moves[i].position.z() > 0.1) {  // Above first layer
+                    first_print_move = i;
+                    break;
+                }
+            }
+
+            // Only check moves after printing starts (skip G28/G29 initialization)
+            if (first_print_move > 0) {
+                bool has_travel_violations = false;
+                int violation_count = 0;
+                // Use same epsilon as BuildVolume::all_paths_inside() for consistency
+                static constexpr const double epsilon = BuildVolume::BedEpsilon;
+
+                for (size_t i = first_print_move; i < gcode_result.moves.size(); ++i) {
+                    const auto& move = gcode_result.moves[i];
+
+                    // Only check Travel moves (Extrude already checked by all_paths_inside)
+                    if (move.type == EMoveType::Travel) {
+                        // Quick rectangle bed check with tolerance
+                        auto bbox = build_volume.bounding_volume();
+                        if (move.position.x() < bbox.min.x() - epsilon ||
+                            move.position.x() > bbox.max.x() + epsilon ||
+                            move.position.y() < bbox.min.y() - epsilon ||
+                            move.position.y() > bbox.max.y() + epsilon) {
+                            violation_count++;
+                            if (violation_count <= 3) {  // Log first 3
+                                BOOST_LOG_TRIVIAL(warning) << "Travel move #" << i
+                                    << " outside bounds: pos=(" << move.position.x()
+                                    << ", " << move.position.y() << ", " << move.position.z() << ")";
+                            }
+                            has_travel_violations = true;
+                        }
+                    }
+                }
+
+                if (has_travel_violations) {
+                    BOOST_LOG_TRIVIAL(warning) << "Found " << violation_count
+                        << " Travel moves outside build volume";
+                    m_contained_in_bed = false;
+                }
+            }
+        }
+
         if (m_contained_in_bed) {
             //PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
             //PartPlate* plate = partplate_list.get_curr_plate();

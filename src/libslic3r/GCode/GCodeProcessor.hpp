@@ -6,6 +6,7 @@
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/CustomGCode.hpp"
+#include "libslic3r/BoundaryValidator.hpp"
 
 #include <cstdint>
 #include <array>
@@ -239,80 +240,16 @@ class Print;
             std::vector<std::string> params;    // extra msg info
         };
 
-        // BBS: Detailed boundary violation information for better user feedback
-        enum class BoundaryViolationType {
-            Unknown = 0,
-            TravelMove,              // Travel move exceeds boundaries
-            ExtrudeMove,             // Extrude move exceeds boundaries
-            SpiralLift,              // Spiral lift arc exceeds boundaries
-            LazyLift,                // Lazy lift slope exceeds boundaries
-            WipeTower,               // Wipe tower position exceeds boundaries
-            Skirt,                   // Skirt exceeds boundaries
-            Brim,                    // Brim exceeds boundaries
-            Support,                 // Support material exceeds boundaries
-            ArcMove,                 // G2/G3 arc move exceeds boundaries
-            Count
-        };
-
-        enum class BoundaryDirection {
-            Unknown = 0,
-            X_Min,
-            X_Max,
-            Y_Min,
-            Y_Max,
-            Z_Max,
-            Radius,                  // For circular beds
-            Count
-        };
-
+        // Snapmaker: Detailed boundary violation information for better user feedback
+        // Uses BoundaryValidator enums to avoid duplication
         struct BoundaryViolationInfo {
-            BoundaryViolationType violation_type{BoundaryViolationType::Unknown};
-            BoundaryDirection direction{BoundaryDirection::Unknown};
+            BoundaryValidator::ViolationType violation_type{BoundaryValidator::ViolationType::Unknown};
+            BoundaryValidator::BoundaryDirection direction{BoundaryValidator::BoundaryDirection::Unknown};
             Vec3d position{Vec3d::Zero()};          // Position where violation occurs (mm)
             double distance_out{0.0};               // How far outside (mm)
             std::string component_name;             // e.g., "Skirt", "Brim", "Support", "Wipe Tower"
             int layer_num{-1};                      // Layer number (if applicable)
             float print_z{-1.0f};                   // Z height at violation (mm)
-
-            // Get human-readable description of violation type
-            std::string get_type_string() const {
-                switch (violation_type) {
-                    case BoundaryViolationType::TravelMove:      return "Travel Move";
-                    case BoundaryViolationType::ExtrudeMove:     return "Extrude Move";
-                    case BoundaryViolationType::SpiralLift:      return "Spiral Lift";
-                    case BoundaryViolationType::LazyLift:        return "Lazy Lift";
-                    case BoundaryViolationType::WipeTower:       return "Wipe Tower";
-                    case BoundaryViolationType::Skirt:           return "Skirt";
-                    case BoundaryViolationType::Brim:            return "Brim";
-                    case BoundaryViolationType::Support:         return "Support";
-                    case BoundaryViolationType::ArcMove:         return "Arc Move";
-                    default:                                     return "Unknown";
-                }
-            }
-
-            // Get human-readable description of direction
-            std::string get_direction_string() const {
-                switch (direction) {
-                    case BoundaryDirection::X_Min:      return "beyond X minimum";
-                    case BoundaryDirection::X_Max:      return "beyond X maximum";
-                    case BoundaryDirection::Y_Min:      return "beyond Y minimum";
-                    case BoundaryDirection::Y_Max:      return "beyond Y maximum";
-                    case BoundaryDirection::Z_Max:      return "above Z maximum";
-                    case BoundaryDirection::Radius:     return "beyond bed radius";
-                    default:                            return "outside boundaries";
-                }
-            }
-
-            // Get formatted description string
-            std::string get_description() const {
-                std::string desc;
-                if (!component_name.empty()) {
-                    desc += component_name + " - ";
-                }
-                desc += get_type_string();
-                desc += " " + get_direction_string();
-                return desc;
-            }
         };
 
         std::string filename;
@@ -346,7 +283,7 @@ class Print;
         std::vector<std::pair<float, std::pair<size_t, size_t>>> spiral_vase_layers;
         //BBS
         std::vector<SliceWarning> warnings;
-        // BBS: Detailed boundary violation information
+        // Snapmaker: Detailed boundary violation information
         std::vector<BoundaryViolationInfo> boundary_violations;
         int nozzle_hrc;
         NozzleType nozzle_type;

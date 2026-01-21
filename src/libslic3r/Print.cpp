@@ -1287,7 +1287,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             }
         }
 
-        // BBS: Critical fix - Validate wipe tower position is within build volume boundaries
+        // Snapmaker: Critical fix - Validate wipe tower position is within build volume boundaries
         // This addresses vulnerability #3: Wipe tower position was not validated against bed boundaries
         {
             const size_t plate_index = this->get_plate_index();
@@ -2286,7 +2286,7 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     //BBS
     result->conflict_result = m_conflict_result;
 
-    // BBS: Copy boundary violations from Print to GCodeProcessorResult
+    // Snapmaker: Copy boundary violations from Print to GCodeProcessorResult
     // This allows detailed violation information to be displayed in the GUI
     if (!m_boundary_violations.empty()) {
         result->boundary_violations.clear();
@@ -2296,36 +2296,8 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
             if (conflict.is_boundary_violation()) {
                 GCodeProcessorResult::BoundaryViolationInfo info;
 
-                // Map ConflictResult violation type to BoundaryViolationType
-                switch (static_cast<BoundaryValidator::ViolationType>(conflict.violation_type_int)) {
-                    case BoundaryValidator::ViolationType::SpiralLiftOutOfBounds:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::SpiralLift;
-                        info.component_name = "Spiral Lift";
-                        break;
-                    case BoundaryValidator::ViolationType::LazyLiftOutOfBounds:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::LazyLift;
-                        info.component_name = "Lazy Lift";
-                        break;
-                    case BoundaryValidator::ViolationType::WipeTowerOutOfBounds:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::WipeTower;
-                        info.component_name = "Wipe Tower";
-                        break;
-                    case BoundaryValidator::ViolationType::SkirtOutOfBounds:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Skirt;
-                        info.component_name = "Skirt";
-                        break;
-                    case BoundaryValidator::ViolationType::BrimOutOfBounds:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Brim;
-                        info.component_name = "Brim";
-                        break;
-                    case BoundaryValidator::ViolationType::SupportOutOfBounds:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Support;
-                        info.component_name = "Support";
-                        break;
-                    default:
-                        info.violation_type = GCodeProcessorResult::BoundaryViolationType::Unknown;
-                        break;
-                }
+                // Directly copy the violation type (enums are now unified)
+                info.violation_type = static_cast<BoundaryValidator::ViolationType>(conflict.violation_type_int);
 
                 // Copy position and height
                 info.position = conflict.violation_position;
@@ -2333,7 +2305,7 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
                 info.layer_num = conflict.layer;
 
                 // Direction is not directly available in ConflictResult, leave as Unknown
-                info.direction = GCodeProcessorResult::BoundaryDirection::Unknown;
+                info.direction = BoundaryValidator::BoundaryDirection::Unknown;
                 info.distance_out = 0.0;
 
                 result->boundary_violations.push_back(info);
@@ -2461,7 +2433,7 @@ void Print::_make_skirt()
 			    loop = loops.front();
             }
             
-            // BBS: Validate skirt loop against build volume boundaries
+            // Snapmaker: Validate skirt loop against build volume boundaries
             if (!validator.validate_polygon(loop, initial_layer_print_height)) {
                 // Record boundary violation
                 BoundingBox loop_bbox = get_extents(loop);
@@ -2471,7 +2443,7 @@ void Print::_make_skirt()
                     initial_layer_print_height
                 );
                 ConflictResult violation = ConflictResult::create_boundary_violation(
-                    static_cast<int>(BoundaryValidator::ViolationType::SkirtOutOfBounds),
+                    static_cast<int>(BoundaryValidator::ViolationType::Skirt),
                     violation_pos,
                     initial_layer_print_height,
                     "Skirt"
@@ -2540,7 +2512,7 @@ void Print::_make_skirt()
                     loop = loops.front();
                 }
 
-                // BBS: Validate per-object skirt loop against build volume boundaries
+                // Snapmaker: Validate per-object skirt loop against build volume boundaries
                 if (!validator.validate_polygon(loop, initial_layer_print_height)) {
                     // Record boundary violation
                     BoundingBox loop_bbox = get_extents(loop);
@@ -2550,7 +2522,7 @@ void Print::_make_skirt()
                         initial_layer_print_height
                     );
                     ConflictResult violation = ConflictResult::create_boundary_violation(
-                        static_cast<int>(BoundaryValidator::ViolationType::SkirtOutOfBounds),
+                        static_cast<int>(BoundaryValidator::ViolationType::Skirt),
                         violation_pos,
                         initial_layer_print_height,
                         object->model_object()->name

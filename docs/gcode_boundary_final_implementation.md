@@ -38,8 +38,8 @@
 
 | 文件 | 修改类型 | 主要变更 |
 |------|----------|----------|
-| `src/libslic3r/BuildVolume.hpp` | 功能增强 | 新增 `all_moves_inside()` 方法 |
-| `src/libslic3r/BuildVolume.cpp` | 功能增强 | 实现 `all_moves_inside()` |
+| `src/libslic3r/BuildVolume.hpp` | (无变更) | 保持原有接口 |
+| `src/libslic3r/BuildVolume.cpp` | (无变更) | 保持原有实现 |
 | `src/libslic3r/GCode/GCodeProcessor.hpp` | 结构扩展 | 扩展 `ConflictResult` |
 | `src/libslic3r/Print.hpp` | 功能增强 | 添加边界超限追踪 |
 | `src/libslic3r/Print.cpp` | 验证增强 | 擦料塔+Skirt边界检查 |
@@ -87,7 +87,9 @@ enum class ViolationType {
 
 ### 2. Travel移动边界检查 (漏洞#7)
 
-**位置**: `src/slic3r/GUI/GCodeViewer.cpp:2403-2450`
+**位置**: `src/slic3r/GUI/GCodeViewer.cpp:2427-2477`
+
+**实现方式**: 内联检查（不使用BuildVolume函数）
 
 **实现逻辑**:
 ```cpp
@@ -95,13 +97,20 @@ enum class ViolationType {
 // 1. 找到第一个挤出移动 (Z > 0.1mm)
 // 2. 只检查此之后的Travel移动
 // 3. 使用 BedEpsilon 容差
+// 4. 直接在检查循环中收集 BoundaryViolationInfo
 ```
+
+**为什么不用独立的 BuildVolume 函数**:
+- 需要收集详细的违规信息（类型、方向、位置、距离）
+- 简单的布尔返回值无法提供足够的诊断数据
+- 内联方式可以直接填充 `BoundaryViolationInfo` 结构
 
 **关键特性**:
 - ✅ 跳过G28/G29等初始化命令
 - ✅ 只检查Travel移动 (Extrude已有检查)
-- ✅ 详细日志输出前3个超限
-- ✅ 记录总超限数量
+- ✅ 确定超限方向 (X_min/X_max/Y_min/Y_max)
+- ✅ 记录位置、距离和Z高度
+- ✅ 填充到 `boundary_violations` 向量
 
 ---
 

@@ -3,7 +3,12 @@
 > **项目编号**: ORCA-2026-001
 > **创建日期**: 2026-01-15
 > **作者**: Claude Code
-> **状态**: 调研完成，待实施
+> **状态**: ✅ 已完成
+
+> **重要说明**：本文档是设计阶段的原始文档。实际实现与设计有一些差异：
+> - 原设计在 `BuildVolume` 中添加 `all_moves_inside()` 方法
+> - **实际实现**：Travel 检查采用内联方式在 `GCodeViewer.cpp` 中实现，以便收集详细的违规信息（类型、方向、位置、距离）
+> - 这是因为需要返回详细的 `BoundaryViolationInfo` 结构，而不是简单的布尔值
 
 ---
 
@@ -872,7 +877,20 @@ public:
 
 #### 修复方案 1: Travel Moves 验证 (P0)
 
-**文件**: `src/libslic3r/BuildVolume.hpp/cpp`
+> **实际实现说明**：设计方案中提出了在 `BuildVolume` 中添加 `all_moves_inside()` 方法，但最终实现采用了不同的方式。
+
+**实际实现位置**: `src/slic3r/GUI/GCodeViewer.cpp:2427-2477`
+
+**实现方式**: 内联检查（而非调用 BuildVolume 方法）
+
+**为什么采用内联实现**:
+- 需要收集详细的违规信息：类型、方向、位置、距离、Z高度
+- 简单的布尔返回值无法提供诊断数据
+- 内联实现可以直接填充 `BoundaryViolationInfo` 结构
+
+**设计方案（未采用）**: 以下是原始设计方案，供参考
+
+**文件**: `src/libslic3r/BuildVolume.hpp/cpp` (设计方案，未实施)
 
 **新增方法**: `all_moves_inside()` (检查所有移动，包括 Travel)
 
@@ -1327,10 +1345,11 @@ std::string GCodeWriter::travel_to_z(double z, const std::string& comment) {
    │      └─→ ConflictChecker::find_inter_of_lines_in_diff_objs() ✓
    │
    └─→ 加载预览
-          ├─→ BuildVolume::all_paths_inside() ✓ (保持)
-          └─→ BuildVolume::all_moves_inside() ✓✓ (NEW - 包括Travel)
+          └─→ GCodeViewer: 内联 Travel 检查 ✓✓ (NEW - 收集详细违规信息)
 
 图例: ✓ 原有检测  ✓✓ 新增/增强检测
+
+> **实际实现说明**：Travel 检查采用内联实现而非 BuildVolume 方法，以便收集详细的违规信息（类型、方向、位置、距离）。见 `GCodeViewer.cpp:2427-2477`。
 ```
 
 ---
@@ -1366,16 +1385,21 @@ struct BoundaryViolation { ... };
 
 ### 新增方法
 
-```cpp
-// BuildVolume.hpp
-bool BuildVolume::all_moves_inside(...) const;
+> **实际实现说明**：`BuildVolume::all_moves_inside()` 未添加。Travel 检查采用内联实现。
 
-// Print.hpp
+```cpp
+// BuildVolume.hpp - 无变更 (设计方案未采纳)
+
+// GCodeViewer.cpp - 内联 Travel 检查实现
+// 位置: lines 2427-2477
+// 功能: 检查 Travel 移动并填充 boundary_violations
+
+// Print.hpp (如实施)
 void Print::add_boundary_violation(const ConflictResult&);
 const std::vector<ConflictResult>& Print::get_boundary_violations() const;
 void Print::clear_boundary_violations();
 
-// GCodeWriter.hpp
+// GCodeWriter.hpp (如实施)
 void GCodeWriter::set_boundary_validator(...);
 ```
 

@@ -22,14 +22,31 @@ public:
      * @brief Types of boundary violations that can occur
      */
     enum class ViolationType {
-        SpiralLiftOutOfBounds,      // Spiral lift arc exceeds boundaries
-        LazyLiftOutOfBounds,        // Lazy lift slope exceeds boundaries
-        WipeTowerOutOfBounds,       // Wipe tower position exceeds boundaries
-        SkirtOutOfBounds,           // Skirt exceeds boundaries
-        BrimOutOfBounds,            // Brim exceeds boundaries
-        SupportOutOfBounds,         // Support material exceeds boundaries
-        TravelMoveOutOfBounds,      // Travel move exceeds boundaries
-        ArcPathOutOfBounds          // Arc extrusion path exceeds boundaries
+        Unknown = 0,
+        TravelMove,              // Travel move exceeds boundaries
+        ExtrudeMove,             // Extrude move exceeds boundaries
+        SpiralLift,              // Spiral lift arc exceeds boundaries
+        LazyLift,                // Lazy lift slope exceeds boundaries
+        WipeTower,               // Wipe tower position exceeds boundaries
+        Skirt,                   // Skirt exceeds boundaries
+        Brim,                    // Brim exceeds boundaries
+        Support,                 // Support material exceeds boundaries
+        ArcMove,                 // G2/G3 arc move exceeds boundaries
+        Count                    // Sentinel value
+    };
+
+    /**
+     * @brief Direction of boundary violation
+     */
+    enum class BoundaryDirection {
+        Unknown = 0,
+        X_Min,                   // Beyond X minimum boundary
+        X_Max,                   // Beyond X maximum boundary
+        Y_Min,                   // Beyond Y minimum boundary
+        Y_Max,                   // Beyond Y maximum boundary
+        Z_Max,                   // Above Z maximum boundary
+        Radius,                  // Beyond circular bed radius
+        Count                    // Sentinel value
     };
 
     /**
@@ -37,14 +54,17 @@ public:
      */
     struct BoundaryViolation {
         ViolationType type;         // Type of violation
+        BoundaryDirection direction; // Direction of violation
         std::string description;    // Human-readable description
         Vec3d position;             // Position where violation occurs (unscaled)
+        double distance_out;        // How far outside boundaries (unscaled)
         double layer_z;             // Z height of the layer (unscaled)
         std::string object_name;    // Name of related object (if applicable)
 
         BoundaryViolation(ViolationType t, const std::string& desc,
-                         const Vec3d& pos, double z, const std::string& obj = "")
-            : type(t), description(desc), position(pos), layer_z(z), object_name(obj) {}
+                         const Vec3d& pos, double z, const std::string& obj = "",
+                         BoundaryDirection dir = BoundaryDirection::Unknown, double dist = 0.0)
+            : type(t), direction(dir), description(desc), position(pos), distance_out(dist), layer_z(z), object_name(obj) {}
     };
 
     using BoundaryViolations = std::vector<BoundaryViolation>;

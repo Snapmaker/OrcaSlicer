@@ -990,7 +990,7 @@ static ExPolygons outer_inner_brim_area(const Print& print,
                         polygons_reverse(ex_poly_holes_reversed);
 
                         if (has_outer_brim) {
-                            // BBS: inner and outer boundary are offset from the same polygon incase of round off error.
+                            // Snapmaker: inner and outer boundary are offset from the same polygon incase of round off error.
                             auto innerExpoly = offset_ex(ex_poly.contour, brim_offset, jtRound, SCALED_RESOLUTION);
                             ExPolygons outerExpoly;
                             if (use_brim_ears) {
@@ -1742,14 +1742,14 @@ void make_brim(const Print& print, PrintTryCancel try_cancel, Polygons& islands_
     for (size_t iia = 0; iia < islands_area.size(); ++iia)
         islands_area[iia].translate(plate_shift);
 
-    // BBS: Create BuildVolume and BoundaryValidator for brim boundary checking
+    // Snapmaker: Create BuildVolume and BoundaryValidator for brim boundary checking
     BuildVolume build_volume(print.config().printable_area.values, print.config().printable_height);
     BuildVolumeBoundaryValidator validator(build_volume);
     double first_layer_height = print.skirt_first_layer_height();
     
     for (auto iter = brimAreaMap.begin(); iter != brimAreaMap.end(); ++iter) {
         if (!iter->second.empty()) {
-            // BBS: Validate brim area against build volume boundaries
+            // Snapmaker: Validate brim area against build volume boundaries
             for (const ExPolygon& expoly : iter->second) {
                 if (!validator.validate_polygon(expoly.contour, first_layer_height)) {
                     // Record boundary violation
@@ -1763,7 +1763,7 @@ void make_brim(const Print& print, PrintTryCancel try_cancel, Polygons& islands_
                         PrintObject* obj = const_cast<PrintObject*>(print.get_object(iter->first));
                         std::string obj_name = obj ? obj->model_object()->name : "Unknown";
                         ConflictResult violation = ConflictResult::create_boundary_violation(
-                            static_cast<int>(BoundaryValidator::ViolationType::BrimOutOfBounds),
+                            static_cast<int>(BoundaryValidator::ViolationType::Brim),
                             violation_pos,
                             first_layer_height,
                             obj_name
@@ -1779,7 +1779,7 @@ void make_brim(const Print& print, PrintTryCancel try_cancel, Polygons& islands_
     }
     for (auto iter = supportBrimAreaMap.begin(); iter != supportBrimAreaMap.end(); ++iter) {
         if (!iter->second.empty()) {
-            // BBS: Validate support brim area against build volume boundaries
+            // Snapmaker: Validate support brim area against build volume boundaries
             for (const ExPolygon& expoly : iter->second) {
                 if (!validator.validate_polygon(expoly.contour, first_layer_height)) {
                     // Record boundary violation
@@ -1793,7 +1793,7 @@ void make_brim(const Print& print, PrintTryCancel try_cancel, Polygons& islands_
                         PrintObject* obj = const_cast<PrintObject*>(print.get_object(iter->first));
                         std::string obj_name = obj ? obj->model_object()->name : "Unknown";
                         ConflictResult violation = ConflictResult::create_boundary_violation(
-                            static_cast<int>(BoundaryValidator::ViolationType::BrimOutOfBounds),
+                            static_cast<int>(BoundaryValidator::ViolationType::Brim),
                             violation_pos,
                             first_layer_height,
                             obj_name + " (support brim)"

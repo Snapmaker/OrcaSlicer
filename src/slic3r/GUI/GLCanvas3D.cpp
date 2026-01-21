@@ -9689,21 +9689,50 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
     case EWarning::ToolHeightOutside:  text = _u8L("A G-code path goes beyond the max print height."); error = ErrorType::SLICING_ERROR; break;
     case EWarning::ToolpathOutside: {
         error = ErrorType::SLICING_ERROR;
-        // BBS: Enhanced boundary violation reporting with detailed information
+        // Snapmaker: Enhanced boundary violation reporting with detailed information
         static std::string prevBoundaryText;
         text = prevBoundaryText;
+
+        // Helper function to get localized violation type name
+        auto get_localized_type_string = [](BoundaryValidator::ViolationType type) -> std::string {
+            switch (type) {
+                case BoundaryValidator::ViolationType::TravelMove:  return _u8L("Travel Move");
+                case BoundaryValidator::ViolationType::ExtrudeMove: return _u8L("Extrude Move");
+                case BoundaryValidator::ViolationType::SpiralLift:  return _u8L("Spiral Lift");
+                case BoundaryValidator::ViolationType::LazyLift:    return _u8L("Lazy Lift");
+                case BoundaryValidator::ViolationType::WipeTower:    return _u8L("Wipe Tower");
+                case BoundaryValidator::ViolationType::Skirt:        return _u8L("Skirt");
+                case BoundaryValidator::ViolationType::Brim:         return _u8L("Brim");
+                case BoundaryValidator::ViolationType::Support:      return _u8L("Support");
+                case BoundaryValidator::ViolationType::ArcMove:      return _u8L("Arc Move");
+                default: return _u8L("Unknown");
+            }
+        };
+
+        // Helper function to get localized direction string
+        auto get_localized_direction_string = [](BoundaryValidator::BoundaryDirection dir) -> std::string {
+            switch (dir) {
+                case BoundaryValidator::BoundaryDirection::X_Min:   return _u8L("beyond X minimum");
+                case BoundaryValidator::BoundaryDirection::X_Max:   return _u8L("beyond X maximum");
+                case BoundaryValidator::BoundaryDirection::Y_Min:   return _u8L("beyond Y minimum");
+                case BoundaryValidator::BoundaryDirection::Y_Max:   return _u8L("beyond Y maximum");
+                case BoundaryValidator::BoundaryDirection::Z_Max:   return _u8L("above Z maximum");
+                case BoundaryValidator::BoundaryDirection::Radius:  return _u8L("beyond bed radius");
+                default: return _u8L("outside boundaries");
+            }
+        };
 
         // Try to get detailed violation information from gcode_result
         const auto& violations = m_gcode_viewer.get_boundary_violations();
         if (!violations.empty()) {
 
             // Group violations by type for better summary
-            std::map<GCodeProcessorResult::BoundaryViolationType, int> violation_counts;
-            std::map<GCodeProcessorResult::BoundaryViolationType, std::string> type_names;
+            std::map<BoundaryValidator::ViolationType, int> violation_counts;
+            std::map<BoundaryValidator::ViolationType, std::string> type_names;
             for (const auto& v : violations) {
                 violation_counts[v.violation_type]++;
                 if (type_names.find(v.violation_type) == type_names.end()) {
-                    type_names[v.violation_type] = v.get_type_string();
+                    type_names[v.violation_type] = get_localized_type_string(v.violation_type);
                 }
             }
 
@@ -9725,7 +9754,14 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
                 int show_count = std::min((int)violations.size(), 5);
                 for (int i = 0; i < show_count; ++i) {
                     const auto& v = violations[i];
-                    msg += "  " + std::to_string(i + 1) + ". " + v.get_description();
+                    // Build localized description
+                    std::string desc;
+                    if (!v.component_name.empty()) {
+                        desc += v.component_name + " - ";
+                    }
+                    desc += get_localized_type_string(v.violation_type);
+                    desc += " " + get_localized_direction_string(v.direction);
+                    msg += "  " + std::to_string(i + 1) + ". " + desc;
                     if (v.distance_out > 0.001) {
                         msg += " (" + (boost::format(_u8L("%.2f mm out")) % v.distance_out).str() + ")";
                     }

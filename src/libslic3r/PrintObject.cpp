@@ -674,7 +674,7 @@ void PrintObject::generate_support_material()
             this->_generate_support_material();
             m_print->throw_if_canceled();
             
-            // BBS: Validate support material against build volume boundaries
+            // Snapmaker: Validate support material against build volume boundaries
             if (!m_support_layers.empty()) {
                 BuildVolume build_volume(m_print->config().printable_area.values, m_print->config().printable_height);
                 BuildVolumeBoundaryValidator validator(build_volume);
@@ -709,7 +709,7 @@ void PrintObject::generate_support_material()
                             
                             if (has_violation) {
                                 ConflictResult violation = ConflictResult::create_boundary_violation(
-                                    static_cast<int>(BoundaryValidator::ViolationType::SupportOutOfBounds),
+                                    static_cast<int>(BoundaryValidator::ViolationType::Support),
                                     violation_pos,
                                     z_height,
                                     this->model_object()->name

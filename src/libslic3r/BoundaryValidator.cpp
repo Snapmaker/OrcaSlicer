@@ -12,22 +12,26 @@ namespace Slic3r {
 std::string BoundaryValidator::violation_type_name(ViolationType type)
 {
     switch (type) {
-        case ViolationType::SpiralLiftOutOfBounds:
-            return "Spiral Lift Out of Bounds";
-        case ViolationType::LazyLiftOutOfBounds:
-            return "Lazy Lift Out of Bounds";
-        case ViolationType::WipeTowerOutOfBounds:
-            return "Wipe Tower Out of Bounds";
-        case ViolationType::SkirtOutOfBounds:
-            return "Skirt Out of Bounds";
-        case ViolationType::BrimOutOfBounds:
-            return "Brim Out of Bounds";
-        case ViolationType::SupportOutOfBounds:
-            return "Support Out of Bounds";
-        case ViolationType::TravelMoveOutOfBounds:
-            return "Travel Move Out of Bounds";
-        case ViolationType::ArcPathOutOfBounds:
-            return "Arc Path Out of Bounds";
+        case ViolationType::Unknown:
+            return "Unknown";
+        case ViolationType::TravelMove:
+            return "Travel Move";
+        case ViolationType::ExtrudeMove:
+            return "Extrude Move";
+        case ViolationType::SpiralLift:
+            return "Spiral Lift";
+        case ViolationType::LazyLift:
+            return "Lazy Lift";
+        case ViolationType::WipeTower:
+            return "Wipe Tower";
+        case ViolationType::Skirt:
+            return "Skirt";
+        case ViolationType::Brim:
+            return "Brim";
+        case ViolationType::Support:
+            return "Support";
+        case ViolationType::ArcMove:
+            return "Arc Move";
         default:
             return "Unknown Violation";
     }

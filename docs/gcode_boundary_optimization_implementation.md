@@ -3,7 +3,13 @@
 **项目编号**: ORCA-2026-001-IMPL
 **实施日期**: 2026-01-16
 **实施者**: Claude Code
-**状态**: ✅ 已完成并编译通过
+**状态**: ⚠️ **已过时 - 中间实现文档**
+
+> **重要说明**：本文档描述的是中间实现状态。最终实现与本文档有重要差异：
+> - `BuildVolume::all_moves_inside()` 方法已在后来被**删除**
+> - Travel 检查改为**内联实现**在 `GCodeViewer.cpp:2427-2477`
+> - 参见 `gcode_boundary_final_implementation.md` 了解最终实现状态
+> - 参见 `gcode_boundary_checking_optimization.md` 了解设计文档（已更新实际实现说明）
 
 ---
 

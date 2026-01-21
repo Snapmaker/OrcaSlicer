@@ -123,7 +123,7 @@ public:
     void set_is_first_layer(bool bval) { m_is_first_layer = bval; }
     GCodeFlavor get_gcode_flavor() const { return config.gcode_flavor; }
 
-    // BBS: Set boundary validator for arc path validation
+    // Snapmaker: Set boundary validator for arc path validation
     void set_boundary_validator(const BoundaryValidator* validator, Print* print_ptr = nullptr) {
         m_boundary_validator = validator;
         m_print_ptr = print_ptr;
@@ -180,7 +180,7 @@ public:
     double          m_current_speed;
     bool            m_is_first_layer = true;
 
-    // BBS: Boundary validator for arc path validation
+    // Snapmaker: Boundary validator for arc path validation
     const BoundaryValidator* m_boundary_validator = nullptr;
     Print* m_print_ptr = nullptr;
 

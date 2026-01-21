@@ -2438,7 +2438,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
 
                             // Create detailed violation info
                             GCodeProcessorResult::BoundaryViolationInfo violation;
-                            violation.violation_type = GCodeProcessorResult::BoundaryViolationType::TravelMove;
+                            violation.violation_type = BoundaryValidator::ViolationType::TravelMove;
                             violation.position = Vec3d(move.position.x(), move.position.y(), move.position.z());
                             violation.print_z = move.position.z();
                             violation.component_name = "Travel";
@@ -2450,16 +2450,16 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
                             double dist_y_max = move.position.y() - bbox.max.y();
 
                             if (dist_x_min > 0) {
-                                violation.direction = GCodeProcessorResult::BoundaryDirection::X_Min;
+                                violation.direction = BoundaryValidator::BoundaryDirection::X_Min;
                                 violation.distance_out = dist_x_min;
                             } else if (dist_x_max > 0) {
-                                violation.direction = GCodeProcessorResult::BoundaryDirection::X_Max;
+                                violation.direction = BoundaryValidator::BoundaryDirection::X_Max;
                                 violation.distance_out = dist_x_max;
                             } else if (dist_y_min > 0) {
-                                violation.direction = GCodeProcessorResult::BoundaryDirection::Y_Min;
+                                violation.direction = BoundaryValidator::BoundaryDirection::Y_Min;
                                 violation.distance_out = dist_y_min;
                             } else if (dist_y_max > 0) {
-                                violation.direction = GCodeProcessorResult::BoundaryDirection::Y_Max;
+                                violation.direction = BoundaryValidator::BoundaryDirection::Y_Max;
                                 violation.distance_out = dist_y_max;
                             }
 
@@ -2467,8 +2467,16 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
 
                             violation_count++;
                             if (violation_count <= 3) {  // Log first 3
+                                std::string dir_str;
+                                switch (violation.direction) {
+                                    case BoundaryValidator::BoundaryDirection::X_Min: dir_str = "X_min"; break;
+                                    case BoundaryValidator::BoundaryDirection::X_Max: dir_str = "X_max"; break;
+                                    case BoundaryValidator::BoundaryDirection::Y_Min: dir_str = "Y_min"; break;
+                                    case BoundaryValidator::BoundaryDirection::Y_Max: dir_str = "Y_max"; break;
+                                    default: dir_str = "Unknown"; break;
+                                }
                                 BOOST_LOG_TRIVIAL(warning) << "Travel move #" << i
-                                    << " outside bounds: " << violation.get_description()
+                                    << " outside bounds: " << violation.component_name << " " << dir_str
                                     << " at pos=(" << move.position.x()
                                     << ", " << move.position.y() << ", " << move.position.z() << ")";
                             }

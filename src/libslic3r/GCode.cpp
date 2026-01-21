@@ -1866,7 +1866,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     
     m_writer.set_is_bbl_machine(is_bbl_printers);
 
-    // BBS: Initialize boundary validator for arc path validation
+    // Snapmaker: Initialize boundary validator for arc path validation
     BuildVolume build_volume(print.config().printable_area.values, print.config().printable_height);
     BuildVolumeBoundaryValidator validator(build_volume);
     m_writer.set_boundary_validator(&validator, &print);

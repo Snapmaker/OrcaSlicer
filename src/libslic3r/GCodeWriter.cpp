@@ -564,7 +564,7 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
                 double start_angle = std::atan2(-ij_offset(1), -ij_offset(0));
                 double end_angle = start_angle + 2 * PI; // Full circle
                 
-                // BBS: Use BoundaryValidator for precise arc validation
+                // Snapmaker: Use BoundaryValidator for precise arc validation
                 bool arc_valid = true;
                 if (m_boundary_validator) {
                     arc_valid = m_boundary_validator->validate_arc(
@@ -576,7 +576,7 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
                         if (m_print_ptr) {
                             Vec3d violation_pos = arc_center + Vec3d(radius, 0, source.z());
                             ConflictResult violation = ConflictResult::create_boundary_violation(
-                                static_cast<int>(BoundaryValidator::ViolationType::SpiralLiftOutOfBounds),
+                                static_cast<int>(BoundaryValidator::ViolationType::SpiralLift),
                                 violation_pos,
                                 source.z(),
                                 "Spiral Lift"
@@ -613,7 +613,7 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
                 Vec2d temp = delta_no_z.normalized() * delta(2) / tan(this->extruder()->travel_slope());
                 Vec3d slope_top_point = Vec3d(temp(0), temp(1), delta(2)) + source;
 
-                // BBS: Use BoundaryValidator for precise line validation
+                // Snapmaker: Use BoundaryValidator for precise line validation
                 bool slope_valid = true;
                 if (m_boundary_validator) {
                     // Validate the entire slope line from source to slope_top_point
@@ -623,7 +623,7 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
                         // Record boundary violation
                         if (m_print_ptr) {
                             ConflictResult violation = ConflictResult::create_boundary_violation(
-                                static_cast<int>(BoundaryValidator::ViolationType::LazyLiftOutOfBounds),
+                                static_cast<int>(BoundaryValidator::ViolationType::LazyLift),
                                 slope_top_point,
                                 source.z(),
                                 "Lazy Lift"
@@ -825,7 +825,7 @@ std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std:
 //center_offset is I and J axis
 std::string GCodeWriter::extrude_arc_to_xy(const Vec2d& point, const Vec2d& center_offset, double dE, const bool is_ccw, const std::string& comment, bool force_no_extrusion)
 {
-    // BBS: Validate arc path against build volume boundaries
+    // Snapmaker: Validate arc path against build volume boundaries
     if (m_boundary_validator) {
         // Calculate arc center (center_offset is relative to start point)
         Vec2d start_point = { m_pos(0) - m_x_offset, m_pos(1) - m_y_offset };
@@ -864,7 +864,7 @@ std::string GCodeWriter::extrude_arc_to_xy(const Vec2d& point, const Vec2d& cent
             if (m_print_ptr) {
                 Vec3d violation_pos = arc_center + Vec3d(radius, 0, m_pos(2));
                 ConflictResult violation = ConflictResult::create_boundary_violation(
-                    static_cast<int>(BoundaryValidator::ViolationType::ArcPathOutOfBounds),
+                    static_cast<int>(BoundaryValidator::ViolationType::ArcMove),
                     violation_pos,
                     m_pos(2),
                     "Arc Extrusion"

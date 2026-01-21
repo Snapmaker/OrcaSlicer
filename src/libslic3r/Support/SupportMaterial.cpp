@@ -584,7 +584,7 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
     }
 #endif /* SLIC3R_DEBUG */
 
-    // BBS: Validate support polygons against build volume boundaries
+    // Snapmaker: Validate support polygons against build volume boundaries
     // This addresses vulnerability #6: Support material boundary validation
     BOOST_LOG_TRIVIAL(info) << "Support generator - Validating boundaries";
     BuildVolume build_volume(object.print()->config().printable_area.values,
@@ -661,7 +661,7 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
             << " support polygons/paths exceeding build volume boundaries";
         // Record violation
         ConflictResult violation = ConflictResult::create_boundary_violation(
-            static_cast<int>(BoundaryValidator::ViolationType::SupportOutOfBounds),
+            static_cast<int>(BoundaryValidator::ViolationType::Support),
             Vec3d(object.center_offset().x(), object.center_offset().y(), 0.0),
             0.0,
             object.model_object()->name

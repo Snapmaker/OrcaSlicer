@@ -849,7 +849,7 @@ public:
     //BBS: add only gcode mode
     bool is_only_gcode_in_preview() const { return m_only_gcode_in_preview; }
 
-    // BBS: Get boundary violations from gcode_result
+    // Snapmaker: Get boundary violations from gcode_result
     const std::vector<GCodeProcessorResult::BoundaryViolationInfo>& get_boundary_violations() const {
         static const std::vector<GCodeProcessorResult::BoundaryViolationInfo> empty_violations;
         return (m_gcode_result != nullptr) ? m_gcode_result->boundary_violations : empty_violations;

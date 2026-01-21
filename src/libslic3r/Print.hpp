@@ -970,7 +970,7 @@ public:
     static StringObjectException sequential_print_clearance_valid(const Print &print, Polygons *polygons = nullptr, std::vector<std::pair<Polygon, float>>* height_polygons = nullptr);
     ConflictResultOpt            get_conflict_result() const { return m_conflict_result; }
 
-    // BBS: boundary violations tracking
+    // Snapmaker: boundary violations tracking
     void add_boundary_violation(const ConflictResult& violation) {
         m_boundary_violations.push_back(violation);
     }
@@ -1078,7 +1078,7 @@ private:
     int     m_modified_count {0};
     //BBS
     ConflictResultOpt m_conflict_result;
-    //BBS: boundary violations tracking
+    //Snapmaker: boundary violations tracking
     std::vector<ConflictResult> m_boundary_violations;
     FakeWipeTower     m_fake_wipe_tower;
     

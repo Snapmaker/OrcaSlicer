@@ -1218,7 +1218,14 @@ private:
 	    double angle = m_internal_angle * float(M_PI/180.);
 	    double c = cos(angle);
 	    double s = sin(angle);
-	    return Vec2f(float(pt.x() * c - pt.y() * s) + m_wipe_tower_width / 2.f, float(pt.x() * s + pt.y() * c) + m_wipe_tower_depth / 2.f);
+	    Vec2f  result(float(pt.x() * c - pt.y() * s) + m_wipe_tower_width / 2.f, float(pt.x() * s + pt.y() * c) + m_wipe_tower_depth / 2.f);
+
+	    // Clamp rotated coordinates to valid range to prevent out-of-bounds positions
+	    // This fixes issues with Rib wall geometry extending beyond expected bounds
+	    result.x() = std::clamp(result.x(), 0.f, m_wipe_tower_width);
+	    result.y() = std::clamp(result.y(), 0.f, m_wipe_tower_depth);
+
+	    return result;
 	}
 
 }; // class WipeTowerWriter2
@@ -1959,9 +1966,10 @@ void WipeTower2::toolchange_Wipe(
 
     // We may be going back to the model - wipe the nozzle. If this is followed
     // by finish_layer, this wipe path will be overwritten.
-    writer.add_wipe_point(writer.x(), writer.y())
-          .add_wipe_point(writer.x(), writer.y() - dy)
-          .add_wipe_point(! m_left_to_right ? m_wipe_tower_width : 0.f, writer.y() - dy);
+    // Clamp wipe point coordinates to valid range to prevent out-of-bounds positions
+    float wipe_y = std::clamp(writer.y() - dy, 0.f, m_wipe_tower_depth);
+    float wipe_x = std::clamp(!m_left_to_right ? m_wipe_tower_width : 0.f, 0.f, m_wipe_tower_width);
+    writer.add_wipe_point(writer.x(), writer.y()).add_wipe_point(writer.x(), wipe_y).add_wipe_point(wipe_x, wipe_y);
 
     if (m_layer_info != m_plan.end() && m_current_tool != m_layer_info->tool_changes.back().new_tool)
         m_left_to_right = !m_left_to_right;

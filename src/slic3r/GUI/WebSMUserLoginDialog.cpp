@@ -91,7 +91,7 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     Bind(wxEVT_WEBVIEW_NEWWINDOW, &SMUserLogin::OnNewWindow, this, m_browser->GetId());
     Bind(wxEVT_WEBVIEW_TITLE_CHANGED, &SMUserLogin::OnTitleChanged, this, m_browser->GetId());
     Bind(wxEVT_WEBVIEW_FULLSCREEN_CHANGED, &SMUserLogin::OnFullScreenChanged, this, m_browser->GetId());
-    Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &SMUserLogin::OnScriptMessage, this, m_browser->GetId());
+    //Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &SMUserLogin::OnScriptMessage, this, m_browser->GetId());
 
     // Connect the idle events
     // Bind(wxEVT_IDLE, &SMUserLogin::OnIdle, this);
@@ -305,7 +305,6 @@ void SMUserLogin::OnScriptMessage(wxWebViewEvent &evt)
         }
         if (strCmd == "user_login") {
             j["data"]["autotest_token"] = m_AutotestToken;
-            wxGetApp().handle_script_message(j.dump());
             Close();
         }
         else if (strCmd == "get_localhost_url") {
@@ -387,42 +386,21 @@ void SMUserLogin::OnRunScriptArrayWithEmulationLevel(wxCommandEvent &WXUNUSED(ev
 /**
  * Callback invoked when a loading error occurs
  */
-void SMUserLogin::OnError(wxWebViewEvent &evt)
+void SMUserLogin::OnError(wxWebViewEvent &event)
 {
-#define WX_ERROR_CASE(type) \
-    case type: category = #type; break;
-
-    wxString category;
-    switch (evt.GetInt()) {
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_CONNECTION);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_CERTIFICATE);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_AUTH);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_SECURITY);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_NOT_FOUND);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_REQUEST);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_USER_CANCELLED);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_OTHER);
+    auto e = "unknown error";
+    switch (event.GetInt()) {
+    case wxWEBVIEW_NAV_ERR_CONNECTION: e = "wxWEBVIEW_NAV_ERR_CONNECTION"; break;
+    case wxWEBVIEW_NAV_ERR_CERTIFICATE: e = "wxWEBVIEW_NAV_ERR_CERTIFICATE"; break;
+    case wxWEBVIEW_NAV_ERR_AUTH: e = "wxWEBVIEW_NAV_ERR_AUTH"; break;
+    case wxWEBVIEW_NAV_ERR_SECURITY: e = "wxWEBVIEW_NAV_ERR_SECURITY"; break;
+    case wxWEBVIEW_NAV_ERR_NOT_FOUND: e = "wxWEBVIEW_NAV_ERR_NOT_FOUND"; break;
+    case wxWEBVIEW_NAV_ERR_REQUEST: e = "wxWEBVIEW_NAV_ERR_REQUEST"; break;
+    case wxWEBVIEW_NAV_ERR_USER_CANCELLED: e = "wxWEBVIEW_NAV_ERR_USER_CANCELLED"; break;
+    case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
-
-    if( evt.GetInt()==wxWEBVIEW_NAV_ERR_CONNECTION )
-    {
-        if(m_timer!=NULL)
-            m_timer->Stop();
-
-        m_networkOk = false;
-
-        if (m_networkOk==false)
-            ShowErrorPage();
-    }
-
-    // wxLogMessage("%s", "Error; url='" + evt.GetURL() + "', error='" +
-    // category + " (" + evt.GetString() + ")'");
-
-    // Show the info bar with an error
-    // m_info->ShowMessage(_L("An error occurred loading ") + evt.GetURL() +
-    // "\n" + "'" + category + "'", wxICON_ERROR);
-
-    UpdateState();
+    BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":SMUserLogin error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
+    Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "bury_point_init SMUserLogin webview fail", BP_WEB_VIEW);
 }
 
 void SMUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))

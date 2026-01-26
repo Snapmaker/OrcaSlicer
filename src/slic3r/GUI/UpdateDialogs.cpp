@@ -92,8 +92,6 @@ bool MsgUpdateSlic3r::disable_version_check() const
 	return true;
 }
 
-// MsgUpdateConfig
-
 MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_before_wizard /* = false*/)
     : DPIDialog(wxGetApp().mainframe, wxID_ANY, _L("Configuration update"), wxDefaultPosition, wxDefaultSize, wxCAPTION)
 {
@@ -122,7 +120,6 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
     m_sizer_body->Add(0, 0, 0, wxRIGHT, FromDIP(25));
 
     wxBoxSizer *m_sizer_right = new wxBoxSizer(wxVERTICAL);
-
 
     auto m_text_up_info = new wxStaticText(this, wxID_ANY, _L("A new configuration package is available. Do you want to install it?"), wxDefaultPosition, wxDefaultSize, 0);
     m_text_up_info->SetFont(::Label::Head_14);
@@ -157,7 +154,7 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
     m_butto_ok->SetFont(Label::Body_12);
     m_butto_ok->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_butto_ok->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
-
+    m_butto_ok->SetCursor(wxCURSOR_HAND);
 
     auto m_button_cancel = new Button(this, _L("Cancel"));
     m_button_cancel->SetBackgroundColor(*wxWHITE);
@@ -165,7 +162,7 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
     m_button_cancel->SetFont(Label::Body_12);
     m_button_cancel->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_cancel->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
-
+    m_button_cancel->SetCursor(wxCURSOR_HAND);
 
     sizer_button->Add(m_butto_ok, 0, wxALL, 5);
     sizer_button->Add(m_button_cancel, 0, wxALL, 5);
@@ -179,16 +176,11 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
 	wxBoxSizer *content_sizer             = new wxBoxSizer(wxVERTICAL);
 
-   
-
-
-
 	const auto lang_code = wxGetApp().current_language_code_safe().ToStdString();
 
     auto *versions = new wxBoxSizer(wxVERTICAL);
     // BBS: use changelog string instead of url
     wxStaticText *changelog_textctrl = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(560), -1));
-
 
     for (const auto &update : updates) {
         auto* versions = new wxBoxSizer(wxVERTICAL);
@@ -214,12 +206,8 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
         versions->Add(flex);
 
-		
-
-        // BBS: use changelog string instead of url
-
-			//auto change_log = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, from_u8(update.change_log), wxDefaultPosition, wxDefaultSize); 
-			changelog_textctrl->SetLabel(changelog_textctrl->GetLabel() + wxString::Format("%s\n", from_u8(update.change_log)));
+		//auto change_log = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, from_u8(update.change_log), wxDefaultPosition, wxDefaultSize); 
+		changelog_textctrl->SetLabel(changelog_textctrl->GetLabel() + wxString::Format("%s\n", from_u8(update.change_log)));
 
 		content_sizer->Add(versions);
 
@@ -227,15 +215,12 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
         if (changelog_textctrl)
             content_sizer->Add(changelog_textctrl, 1, wxEXPAND | wxTOP, FromDIP(30));
     }
-
 	
 	m_butto_ok->Bind(wxEVT_BUTTON, [this](const wxCommandEvent &) { EndModal(wxID_OK); });
 	m_button_cancel->Bind(wxEVT_BUTTON, [this](const wxCommandEvent &) { EndModal(wxID_CLOSE); });
 
-
     m_scrollwindw_release_note->SetSizer(content_sizer);
     m_scrollwindw_release_note->Layout();
-
 
     SetSizer(m_sizer_main);
     Layout();

@@ -748,10 +748,11 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
-        if (param == "privacy_policy_isagree")
+        if (param == PRIVACY_POLICY_FLAGS)
             {
-                app_config->set("app", "privacy_policy_isagree", checkbox->GetValue());
-                set_privacy_policy(checkbox->GetValue());    
+            app_config->set("app", PRIVACY_POLICY_FLAGS, checkbox->GetValue());            
+                BOOST_LOG_TRIVIAL(warning) <<"create_item_checkbox changed the privacy policy with: "<<(checkbox->GetValue()?"true" : "false");
+                wxGetApp().user_update_privacy_notify(checkbox->GetValue());    
             }
         // if (param == "staff_pick_switch") {
         //     bool pbool = app_config->get("staff_pick_switch") == "true";
@@ -1197,7 +1198,7 @@ wxWindow* PreferencesDialog::create_general_page()
     app_config->save();
 
     
-    auto item_check_stable_version_only = create_item_checkbox(_L("Check for stable updates only"), page, _L("Check for stable updates only"), 50, "check_stable_update_only");
+    //auto item_check_stable_version_only = create_item_checkbox(_L("Check for stable updates only"), page, _L("Check for stable updates only"), 50, "check_stable_update_only");
 
     std::vector<wxString> Units         = {_L("Metric") + " (mm, g)", _L("Imperial") + " (in, oz)"};
     auto item_currency = create_item_combobox(_L("Units"), page, _L("Units"), "use_inches", Units);
@@ -1232,7 +1233,7 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_multi_machine = create_item_checkbox(_L("Multi-device Management (Take effect after restarting Snapmaker Orca)."), page, _L("With this option enabled, you can send a task to multiple devices at the same time and manage multiple devices."), 50, "enable_multi_machine");
     auto item_auto_arrange  = create_item_checkbox(_L("Auto arrange plate after cloning"), page, _L("Auto arrange plate after object cloning"), 50, "auto_arrange");
     auto title_presets = create_item_title(_L("Presets"), page, _L("Presets"));
-    auto title_network = create_item_title(_L("Network"), page, _L("Network"));
+    //auto title_network = create_item_title(_L("Network"), page, _L("Network"));
     auto item_user_sync        = create_item_checkbox(_L("Auto sync user presets (Printer/Filament/Process)"), page, _L("User Sync"), 50, "sync_user_preset");
     auto item_system_sync        = create_item_checkbox(_L("Update built-in Presets automatically."), page, _L("System Sync"), 50, "sync_system_preset");
     auto item_save_presets = create_item_button(_L("Clear my choice on the unsaved presets."), _L("Clear"), page, L"", _L("Clear my choice on the unsaved presets."), []() {
@@ -1299,7 +1300,7 @@ wxWindow* PreferencesDialog::create_general_page()
     std::string region = app_config->get("language");
 
     auto title_user_experience = create_item_title(_L("User Experience"), page, _L("User Experience"));
-    auto item_priv_policy      = create_item_checkbox(_L("Join Customer Experience Improvement Program."), page, _L(""), 50, "privacy_policy_isagree");
+    auto             item_priv_policy      = create_item_checkbox(_L("Join Customer Experience Improvement Program."), page, _L(""), 50,PRIVACY_POLICY_FLAGS);
     wxHyperlinkCtrl* hyperlink = nullptr;
     if (region.empty() || region != "zh_CN")
         hyperlink = new wxHyperlinkCtrl(page, wxID_ANY, _L("What data would be collected?"), enUrl);
@@ -1337,8 +1338,8 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_system_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_remember_printer_config, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_save_presets, 0, wxTOP, FromDIP(3));
-    sizer_page->Add(title_network, 0, wxTOP | wxEXPAND, FromDIP(20));
-    sizer_page->Add(item_check_stable_version_only, 0, wxTOP, FromDIP(3));
+    //sizer_page->Add(title_network, 0, wxTOP | wxEXPAND, FromDIP(20));
+    //sizer_page->Add(item_check_stable_version_only, 0, wxTOP, FromDIP(3));
 
     // SM Beta: temporarily open the item_stealth_mode and close the network plugin
     

@@ -23,6 +23,14 @@ using namespace nlohmann;
 namespace asio = boost::asio;
 using tcp = asio::ip::tcp;
 
+
+//WCP Interface definition
+#define UPDATE_PRIVACY_STATUS "sw_SubUserUpdatePrivacy"
+#define GET_PRIVACY_STATUS "sw_GetUserUpdatePrivacy"
+#define UPLOAD_CAMERA_TIMELAPSE "sw_UploadCameraTimelapse"
+#define DELETE_CAMERA_TIMELAPSE "sw_DeleteCameraTimelapse"
+#define GET_DEVICEDATA_STORAGESPACE "sw_GetDeviceDataStorageSpace"
+
 namespace Slic3r { namespace GUI {
 
 class WCP_Logger
@@ -185,7 +193,7 @@ public:
     void update_filament_info(const json& objects, bool send_message = false);
 
 protected:
-    std::thread                                  m_work_thread; // Worker thread
+    std::thread m_work_thread; // Worker thread
 
 public:
     std::string m_cmd;           // Command to execute
@@ -302,9 +310,6 @@ private:
     void sw_mqtt_publish();
     void sw_mqtt_set_engine();
 
-
-
-
 private:
     void clean_current_engine();
 
@@ -416,10 +421,13 @@ private:
     void sw_GetFileListPage();
     void sw_UploadCameraTimelapse();
     void sw_DeleteCameraTimelapse();
-    void sw_GetTimelapseInstance();
+    void sw_GetCameraTimelapseInstance();
 
-    void sw_DefectDetactionConfig();
+    void sw_DefectDetactionConfig();    
 
+    void sw_GetDeviceDataStorageSpace();
+
+    void CmdForwarding();
 
     // Download machine file
     void sw_DownloadMachineFile();
@@ -525,6 +533,9 @@ private:
 
     void sw_SubscribeUserLoginState();
 
+    void sw_GetUserUpdatePrivacy();
+
+    void sw_SubUserUpdatePrivacy();
 };
 
 // Instance class for homepage business

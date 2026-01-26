@@ -77,17 +77,15 @@
 #include "sentry_wrapper/SentryWrapper.hpp"
 
 
+#define UPDATE_BUSER    true
+#define UPDATE_BUAUTO   false
+
 namespace Slic3r {
 namespace GUI {
 
 wxDEFINE_EVENT(EVT_SELECT_TAB, wxCommandEvent);
 wxDEFINE_EVENT(EVT_HTTP_ERROR, wxCommandEvent);
-wxDEFINE_EVENT(EVT_USER_LOGIN, wxCommandEvent);
-wxDEFINE_EVENT(EVT_USER_LOGIN_HANDLE, wxCommandEvent);
-wxDEFINE_EVENT(EVT_CHECK_PRIVACY_VER, wxCommandEvent);
-wxDEFINE_EVENT(EVT_CHECK_PRIVACY_SHOW, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_IP_DIALOG, wxCommandEvent);
-wxDEFINE_EVENT(EVT_SET_SELECTED_MACHINE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_MACHINE_LIST, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_PRESET_CB, SimpleEvent);
 
@@ -1747,165 +1745,124 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_print_option_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
-            SidePopup* p = new SidePopup(this);
+        SidePopup* p = new SidePopup(this);
 
-            if (wxGetApp().preset_bundle
-                && !wxGetApp().preset_bundle->is_bbl_vendor()) {
-                // ThirdParty Buttons
-                SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
-                export_gcode_btn->SetCornerRadius(0);
-                export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Export G-code file"));
-                    m_print_select = eExportGcode;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
+        if (wxGetApp().preset_bundle && !wxGetApp().preset_bundle->is_bbl_vendor())
+        //if (0)
+        {
+            // ThirdParty Buttons
+            SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
+            export_gcode_btn->SetCornerRadius(0);
+            export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                m_print_btn->SetLabel(_L("Export G-code file"));
+                m_print_select = eExportGcode;
+                m_print_enable = get_enable_print_status();
+                m_print_btn->Enable(m_print_enable);
+                this->Layout();
+                p->Dismiss();
+            });
 
-                // upload and print
-                SideButton* send_gcode_btn = new SideButton(p, _L("Print"), "");
-                send_gcode_btn->SetCornerRadius(0);
-                send_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Print"));
-                    m_print_select = eSendGcode;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
+            // upload and print
+            SideButton* send_gcode_btn = new SideButton(p, _L("Print"), "");
+            send_gcode_btn->SetCornerRadius(0);
+            send_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                m_print_btn->SetLabel(_L("Print"));
+                m_print_select = eSendGcode;
+                m_print_enable = get_enable_print_status();
+                m_print_btn->Enable(m_print_enable);
+                this->Layout();
+                p->Dismiss();
+            });
 
-                p->append_button(send_gcode_btn);
-                p->append_button(export_gcode_btn);
+            p->append_button(send_gcode_btn);
+            p->append_button(export_gcode_btn);
+        } else {
+            SideButton* print_plate_btn = new SideButton(p, _L("Print"), "");
+            print_plate_btn->SetCornerRadius(0);
+
+            SideButton* export_sliced_file_btn = new SideButton(p, _L("Export plate sliced file"), "");
+            export_sliced_file_btn->SetCornerRadius(0);
+
+            SideButton* export_all_sliced_file_btn = new SideButton(p, _L("Export all sliced file"), "");
+            export_all_sliced_file_btn->SetCornerRadius(0);
+
+            print_plate_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                m_print_btn->SetLabel(_L("Print"));
+                m_print_select = eSendGcode;
+                m_print_enable = get_enable_print_status();
+                m_print_btn->Enable(m_print_enable);
+                this->Layout();
+                p->Dismiss();
+            });
+
+            export_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                m_print_btn->SetLabel(_L("Export plate sliced file"));
+                m_print_select = eExportSlicedFile;
+                m_print_enable = get_enable_print_status();
+                m_print_btn->Enable(m_print_enable);
+                this->Layout();
+                p->Dismiss();
+            });
+
+            export_all_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                m_print_btn->SetLabel(_L("Export all sliced file"));
+                m_print_select = eExportAllSlicedFile;
+                m_print_enable = get_enable_print_status();
+                m_print_btn->Enable(m_print_enable);
+                this->Layout();
+                p->Dismiss();
+            });
+
+            bool support_send      = true;
+            bool support_print_all = true;
+
+            const auto preset_bundle = wxGetApp().preset_bundle;
+            if (preset_bundle) {
+                if (preset_bundle->use_bbl_network()) {
+                    // BBL network support everything
+                } else {
+                    support_send = false; // All 3rd print hosts do not have the send options
+
+                    auto       cfg       = preset_bundle->printers.get_edited_preset().config;
+                    const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
+
+                    // Only simply print support uploading all plates
+                    support_print_all = host_type == PrintHostType::htSimplyPrint;
+                }
             }
-            else {
-                //Snapmaker Orca Buttons
-                SideButton* print_plate_btn = new SideButton(p, _L("Print plate"), "");
-                print_plate_btn->SetCornerRadius(0);
 
-                SideButton* send_to_printer_btn = new SideButton(p, _L("Send"), "");
-                send_to_printer_btn->SetCornerRadius(0);
+            p->append_button(print_plate_btn);
 
-                SideButton* export_sliced_file_btn = new SideButton(p, _L("Export plate sliced file"), "");
-                export_sliced_file_btn->SetCornerRadius(0);
-
-                SideButton* export_all_sliced_file_btn = new SideButton(p, _L("Export all sliced file"), "");
-                export_all_sliced_file_btn->SetCornerRadius(0);
-
-                print_plate_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Print plate"));
-                    m_print_select = ePrintPlate;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
-                SideButton* print_all_btn = new SideButton(p, _L("Print all"), "");
-                print_all_btn->SetCornerRadius(0);
-                print_all_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Print all"));
-                    m_print_select = ePrintAll;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
-                send_to_printer_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Send"));
-                    m_print_select = eSendToPrinter;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
-                SideButton* send_to_printer_all_btn = new SideButton(p, _L("Send all"), "");
-                send_to_printer_all_btn->SetCornerRadius(0);
-                send_to_printer_all_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Send all"));
-                    m_print_select = eSendToPrinterAll;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
-                export_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Export plate sliced file"));
-                    m_print_select = eExportSlicedFile;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
-                export_all_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Export all sliced file"));
-                    m_print_select = eExportAllSlicedFile;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                    });
-
-                bool support_send = true;
-                bool support_print_all = true;
-
-                const auto preset_bundle = wxGetApp().preset_bundle;
-                if (preset_bundle) {
-                    if (preset_bundle->use_bbl_network()) {
-                        // BBL network support everything
-                    } else {
-                        support_send = false; // All 3rd print hosts do not have the send options
-
-                        auto cfg = preset_bundle->printers.get_edited_preset().config;
-                        const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
-
-                        // Only simply print support uploading all plates
-                        support_print_all = host_type == PrintHostType::htSimplyPrint;
-                    }
-                }
-
-                p->append_button(print_plate_btn);
-                if (support_print_all) {
-                    p->append_button(print_all_btn);
-                }
-                if (support_send) {
-                    p->append_button(send_to_printer_btn);
-                    p->append_button(send_to_printer_all_btn);
-                }
-                if (enable_multi_machine) {
-                    SideButton* print_multi_machine_btn = new SideButton(p, _L("Send to Multi-device"), "");
-                    print_multi_machine_btn->SetCornerRadius(0);
-                    print_multi_machine_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                        m_print_btn->SetLabel(_L("Send to Multi-device"));
-                        m_print_select = ePrintMultiMachine;
-                        m_print_enable = get_enable_print_status();
-                        m_print_btn->Enable(m_print_enable);
-                        this->Layout();
-                        p->Dismiss();
-                    });
-                    p->append_button(print_multi_machine_btn);
-                }
-                p->append_button(export_sliced_file_btn);
-                p->append_button(export_all_sliced_file_btn);
-                SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
-                export_gcode_btn->SetCornerRadius(0);
-                export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Export G-code file"));
-                    m_print_select = eExportGcode;
+            if (enable_multi_machine) {
+                SideButton* print_multi_machine_btn = new SideButton(p, _L("Send to Multi-device"), "");
+                print_multi_machine_btn->SetCornerRadius(0);
+                print_multi_machine_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                    m_print_btn->SetLabel(_L("Send to Multi-device"));
+                    m_print_select = ePrintMultiMachine;
                     m_print_enable = get_enable_print_status();
                     m_print_btn->Enable(m_print_enable);
                     this->Layout();
                     p->Dismiss();
                 });
-                p->append_button(export_gcode_btn);
+                p->append_button(print_multi_machine_btn);
             }
-
-            p->Popup(m_print_btn);
+            p->append_button(export_sliced_file_btn);
+            p->append_button(export_all_sliced_file_btn);
+            SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
+            export_gcode_btn->SetCornerRadius(0);
+            export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
+                m_print_btn->SetLabel(_L("Export G-code file"));
+                m_print_select = eExportGcode;
+                m_print_enable = get_enable_print_status();
+                m_print_btn->Enable(m_print_enable);
+                this->Layout();
+                p->Dismiss();
+            });
+            p->append_button(export_gcode_btn);
         }
+
+        p->Popup(m_print_btn);
+         }
     );
 
     /*
@@ -2294,10 +2251,25 @@ static wxMenu* generate_help_menu()
     // Check New Version
     append_menu_item(helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
         [](wxCommandEvent&) {
-            wxGetApp().check_new_version_sf(true, 1);
+            wxGetApp().check_new_version_sf(true, UPDATE_BUSER);
         }, "", nullptr, []() {
             return true;
         });
+
+    append_menu_item(
+        helpMenu, wxID_ANY, _L("Check for Process Preset Updates"), _L("Check for Process Preset Updates"),
+        [](wxCommandEvent&) { 
+            wxGetApp().check_preset_version();
+
+        },
+        "", nullptr, []() { return true; });
+
+    append_menu_item(
+        helpMenu, wxID_ANY, _L("Check for Web Resource Updates"), _L("Check for Web Resource Updates"),
+        [](wxCommandEvent&) { 
+            wxGetApp().check_web_version();
+        },
+        "", nullptr, []() { return true; });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Import Profile"), _L("Import Profile"), [](wxCommandEvent&) {
         wxGetApp().import_presets();

@@ -24,6 +24,7 @@
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "sentry_wrapper/SentryWrapper.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -43,6 +44,7 @@ wxDEFINE_EVENT(EVT_UPDATE_NOZZLE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_JUMP_TO_HMS, wxCommandEvent);
 wxDEFINE_EVENT(EVT_JUMP_TO_LIVEVIEW, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_TEXT_MSG, wxCommandEvent);
+wxDEFINE_EVENT(EVT_DOWN_URL_PACK, wxCommandEvent);
 
 ReleaseNoteDialog::ReleaseNoteDialog(Plater *plater /*= nullptr*/)
     : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe), wxID_ANY, _L("Release Note"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
@@ -95,7 +97,6 @@ ReleaseNoteDialog::ReleaseNoteDialog(Plater *plater /*= nullptr*/)
 
 ReleaseNoteDialog::~ReleaseNoteDialog() {}
 
-
 void ReleaseNoteDialog::on_dpi_changed(const wxRect &suggested_rect)
 {
 }
@@ -128,18 +129,13 @@ UpdatePluginDialog::UpdatePluginDialog(wxWindow* parent /*= nullptr*/)
     m_sizer_main->Add(0, 0, 0, wxTOP, FromDIP(30));
 
     wxBoxSizer* m_sizer_body = new wxBoxSizer(wxHORIZONTAL);
-
-
-
     auto sm = create_scaled_bitmap("Snapmaker_Orca", nullptr, 55);
     auto brand = new wxStaticBitmap(this, wxID_ANY, sm, wxDefaultPosition, wxSize(FromDIP(55), FromDIP(55)));
-
     wxBoxSizer* m_sizer_right = new wxBoxSizer(wxVERTICAL);
 
     m_text_up_info = new Label(this, Label::Head_13, wxEmptyString, LB_AUTO_WRAP);
     m_text_up_info->SetMaxSize(wxSize(FromDIP(260), -1));
     m_text_up_info->SetForegroundColour(wxColour(0x26, 0x2E, 0x30));
-
 
     operation_tips = new ::Label(this, Label::Body_12, _L("Click OK to update the Network plug-in when Snapmaker Orca launches next time."), LB_AUTO_WRAP);
     operation_tips->SetMinSize(wxSize(FromDIP(260), -1));
@@ -212,7 +208,6 @@ UpdatePluginDialog::UpdatePluginDialog(wxWindow* parent /*= nullptr*/)
 
 UpdatePluginDialog::~UpdatePluginDialog() {}
 
-
 void UpdatePluginDialog::on_dpi_changed(const wxRect& suggested_rect)
 {
 }
@@ -268,18 +263,11 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     auto        m_line_top   = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
     m_line_top->SetBackgroundColour(wxColour(166, 169, 170));
     
-
-    wxBoxSizer *m_sizer_body = new wxBoxSizer(wxHORIZONTAL);
-
-    
-
+    wxBoxSizer *m_sizer_body = new wxBoxSizer(wxHORIZONTAL);   
     auto sm    = create_scaled_bitmap("Snapmaker_Orca", nullptr, 70);
-    m_brand = new wxStaticBitmap(this, wxID_ANY, sm, wxDefaultPosition, wxSize(FromDIP(70), FromDIP(70)));
-
-    
+    m_brand = new wxStaticBitmap(this, wxID_ANY, sm, wxDefaultPosition, wxSize(FromDIP(70), FromDIP(70)));    
 
     wxBoxSizer *m_sizer_right = new wxBoxSizer(wxVERTICAL);
-
     m_text_up_info = new Label(this, Label::Head_14, wxEmptyString, LB_AUTO_WRAP);
     m_text_up_info->SetForegroundColour(wxColour(0x26, 0x2E, 0x30));
 
@@ -343,9 +331,16 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     m_button_download->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_download->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_download->SetCornerRadius(FromDIP(12));
+    m_button_download->SetCursor(wxCURSOR_HAND);
 
     m_button_download->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &e) {
-        EndModal(wxID_YES);
+        wxCommandEvent event(EVT_DOWN_URL_PACK);
+
+        wxPostEvent(this, event);
+        if (isModal)
+            EndModal(wxID_NO);
+        else
+            Close();  
     });
 
     m_button_skip_version = new Button(this, _L("Skip this Version"));
@@ -355,10 +350,14 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     m_button_skip_version->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_skip_version->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_skip_version->SetCornerRadius(FromDIP(12));
+    m_button_skip_version->SetCursor(wxCURSOR_HAND);
 
     m_button_skip_version->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &e) { 
         wxGetApp().set_skip_version(true);
-        EndModal(wxID_NO);
+        if (isModal)
+            EndModal(wxID_NO);
+        else
+            Close();        
     });
 
     m_cb_stable_only = new CheckBox(this);
@@ -385,9 +384,14 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     m_button_cancel->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_cancel->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_cancel->SetCornerRadius(FromDIP(12));
+    m_button_cancel->SetCursor(wxCURSOR_HAND);
 
     m_button_cancel->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &e) {
-        EndModal(wxID_NO);
+        if (isModal)
+            EndModal(wxID_NO);
+        else
+            Close();
+
     });
 
     m_sizer_main->Add(m_line_top, 0, wxEXPAND | wxBOTTOM, 0);
@@ -423,7 +427,6 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 
 UpdateVersionDialog::~UpdateVersionDialog() {}
 
-
 wxWebView* UpdateVersionDialog::CreateTipView(wxWindow* parent)
 {
 	wxWebView* tipView = WebView::CreateWebView(parent, "");
@@ -445,6 +448,19 @@ void UpdateVersionDialog::OnTitleChanged(wxWebViewEvent& event)
 }
 void UpdateVersionDialog::OnError(wxWebViewEvent& event)
 {
+    auto e = "unknown error";
+    switch (event.GetInt()) {
+    case wxWEBVIEW_NAV_ERR_CONNECTION: e = "wxWEBVIEW_NAV_ERR_CONNECTION"; break;
+    case wxWEBVIEW_NAV_ERR_CERTIFICATE: e = "wxWEBVIEW_NAV_ERR_CERTIFICATE"; break;
+    case wxWEBVIEW_NAV_ERR_AUTH: e = "wxWEBVIEW_NAV_ERR_AUTH"; break;
+    case wxWEBVIEW_NAV_ERR_SECURITY: e = "wxWEBVIEW_NAV_ERR_SECURITY"; break;
+    case wxWEBVIEW_NAV_ERR_NOT_FOUND: e = "wxWEBVIEW_NAV_ERR_NOT_FOUND"; break;
+    case wxWEBVIEW_NAV_ERR_REQUEST: e = "wxWEBVIEW_NAV_ERR_REQUEST"; break;
+    case wxWEBVIEW_NAV_ERR_USER_CANCELLED: e = "wxWEBVIEW_NAV_ERR_USER_CANCELLED"; break;
+    case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
+    }
+    BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":UpdateVersionDialog error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e %event.GetString();
+    Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "bury_point_init UpdateVersionDialog webview fail", BP_WEB_VIEW);
     event.Skip();
 }
 
@@ -512,18 +528,6 @@ void UpdateVersionDialog::update_version_info(wxString release_note, wxString ve
     //bbs check whether the web display is used
     bool use_web_link = false;
     url_line          = "";
-    // Orca: not used in Orca Slicer
-    // auto split_array = splitWithStl(release_note.ToStdString(), "###");
-    // if (split_array.size() >= 3) {
-    //     for (auto i = 0; i < split_array.size(); i++) {
-    //         std::string url = split_array[i];
-    //         if (std::strstr(url.c_str(), "http://") != NULL || std::strstr(url.c_str(), "https://") != NULL) {
-    //             use_web_link = true;
-    //             url_line     = url;
-    //             break;
-    //         }
-    //     }
-    // }
 
     if (use_web_link) {
         m_brand->Hide();

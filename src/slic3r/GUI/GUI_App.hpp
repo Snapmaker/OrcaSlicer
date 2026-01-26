@@ -46,6 +46,8 @@
     #define _MSW_DARK_MODE            1
 #endif // _MSW_DARK_MODE
 
+#define PRIVACY_POLICY_FLAGS "privacy_policy_isagree"
+
 class wxMenuItem;
 class wxMenuBar;
 class wxTopLevelWindow;
@@ -55,7 +57,13 @@ class wxBookCtrlBase;
 class Notebook;
 struct wxLanguageInfo;
 
+namespace Slic3r {
+namespace GUI {
+    class UpdateVersionDialog;
+};
+};
 
+// namespace Slice3rnamespace GUI::Slice3rnamespace GUI
 namespace Slic3r {
 
 class AppConfig;
@@ -557,13 +565,10 @@ private:
     void            sm_request_login(bool show_user_info = false);
     void            sm_ShowUserLogin(bool show  =  true);
     void            sm_request_user_logout();
-
-    void            request_user_login(int online_login = 0);
-    void            request_user_handle(int online_login = 0);
+  
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
     std::string     handle_web_request(std::string cmd);
-    void            handle_script_message(std::string msg);
     void            request_model_download(wxString url);
     void            download_project(std::string project_id);
     void            request_project_download(std::string project_id);
@@ -573,10 +578,6 @@ private:
 
     void            handle_http_error(unsigned int status, std::string body);
     void            on_http_error(wxCommandEvent &evt);
-    void            on_set_selected_machine(wxCommandEvent& evt);
-    void            on_update_machine_list(wxCommandEvent& evt);
-    void            on_user_login(wxCommandEvent &evt);
-    void            on_user_login_handle(wxCommandEvent& evt);
     void            enable_user_preset_folder(bool enable);
 
     // BBS
@@ -585,11 +586,10 @@ private:
     bool            m_studio_active = true;
     std::chrono::system_clock::time_point  last_active_point;
 
-    void            check_update(bool show_tips, int by_user);
-    void            check_new_version(bool show_tips = false, int by_user = 0);
-    void            check_new_version_sf(bool show_tips = false, int by_user = 0);
+    void            check_web_version();
+    void            check_preset_version();
+    void            check_new_version_sf(bool show_tips = false, bool by_user = false);
     void            process_network_msg(std::string dev_id, std::string msg);
-    void            request_new_version(int by_user);
     void            enter_force_upgrade();
     void            set_skip_version(bool skip = true);
     void            no_new_version();
@@ -609,12 +609,8 @@ private:
     void            start_page_http_server();
     void            stop_page_http_server();
     void            switch_staff_pick(bool on);
-
-    void            on_show_check_privacy_dlg(int online_login = 0);
-    void            show_check_privacy_dlg(wxCommandEvent& evt);
-    void            on_check_privacy_update(wxCommandEvent &evt);
     bool            check_privacy_update();
-    void            check_privacy_version(int online_login = 0);
+    
     void            check_track_enable();
 
     static bool     catch_error(std::function<void()> cb, const std::string& err);
@@ -729,6 +725,7 @@ private:
     PresetUpdater*  preset_updater{ nullptr };
     MainFrame*      mainframe{ nullptr };
     Plater*         plater_{ nullptr };
+    UpdateVersionDialog* m_updateDialog{nullptr};
 
 	PresetUpdater*  get_preset_updater() { return preset_updater; }
 
@@ -794,7 +791,7 @@ private:
     bool            check_networking_version();
     void            cancel_networking_install();
     void            restart_networking();
-    void            check_config_updates_from_updater() { check_updates(false); }
+    void            check_config_updates_from_updater(bool updateByuser = false) { check_updates(updateByuser); }
 
 private:
     int             updating_bambu_networking();
@@ -834,7 +831,7 @@ public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_page_state_subscribers;
-
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_update_privacy_subscribers;
     struct CachePairCompare
     {
         bool operator()(const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& lhs,
@@ -850,7 +847,7 @@ public:
     void device_card_notify(const json& res);
     void page_state_notify_webview(wxWebView* webview, const std::string& state);
     void cache_notify(const std::string& key, const json& res);
-
+    void user_update_privacy_notify(const bool& res);
 
 public:
     bool sm_disconnect_current_machine(bool need_reload_printerview = true);

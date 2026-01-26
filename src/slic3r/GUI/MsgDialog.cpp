@@ -172,7 +172,7 @@ Button* MsgDialog::add_button(wxWindowID btn_id, bool set_focus /*= false*/, con
         btn->SetFocus();
     btn_sizer->Add(btn, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(ButtonProps::ChoiceButtonGap()));
     btn->Bind(wxEVT_BUTTON, [this, btn_id](wxCommandEvent&) { EndModal(btn_id); });
-
+    btn->SetCursor(wxCURSOR_HAND);
     MsgButton *mb = new MsgButton;
     ButtonData *bd = new ButtonData;
 
@@ -441,7 +441,7 @@ DownloadDialog::DownloadDialog(wxWindow *parent, const wxString &msg, const wxSt
     : MsgDialog(parent, title, msg, style), msg(msg)
 {
     add_button(wxID_YES, true, _L("Download"));
-    add_button(wxID_CANCEL, true, _L("Skip"));
+    //add_button(wxID_CANCEL, true, _L("Skip"));
     
     finalize();
 }

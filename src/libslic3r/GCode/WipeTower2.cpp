@@ -1220,11 +1220,6 @@ private:
 	    double s = sin(angle);
 	    Vec2f  result(float(pt.x() * c - pt.y() * s) + m_wipe_tower_width / 2.f, float(pt.x() * s + pt.y() * c) + m_wipe_tower_depth / 2.f);
 
-	    // Clamp rotated coordinates to valid range to prevent out-of-bounds positions
-	    // This fixes issues with Rib wall geometry extending beyond expected bounds
-	    result.x() = std::clamp(result.x(), 0.f, m_wipe_tower_width);
-	    result.y() = std::clamp(result.y(), 0.f, m_wipe_tower_depth);
-
 	    return result;
 	}
 
@@ -1347,10 +1342,10 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar.push_back(FilamentParameters());
 
     m_filpar[idx].material = config.filament_type.get_at(idx);
-    // m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
-    m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
+    m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) :
+                               (idx != size_t(config.wipe_tower_filament - 1));
     m_filpar[idx].temperature = config.nozzle_temperature.get_at(idx);
-    m_filpar[idx].first_layer_temperature = config.nozzle_temperature_initial_layer.get_at(idx);
+    m_filpar[idx].first_layer_temperature              = config.nozzle_temperature_initial_layer.get_at(idx);
     m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(idx);
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
@@ -1967,9 +1962,9 @@ void WipeTower2::toolchange_Wipe(
     // We may be going back to the model - wipe the nozzle. If this is followed
     // by finish_layer, this wipe path will be overwritten.
     // Clamp wipe point coordinates to valid range to prevent out-of-bounds positions
-    float wipe_y = std::clamp(writer.y() - dy, 0.f, m_wipe_tower_depth);
-    float wipe_x = std::clamp(!m_left_to_right ? m_wipe_tower_width : 0.f, 0.f, m_wipe_tower_width);
-    writer.add_wipe_point(writer.x(), writer.y()).add_wipe_point(writer.x(), wipe_y).add_wipe_point(wipe_x, wipe_y);
+    writer.add_wipe_point(writer.x(), writer.y())
+          .add_wipe_point(writer.x(), writer.y() - dy)
+          .add_wipe_point(! m_left_to_right ? m_wipe_tower_width : 0.f, writer.y() - dy);
 
     if (m_layer_info != m_plan.end() && m_current_tool != m_layer_info->tool_changes.back().new_tool)
         m_left_to_right = !m_left_to_right;
@@ -2311,7 +2306,12 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>> 
         return;
 
 	plan_tower();
-#if 1
+#if 0
+// BBS: Disabled 5-iteration loop - matching Bambu Studio's approach
+// This loop causes instability in depth calculations which leads to out-of-bounds coordinates
+// The loop recalculates required_depth in save_on_last_wipe() and propagates it downward via plan_tower()
+// After multiple iterations, depth can exceed reasonable bounds, causing m_y_shift to change
+// This in turn causes the rotate() function to generate negative coordinates
     for (int i=0;i<5;++i) {
         save_on_last_wipe();
         plan_tower();

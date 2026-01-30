@@ -310,6 +310,9 @@ private:
     void sw_mqtt_publish();
     void sw_mqtt_set_engine();
 
+    // Temporarily: sw_add_connected_device
+    void sw_add_connected_device();
+
 
 
 

@@ -45,18 +45,18 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     // url
     auto region = wxGetApp().app_config->get_country_code();
     if (region.find("CN") == std::string::npos) {
-        TargetUrl     = "https://id.snapmaker.com?from=orca";
-        LogoutUrl     = "https://id.snapmaker.com/logout?from=orca";
+        TargetUrl     = "http://172.17.100.32:9000/?from=orca";
+        LogoutUrl     = "http://172.17.100.32:9000//logout?from=orca";
         m_hostUrl     = "https://id.snapmaker.com";
         m_accountUrl  = "https://id.snapmaker.com";
-        m_userInfoUrl = "https://id.snapmaker.com/api/common/accounts/current";
+        m_userInfoUrl = "http://172.17.100.32:8100/api/common/accounts/current";
         m_home_url    = "https://www.snapmaker.com/";
     } else {
-        TargetUrl     = "https://id.snapmaker.cn?from=orca";
-        LogoutUrl     = "https://id.snapmaker.cn/logout?from=orca";
+        TargetUrl     = "http://172.17.100.32:9000?from=orca";
+        LogoutUrl     = "http://172.17.100.32:9000/logout?from=orca";
         m_hostUrl     = "https://id.snapmaker.cn";
-        m_accountUrl  = "https://api.snapmaker.cn";
-        m_userInfoUrl = "https://api.snapmaker.cn/api/common/accounts/current";
+        m_accountUrl  = "http://172.17.100.32:9000";
+        m_userInfoUrl = "http://172.17.100.32:8100/api/common/accounts/current";
         m_home_url    = "https://www.snapmaker.cn/";
     }
 

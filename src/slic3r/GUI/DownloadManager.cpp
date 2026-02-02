@@ -6,7 +6,7 @@
 
 namespace Slic3r { namespace GUI {
 
-size_t WCPDownloadManager::start_download(const std::string& file_url,
+size_t DownloadManager::start_download(const std::string& file_url,
                                          const std::string& file_name,
                                          std::shared_ptr<SSWCP_Instance> wcp_instance) {
 
@@ -23,8 +23,8 @@ size_t WCPDownloadManager::start_download(const std::string& file_url,
     std::string dest_path = dest_file.string();
     
     // Create task
-    auto task = std::make_shared<WCPDownloadTask>(task_id, file_url, file_name, dest_path, wcp_instance);
-    task->state = WCPDownloadState::Downloading;
+    auto task = std::make_shared<DownloadTask>(task_id, file_url, file_name, dest_path, wcp_instance);
+    task->state = SMDownloadState::Downloading;
     
     m_tasks[task_id] = task;
     
@@ -36,7 +36,7 @@ size_t WCPDownloadManager::start_download(const std::string& file_url,
             
             // Step 2: Set progress callback
             http.on_progress([this, task](Http::Progress progress, bool& cancel) {
-                if (task->state == WCPDownloadState::Canceled) {
+                if (task->state == SMDownloadState::Canceled) {
                     cancel = true;
                     return;
                 }
@@ -87,7 +87,7 @@ size_t WCPDownloadManager::start_download(const std::string& file_url,
                         file.write(body.c_str(), body.size());
                         file.close();
                         
-                        task->state = WCPDownloadState::Completed;
+                        task->state = SMDownloadState::Completed;
                         task->percent = 100;
                         send_complete_update(task, task->dest_path);
                         cleanup_task(task->task_id);
@@ -101,7 +101,7 @@ size_t WCPDownloadManager::start_download(const std::string& file_url,
             // Step 4: Set error callback
             http.on_error([this, task](std::string body, std::string error, unsigned status) {
                 wxGetApp().CallAfter([this, task, error, status]() {
-                    task->state = WCPDownloadState::Error;
+                    task->state = SMDownloadState::Error;
                     task->error_message = error;
                     send_error_update(task, error);
                     cleanup_task(task->task_id);
@@ -112,7 +112,7 @@ size_t WCPDownloadManager::start_download(const std::string& file_url,
             task->http_object = http.perform();
             
         } catch (std::exception& e) {
-            task->state = WCPDownloadState::Error;
+            task->state = SMDownloadState::Error;
             task->error_message = e.what();
             send_error_update(task, e.what());
             cleanup_task(task->task_id);
@@ -122,7 +122,7 @@ size_t WCPDownloadManager::start_download(const std::string& file_url,
     return task_id;
 }
 
-bool WCPDownloadManager::cancel_download(size_t task_id) {
+bool DownloadManager::cancel_download(size_t task_id) {
     std::shared_ptr<SSWCP_Instance> wcp_to_destroy;
     
     {
@@ -134,8 +134,8 @@ bool WCPDownloadManager::cancel_download(size_t task_id) {
         }
         
         auto task = it->second;
-        if (task->state == WCPDownloadState::Downloading) {
-            task->state = WCPDownloadState::Canceled;
+        if (task->state == SMDownloadState::Downloading) {
+            task->state = SMDownloadState::Canceled;
             if (task->http_object) {
                 task->http_object->cancel();
             }
@@ -158,41 +158,41 @@ bool WCPDownloadManager::cancel_download(size_t task_id) {
     return true;
 }
 
-bool WCPDownloadManager::pause_download(size_t task_id) {
+bool DownloadManager::pause_download(size_t task_id) {
     // Pause functionality can be implemented if needed
     // Current Http module may not support pause, need to implement resume from breakpoint
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     auto it = m_tasks.find(task_id);
-    if (it != m_tasks.end() && it->second->state == WCPDownloadState::Downloading) {
-        it->second->state = WCPDownloadState::Paused;
+    if (it != m_tasks.end() && it->second->state == SMDownloadState::Downloading) {
+        it->second->state = SMDownloadState::Paused;
         // Note: Http module doesn't support pause directly, would need breakpoint resume
         return true;
     }
     return false;
 }
 
-bool WCPDownloadManager::resume_download(size_t task_id) {
+bool DownloadManager::resume_download(size_t task_id) {
     // Resume functionality can be implemented if needed
     // Would require breakpoint resume support in Http module
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     auto it = m_tasks.find(task_id);
-    if (it != m_tasks.end() && it->second->state == WCPDownloadState::Paused) {
+    if (it != m_tasks.end() && it->second->state == SMDownloadState::Paused) {
         // Would need to restart download with range header
         return false;  // Not implemented yet
     }
     return false;
 }
 
-WCPDownloadState WCPDownloadManager::get_task_state(size_t task_id) {
+SMDownloadState DownloadManager::get_task_state(size_t task_id) {
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     auto it = m_tasks.find(task_id);
     if (it != m_tasks.end()) {
         return it->second->state;
     }
-    return WCPDownloadState::Error;
+    return SMDownloadState::Error;
 }
 
-std::shared_ptr<WCPDownloadTask> WCPDownloadManager::get_task(size_t task_id) {
+std::shared_ptr<DownloadTask> DownloadManager::get_task(size_t task_id) {
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     auto it = m_tasks.find(task_id);
     if (it != m_tasks.end()) {
@@ -201,7 +201,7 @@ std::shared_ptr<WCPDownloadTask> WCPDownloadManager::get_task(size_t task_id) {
     return nullptr;
 }
 
-void WCPDownloadManager::send_progress_update(std::shared_ptr<WCPDownloadTask> task, 
+void DownloadManager::send_progress_update(std::shared_ptr<DownloadTask> task, 
                                                int percent, 
                                                size_t downloaded, 
                                                size_t total) {
@@ -227,7 +227,7 @@ void WCPDownloadManager::send_progress_update(std::shared_ptr<WCPDownloadTask> t
     }
 }
 
-void WCPDownloadManager::send_complete_update(std::shared_ptr<WCPDownloadTask> task, 
+void DownloadManager::send_complete_update(std::shared_ptr<DownloadTask> task, 
                                                const std::string& file_path) {
     if (auto wcp = task->wcp_instance.lock()) {
         json complete_data;
@@ -247,7 +247,7 @@ void WCPDownloadManager::send_complete_update(std::shared_ptr<WCPDownloadTask> t
     }
 }
 
-void WCPDownloadManager::send_error_update(std::shared_ptr<WCPDownloadTask> task, 
+void DownloadManager::send_error_update(std::shared_ptr<DownloadTask> task, 
                                            const std::string& error) {
     if (auto wcp = task->wcp_instance.lock()) {
         json error_data;
@@ -265,7 +265,7 @@ void WCPDownloadManager::send_error_update(std::shared_ptr<WCPDownloadTask> task
     }
 }
 
-void WCPDownloadManager::cleanup_task(size_t task_id) {
+void DownloadManager::cleanup_task(size_t task_id) {
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     m_tasks.erase(task_id);
     m_last_percent.erase(task_id);

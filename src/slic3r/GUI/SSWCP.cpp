@@ -3001,10 +3001,11 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
         if (wxGetApp().get_web_preprint_dialog()) {
             WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
             if (dialog) {
+                // BBS: Use SafeEndModal to prevent duplicate EndModal calls
                 if(dialog->is_finish()){
-                    dialog->EndModal(wxID_OK);
+                    dialog->SafeEndModal(wxID_OK);
                 }else{
-                    dialog->EndModal(wxID_CANCEL);
+                    dialog->SafeEndModal(wxID_CANCEL);
                 }
             }
         }
@@ -4397,7 +4398,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile() {
         }
 
         // Use WCP Download Manager
-        WCPDownloadManager* download_mgr = wxGetApp().wcp_download_manager();
+        DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
             handle_general_fail(-1, "WCP Download Manager not available");
             return;
@@ -4432,7 +4433,7 @@ void SSWCP_UserLogin_Instance::sw_CancelDownload() {
             return;
         }
         
-        WCPDownloadManager* download_mgr = wxGetApp().wcp_download_manager();
+        DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
             handle_general_fail(-1, "WCP Download Manager not available");
             return;

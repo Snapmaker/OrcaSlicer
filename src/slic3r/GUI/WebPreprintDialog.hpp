@@ -33,7 +33,10 @@ public:
 
     bool is_finish() { return m_finish; }
 
-    void set_finish(bool flag) { m_finish = flag; }
+    void set_finish(bool flag);
+    
+    // BBS: Safely end modal dialog, preventing duplicate EndModal calls
+    void SafeEndModal(int returnCode);
 
 private:
     void OnClose(wxCloseEvent& evt);
@@ -53,6 +56,7 @@ private:
     bool        m_switch_to_device  = false;
 
     bool  m_finish = false;
+    bool  m_modal_ended = false;  // BBS: Flag to prevent duplicate EndModal calls
     DECLARE_EVENT_TABLE()
 };
 

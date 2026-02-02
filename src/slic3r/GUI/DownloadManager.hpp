@@ -15,7 +15,7 @@
 namespace Slic3r { namespace GUI {
 
 // Download task state
-enum class WCPDownloadState {
+enum class SMDownloadState {
     Pending,
     Downloading,
     Paused,
@@ -25,28 +25,28 @@ enum class WCPDownloadState {
 };
 
 // Download task information
-struct WCPDownloadTask {
+struct DownloadTask {
     size_t task_id;
     std::string file_url;
     std::string file_name;
     std::string dest_path;
     std::weak_ptr<SSWCP_Instance> wcp_instance;  // Associated WCP instance
     Http::Ptr http_object;  // HTTP object for cancellation
-    WCPDownloadState state;
+    SMDownloadState state;
     int percent;
     std::string error_message;
     
-    WCPDownloadTask(size_t id, const std::string& url, const std::string& name, 
+    DownloadTask(size_t id, const std::string& url, const std::string& name, 
                    const std::string& path, std::shared_ptr<SSWCP_Instance> instance)
-        : task_id(id), file_url(url), file_name(name), dest_path(path),
-          wcp_instance(instance), state(WCPDownloadState::Pending), percent(0) {}
+        : task_id(id), file_url(url), file_name(name), dest_path(path), wcp_instance(instance), state(SMDownloadState::Pending), percent(0)
+    {}
 };
 
-// WCP Download Manager
-class WCPDownloadManager {
+// Download Manager
+class DownloadManager {
 public:
-    static WCPDownloadManager& getInstance() {
-        static WCPDownloadManager instance;
+    static DownloadManager& getInstance() {
+        static DownloadManager instance;
         return instance;
     }
     
@@ -65,19 +65,19 @@ public:
     bool resume_download(size_t task_id);
     
     // Get task state
-    WCPDownloadState get_task_state(size_t task_id);
+    SMDownloadState get_task_state(size_t task_id);
     
     // Get task information
-    std::shared_ptr<WCPDownloadTask> get_task(size_t task_id);
+    std::shared_ptr<DownloadTask> get_task(size_t task_id);
     
 private:
-    WCPDownloadManager() = default;
-    ~WCPDownloadManager() = default;
-    WCPDownloadManager(const WCPDownloadManager&) = delete;
-    WCPDownloadManager& operator=(const WCPDownloadManager&) = delete;
+    DownloadManager() = default;
+    ~DownloadManager() = default;
+    DownloadManager(const DownloadManager&) = delete;
+    DownloadManager& operator=(const DownloadManager&) = delete;
     
     std::mutex m_tasks_mutex;
-    std::unordered_map<size_t, std::shared_ptr<WCPDownloadTask>> m_tasks;
+    std::unordered_map<size_t, std::shared_ptr<DownloadTask>> m_tasks;
     std::atomic<size_t> m_next_task_id{1};
     
     // Track last progress update for throttling
@@ -85,14 +85,14 @@ private:
     std::unordered_map<size_t, std::chrono::steady_clock::time_point> m_last_update;
     
     // Send progress update to WCP
-    void send_progress_update(std::shared_ptr<WCPDownloadTask> task, int percent, 
+    void send_progress_update(std::shared_ptr<DownloadTask> task, int percent, 
                               size_t downloaded, size_t total);
     
     // Send completion message to WCP
-    void send_complete_update(std::shared_ptr<WCPDownloadTask> task, const std::string& file_path);
+    void send_complete_update(std::shared_ptr<DownloadTask> task, const std::string& file_path);
     
     // Send error message to WCP
-    void send_error_update(std::shared_ptr<WCPDownloadTask> task, const std::string& error);
+    void send_error_update(std::shared_ptr<DownloadTask> task, const std::string& error);
     
     // Clean up completed task
     void cleanup_task(size_t task_id);

@@ -1066,7 +1066,7 @@ GUI_App::GUI_App()
     , m_imgui(new ImGuiWrapper())
 	, m_removable_drive_manager(std::make_unique<RemovableDriveManager>())
     , m_downloader(std::make_unique<Downloader>())
-    , m_wcp_download_manager(&WCPDownloadManager::getInstance())
+    , m_download_manager(&DownloadManager::getInstance())
 	, m_other_instance_message_handler(std::make_unique<OtherInstanceMessageHandler>())
 {
 	//app config initializes early becasuse it is used in instance checking in Snapmaker_Orca.cpp
@@ -6478,9 +6478,9 @@ Downloader* GUI_App::downloader()
     return m_downloader.get();
 }
 
-WCPDownloadManager* GUI_App::wcp_download_manager()
+DownloadManager* GUI_App::download_manager()
 {
-    return m_wcp_download_manager;
+    return m_download_manager;
 }
 
 void GUI_App::load_url(wxString url)

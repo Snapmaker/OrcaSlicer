@@ -23,6 +23,7 @@
 
 #include <functional>
 #include <set>
+#include <unordered_map>
 
 #include "calib.hpp"
 
@@ -887,6 +888,24 @@ public:
 
     std::vector<unsigned int> object_extruders() const;
     std::vector<unsigned int> support_material_extruders() const;
+
+    // SM Orca: 设置耗材-挤出机映射
+    void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
+    // SM Orca: 获取耗材-挤出机映射表
+    const std::unordered_map<int, int>& get_filament_extruder_map() const { return m_filament_extruder_map; }
+    // SM Orca: 获取物理挤出机ID（根据耗材索引）
+    int get_physical_extruder(int filament_idx) const {
+        auto it = m_filament_extruder_map.find(filament_idx);
+        int physical_extruder_id = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
+        // SM Orca: 日志 - 映射查询
+        BOOST_LOG_TRIVIAL(info) << "Print::get_physical_extruder: filament_id=" << filament_idx
+            << " -> physical_extruder_id=" << physical_extruder_id
+            << " (map_size=" << m_filament_extruder_map.size() << ")"
+            << (it != m_filament_extruder_map.end() ? " [from_map]" : " [default_identity]");
+        return physical_extruder_id;
+    }
+    // SM Orca: Initialize filament-to-physical-extruder mapping table
+    void                initialize_filament_extruder_map();
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
     double              max_allowed_layer_height() const;
     bool                has_support_material() const;
@@ -1065,6 +1084,9 @@ private:
     
     //SoftFever: calibration
     Calib_Params m_calib_params;
+
+    // SM Orca: 耗材到物理挤出机的映射表
+    std::unordered_map<int, int> m_filament_extruder_map;
 
     // To allow GCode to set the Print's GCodeExport step status.
     friend class GCode;

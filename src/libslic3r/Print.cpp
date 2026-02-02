@@ -293,8 +293,6 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_no_sparse_layers"
             || opt_key == "flush_volumes_matrix"
             || opt_key == "prime_volume"
-            || opt_key == "prime_tower_brim_chamfer"
-            || opt_key == "prime_tower_brim_chamfer_max_width"
             || opt_key == "flush_into_infill"
             || opt_key == "flush_into_support"
             || opt_key == "initial_layer_infill_speed"
@@ -495,6 +493,44 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     return extruders;
 }
 
+// SM Orca: Initialize filament-to-physical-extruder mapping
+// This must be called before the mapping is used (e.g., before export_gcode)
+void Print::initialize_filament_extruder_map()
+{
+    m_filament_extruder_map.clear();
+
+    // Get the number of physical extruders (number of nozzle_diameter entries)
+    size_t physical_extruder_count = m_config.nozzle_diameter.values.size();
+
+    if (physical_extruder_count == 0) {
+        BOOST_LOG_TRIVIAL(warning) << "Print::initialize_filament_extruder_map: No physical extruders configured!";
+        return;
+    }
+
+    // Get all filament indices that will be used
+    std::vector<unsigned int> filament_extruders = this->extruders();
+
+    BOOST_LOG_TRIVIAL(info) << "Print::initialize_filament_extruder_map: Initializing with "
+        << physical_extruder_count << " physical extruders and "
+        << filament_extruders.size() << " filaments to map";
+
+    // Create mapping: filament_id -> physical_extruder_id
+    // Mapping formula: physical_extruder = filament_id % physical_extruder_count
+    // This allows using 8 filaments with 4 physical extruders:
+    //   filament 0,1,2,3 -> extruder 0,1,2,3
+    //   filament 4,5,6,7 -> extruder 0,1,2,3
+    for (unsigned int filament_idx : filament_extruders) {
+        int physical_extruder = filament_idx % physical_extruder_count;
+        m_filament_extruder_map[filament_idx] = physical_extruder;
+
+        BOOST_LOG_TRIVIAL(info) << "Print::initialize_filament_extruder_map: filament "
+            << filament_idx << " -> physical_extruder " << physical_extruder;
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "Print::initialize_filament_extruder_map: Map initialized with "
+        << m_filament_extruder_map.size() << " entries";
+}
+
 unsigned int Print::num_object_instances() const
 {
 	unsigned int instances = 0;
@@ -506,8 +542,11 @@ unsigned int Print::num_object_instances() const
 double Print::max_allowed_layer_height() const
 {
     double nozzle_diameter_max = 0.;
-    for (unsigned int extruder_id : this->extruders())
-        nozzle_diameter_max = std::max(nozzle_diameter_max, m_config.nozzle_diameter.get_at(extruder_id));
+    for (unsigned int extruder_id : this->extruders()) {
+        // SM Orca: 使用物理挤出机的喷嘴直径
+        int physical_extruder = get_physical_extruder(extruder_id);
+        nozzle_diameter_max = std::max(nozzle_diameter_max, m_config.nozzle_diameter.get_at(physical_extruder));
+    }
     return nozzle_diameter_max;
 }
 
@@ -1185,10 +1224,13 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     if (this->has_wipe_tower() && ! m_objects.empty()) {
         // Make sure all extruders use same diameter filament and have the same nozzle diameter
         // EPSILON comparison is used for nozzles and 10 % tolerance is used for filaments
-        double first_nozzle_diam = m_config.nozzle_diameter.get_at(extruders.front());
+        // SM Orca: 使用物理挤出机的喷嘴直径
+        int first_physical = get_physical_extruder(extruders.front());
+        double first_nozzle_diam = m_config.nozzle_diameter.get_at(first_physical);
         double first_filament_diam = m_config.filament_diameter.get_at(extruders.front());
         for (const auto& extruder_idx : extruders) {
-            double nozzle_diam = m_config.nozzle_diameter.get_at(extruder_idx);
+            int physical_extruder = get_physical_extruder(extruder_idx);
+            double nozzle_diam = m_config.nozzle_diameter.get_at(physical_extruder);
             double filament_diam = m_config.filament_diameter.get_at(extruder_idx);
             if (nozzle_diam - EPSILON > first_nozzle_diam || nozzle_diam + EPSILON < first_nozzle_diam
                 || std::abs((filament_diam - first_filament_diam) / first_filament_diam) > 0.1) {
@@ -1294,7 +1336,9 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 		double min_nozzle_diameter = std::numeric_limits<double>::max();
 		double max_nozzle_diameter = 0;
 		for (unsigned int extruder_id : extruders) {
-			double dmr = m_config.nozzle_diameter.get_at(extruder_id);
+			// SM Orca: 使用物理挤出机的喷嘴直径
+			int physical_extruder = get_physical_extruder(extruder_id);
+			double dmr = m_config.nozzle_diameter.get_at(physical_extruder);
 			min_nozzle_diameter = std::min(min_nozzle_diameter, dmr);
 			max_nozzle_diameter = std::max(max_nozzle_diameter, dmr);
 		}
@@ -1382,9 +1426,11 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 size_t first_layer_extruder = object->config().raft_layers == 1
                     ? object->config().support_interface_filament-1
                     : object->config().support_filament-1;
+                // SM Orca: 使用物理挤出机的喷嘴直径
+                int physical_extruder = get_physical_extruder(first_layer_extruder);
                 first_layer_min_nozzle_diameter = (first_layer_extruder == size_t(-1)) ?
                     min_nozzle_diameter :
-                    m_config.nozzle_diameter.get_at(first_layer_extruder);
+                    m_config.nozzle_diameter.get_at(physical_extruder);
             } else {
                 // if we don't have raft layers, any nozzle diameter is potentially used in first layer
                 first_layer_min_nozzle_diameter = min_nozzle_diameter;
@@ -1702,11 +1748,14 @@ Flow Print::brim_flow() const
        extruders and take the one with, say, the smallest index.
        The same logic should be applied to the code that selects the extruder during G-code
        generation as well. */
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = m_print_regions.front()->config().wall_filament - 1;
+    int physical_extruder = get_physical_extruder(filament_idx);
     return Flow::new_from_config_width(
         frPerimeter,
         // Flow::new_from_config_width takes care of the percent to value substitution
 		width,
-        (float)m_config.nozzle_diameter.get_at(m_print_regions.front()->config().wall_filament-1),
+        (float)m_config.nozzle_diameter.get_at(physical_extruder),
 		(float)this->skirt_first_layer_height());
 }
 
@@ -1721,11 +1770,14 @@ Flow Print::skirt_flow() const
        extruders and take the one with, say, the smallest index;
        The same logic should be applied to the code that selects the extruder during G-code
        generation as well. */
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = m_objects.front()->config().support_filament - 1;
+    int physical_extruder = get_physical_extruder(filament_idx);
     return Flow::new_from_config_width(
         frPerimeter,
         // Flow::new_from_config_width takes care of the percent to value substitution
 		width,
-		(float)m_config.nozzle_diameter.get_at(m_objects.front()->config().support_filament-1),
+		(float)m_config.nozzle_diameter.get_at(physical_extruder),
 		(float)this->skirt_first_layer_height());
 }
 
@@ -2243,6 +2295,17 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     //BBS: compute plate offset for gcode-generator
     const Vec3d origin = this->get_plate_origin();
     gcode.set_gcode_offset(origin(0), origin(1));
+
+    // SM Orca: Initialize filament-to-extruder mapping before it's used
+    this->initialize_filament_extruder_map();
+
+    // SM Orca: 设置耗材-挤出机映射
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Print::export_gcode - Setting filament_extruder_map to GCode, mapping size: " << m_filament_extruder_map.size();
+    for (const auto& pair : m_filament_extruder_map) {
+        BOOST_LOG_TRIVIAL(info) << "  SM Orca: Print mapping: filament " << pair.first << " -> extruder " << pair.second;
+    }
+    gcode.set_filament_extruder_map(m_filament_extruder_map);
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Print::export_gcode - Mapping set to GCode object, calling do_export";
     gcode.do_export(this, path.c_str(), result, thumbnail_cb);
 
     //BBS
@@ -2333,7 +2396,9 @@ void Print::_make_skirt()
         extruders_e_per_mm.reserve(set_extruders.size());
         for (auto &extruder_id : set_extruders) {
             extruders.push_back(extruder_id);
-            extruders_e_per_mm.push_back(Extruder((unsigned int)extruder_id, &m_config, m_config.single_extruder_multi_material).e_per_mm(mm3_per_mm));
+            // SM Orca: 创建 Extruder 对象时传递物理挤出机ID
+            int physical_extruder_id = get_physical_extruder(extruder_id);
+            extruders_e_per_mm.push_back(Extruder((unsigned int)extruder_id, physical_extruder_id, &m_config, m_config.single_extruder_multi_material).e_per_mm(mm3_per_mm));
         }
     }
 
@@ -2733,8 +2798,11 @@ void Print::_make_wipe_tower()
         // wipe_tower.set_zhop();
 
         // Set the extruder & material properties at the wipe tower object.
-        for (size_t i = 0; i < number_of_extruders; ++i)
-            wipe_tower.set_extruder(i, m_config);
+        // SM Orca: 传递物理挤出机ID以支持耗材-挤出机映射
+        for (size_t i = 0; i < number_of_extruders; ++i) {
+            int physical_extruder = get_physical_extruder(i);
+            wipe_tower.set_extruder(i, physical_extruder, m_config);
+        }
 
         // BBS: remove priming logic
         // m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(
@@ -2829,8 +2897,11 @@ void Print::_make_wipe_tower()
         // wipe_tower.set_zhop();
 
         // Set the extruder & material properties at the wipe tower object.
-        for (size_t i = 0; i < number_of_extruders; ++i)
-            wipe_tower.set_extruder(i, m_config);
+        // SM Orca: 传递物理挤出机ID以支持耗材-挤出机映射
+        for (size_t i = 0; i < number_of_extruders; ++i) {
+            int physical_extruder = get_physical_extruder(i);
+            wipe_tower.set_extruder(i, physical_extruder, m_config);
+        }
 
         m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(
             wipe_tower.prime((float)this->skirt_first_layer_height(), m_wipe_tower_data.tool_ordering.all_extruders(), false));
@@ -2970,6 +3041,8 @@ void Print::export_gcode_from_previous_file(const std::string& file, GCodeProces
         GCodeProcessor::s_IsBBLPrinter = is_BBL_printer();
         const Vec3d origin = this->get_plate_origin();
         processor.set_xy_offset(origin(0), origin(1));
+        // SM Orca: 设置耗材到物理挤出机的映射
+        processor.set_filament_extruder_map(m_filament_extruder_map);
         //processor.enable_producers(true);
         processor.process_file(file);
 

@@ -504,8 +504,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SMPhysicalPrinterDialog.cpp
     GUI/SSWCP.cpp
     GUI/SSWCP.hpp
-    GUI/WCPDownloadManager.cpp
-    GUI/WCPDownloadManager.hpp
+    GUI/DownloadManager.cpp
+    GUI/DownloadManager.hpp
     GUI/WebPresetDialog.hpp
     GUI/WebPresetDialog.cpp
     GUI/WebSMUserLoginDialog.cpp

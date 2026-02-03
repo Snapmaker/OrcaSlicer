@@ -541,6 +541,9 @@ private:
     void sw_SubUserUpdatePrivacy();
 
     void sw_DownloadFile();
+
+    void sw_DownloadFileEx();
+
     void sw_CancelDownload();
 
     void sw_FileView();

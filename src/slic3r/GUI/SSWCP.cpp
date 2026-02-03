@@ -2,7 +2,7 @@
 #include "SSWCP.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
-#include "WCPDownloadManager.hpp"
+#include "DownloadManager.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
@@ -4387,7 +4387,8 @@ void SSWCP_UserLogin_Instance::sw_GetUserUpdatePrivacy()
 
 }
 
-void SSWCP_UserLogin_Instance::sw_DownloadFile() {
+void SSWCP_UserLogin_Instance::sw_DownloadFile() 
+{
     try {
         std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
@@ -4397,17 +4398,55 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile() {
             return;
         }
 
-        // Use WCP Download Manager
+        // Use Download Manager
         DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
-            handle_general_fail(-1, "WCP Download Manager not available");
+            handle_general_fail(-1, "Download Manager not available");
             return;
         }
 
-        // Start download task
-        size_t task_id = download_mgr->start_download(fileUrl, fileName, shared_from_this());
-        
+        size_t task_id = download_mgr->start_wcp_download(fileUrl,
+                                                          fileName,
+                                                          shared_from_this(), 
+                                                          false); // use_original_event_id = false (sw_DownloadFile: finish immediately)
+
         // Return task ID to Flutter
+        json response;
+        response["task_id"]   = task_id;
+        response["file_name"] = fileName;
+        response["file_url"]  = fileUrl;
+        m_res_data            = response;
+        m_status              = 0;
+        m_msg                 = "Download started";
+        send_to_js();
+        finish_job();
+
+    } catch (std::exception& e) {
+        handle_general_fail(-1, e.what());
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
+    try {
+        std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
+        std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
+
+        if (fileUrl.empty() || fileName.empty()) {
+            handle_general_fail(-1, "file_url and file_name are required");
+            return;
+        }
+
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
+        if (!download_mgr) {
+            handle_general_fail(-1, "Download Manager not available");
+            return;
+        }
+        size_t task_id = download_mgr->start_wcp_download(fileUrl,
+                                                          fileName,
+                                                          shared_from_this(),
+                                                          true); 
+        
         json response;
         response["task_id"] = task_id;
         response["file_name"] = fileName;
@@ -4416,9 +4455,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile() {
         m_status = 0;
         m_msg = "Download started";
         send_to_js();
-        // Note: Do not call finish_job() here, as download is asynchronous
-        // The manager will send progress updates and completion/error messages via WCP
-        
+              
     } catch (std::exception& e) {
         handle_general_fail(-1, e.what());
     }

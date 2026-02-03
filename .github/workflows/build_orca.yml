@@ -215,28 +215,24 @@ jobs:
             codesign --force --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || echo "  Warning: Failed to sign $file"
           done
 
-          # Step 3: Sign the main executable WITH entitlements
+          # Step 3: Sign the entire app bundle WITH entitlements
+          # This signs all components and applies entitlements to the main executable
           echo ""
-          echo "--- Step 3: Signing main executable with entitlements ---"
-          MAIN_EXECUTABLE="$APP_PATH/Contents/MacOS/Snapmaker_Orca"
-          if [ ! -f "$MAIN_EXECUTABLE" ]; then
-            echo "ERROR: Main executable not found at $MAIN_EXECUTABLE"
-            exit 1
-          fi
-
-          echo "  Signing: $MAIN_EXECUTABLE"
+          echo "--- Step 3: Signing app bundle with entitlements ---"
+          echo "  This will sign all components and apply entitlements to the main executable"
           echo "  Entitlements: $ENTITLEMENTS_PATH"
+
           codesign --force --verbose --options runtime --timestamp \
             --entitlements "$ENTITLEMENTS_PATH" \
             --sign "$CERTIFICATE_ID" \
-            "$MAIN_EXECUTABLE"
+            "$APP_PATH"
 
           if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to sign main executable"
+            echo "ERROR: Failed to sign app bundle"
             exit 1
           fi
 
-          # Step 4: Verify entitlements are embedded
+          # Step 4: Verify entitlements are embedded in the bundle
           echo ""
           echo "--- Step 4: Verifying entitlements ---"
           codesign -d --entitlements - "$APP_PATH" 2>&1 | tee /tmp/entitlements_check.txt
@@ -247,42 +243,49 @@ jobs:
             echo "  WARNING: Expected entitlements not found"
           fi
 
-          # Step 5: Sign the entire app bundle to seal it
+          # Step 5: Verify deep signature
           echo ""
-          echo "--- Step 5: Sealing app bundle ---"
-          codesign --force --verbose --options runtime --timestamp \
-            --sign "$CERTIFICATE_ID" \
-            "$APP_PATH"
+          echo "--- Step 5: Verifying deep signature ---"
+          codesign -vvv --deep --strict "$APP_PATH" 2>&1 || echo "  Note: Deep verification completed with warnings"
 
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to seal app bundle"
+          # Step 6: Final entitlements check on main executable
+          echo ""
+          echo "--- Step 6: Final entitlements check on main executable ---"
+          codesign -d --entitlements - "$APP_PATH/Contents/MacOS/Snapmaker_Orca" 2>&1 | tee /tmp/executable_entitlements.txt
+
+          if grep -q "com.apple.security.cs.disable-library-validation" /tmp/executable_entitlements.txt; then
+            echo "  SUCCESS: Main executable has correct entitlements!"
+          else
+            echo "  ERROR: Main executable is missing entitlements!"
             exit 1
           fi
 
-          # Step 6: Sign profile validator app if it exists
+          # Step 7: Sign profile validator app if it exists
           echo ""
-          echo "--- Step 6: Signing profile validator (if exists) ---"
+          echo "--- Step 7: Signing profile validator (if exists) ---"
           if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
             echo "  Found profile validator app"
 
-            # Sign helpers first
+            # Sign helpers first (before signing the bundle)
             find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
               echo "    Signing helper: $file"
               codesign --force --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || true
             done
 
-            # Sign main executable with entitlements
-            echo "    Signing main executable with entitlements..."
+            # Sign the entire bundle with entitlements (applies to main executable)
+            echo "    Signing bundle with entitlements..."
             codesign --force --verbose --options runtime --timestamp \
               --entitlements "$ENTITLEMENTS_PATH" \
               --sign "$CERTIFICATE_ID" \
-              "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator"
-
-            # Seal bundle
-            echo "    Sealing bundle..."
-            codesign --force --verbose --options runtime --timestamp \
-              --sign "$CERTIFICATE_ID" \
               "$VALIDATOR_APP_PATH"
+
+            # Verify entitlements
+            echo "    Verifying entitlements..."
+            if codesign -d --entitlements - "$VALIDATOR_APP_PATH" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
+              echo "    SUCCESS: Profile validator has correct entitlements!"
+            else
+              echo "    WARNING: Profile validator entitlements check failed"
+            fi
           else
             echo "  Profile validator not found, skipping..."
           fi

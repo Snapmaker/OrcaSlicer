@@ -195,24 +195,24 @@ jobs:
             exit 1
           fi
 
-          # Step 1: Sign all frameworks and dylibs
+          # Step 1: Sign all frameworks and dylibs with runtime options
           echo ""
           echo "--- Step 1: Signing frameworks and dylibs ---"
           FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
           if [ -d "$FRAMEWORKS_DIR" ]; then
             find "$FRAMEWORKS_DIR" -type f \( -name "*.dylib" -o -name "*.framework" \) 2>/dev/null | while read file; do
               echo "  Signing: $file"
-              codesign --force --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || echo "  Warning: Failed to sign $file"
+              codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || echo "  Warning: Failed to sign $file"
             done
           fi
 
-          # Step 2: Sign helper executables (excluding main executable)
+          # Step 2: Sign helper executables (excluding main executable) with runtime options
           echo ""
           echo "--- Step 2: Signing helper executables ---"
           MACOS_DIR="$APP_PATH/Contents/MacOS"
           find "$MACOS_DIR" -type f ! -name "Snapmaker_Orca" 2>/dev/null | while read file; do
             echo "  Signing helper: $file"
-            codesign --force --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || echo "  Warning: Failed to sign $file"
+            codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || echo "  Warning: Failed to sign $file"
           done
 
           # Step 3: Sign the entire app bundle WITH entitlements

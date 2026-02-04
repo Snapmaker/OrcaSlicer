@@ -5,6 +5,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/format.hpp>
 #include <vector>
+#include <ctime>
 
 namespace Slic3r { namespace GUI {
 
@@ -14,24 +15,74 @@ namespace Slic3r { namespace GUI {
 
 std::string DownloadManager::get_unique_file_path(const boost::filesystem::path& file_path)
 {
+    // file_path should be the complete absolute path: directory + filename
+    std::string original_path = file_path.string();
+    BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: Checking path '%1%'") % original_path;
+    
+    // Check if file exists, if not return original path
     if (!boost::filesystem::exists(file_path)) {
-        return file_path.string();
+        BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: File does not exist, returning original path '%1%'") % original_path;
+        return original_path;
     }
+    
+    BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: File exists, generating unique name");
     
     boost::filesystem::path parent_dir = file_path.parent_path();
     std::string filename = file_path.filename().string();
-    std::string extension = file_path.extension().string();
-    std::string name_without_ext = filename.substr(0, filename.size() - extension.size());
     
+    // Properly extract extension (includes the dot, e.g., ".txt")
+    // For "file.txt", extension() returns ".txt"
+    // For "file", extension() returns ""
+    std::string extension = file_path.extension().string();
+    
+    // Extract name without extension
+    // If extension is empty, name_without_ext is the full filename
+    std::string name_without_ext;
+    if (extension.empty()) {
+        name_without_ext = filename;
+        BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: No extension found, filename='%1%'") % filename;
+    } else {
+        // Remove extension from filename (extension includes the dot)
+        // For "file.txt", filename="file.txt", extension=".txt", so name_without_ext="file"
+        name_without_ext = filename.substr(0, filename.size() - extension.size());
+        BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: filename='%1%', extension='%2%', name_without_ext='%3%'")
+            % filename % extension % name_without_ext;
+    }
+    
+    // Generate unique filename with Windows-style numbering: filename(1).ext, filename(2).ext, etc.
     size_t version = 1;
     boost::filesystem::path unique_path;
     do {
-        std::string new_filename = name_without_ext + "(" + std::to_string(version) + ")" + extension;
+        std::string new_filename;
+        if (extension.empty()) {
+            // No extension: filename(1), filename(2), etc.
+            new_filename = name_without_ext + "(" + std::to_string(version) + ")";
+        } else {
+            // Has extension: filename(1).ext, filename(2).ext, etc.
+            new_filename = name_without_ext + "(" + std::to_string(version) + ")" + extension;
+        }
         unique_path = parent_dir / new_filename;
+        BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: Trying version %1%: '%2%'") % version % unique_path.string();
         version++;
     } while (boost::filesystem::exists(unique_path) && version < 10000);  // Safety limit
     
-    return unique_path.string();
+    if (version >= 10000) {
+        // If we hit the limit, log a warning and return a timestamp-based name
+        BOOST_LOG_TRIVIAL(warning) << boost::format("DownloadManager::get_unique_file_path: Too many duplicate files for '%1%', using timestamp-based name")
+            % original_path;
+        std::string timestamp = std::to_string(std::time(nullptr));
+        std::string new_filename;
+        if (extension.empty()) {
+            new_filename = name_without_ext + "_" + timestamp;
+        } else {
+            new_filename = name_without_ext + "_" + timestamp + extension;
+        }
+        unique_path = parent_dir / new_filename;
+    }
+    
+    std::string result = unique_path.string();
+    BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: Final unique path: '%1%'") % result;
+    return result;
 }
 
 // ============================================================================
@@ -74,17 +125,34 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
 // Internal Download Interface (for PC internal use)
 // ============================================================================
 size_t DownloadManager::start_internal_download(const std::string& file_url,
-                                                  const std::string& file_name,
-                                                  const std::string& dest_path,
-                                                  DownloadCallbacks callbacks) {
+                                                 const std::string& file_name,
+                                                 const std::string& dest_path,
+                                                 DownloadCallbacks callbacks) {
     
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     size_t task_id = m_next_task_id++;
     
-    boost::filesystem::path dest_file_path(dest_path);
+    boost::filesystem::path dest_path_obj(dest_path);
+    
+    // Check if dest_path is a directory or a complete file path
+    boost::filesystem::path dest_file_path;
+    if (boost::filesystem::is_directory(dest_path_obj) || dest_path_obj.filename().empty()) {
+        // dest_path is a directory, need to append file_name
+        BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::start_internal_download: dest_path '%1%' is a directory, appending file_name '%2%'")
+            % dest_path % file_name;
+        dest_file_path = dest_path_obj / file_name;
+    } else {
+        // dest_path is already a complete file path (directory + filename)
+        BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::start_internal_download: dest_path '%1%' is a complete file path")
+            % dest_path;
+        dest_file_path = dest_path_obj;
+    }
+    
+    // Create parent directory if it doesn't exist
     boost::filesystem::create_directories(dest_file_path.parent_path());
     
     // Generate unique file path if file already exists
+    // dest_file_path should now be the complete absolute path: directory + filename
     std::string unique_dest_path = get_unique_file_path(dest_file_path);
 
     auto task = std::make_shared<DownloadTask>(task_id, 

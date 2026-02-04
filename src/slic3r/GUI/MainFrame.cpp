@@ -75,7 +75,7 @@
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
 #include "sentry_wrapper/SentryWrapper.hpp"
-
+#include "GenericDownloadDialog.hpp"
 
 #define UPDATE_BUSER    true
 #define UPDATE_BUAUTO   false
@@ -2249,8 +2249,17 @@ static wxMenu* generate_help_menu()
     //        //TODO
     //    });
     // Check New Version
-    append_menu_item(helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
+    append_menu_item(
+        helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
         [](wxCommandEvent&) {
+            std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
+            //std::string fileUrl = "https://github.com/Snapmaker/OrcaSlicer/releases/download/v2.2.1/Snapmaker_Orca_Windows_Installer_V2.2.1.exe";
+            std::string           filename = "test_for_download.3mf";
+            std::string           downloadPath = "C:/tmp";
+
+            GenericDownloadDialog dlg(_L("importing the model"), fileUrl, filename, downloadPath);
+            dlg.ShowModal();
+            return;
             wxGetApp().check_new_version_sf(true, UPDATE_BUSER);
         }, "", nullptr, []() {
             return true;

@@ -192,6 +192,16 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
 
             // Step 2: Set progress callback
             http.on_progress([this, task](Http::Progress progress, bool& cancel) {
+                // Check if task is canceled or already cleaned up
+                {
+                    std::lock_guard<std::mutex> lock(m_tasks_mutex);
+                    if (m_tasks.find(task->task_id) == m_tasks.end()) {
+                        // Task has been cleaned up, cancel the download
+                        cancel = true;
+                        return;
+                    }
+                }
+                
                 if (task->state == DownloadTaskState::Canceled) {
                     cancel = true;
                     return;
@@ -206,6 +216,13 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                 
                 // Throttle progress updates: update every 5% or every second
                 std::lock_guard<std::mutex> lock(m_tasks_mutex);
+                
+                // Double-check task still exists after acquiring lock
+                if (m_tasks.find(task->task_id) == m_tasks.end()) {
+                    cancel = true;
+                    return;
+                }
+                
                 auto& last_pct = m_last_percent[task->task_id];
                 auto& last_upd = m_last_update[task->task_id];
                 
@@ -222,7 +239,12 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                 if (should_update) {
                     last_upd = now;
                     wxGetApp().CallAfter([this, task, percent, progress]() {
-                        send_progress_update(task, percent, progress.dlnow, progress.dltotal);
+                        // Check if task still exists before sending update
+                        std::lock_guard<std::mutex> lock(m_tasks_mutex);
+                        if (m_tasks.find(task->task_id) != m_tasks.end() && 
+                            task->state != DownloadTaskState::Canceled) {
+                            send_progress_update(task, percent, progress.dlnow, progress.dltotal);
+                        }
                     });
                 }
             });
@@ -230,6 +252,17 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             // Step 3: Set complete callback
             http.on_complete([this, task](std::string body, unsigned status) {
                 wxGetApp().CallAfter([this, task, body]() {
+                    // Check if task still exists and is not canceled
+                    {
+                        std::lock_guard<std::mutex> lock(m_tasks_mutex);
+                        if (m_tasks.find(task->task_id) == m_tasks.end() || 
+                            task->state == DownloadTaskState::Canceled) {
+                            // Task has been canceled or cleaned up, ignore completion
+                            BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring complete callback for canceled/cleaned task " << task->task_id;
+                            return;
+                        }
+                    }
+                    
                     try {
                         // Save file
                         boost::nowide::ofstream file(task->dest_path, std::ios::binary);
@@ -268,6 +301,21 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             // Step 4: Set error callback
             http.on_error([this, task](std::string body, std::string error, unsigned status) {
                 wxGetApp().CallAfter([this, task, error, status]() {
+                    // Check if task still exists and is not canceled
+                    {
+                        std::lock_guard<std::mutex> lock(m_tasks_mutex);
+                        if (m_tasks.find(task->task_id) == m_tasks.end()) {
+                            // Task has been cleaned up, ignore error callback
+                            BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring error callback for cleaned task " << task->task_id;
+                            return;
+                        }
+                        if (task->state == DownloadTaskState::Canceled) {
+                            // Task was canceled, ignore error callback (cancel already handled cleanup)
+                            BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring error callback for canceled task " << task->task_id;
+                            return;
+                        }
+                    }
+                    
                     std::string error_msg = boost::str(boost::format("HTTP error: %1% (status: %2%)") % error % status);
                     BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg 
                         << ", URL: " << task->file_url 
@@ -330,7 +378,10 @@ bool DownloadManager::cancel_download(size_t task_id) {
                 task->callbacks.on_complete = nullptr;
             }
             
-            cleanup_task(task_id);
+            // Cleanup task directly (already holding the lock, don't call cleanup_task)
+            m_tasks.erase(task_id);
+            m_last_percent.erase(task_id);
+            m_last_update.erase(task_id);
         } else {
             return false;
         }
@@ -446,8 +497,11 @@ void DownloadManager::send_wcp_progress_update(std::shared_ptr<DownloadTask> tas
 void DownloadManager::call_internal_progress_callback(std::shared_ptr<DownloadTask> task,
                                                       int percent,
                                                       size_t downloaded,
-                                                      size_t total) {    
-    if (task->callbacks.on_progress) {
+                                                      size_t total) {
+    // Only check if callback is still valid (cleared during cancellation)
+    // Don't check m_tasks because this is called from CallAfter which may execute
+    // after cleanup_task, but the callback should still be valid if not canceled
+    if (task->callbacks.on_progress && task->state != DownloadTaskState::Canceled) {
         task->callbacks.on_progress(task->task_id, percent, downloaded, total);
     }
 }
@@ -487,7 +541,10 @@ void DownloadManager::send_wcp_complete_update(std::shared_ptr<DownloadTask> tas
 
 void DownloadManager::call_internal_complete_callback(std::shared_ptr<DownloadTask> task,
                                                        const std::string& file_path) {
-    if (task->callbacks.on_complete) {
+    // Only check if callback is still valid (cleared during cancellation)
+    // Don't check m_tasks because cleanup_task may have been called, but the callback
+    // should still be valid if not canceled
+    if (task->callbacks.on_complete && task->state != DownloadTaskState::Canceled) {
         task->callbacks.on_complete(task->task_id, file_path);
     }
 }
@@ -525,7 +582,10 @@ void DownloadManager::send_wcp_error_update(std::shared_ptr<DownloadTask> task,
 
 void DownloadManager::call_internal_error_callback(std::shared_ptr<DownloadTask> task,
                                                     const std::string& error) {
-    if (task->callbacks.on_error) {
+    // Only check if callback is still valid (cleared during cancellation)
+    // Don't check m_tasks because cleanup_task may have been called, but the callback
+    // should still be valid if not canceled
+    if (task->callbacks.on_error && task->state != DownloadTaskState::Canceled) {
         task->callbacks.on_error(task->task_id, error);
     }
 }

@@ -4013,7 +4013,10 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
     // std::string           filename     = "test_for_download.3mf";
 
     GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, fileName, completeFilePath);
-    dlg.ShowModal();
+    auto res = dlg.ShowModal();
+
+    if (res != wxID_OK)
+        return;
 
     if (completeFilePath.empty()) {
         auto downloadPath = wxGetApp().app_config->get("download_path");

@@ -53,8 +53,14 @@ GenericDownloadDialog::GenericDownloadDialog(wxString title,
 
 GenericDownloadDialog::~GenericDownloadDialog()
 {
+    // Set destroying flag first to prevent any callbacks from accessing this object
     m_is_destroying = true;
-    m_task_id = 0;
+    
+    // Cancel any active download before destruction
+    if (m_task_id > 0) {
+        DownloadManager::getInstance().cancel_download(m_task_id);
+        m_task_id = 0;
+    }
 }
 
 void GenericDownloadDialog::setup_ui()
@@ -236,8 +242,9 @@ void GenericDownloadDialog::start_download()
     m_status_bar->set_cancel_callback_fina([this]() {
         if (m_task_id > 0) {
             DownloadManager::getInstance().cancel_download(m_task_id);
-            m_task_id = 0;  // Mark as canceled to prevent duplicate cancellation
+            m_task_id = 0;             
         }
+        EndModal(wxID_CANCEL);
     });
 
     // Create download callbacks

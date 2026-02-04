@@ -3,9 +3,36 @@
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/format.hpp>
 #include <vector>
 
 namespace Slic3r { namespace GUI {
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+std::string DownloadManager::get_unique_file_path(const boost::filesystem::path& file_path)
+{
+    if (!boost::filesystem::exists(file_path)) {
+        return file_path.string();
+    }
+    
+    boost::filesystem::path parent_dir = file_path.parent_path();
+    std::string filename = file_path.filename().string();
+    std::string extension = file_path.extension().string();
+    std::string name_without_ext = filename.substr(0, filename.size() - extension.size());
+    
+    size_t version = 1;
+    boost::filesystem::path unique_path;
+    do {
+        std::string new_filename = name_without_ext + "(" + std::to_string(version) + ")" + extension;
+        unique_path = parent_dir / new_filename;
+        version++;
+    } while (boost::filesystem::exists(unique_path) && version < 10000);  // Safety limit
+    
+    return unique_path.string();
+}
 
 // ============================================================================
 // WCP Download Interface (for Web-to-PC communication)
@@ -22,11 +49,16 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
     boost::filesystem::path dest_folder(downloadPath);
     boost::filesystem::create_directories(dest_folder);
     boost::filesystem::path dest_file = dest_folder / file_name;
-    std::string dest_path = dest_file.string();
+    
+    // Generate unique file path if file already exists
+    std::string dest_path = get_unique_file_path(dest_file);
+    
+    // Update file_name if it was changed due to duplicate
+    std::string actual_file_name = boost::filesystem::path(dest_path).filename().string();
     
     auto task = std::make_shared<DownloadTask>(task_id, 
                                                 file_url, 
-                                                file_name, 
+                                                actual_file_name, 
                                                 dest_path, 
                                                 wcp_instance,
                                                 use_original_event_id);
@@ -51,11 +83,14 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
     
     boost::filesystem::path dest_file_path(dest_path);
     boost::filesystem::create_directories(dest_file_path.parent_path());
+    
+    // Generate unique file path if file already exists
+    std::string unique_dest_path = get_unique_file_path(dest_file_path);
 
     auto task = std::make_shared<DownloadTask>(task_id, 
                                                 file_url, 
                                                 file_name, 
-                                                dest_path, 
+                                                unique_dest_path, 
                                                 std::move(callbacks));
 
     task->state = DownloadTaskState::Downloading;
@@ -75,7 +110,9 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
     boost::filesystem::create_directories(dest_folder);
     
     boost::filesystem::path dest_file = dest_folder / file_name;
-    std::string dest_path = dest_file.string();
+    
+    // Generate unique file path if file already exists
+    std::string dest_path = get_unique_file_path(dest_file);
     
     return start_internal_download(file_url, file_name, dest_path, std::move(callbacks));
 }
@@ -133,12 +170,22 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         // Save file
                         boost::nowide::ofstream file(task->dest_path, std::ios::binary);
                         if (!file.is_open()) {
-                            send_error_update(task, "Failed to open file for writing");
+                            std::string error_msg = "Failed to open file for writing: " + task->dest_path;
+                            BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg;
+                            send_error_update(task, error_msg);
                             cleanup_task(task->task_id);
                             return;
                         }
                         
                         file.write(body.c_str(), body.size());
+                        if (file.fail()) {
+                            std::string error_msg = "Failed to write file: " + task->dest_path;
+                            BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg << ", body size: " << body.size();
+                            file.close();
+                            send_error_update(task, error_msg);
+                            cleanup_task(task->task_id);
+                            return;
+                        }
                         file.close();
                         
                         task->state = DownloadTaskState::Completed;
@@ -146,7 +193,9 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         send_complete_update(task, task->dest_path);
                         cleanup_task(task->task_id);
                     } catch (std::exception& e) {
-                        send_error_update(task, e.what());
+                        std::string error_msg = std::string("File write exception: ") + e.what();
+                        BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg << ", file: " << task->dest_path;
+                        send_error_update(task, error_msg);
                         cleanup_task(task->task_id);
                     }
                 });
@@ -155,6 +204,11 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             // Step 4: Set error callback
             http.on_error([this, task](std::string body, std::string error, unsigned status) {
                 wxGetApp().CallAfter([this, task, error, status]() {
+                    std::string error_msg = boost::str(boost::format("HTTP error: %1% (status: %2%)") % error % status);
+                    BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg 
+                        << ", URL: " << task->file_url 
+                        << ", file: " << task->file_name
+                        << ", dest: " << task->dest_path;
                     task->state = DownloadTaskState::Error;
                     task->error_message = error;
                     send_error_update(task, error);
@@ -166,6 +220,11 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             task->http_object = http.perform();
             
         } catch (std::exception& e) {
+            std::string error_msg = std::string("Download exception: ") + e.what();
+            BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg 
+                << ", URL: " << task->file_url 
+                << ", file: " << task->file_name
+                << ", dest: " << task->dest_path;
             task->state = DownloadTaskState::Error;
             task->error_message = e.what();
             send_error_update(task, e.what());
@@ -197,14 +256,14 @@ bool DownloadManager::cancel_download(size_t task_id) {
             if (task->is_wcp_download()) {
                 wcp_to_destroy = task->wcp_instance.lock();
             } else {
-                // For internal downloads, call error callback if available
-                if (task->callbacks.on_error) {
-                    wxGetApp().CallAfter([task]() {
-                        if (task->callbacks.on_error) {
-                            task->callbacks.on_error(task->task_id, "Download canceled");
-                        }
-                    });
-                }
+                // For internal downloads, don't call error callback if task is being canceled
+                // during destruction (e.g., when dialog is closing). The callback may reference
+                // a destroyed dialog object, causing a crash.
+                // Note: We clear the callbacks before cleanup to prevent any delayed callbacks
+                // from accessing destroyed objects.
+                task->callbacks.on_error = nullptr;
+                task->callbacks.on_progress = nullptr;
+                task->callbacks.on_complete = nullptr;
             }
             
             cleanup_task(task_id);

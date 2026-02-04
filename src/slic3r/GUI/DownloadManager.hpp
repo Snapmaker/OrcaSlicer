@@ -198,6 +198,10 @@ private:
     
     // Clean up completed task
     void cleanup_task(size_t task_id);
+    
+    // Generate unique file path if file already exists
+    // Returns path like "file(1).zip", "file(2).zip" etc.
+    static std::string get_unique_file_path(const boost::filesystem::path& file_path);
 };
 
 }} // namespace Slic3r::GUI

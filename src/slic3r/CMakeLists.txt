@@ -506,6 +506,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SSWCP.hpp
     GUI/DownloadManager.cpp
     GUI/DownloadManager.hpp
+    GUI/GenericDownloadDialog.cpp
+    GUI/GenericDownloadDialog.hpp
     GUI/WebPresetDialog.hpp
     GUI/WebPresetDialog.cpp
     GUI/WebSMUserLoginDialog.cpp

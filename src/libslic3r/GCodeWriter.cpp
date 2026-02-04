@@ -45,17 +45,26 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 
 void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
 {
+    BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: START - Creating Extruder objects for " << extruder_ids.size() << " extruders";
+    BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: filament_extruder_map size=" << m_filament_extruder_map.size();
+
     std::sort(extruder_ids.begin(), extruder_ids.end());
     m_extruder = nullptr; // this points to object inside `m_extruders`, so should be cleared too
     m_extruders.clear();
     m_extruders.reserve(extruder_ids.size());
-    for (unsigned int extruder_id : extruder_ids)
-        m_extruders.emplace_back(Extruder(extruder_id, &this->config, config.single_extruder_multi_material.value));
-    
+    // SM Orca: 创建 Extruder 对象时传递物理挤出机ID
+    for (unsigned int extruder_id : extruder_ids) {
+        int physical_extruder_id = get_physical_extruder(extruder_id);
+        BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: Creating Extruder - filament_id=" << extruder_id
+            << " -> physical_extruder_id=" << physical_extruder_id;
+        m_extruders.emplace_back(Extruder(extruder_id, physical_extruder_id, &this->config, config.single_extruder_multi_material.value));
+    }
+
     /*  we enable support for multiple extruder if any extruder greater than 0 is used
         (even if prints only uses that one) since we need to output Tx commands
         first extruder has index 0 */
     this->multiple_extruders = (*std::max_element(extruder_ids.begin(), extruder_ids.end())) > 0;
+    BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: END - multiple_extruders=" << this->multiple_extruders;
 }
 
 std::string GCodeWriter::preamble()
@@ -454,6 +463,12 @@ std::string GCodeWriter::toolchange_prefix() const
 
 std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeWriter::toolchange(" << extruder_id << ") called";
+
+    // SM Orca: 记录映射信息
+    int physical_extruder = get_physical_extruder(extruder_id);
+    BOOST_LOG_TRIVIAL(info) << "SM Orca: Toolchange - filament " << extruder_id << " maps to physical extruder " << physical_extruder << " (mapping table size: " << m_filament_extruder_map.size() << ")";
+
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
     assert(it_extruder != m_extruders.end() && it_extruder->id() == extruder_id);
@@ -463,12 +478,16 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
     // if we are running a single-extruder setup, just set the extruder and return nothing
     std::ostringstream gcode;
     if (this->multiple_extruders || (this->config.filament_diameter.values.size() > 1 && !is_bbl_printers())) {
+        // SM Orca: T命令使用耗材序号（extruder_id），物理换头由固件处理
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Generating T command: T" << extruder_id;
         gcode << this->toolchange_prefix() << extruder_id;
         //BBS
         if (GCodeWriter::full_gcode_comment)
             gcode << " ; change extruder";
         gcode << "\n";
         gcode << this->reset_e(true);
+    } else {
+        BOOST_LOG_TRIVIAL(info) << "SM Orca: Toolchange - Single extruder mode, no T command generated";
     }
     return gcode.str();
 }
@@ -489,13 +508,21 @@ std::string GCodeWriter::set_speed(double F, const std::string &comment, const s
 
 std::string GCodeWriter::travel_to_xy(const Vec2d &point, const std::string &comment)
 {
+    // SM Orca: 诊断NaN输入
+    if (std::isnan(point(0)) || std::isinf(point(0)) || std::isnan(point(1)) || std::isinf(point(1))) {
+        BOOST_LOG_TRIVIAL(error) << "SM Orca: travel_to_xy received NaN/inf point"
+            << " extruder=" << (m_extruder ? m_extruder->id() : -1)
+            << " point=(" << point(0) << ", " << point(1) << ")"
+            << " comment=" << comment;
+    }
+
     m_pos(0) = point(0);
     m_pos(1) = point(1);
 
     this->set_current_position_clear(true);
     //BBS: take plate offset into consider
     Vec2d point_on_plate = { point(0) - m_x_offset, point(1) - m_y_offset };
-    
+
     GCodeG1Formatter w;
     w.emit_xy(point_on_plate);
     auto speed = m_is_first_layer
@@ -709,11 +736,20 @@ bool GCodeWriter::will_move_z(double z) const
 
 std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std::string &comment, bool force_no_extrusion)
 {
+    // SM Orca: 诊断NaN输入
+    if (std::isnan(point(0)) || std::isinf(point(0)) || std::isnan(point(1)) || std::isinf(point(1))) {
+        BOOST_LOG_TRIVIAL(error) << "SM Orca: extrude_to_xy received NaN/inf point"
+            << " extruder=" << (m_extruder ? m_extruder->id() : -1)
+            << " point=(" << point(0) << ", " << point(1) << ")"
+            << " dE=" << dE
+            << " comment=" << comment;
+    }
+
     m_pos(0) = point(0);
     m_pos(1) = point(1);
     if(std::abs(dE) <= std::numeric_limits<double>::epsilon())
         force_no_extrusion = true;
-    
+
     if (!force_no_extrusion)
         m_extruder->extrude(dE);
 

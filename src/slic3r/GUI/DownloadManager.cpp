@@ -29,21 +29,13 @@ std::string DownloadManager::get_unique_file_path(const boost::filesystem::path&
     
     boost::filesystem::path parent_dir = file_path.parent_path();
     std::string filename = file_path.filename().string();
-    
-    // Properly extract extension (includes the dot, e.g., ".txt")
-    // For "file.txt", extension() returns ".txt"
-    // For "file", extension() returns ""
     std::string extension = file_path.extension().string();
-    
-    // Extract name without extension
-    // If extension is empty, name_without_ext is the full filename
+
     std::string name_without_ext;
     if (extension.empty()) {
         name_without_ext = filename;
         BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: No extension found, filename='%1%'") % filename;
     } else {
-        // Remove extension from filename (extension includes the dot)
-        // For "file.txt", filename="file.txt", extension=".txt", so name_without_ext="file"
         name_without_ext = filename.substr(0, filename.size() - extension.size());
         BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: filename='%1%', extension='%2%', name_without_ext='%3%'")
             % filename % extension % name_without_ext;
@@ -252,15 +244,11 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             // Step 3: Set complete callback
             http.on_complete([this, task](std::string body, unsigned status) {
                 wxGetApp().CallAfter([this, task, body]() {
-                    // Check if task still exists and is not canceled
-                    {
-                        std::lock_guard<std::mutex> lock(m_tasks_mutex);
-                        if (m_tasks.find(task->task_id) == m_tasks.end() || 
-                            task->state == DownloadTaskState::Canceled) {
-                            // Task has been canceled or cleaned up, ignore completion
-                            BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring complete callback for canceled/cleaned task " << task->task_id;
-                            return;
-                        }
+                    // Check if task still exists and is not canceled (without lock to avoid deadlock with cleanup_task)
+                    if (task->state == DownloadTaskState::Canceled) {
+                        // Task has been canceled, ignore completion
+                        BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring complete callback for canceled task " << task->task_id;
+                        return;
                     }
                     
                     try {
@@ -301,19 +289,11 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             // Step 4: Set error callback
             http.on_error([this, task](std::string body, std::string error, unsigned status) {
                 wxGetApp().CallAfter([this, task, error, status]() {
-                    // Check if task still exists and is not canceled
-                    {
-                        std::lock_guard<std::mutex> lock(m_tasks_mutex);
-                        if (m_tasks.find(task->task_id) == m_tasks.end()) {
-                            // Task has been cleaned up, ignore error callback
-                            BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring error callback for cleaned task " << task->task_id;
-                            return;
-                        }
-                        if (task->state == DownloadTaskState::Canceled) {
-                            // Task was canceled, ignore error callback (cancel already handled cleanup)
-                            BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring error callback for canceled task " << task->task_id;
-                            return;
-                        }
+                    // Check if task was canceled (without lock to avoid deadlock with cleanup_task)
+                    if (task->state == DownloadTaskState::Canceled) {
+                        // Task was canceled, ignore error callback (cancel already handled cleanup)
+                        BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring error callback for canceled task " << task->task_id;
+                        return;
                     }
                     
                     std::string error_msg = boost::str(boost::format("HTTP error: %1% (status: %2%)") % error % status);
@@ -368,11 +348,6 @@ bool DownloadManager::cancel_download(size_t task_id) {
             if (task->is_wcp_download()) {
                 wcp_to_destroy = task->wcp_instance.lock();
             } else {
-                // For internal downloads, don't call error callback if task is being canceled
-                // during destruction (e.g., when dialog is closing). The callback may reference
-                // a destroyed dialog object, causing a crash.
-                // Note: We clear the callbacks before cleanup to prevent any delayed callbacks
-                // from accessing destroyed objects.
                 task->callbacks.on_error = nullptr;
                 task->callbacks.on_progress = nullptr;
                 task->callbacks.on_complete = nullptr;
@@ -498,9 +473,7 @@ void DownloadManager::call_internal_progress_callback(std::shared_ptr<DownloadTa
                                                       int percent,
                                                       size_t downloaded,
                                                       size_t total) {
-    // Only check if callback is still valid (cleared during cancellation)
-    // Don't check m_tasks because this is called from CallAfter which may execute
-    // after cleanup_task, but the callback should still be valid if not canceled
+
     if (task->callbacks.on_progress && task->state != DownloadTaskState::Canceled) {
         task->callbacks.on_progress(task->task_id, percent, downloaded, total);
     }
@@ -541,9 +514,7 @@ void DownloadManager::send_wcp_complete_update(std::shared_ptr<DownloadTask> tas
 
 void DownloadManager::call_internal_complete_callback(std::shared_ptr<DownloadTask> task,
                                                        const std::string& file_path) {
-    // Only check if callback is still valid (cleared during cancellation)
-    // Don't check m_tasks because cleanup_task may have been called, but the callback
-    // should still be valid if not canceled
+
     if (task->callbacks.on_complete && task->state != DownloadTaskState::Canceled) {
         task->callbacks.on_complete(task->task_id, file_path);
     }
@@ -582,9 +553,7 @@ void DownloadManager::send_wcp_error_update(std::shared_ptr<DownloadTask> task,
 
 void DownloadManager::call_internal_error_callback(std::shared_ptr<DownloadTask> task,
                                                     const std::string& error) {
-    // Only check if callback is still valid (cleared during cancellation)
-    // Don't check m_tasks because cleanup_task may have been called, but the callback
-    // should still be valid if not canceled
+
     if (task->callbacks.on_error && task->state != DownloadTaskState::Canceled) {
         task->callbacks.on_error(task->task_id, error);
     }

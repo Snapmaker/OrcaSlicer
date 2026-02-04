@@ -134,7 +134,6 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
     
     boost::filesystem::path dest_path_obj(dest_path);
     
-    // Check if dest_path is a directory or a complete file path
     boost::filesystem::path dest_file_path;
     if (boost::filesystem::is_directory(dest_path_obj) || dest_path_obj.filename().empty()) {
         // dest_path is a directory, need to append file_name
@@ -148,11 +147,8 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
         dest_file_path = dest_path_obj;
     }
     
-    // Create parent directory if it doesn't exist
     boost::filesystem::create_directories(dest_file_path.parent_path());
     
-    // Generate unique file path if file already exists
-    // dest_file_path should now be the complete absolute path: directory + filename
     std::string unique_dest_path = get_unique_file_path(dest_file_path);
 
     auto task = std::make_shared<DownloadTask>(task_id, 

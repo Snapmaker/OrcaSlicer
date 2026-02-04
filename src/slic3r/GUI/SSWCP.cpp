@@ -3187,13 +3187,9 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         
         response["thumbnails"] = thumbnails;
 
-        
-        
         // file name
         response["filename"] = SSWCP::get_display_filename();
         response["filepath"] = SSWCP::get_active_filename();
-
-        
 
         m_res_data = response;
         send_to_js();
@@ -4404,18 +4400,9 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile()
             handle_general_fail(-1, "Download Manager not available");
             return;
         }
+        
+        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
 
-        size_t task_id = download_mgr->start_wcp_download(fileUrl,
-                                                          fileName,
-                                                          shared_from_this(), 
-                                                          false); // use_original_event_id = false (sw_DownloadFile: finish immediately)
-
-        // Return task ID to Flutter
-        json response;
-        response["task_id"]   = task_id;
-        response["file_name"] = fileName;
-        response["file_url"]  = fileUrl;
-        m_res_data            = response;
         m_status              = 0;
         m_msg                 = "Download started";
         send_to_js();

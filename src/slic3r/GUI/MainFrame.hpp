@@ -348,7 +348,11 @@ public:
     void        load_printer_url();
     bool        is_printer_view() const;
     void        refresh_plugin_tips();
-    void RunScript(wxString js);
+    void        RunScript(wxString js);
+
+    void        downloadOpenProject(const std::string& fileUrl, 
+                                    const std::string& fileName, 
+                                    std::string completeFilePath = "");
 
     //SoftFever
     void show_device(bool bBBLPrinter);

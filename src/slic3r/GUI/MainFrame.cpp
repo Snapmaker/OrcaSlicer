@@ -2252,14 +2252,6 @@ static wxMenu* generate_help_menu()
     append_menu_item(
         helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
         [](wxCommandEvent&) {
-            std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
-            //std::string fileUrl = "https://github.com/Snapmaker/OrcaSlicer/releases/download/v2.2.1/Snapmaker_Orca_Windows_Installer_V2.2.1.exe";
-            std::string           filename = "test_for_download.3mf";
-            std::string           downloadPath = "C:/tmp";
-
-            GenericDownloadDialog dlg(_L("importing the model"), fileUrl, filename, downloadPath);
-            dlg.ShowModal();
-            return;
             wxGetApp().check_new_version_sf(true, UPDATE_BUSER);
         }, "", nullptr, []() {
             return true;
@@ -4013,6 +4005,38 @@ void MainFrame::RunScript(wxString js)
 {
     if (m_webview != nullptr)
         m_webview->RunScript(js);
+}
+
+void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::string& fileName, std::string completeFilePath)
+{
+    // std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
+    // std::string           filename     = "test_for_download.3mf";
+
+    GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, fileName, completeFilePath);
+    dlg.ShowModal();
+
+    if (completeFilePath.empty()) {
+        auto downloadPath = wxGetApp().app_config->get("download_path");
+        completeFilePath  = downloadPath + "/" + fileName;
+    }
+    if (!boost::filesystem::exists(completeFilePath)) 
+    {
+        BOOST_LOG_TRIVIAL(warning) << boost::format("the file '%1%' not exists") % completeFilePath;
+        return;
+    }
+
+    // Auto-open project if it's a .3mf file
+    boost::filesystem::path path(completeFilePath);
+    std::string             extension = boost::algorithm::to_lower_copy(path.extension().string());
+    if (extension == ".3mf") {
+        BOOST_LOG_TRIVIAL(info) << boost::format("GenericDownloadDialog: Auto-opening project file '%1%'") % completeFilePath;
+        wxString wx_file_path = wxString::FromUTF8(completeFilePath.c_str());
+        if (wxGetApp().can_load_project() && wxGetApp().mainframe && wxGetApp().mainframe->plater()) {
+            wxGetApp().mainframe->plater()->load_project(wx_file_path);
+        }
+    }
+
+    
 }
 
 void MainFrame::technology_changed()

@@ -383,8 +383,9 @@ void GenericDownloadDialog::show_progress_page()
 
 void GenericDownloadDialog::show_complete_page()
 {
-    m_simplebook_status->SetSelection(1);
-    m_status_bar->hide_cancel_button();
+    //m_simplebook_status->SetSelection(1);
+    //m_status_bar->hide_cancel_button();
+    EndModal(wxID_OK);
 }
 
 void GenericDownloadDialog::show_error_page(const std::string& error_msg)

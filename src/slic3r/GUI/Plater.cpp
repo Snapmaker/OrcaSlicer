@@ -13685,18 +13685,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     islegal = (c_preset == connect_preset);
 
-   /* if (!islegal) {
-        MessageDialog msg_window(nullptr,
-                                 _L(" Your connected machine is ") + (connect_preset == "" ? "Unknown" : connect_preset) + _L("\nYour model's preset is ") + c_preset + _L("\nDo you want to continue?"),
-                                 L("machine check"),
-                                 wxICON_QUESTION | wxOK);
-        int res = msg_window.ShowModal();
-        if (res != wxID_OK) {
-            return;
-        }
-    }*/
-
-
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
     if (! physical_printer_config || p->model.objects.empty())
         return;
@@ -13714,34 +13702,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
     }
     local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
     local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
-
-
-    /*if (wxGetApp().app_config->get("use_new_connect") == "true") {
-        upload_job = PrintHostJob(wxGetApp().get_host_config());
-    } */
-    
-    // if (local_name == "Snapmaker U1 0.4 nozzle" && devices.size() == 0) {
-    //     MessageDialog msg_window(nullptr, _L("You don't have active machine, do you want to add one?"), _L("Info"), wxICON_QUESTION | wxOK | wxCANCEL);
-
-    //     int           res = msg_window.ShowModal();
-    //     if (res == wxID_OK) {
-    //         wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
-    //         auto view = wxGetApp().mainframe->m_printer_view;
-    //         if (view) {
-    //             json msg;
-    //             msg["head"] = json::object();
-    //             json payload = json::object();
-    //             payload["cmd"] = "devicepage_add_device";
-    //             payload["method"] = "call_flutter";
-    //             payload["params"] = json::object();
-    //             msg["payload"]    = payload;
-
-    //             std::string str_msg = msg.dump(4, ' ', true);
-    //             view->sendMessage(str_msg);
-    //         }
-    //     }
-    //     return;
-    // }
 
     if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
         // 先不创建job，直接创建上传 / 上传下载对话框
@@ -13803,8 +13763,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
         dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
         bool res = dialog->run();
-
-        // wxGetApp().mainframe->m_printer_view->reload();
 
         if (dialog->is_finish()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);

@@ -2,7 +2,7 @@
 #include "SSWCP.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
-#include "WCPDownloadManager.hpp"
+#include "DownloadManager.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
@@ -3001,10 +3001,11 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
         if (wxGetApp().get_web_preprint_dialog()) {
             WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
             if (dialog) {
+                // BBS: Use SafeEndModal to prevent duplicate EndModal calls
                 if(dialog->is_finish()){
-                    dialog->EndModal(wxID_OK);
+                    dialog->SafeEndModal(wxID_OK);
                 }else{
-                    dialog->EndModal(wxID_CANCEL);
+                    dialog->SafeEndModal(wxID_CANCEL);
                 }
             }
         }
@@ -3186,13 +3187,9 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         
         response["thumbnails"] = thumbnails;
 
-        
-        
         // file name
         response["filename"] = SSWCP::get_display_filename();
         response["filepath"] = SSWCP::get_active_filename();
-
-        
 
         m_res_data = response;
         send_to_js();
@@ -4386,7 +4383,8 @@ void SSWCP_UserLogin_Instance::sw_GetUserUpdatePrivacy()
 
 }
 
-void SSWCP_UserLogin_Instance::sw_DownloadFile() {
+void SSWCP_UserLogin_Instance::sw_DownloadFile() 
+{
     try {
         std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
@@ -4396,17 +4394,46 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile() {
             return;
         }
 
-        // Use WCP Download Manager
-        WCPDownloadManager* download_mgr = wxGetApp().wcp_download_manager();
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
-            handle_general_fail(-1, "WCP Download Manager not available");
+            handle_general_fail(-1, "Download Manager not available");
+            return;
+        }
+        
+        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+
+        m_status              = 0;
+        m_msg                 = "Download started";
+        send_to_js();
+        finish_job();
+
+    } catch (std::exception& e) {
+        handle_general_fail(-1, e.what());
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
+    try {
+        std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
+        std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
+
+        if (fileUrl.empty() || fileName.empty()) {
+            handle_general_fail(-1, "file_url and file_name are required");
             return;
         }
 
-        // Start download task
-        size_t task_id = download_mgr->start_download(fileUrl, fileName, shared_from_this());
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
+        if (!download_mgr) {
+            handle_general_fail(-1, "Download Manager not available");
+            return;
+        }
+        size_t task_id = download_mgr->start_wcp_download(fileUrl,
+                                                          fileName,
+                                                          shared_from_this(),
+                                                          true); 
         
-        // Return task ID to Flutter
         json response;
         response["task_id"] = task_id;
         response["file_name"] = fileName;
@@ -4415,9 +4442,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile() {
         m_status = 0;
         m_msg = "Download started";
         send_to_js();
-        // Note: Do not call finish_job() here, as download is asynchronous
-        // The manager will send progress updates and completion/error messages via WCP
-        
+              
     } catch (std::exception& e) {
         handle_general_fail(-1, e.what());
     }
@@ -4432,7 +4457,7 @@ void SSWCP_UserLogin_Instance::sw_CancelDownload() {
             return;
         }
         
-        WCPDownloadManager* download_mgr = wxGetApp().wcp_download_manager();
+        DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
             handle_general_fail(-1, "WCP Download Manager not available");
             return;

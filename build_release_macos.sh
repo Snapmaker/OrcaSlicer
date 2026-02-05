@@ -116,33 +116,25 @@ DEPS="$DEPS_BUILD_DIR/OrcaSlicer_deps"
 export BUILD_DIR_CONFIG_SUBDIR="/$BUILD_CONFIG"
 
 function build_deps() {
-    # iterate over two architectures: x86_64 and arm64
-    for _ARCH in x86_64 arm64; do
-        # if ARCH is universal or equal to _ARCH
-        if [ "$ARCH" == "universal" ] || [ "$ARCH" == "$_ARCH" ]; then
+    # Build only for the specified architecture (arm64, x86_64, or universal)
+    # When ARCH is "universal", this will be called separately for each architecture
 
-            PROJECT_BUILD_DIR="$PROJECT_DIR/build/$_ARCH"
-            DEPS_BUILD_DIR="$DEPS_DIR/build/$_ARCH"
-            DEPS="$DEPS_BUILD_DIR/OrcaSlicer_dep"
-
-            echo "Building deps..."
-            (
-                set -x
-                mkdir -p "$DEPS"
-                cd "$DEPS_BUILD_DIR"
-                if [ "1." != "$BUILD_ONLY". ]; then
-                    cmake "${DEPS_DIR}" \
-                        -G "${DEPS_CMAKE_GENERATOR}" \
-                        -DDESTDIR="$DEPS" \
-                        -DOPENSSL_ARCH="darwin64-${_ARCH}-cc" \
-                        -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
-                        -DCMAKE_OSX_ARCHITECTURES:STRING="${_ARCH}" \
-                        -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}"
-                fi
-                cmake --build . --config "$BUILD_CONFIG" --target deps
-            )
+    echo "Building deps for $ARCH..."
+    (
+        set -x
+        mkdir -p "$DEPS"
+        cd "$DEPS_BUILD_DIR"
+        if [ "1." != "$BUILD_ONLY". ]; then
+            cmake "${DEPS_DIR}" \
+                -G "${DEPS_CMAKE_GENERATOR}" \
+                -DDESTDIR="$DEPS" \
+                -DOPENSSL_ARCH="darwin64-${ARCH}-cc" \
+                -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
+                -DCMAKE_OSX_ARCHITECTURES:STRING="${ARCH}" \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}"
         fi
-    done
+        cmake --build . --config "$BUILD_CONFIG" --target deps
+    )
 }
 
 function pack_deps() {
@@ -155,47 +147,41 @@ function pack_deps() {
 }
 
 function build_slicer() {
-    # iterate over two architectures: x86_64 and arm64
-    for _ARCH in x86_64 arm64; do
-        # if ARCH is universal or equal to _ARCH
-        if [ "$ARCH" == "universal" ] || [ "$ARCH" == "$_ARCH" ]; then
+    # Build only for the specified architecture (arm64, x86_64, or universal)
+    # When ARCH is "universal", this will be called separately for each architecture
 
-            PROJECT_BUILD_DIR="$PROJECT_DIR/build/$_ARCH"
-            DEPS_BUILD_DIR="$DEPS_DIR/build/$_ARCH"
-            DEPS="$DEPS_BUILD_DIR/OrcaSlicer_dep"
+    echo "Building slicer for $ARCH..."
+    (
+        set -x
+        mkdir -p "$PROJECT_BUILD_DIR"
+        cd "$PROJECT_BUILD_DIR"
+        if [ "1." != "$BUILD_ONLY". ]; then
+            cmake "${PROJECT_DIR}" \
+                -G "${SLICER_CMAKE_GENERATOR}" \
+                -DBBL_RELEASE_TO_PUBLIC=1 \
+                -DORCA_TOOLS=ON \
+                ${ORCA_UPDATER_SIG_KEY:+-DORCA_UPDATER_SIG_KEY="$ORCA_UPDATER_SIG_KEY"} \
+                -DCMAKE_PREFIX_PATH="$DEPS/usr/local" \
+                -DCMAKE_INSTALL_PREFIX="$PWD/Snapmaker_Orca" \
+                -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
+                -DCMAKE_MACOSX_RPATH=ON \
+                -DCMAKE_INSTALL_RPATH="${DEPS}/usr/local" \
+                -DCMAKE_MACOSX_BUNDLE=ON \
+                -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}"
+        fi
+        cmake --build . --config "$BUILD_CONFIG" --target "$SLICER_BUILD_TARGET"
+        # Explicitly build profile_validator if ORCA_TOOLS is enabled
+        if [ "$SLICER_BUILD_TARGET" = "all" ] || [ "$SLICER_BUILD_TARGET" = "ALL_BUILD" ]; then
+            cmake --build . --config "$BUILD_CONFIG" --target Snapmaker_Orca_profile_validator || echo "Warning: Snapmaker_Orca_profile_validator build failed or not available"
+        fi
+    )
 
-            echo "Building slicer for $_ARCH..."
-            (
-                set -x
-            mkdir -p "$PROJECT_BUILD_DIR"
-            cd "$PROJECT_BUILD_DIR"
-            if [ "1." != "$BUILD_ONLY". ]; then
-                cmake "${PROJECT_DIR}" \
-                    -G "${SLICER_CMAKE_GENERATOR}" \
-                    -DBBL_RELEASE_TO_PUBLIC=1 \
-                    -DORCA_TOOLS=ON \
-                    ${ORCA_UPDATER_SIG_KEY:+-DORCA_UPDATER_SIG_KEY="$ORCA_UPDATER_SIG_KEY"} \
-                    -DCMAKE_PREFIX_PATH="$DEPS/usr/local" \
-                    -DCMAKE_INSTALL_PREFIX="$PWD/Snapmaker_Orca" \
-                    -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
-                    -DCMAKE_MACOSX_RPATH=ON \
-                    -DCMAKE_INSTALL_RPATH="${DEPS}/usr/local" \
-                    -DCMAKE_MACOSX_BUNDLE=ON \
-                    -DCMAKE_OSX_ARCHITECTURES="${_ARCH}" \
-                    -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}"
-            fi
-            cmake --build . --config "$BUILD_CONFIG" --target "$SLICER_BUILD_TARGET"
-            # Explicitly build profile_validator if ORCA_TOOLS is enabled
-            if [ "$SLICER_BUILD_TARGET" = "all" ] || [ "$SLICER_BUILD_TARGET" = "ALL_BUILD" ]; then
-                cmake --build . --config "$BUILD_CONFIG" --target Snapmaker_Orca_profile_validator || echo "Warning: Snapmaker_Orca_profile_validator build failed or not available"
-            fi
-        )
-
-        echo "Verify localization with gettext..."
-        (
-            cd "$PROJECT_DIR"
-            ./scripts/run_gettext.sh
-        )
+    echo "Verify localization with gettext..."
+    (
+        cd "$PROJECT_DIR"
+        ./scripts/run_gettext.sh
+    )
 
     echo "Fix macOS app package..."
     (
@@ -228,7 +214,7 @@ function build_slicer() {
         APP_MACOS_DIR='./Snapmaker Orca.app/Contents/MacOS'
         APP_FRAMEWORKS_DIR='./Snapmaker Orca.app/Contents/Frameworks'
         EXECUTABLE="${APP_MACOS_DIR}/Snapmaker_Orca"
-        
+
         if [ -f "${CRASHPAD_HANDLER}" ]; then
             echo "Copying crashpad_handler to app bundle..."
             cp -f "${CRASHPAD_HANDLER}" "${APP_MACOS_DIR}/crashpad_handler"
@@ -237,14 +223,14 @@ function build_slicer() {
         else
             echo "Warning: crashpad_handler not found at ${CRASHPAD_HANDLER}"
         fi
-        
+
         if [ -f "${LIBSENTRY}" ]; then
             echo "Copying libsentry.dylib to Frameworks..."
             mkdir -p "${APP_FRAMEWORKS_DIR}"
             cp -f "${LIBSENTRY}" "${APP_FRAMEWORKS_DIR}/libsentry.dylib"
             # Sign libsentry.dylib
             codesign --force --sign - "${APP_FRAMEWORKS_DIR}/libsentry.dylib" 2>/dev/null || true
-            
+
             # Update rpath in Snapmaker_Orca to use @executable_path relative path
             if [ -f "${EXECUTABLE}" ]; then
                 echo "Updating libsentry.dylib rpath in Snapmaker_Orca..."
@@ -270,48 +256,34 @@ function build_slicer() {
         echo "Generating dSYM debug symbols..."
         DSYM_DIR="./dSYM"
         mkdir -p "${DSYM_DIR}"
-        
+
         # Generate dSYM for main app
         if [ -f "${APP_MACOS_DIR}/Snapmaker_Orca" ]; then
             echo "Generating dSYM for Snapmaker_Orca..."
             dsymutil "${APP_MACOS_DIR}/Snapmaker_Orca" -o "${DSYM_DIR}/Snapmaker_Orca.dSYM" 2>/dev/null || echo "Warning: Failed to generate dSYM for Snapmaker_Orca (no debug symbols?)"
         fi
-        
+
         # Generate dSYM for crashpad_handler if it exists
         if [ -f "${APP_MACOS_DIR}/crashpad_handler" ]; then
             echo "Generating dSYM for crashpad_handler..."
             dsymutil "${APP_MACOS_DIR}/crashpad_handler" -o "${DSYM_DIR}/crashpad_handler.dSYM" 2>/dev/null || true
         fi
-        
+
         # Generate dSYM for libsentry.dylib if it exists
         if [ -f "${APP_FRAMEWORKS_DIR}/libsentry.dylib" ]; then
             echo "Generating dSYM for libsentry.dylib..."
             dsymutil "${APP_FRAMEWORKS_DIR}/libsentry.dylib" -o "${DSYM_DIR}/libsentry.dSYM" 2>/dev/null || true
         fi
-        
+
         # Generate dSYM for profile_validator if it exists
         if [ -f "./Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
             echo "Generating dSYM for Snapmaker_Orca_profile_validator..."
             dsymutil "./Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" -o "${DSYM_DIR}/Snapmaker_Orca_profile_validator.dSYM" 2>/dev/null || true
         fi
-        
+
         echo "dSYM files generated in ${DSYM_DIR}"
         ls -la "${DSYM_DIR}" 2>/dev/null || echo "No dSYM files generated"
     )
-
-    # extract version
-    # export ver=$(grep '^#define Snapmaker_VERSION' ../src/libslic3r/libslic3r_version.h | cut -d ' ' -f3)
-    # ver="_V${ver//\"}"
-    # echo $PWD
-    # if [ "1." != "$NIGHTLY_BUILD". ];
-    # then
-    #     ver=${ver}_dev
-    # fi
-
-        # zip -FSr Snapmaker_Orca${ver}_Mac_${_ARCH}.zip OrcaSlicer.app
-
-    fi
-    done
 }
 
 function build_universal() {
@@ -428,24 +400,68 @@ function build_universal() {
 
 case "${BUILD_TARGET}" in
     all)
-        build_deps
-        build_slicer
+        if [ "$ARCH" = "universal" ]; then
+            # Build for each architecture separately first
+            for _ARCH in arm64 x86_64; do
+                echo "===== Building for $_ARCH ====="
+                ARCH="$_ARCH"
+                PROJECT_BUILD_DIR="$PROJECT_DIR/build/$_ARCH"
+                DEPS_BUILD_DIR="$DEPS_DIR/build/$_ARCH"
+                DEPS="$DEPS_BUILD_DIR/OrcaSlicer_deps"
+                build_deps
+                build_slicer
+            done
+            # Restore ARCH for build_universal
+            ARCH="universal"
+            PROJECT_BUILD_DIR="$PROJECT_DIR/build/$ARCH"
+            build_universal
+        else
+            build_deps
+            build_slicer
+        fi
         ;;
     deps)
-        build_deps
+        if [ "$ARCH" = "universal" ]; then
+            # Build deps for each architecture separately
+            for _ARCH in arm64 x86_64; do
+                echo "===== Building deps for $_ARCH ====="
+                ARCH="$_ARCH"
+                PROJECT_BUILD_DIR="$PROJECT_DIR/build/$_ARCH"
+                DEPS_BUILD_DIR="$DEPS_DIR/build/$_ARCH"
+                DEPS="$DEPS_BUILD_DIR/OrcaSlicer_deps"
+                build_deps
+            done
+            # Restore ARCH
+            ARCH="universal"
+            PROJECT_BUILD_DIR="$PROJECT_DIR/build/$ARCH"
+        else
+            build_deps
+        fi
         ;;
     slicer)
-        build_slicer
+        if [ "$ARCH" = "universal" ]; then
+            # Build slicer for each architecture separately
+            for _ARCH in arm64 x86_64; do
+                echo "===== Building slicer for $_ARCH ====="
+                ARCH="$_ARCH"
+                PROJECT_BUILD_DIR="$PROJECT_DIR/build/$_ARCH"
+                DEPS_BUILD_DIR="$DEPS_DIR/build/$_ARCH"
+                DEPS="$DEPS_BUILD_DIR/OrcaSlicer_deps"
+                build_slicer
+            done
+            # Merge slicer builds
+            ARCH="universal"
+            PROJECT_BUILD_DIR="$PROJECT_DIR/build/$ARCH"
+            build_universal
+        else
+            build_slicer
+        fi
         ;;
     *)
         echo "Unknown target: $BUILD_TARGET. Available targets: deps, slicer, all."
         exit 1
         ;;
 esac
-
-if [ "$ARCH" = "universal" ] && [ "$BUILD_TARGET" != "deps" ]; then
-    build_universal
-fi
 
 if [ "1." == "$PACK_DEPS". ]; then
     pack_deps

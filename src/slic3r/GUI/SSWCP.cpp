@@ -4403,8 +4403,8 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile()
         
         wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
 
-        m_status              = 0;
-        m_msg                 = "Download started";
+        m_status  = 0;
+        m_msg     = "success";
         send_to_js();
         finish_job();
 
@@ -4440,7 +4440,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
         response["file_url"] = fileUrl;
         m_res_data = response;
         m_status = 0;
-        m_msg = "Download started";
+        m_msg = "success";
         send_to_js();
               
     } catch (std::exception& e) {

@@ -60,7 +60,7 @@ jobs:
           - os: windows-latest
           - os: macos-14
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             arch: x86_64
     uses: ./.github/workflows/build_check_cache.yml
     with:

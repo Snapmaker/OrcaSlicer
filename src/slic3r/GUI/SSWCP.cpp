@@ -4297,6 +4297,8 @@ void SSWCP_UserLogin_Instance::process()
         sw_GetUserUpdatePrivacy();
     } else if (m_cmd == DOWNLOAD_FILE) {
         sw_DownloadFile();
+    } else if (m_cmd == DOWNLOAD_FILE_AND_OPEN) {
+        sw_DownloadFileAndOpen();
     } else if (m_cmd == CANCEL_DOWNLOAD) {
         sw_CancelDownload();
     } else if (m_cmd == FILE_VIEW) {
@@ -4383,6 +4385,36 @@ void SSWCP_UserLogin_Instance::sw_GetUserUpdatePrivacy()
 
 }
 
+void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
+{
+    try {
+        std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
+        std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
+
+        if (fileUrl.empty() || fileName.empty()) {
+            handle_general_fail(-1, "file_url and file_name are required");
+            return;
+        }
+
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
+        if (!download_mgr) {
+            handle_general_fail(-1, "Download Manager not available");
+            return;
+        }
+
+        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+
+        m_status = 0;
+        m_msg    = "success";
+        send_to_js();
+        finish_job();
+
+    } catch (std::exception& e) {
+        handle_general_fail(-1, e.what());
+    }
+}
+
 void SSWCP_UserLogin_Instance::sw_DownloadFile() 
 {
     try {
@@ -4401,7 +4433,8 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile()
             return;
         }
         
-        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+        //only download file and don't do anything.
+        //wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
 
         m_status  = 0;
         m_msg     = "success";

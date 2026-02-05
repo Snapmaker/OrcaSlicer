@@ -4038,6 +4038,12 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
             wxGetApp().mainframe->plater()->load_project(wx_file_path);
         }
     }
+    else
+    {
+        // Not a valid 3mf file, show error message
+        wxString msg = wxString::Format(_L("The downloaded file '%s' is not a valid 3MF project file."), fileName);
+        MessageDialog(this, msg, _L("Invalid File"), wxOK | wxICON_WARNING).ShowModal();
+    }
 
     
 }

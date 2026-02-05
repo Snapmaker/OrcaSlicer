@@ -355,6 +355,7 @@ void GenericDownloadDialog::on_download_error(size_t task_id, const std::string&
 
 void GenericDownloadDialog::on_retry_clicked(wxCommandEvent& event)
 {
+    SetTitle(m_title);
     if (m_on_retry) {
         m_on_retry();
     }
@@ -399,6 +400,8 @@ void GenericDownloadDialog::show_error_page(const std::string& error_msg)
 {
     m_simplebook_status->SetSelection(2);
     
+    SetTitle(_L("Donwload failed"));
+
     // Display simple error message: filename + "Download failed"
     wxString filename = wxString::FromUTF8(m_file_name.c_str());
     wxString error_text = filename + " - Download failed";

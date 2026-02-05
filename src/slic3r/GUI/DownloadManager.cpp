@@ -1,5 +1,6 @@
 #include "DownloadManager.hpp"
 #include "GUI_App.hpp"
+#include "libslic3r/Utils.hpp"
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/log/trivial.hpp>
@@ -257,6 +258,8 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         if (!file.is_open()) {
                             std::string error_msg = "Failed to open file for writing: " + task->dest_path;
                             BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg;
+                            // Flush logs immediately for critical errors
+                            Slic3r::flush_logs();
                             send_error_update(task, error_msg);
                             cleanup_task(task->task_id);
                             return;
@@ -266,6 +269,8 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         if (file.fail()) {
                             std::string error_msg = "Failed to write file: " + task->dest_path;
                             BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg << ", body size: " << body.size();
+                            // Flush logs immediately for critical errors
+                            Slic3r::flush_logs();
                             file.close();
                             send_error_update(task, error_msg);
                             cleanup_task(task->task_id);
@@ -280,6 +285,8 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                     } catch (std::exception& e) {
                         std::string error_msg = std::string("File write exception: ") + e.what();
                         BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg << ", file: " << task->dest_path;
+                        // Flush logs immediately for critical errors
+                        Slic3r::flush_logs();
                         send_error_update(task, error_msg);
                         cleanup_task(task->task_id);
                     }
@@ -301,6 +308,8 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         << ", URL: " << task->file_url 
                         << ", file: " << task->file_name
                         << ", dest: " << task->dest_path;
+                    // Flush logs immediately for critical errors to ensure they are written
+                    Slic3r::flush_logs();
                     task->state = DownloadTaskState::Error;
                     task->error_message = error;
                     send_error_update(task, error);

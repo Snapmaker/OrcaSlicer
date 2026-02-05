@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <vector>
 #include "libslic3r.h"
 #include "clonable_ptr.hpp"
@@ -39,6 +40,12 @@ namespace Slic3r {
     inline bool operator==(const FloatOrPercent& l, const FloatOrPercent& r) throw() { return l.value == r.value && l.percent == r.percent; }
     inline bool operator!=(const FloatOrPercent& l, const FloatOrPercent& r) throw() { return !(l == r); }
     inline bool operator< (const FloatOrPercent& l, const FloatOrPercent& r) throw() { return l.value < r.value || (l.value == r.value && int(l.percent) < int(r.percent)); }
+    inline std::ostream& operator<<(std::ostream& os, const FloatOrPercent& v) {
+        os << v.value;
+        if (v.percent)
+            os << "%";
+        return os;
+    }
 }
 
 namespace std {
@@ -415,22 +422,63 @@ public:
     // This function is useful to split values from multiple extrder / filament settings into separate configurations.
     void set_at(const ConfigOption *rhs, size_t i, size_t j) override
     {
+        // SM Orca: Debug logging
+        BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: START - this->values.size()=" << this->values.size()
+            << ", i=" << i << ", j=" << j;
+
         // It is expected that the vector value has at least one value, which is the default, if not overwritten.
         assert(! this->values.empty());
         if (this->values.size() <= i) {
             // Resize this vector, fill in the new vector fields with the copy of the first field.
             T v = this->values.front();
             this->values.resize(i + 1, v);
+            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: resized to " << this->values.size();
         }
+
         if (rhs->type() == this->type()) {
             // Assign the first value of the rhs vector.
             auto other = static_cast<const ConfigOptionVector<T>*>(rhs);
             if (other->values.empty())
                 throw ConfigurationError("ConfigOptionVector::set_at(): Assigning from an empty vector");
+
+            // Log before assignment
+            std::stringstream before_ss;
+            before_ss << "[";
+            for (size_t k = 0; k < this->values.size(); ++k) {
+                if (k > 0) before_ss << ", ";
+                before_ss << this->values[k];
+            }
+            before_ss << "]";
+            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: before this->values=" << before_ss.str();
+
+            // Log other vector
+            std::stringstream other_ss;
+            other_ss << "[";
+            for (size_t k = 0; k < other->values.size(); ++k) {
+                if (k > 0) other_ss << ", ";
+                other_ss << other->values[k];
+            }
+            other_ss << "]";
+            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: other->values=" << other_ss.str()
+                << ", other->get_at(" << j << ")=" << other->get_at(j);
+
             this->values[i] = other->get_at(j);
-        } else if (rhs->type() == this->scalar_type())
+
+            // Log after assignment
+            std::stringstream after_ss;
+            after_ss << "[";
+            for (size_t k = 0; k < this->values.size(); ++k) {
+                if (k > 0) after_ss << ", ";
+                after_ss << this->values[k];
+            }
+            after_ss << "]";
+            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: after this->values[" << i << "]=" << this->values[i]
+                << ", full=" << after_ss.str();
+
+        } else if (rhs->type() == this->scalar_type()) {
             this->values[i] = static_cast<const ConfigOptionSingle<T>*>(rhs)->value;
-        else
+            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: assigned scalar value=" << this->values[i];
+        } else
             throw ConfigurationError("ConfigOptionVector::set_at(): Assigning an incompatible type");
     }
 

@@ -94,7 +94,6 @@ const std::vector<std::string> GCodeProcessor::Reserved_Tags_compatible = {
     " PA_CHANGE:"
 };
 
-
 const std::string GCodeProcessor::Flush_Start_Tag = " FLUSH_START";
 const std::string GCodeProcessor::Flush_End_Tag = " FLUSH_END";
 
@@ -397,7 +396,6 @@ void GCodeProcessor::TimeProcessor::reset()
     filament_unload_times = 0.0f;
     machine_tool_change_time = 0.0f;
 
-
     for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
         machines[i].reset();
     }
@@ -456,7 +454,6 @@ void GCodeProcessor::UsedFilaments::process_color_change_cache()
         color_change_cache = 0.0f;
     }
 }
-
 
 void GCodeProcessor::UsedFilaments::process_total_volume_cache(GCodeProcessor* processor)
 {
@@ -526,7 +523,6 @@ void GCodeProcessor::UsedFilaments::process_role_cache(GCodeProcessor* processor
     if (role_cache != 0.0f) {
         std::pair<double, double> filament = { 0.0f, 0.0f };
 
-        // SM Orca: 添加边界检查，与其他地方保持一致
         float diameter = (static_cast<size_t>(processor->m_extruder_id) < processor->m_result.filament_diameters.size())
             ? processor->m_result.filament_diameters[processor->m_extruder_id]
             : processor->m_result.filament_diameters.back();
@@ -565,21 +561,16 @@ void GCodeProcessorResult::reset() {
     //BBS: add mutex for protection of gcode result
     lock();
 
-    // SM Orca: 保存当前的extruders_count并尝试从已有数组推断
     size_t saved_count = extruders_count;
 
-    // SM Orca: 如果extruders_count不合理，尝试从已有数组大小推断
     if (saved_count == 0 || saved_count > 256) {
         // 尝试从已有数组大小推断（优先使用filament_diameters的大小）
         if (!filament_diameters.empty() && filament_diameters.size() <= 256) {
             saved_count = filament_diameters.size();
-            BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessorResult::reset() - Inferred extruders_count from existing array: "
                 << saved_count;
         } else {
-            // SM Orca: 使用16作为默认值（覆盖U1等多耗材机型）
             // 对于只有少量耗材的用户，稍微多分配一些内存影响很小
             saved_count = 16;
-            BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessorResult::reset() - Using default extruders_count: "
                 << saved_count << " (was " << extruders_count << ", array size was " << filament_diameters.size() << ")";
         }
     }
@@ -596,18 +587,15 @@ void GCodeProcessorResult::reset() {
     printable_height = 0.0f;
     settings_ids.reset();
 
-    // SM Orca: 恢复extruders_count为合理的值
     extruders_count = saved_count;
     extruder_colors = std::vector<std::string>();
 
-    // SM Orca: 使用推断的大小初始化所有耗材相关数组
     filament_diameters = std::vector<float>(saved_count, DEFAULT_FILAMENT_DIAMETER);
     filament_densities = std::vector<float>(saved_count, DEFAULT_FILAMENT_DENSITY);
     filament_costs = std::vector<float>(saved_count, DEFAULT_FILAMENT_COST);
     required_nozzle_HRC = std::vector<int>(saved_count, DEFAULT_FILAMENT_HRC);
     filament_vitrification_temperature = std::vector<int>(saved_count, DEFAULT_FILAMENT_VITRIFICATION_TEMPERATURE);
 
-    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessorResult::reset() - Resized arrays to " << saved_count
         << " (original extruders_count=" << (saved_count == extruders_count ? "preserved" : "inferred")
         << ", this=" << this << ")";
 
@@ -623,21 +611,16 @@ void GCodeProcessorResult::reset() {
     //BBS: add mutex for protection of gcode result
     lock();
 
-    // SM Orca: 保存当前的extruders_count并尝试从已有数组推断
     size_t saved_count = extruders_count;
 
-    // SM Orca: 如果extruders_count不合理，尝试从已有数组大小推断
     if (saved_count == 0 || saved_count > 256) {
         // 尝试从已有数组大小推断（优先使用filament_diameters的大小）
         if (!filament_diameters.empty() && filament_diameters.size() <= 256) {
             saved_count = filament_diameters.size();
-            BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessorResult::reset() - Inferred extruders_count from existing array: "
                 << saved_count;
         } else {
-            // SM Orca: 使用16作为默认值（覆盖U1等多耗材机型）
             // 对于只有少量耗材的用户，稍微多分配一些内存影响很小
             saved_count = 16;
-            BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessorResult::reset() - Using default extruders_count: "
                 << saved_count << " (was " << extruders_count << ", array size was " << filament_diameters.size() << ")";
         }
     }
@@ -658,17 +641,14 @@ void GCodeProcessorResult::reset() {
     backtrace_enabled = false;
     extruder_colors = std::vector<std::string>();
 
-    // SM Orca: 恢复extruders_count为合理的值
     extruders_count = saved_count;
 
-    // SM Orca: 使用推断的大小初始化所有耗材相关数组
     filament_diameters = std::vector<float>(saved_count, DEFAULT_FILAMENT_DIAMETER);
     required_nozzle_HRC = std::vector<int>(saved_count, DEFAULT_FILAMENT_HRC);
     filament_densities = std::vector<float>(saved_count, DEFAULT_FILAMENT_DENSITY);
     filament_costs = std::vector<float>(saved_count, DEFAULT_FILAMENT_COST);
     filament_vitrification_temperature = std::vector<int>(saved_count, DEFAULT_FILAMENT_VITRIFICATION_TEMPERATURE);
 
-    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeProcessorResult::reset() - Resized arrays to " << saved_count
         << " (original extruders_count=" << (saved_count == extruders_count ? "preserved" : "inferred")
         << ", this=" << this << ")";
 
@@ -788,9 +768,7 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         m_preheat_steps = 1;
     m_result.backtrace_enabled = m_preheat_time > 0 && (m_is_XL_printer || (!m_single_extruder_multi_material && extruders_count > 1));
 
-    // SM Orca: 配置验证 - 在resize之前检查配置完整性
     size_t physical_extruder_count = config.extruder_offset.values.size();
-    BOOST_LOG_TRIVIAL(info) << "SM Orca: Configuration validation:"
         << " filaments=" << extruders_count
         << ", physical_extruders=" << physical_extruder_count
         << ", mappings=" << m_filament_extruder_map.size();
@@ -840,7 +818,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     m_result.nozzle_hrc = static_cast<int>(config.nozzle_hrc.getInt());
     m_result.nozzle_type = config.nozzle_type;
 
-    // SM Orca: 获取各配置数组的大小，用于边界检查
     size_t diameter_count = config.filament_diameter.values.size();
     size_t density_count = config.filament_density.values.size();
     size_t cost_count = config.filament_cost.values.size();
@@ -850,10 +827,8 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     size_t vitrification_count = config.temperature_vitrification.values.size();
 
     for (size_t i = 0; i < extruders_count; ++ i) {
-        // SM Orca: 使用物理挤出机ID来访问offset，并确保不越界
         int physical_extruder = get_physical_extruder(i);
 
-        // SM Orca: 边界检查 - 如果映射的物理挤出机超出范围，回退到1:1映射
         if (physical_extruder < 0 || physical_extruder >= static_cast<int>(physical_extruder_count)) {
             BOOST_LOG_TRIVIAL(error) << "SM Orca: Filament " << i
                                      << " maps to invalid physical extruder " << physical_extruder
@@ -866,7 +841,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         m_extruder_offsets[i]           = to_3d(config.extruder_offset.get_at(physical_extruder).cast<float>().eval(), 0.f);
         m_extruder_colors[i]            = static_cast<unsigned char>(i);
 
-        // SM Orca: 安全读取温度配置（使用最后有效值作为回退）
         // 温度是挤出机属性，使用 physical_extruder 而不是 filament index
         if (physical_extruder < static_cast<int>(temp_initial_count)) {
             m_extruder_temps_first_layer_config[i] = static_cast<int>(config.nozzle_temperature_initial_layer.get_at(physical_extruder));
@@ -891,7 +865,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
             m_extruder_temps_config[i] = m_extruder_temps_first_layer_config[i];
         }
 
-        // SM Orca: 安全读取直径（使用最后有效值作为回退）
         if (i < diameter_count) {
             m_result.filament_diameters[i] = static_cast<float>(config.filament_diameter.get_at(i));
         } else {
@@ -901,7 +874,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
             BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " diameter not configured, using " << fallback << "mm";
         }
 
-        // SM Orca: 安全读取HRC
         if (i < hrc_count) {
             m_result.required_nozzle_HRC[i] = static_cast<int>(config.required_nozzle_HRC.get_at(i));
         } else {
@@ -910,7 +882,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
             m_result.required_nozzle_HRC[i] = fallback;
         }
 
-        // SM Orca: 安全读取密度（使用最后有效值作为回退）
         if (i < density_count) {
             m_result.filament_densities[i] = static_cast<float>(config.filament_density.get_at(i));
         } else {
@@ -920,7 +891,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
             BOOST_LOG_TRIVIAL(warning) << "SM Orca: Filament " << i << " density not configured, using " << fallback << " g/cm³";
         }
 
-        // SM Orca: 安全读取玻璃化温度
         if (i < vitrification_count) {
             m_result.filament_vitrification_temperature[i] = static_cast<int>(config.temperature_vitrification.get_at(i));
         } else {
@@ -929,7 +899,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
             m_result.filament_vitrification_temperature[i] = fallback;
         }
 
-        // SM Orca: 安全读取成本（使用0作为默认值）
         if (i < cost_count) {
             m_result.filament_costs[i] = static_cast<float>(config.filament_cost.get_at(i));
         } else {
@@ -1051,17 +1020,14 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (filament_diameters != nullptr) {
         size_t config_size = filament_diameters->values.size();
 
-        // SM Orca: 确保数组大小等于extruders_count，不要clear()
         if (m_result.filament_diameters.size() < m_result.extruders_count) {
             m_result.filament_diameters.resize(m_result.extruders_count, DEFAULT_FILAMENT_DIAMETER);
         }
 
-        // SM Orca: 只更新配置中有的值
         for (size_t i = 0; i < config_size && i < m_result.extruders_count; ++i) {
             m_result.filament_diameters[i] = static_cast<float>(filament_diameters->values[i]);
         }
 
-        // SM Orca: 对于配置中没有的值，使用最后一个有效值
         if (config_size > 0 && config_size < m_result.extruders_count) {
             float last_value = static_cast<float>(filament_diameters->values[config_size - 1]);
             for (size_t i = config_size; i < m_result.extruders_count; ++i) {
@@ -1072,7 +1038,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         }
     }
 
-    // SM Orca: 确保数组大小正确（移除原有的回退逻辑，因为已经在上面处理了）
     if (m_result.filament_diameters.size() < m_result.extruders_count) {
         m_result.filament_diameters.resize(m_result.extruders_count, DEFAULT_FILAMENT_DIAMETER);
     }
@@ -1093,17 +1058,14 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (filament_densities != nullptr) {
         size_t config_size = filament_densities->values.size();
 
-        // SM Orca: 确保数组大小等于extruders_count，不要clear()
         if (m_result.filament_densities.size() < m_result.extruders_count) {
             m_result.filament_densities.resize(m_result.extruders_count, DEFAULT_FILAMENT_DENSITY);
         }
 
-        // SM Orca: 只更新配置中有的值
         for (size_t i = 0; i < config_size && i < m_result.extruders_count; ++i) {
             m_result.filament_densities[i] = static_cast<float>(filament_densities->values[i]);
         }
 
-        // SM Orca: 对于配置中没有的值，使用最后一个有效值
         if (config_size > 0 && config_size < m_result.extruders_count) {
             float last_value = static_cast<float>(filament_densities->values[config_size - 1]);
             for (size_t i = config_size; i < m_result.extruders_count; ++i) {
@@ -1114,7 +1076,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         }
     }
 
-    // SM Orca: 确保数组大小正确
     if (m_result.filament_densities.size() < m_result.extruders_count) {
         m_result.filament_densities.resize(m_result.extruders_count, DEFAULT_FILAMENT_DENSITY);
     }
@@ -1124,16 +1085,13 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (filament_costs != nullptr) {
         size_t config_size = filament_costs->values.size();
 
-        // SM Orca: 确保数组大小等于extruders_count，不要clear()
         if (m_result.filament_costs.size() < m_result.extruders_count) {
             m_result.filament_costs.resize(m_result.extruders_count, DEFAULT_FILAMENT_COST);
         }
 
-        // SM Orca: 只更新配置中有的值
         for (size_t i = 0; i < config_size && i < m_result.extruders_count; ++i)
             m_result.filament_costs[i] = static_cast<float>(filament_costs->values[i]);
 
-        // SM Orca: 对于配置中没有的值，使用0（成本默认值）
         if (config_size < m_result.extruders_count) {
             for (size_t i = config_size; i < m_result.extruders_count; ++i) {
                 m_result.filament_costs[i] = DEFAULT_FILAMENT_COST;
@@ -1143,7 +1101,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         }
     }
 
-    // SM Orca: 确保数组大小正确
     if (m_result.filament_costs.size() < m_result.extruders_count) {
         m_result.filament_costs.resize(m_result.extruders_count, DEFAULT_FILAMENT_COST);
     }
@@ -1153,17 +1110,14 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (filament_vitrification_temperature != nullptr) {
         size_t config_size = filament_vitrification_temperature->values.size();
 
-        // SM Orca: 确保数组大小等于extruders_count，不要clear()
         if (m_result.filament_vitrification_temperature.size() < m_result.extruders_count) {
             m_result.filament_vitrification_temperature.resize(m_result.extruders_count, DEFAULT_FILAMENT_VITRIFICATION_TEMPERATURE);
         }
 
-        // SM Orca: 只更新配置中有的值
         for (size_t i = 0; i < config_size && i < m_result.extruders_count; ++i) {
             m_result.filament_vitrification_temperature[i] = static_cast<int>(filament_vitrification_temperature->values[i]);
         }
 
-        // SM Orca: 对于配置中没有的值，使用最后一个有效值
         if (config_size > 0 && config_size < m_result.extruders_count) {
             int last_value = static_cast<int>(filament_vitrification_temperature->values[config_size - 1]);
             for (size_t i = config_size; i < m_result.extruders_count; ++i) {
@@ -1186,7 +1140,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
             }
         }
         else {
-            // SM Orca: 先确保数组足够大，不要缩小已有的数组
             size_t physical_count = extruder_offset->values.size();
             if (m_extruder_offsets.size() < m_result.extruders_count) {
                 m_extruder_offsets.resize(m_result.extruders_count, DEFAULT_EXTRUDER_OFFSET);
@@ -1201,7 +1154,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     }
 
     if (m_extruder_offsets.size() < m_result.extruders_count) {
-        // SM Orca: 使用映射来填充剩余耗材的offset，而不是使用默认值
         size_t physical_count = m_extruder_offsets.size();
         for (size_t i = m_extruder_offsets.size(); i < m_result.extruders_count; ++i) {
             int physical_extruder = get_physical_extruder(i);
@@ -1256,7 +1208,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     const ConfigOptionFloat* machine_tool_change_time = config.option<ConfigOptionFloat>("machine_tool_change_time");
     if (machine_tool_change_time != nullptr)
         m_time_processor.machine_tool_change_time = static_cast<float>(machine_tool_change_time->value);
-
 
     if (m_flavor == gcfMarlinLegacy || m_flavor == gcfMarlinFirmware || m_flavor == gcfKlipper) {
         const ConfigOptionFloats* machine_max_acceleration_x = config.option<ConfigOptionFloats>("machine_max_acceleration_x");
@@ -1319,14 +1270,12 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         if (machine_max_acceleration_retracting != nullptr)
             m_time_processor.machine_limits.machine_max_acceleration_retracting.values = machine_max_acceleration_retracting->values;
 
-
         // Legacy Marlin does not have separate travel acceleration, it uses the 'extruding' value instead.
         const ConfigOptionFloats* machine_max_acceleration_travel = config.option<ConfigOptionFloats>(m_flavor == gcfMarlinLegacy || m_flavor == gcfKlipper
                                                                                                     ? "machine_max_acceleration_extruding"
                                                                                                     : "machine_max_acceleration_travel");
         if (machine_max_acceleration_travel != nullptr)
             m_time_processor.machine_limits.machine_max_acceleration_travel.values = machine_max_acceleration_travel->values;
-
 
         const ConfigOptionFloats* machine_min_extruding_rate = config.option<ConfigOptionFloats>("machine_min_extruding_rate");
         if (machine_min_extruding_rate != nullptr)
@@ -1379,12 +1328,10 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (bed_type != nullptr)
         m_result.bed_type = (BedType)bed_type->value;
 
-
     const ConfigOptionFloat* z_offset = config.option<ConfigOptionFloat>("z_offset");
     if (z_offset != nullptr)
         m_z_offset = z_offset->value;
 
-    // SM Orca: 验证所有数组大小是否正确
     bool arrays_valid = true;
     if (m_result.filament_diameters.size() != m_result.extruders_count) {
         BOOST_LOG_TRIVIAL(error) << "SM Orca: CRITICAL - filament_diameters size mismatch: "
@@ -1408,7 +1355,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     }
 
     if (arrays_valid) {
-        BOOST_LOG_TRIVIAL(info) << "SM Orca: DynamicPrintConfig array validation passed - all arrays correctly sized to "
             << m_result.extruders_count;
     }
 }
@@ -1850,7 +1796,6 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
     // update start position
     m_start_position = m_end_position;
 
-    // SM Orca: 防止NaN/inf从m_end_position传播到m_start_position
     if (std::isnan(m_start_position[X]) || std::isinf(m_start_position[X]) ||
         std::isnan(m_start_position[Y]) || std::isinf(m_start_position[Y]) ||
         std::isnan(m_start_position[Z]) || std::isinf(m_start_position[Z])) {
@@ -2946,7 +2891,6 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
         m_end_position[a] = absolute_position((Axis)a, line);
     }
 
-    // SM Orca: 验证position更新，捕获NaN/inf的源头
     if (std::isnan(m_end_position[X]) || std::isinf(m_end_position[X]) ||
         std::isnan(m_end_position[Y]) || std::isinf(m_end_position[Y]) ||
         std::isnan(m_end_position[Z]) || std::isinf(m_end_position[Z])) {
@@ -3026,12 +2970,10 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
             // cross section: rectangle
             m_width = delta_pos[E] * static_cast<float>(M_PI * sqr(1.05f * filament_radius)) / (delta_xyz * m_height);
         else if (m_extrusion_role == erBridgeInfill || m_extrusion_role == erInternalBridgeInfill || m_extrusion_role == erNone) {
-            // SM Orca: 添加边界检查
             float diameter = (static_cast<size_t>(m_extruder_id) < m_result.filament_diameters.size())
                 ? m_result.filament_diameters[m_extruder_id]
                 : m_result.filament_diameters.back();
 
-            // SM Orca: 防止sqrt(负数)产生NaN
             float ratio = delta_pos[E] / delta_xyz;
             if (ratio < 0.0f) {
                 BOOST_LOG_TRIVIAL(warning) << "SM Orca: Negative E/XYZ ratio (" << ratio
@@ -3046,7 +2988,6 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
             // cross section: rectangle + 2 semicircles
             m_width = delta_pos[E] * static_cast<float>(M_PI * sqr(filament_radius)) / (delta_xyz * m_height) + static_cast<float>(1.0 - 0.25 * M_PI) * m_height;
 
-        // SM Orca: 验证宽度计算结果，防止NaN/inf传播
         if (std::isnan(m_width) || std::isinf(m_width)) {
             BOOST_LOG_TRIVIAL(error) << "SM Orca: Invalid width calculated: " << m_width
                 << " for extruder " << m_extruder_id
@@ -3262,7 +3203,6 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
                             // axis reversal
                             std::max(-v_exit, v_entry));
 
-
                     float axis_max_jerk = get_axis_max_jerk(static_cast<PrintEstimatedStatistics::ETimeMode>(i), static_cast<Axis>(a));
                     if (jerk > axis_max_jerk) {
                         v_factor *= axis_max_jerk / jerk;
@@ -3309,7 +3249,6 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
         // check for seam starting vertex
         if (type == EMoveType::Extrude && m_extrusion_role == erExternalPerimeter) {
             //BBS: m_result.moves.back().position has plate offset, must minus plate offset before calculate the real seam position
-            // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
             const Vec3f new_pos = m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset;
             if (!m_seams_detector.has_first_vertex()) {
                 m_seams_detector.set_first_vertex(new_pos);
@@ -3329,7 +3268,6 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
 
             const Vec3f curr_pos(m_end_position[X], m_end_position[Y], m_end_position[Z]);
             //BBS: m_result.moves.back().position has plate offset, must minus plate offset before calculate the real seam position
-            // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
             const Vec3f new_pos = m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset;
             const std::optional<Vec3f> first_vertex = m_seams_detector.get_first_vertex();
             // the threshold value = 0.0625f == 0.25 * 0.25 is arbitrary, we may find some smarter condition later
@@ -3345,7 +3283,6 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
     }
     else if (type == EMoveType::Extrude && m_extrusion_role == erExternalPerimeter) {
         m_seams_detector.activate(true);
-        // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
         m_seams_detector.set_first_vertex(m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset);
     }
 
@@ -3439,7 +3376,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
         m_end_position[a] = absolute_position((Axis)a, line);
     }
 
-    // SM Orca: 验证position更新，捕获NaN/inf的源头
     if (std::isnan(m_end_position[X]) || std::isinf(m_end_position[X]) ||
         std::isnan(m_end_position[Y]) || std::isinf(m_end_position[Y]) ||
         std::isnan(m_end_position[Z]) || std::isinf(m_end_position[Z])) {
@@ -3499,7 +3435,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
 
     EMoveType type = move_type(delta_pos[E]);
 
-
     const float delta_xyz = std::sqrt(sqr(arc_length) + sqr(delta_pos[Z]));
     m_travel_dist         = delta_xyz;
     if (type == EMoveType::Extrude) {
@@ -3548,12 +3483,10 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
             //BBS: cross section: rectangle
             m_width = delta_pos[E] * static_cast<float>(M_PI * sqr(1.05f * filament_radius)) / (delta_xyz * m_height);
         else if (m_extrusion_role == erBridgeInfill || m_extrusion_role == erInternalBridgeInfill || m_extrusion_role == erNone) {
-            // SM Orca: 添加边界检查
             float diameter = (static_cast<size_t>(m_extruder_id) < m_result.filament_diameters.size())
                 ? m_result.filament_diameters[m_extruder_id]
                 : m_result.filament_diameters.back();
 
-            // SM Orca: 防止sqrt(负数)产生NaN
             float ratio = delta_pos[E] / delta_xyz;
             if (ratio < 0.0f) {
                 BOOST_LOG_TRIVIAL(warning) << "SM Orca: Negative E/XYZ ratio (" << ratio
@@ -3568,7 +3501,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
             //BBS: cross section: rectangle + 2 semicircles
             m_width = delta_pos[E] * static_cast<float>(M_PI * sqr(filament_radius)) / (delta_xyz * m_height) + static_cast<float>(1.0 - 0.25 * M_PI) * m_height;
 
-        // SM Orca: 验证宽度计算结果，防止NaN/inf传播
         if (std::isnan(m_width) || std::isinf(m_width)) {
             BOOST_LOG_TRIVIAL(error) << "SM Orca: Invalid width calculated: " << m_width
                 << " for extruder " << m_extruder_id
@@ -3739,7 +3671,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
                             //BBS: axis reversal
                             std::max(-v_exit, v_entry));
 
-
                     float axis_max_jerk = get_axis_max_jerk(static_cast<PrintEstimatedStatistics::ETimeMode>(i), static_cast<Axis>(a));
                     if (jerk > axis_max_jerk) {
                         v_factor *= axis_max_jerk / jerk;
@@ -3786,7 +3717,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
     if (m_seams_detector.is_active()) {
         //BBS: check for seam starting vertex
         if (type == EMoveType::Extrude && m_extrusion_role == erExternalPerimeter) {
-            // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
             const Vec3f new_pos = m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset;
             if (!m_seams_detector.has_first_vertex()) {
                 m_seams_detector.set_first_vertex(new_pos);
@@ -3804,7 +3734,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
                 m_end_position[X] = pos.x(); m_end_position[Y] = pos.y(); m_end_position[Z] = pos.z();
             };
             const Vec3f curr_pos(m_end_position[X], m_end_position[Y], m_end_position[Z]);
-            // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
             const Vec3f new_pos = m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset;
             const std::optional<Vec3f> first_vertex = m_seams_detector.get_first_vertex();
             //BBS: the threshold value = 0.0625f == 0.25 * 0.25 is arbitrary, we may find some smarter condition later
@@ -3820,7 +3749,6 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
     }
     else if (type == EMoveType::Extrude && m_extrusion_role == erExternalPerimeter) {
         m_seams_detector.activate(true);
-        // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
         m_seams_detector.set_first_vertex(m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset);
     }
 
@@ -3866,21 +3794,17 @@ void GCodeProcessor::process_G29(const GCodeReader::GCodeLine& line)
 
 void GCodeProcessor::process_G10(const GCodeReader::GCodeLine& line)
 {
-    // SM Orca: 回抽参数是挤出机属性，使用 physical_extruder
-    int physical_extruder = get_physical_extruder(m_extruder_id);
     GCodeReader::GCodeLine g10;
-    g10.set(Axis::E, -this->m_parser.config().retraction_length.get_at(physical_extruder));
-    g10.set(Axis::F,  this->m_parser.config().retraction_speed.get_at(physical_extruder) * 60);
+    g10.set(Axis::E, -this->m_parser.config().retraction_length.get_at(m_extruder_id));
+    g10.set(Axis::F,  this->m_parser.config().retraction_speed.get_at(m_extruder_id) * 60);
     process_G1(g10);
 }
 
 void GCodeProcessor::process_G11(const GCodeReader::GCodeLine& line)
 {
-    // SM Orca: 回抽参数是挤出机属性，使用 physical_extruder
-    int physical_extruder = get_physical_extruder(m_extruder_id);
     GCodeReader::GCodeLine g11;
-    g11.set(Axis::E, this->m_parser.config().retraction_length.get_at(physical_extruder) + this->m_parser.config().retract_restart_extra.get_at(physical_extruder));
-    g11.set(Axis::F, this->m_parser.config().deretraction_speed.get_at(physical_extruder) * 60);
+    g11.set(Axis::E, this->m_parser.config().retraction_length.get_at(m_extruder_id) + this->m_parser.config().retract_restart_extra.get_at(m_extruder_id));
+    g11.set(Axis::F, this->m_parser.config().deretraction_speed.get_at(m_extruder_id) * 60);
     process_G1(g11);
 }
 
@@ -3979,7 +3903,6 @@ void GCodeProcessor::process_G92(const GCodeReader::GCodeLine& line)
         }
     }
 
-    // SM Orca: 验证m_origin，防止NaN/inf传播
     if (std::isnan(m_origin[X]) || std::isinf(m_origin[X]) ||
         std::isnan(m_origin[Y]) || std::isinf(m_origin[Y]) ||
         std::isnan(m_origin[Z]) || std::isinf(m_origin[Z])) {
@@ -4120,7 +4043,6 @@ void GCodeProcessor::process_M191(const GCodeReader::GCodeLine& line)
     if (line.has_value('S', chamber_temp) && chamber_temp > 40)
         simulate_st_synchronize(wait_chamber_temp_time);
 }
-
 
 void GCodeProcessor::process_M201(const GCodeReader::GCodeLine& line)
 {
@@ -4457,7 +4379,6 @@ void GCodeProcessor::run_post_process()
     double filament_total_cost = 0.0;
 
     for (const auto& [id, volume] : m_result.print_statistics.total_volumes_per_extruder) {
-        // SM Orca: 边界检查 - 确保id在有效范围内
         if (id >= m_result.filament_diameters.size() ||
             id >= m_result.filament_densities.size() ||
             id >= m_result.filament_costs.size()) {
@@ -4468,12 +4389,10 @@ void GCodeProcessor::run_post_process()
             continue;
         }
 
-        // SM Orca: 读取并验证配置值
         double diameter = m_result.filament_diameters[id];
         double density = m_result.filament_densities[id];
         double cost = m_result.filament_costs[id];
 
-        // SM Orca: 防止除零和NaN传播
         if (diameter <= 0.0 || std::isnan(diameter)) {
             BOOST_LOG_TRIVIAL(warning) << "SM Orca: Invalid filament diameter " << diameter
                 << " for filament " << id << ", using default 1.75mm";
@@ -4492,7 +4411,6 @@ void GCodeProcessor::run_post_process()
             cost = 0.0;
         }
 
-        // SM Orca: 执行成本计算
         double cross_section = M_PI * sqr(0.5 * diameter);
         filament_mm[id] = volume / cross_section;
         filament_cm3[id] = volume * 0.001;
@@ -4508,7 +4426,6 @@ void GCodeProcessor::run_post_process()
     }
 
     double total_g_wipe_tower = m_print->print_statistics().total_wipe_tower_filament;
-
 
     auto time_in_minutes = [](float time_in_seconds) {
         assert(time_in_seconds >= 0.f);
@@ -4636,7 +4553,6 @@ void GCodeProcessor::run_post_process()
 
         size_t m_times_cache_id{ 0 };
         size_t m_out_file_pos{ 0 };
-
 
     public:
         ExportLines(EWriteType type,
@@ -5207,7 +5123,6 @@ void GCodeProcessor::run_post_process()
 
     export_lines.flush(out, m_result, out_path);
 
-
     out.close();
     in.close();
 
@@ -5225,7 +5140,6 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
         m_line_id + 1 :
         ((type == EMoveType::Seam) ? m_last_line_id : m_line_id);
 
-    // SM Orca: 添加边界检查，防止访问越界
     Vec3f extruder_offset = (static_cast<size_t>(m_extruder_id) < m_extruder_offsets.size())
         ? m_extruder_offsets[m_extruder_id]
         : Vec3f(0.0f, 0.0f, 0.0f);
@@ -5241,7 +5155,6 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
                 extruder_offset;
     }
 
-    // SM Orca: 最后一道防线，防止无效值进入result
     if (std::isnan(m_width) || std::isinf(m_width)) {
         BOOST_LOG_TRIVIAL(error) << "SM Orca: Blocking invalid width: " << m_width
             << " (extruder " << m_extruder_id << ")";
@@ -5254,7 +5167,6 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
         m_height = DEFAULT_TOOLPATH_HEIGHT;
     }
 
-    // SM Orca: 验证position，防止NaN/inf进入moves
     Vec3f final_position = Vec3f(m_end_position[X] + m_x_offset,
                                   m_end_position[Y] + m_y_offset,
                                   m_processing_start_custom_gcode ? m_first_layer_height : m_end_position[Z] - m_z_offset)
@@ -5281,7 +5193,6 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
         m_extruder_id,
         m_cp_color.current,
         //BBS: add plate's offset to the rendering vertices
-        // SM Orca: 使用验证过的final_position
         final_position,
         static_cast<float>(m_end_position[E] - m_start_position[E]),
         m_feedrate,
@@ -5295,7 +5206,6 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
         static_cast<float>(m_layer_id), //layer_duration: set later
         //BBS: add arc move related data
         path_type,
-        // SM Orca: m_extruder_offsets[i] 已经在 apply_config 中映射过了，这里直接使用 m_extruder_id 作为索引
         Vec3f(m_arc_center(0, 0) + m_x_offset, m_arc_center(1, 0) + m_y_offset, m_arc_center(2, 0)) + m_extruder_offsets[m_extruder_id],
         m_interpolation_points,
     });

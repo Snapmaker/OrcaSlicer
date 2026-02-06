@@ -99,13 +99,13 @@ jobs:
 
 #   Mac
       - name: Install tools mac
-        if: inputs.os == 'macos-14'
+        if: startsWith(inputs.os, 'macos-')
         run: |
-          brew install libtool
+          brew install libtool || true
           brew list
           mkdir -p ${{ github.workspace }}/deps/build
 
-      - name: Free disk space
+      - name: Free disk space (macos-14 only)
         if: inputs.os == 'macos-14'
         run: |
           df -hI /dev/disk3s1s1

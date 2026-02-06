@@ -71,7 +71,6 @@ jobs:
             choco install strawberryperl
             .\build_release_vs2022.bat deps
             .\build_release_vs2022.bat pack
-            cd ${{ github.workspace }}/deps/build
 
       - name: Build on Mac ${{ inputs.arch }}
         if: startsWith(inputs.os, 'macos-')

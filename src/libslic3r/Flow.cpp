@@ -220,11 +220,6 @@ Flow support_material_flow(const PrintObject *object, float layer_height)
     // SM Orca: 日志 - 配置数组访问边界检查
     const auto& nozzle_diameter_config = object->print()->config().nozzle_diameter;
     size_t array_size = nozzle_diameter_config.values.size();
-    BOOST_LOG_TRIVIAL(info) << "Flow::support_material_flow: filament_idx=" << filament_idx
-        << " physical_extruder=" << physical_extruder
-        << " nozzle_diameter array_size=" << array_size
-        << " access_index=" << physical_extruder
-        << (physical_extruder >= (int)array_size ? " [POTENTIAL_OUT_OF_BOUNDS!]" : " [OK]");
 
     return Flow::new_from_config_width(
         frSupportMaterial,
@@ -245,11 +240,6 @@ Flow support_transition_flow(const PrintObject* object)
     // SM Orca: 日志 - 配置数组访问边界检查
     const auto& nozzle_diameter_config = object->print()->config().nozzle_diameter;
     size_t array_size = nozzle_diameter_config.values.size();
-    BOOST_LOG_TRIVIAL(info) << "Flow::support_transition_flow: filament_idx=" << filament_idx
-        << " physical_extruder=" << physical_extruder
-        << " nozzle_diameter array_size=" << array_size
-        << " access_index=" << physical_extruder
-        << (physical_extruder >= (int)array_size ? " [POTENTIAL_OUT_OF_BOUNDS!]" : " [OK]");
 
     float dmr = float(object->print()->config().nozzle_diameter.get_at(physical_extruder));
     return Flow::bridging_flow(dmr, dmr);
@@ -264,11 +254,6 @@ Flow support_material_1st_layer_flow(const PrintObject *object, float layer_heig
 
     // SM Orca: 日志 - 配置数组访问边界检查
     size_t array_size = print_config.nozzle_diameter.values.size();
-    BOOST_LOG_TRIVIAL(info) << "Flow::support_material_1st_layer_flow: filament_idx=" << filament_idx
-        << " physical_extruder=" << physical_extruder
-        << " nozzle_diameter array_size=" << array_size
-        << " access_index=" << physical_extruder
-        << (physical_extruder >= (int)array_size ? " [POTENTIAL_OUT_OF_BOUNDS!]" : " [OK]");
 
     const auto &width = (print_config.initial_layer_line_width.value > 0) ? print_config.initial_layer_line_width : object->config().support_line_width;
     return Flow::new_from_config_width(
@@ -288,11 +273,6 @@ Flow support_material_interface_flow(const PrintObject *object, float layer_heig
     // SM Orca: 日志 - 配置数组访问边界检查
     const auto& nozzle_diameter_config = object->print()->config().nozzle_diameter;
     size_t array_size = nozzle_diameter_config.values.size();
-    BOOST_LOG_TRIVIAL(info) << "Flow::support_material_interface_flow: filament_idx=" << filament_idx
-        << " physical_extruder=" << physical_extruder
-        << " nozzle_diameter array_size=" << array_size
-        << " access_index=" << physical_extruder
-        << (physical_extruder >= (int)array_size ? " [POTENTIAL_OUT_OF_BOUNDS!]" : " [OK]");
 
     return Flow::new_from_config_width(
         frSupportMaterialInterface,

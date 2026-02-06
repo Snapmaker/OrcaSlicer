@@ -83,7 +83,7 @@ jobs:
             ./build_release_macos.sh -dx -a ${{ inputs.arch || 'arm64' }} -t 10.15 -1
             # Clean up build directory (keep only OrcaSlicer_deps)
             (cd "${{ github.workspace }}/deps/build/${{ inputs.arch || 'arm64' }}" && \
-                find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +) || true
+                find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_deps' -exec rm -rf {} +) || true
             brew install zstd || true
 
 

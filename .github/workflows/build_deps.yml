@@ -80,11 +80,9 @@ jobs:
             brew install automake texinfo libtool
             brew list
             brew uninstall --ignore-dependencies zstd
-            ./build_release_macos.sh -dx -a universal -t 10.15 -1
-            for arch in arm64 x86_64; do
-                (cd "${{ github.workspace }}/deps/build/${arch}" && \
-                find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +)
-            done
+            ./build_release_macos.sh -dx -a ${{ inputs.arch }} -t 10.15 -1
+            (cd "${{ github.workspace }}/deps/build/${{ inputs.arch }}" && \
+            find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +)
             brew install zstd
 
 
@@ -158,7 +156,8 @@ jobs:
     uses: ./.github/workflows/sentry_cli.yml
     with:
       os: ${{ inputs.os }}
+      arch: ${{ inputs.arch }}
       pdb-artifact-name: PDB
-      dsym-artifact-name: ${{ inputs.os == 'macos-14' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
+      dsym-artifact-name: ${{ inputs.os == 'macos-14' && format('dSYM_Mac_{0}_{1}', inputs.arch, needs.build_orca.outputs.release) || '' }}
       release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

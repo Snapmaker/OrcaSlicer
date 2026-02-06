@@ -16,19 +16,37 @@ on:
       outputs:
         release:
           description: "Release version/tag for the build"
-          value: ${{ jobs.build_orca.outputs.release }}
+          value: ${{ jobs.setup.outputs.release }}
+        macos_arm64_artifact:
+          description: "macOS arm64 DMG artifact name"
+          value: ${{ jobs.build_macos_arm64.outputs.artifact_name }}
+        macos_x86_64_artifact:
+          description: "macOS x86_64 DMG artifact name"
+          value: ${{ jobs.build_macos_x86_64.outputs.artifact_name }}
+        macos_universal_artifact:
+          description: "macOS universal DMG artifact name"
+          value: ${{ jobs.build_macos_universal.outputs.artifact_name }}
+        dsym_arm64_artifact:
+          description: "macOS arm64 dSYM artifact name"
+          value: dSYM_Mac_arm64_${{ jobs.setup.outputs.ver }}
+        dsym_x86_64_artifact:
+          description: "macOS x86_64 dSYM artifact name"
+          value: dSYM_Mac_x86_64_${{ jobs.setup.outputs.ver }}
+        dsym_universal_artifact:
+          description: "macOS universal dSYM artifact name"
+          value: dSYM_Mac_universal_${{ jobs.setup.outputs.ver }}
 
 jobs:
-  build_orca:
-    name: Build Snapmaker_Orca
+  # ==============================================================================
+  # Setup job - runs first to set version and cache
+  # ==============================================================================
+  setup:
+    name: Setup Build Environment
     runs-on: ${{ inputs.os }}
     outputs:
       release: ${{ steps.set_release.outputs.release || steps.set_release_win.outputs.release }}
-    env:
-      date:
-      ver:
-      ver_pure:
-
+      ver: ${{ steps.set_release.outputs.ver || steps.set_release_win.outputs.ver }}
+      ver_pure: ${{ steps.set_release.outputs.ver_pure || steps.set_release_win.outputs.ver_pure }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -44,8 +62,8 @@ jobs:
 
       - uses: lukka/get-cmake@latest
         with:
-          cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
-          
+          cmakeVersion: "~3.28.0"
+
       - name: Get the version and date on Ubuntu and macOS
         if: inputs.os != 'windows-latest'
         run: |
@@ -53,12 +71,13 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             ver="PR-${{ github.event.number }}"
           else
-            ver=V$ver_pure
+            ver="V$ver_pure"
           fi
-          echo "ver=$ver" >> $GITHUB_ENV
-          echo "ver_pure=$ver_pure" >> $GITHUB_ENV
+          echo "ver=$ver" >> $GITHUB_OUTPUT
+          echo "ver_pure=$ver_pure" >> $GITHUB_OUTPUT
           echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
         shell: bash
+        id: set_release
 
       - name: Get the version and date on Windows
         if: inputs.os == 'windows-latest'
@@ -73,56 +92,63 @@ jobs:
           } else {
               $versionContent = Get-Content version.inc -Raw
               if ($versionContent -match 'set\(Snapmaker_VERSION "(.*?)"\)') {
-                  $ver = $matches[1]
+                  $ver_pure = $matches[1]
               }
-              $ver = "V$ver"
+              $ver = "V$ver_pure"
           }
 
-          echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          echo "date=$date" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
-          echo "date: ${{ env.date }} version: ${{ env.ver }}"
+          echo "ver=$ver" >> $GITHUB_OUTPUT
+          echo "ver_pure=$ver_pure" >> $GITHUB_OUTPUT
+          echo "date=$date" >> $env:GITHUB_ENV
         shell: pwsh
-
-      - name: Set release output (non-Windows)
-        id: set_release
-        if: inputs.os != 'windows-latest'
-        run: |
-          echo "release=$ver" >> $GITHUB_OUTPUT
-        shell: bash
-
-      - name: Set release output (Windows)
         id: set_release_win
-        if: inputs.os == 'windows-latest'
-        run: |
-          $release = $env:ver
-          Write-Output ("release=$release") | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-        shell: pwsh
 
-#   Mac
-      - name: Install tools mac
-        if: inputs.os == 'macos-14'
+  # ==============================================================================
+  # macOS ARM64 Build Job
+  # ==============================================================================
+  build_macos_arm64:
+    name: Build macOS ARM64
+    runs-on: ${{ inputs.os }}
+    needs: setup
+    if: inputs.os == 'macos-14'
+    outputs:
+      artifact_name: Snapmaker_Orca_Mac_arm64_${{ needs.setup.outputs.ver }}.dmg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          lfs: 'true'
+
+      - name: Load cached deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.cache-path }}
+          key: ${{ inputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
+      - name: Install tools
         run: |
           brew install libtool
           brew list
           mkdir -p ${{ github.workspace }}/deps/build
 
       - name: Free disk space
-        if: inputs.os == 'macos-14'
         run: |
           df -hI /dev/disk3s1s1
           sudo find /Applications -maxdepth 1 -type d -name "Xcode_*.app" ! -name "Xcode_15.4.app" -exec rm -rf {} +
           sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
           df -hI /dev/disk3s1s1
 
-      - name: Build slicer mac
-        if: inputs.os == 'macos-14'
+      - name: Build slicer for ARM64
         working-directory: ${{ github.workspace }}
         run: |
-          ./build_release_macos.sh -s -n -x -a universal -t 10.15 -1
+          ./build_release_macos.sh -s -n -x -a arm64 -t 10.15 -1
 
- # Thanks to RaySajuuk, it's working now
-      - name: Sign app and notary
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14'
+      - name: Setup code signing certificate
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -132,6 +158,7 @@ jobs:
         run: |
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
           security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
@@ -139,132 +166,526 @@ jobs:
           security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app"
-          # Sign Snapmaker_Orca_profile_validator.app if it exists
-          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app
-          fi
-          
-          # Create main Snapmaker Orca DMG without the profile validator helper
-          mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
-          rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
-          cp -R "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app" "${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/"
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
-          
-          # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
-          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-            mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg
-            rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
-            cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
-            ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
-            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
-            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
-          fi
-          
-          # Notarize main DMG
-          xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
-          xcrun notarytool submit "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-          xcrun stapler staple "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
-          
-          # Notarize profile validator DMG if it exists
-          if [ -f "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
-            xcrun notarytool submit "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-            xcrun stapler staple "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
+          security find-identity -v $KEYCHAIN_PATH
+
+      - name: Sign and create DMG
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          APPLE_DEV_ACCOUNT: ${{ secrets.APPLE_DEV_ACCOUNT }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_PWD: ${{ secrets.APP_PWD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          ENTITLEMENTS_PATH="${{ github.workspace }}/scripts/disable_validation.entitlements"
+          ARCH="arm64"
+          APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker Orca.app"
+          VALIDATOR_APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
+          DMG_PATH="${{ github.workspace }}/Snapmaker_Orca_Mac_${ARCH}_${{ needs.setup.outputs.ver }}.dmg"
+
+          # Store notarytool credentials
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "$APPLE_DEV_ACCOUNT" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PWD"
+
+          # Sign frameworks and dylibs
+          FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
+          if [ -d "$FRAMEWORKS_DIR" ]; then
+            find "$FRAMEWORKS_DIR" -type f \( -name "*.dylib" -o -name "*.framework" \) 2>/dev/null | while read file; do
+              codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || true
+            done
           fi
 
-      - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && inputs.os == 'macos-14' && github.ref != 'refs/heads/2.2.3'
+          # Sign helper executables
+          find "$APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca" 2>/dev/null | while read file; do
+            codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || true
+          done
+
+          # Sign app bundle with entitlements
+          codesign --force --verbose --options runtime --timestamp \
+            --entitlements "$ENTITLEMENTS_PATH" \
+            --sign "$CERTIFICATE_ID" \
+            "$APP_PATH"
+
+          # Verify entitlements
+          if codesign -d --entitlements - "$APP_PATH" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
+            true
+          fi
+
+          # Sign profile validator if exists
+          if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
+              codesign --force --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || true
+            done
+            codesign --force --verbose --options runtime --timestamp \
+              --entitlements "$ENTITLEMENTS_PATH" \
+              --sign "$CERTIFICATE_ID" \
+              "$VALIDATOR_APP_PATH"
+          fi
+
+          # Create DMG
+          mkdir -p ${{ github.workspace }}/build/${ARCH}_dmg
+          rm -rf ${{ github.workspace }}/build/${ARCH}_dmg/*
+          cp -R "$APP_PATH" "${{ github.workspace }}/build/${ARCH}_dmg/"
+          ln -sfn /Applications ${{ github.workspace }}/build/${ARCH}_dmg/Applications
+
+          hdiutil create -volname "Snapmaker_Orca" \
+            -srcfolder ${{ github.workspace }}/build/${ARCH}_dmg \
+            -ov -format UDZO "$DMG_PATH"
+
+          # Sign DMG
+          codesign --force --verbose --options runtime --timestamp \
+            --sign "$CERTIFICATE_ID" \
+            "$DMG_PATH"
+
+          # Notarize DMG
+          xcrun notarytool submit "$DMG_PATH" \
+            --keychain-profile "notarytool-profile" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snapmaker_Orca_Mac_arm64_${{ needs.setup.outputs.ver }}
+          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_arm64_${{ needs.setup.outputs.ver }}.dmg
+
+      - name: Upload dSYM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dSYM_Mac_arm64_${{ needs.setup.outputs.ver }}
+          path: ${{ github.workspace }}/build/arm64/Snapmaker_Orca/dSYM
+          if-no-files-found: warn
+
+      - name: Deploy DMG to nightly release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
+        uses: WebFreak001/deploy-nightly@v3.2.0
+        with:
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_arm64_${{ needs.setup.outputs.ver }}.dmg
+          asset_name: Snapmaker_Orca_Mac_arm64_${{ needs.setup.outputs.ver }}.dmg
+          asset_content_type: application/octet-stream
+          max_releases: 1
+
+  # ==============================================================================
+  # macOS x86_64 Build Job
+  # ==============================================================================
+  build_macos_x86_64:
+    name: Build macOS x86_64
+    runs-on: ${{ inputs.os }}
+    needs: setup
+    if: inputs.os == 'macos-14'
+    outputs:
+      artifact_name: Snapmaker_Orca_Mac_x86_64_${{ needs.setup.outputs.ver }}.dmg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          lfs: 'true'
+
+      - name: Load cached deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.cache-path }}
+          key: ${{ inputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
+      - name: Install tools
+        run: |
+          brew install libtool
+          brew list
+          mkdir -p ${{ github.workspace }}/deps/build
+
+      - name: Free disk space
+        run: |
+          df -hI /dev/disk3s1s1
+          sudo find /Applications -maxdepth 1 -type d -name "Xcode_*.app" ! -name "Xcode_15.4.app" -exec rm -rf {} +
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -hI /dev/disk3s1s1
+
+      - name: Build slicer for x86_64
         working-directory: ${{ github.workspace }}
         run: |
-          mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
-          rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
-          cp -R "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app" "${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/"
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
-          
-          # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
-          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-            mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg
-            rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
-            cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
-            ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
-            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
+          ./build_release_macos.sh -s -n -x -a x86_64 -t 10.15 -1
+
+      - name: Setup code signing certificate
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+          security find-identity -v $KEYCHAIN_PATH
+
+      - name: Sign and create DMG
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          APPLE_DEV_ACCOUNT: ${{ secrets.APPLE_DEV_ACCOUNT }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_PWD: ${{ secrets.APP_PWD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          ENTITLEMENTS_PATH="${{ github.workspace }}/scripts/disable_validation.entitlements"
+          ARCH="x86_64"
+          APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker Orca.app"
+          VALIDATOR_APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
+          DMG_PATH="${{ github.workspace }}/Snapmaker_Orca_Mac_${ARCH}_${{ needs.setup.outputs.ver }}.dmg"
+
+          # Store notarytool credentials
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "$APPLE_DEV_ACCOUNT" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PWD"
+
+          # Sign frameworks and dylibs
+          FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
+          if [ -d "$FRAMEWORKS_DIR" ]; then
+            find "$FRAMEWORKS_DIR" -type f \( -name "*.dylib" -o -name "*.framework" \) 2>/dev/null | while read file; do
+              codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || true
+            done
           fi
 
-      - name: Upload artifacts mac
-        if: inputs.os == 'macos-14'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Snapmaker_Orca_Mac_universal_${{ env.ver }}
-          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
+          # Sign helper executables
+          find "$APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca" 2>/dev/null | while read file; do
+            codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || true
+          done
 
-      - name: Upload Snapmaker_Orca_profile_validator DMG mac
-        if: inputs.os == 'macos-14'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Snapmaker_Orca_profile_validator_Mac_universal_DMG_${{ env.ver }}
-          path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
-          if-no-files-found: ignore
+          # Sign app bundle with entitlements
+          codesign --force --verbose --options runtime --timestamp \
+            --entitlements "$ENTITLEMENTS_PATH" \
+            --sign "$CERTIFICATE_ID" \
+            "$APP_PATH"
 
-      - name: Upload dSYM artifacts mac
-        if: inputs.os == 'macos-14'
+          # Verify entitlements
+          if codesign -d --entitlements - "$APP_PATH" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
+            true
+          fi
+
+          # Sign profile validator if exists
+          if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
+              codesign --force --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || true
+            done
+            codesign --force --verbose --options runtime --timestamp \
+              --entitlements "$ENTITLEMENTS_PATH" \
+              --sign "$CERTIFICATE_ID" \
+              "$VALIDATOR_APP_PATH"
+          fi
+
+          # Create DMG
+          mkdir -p ${{ github.workspace }}/build/${ARCH}_dmg
+          rm -rf ${{ github.workspace }}/build/${ARCH}_dmg/*
+          cp -R "$APP_PATH" "${{ github.workspace }}/build/${ARCH}_dmg/"
+          ln -sfn /Applications ${{ github.workspace }}/build/${ARCH}_dmg/Applications
+
+          hdiutil create -volname "Snapmaker_Orca" \
+            -srcfolder ${{ github.workspace }}/build/${ARCH}_dmg \
+            -ov -format UDZO "$DMG_PATH"
+
+          # Sign DMG
+          codesign --force --verbose --options runtime --timestamp \
+            --sign "$CERTIFICATE_ID" \
+            "$DMG_PATH"
+
+          # Notarize DMG
+          xcrun notarytool submit "$DMG_PATH" \
+            --keychain-profile "notarytool-profile" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dSYM_Mac_${{ env.ver }}
+          name: Snapmaker_Orca_Mac_x86_64_${{ needs.setup.outputs.ver }}
+          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_x86_64_${{ needs.setup.outputs.ver }}.dmg
+
+      - name: Upload dSYM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dSYM_Mac_x86_64_${{ needs.setup.outputs.ver }}
+          path: ${{ github.workspace }}/build/x86_64/Snapmaker_Orca/dSYM
+          if-no-files-found: warn
+
+      - name: Deploy DMG to nightly release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
+        uses: WebFreak001/deploy-nightly@v3.2.0
+        with:
+          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
+          release_id: 169912305
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_x86_64_${{ needs.setup.outputs.ver }}.dmg
+          asset_name: Snapmaker_Orca_Mac_x86_64_${{ needs.setup.outputs.ver }}.dmg
+          asset_content_type: application/octet-stream
+          max_releases: 1
+
+  # ==============================================================================
+  # macOS Universal Build Job (depends on arm64 and x86_64)
+  # ==============================================================================
+  build_macos_universal:
+    name: Build macOS Universal
+    runs-on: ${{ inputs.os }}
+    needs: [setup, build_macos_arm64, build_macos_x86_64]
+    if: inputs.os == 'macos-14'
+    outputs:
+      artifact_name: Snapmaker_Orca_Mac_universal_${{ needs.setup.outputs.ver }}.dmg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          lfs: 'true'
+
+      - name: Load cached deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.cache-path }}
+          key: ${{ inputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
+      - name: Install tools
+        run: |
+          brew install libtool
+          brew list
+          mkdir -p ${{ github.workspace }}/deps/build
+
+      - name: Free disk space
+        run: |
+          df -hI /dev/disk3s1s1
+          sudo find /Applications -maxdepth 1 -type d -name "Xcode_*.app" ! -name "Xcode_15.4.app" -exec rm -rf {} +
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -hI /dev/disk3s1s1
+
+      - name: Build slicer for Universal (requires arm64 + x86_64 binaries)
+        working-directory: ${{ github.workspace }}
+        run: |
+          ./build_release_macos.sh -s -n -x -a universal -t 10.15 -1
+
+      - name: Setup code signing certificate
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
+          security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+          security find-identity -v $KEYCHAIN_PATH
+
+      - name: Sign and create DMG
+        working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          APPLE_DEV_ACCOUNT: ${{ secrets.APPLE_DEV_ACCOUNT }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_PWD: ${{ secrets.APP_PWD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          ENTITLEMENTS_PATH="${{ github.workspace }}/scripts/disable_validation.entitlements"
+          ARCH="universal"
+          APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker Orca.app"
+          VALIDATOR_APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
+          DMG_PATH="${{ github.workspace }}/Snapmaker_Orca_Mac_${ARCH}_${{ needs.setup.outputs.ver }}.dmg"
+          VALIDATOR_DMG_PATH="${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_${ARCH}_${{ needs.setup.outputs.ver }}.dmg"
+
+          # Store notarytool credentials
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "$APPLE_DEV_ACCOUNT" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PWD"
+
+          # Sign frameworks and dylibs
+          echo "Signing frameworks and dylibs..."
+          FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
+          if [ -d "$FRAMEWORKS_DIR" ]; then
+            find "$FRAMEWORKS_DIR" -type f \( -name "*.dylib" -o -name "*.framework" \) 2>/dev/null | while read file; do
+              codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || true
+            done
+          fi
+
+          # Sign helper executables
+          echo "Signing helper executables..."
+          find "$APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca" 2>/dev/null | while read file; do
+            codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || true
+          done
+
+          # Sign app bundle with entitlements
+          echo "Signing app bundle with entitlements..."
+          codesign --force --verbose --options runtime --timestamp \
+            --entitlements "$ENTITLEMENTS_PATH" \
+            --sign "$CERTIFICATE_ID" \
+            "$APP_PATH"
+
+          # Verify entitlements
+          if codesign -d --entitlements - "$APP_PATH" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
+            true
+          fi
+
+          # Sign profile validator if exists
+          if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+            echo "Signing profile validator..."
+            find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
+              codesign --force --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || true
+            done
+            codesign --force --verbose --options runtime --timestamp \
+              --entitlements "$ENTITLEMENTS_PATH" \
+              --sign "$CERTIFICATE_ID" \
+              "$VALIDATOR_APP_PATH"
+
+            # Create validator DMG
+            echo "Creating profile validator DMG..."
+            mkdir -p ${{ github.workspace }}/build/${ARCH}_validator_dmg
+            rm -rf ${{ github.workspace }}/build/${ARCH}_validator_dmg/*
+            cp -R "$VALIDATOR_APP_PATH" "${{ github.workspace }}/build/${ARCH}_validator_dmg/"
+            ln -sfn /Applications ${{ github.workspace }}/build/${ARCH}_validator_dmg/Applications
+
+            hdiutil create -volname "Snapmaker_Orca_profile_validator" \
+              -srcfolder ${{ github.workspace }}/build/${ARCH}_validator_dmg \
+              -ov -format UDZO "$VALIDATOR_DMG_PATH"
+
+            codesign --force --verbose --options runtime --timestamp \
+              --sign "$CERTIFICATE_ID" \
+              "$VALIDATOR_DMG_PATH"
+          fi
+
+          # Create DMG
+          echo "Creating DMG..."
+          mkdir -p ${{ github.workspace }}/build/${ARCH}_dmg
+          rm -rf ${{ github.workspace }}/build/${ARCH}_dmg/*
+          cp -R "$APP_PATH" "${{ github.workspace }}/build/${ARCH}_dmg/"
+          ln -sfn /Applications ${{ github.workspace }}/build/${ARCH}_dmg/Applications
+
+          hdiutil create -volname "Snapmaker_Orca" \
+            -srcfolder ${{ github.workspace }}/build/${ARCH}_dmg \
+            -ov -format UDZO "$DMG_PATH"
+
+          # Sign DMG
+          codesign --force --verbose --options runtime --timestamp \
+            --sign "$CERTIFICATE_ID" \
+            "$DMG_PATH"
+
+          # Notarize DMG
+          xcrun notarytool submit "$DMG_PATH" \
+            --keychain-profile "notarytool-profile" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snapmaker_Orca_Mac_universal_${{ needs.setup.outputs.ver }}
+          path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ needs.setup.outputs.ver }}.dmg
+
+      - name: Upload dSYM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dSYM_Mac_universal_${{ needs.setup.outputs.ver }}
           path: ${{ github.workspace }}/build/universal/Snapmaker_Orca/dSYM
           if-no-files-found: warn
 
-      - name: Deploy Mac release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14'
+      - name: Upload profile validator DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snapmaker_Orca_profile_validator_Mac_universal_${{ needs.setup.outputs.ver }}
+          path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ needs.setup.outputs.ver }}.dmg
+          if-no-files-found: ignore
+
+      - name: Deploy DMG to nightly release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
-          asset_name: Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ needs.setup.outputs.ver }}.dmg
+          asset_name: Snapmaker_Orca_Mac_universal_${{ needs.setup.outputs.ver }}.dmg
           asset_content_type: application/octet-stream
-          max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
+          max_releases: 1
 
-      - name: Check if profile validator DMG exists
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14'
-        id: check_dmg
-        working-directory: ${{ github.workspace }}
-        run: |
-          if [ -f "Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "DMG file found, will deploy"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "DMG file not found, skipping deployment"
-          fi
-        shell: bash
-
-      - name: Deploy Mac Snapmaker_Orca_profile_validator DMG release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14' && steps.check_dmg.outputs.exists == 'true'
+      - name: Deploy profile validator DMG to nightly release
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
+          asset_path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ needs.setup.outputs.ver }}.dmg
           asset_name: Snapmaker_Orca_profile_validator_Mac_universal_nightly.dmg
           asset_content_type: application/octet-stream
           max_releases: 1
 
-# Windows
+  # ==============================================================================
+  # Windows Build Job
+  # ==============================================================================
+  build_windows:
+    name: Build Windows
+    runs-on: ${{ inputs.os }}
+    needs: setup
+    if: inputs.os == 'windows-latest'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          lfs: 'true'
+
+      - name: load cached deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.cache-path }}
+          key: ${{ inputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
       - name: setup MSVC
-        if: inputs.os == 'windows-latest'
         uses: microsoft/setup-msbuild@v2
 
       - name: Install nsis
-        if: inputs.os == 'windows-latest'
         run: |
           dir "C:/Program Files (x86)/Windows Kits/10/Include"
           choco install nsis
 
       - name: Build slicer Win
-        if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}
         env:
           WindowsSdkDir: 'C:\Program Files (x86)\Windows Kits\10\'
@@ -272,75 +693,68 @@ jobs:
         run: .\build_release_vs2022.bat slicer
 
       - name: Create installer Win
-        if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}/build
         run: |
           cpack -G NSIS
 
       - name: Pack app
-        if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}/build
         shell: cmd
-        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip ${{ github.workspace }}/build/Snapmaker_Orca'
+        run: '"C:/Program Files/7-Zip/7z.exe" a -tzip Snapmaker_Orca_Windows_${{ needs.setup.outputs.ver }}_portable.zip ${{ github.workspace }}/build/Snapmaker_Orca'
 
       - name: Pack PDB
-        if: inputs.os == 'windows-latest'
         working-directory: ${{ github.workspace }}/build/src/Release
         shell: cmd
-        run: '"C:/Program Files/7-Zip/7z.exe" a -m0=lzma2 -mx9 Debug_PDB_${{ env.ver }}_for_developers_only.7z  *.pdb'
+        run: '"C:/Program Files/7-Zip/7z.exe" a -m0=lzma2 -mx9 Debug_PDB_${{ needs.setup.outputs.ver }}_for_developers_only.7z  *.pdb'
 
       - name: Upload artifacts Win zip
-        if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Windows_${{ env.ver }}_portable
+          name: Snapmaker_Orca_Windows_${{ needs.setup.outputs.ver }}_portable
           path: ${{ github.workspace }}/build/Snapmaker_Orca
 
       - name: Upload artifacts Win installer
-        if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Windows_${{ env.ver }}
+          name: Snapmaker_Orca_Windows_${{ needs.setup.outputs.ver }}
           path: ${{ github.workspace }}/build/Snapmaker_Orca*.exe
 
       - name: Upload artifacts Win PDB
-        if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: PDB
-          path: ${{ github.workspace }}/build/src/Release/Debug_PDB_${{ env.ver }}_for_developers_only.7z
+          path: ${{ github.workspace }}/build/src/Release/Debug_PDB_${{ needs.setup.outputs.ver }}_for_developers_only.7z
 
       - name: Upload Snapmaker_Orca_profile_validator Win
-        if: inputs.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_profile_validator_Windows_${{ env.ver }}
+          name: Snapmaker_Orca_profile_validator_Windows_${{ needs.setup.outputs.ver }}
           path: ${{ github.workspace }}/build/src/Release/Snapmaker_Orca_profile_validator.exe
 
       - name: Deploy Windows release portable
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'windows-latest'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
-          asset_name: Snapmaker_Orca_Windows_${{ env.ver }}_portable.zip
+          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_${{ needs.setup.outputs.ver }}_portable.zip
+          asset_name: Snapmaker_Orca_Windows_${{ needs.setup.outputs.ver }}_portable.zip
           asset_content_type: application/x-zip-compressed
           max_releases: 1
 
       - name: Deploy Windows release installer
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'windows-latest'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
-          asset_name: Snapmaker_Orca_Windows_Installer_${{ env.ver }}.exe
+          asset_path: ${{ github.workspace }}/build/Snapmaker_Orca_Windows_Installer_${{ needs.setup.outputs.ver }}.exe
+          asset_name: Snapmaker_Orca_Windows_Installer_${{ needs.setup.outputs.ver }}.exe
           asset_content_type: application/x-msdownload
           max_releases: 1
 
       - name: Deploy Windows Snapmaker_Orca_profile_validator release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'windows-latest'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
@@ -350,13 +764,39 @@ jobs:
           asset_content_type: application/x-msdownload
           max_releases: 1
 
-# Ubuntu
+  # ==============================================================================
+  # Ubuntu Build Jobs
+  # ==============================================================================
+  build_ubuntu:
+    name: Build Ubuntu ${{ matrix.version }}
+    runs-on: ${{ inputs.os }}
+    needs: setup
+    if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
+    strategy:
+      matrix:
+        version: [20.04, 24.04]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          lfs: 'true'
+
+      - name: Load cached deps
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ inputs.cache-path }}
+          key: ${{ inputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
       - name: Install dependencies
-        if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
         env:
-          apt-cmd: ${{ (inputs.os == 'ubuntu-20.04' && 'apt-fast') || (inputs.os == 'ubuntu-24.04' && 'sudo apt-get') || '' }}
-          webkit-ver: ${{ (inputs.os == 'ubuntu-20.04' && '4.0') || (inputs.os == 'ubuntu-24.04' && '4.1') || '' }}
-          libfuse2-pkg: ${{ (inputs.os == 'ubuntu-20.04' && 'libfuse2') || (inputs.os == 'ubuntu-24.04' && 'libfuse2t64') || '' }}
+          apt-cmd: ${{ (matrix.version == 20.04 && 'apt-fast') || 'sudo apt-get' }}
+          webkit-ver: ${{ (matrix.version == 20.04 && '4.0') || '4.1' }}
+          libfuse2-pkg: ${{ (matrix.version == 20.04 && 'libfuse2') || 'libfuse2t64' }}
         run: |
           ${{ env.apt-cmd }} update
           ${{ env.apt-cmd }} install -y autoconf build-essential cmake curl eglexternalplatform-dev \
@@ -366,27 +806,24 @@ jobs:
           libwebkit2gtk-${{ env.webkit-ver }}-dev libxkbcommon-dev locales locales-all m4 pkgconf sudo wayland-protocols wget ${{ env.libfuse2-pkg }}
 
       - name: Install dependencies from build_linux.sh
-        if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
         shell: bash
         run: sudo ./build_linux.sh -ur
 
       - name: Fix permissions
-        if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
         shell: bash
         run: sudo chown $USER -R ./
 
       - name: Build slicer
-        if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
         shell: bash
         env:
-          ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
+          ubuntu-ver-str: ${{ (matrix.version == 24.04 && '_Ubuntu2404') || '' }}
         run: |
           ./build_linux.sh -isr
-          mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
-          chmod +x ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
+          mv -n ./build/Snapmaker_Orca_Linux_V${{ needs.setup.outputs.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ needs.setup.outputs.ver }}.AppImage
+          chmod +x ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ needs.setup.outputs.ver }}.AppImage
 
       - name: Build orca_custom_preset_tests
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.1') && inputs.os == 'ubuntu-24.04'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.1') && matrix.version == 24.04
         working-directory: ${{ github.workspace }}/build/src/Release
         shell: bash
         run: |
@@ -395,38 +832,37 @@ jobs:
           zip -r orca_custom_preset_tests.zip user/
 
       - name: Upload artifacts Ubuntu
-        if: ${{ ! env.ACT && inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04' }}
         env:
-          ubuntu-ver: ${{ (inputs.os == 'ubuntu-20.04' && '2004') || (inputs.os == 'ubuntu-24.04' && '2404') || '' }}
-          ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
+          ubuntu-ver: ${{ matrix.version }}
+          ubuntu-ver-str: ${{ (matrix.version == 24.04 && '_Ubuntu2404') || '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
-          path: './build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage'
+          name: Snapmaker_Orca_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ needs.setup.outputs.ver }}
+          path: './build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ needs.setup.outputs.ver }}.AppImage'
 
       - name: Upload Snapmaker_Orca_profile_validator Ubuntu
-        if: ${{ ! env.ACT && inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04' }}
         env:
-          ubuntu-ver: ${{ (inputs.os == 'ubuntu-20.04' && '2004') || (inputs.os == 'ubuntu-24.04' && '2404') || '' }}
+          ubuntu-ver: ${{ matrix.version }}
         uses: actions/upload-artifact@v4
         with:
-          name: Snapmaker_Orca_profile_validator_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ env.ver }}
+          name: Snapmaker_Orca_profile_validator_Linux_ubuntu_${{ env.ubuntu-ver }}_${{ needs.setup.outputs.ver }}
           path: './build/src/Release/Snapmaker_Orca_profile_validator'
 
       - name: Deploy Ubuntu release
-        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && (inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04') }}
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'
         env:
-          ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
+          ubuntu-ver-str: ${{ (matrix.version == 24.04 && '_Ubuntu2404') || '' }}
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
           release_id: 169912305
-          asset_path: ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage
-          asset_name: Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}_Beta.AppImage
+          asset_path: ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ needs.setup.outputs.ver }}.AppImage
+          asset_name: Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ needs.setup.outputs.ver }}_Beta.AppImage
           asset_content_type: application/octet-stream
-          max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
-      - name: Deploy Ubuntu release
-        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'ubuntu-24.04' }}
+          max_releases: 1
+
+      - name: Create nightly tag
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'
         uses: rickstaa/action-create-tag@v1
         with:
           tag: "nightly-builds"
@@ -435,9 +871,9 @@ jobs:
           message: "nightly-builds"
 
       - name: Deploy Ubuntu Snapmaker_Orca_profile_validator release
-        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && (inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04') }}
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0'
         env:
-          ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
+          ubuntu-ver-str: ${{ (matrix.version == 24.04 && '_Ubuntu2404') || '' }}
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
@@ -448,7 +884,7 @@ jobs:
           max_releases: 1
 
       - name: Deploy orca_custom_preset_tests
-        if: ${{ ! env.ACT && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.1') && inputs.os == 'ubuntu-24.04' }}
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.1'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
@@ -457,3 +893,126 @@ jobs:
           asset_name: orca_custom_preset_tests.zip
           asset_content_type: application/octet-stream
           max_releases: 1
+
+  # ==============================================================================
+  # Upload macOS dSYM to Sentry (for all architectures)
+  # ==============================================================================
+  upload_dsym_to_sentry_macos:
+    name: Upload dSYM to Sentry (macOS)
+    runs-on: ${{ inputs.os }}
+    needs: [setup, build_macos_universal]
+    if: inputs.os == 'macos-14'
+    env:
+      VERSION: ${{ needs.setup.outputs.ver }}
+    steps:
+      - name: Install sentry-cli
+        run: |
+          # Method 1: Official install script
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Installing sentry-cli via official script..."
+            curl -sL https://sentry.io/get-cli/ | bash || true
+          fi
+
+          # Method 2: npm fallback
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Official script failed, trying npm..."
+            npm install -g @sentry/cli || true
+          fi
+
+          # Method 3: Direct binary download
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Downloading binary directly..."
+            SENTRY_CLI_VERSION=$(curl -s https://api.github.com/repos/getsentry/sentry-cli/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            curl -sL "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal" -o /usr/local/bin/sentry-cli
+            chmod +x /usr/local/bin/sentry-cli
+          fi
+
+          sentry-cli --version
+
+      # Download and upload arm64 dSYM
+      - name: Download arm64 dSYM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_arm64_${{ needs.setup.outputs.ver }}
+          path: ./dsym_arm64
+
+      - name: Upload arm64 dSYM to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -d "./dsym_arm64" ] && [ "$(find ./dsym_arm64 -name "*.dSYM" | wc -l)" -gt 0 ]; then
+            sentry-cli --log-level=info upload-dif --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" ./dsym_arm64
+          fi
+
+      # Download and upload x86_64 dSYM
+      - name: Download x86_64 dSYM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_x86_64_${{ needs.setup.outputs.ver }}
+          path: ./dsym_x86_64
+
+      - name: Upload x86_64 dSYM to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -d "./dsym_x86_64" ] && [ "$(find ./dsym_x86_64 -name "*.dSYM" | wc -l)" -gt 0 ]; then
+            sentry-cli --log-level=info upload-dif --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" ./dsym_x86_64
+          fi
+
+      # Download and upload universal dSYM
+      - name: Download universal dSYM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_universal_${{ needs.setup.outputs.ver }}
+          path: ./dsym_universal
+
+      - name: Upload universal dSYM to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -d "./dsym_universal" ] && [ "$(find ./dsym_universal -name "*.dSYM" | wc -l)" -gt 0 ]; then
+            sentry-cli --log-level=info upload-dif --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" ./dsym_universal
+          fi
+
+  # ==============================================================================
+  # Merge all dSYM into single artifact for compatibility with build_deps.yml
+  # ==============================================================================
+  merge_dsym_artifacts:
+    name: Merge dSYM Artifacts
+    runs-on: ${{ inputs.os }}
+    needs: [setup, build_macos_universal]
+    if: inputs.os == 'macos-14'
+    steps:
+      - name: Download all dSYM artifacts
+        run: |
+          mkdir -p ./merged_dsym
+
+      - name: Download arm64 dSYM
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_arm64_${{ needs.setup.outputs.ver }}
+          path: ./merged_dsym
+
+      - name: Download x86_64 dSYM
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_x86_64_${{ needs.setup.outputs.ver }}
+          path: ./merged_dsym
+
+      - name: Download universal dSYM
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_universal_${{ needs.setup.outputs.ver }}
+          path: ./merged_dsym
+
+      - name: Upload merged dSYM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dSYM_Mac_${{ needs.setup.outputs.ver }}
+          path: ./merged_dsym

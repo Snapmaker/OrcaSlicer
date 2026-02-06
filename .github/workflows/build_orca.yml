@@ -119,6 +119,43 @@ jobs:
         run: |
           ./build_release_macos.sh -s -n -x -a ${{ inputs.arch || 'arm64' }} -t 10.15 -1
 
+      - name: Diagnose mac build output
+        if: startsWith(inputs.os, 'macos-') && failure()
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "=== Build failed. Diagnosing... ==="
+          echo "Checking build directory for ${{ inputs.arch || 'arm64' }}:"
+          ls -la build/ || echo "build/ directory not found"
+          echo ""
+          echo "Checking for ${{ inputs.arch || 'arm64' }} subdirectory:"
+          ls -la build/${{ inputs.arch || 'arm64' }}/ || echo "build/${{ inputs.arch || 'arm64' }}/ directory not found"
+          echo ""
+          echo "Checking for Snapmaker_Orca.app:"
+          find build/ -name "Snapmaker Orca.app" -o -name "*.app" | head -20 || echo "No .app bundles found"
+          echo ""
+          echo "Last 50 lines of build log:"
+          tail -50 build/${{ inputs.arch || 'arm64' }}/build.log || echo "No build.log found"
+
+      - name: Verify mac build output
+        if: startsWith(inputs.os, 'macos-')
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "=== Verifying build output ==="
+          APP_PATH="${{ github.workspace }}/build/${{ inputs.arch || 'arm64' }}/Snapmaker_Orca/Snapmaker Orca.app"
+          echo "Checking for app at: $APP_PATH"
+          if [ -d "$APP_PATH" ]; then
+              echo "✓ App bundle found!"
+              ls -la "$APP_PATH"
+              ls -la "$APP_PATH/Contents/MacOS/"
+          else
+              echo "✗ App bundle NOT found!"
+              echo "Listing build/${{ inputs.arch || 'arm64' }}/:"
+              ls -la "build/${{ inputs.arch || 'arm64' }}/" || echo "Directory not found"
+              echo "Searching for any .app bundles:"
+              find build/ -name "*.app" -type d || echo "No .app bundles found"
+              exit 1
+          fi
+
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
         if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/2.2.3') && startsWith(inputs.os, 'macos-')

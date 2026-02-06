@@ -34,10 +34,11 @@ jobs:
         id: set_outputs
         env:
           # todo: this is mad! refactor other build scripts to use same name
-          dep-folder-name: ${{ inputs.os == 'windows-latest' && '/OrcaSlicer_dep' || inputs.os == 'macos-14' && '' || inputs.os != 'macos-14' && '/destdir' || '' }}
+          dep-folder-name: ${{ inputs.os == 'windows-latest' && '/OrcaSlicer_dep' || inputs.os == 'macos-14' && format('/{0}', inputs.arch) || inputs.os != 'macos-14' && '/destdir' || '' }}
           output-cmd: ${{ inputs.os == 'windows-latest' && '$env:GITHUB_OUTPUT' || '"$GITHUB_OUTPUT"'}}
+          cache-suffix: ${{ inputs.os == 'macos-14' && format('-{0}', inputs.arch) || '' }}
         run: |
-          echo cache-key=${{ inputs.os }}-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }} >> ${{ env.output-cmd }}
+          echo cache-key=${{ inputs.os }}${{ env.cache-suffix }}-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }} >> ${{ env.output-cmd }}
           echo cache-path=${{ github.workspace }}/deps/build${{ env.dep-folder-name }} >> ${{ env.output-cmd }}
             
       - name: load cache

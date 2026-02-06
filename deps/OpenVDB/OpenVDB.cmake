@@ -7,8 +7,12 @@ else()
 endif()
 
 # Apply clang19 patch to fix template keyword compilation errors
+# Set DIRECTORY_FLAG for all builds to ensure patch command works
 if (IN_GIT_REPO)
     set(OPENVDB_DIRECTORY_FLAG --directory ${BINARY_DIR_REL}/dep_OpenVDB-prefix/src/dep_OpenVDB)
+else ()
+    # For non-git builds, use absolute path to source directory
+    set(OPENVDB_DIRECTORY_FLAG --directory=${CMAKE_BINARY_DIR}/dep_OpenVDB-prefix/src/dep_OpenVDB)
 endif ()
 
 Snapmaker_Orca_add_cmake_project(OpenVDB

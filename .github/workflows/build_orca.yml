@@ -278,7 +278,7 @@ jobs:
 
       - name: Upload DMG artifacts for all architectures
         if: inputs.os == 'macos-14'
-        uses: actions/upload-artifact@v4@v4
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           path: |

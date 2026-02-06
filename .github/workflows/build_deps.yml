@@ -72,6 +72,33 @@ jobs:
             .\build_release_vs2022.bat deps
             .\build_release_vs2022.bat pack
 
+      - name: Verify Windows deps
+        if: inputs.os == 'windows-latest'
+        shell: pwsh
+        run: |
+            Write-Host "Checking if dependencies were built successfully..."
+            $depsPath = "${{ github.workspace }}/deps/build/OrcaSlicer_dep/usr/local"
+
+            # Check for critical dependencies
+            $criticalPaths = @(
+                "$depsPath/lib",
+                "$depsPath/include",
+                "$depsPath/lib/openvdb.lib",
+                "$depsPath/lib/tbb.lib"
+            )
+
+            foreach ($path in $criticalPaths) {
+                if (Test-Path $path) {
+                    Write-Host "✓ Found: $path"
+                } else {
+                    Write-Host "✗ Missing: $path"
+                    Write-Host "Listing deps directory contents:"
+                    Get-ChildItem -Recurse "${{ github.workspace }}/deps/build" | Select-Object -First 20 FullName
+                    throw "Dependency verification failed: $path not found"
+                }
+            }
+            Write-Host "All critical dependencies verified!"
+
       - name: Build on Mac ${{ inputs.arch }}
         if: startsWith(inputs.os, 'macos-')
         working-directory: ${{ github.workspace }}

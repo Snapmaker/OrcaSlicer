@@ -114,15 +114,23 @@ jobs:
           sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
           df -hI /dev/disk3s1s1
 
-      - name: Build slicer mac
+      - name: Build slicer for all architectures (arm64, x86_64, universal)
         if: inputs.os == 'macos-14'
         working-directory: ${{ github.workspace }}
         run: |
+          echo "Building arm64..."
+          ./build_release_macos.sh -s -n -x -a arm64 -t 10.15 -1
+          echo "Building x86_64..."
+          ./build_release_macos.sh -s -n -x -a x86_64 -t 10.15 -1
+          echo "Building universal..."
           ./build_release_macos.sh -s -n -x -a universal -t 10.15 -1
+          echo "All architectures built successfully!"
 
- # Thanks to RaySajuuk, it's working now
-      - name: Sign app and notary
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14'
+ # ==============================================================================
+ # macOS Code Signing and Notarization for All Architectures
+ # ==============================================================================
+      - name: Setup code signing certificate
+        if: inputs.os == 'macos-14'
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -132,6 +140,12 @@ jobs:
         run: |
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          ENTITLEMENTS_PATH="${{ github.workspace }}/scripts/disable_validation.entitlements"
+
+          echo "=========================================="
+          echo "Setting up code signing certificate..."
+          echo "=========================================="
+
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
           security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
@@ -139,64 +153,147 @@ jobs:
           security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app"
-          # Sign Snapmaker_Orca_profile_validator.app if it exists
-          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app
-          fi
-          
-          # Create main Snapmaker Orca DMG without the profile validator helper
-          mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
-          rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
-          cp -R "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app" "${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/"
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
-          codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
-          
-          # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
-          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-            mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg
-            rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
-            cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
-            ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
-            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
-            codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
-          fi
-          
-          # Notarize main DMG
-          xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
-          xcrun notarytool submit "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-          xcrun stapler staple "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
-          
-          # Notarize profile validator DMG if it exists
-          if [ -f "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
-            xcrun notarytool submit "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait
-            xcrun stapler staple "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
-          fi
+          security find-identity -v $KEYCHAIN_PATH
 
-      - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && inputs.os == 'macos-14' && github.ref != 'refs/heads/2.2.3'
+          echo ""
+          echo "Certificate setup completed successfully"
+          echo "Certificate ID: $CERTIFICATE_ID"
+
+      - name: Sign and create DMG for all architectures
+        if: inputs.os == 'macos-14'
         working-directory: ${{ github.workspace }}
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          CERTIFICATE_ID: ${{ secrets.MACOS_CERTIFICATE_ID }}
+          APPLE_DEV_ACCOUNT: ${{ secrets.APPLE_DEV_ACCOUNT }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_PWD: ${{ secrets.APP_PWD }}
         run: |
-          mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
-          rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
-          cp -R "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app" "${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/"
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
-          
-          # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
-          if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-            mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg
-            rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
-            cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
-            ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
-            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
-          fi
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          ENTITLEMENTS_PATH="${{ github.workspace }}/scripts/disable_validation.entitlements"
 
-      - name: Upload artifacts mac
+          # Store notarytool credentials once
+          echo ""
+          echo "Storing notarytool credentials..."
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "$APPLE_DEV_ACCOUNT" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PWD"
+
+          # Process each architecture
+          for ARCH in arm64 x86_64 universal; do
+            echo ""
+            echo "=========================================="
+            echo "Processing architecture: $ARCH"
+            echo "=========================================="
+
+            APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker Orca.app"
+            VALIDATOR_APP_PATH="${{ github.workspace }}/build/$ARCH/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
+            DMG_PATH="${{ github.workspace }}/Snapmaker_Orca_Mac_${ARCH}_${{ env.ver }}.dmg"
+            VALIDATOR_DMG_PATH="${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_${ARCH}_${{ env.ver }}.dmg"
+
+            # Check if app exists
+            if [ ! -d "$APP_PATH" ]; then
+              echo "Skipping $ARCH - app not found at $APP_PATH"
+              continue
+            fi
+
+            # Sign frameworks and dylibs
+            echo "--- Signing frameworks and dylibs ---"
+            FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
+            if [ -d "$FRAMEWORKS_DIR" ]; then
+              find "$FRAMEWORKS_DIR" -type f \( -name "*.dylib" -o -name "*.framework" \) 2>/dev/null | while read file; do
+                echo "  Signing: $file"
+                codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || echo "  Warning: Failed to sign $file"
+              done
+            fi
+
+            # Sign helper executables
+            echo "--- Signing helper executables ---"
+            MACOS_DIR="$APP_PATH/Contents/MacOS"
+            find "$MACOS_DIR" -type f ! -name "Snapmaker_Orca" 2>/dev/null | while read file; do
+              echo "  Signing helper: $file"
+              codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$file" 2>&1 || echo "  Warning: Failed to sign $file"
+            done
+
+            # Sign app bundle with entitlements
+            echo "--- Signing app bundle with entitlements ---"
+            codesign --force --verbose --options runtime --timestamp \
+              --entitlements "$ENTITLEMENTS_PATH" \
+              --sign "$CERTIFICATE_ID" \
+              "$APP_PATH"
+
+            # Verify entitlements
+            echo "--- Verifying entitlements ---"
+            if codesign -d --entitlements - "$APP_PATH" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
+              echo "  SUCCESS: Entitlements embedded correctly"
+            else
+              echo "  WARNING: Entitlements verification failed"
+            fi
+
+            # Sign profile validator if exists
+            if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
+              echo "--- Signing profile validator ---"
+              # Sign helpers first
+              find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
+                codesign --force --sign "$CERTIFICATE_ID" "$file" 2>/dev/null || true
+              done
+              # Sign bundle with entitlements
+              codesign --force --verbose --options runtime --timestamp \
+                --entitlements "$ENTITLEMENTS_PATH" \
+                --sign "$CERTIFICATE_ID" \
+                "$VALIDATOR_APP_PATH"
+            fi
+
+            # Create DMG
+            echo "--- Creating DMG ---"
+            mkdir -p ${{ github.workspace }}/build/${ARCH}_dmg
+            rm -rf ${{ github.workspace }}/build/${ARCH}_dmg/*
+            cp -R "$APP_PATH" "${{ github.workspace }}/build/${ARCH}_dmg/"
+            ln -sfn /Applications ${{ github.workspace }}/build/${ARCH}_dmg/Applications
+
+            hdiutil create -volname "Snapmaker_Orca" \
+              -srcfolder ${{ github.workspace }}/build/${ARCH}_dmg \
+              -ov -format UDZO "$DMG_PATH"
+
+            # Sign DMG
+            echo "--- Signing DMG ---"
+            codesign --force --verbose --options runtime --timestamp \
+              --sign "$CERTIFICATE_ID" \
+              "$DMG_PATH"
+
+            # Notarize DMG
+            echo "--- Notarizing DMG ---"
+            xcrun notarytool submit "$DMG_PATH" \
+              --keychain-profile "notarytool-profile" \
+              --wait
+
+            echo "--- Stapling notary ticket ---"
+            xcrun stapler staple "$DMG_PATH"
+
+            echo "✓ $ARCH DMG completed successfully!"
+          done
+
+      - name: Upload DMG artifacts for all architectures
+        if: inputs.os == 'macos-14'
+        uses: actions/upload-artifact@v4@v4
+        continue-on-error: true
+        with:
+          path: |
+            Snapmaker_Orca_Mac_arm64_${{ env.ver }}.dmg
+            Snapmaker_Orca_Mac_x86_64_${{ env.ver }}.dmg
+            Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
+          if-no-files-ignore: true
+
+      - name: Upload dSYM artifacts (universal)
         if: inputs.os == 'macos-14'
         uses: actions/upload-artifact@v4
         with:
+          name: dSYM_Mac_${{ env.ver }}
+          path: ${{ github.workspace }}/build/universal/Snapmaker_Orca/dSYM
+          if-no-files-found: warn
           name: Snapmaker_Orca_Mac_universal_${{ env.ver }}
           path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
 
@@ -216,41 +313,87 @@ jobs:
           path: ${{ github.workspace }}/build/universal/Snapmaker_Orca/dSYM
           if-no-files-found: warn
 
-      - name: Deploy Mac release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14'
-        uses: WebFreak001/deploy-nightly@v3.2.0
-        with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
-          release_id: 169912305
-          asset_path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
-          asset_name: Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
-          asset_content_type: application/octet-stream
-          max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
-
-      - name: Check if profile validator DMG exists
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14'
-        id: check_dmg
-        working-directory: ${{ github.workspace }}
+      - name: Deploy Mac releases for all architectures
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
+        env:
+          VERSION: ${{ env.ver }}
+          RELEASE_ID: 169912305
         run: |
-          if [ -f "Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "DMG file found, will deploy"
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "DMG file not found, skipping deployment"
+          # Deploy arm64 DMG
+          if [ -f "Snapmaker_Orca_Mac_arm64_${VERSION}.dmg" ]; then
+            echo "Deploying arm64 DMG..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/${RELEASE_ID}/assets?name=Snapmaker_Orca_Mac_arm64_${VERSION}.dmg" \
+              --data-binary @"Snapmaker_Orca_Mac_arm64_${VERSION}.dmg"
           fi
-        shell: bash
 
-      - name: Deploy Mac Snapmaker_Orca_profile_validator DMG release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3') && inputs.os == 'macos-14' && steps.check_dmg.outputs.exists == 'true'
-        uses: WebFreak001/deploy-nightly@v3.2.0
-        with:
-          upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
-          release_id: 169912305
-          asset_path: ${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg
-          asset_name: Snapmaker_Orca_profile_validator_Mac_universal_nightly.dmg
-          asset_content_type: application/octet-stream
-          max_releases: 1
+          # Deploy x86_64 DMG
+          if [ -f "Snapmaker_Orca_Mac_x86_64_${VERSION}.dmg" ]; then
+            echo "Deploying x86_64 DMG..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/${RELEASE_ID}/assets?name=Snapmaker_Orca_Mac_x86_64_${VERSION}.dmg" \
+              --data-binary @"Snapmaker_Orca_Mac_x86_64_${VERSION}.dmg"
+          fi
+
+          # Deploy universal DMG
+          if [ -f "Snapmaker_Orca_Mac_universal_${VERSION}.dmg" ]; then
+            echo "Deploying universal DMG..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/${RELEASE_ID}/assets?name=Snapmaker_Orca_Mac_universal_${VERSION}.dmg" \
+              --data-binary @"Snapmaker_Orca_Mac_universal_${VERSION}.dmg"
+          fi
+
+          echo "All macOS deployments completed!"
+
+      - name: Deploy profile validator DMG (if exists)
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.0') && inputs.os == 'macos-14'
+        env:
+          VERSION: ${{ env.ver }}
+          RELEASE_ID: 169912305
+        run: |
+          # Deploy arm64 profile validator
+          if [ -f "Snapmaker_Orca_profile_validator_Mac_arm64_${VERSION}.dmg" ]; then
+            echo "Deploying arm64 profile validator DMG..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/${RELEASE_ID}/assets?name=Snapmaker_Orca_profile_validator_Mac_arm64_nightly.dmg" \
+              --data-binary @"Snapmaker_Orca_profile_validator_Mac_arm64_${VERSION}.dmg"
+          fi
+
+          # Deploy x86_64 profile validator
+          if [ -f "Snapmaker_Orca_profile_validator_Mac_x86_64_${VERSION}.dmg" ]; then
+            echo "Deploying x86_64 profile validator DMG..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/${RELEASE_ID}/assets?name=Snapmaker_Orca_profile_validator_Mac_x86_64_nightly.dmg" \
+              --data-binary @"Snapmaker_Orca_profile_validator_Mac_x86_64_${VERSION}.dmg"
+          fi
+
+          # Deploy universal profile validator
+          if [ -f "Snapmaker_Orca_profile_validator_Mac_universal_${VERSION}.dmg" ]; then
+            echo "Deploying universal profile validator DMG..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/${RELEASE_ID}/assets?name=Snapmaker_Orca_profile_validator_Mac_universal_nightly.dmg" \
+              --data-binary @"Snapmaker_Orca_profile_validator_Mac_universal_${VERSION}.dmg"
+          fi
+
+          echo "Profile validator deployments completed!"
 
 # Windows
       - name: setup MSVC

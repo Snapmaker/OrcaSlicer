@@ -787,11 +787,6 @@ class Print;
         int get_physical_extruder(int filament_idx) const {
             auto it = m_filament_extruder_map.find(filament_idx);
             int physical_extruder_id = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
-            // SM Orca: 日志 - 映射查询
-            BOOST_LOG_TRIVIAL(info) << "GCodeProcessor::get_physical_extruder: filament_id=" << filament_idx
-                << " -> physical_extruder_id=" << physical_extruder_id
-                << " (map_size=" << m_filament_extruder_map.size() << ")"
-                << (it != m_filament_extruder_map.end() ? " [from_map]" : " [default_identity]");
             return physical_extruder_id;
         }
         void enable_stealth_time_estimator(bool enabled);

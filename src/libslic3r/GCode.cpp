@@ -3749,12 +3749,17 @@ LayerResult GCode::process_layer(const Print& print,
                  "\n";
     }
 
-    PrinterStructure printer_structure                           = m_config.printer_structure.value;
-    bool             need_insert_timelapse_gcode_for_traditional = false;
-    if (printer_structure == PrinterStructure::psI3 && !m_spiral_vase && (!m_wipe_tower || !m_wipe_tower->enable_timelapse_print()) &&
-        print.config().print_sequence == PrintSequence::ByLayer) {
+    PrinterStructure printer_structure = m_config.printer_structure.value;
+
+    bool is_smooth_timelapse     = m_wipe_tower && m_wipe_tower->enable_timelapse_print();
+    bool is_traditional_timelapse = !is_smooth_timelapse && !m_config.time_lapse_gcode.value.empty();
+
+    bool need_insert_timelapse_gcode_for_traditional = false;
+    if (printer_structure == PrinterStructure::psI3 && !m_spiral_vase && !is_smooth_timelapse &&
+        !m_config.time_lapse_gcode.value.empty() && print.config().print_sequence == PrintSequence::ByLayer) {
         need_insert_timelapse_gcode_for_traditional = true;
     }
+
     bool has_insert_timelapse_gcode = false;
     bool has_wipe_tower             = (layer_tools.has_wipe_tower && m_wipe_tower);
 
@@ -3776,31 +3781,20 @@ LayerResult GCode::process_layer(const Print& print,
     gcode += this->change_layer(print_z); // this will increase m_layer_index
     m_layer                  = &layer;
     m_object_layer_over_raft = false;
-    if (is_BBL_Printer()) {
-        if (printer_structure == PrinterStructure::psI3 && !need_insert_timelapse_gcode_for_traditional && !m_spiral_vase &&
-            print.config().print_sequence == PrintSequence::ByLayer) {
-            std::string timepals_gcode = insert_timelapse_gcode();
-            if (!timepals_gcode.empty()) {
-                gcode += timepals_gcode;
-                m_writer.set_current_position_clear(false);
-                // BBS: check whether custom gcode changes the z position. Update if changed
-                double temp_z_after_timepals_gcode;
-                if (GCodeProcessor::get_last_z_from_gcode(timepals_gcode, temp_z_after_timepals_gcode)) {
-                    Vec3d pos = m_writer.get_position();
-                    pos(2)    = temp_z_after_timepals_gcode;
-                    m_writer.set_position(pos);
-                }
+
+    if (printer_structure == PrinterStructure::psI3 && !need_insert_timelapse_gcode_for_traditional && !m_spiral_vase &&
+        print.config().print_sequence == PrintSequence::ByLayer) {
+        std::string timepals_gcode = insert_timelapse_gcode();
+        if (!timepals_gcode.empty()) {
+            gcode += timepals_gcode;
+            m_writer.set_current_position_clear(false);
+            // BBS: check whether custom gcode changes the z position. Update if changed
+            double temp_z_after_timepals_gcode;
+            if (GCodeProcessor::get_last_z_from_gcode(timepals_gcode, temp_z_after_timepals_gcode)) {
+                Vec3d pos = m_writer.get_position();
+                pos(2)    = temp_z_after_timepals_gcode;
+                m_writer.set_position(pos);
             }
-        }
-    } else {
-        if (!m_config.time_lapse_gcode.value.empty()) {
-            DynamicConfig config;
-            config.set_key_value("layer_num", new ConfigOptionInt(m_layer_index));
-            config.set_key_value("layer_z", new ConfigOptionFloat(print_z));
-            config.set_key_value("max_layer_z", new ConfigOptionFloat(m_max_layer_z));
-            gcode += this->placeholder_parser_process("timelapse_gcode", print.config().time_lapse_gcode.value, m_writer.extruder()->id(),
-                                                      &config) +
-                     "\n";
         }
     }
     if (!m_config.layer_change_gcode.value.empty()) {
@@ -4209,6 +4203,7 @@ LayerResult GCode::process_layer(const Print& print,
         std::string gcode_toolchange;
         if (has_wipe_tower) {
             if (!m_wipe_tower->is_empty_wipe_tower_gcode(*this, extruder_id, extruder_id == layer_tools.extruders.back())) {
+                
                 if (need_insert_timelapse_gcode_for_traditional && !has_insert_timelapse_gcode) {
                     gcode += this->retract(false, false, LiftType::NormalLift);
                     m_writer.add_object_change_labels(gcode);

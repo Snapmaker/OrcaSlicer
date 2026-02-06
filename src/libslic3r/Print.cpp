@@ -2668,7 +2668,7 @@ void Print::_make_wipe_tower()
     for (unsigned int i = 0; i<number_of_extruders; ++i)
         wipe_volumes.push_back(std::vector<float>(flush_matrix.begin()+i*number_of_extruders, flush_matrix.begin()+(i+1)*number_of_extruders));
 
-    const auto bUseWipeTower2 = is_BBL_printer() ? false : true;
+    const auto bUseWipeTower2 = is_BBL_printer() ? false : (m_config.timelapse_type.value == TimelapseType::tlSmooth ? false : true);
     // Orca: itertate over wipe_volumes and change the non-zero values to the prime_volume
     if ((!m_config.purge_in_prime_tower || !m_config.single_extruder_multi_material) && !is_BBL_printer()) {
         for (unsigned int i = 0; i < number_of_extruders; ++i) {
@@ -2725,7 +2725,8 @@ void Print::_make_wipe_tower()
     this->throw_if_canceled();
 
     if (!bUseWipeTower2) {
-        // in BBL machine, wipe tower is only use to prime extruder. So just use a global wipe volume.
+        // BBL 机器或在平滑延时摄影模式下的所有机型：使用 WipeTower（支持矩形围栏式擦料塔）
+        // 在这些情况下，擦料塔主要用于 prime extruder，使用全局 wipe volume
         WipeTower wipe_tower(m_config, m_plate_index, m_origin, m_config.prime_volume, m_wipe_tower_data.tool_ordering.first_extruder(),
                              m_wipe_tower_data.tool_ordering.empty() ? 0.f : m_wipe_tower_data.tool_ordering.back().print_z);
 

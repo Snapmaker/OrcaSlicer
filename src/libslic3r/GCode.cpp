@@ -1592,15 +1592,8 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
 //    DoExport::update_print_estimated_times_stats(m_processor, print->m_print_statistics);
     DoExport::update_print_estimated_stats(m_processor, m_writer.extruders(), print->m_print_statistics, print->config());
     if (result != nullptr) {
-            << ", result->extruders_count=" << result->extruders_count
-            << ", result->filament_diameters.size()=" << result->filament_diameters.size()
-            << ", processor.result().extruders_count=" << m_processor.result().extruders_count
-            << ", processor.result().filament_diameters.size()=" << m_processor.result().filament_diameters.size();
 
         *result = std::move(m_processor.extract_result());
-
-            << ", result->extruders_count=" << result->extruders_count
-            << ", result->filament_diameters.size()=" << result->filament_diameters.size();
 
         // set the filename to the correct value
         result->filename = path;
@@ -6785,10 +6778,6 @@ Vec2d GCode::point_to_gcode(const Point &point) const
 {
     static std::atomic<int> call_count{0};
     int this_call = ++call_count;
-    if (this_call <= 5 || (m_writer.extruder() && m_writer.extruder()->id() >= 12)) {
-            << " extruder=" << (m_writer.extruder() ? m_writer.extruder()->id() : -1)
-            << " point=(" << point.x() << ", " << point.y() << ")";
-    }
 
     Vec2d extruder_offset = Vec2d::Zero();
     if (const Extruder *extruder = m_writer.extruder(); extruder) {

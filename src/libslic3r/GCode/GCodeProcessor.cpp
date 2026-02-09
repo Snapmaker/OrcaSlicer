@@ -617,11 +617,9 @@ void GCodeProcessorResult::reset() {
         // 尝试从已有数组大小推断（优先使用filament_diameters的大小）
         if (!filament_diameters.empty() && filament_diameters.size() <= 256) {
             saved_count = filament_diameters.size();
-                << saved_count;
         } else {
             // 对于只有少量耗材的用户，稍微多分配一些内存影响很小
             saved_count = 16;
-                << saved_count << " (was " << extruders_count << ", array size was " << filament_diameters.size() << ")";
         }
     }
 
@@ -648,9 +646,6 @@ void GCodeProcessorResult::reset() {
     filament_densities = std::vector<float>(saved_count, DEFAULT_FILAMENT_DENSITY);
     filament_costs = std::vector<float>(saved_count, DEFAULT_FILAMENT_COST);
     filament_vitrification_temperature = std::vector<int>(saved_count, DEFAULT_FILAMENT_VITRIFICATION_TEMPERATURE);
-
-        << " (original extruders_count=" << (saved_count == extruders_count ? "preserved" : "inferred")
-        << ", this=" << this << ")";
 
     custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
     spiral_vase_layers = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
@@ -769,9 +764,6 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     m_result.backtrace_enabled = m_preheat_time > 0 && (m_is_XL_printer || (!m_single_extruder_multi_material && extruders_count > 1));
 
     size_t physical_extruder_count = config.extruder_offset.values.size();
-        << " filaments=" << extruders_count
-        << ", physical_extruders=" << physical_extruder_count
-        << ", mappings=" << m_filament_extruder_map.size();
 
     // 验证各配置数组大小
     if (config.filament_density.values.size() < extruders_count) {
@@ -1354,9 +1346,6 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         arrays_valid = false;
     }
 
-    if (arrays_valid) {
-            << m_result.extruders_count;
-    }
 }
 
 void GCodeProcessor::enable_stealth_time_estimator(bool enabled)

@@ -257,8 +257,20 @@ static ConfigOption* apply_physical_extruder_defaults(
                 // Only if it's different do we consider it a user override
                 // Get the default value from the mapped physical extruder
                 auto map_it = filament_extruder_map.find(filament_idx);
-                int physical_extruder_idx = (map_it != filament_extruder_map.end()) ?
-                    map_it->second : (int)filament_idx;
+                int physical_extruder_idx;
+                if (map_it != filament_extruder_map.end()) {
+                    physical_extruder_idx = map_it->second;
+                } else {
+                    // Fallback: use modulo to map filament to physical extruder
+                    // This handles edge cases where the map is incomplete or filament_idx is out of range
+                    size_t physical_extruder_count = extruder_vec->size();
+                    if (physical_extruder_count == 0) {
+                        // Should not happen, but safety check
+                        physical_extruder_idx = 0;
+                    } else {
+                        physical_extruder_idx = (int)filament_idx % (int)physical_extruder_count;
+                    }
+                }
 
                 if (physical_extruder_idx < extruder_vec->size()) {
                     // Try different types: double, int, bool
@@ -271,13 +283,6 @@ static ConfigOption* apply_physical_extruder_defaults(
                         // Use override only if value differs from default
                         has_override = (override_value != default_value);
 
-                        if (has_override) {
-                                << " has override value=" << override_value
-                                << ", default from physical extruder " << physical_extruder_idx << "=" << default_value;
-                        } else {
-                                << " no override (value=" << override_value
-                                << " matches default from physical extruder " << physical_extruder_idx << "=" << default_value << ")";
-                        }
                     } else {
                         // Try int type
                         auto* override_int = dynamic_cast<const ConfigOptionVector<int>*>(override_vec);
@@ -286,14 +291,6 @@ static ConfigOption* apply_physical_extruder_defaults(
                             int override_value = override_int->get_at(filament_idx);
                             int default_value = extruder_int->get_at(physical_extruder_idx);
                             has_override = (override_value != default_value);
-
-                            if (has_override) {
-                                    << " has override value=" << override_value
-                                    << ", default from physical extruder " << physical_extruder_idx << "=" << default_value;
-                            } else {
-                                    << " no override (value=" << override_value
-                                    << " matches default from physical extruder " << physical_extruder_idx << "=" << default_value << ")";
-                            }
                         } else {
                             // Try bool type
                             auto* override_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(override_vec);
@@ -302,14 +299,6 @@ static ConfigOption* apply_physical_extruder_defaults(
                                 unsigned char override_value = override_bool->get_at(filament_idx);
                                 unsigned char default_value = extruder_bool->get_at(physical_extruder_idx);
                                 has_override = (override_value != default_value);
-
-                                if (has_override) {
-                                        << " has override value=" << (int)override_value
-                                        << ", default from physical extruder " << physical_extruder_idx << "=" << (int)default_value;
-                                } else {
-                                        << " no override (value=" << (int)override_value
-                                        << " matches default from physical extruder " << physical_extruder_idx << "=" << (int)default_value << ")";
-                                }
                             }
                         }
                     }
@@ -320,18 +309,27 @@ static ConfigOption* apply_physical_extruder_defaults(
         if (!has_override) {
             // No override: inherit from the mapped physical extruder
             auto map_it = filament_extruder_map.find(filament_idx);
-            int physical_extruder_idx = (map_it != filament_extruder_map.end()) ?
-                map_it->second : (int)filament_idx;
+            int physical_extruder_idx;
+            if (map_it != filament_extruder_map.end()) {
+                physical_extruder_idx = map_it->second;
+            } else {
+                // Fallback: use modulo to map filament to physical extruder
+                // This handles edge cases where the map is incomplete or filament_idx is out of range
+                size_t physical_extruder_count = extruder_vec->size();
+                if (physical_extruder_count == 0) {
+                    // Should not happen, but safety check
+                    physical_extruder_idx = 0;
+                } else {
+                    physical_extruder_idx = (int)filament_idx % (int)physical_extruder_count;
+                }
+            }
 
             if (physical_extruder_idx < extruder_vec->size() && filament_idx < target_vec->size()) {
                 target_vec->set_at(extruder_vec, filament_idx, physical_extruder_idx);
             }
-
-                << " inherited from physical extruder " << physical_extruder_idx;
         } else if (override_vec && filament_idx < override_vec->size()) {
             // Has override: use the value from filament config
             target_vec->set_at(override_vec, filament_idx, filament_idx);
-                << " using override value (checkbox checked)";
         }
     }
 
@@ -1276,7 +1274,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // 此时 m_objects 和 m_config 是稳定的，可以安全地计算映射
     // 这确保了 print_config_diffs 中的参数继承机制能正常工作
     this->initialize_filament_extruder_map();
-        %__LINE__ % m_filament_extruder_map.size();
 
     //new_full_config.normalize_fdm(used_filaments);
     new_full_config.normalize_fdm_1();
@@ -1761,7 +1758,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // 在对象同步后，m_objects 可能已经被重建，需要重新计算映射以反映最新状态
     // 这确保了后续使用映射表时（如 export_gcode）能获得正确的映射关系
     this->initialize_filament_extruder_map();
-        %__LINE__ % m_filament_extruder_map.size();
 
     // All regions now have distinct settings.
     // Check whether applying the new region config defaults we would get different regions,

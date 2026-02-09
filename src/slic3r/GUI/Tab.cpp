@@ -3288,17 +3288,18 @@ void TabFilament::add_filament_overrides_page()
                             const auto printer_config = m_preset_bundle->printers.get_edited_preset().config;
                             // SM Orca: Map filament slot to physical extruder index for inheritance
                             auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
-                            int physical_extruder_idx = opt_index;  // default: filament N uses extruder N
+                            // SM Orca: First calculate num_extruders to use modulo for default mapping
+                            const ConfigOptionFloats* nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
+                            int num_extruders = nozzle_diameter ? (int)nozzle_diameter->values.size() : 1;
+                            // SM Orca: Use modulo arithmetic for default mapping when no explicit mapping exists
+                            int physical_extruder_idx = opt_index % num_extruders;  // default: filament N maps to extruder N % num_extruders
                             auto map_it = filament_extruder_map.find(opt_index);
                             if (map_it != filament_extruder_map.end()) {
                                 physical_extruder_idx = map_it->second;
                             }
                             // SM Orca: Bounds check to prevent crash from misconfigured map
-                            // Use nozzle_diameter to determine actual extruder count
-                            const ConfigOptionFloats* nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
-                            int num_extruders = nozzle_diameter ? (int)nozzle_diameter->values.size() : 1;
                             if (physical_extruder_idx < 0 || physical_extruder_idx >= num_extruders) {
-                                BOOST_LOG_TRIVIAL(warning) << "Invalid physical_extruder_idx " << physical_extruder_idx 
+                                BOOST_LOG_TRIVIAL(warning) << "Invalid physical_extruder_idx " << physical_extruder_idx
                                     << " for filament slot " << opt_index << ", using default";
                                 physical_extruder_idx = std::clamp(physical_extruder_idx, 0, num_extruders - 1);
                             }
@@ -3417,17 +3418,20 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                 const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
                 // SM Orca: Map filament slot to physical extruder index for inheritance
                 auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+                // SM Orca: Determine extruder count first for proper modulo calculation
+                const ConfigOptionFloats* nozzle_diameter = printers_config->option<ConfigOptionFloats>("nozzle_diameter");
+                int num_extruders = nozzle_diameter ? (int)nozzle_diameter->values.size() : 1;
                 int physical_extruder_idx = extruder_idx;  // default: filament N uses extruder N
                 auto map_it = filament_extruder_map.find(extruder_idx);
                 if (map_it != filament_extruder_map.end()) {
                     physical_extruder_idx = map_it->second;
+                } else {
+                    // SM Orca: Use modulo arithmetic when map entry doesn't exist
+                    physical_extruder_idx = extruder_idx % num_extruders;
                 }
                 // SM Orca: Bounds check to prevent crash from misconfigured map
-                // Use nozzle_diameter to determine actual extruder count
-                const ConfigOptionFloats* nozzle_diameter = printers_config->option<ConfigOptionFloats>("nozzle_diameter");
-                int num_extruders = nozzle_diameter ? (int)nozzle_diameter->values.size() : 1;
                 if (physical_extruder_idx < 0 || physical_extruder_idx >= num_extruders) {
-                    BOOST_LOG_TRIVIAL(warning) << "Invalid physical_extruder_idx " << physical_extruder_idx 
+                    BOOST_LOG_TRIVIAL(warning) << "Invalid physical_extruder_idx " << physical_extruder_idx
                         << " for filament slot " << extruder_idx << ", using default";
                     physical_extruder_idx = std::clamp(physical_extruder_idx, 0, num_extruders - 1);
                 }

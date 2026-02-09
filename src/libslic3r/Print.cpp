@@ -501,8 +501,6 @@ void Print::initialize_filament_extruder_map()
     // Get the number of physical extruders (number of nozzle_diameter entries)
     size_t physical_extruder_count = m_config.nozzle_diameter.values.size();
 
-        << physical_extruder_count;
-
     if (physical_extruder_count == 0) {
         BOOST_LOG_TRIVIAL(error) << "Print::initialize_filament_extruder_map: ERROR - No physical extruders configured!";
         return;
@@ -511,6 +509,11 @@ void Print::initialize_filament_extruder_map()
     // Get all filament indices that will be used
     std::vector<unsigned int> filament_extruders = this->extruders();
 
+    // IMPORTANT: Always create mappings for ALL configured filaments, not just those used by objects.
+    // This is critical because filament override parameters need to access the mapping for all filaments.
+    // For example, if a user has 8 filaments configured but only uses 4 in their model,
+    // the mapping table must still contain entries for all 8 filaments to correctly
+    // inherit parameters from the corresponding physical extruders.
     // extruders() returns empty. In this case, use filament_diameter.size() to determine filament count.
     // This ensures the mapping is created for all configured filaments, not just those used by objects.
     if (filament_extruders.empty()) {
@@ -518,10 +521,16 @@ void Print::initialize_filament_extruder_map()
         for (size_t i = 0; i < filament_count; ++i) {
             filament_extruders.push_back((unsigned int)i);
         }
+    } else {
+        // Even if extruders() returns some values, we need to ensure ALL configured filaments are in the map.
+        // Add any missing filament indices that are configured but not used by objects.
+        size_t configured_filament_count = m_config.filament_diameter.size();
+        for (size_t i = 0; i < configured_filament_count; ++i) {
+            if (std::find(filament_extruders.begin(), filament_extruders.end(), (unsigned int)i) == filament_extruders.end()) {
+                filament_extruders.push_back((unsigned int)i);
+            }
+        }
     }
-
-        << physical_extruder_count << " physical extruders and "
-        << filament_extruders.size() << " filaments to map";
 
     // Create mapping: filament_id -> physical_extruder_id
     // Mapping formula: physical_extruder = filament_id % physical_extruder_count
@@ -531,11 +540,7 @@ void Print::initialize_filament_extruder_map()
     for (unsigned int filament_idx : filament_extruders) {
         int physical_extruder = filament_idx % physical_extruder_count;
         m_filament_extruder_map[filament_idx] = physical_extruder;
-
-            << filament_idx << " -> physical_extruder " << physical_extruder;
     }
-
-        << m_filament_extruder_map.size() << " entries";
 }
 
 unsigned int Print::num_object_instances() const
@@ -2304,7 +2309,32 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
 
     //BBS
     result->conflict_result = m_conflict_result;
-    return path.c_str();
+
+    // After G-code export is complete, finalize the output path by replacing placeholders with actual values
+    // This ensures that placeholders like {print_time} are replaced with calculated values
+    // Note: This is needed for direct export (not through BackgroundSlicingProcess) where
+    // finalize_output_path() might not be called automatically
+    std::string final_path = this->print_statistics().finalize_output_path(path);
+
+    // Rename the file from the placeholder path to the finalized path
+    if (final_path != path) {
+        std::error_code ret = rename_file(path, final_path);
+        if (ret) {
+            BOOST_LOG_TRIVIAL(warning) << "Failed to rename G-code file from '" << path
+                << "' to '" << final_path << "': " << ret.message();
+            // If rename fails, return the original path
+            return path;
+        } else {
+            BOOST_LOG_TRIVIAL(info) << "Renamed G-code file from '" << path
+                << "' to '" << final_path << "'";
+            // Update result filename to reflect the new path
+            if (result) {
+                result->filename = final_path;
+            }
+        }
+    }
+
+    return final_path;
 }
 
 void Print::_make_skirt()
@@ -2982,7 +3012,10 @@ std::string Print::output_filename(const std::string &filename_base) const
 {
     // Set the placeholders for the data know first after the G-code export is finished.
     // These values will be just propagated into the output file name.
-    DynamicConfig config = this->finished() ? this->print_statistics().config() : this->print_statistics().placeholders();
+    // Use cached statistics if available (even if not finished) to avoid placeholders like {print_time}
+    const PrintStatistics& stats = this->print_statistics();
+    bool has_valid_stats = stats.total_used_filament > 0 || !stats.estimated_normal_print_time.empty();
+    DynamicConfig config = (this->finished() || has_valid_stats) ? stats.config() : stats.placeholders();
     config.set_key_value("num_filaments", new ConfigOptionInt((int)m_config.nozzle_diameter.size()));
     config.set_key_value("num_extruders", new ConfigOptionInt((int) m_config.nozzle_diameter.size()));
     config.set_key_value("plate_name", new ConfigOptionString(get_plate_name()));

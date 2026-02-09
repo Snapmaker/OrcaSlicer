@@ -1555,12 +1555,9 @@ PresetUpdater::~PresetUpdater()
 //BBS: refine the preset updater logic
 void PresetUpdater::sync(std::string http_url, std::string language, std::string plugin_version, PresetBundle *preset_bundle)
 {
-	//p->set_download_prefs(GUI::wxGetApp().app_config);
+
 	if (!p->enabled_version_check && !p->enabled_config_update) { return; }
 
-	// Copy the whole vendors data for use in the background thread
-	// Unfortunatelly as of C++11, it needs to be copied again
-	// into the closure (but perhaps the compiler can elide this).
     VendorMap vendors = preset_bundle ? preset_bundle->vendors : VendorMap{};
 
 	p->thread = std::thread([this, vendors, http_url, language, plugin_version]() {
@@ -1582,10 +1579,7 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
 			return;
         this->p->sync_plugins(http_url, plugin_version);
         this->p->sync_printer_config(http_url);
-		//if (p->cancel)
-		//	return;
-		//remove the tooltip currently
-		//this->p->sync_tooltip(http_url, language);
+	
 	});
 }
 
@@ -1603,9 +1597,7 @@ static bool reload_configs_update_gui()
 
 	// Reload global configuration
 	auto* app_config = GUI::wxGetApp().app_config;
-	// System profiles should not trigger any substitutions, user profiles may trigger substitutions, but these substitutions
-	// were already presented to the user on application start up. Just do substitutions now and keep quiet about it.
-	// However throw on substitutions in system profiles, those shall never happen with system profiles installed over the air.
+
 	GUI::wxGetApp().preset_bundle->load_presets(*app_config, ForwardCompatibilitySubstitutionRule::EnableSilentDisableSystem);
 	GUI::wxGetApp().load_current_presets();
 	GUI::wxGetApp().plater()->set_bed_shape();

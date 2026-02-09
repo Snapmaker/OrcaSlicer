@@ -808,8 +808,19 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                     return;
                 }
 
-                if (currentPresetVersion < remoteVersion)
+                if (currentPresetVersion < remoteVersion) {
+                    
+                    if (fs::exists(fileName))
+                        fs::remove(fileName);    
+
+                    fs::path tmpPath = fileName;
+                    auto     dirPath = tmpPath.parent_path() / "profiles/flutter_web";
+
+                    if (fs::exists(dirPath))
+                        fs::remove_all(dirPath);   
+
                     download_file(fileUrl, fileName, "../ota/profiles/");
+                }
                 else {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
@@ -917,8 +928,18 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     return;
                 }
 
-                if (currentPresetVersion < remoteVersion)
+                if (currentPresetVersion < remoteVersion) {
+                    if (fs::exists(fileName))
+                        fs::remove(fileName);
+
+                    fs::path tmpPath = fileName;
+                    auto     dirPath = tmpPath.parent_path() / "profiles/profiles";
+
+                    if (fs::exists(dirPath))
+                        fs::remove_all(dirPath);   
+
                     download_file(fileUrl, fileName, "../ota/profiles/profiles/");
+                }
                 else {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);

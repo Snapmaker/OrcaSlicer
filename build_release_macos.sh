@@ -3,7 +3,7 @@
 set -e
 set -o pipefail
 
-while getopts ":dpa:snt:xbc:1h" opt; do
+while getopts ":dpa:snt:xbc:hu" opt; do
   case "${opt}" in
     d )
         export BUILD_TARGET="deps"
@@ -36,6 +36,9 @@ while getopts ":dpa:snt:xbc:1h" opt; do
         ;;
     1 )
         export CMAKE_BUILD_PARALLEL_LEVEL=1
+        ;;
+    u )
+        export BUILD_UNIVERSAL="1"
         ;;
     h ) echo "Usage: ./build_release_macos.sh [-d]"
         echo "   -d: Build deps only"

@@ -132,9 +132,10 @@ jobs:
 
       - name: Install tools
         run: |
-          brew install libtool
+          brew install ninja libtool
           brew list
-          mkdir -p ${{ github.workspace }}/deps/build
+          mkdir -p ${{ github.workspace }}/deps/build_arm64
+          mkdir -p ${{ github.workspace }}/deps/build_arm64/OrcaSlicer_dep_arm64
 
       - name: Free disk space
         run: |
@@ -216,6 +217,15 @@ jobs:
             true
           fi
 
+          # Verify app bundle signature
+          echo "Verifying ARM64 app bundle signature..."
+          codesign --verify --verbose --deep --strict "$APP_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::ARM64 app bundle signature verification failed"
+            exit 1
+          fi
+          echo "ARM64 app bundle signature verified successfully"
+
           # Sign profile validator if exists
           if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
             find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
@@ -225,6 +235,15 @@ jobs:
               --entitlements "$ENTITLEMENTS_PATH" \
               --sign "$CERTIFICATE_ID" \
               "$VALIDATOR_APP_PATH"
+            
+            # Verify profile validator signature
+            echo "Verifying ARM64 profile validator signature..."
+            codesign --verify --verbose --deep --strict "$VALIDATOR_APP_PATH"
+            if [ $? -ne 0 ]; then
+              echo "::error::ARM64 profile validator signature verification failed"
+              exit 1
+            fi
+            echo "ARM64 profile validator signature verified successfully"
           fi
 
           # Create DMG
@@ -242,12 +261,33 @@ jobs:
             --sign "$CERTIFICATE_ID" \
             "$DMG_PATH"
 
+          # Verify DMG signature
+          echo "Verifying ARM64 DMG signature..."
+          codesign --verify --verbose "$DMG_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::ARM64 DMG signature verification failed"
+            exit 1
+          fi
+          echo "ARM64 DMG signature verified successfully"
+
           # Notarize DMG
+          echo "Submitting ARM64 DMG for notarization..."
           xcrun notarytool submit "$DMG_PATH" \
             --keychain-profile "notarytool-profile" \
             --wait
 
+          # Staple notarization ticket
+          echo "Stapling ARM64 DMG notarization ticket..."
           xcrun stapler staple "$DMG_PATH"
+
+          # Verify notarization
+          echo "Verifying ARM64 DMG notarization..."
+          xcrun stapler validate "$DMG_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::ARM64 DMG notarization validation failed"
+            exit 1
+          fi
+          echo "ARM64 DMG notarization verified successfully"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -272,6 +312,61 @@ jobs:
           asset_name: Snapmaker_Orca_Mac_arm64_${{ needs.setup.outputs.ver }}.dmg
           asset_content_type: application/octet-stream
           max_releases: 1
+
+  # ==============================================================================
+  # Upload macOS ARM64 dSYM to Sentry
+  # ==============================================================================
+  upload_dsym_to_sentry_arm64:
+    name: Upload ARM64 dSYM to Sentry
+    runs-on: ${{ inputs.os }}
+    needs: [setup, build_macos_arm64]
+    if: inputs.os == 'macos-14'
+    env:
+      VERSION: ${{ needs.setup.outputs.ver }}
+    steps:
+      - name: Install sentry-cli
+        run: |
+          # Method 1: Official install script
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Installing sentry-cli via official script..."
+            curl -sL https://sentry.io/get-cli/ | bash || true
+          fi
+
+          # Method 2: npm fallback
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Official script failed, trying npm..."
+            npm install -g @sentry/cli || true
+          fi
+
+          # Method 3: Direct binary download
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Downloading binary directly..."
+            SENTRY_CLI_VERSION=$(curl -s https://api.github.com/repos/getsentry/sentry-cli/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            curl -sL "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal" -o /usr/local/bin/sentry-cli
+            chmod +x /usr/local/bin/sentry-cli
+          fi
+
+          sentry-cli --version
+
+      - name: Download arm64 dSYM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_arm64_${{ needs.setup.outputs.ver }}
+          path: ./dsym_arm64
+
+      - name: Upload arm64 dSYM to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -d "./dsym_arm64" ] && [ "$(find ./dsym_arm64 -name "*.dSYM" | wc -l)" -gt 0 ]; then
+            echo "Uploading ARM64 dSYM files to Sentry..."
+            sentry-cli --log-level=info upload-dif --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" ./dsym_arm64
+            echo "ARM64 dSYM upload completed successfully"
+          else
+            echo "Warning: No ARM64 dSYM files found to upload"
+          fi
 
   # ==============================================================================
   # macOS x86_64 Build Job
@@ -302,9 +397,10 @@ jobs:
 
       - name: Install tools
         run: |
-          brew install libtool
+          brew install ninja libtool
           brew list
-          mkdir -p ${{ github.workspace }}/deps/build
+          mkdir -p ${{ github.workspace }}/deps/build_x86_64
+          mkdir -p ${{ github.workspace }}/deps/build_x86_64/OrcaSlicer_dep_x86_64
 
       - name: Free disk space
         run: |
@@ -386,6 +482,15 @@ jobs:
             true
           fi
 
+          # Verify app bundle signature
+          echo "Verifying x86_64 app bundle signature..."
+          codesign --verify --verbose --deep --strict "$APP_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::x86_64 app bundle signature verification failed"
+            exit 1
+          fi
+          echo "x86_64 app bundle signature verified successfully"
+
           # Sign profile validator if exists
           if [ -f "$VALIDATOR_APP_PATH/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
             find "$VALIDATOR_APP_PATH/Contents/MacOS" -type f ! -name "Snapmaker_Orca_profile_validator" 2>/dev/null | while read file; do
@@ -395,6 +500,15 @@ jobs:
               --entitlements "$ENTITLEMENTS_PATH" \
               --sign "$CERTIFICATE_ID" \
               "$VALIDATOR_APP_PATH"
+            
+            # Verify profile validator signature
+            echo "Verifying x86_64 profile validator signature..."
+            codesign --verify --verbose --deep --strict "$VALIDATOR_APP_PATH"
+            if [ $? -ne 0 ]; then
+              echo "::error::x86_64 profile validator signature verification failed"
+              exit 1
+            fi
+            echo "x86_64 profile validator signature verified successfully"
           fi
 
           # Create DMG
@@ -412,12 +526,33 @@ jobs:
             --sign "$CERTIFICATE_ID" \
             "$DMG_PATH"
 
+          # Verify DMG signature
+          echo "Verifying x86_64 DMG signature..."
+          codesign --verify --verbose "$DMG_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::x86_64 DMG signature verification failed"
+            exit 1
+          fi
+          echo "x86_64 DMG signature verified successfully"
+
           # Notarize DMG
+          echo "Submitting x86_64 DMG for notarization..."
           xcrun notarytool submit "$DMG_PATH" \
             --keychain-profile "notarytool-profile" \
             --wait
 
+          # Staple notarization ticket
+          echo "Stapling x86_64 DMG notarization ticket..."
           xcrun stapler staple "$DMG_PATH"
+
+          # Verify notarization
+          echo "Verifying x86_64 DMG notarization..."
+          xcrun stapler validate "$DMG_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::x86_64 DMG notarization validation failed"
+            exit 1
+          fi
+          echo "x86_64 DMG notarization verified successfully"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -442,6 +577,61 @@ jobs:
           asset_name: Snapmaker_Orca_Mac_x86_64_${{ needs.setup.outputs.ver }}.dmg
           asset_content_type: application/octet-stream
           max_releases: 1
+
+  # ==============================================================================
+  # Upload macOS x86_64 dSYM to Sentry
+  # ==============================================================================
+  upload_dsym_to_sentry_x86_64:
+    name: Upload x86_64 dSYM to Sentry
+    runs-on: ${{ inputs.os }}
+    needs: [setup, build_macos_x86_64]
+    if: inputs.os == 'macos-14'
+    env:
+      VERSION: ${{ needs.setup.outputs.ver }}
+    steps:
+      - name: Install sentry-cli
+        run: |
+          # Method 1: Official install script
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Installing sentry-cli via official script..."
+            curl -sL https://sentry.io/get-cli/ | bash || true
+          fi
+
+          # Method 2: npm fallback
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Official script failed, trying npm..."
+            npm install -g @sentry/cli || true
+          fi
+
+          # Method 3: Direct binary download
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Downloading binary directly..."
+            SENTRY_CLI_VERSION=$(curl -s https://api.github.com/repos/getsentry/sentry-cli/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            curl -sL "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal" -o /usr/local/bin/sentry-cli
+            chmod +x /usr/local/bin/sentry-cli
+          fi
+
+          sentry-cli --version
+
+      - name: Download x86_64 dSYM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dSYM_Mac_x86_64_${{ needs.setup.outputs.ver }}
+          path: ./dsym_x86_64
+
+      - name: Upload x86_64 dSYM to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [ -d "./dsym_x86_64" ] && [ "$(find ./dsym_x86_64 -name "*.dSYM" | wc -l)" -gt 0 ]; then
+            echo "Uploading x86_64 dSYM files to Sentry..."
+            sentry-cli --log-level=info upload-dif --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" ./dsym_x86_64
+            echo "x86_64 dSYM upload completed successfully"
+          else
+            echo "Warning: No x86_64 dSYM files found to upload"
+          fi
 
   # ==============================================================================
   # macOS Universal Build Job (depends on arm64 and x86_64)
@@ -472,9 +662,10 @@ jobs:
 
       - name: Install tools
         run: |
-          brew install libtool
+          brew install ninja libtool
           brew list
-          mkdir -p ${{ github.workspace }}/deps/build
+          mkdir -p ${{ github.workspace }}/deps/build_universal
+          mkdir -p ${{ github.workspace }}/deps/build_universal/OrcaSlicer_dep_universal
 
       - name: Free disk space
         run: |

@@ -139,5 +139,12 @@
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Snapmaker Orca 需要访问您的本地网络以发现并连接到您的 3D 打印机，并在本地主机上为应用界面提供网页内容。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_printer._tcp</string>
+	</array>
 </dict>
 </plist>

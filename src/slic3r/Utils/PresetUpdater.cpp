@@ -232,7 +232,11 @@ struct PresetUpdater::priv
     void sync_resources(std::string http_url, std::map<std::string, Resource> &resources, bool check_patch = false,  std::string current_version="", std::string changelog_file="");
     void sync_config(bool isAuto_check = true);
     void sync_update_flutter_resource(bool isAuto_check = true);
-    bool download_file(const std::string& url, const std::string& target_path, int timeout_sec = 30, bool* cancel_flag = nullptr);
+    bool download_file(const std::string&            url,
+                       const std::string&            target_path,
+                       const std::string&            extract_path,
+                       int timeout_sec = 30,
+                       bool*                         cancel_flag = nullptr);
     void sync_tooltip(std::string http_url, std::string language);
     void sync_plugins(std::string http_url, std::string plugin_version);
     void sync_printer_config(std::string http_url);
@@ -656,7 +660,8 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
     }
 }
 bool PresetUpdater::priv::download_file(const std::string& url,
-                                        const std::string& target_path,
+                                        const std::string& target_path, 
+                                        const std::string& extract_path,
                                         int   timeout_sec,
                                         bool* cancel_flag )
 {
@@ -700,7 +705,7 @@ bool PresetUpdater::priv::download_file(const std::string& url,
                 BOOST_LOG_TRIVIAL(error) << "Failed to rename temp file: " << ec.message();
                 return;
             }
-            extract_file(target_path, "../ota/profiles/");
+            extract_file(target_path, extract_path);
             BOOST_LOG_TRIVIAL(info) << "Download completed: " << target_path;
             res = true;
         })
@@ -804,7 +809,7 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                 }
 
                 if (currentPresetVersion < remoteVersion)
-                    download_file(fileUrl, fileName);
+                    download_file(fileUrl, fileName, "../ota/profiles/");
                 else {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
@@ -913,7 +918,7 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 }
 
                 if (currentPresetVersion < remoteVersion)
-                    download_file(fileUrl, fileName);
+                    download_file(fileUrl, fileName, "../ota/profiles/profiles/");
                 else {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
@@ -1375,7 +1380,7 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 	Updates updates;
 
 	BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:Checking for cached configuration updates...";
-    auto cache_profile_path =  cache_path / "profiles";
+    auto cache_profile_path =  cache_path / "profiles/profiles";
     if (!fs::exists(cache_profile_path))
         return updates;
 
@@ -1465,15 +1470,8 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 //BBS: switch to new BBL.json configs
 bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) const
 {
-    //std::string vendor_path;
-    //std::string vendor_name;
     if (updates.incompats.size() > 0) {
-        //if (snapshot) {
-        //	BOOST_LOG_TRIVIAL(info) << "Taking a snapshot...";
-        //	if (! GUI::Config::take_config_snapshot_cancel_on_error(*GUI::wxGetApp().app_config, Snapshot::SNAPSHOT_DOWNGRADE, "",
-        //		_u8L("Continue and install configuration updates?")))
-        //		return false;
-        //}
+
         BOOST_LOG_TRIVIAL(info) << format("[Orca Updater]:Deleting %1% incompatible bundles", updates.incompats.size());
 
         for (auto &incompat : updates.incompats) {
@@ -1481,12 +1479,6 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
             incompat.remove();
         }
     } else if (updates.updates.size() > 0) {
-        //if (snapshot) {
-        //	BOOST_LOG_TRIVIAL(info) << "Taking a snapshot...";
-        //	if (! GUI::Config::take_config_snapshot_cancel_on_error(*GUI::wxGetApp().app_config, Snapshot::SNAPSHOT_UPGRADE, "",
-        //		_u8L("Continue and install configuration updates?")))
-        //		return false;
-        //}
 
         BOOST_LOG_TRIVIAL(info) << format("[Orca Updater]:Performing %1% updates", updates.updates.size());
 
@@ -1495,28 +1487,8 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
 
             if (update.can_install)
                 update.install();
-            //if (!update.is_directory) {
-            //    vendor_path = update.source.parent_path().string();
-            //    vendor_name = update.vendor;
-            //}
+
         }
-
-        //if (!vendor_path.empty()) {
-        //    PresetBundle bundle;
-        //    // Throw when parsing invalid configuration. Only valid configuration is supposed to be provided over the air.
-        //    bundle.load_vendor_configs_from_json(vendor_path, vendor_name, PresetBundle::LoadConfigBundleAttribute::LoadSystem, ForwardCompatibilitySubstitutionRule::Disable);
-
-        //    BOOST_LOG_TRIVIAL(info) << format("Deleting %1% conflicting presets", bundle.prints.size() + bundle.filaments.size() + bundle.printers.size());
-
-        //    auto preset_remover = [](const Preset& preset) {
-        //        BOOST_LOG_TRIVIAL(info) << '\t' << preset.file;
-        //        fs::remove(preset.file);
-        //    };
-
-        //    for (const auto &preset : bundle.prints)    { preset_remover(preset); }
-        //    for (const auto &preset : bundle.filaments) { preset_remover(preset); }
-        //    for (const auto &preset : bundle.printers)  { preset_remover(preset); }
-        //}
     }
 
     return true;

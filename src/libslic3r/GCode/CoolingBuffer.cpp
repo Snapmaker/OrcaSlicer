@@ -340,12 +340,14 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
     for (size_t i = 0; i < m_extruder_ids.size(); ++ i) {
         PerExtruderAdjustments &adj         = per_extruder_adjustments[i];
         unsigned int            extruder_id = m_extruder_ids[i];
+        // SM Orca: 冷却参数都是物理挤出机参数（无耗材覆盖），使用physical_extruder_id访问
+        int physical_extruder_id = get_physical_extruder(extruder_id);
         adj.extruder_id               = extruder_id;
-        adj.cooling_slow_down_enabled = m_config.slow_down_for_layer_cooling.get_at(extruder_id);
-        adj.slow_down_layer_time = float(m_config.slow_down_layer_time.get_at(extruder_id));
-        adj.slow_down_min_speed           = float(m_config.slow_down_min_speed.get_at(extruder_id));
+        adj.cooling_slow_down_enabled = m_config.slow_down_for_layer_cooling.get_at(physical_extruder_id);
+        adj.slow_down_layer_time      = float(m_config.slow_down_layer_time.get_at(physical_extruder_id));
+        adj.slow_down_min_speed       = float(m_config.slow_down_min_speed.get_at(physical_extruder_id));
         // ORCA: To enable dont slow down external perimeters feature per filament (extruder)
-        adj.dont_slow_down_outer_wall   = m_config.dont_slow_down_outer_wall.get_at(extruder_id);
+        adj.dont_slow_down_outer_wall = m_config.dont_slow_down_outer_wall.get_at(physical_extruder_id);
         map_extruder_to_per_extruder_adjustment[extruder_id] = i;
     }
 
@@ -731,7 +733,8 @@ std::string CoolingBuffer::apply_layer_cooldown(
         &supp_interface_fan_control, &supp_interface_fan_speed,
         &ironing_fan_control, &ironing_fan_speed
     ](bool immediately_apply) {
-#define EXTRUDER_CONFIG(OPT) m_config.OPT.get_at(m_current_extruder)
+        // SM Orca: 风扇参数都是物理挤出机参数（无耗材覆盖），使用physical_extruder_id访问
+#define EXTRUDER_CONFIG(OPT) m_config.OPT.get_at(get_physical_extruder(m_current_extruder))
         float fan_min_speed = EXTRUDER_CONFIG(fan_min_speed);
         float fan_speed_new = EXTRUDER_CONFIG(reduce_fan_stop_start_freq) ? fan_min_speed : 0;
         //BBS

@@ -391,20 +391,58 @@ static t_config_option_keys print_config_diffs(
                 continue;
 
             // - Check if printer config or filament override changed the effective value
-            // - Only add to print_diff (not filament_overrides) to avoid array size mismatch
-            // The actual filament->extruder mapping is applied later during config usage
+            // - Add to print_diff for tracking changes
+            // - Add to filament_overrides only if filament has real user override
             //
-            // 关键修复：只要打印机配置变化了，就应该添加到 print_diff
-            // 这确保了用户在UI中修改打印机配置时，修改能被正确保存
+            // SM Orca: 关键修复 - 只有当耗材真的有用户覆盖时才添加到 filament_overrides
+            // 检查是否有任意耗材的值不同于映射的挤出机值
+            bool has_real_filament_override = false;
+            auto* new_vec = dynamic_cast<const ConfigOptionVectorBase*>(opt_new);
+            auto* new_filament_vec = dynamic_cast<const ConfigOptionVectorBase*>(opt_new_filament);
+
+            if (new_vec && new_filament_vec) {
+                for (size_t filament_idx = 0; filament_idx < new_filament_vec->size(); ++filament_idx) {
+                    // 取模映射：耗材索引直接对应挤出机索引
+                    size_t extruder_idx = filament_idx % new_vec->size();
+
+                    // 检查耗材值是否等于挤出机值
+                    auto* new_int = dynamic_cast<const ConfigOptionVector<int>*>(new_vec);
+                    auto* new_filament_int = dynamic_cast<const ConfigOptionVector<int>*>(new_filament_vec);
+                    auto* new_dbl = dynamic_cast<const ConfigOptionVector<double>*>(new_vec);
+                    auto* new_filament_dbl = dynamic_cast<const ConfigOptionVector<double>*>(new_filament_vec);
+
+                    bool values_equal = false;
+                    if (new_int && new_filament_int) {
+                        values_equal = (new_int->get_at(extruder_idx) == new_filament_int->get_at(filament_idx));
+                    } else if (new_dbl && new_filament_dbl) {
+                        values_equal = (new_dbl->get_at(extruder_idx) == new_filament_dbl->get_at(filament_idx));
+                    }
+
+                    if (!values_equal) {
+                        has_real_filament_override = true;
+                        break;
+                    }
+                }
+            }
+
             auto opt_copy = opt_new->clone();
-            opt_copy->apply_override(opt_new_filament);
+            if (!((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
+                && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament))
+                opt_copy->apply_override(opt_new_filament);
+
             if (printer_config_changed || *opt_old != *opt_copy) {
                 print_diff.emplace_back(opt_key);
                 BOOST_LOG_TRIVIAL(info) << "print_config_diffs: " << opt_key
                     << " - adding to print_diff (printer_changed=" << (printer_config_changed ? "Y" : "N")
                     << ", effective_changed=" << (*opt_old != *opt_copy ? "Y" : "N") << ")";
             }
-            delete opt_copy;
+
+            // SM Orca: 只有耗材真的有覆盖时才添加到 filament_overrides
+            if (has_real_filament_override) {
+                filament_overrides.set_key_value(opt_key, opt_copy);
+            } else {
+                delete opt_copy;
+            }
         } else if (opt_new_filament != nullptr && ! opt_new_filament->is_nil()) {
             // An extruder retract override is available at some of the filament presets.
             bool overriden = opt_new->overriden_by(opt_new_filament);
@@ -1324,20 +1362,107 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // 2. 当耗材-挤出机映射激活时（m_filament_extruder_map不为空），
     //    filament_overrides中的回抽值会覆盖用户对打印机配置的直接修改
     //
-    // 修复策略：
-    // - 当存在耗材-挤出机映射时（说明已加载项目），移除filament_overrides中的所有回抽参数
-    // - 这样用户的打印机配置修改就不会被耗材覆盖值覆盖
-    // - 保留filament_overrides中其他参数的功能不受影响
+    // 修复策略（SM Orca）：
+    // - 当存在耗材-挤出机映射时，选择性清除耗材覆盖
+    // - 只清除所有耗材都没勾选的参数
+    // - 保留用户勾选的耗材参数覆盖（优先级最高）
+    // - 未勾选的参数从映射的挤出机继承配置
     //
-    // 注意：此修复确保用户对打印机挤出机回抽参数的直接编辑拥有最高优先级
+    // 注意：此修复确保用户勾选的耗材参数覆盖拥有最高优先级
     const std::vector<std::string> &extruder_retract_keys = print_config_def.extruder_retract_keys();
     bool has_mapping = !m_filament_extruder_map.empty();
     if (has_mapping) {
-        // 当有映射时，移除所有回抽参数的耗材覆盖，让打印机配置生效
+        // SM Orca: 选择性清除 - 只清除所有耗材都没勾选的参数，保留用户勾选的覆盖
         for (const std::string &key : extruder_retract_keys) {
-            if (filament_overrides.erase(key)) {
-                BOOST_LOG_TRIVIAL(info) << "Print::apply - Clearing filament override for '" << key
-                    << "' to allow printer config to take effect (filament-extruder mapping active)";
+            ConfigOption* override = filament_overrides.option(key);
+            if (!override || !override->is_vector())
+                continue;
+
+            auto* override_vec = dynamic_cast<ConfigOptionVectorBase*>(override);
+            if (!override_vec)
+                continue;
+
+            // 检查是否有任意耗材勾选了这个参数
+            bool has_any_user_override = false;
+            if (override_vec->nullable()) {
+                // Nullable类型：检查是否有非nil的值
+                for (size_t i = 0; i < override_vec->size(); ++i) {
+                    if (!override_vec->is_nil(i)) {
+                        has_any_user_override = true;
+                        break;
+                    }
+                }
+            } else {
+                // Non-nullable类型：检查是否有不同于默认值的值
+                // 需要与映射的挤出机默认值比较
+                for (size_t filament_idx = 0; filament_idx < override_vec->size(); ++filament_idx) {
+                    // 获取映射的物理挤出机索引
+                    auto map_it = m_filament_extruder_map.find(filament_idx);
+                    int physical_extruder_idx;
+                    if (map_it != m_filament_extruder_map.end()) {
+                        physical_extruder_idx = map_it->second;
+                    } else {
+                        // 回退：使用取模映射
+                        physical_extruder_idx = (int)filament_idx % (int)override_vec->size();
+                        if (physical_extruder_idx < 0)
+                            physical_extruder_idx = 0;
+                    }
+
+                    // Get the actual extruder defaults from printer config (m_config)
+                    const ConfigOption* extruder_default = m_config.option(key);
+                    if (!extruder_default || !extruder_default->is_vector())
+                        continue;
+
+                    auto* default_vec = dynamic_cast<const ConfigOptionVectorBase*>(extruder_default);
+                    if (!default_vec)
+                        continue;
+
+                    if (physical_extruder_idx >= (int)default_vec->size())
+                        continue;
+
+                    // 尝试不同类型的比较
+                    auto* override_dbl = dynamic_cast<const ConfigOptionVector<double>*>(override_vec);
+                    auto* override_int = dynamic_cast<const ConfigOptionVector<int>*>(override_vec);
+                    auto* override_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(override_vec);
+
+                    auto* default_dbl = dynamic_cast<const ConfigOptionVector<double>*>(default_vec);
+                    auto* default_int = dynamic_cast<const ConfigOptionVector<int>*>(default_vec);
+                    auto* default_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(default_vec);
+
+                    if (override_dbl && default_dbl) {
+                        double override_value = override_dbl->get_at(filament_idx);
+                        double default_value = default_dbl->get_at(physical_extruder_idx);
+                        if (override_value != default_value) {
+                            has_any_user_override = true;
+                            break;
+                        }
+                    } else if (override_int && default_int) {
+                        int override_value = override_int->get_at(filament_idx);
+                        int default_value = default_int->get_at(physical_extruder_idx);
+                        if (override_value != default_value) {
+                            has_any_user_override = true;
+                            break;
+                        }
+                    } else if (override_bool && default_bool) {
+                        unsigned char override_value = override_bool->get_at(filament_idx);
+                        unsigned char default_value = default_bool->get_at(physical_extruder_idx);
+                        if (override_value != default_value) {
+                            has_any_user_override = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 只有所有耗材都没勾选时才清除这个参数
+            if (!has_any_user_override) {
+                if (filament_overrides.erase(key)) {
+                    BOOST_LOG_TRIVIAL(info) << "Print::apply - Clearing unused filament override for '" << key
+                        << "' (no user overrides, will inherit from mapped extruder)";
+                }
+            } else {
+                BOOST_LOG_TRIVIAL(info) << "Print::apply - Preserving filament override for '" << key
+                    << "' (has user overrides, will use override value)";
             }
         }
     }

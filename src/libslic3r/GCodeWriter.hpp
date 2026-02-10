@@ -136,11 +136,6 @@ public:
             // 映射表为空或没有该耗材的映射，使用默认模运算映射
             physical_extruder_id = filament_idx % m_physical_extruder_count;
         }
-        // SM Orca: 日志 - 映射查询
-        BOOST_LOG_TRIVIAL(info) << "GCodeWriter::get_physical_extruder: filament_id=" << filament_idx
-            << " -> physical_extruder_id=" << physical_extruder_id
-            << " (map_size=" << m_filament_extruder_map.size() << ", physical_count=" << m_physical_extruder_count << ")"
-            << (it != m_filament_extruder_map.end() ? " [from_map]" : " [default_mod]");
         return physical_extruder_id;
     }
 

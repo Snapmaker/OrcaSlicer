@@ -4893,7 +4893,7 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
             BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;            
           }
         })
-        .perform_sync();
+        .perform();
 }
 void GUI_App::process_network_msg(std::string dev_id, std::string msg)
 {

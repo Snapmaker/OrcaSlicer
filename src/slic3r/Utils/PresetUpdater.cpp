@@ -710,7 +710,7 @@ bool PresetUpdater::priv::download_file(const std::string& url,
             res = true;
         })
         .timeout_max(timeout_sec)
-        .perform_sync();
+        .perform();
 
     if (fs::exists(tmp_path)) {
         fs::remove(tmp_path);
@@ -835,7 +835,7 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server flutter update data error:" << errorMsg;
             }
         })
-        .perform_sync();
+        .perform();
 }
     // Orca: sync config update for currect App version
 void PresetUpdater::priv::sync_config(bool isAuto_check)
@@ -954,7 +954,7 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server preset update data error:" << errorMsg;
             }
         })
-        .perform_sync();
+        .perform();
 }
 
 void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string language)

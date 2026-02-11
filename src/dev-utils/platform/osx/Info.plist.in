@@ -125,11 +125,18 @@
     </dict>
   </array>
   <key>LSMinimumSystemVersion</key>
-  <string>12.0</string>
+  <string>10.10</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Snapmaker Orca 需要访问您的本地网络以发现并连接到您的 3D 打印机，并在本地主机上为应用界面提供网页内容。</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_http._tcp</string>
+    <string>_printer._tcp</string>
+  </array>
   <key>LSEnvironment</key>
   <dict>
     <key>ASAN_OPTIONS</key>

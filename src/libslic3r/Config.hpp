@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 #include "libslic3r.h"
 #include "clonable_ptr.hpp"
@@ -297,6 +298,15 @@ public:
     		return false;
     	*this = *rhs;
     	return true;
+    }
+    // SM Orca: Apply an override option with filament-to-extruder mapping.
+    // map_indices[i] indicates which physical extruder filament i should inherit from.
+    // Default implementation ignores mapping and applies directly.
+    virtual bool                apply_override(const ConfigOption *rhs, const std::vector<int>& /*map_indices*/) {
+        if (*this == *rhs)
+            return false;
+        *this = *rhs;
+        return true;
     }
 };
 
@@ -613,6 +623,86 @@ public:
             } else {
                 this->values[i] = default_value;
             }
+        }
+        return modified;
+    }
+    // SM Orca: Apply an override option with filament-to-extruder mapping.
+    // map_indices[i] indicates which physical extruder filament i should inherit from.
+    // When a filament value is nil, it inherits from the mapped physical extruder's default value.
+    bool apply_override(const ConfigOption *rhs, const std::vector<int>& map_indices) override {
+        if (this->nullable())
+            throw ConfigurationError("Cannot override a nullable ConfigOption.");
+        if (rhs->type() != this->type())
+            throw ConfigurationError("ConfigOptionVector.apply_override() applied to different types.");
+        auto rhs_vec = static_cast<const ConfigOptionVector<T>*>(rhs);
+
+        if (!rhs->nullable()) {
+            // Overriding a non-nullable object with another non-nullable object.
+            if (this->values != rhs_vec->values) {
+                this->values = rhs_vec->values;
+                return true;
+            }
+            return false;
+        }
+
+        size_t cnt = std::min(this->size(), rhs_vec->size());
+        if (cnt < 1)
+            return false;
+
+        // Save original values as the default source for physical extruders
+        std::vector<T> default_values = this->values;
+
+        // Extend array to rhs_vec size
+        if (this->values.empty())
+            this->values.resize(rhs_vec->size());
+        else
+            this->values.resize(rhs_vec->size(), this->values.front());
+
+        // DEBUG: 打印 default_values (仅限算术类型)
+        if constexpr (std::is_arithmetic_v<T>) {
+            std::string default_vals_str = "[";
+            for (size_t i = 0; i < default_values.size() && i < 8; ++i) {
+                default_vals_str += std::to_string(default_values[i]) + (i < default_values.size()-1 ? "," : "");
+            }
+            default_vals_str += "]";
+            BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_START: default_values=" << default_vals_str
+                << " rhs_size=" << rhs_vec->size();
+        }
+
+        bool modified = false;
+        for (size_t i = 0; i < rhs_vec->size(); ++i) {
+            T old_value = (i < this->values.size()) ? this->values[i] : T();
+            if (!rhs_vec->is_nil(i)) {
+                // Non-nil: use filament's own value
+                this->values[i] = rhs_vec->values[i];
+                // DEBUG: 仅限算术类型
+                if constexpr (std::is_arithmetic_v<T>) {
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
+                        << " nil=N rhs_val=" << rhs_vec->values[i];
+                }
+            } else {
+                // Nil: inherit from mapped physical extruder
+                if (i < map_indices.size() && map_indices[i] >= 0 && (size_t)map_indices[i] < default_values.size()) {
+                    this->values[i] = default_values[map_indices[i]];
+                    // DEBUG: 仅限算术类型
+                    if constexpr (std::is_arithmetic_v<T>) {
+                        BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
+                            << " nil=Y map_idx=" << map_indices[i]
+                            << " inherited=" << default_values[map_indices[i]];
+                    }
+                } else if (!default_values.empty()) {
+                    // Fallback: use first value
+                    this->values[i] = default_values[0];
+                    // DEBUG: 仅限算术类型
+                    if constexpr (std::is_arithmetic_v<T>) {
+                        BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
+                            << " nil=Y FALLBACK default_val=" << default_values[0];
+                    }
+                }
+            }
+            // Check if the value actually changed
+            if (this->values[i] != old_value)
+                modified = true;
         }
         return modified;
     }

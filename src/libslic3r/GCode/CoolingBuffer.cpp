@@ -28,6 +28,12 @@ CoolingBuffer::CoolingBuffer(GCode &gcodegen) : m_config(gcodegen.config()), m_t
         m_num_extruders = std::max(ex.id() + 1, m_num_extruders);
         m_extruder_ids.emplace_back(ex.id());
     }
+
+    // SM Orca: 设置物理挤出机数量，用于 get_physical_extruder() 的模运算回退
+    m_physical_extruder_count = m_config.extruder_offset.values.size();
+    if (m_physical_extruder_count < 1) {
+        m_physical_extruder_count = 1;
+    }
 }
 
 void CoolingBuffer::reset(const Vec3d &position)

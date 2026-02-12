@@ -680,6 +680,8 @@ class Print;
         std::vector<Vec3f> m_extruder_offsets;
         // SM Orca: 耗材到物理挤出机的映射
         std::unordered_map<int, int> m_filament_extruder_map;
+        // SM Orca: 物理挤出机数量（用于默认模运算映射，防止数组越界）
+        size_t m_physical_extruder_count = 1;
         GCodeFlavor m_flavor;
         float       m_nozzle_volume;
         AxisCoords m_start_position; // mm
@@ -783,11 +785,19 @@ class Print;
         void set_filament_extruder_map(const std::unordered_map<int, int>& map) {
             m_filament_extruder_map = map;
         }
+        // SM Orca: 设置物理挤出机数量
+        void set_physical_extruder_count(size_t count) {
+            m_physical_extruder_count = (count > 0) ? count : 1;
+        }
         // SM Orca: 获取物理挤出机ID（根据耗材索引）
+        // 关键修复：当映射表为空时，使用模运算而不是直接返回耗材ID，避免越界
         int get_physical_extruder(int filament_idx) const {
             auto it = m_filament_extruder_map.find(filament_idx);
-            int physical_extruder_id = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
-            return physical_extruder_id;
+            if (it != m_filament_extruder_map.end()) {
+                return it->second;
+            }
+            // 映射表为空或没有该耗材的映射，使用默认模运算映射
+            return filament_idx % static_cast<int>(m_physical_extruder_count);
         }
         void enable_stealth_time_estimator(bool enabled);
         bool is_stealth_time_estimator_enabled() const {

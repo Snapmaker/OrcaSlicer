@@ -2195,7 +2195,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 
     m_cooling_buffer = make_unique<CoolingBuffer>(*this);
     m_cooling_buffer->set_current_extruder(initial_extruder_id);
-    
+    // SM Orca: 设置耗材-挤出机映射，确保 get_physical_extruder() 能正确工作
+    m_cooling_buffer->set_filament_extruder_map(writer_mapping);
+
     // Orca: Initialise AdaptivePA processor filter
     m_pa_processor = std::make_unique<AdaptivePAProcessor>(*this, tool_ordering.all_extruders());
 

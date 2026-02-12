@@ -366,12 +366,25 @@ static t_config_option_keys print_config_diffs(
         bool is_extruder_retract_param = (iter != extruder_retract_keys.end());
 
         // 1. This is an extruder retract parameter AND
-        // 2. Filament overrides exist AND
+        // 2. Filament overrides exist (nullable type means filament-level config) AND
         // 3. Filament-extruder map is not empty (meaning objects are loaded and mapping is initialized)
-        // When user edits printer config directly (without objects loaded or without filament overrides),
-        // we should treat it as a regular config change to ensure UI updates work correctly.
-        bool has_filament_overrides = (opt_new_filament != nullptr && !opt_new_filament->is_nil());
+        // SM Orca: 关键修复 - 对于nullable类型，即使所有元素都是nil，也需要进入映射处理
+        // 因为nil元素需要从对应的物理挤出机继承值
+        // 原来的逻辑 !opt_new_filament->is_nil() 会在所有元素都为nil时返回false，导致跳过映射处理
+        bool has_filament_overrides = (opt_new_filament != nullptr && opt_new_filament->nullable());
         bool needs_physical_mapping = is_extruder_retract_param && has_filament_overrides && !filament_extruder_map.empty();
+
+        // DEBUG: 打印 needs_physical_mapping 条件检查
+        if (is_extruder_retract_param) {
+            BOOST_LOG_TRIVIAL(error) << "DEBUG_NEEDS_MAPPING_CHECK: " << opt_key
+                << " is_extruder_retract=" << (is_extruder_retract_param ? "Y" : "N")
+                << " opt_new_filament=" << (opt_new_filament ? "exists" : "null")
+                << " nullable=" << (opt_new_filament ? (opt_new_filament->nullable() ? "Y" : "N") : "N/A")
+                << " is_nil=" << (opt_new_filament ? (opt_new_filament->is_nil() ? "Y" : "N") : "N/A")
+                << " has_filament_overrides=" << (has_filament_overrides ? "Y" : "N")
+                << " filament_extruder_map.empty=" << (filament_extruder_map.empty() ? "Y" : "N")
+                << " needs_physical_mapping=" << (needs_physical_mapping ? "Y" : "N");
+        }
 
         if (needs_physical_mapping) {
 
@@ -390,6 +403,51 @@ static t_config_option_keys print_config_diffs(
                 && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)
                 continue;
 
+            // SM Orca: Build map_indices for apply_override
+            // map_indices[i] = physical extruder index that filament i should inherit from
+            std::vector<int> map_indices;
+
+            // DEBUG: 打印 filament_extruder_map 内容
+            BOOST_LOG_TRIVIAL(error) << "DEBUG_FILAMENT_MAP: " << opt_key
+                << " filament_extruder_map.size()=" << filament_extruder_map.size();
+
+            if (!filament_extruder_map.empty()) {
+                // Get physical extruder count from nozzle_diameter
+                const ConfigOptionFloats* nozzle_diameter = new_full_config.option<ConfigOptionFloats>("nozzle_diameter");
+                size_t physical_extruder_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
+
+                // Get filament count from filament_diameter
+                const ConfigOptionFloats* filament_diameter = new_full_config.option<ConfigOptionFloats>("filament_diameter");
+                size_t filament_count = filament_diameter ? filament_diameter->values.size() : 1;
+
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_BUILD_MAP_INDICES: " << opt_key
+                    << " physical_extruder_count=" << physical_extruder_count
+                    << " filament_count=" << filament_count;
+
+                map_indices.resize(filament_count, 0);
+                for (size_t i = 0; i < filament_count; ++i) {
+                    auto it = filament_extruder_map.find((int)i);
+                    if (it != filament_extruder_map.end()) {
+                        map_indices[i] = it->second;
+                    } else {
+                        map_indices[i] = (int)(i % physical_extruder_count);
+                    }
+                }
+            } else {
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_BUILD_MAP_INDICES: " << opt_key << " filament_extruder_map is EMPTY!";
+            }
+
+            // DEBUG: 打印 map_indices 结果
+            if (!map_indices.empty()) {
+                std::string indices_str = "";
+                for (size_t i = 0; i < map_indices.size() && i < 8; ++i) {
+                    indices_str += std::to_string(i) + "->" + std::to_string(map_indices[i]) + " ";
+                }
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_MAP_INDICES_RESULT: " << opt_key << " [" << indices_str << "]";
+            } else {
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_MAP_INDICES_RESULT: " << opt_key << " map_indices is EMPTY!";
+            }
+
             // - Check if printer config or filament override changed the effective value
             // - Add to print_diff for tracking changes
             // - Add to filament_overrides only if filament has real user override
@@ -402,20 +460,31 @@ static t_config_option_keys print_config_diffs(
 
             if (new_vec && new_filament_vec) {
                 for (size_t filament_idx = 0; filament_idx < new_filament_vec->size(); ++filament_idx) {
-                    // 取模映射：耗材索引直接对应挤出机索引
-                    size_t extruder_idx = filament_idx % new_vec->size();
+                    // SM Orca: 对于 nullable 类型，nil 表示没有覆盖，跳过比较
+                    if (new_filament_vec->nullable() && new_filament_vec->is_nil(filament_idx)) {
+                        continue;
+                    }
+
+                    // Use map_indices to determine which extruder to compare against
+                    size_t extruder_idx = (filament_idx < map_indices.size() && map_indices[filament_idx] >= 0)
+                        ? (size_t)map_indices[filament_idx]
+                        : (filament_idx % new_vec->size());
 
                     // 检查耗材值是否等于挤出机值
                     auto* new_int = dynamic_cast<const ConfigOptionVector<int>*>(new_vec);
                     auto* new_filament_int = dynamic_cast<const ConfigOptionVector<int>*>(new_filament_vec);
                     auto* new_dbl = dynamic_cast<const ConfigOptionVector<double>*>(new_vec);
                     auto* new_filament_dbl = dynamic_cast<const ConfigOptionVector<double>*>(new_filament_vec);
+                    auto* new_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(new_vec);
+                    auto* new_filament_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(new_filament_vec);
 
                     bool values_equal = false;
                     if (new_int && new_filament_int) {
                         values_equal = (new_int->get_at(extruder_idx) == new_filament_int->get_at(filament_idx));
                     } else if (new_dbl && new_filament_dbl) {
                         values_equal = (new_dbl->get_at(extruder_idx) == new_filament_dbl->get_at(filament_idx));
+                    } else if (new_bool && new_filament_bool) {
+                        values_equal = (new_bool->get_at(extruder_idx) == new_filament_bool->get_at(filament_idx));
                     }
 
                     if (!values_equal) {
@@ -427,8 +496,86 @@ static t_config_option_keys print_config_diffs(
 
             auto opt_copy = opt_new->clone();
             if (!((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
-                && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament))
-                opt_copy->apply_override(opt_new_filament);
+                && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)) {
+                if (!map_indices.empty()) {
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_CALL: " << opt_key << " calling apply_override WITH map_indices";
+                    opt_copy->apply_override(opt_new_filament, map_indices);
+                } else {
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_CALL: " << opt_key << " calling apply_override WITHOUT map_indices (FALLBACK)";
+                    opt_copy->apply_override(opt_new_filament);
+                }
+            }
+
+            // DEBUG: 打印 extruder config (opt_new), filament override (opt_new_filament), 和结果 (opt_copy)
+            {
+                auto* new_int = dynamic_cast<const ConfigOptionVector<int>*>(opt_new);
+                auto* new_dbl = dynamic_cast<const ConfigOptionVector<double>*>(opt_new);
+                auto* filament_int = dynamic_cast<const ConfigOptionVector<int>*>(opt_new_filament);
+                auto* filament_dbl = dynamic_cast<const ConfigOptionVector<double>*>(opt_new_filament);
+                auto* copy_int = dynamic_cast<const ConfigOptionVector<int>*>(opt_copy);
+                auto* copy_dbl = dynamic_cast<const ConfigOptionVector<double>*>(opt_copy);
+
+                // 打印 extruder config
+                if (new_int) {
+                    std::string vals = "extruder_values=[";
+                    for (size_t i = 0; i < new_int->values.size() && i < 8; ++i) {
+                        vals += std::to_string(new_int->values[i]) + (i < new_int->values.size()-1 ? "," : "");
+                    }
+                    vals += "] ";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_INPUT: " << opt_key << " " << vals;
+                } else if (new_dbl) {
+                    std::string vals = "extruder_values=[";
+                    for (size_t i = 0; i < new_dbl->values.size() && i < 8; ++i) {
+                        vals += std::to_string(new_dbl->values[i]) + (i < new_dbl->values.size()-1 ? "," : "");
+                    }
+                    vals += "] ";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_INPUT: " << opt_key << " " << vals;
+                }
+
+                // 打印 filament override (包括 nil 标记)
+                if (filament_int) {
+                    std::string vals = "filament_values=[";
+                    for (size_t i = 0; i < filament_int->size() && i < 8; ++i) {
+                        if (filament_int->nullable() && filament_int->is_nil(i)) {
+                            vals += "nil";
+                        } else {
+                            vals += std::to_string(filament_int->get_at(i));
+                        }
+                        vals += (i < filament_int->size()-1 ? "," : "");
+                    }
+                    vals += "] ";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_INPUT: " << opt_key << " " << vals;
+                } else if (filament_dbl) {
+                    std::string vals = "filament_values=[";
+                    for (size_t i = 0; i < filament_dbl->size() && i < 8; ++i) {
+                        if (filament_dbl->nullable() && filament_dbl->is_nil(i)) {
+                            vals += "nil";
+                        } else {
+                            vals += std::to_string(filament_dbl->get_at(i));
+                        }
+                        vals += (i < filament_dbl->size()-1 ? "," : "");
+                    }
+                    vals += "] ";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_INPUT: " << opt_key << " " << vals;
+                }
+
+                // 打印 opt_copy 结果
+                if (copy_int) {
+                    std::string vals = "result_values=[";
+                    for (size_t i = 0; i < copy_int->values.size() && i < 8; ++i) {
+                        vals += std::to_string(copy_int->values[i]) + (i < copy_int->values.size()-1 ? "," : "");
+                    }
+                    vals += "]";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_RESULT: " << opt_key << " " << vals;
+                } else if (copy_dbl) {
+                    std::string vals = "result_values=[";
+                    for (size_t i = 0; i < copy_dbl->values.size() && i < 8; ++i) {
+                        vals += std::to_string(copy_dbl->values[i]) + (i < copy_dbl->values.size()-1 ? "," : "");
+                    }
+                    vals += "]";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_RESULT: " << opt_key << " " << vals;
+                }
+            }
 
             if (printer_config_changed || *opt_old != *opt_copy) {
                 print_diff.emplace_back(opt_key);
@@ -437,12 +584,11 @@ static t_config_option_keys print_config_diffs(
                     << ", effective_changed=" << (*opt_old != *opt_copy ? "Y" : "N") << ")";
             }
 
-            // SM Orca: 只有耗材真的有覆盖时才添加到 filament_overrides
-            if (has_real_filament_override) {
-                filament_overrides.set_key_value(opt_key, opt_copy);
-            } else {
-                delete opt_copy;
-            }
+            // SM Orca: 关键修复 - 始终将 opt_copy 添加到 filament_overrides
+            // 原因：apply_override() 已经将数组扩展到 filament_count 并填充了正确的映射值
+            // 即使没有"真正的用户覆盖"，也需要这些扩展后的配置用于 G-code 生成
+            // 例如：8 耗材系统中，5→1, 6→2, 7→3, 8→4 的映射关系需要被保留
+            filament_overrides.set_key_value(opt_key, opt_copy);
         } else if (opt_new_filament != nullptr && ! opt_new_filament->is_nil()) {
             // An extruder retract override is available at some of the filament presets.
             bool overriden = opt_new->overriden_by(opt_new_filament);
@@ -1457,12 +1603,13 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             // 只有所有耗材都没勾选时才清除这个参数
             if (!has_any_user_override) {
                 if (filament_overrides.erase(key)) {
-                    BOOST_LOG_TRIVIAL(info) << "Print::apply - Clearing unused filament override for '" << key
-                        << "' (no user overrides, will inherit from mapped extruder)";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_FILAMENT_OVERRIDE_ERASE: " << key
+                        << " ERASED (no user overrides, will inherit from mapped extruder)";
                 }
             } else {
-                BOOST_LOG_TRIVIAL(info) << "Print::apply - Preserving filament override for '" << key
-                    << "' (has user overrides, will use override value)";
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_FILAMENT_OVERRIDE_KEEP: " << key
+                    << " PRESERVED (has_any_user_override=" << (has_any_user_override ? "Y" : "N")
+                    << " nullable=" << (override_vec->nullable() ? "Y" : "N") << ")";
             }
         }
     }
@@ -1505,6 +1652,25 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 	    //FIXME use move semantics once ConfigBase supports it.
         // Some filament_overrides may contain values different from new_full_config, but equal to m_config.
         // As long as these config options don't reallocate memory when copying, we are safe overriding a value, which is in use by a worker thread.
+
+        // DEBUG: 打印 filament_overrides 最终值（在应用到 m_config 之前）
+        {
+            const ConfigOption* opt = filament_overrides.option("z_hop_types");
+            if (opt) {
+                auto* vec_int = dynamic_cast<const ConfigOptionVector<int>*>(opt);
+                if (vec_int) {
+                    std::string vals = "[";
+                    for (size_t i = 0; i < vec_int->values.size() && i < 8; ++i) {
+                        vals += std::to_string(vec_int->values[i]) + (i < vec_int->values.size()-1 ? "," : "");
+                    }
+                    vals += "]";
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_FINAL_FILAMENT_OVERRIDES: z_hop_types " << vals;
+                }
+            } else {
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_FINAL_FILAMENT_OVERRIDES: z_hop_types NOT IN filament_overrides!";
+            }
+        }
+
 	    m_config.apply(filament_overrides);
 	    // Handle changes to object config defaults
 	    m_default_object_config.apply_only(new_full_config, object_diff, true);

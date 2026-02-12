@@ -29,10 +29,17 @@ public:
     std::string process_layer(std::string &&gcode, size_t layer_id, bool flush);
     // SM Orca: Set filament to physical extruder mapping for correct parameter access
     void        set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
+    // SM Orca: Set physical extruder count for modulo fallback
+    void        set_physical_extruder_count(size_t count) { m_physical_extruder_count = (count > 0) ? count : 1; }
     // SM Orca: Get physical extruder ID from filament ID
+    // Key fix: use modulo fallback instead of identity mapping to avoid array out of bounds
     int         get_physical_extruder(int filament_idx) const {
         auto it = m_filament_extruder_map.find(filament_idx);
-        return (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
+        if (it != m_filament_extruder_map.end()) {
+            return it->second;
+        }
+        // Fallback: use modulo mapping to avoid out-of-bounds access
+        return filament_idx % static_cast<int>(m_physical_extruder_count);
     }
 
 private:
@@ -64,6 +71,8 @@ private:
     unsigned int                m_current_extruder;
     // SM Orca: Filament to physical extruder mapping for correct parameter access
     std::unordered_map<int, int> m_filament_extruder_map;
+    // SM Orca: Physical extruder count for modulo fallback (prevent out-of-bounds)
+    size_t m_physical_extruder_count = 1;
     //BBS: current fan speed
     int                         m_current_fan_speed;
 };

@@ -797,6 +797,9 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         }
     }
 
+    // SM Orca: 设置物理挤出机数量，用于 get_physical_extruder() 的模运算回退
+    m_physical_extruder_count = physical_extruder_count;
+
     m_extruder_offsets.resize(extruders_count);
     m_extruder_colors.resize(extruders_count);
     m_result.filament_diameters.resize(extruders_count);

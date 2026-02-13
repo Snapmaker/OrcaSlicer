@@ -1519,85 +1519,46 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     bool has_mapping = !m_filament_extruder_map.empty();
     if (has_mapping) {
         // SM Orca: 选择性清除 - 只清除所有耗材都没勾选的参数，保留用户勾选的覆盖
+        //
+        // 关键修复：必须检查 new_full_config 中的原始 filament_xxx 配置，
+        // 而不是 filament_overrides 中已处理的值！
+        // 因为 filament_overrides 存储的是 apply_override() 的结果（挤出机配置类型），
+        // 已经丢失了 nil 标记信息。
+        // 而 new_full_config 中的 filament_xxx 才保留了用户勾选状态的 nil 标记。
         for (const std::string &key : extruder_retract_keys) {
+            // 检查 filament_overrides 中是否有此参数
             ConfigOption* override = filament_overrides.option(key);
             if (!override || !override->is_vector())
                 continue;
 
-            auto* override_vec = dynamic_cast<ConfigOptionVectorBase*>(override);
-            if (!override_vec)
-                continue;
+            // 关键：从 new_full_config 获取原始的 nullable filament 配置
+            std::string filament_key = "filament_" + key;
+            const ConfigOption* filament_opt = new_full_config.option(filament_key);
 
             // 检查是否有任意耗材勾选了这个参数
             bool has_any_user_override = false;
-            if (override_vec->nullable()) {
-                // Nullable类型：检查是否有非nil的值
-                for (size_t i = 0; i < override_vec->size(); ++i) {
-                    if (!override_vec->is_nil(i)) {
-                        has_any_user_override = true;
-                        break;
+
+            if (filament_opt && filament_opt->nullable()) {
+                // 检查原始 filament 配置中的 nil 标记
+                auto* filament_vec = dynamic_cast<const ConfigOptionVectorBase*>(filament_opt);
+                if (filament_vec) {
+                    for (size_t i = 0; i < filament_vec->size(); ++i) {
+                        if (!filament_vec->is_nil(i)) {
+                            has_any_user_override = true;
+                            BOOST_LOG_TRIVIAL(error) << "DEBUG_USER_OVERRIDE_FOUND: " << key
+                                << " filament[" << i << "] is NOT nil (user checked override)";
+                            break;
+                        }
                     }
                 }
             } else {
-                // Non-nullable类型：检查是否有不同于默认值的值
-                // 需要与映射的挤出机默认值比较
-                for (size_t filament_idx = 0; filament_idx < override_vec->size(); ++filament_idx) {
-                    // 获取映射的物理挤出机索引
-                    auto map_it = m_filament_extruder_map.find(filament_idx);
-                    int physical_extruder_idx;
-                    if (map_it != m_filament_extruder_map.end()) {
-                        physical_extruder_idx = map_it->second;
-                    } else {
-                        // 回退：使用取模映射
-                        physical_extruder_idx = (int)filament_idx % (int)override_vec->size();
-                        if (physical_extruder_idx < 0)
-                            physical_extruder_idx = 0;
-                    }
-
-                    // Get the actual extruder defaults from printer config (m_config)
-                    const ConfigOption* extruder_default = m_config.option(key);
-                    if (!extruder_default || !extruder_default->is_vector())
-                        continue;
-
-                    auto* default_vec = dynamic_cast<const ConfigOptionVectorBase*>(extruder_default);
-                    if (!default_vec)
-                        continue;
-
-                    if (physical_extruder_idx >= (int)default_vec->size())
-                        continue;
-
-                    // 尝试不同类型的比较
-                    auto* override_dbl = dynamic_cast<const ConfigOptionVector<double>*>(override_vec);
-                    auto* override_int = dynamic_cast<const ConfigOptionVector<int>*>(override_vec);
-                    auto* override_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(override_vec);
-
-                    auto* default_dbl = dynamic_cast<const ConfigOptionVector<double>*>(default_vec);
-                    auto* default_int = dynamic_cast<const ConfigOptionVector<int>*>(default_vec);
-                    auto* default_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(default_vec);
-
-                    if (override_dbl && default_dbl) {
-                        double override_value = override_dbl->get_at(filament_idx);
-                        double default_value = default_dbl->get_at(physical_extruder_idx);
-                        if (override_value != default_value) {
-                            has_any_user_override = true;
-                            break;
-                        }
-                    } else if (override_int && default_int) {
-                        int override_value = override_int->get_at(filament_idx);
-                        int default_value = default_int->get_at(physical_extruder_idx);
-                        if (override_value != default_value) {
-                            has_any_user_override = true;
-                            break;
-                        }
-                    } else if (override_bool && default_bool) {
-                        unsigned char override_value = override_bool->get_at(filament_idx);
-                        unsigned char default_value = default_bool->get_at(physical_extruder_idx);
-                        if (override_value != default_value) {
-                            has_any_user_override = true;
-                            break;
-                        }
-                    }
-                }
+                // Non-nullable 类型或 filament_opt 不存在，保留在 filament_overrides 中
+                // 因为这种情况无法确定是否有用户覆盖，保守起见保留
+                has_any_user_override = true;
+                BOOST_LOG_TRIVIAL(error) << "DEBUG_USER_OVERRIDE_FALLBACK: " << key
+                    << " filament_opt=" << (filament_opt ? "exists" : "null")
+                    << " nullable=" << (filament_opt ? (filament_opt->nullable() ? "Y" : "N") : "N/A")
+                    << " -> keeping in filament_overrides";
             }
 
             // 只有所有耗材都没勾选时才清除这个参数
@@ -1608,8 +1569,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 }
             } else {
                 BOOST_LOG_TRIVIAL(error) << "DEBUG_FILAMENT_OVERRIDE_KEEP: " << key
-                    << " PRESERVED (has_any_user_override=" << (has_any_user_override ? "Y" : "N")
-                    << " nullable=" << (override_vec->nullable() ? "Y" : "N") << ")";
+                    << " PRESERVED (has_any_user_override=" << (has_any_user_override ? "Y" : "N") << ")";
             }
         }
     }

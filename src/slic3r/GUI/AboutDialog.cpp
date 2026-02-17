@@ -210,8 +210,12 @@ void CopyrightsDialog::onCloseDialog(wxEvent &)
 }
 
 AboutDialog::AboutDialog()
-    : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe),wxID_ANY,from_u8((boost::format(_utf8(L("About %s"))) % (wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME)).str()),wxDefaultPosition,
-        wxDefaultSize, /*wxCAPTION*/wxDEFAULT_DIALOG_STYLE)
+    : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe),
+                wxID_ANY,
+                wxString::Format(_L("About %s"), _L("Snapmaker Orca Full Spectrum")),
+                wxDefaultPosition,
+                wxDefaultSize,
+                /*wxCAPTION*/wxDEFAULT_DIALOG_STYLE)
 {
     SetFont(wxGetApp().normal_font());
 	SetBackgroundColour(*wxWHITE);
@@ -242,7 +246,7 @@ AboutDialog::AboutDialog()
     // version
     {
         vesizer->Add(0, FromDIP(165), 1, wxEXPAND, FromDIP(5));
-        auto version_string = _L("Snapmaker Orca ") + " " + std::string(Snapmaker_VERSION);
+        auto version_string = _L("Snapmaker Orca Full Spectrum") + " " + std::string(Snapmaker_VERSION);
         wxStaticText* version = new wxStaticText(this, wxID_ANY, version_string.c_str(), wxDefaultPosition, wxDefaultSize);
         wxStaticText* bs_version = new wxStaticText(this, wxID_ANY, wxString::Format("Based on Orca Slicer"), wxDefaultPosition, wxDefaultSize);
         bs_version->SetFont(Label::Body_12);
@@ -350,7 +354,11 @@ AboutDialog::AboutDialog()
               (boost::format(
               "<html>"
               "<body>"
-              "<p style=\"text-align:left\"><a style=\"color:#009789\" href=\"www.snapmaker.com\">www.snapmaker.com</ a></p>"
+              "<p style=\"text-align:left\">"
+              "<a style=\"color:#009789\" href=\"https://www.snapmaker.com\">www.snapmaker.com</a>"
+              "&nbsp;&nbsp;|&nbsp;&nbsp;"
+              "<a style=\"color:#009789\" href=\"https://github.com/ratdoux/OrcaSlicer-FullSpectrum\">GitHub</a>"
+              "</p>"
               "</body>"
               "</html>")
             ).str());

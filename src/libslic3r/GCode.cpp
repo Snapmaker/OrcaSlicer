@@ -5175,8 +5175,12 @@ LayerResult GCode::process_layer(const Print& print,
                     m_config.apply(instance_to_print.print_object.config(), true);
                     m_layer                  = layer_to_print.layer();
                     m_object_layer_over_raft = object_layer_over_raft;
-                    if (m_config.reduce_crossing_wall)
-                        m_avoid_crossing_perimeters.init_layer(*m_layer);
+                    const bool saved_reduce_crossing_wall = m_config.reduce_crossing_wall.value;
+                    // Local-Z phase-b emits many short micro-passes. Avoid-crossing
+                    // travel planning is expensive and fragile on these fragments, so
+                    // keep travel simple here.
+                    m_config.reduce_crossing_wall.value = false;
+                    m_avoid_crossing_perimeters.disable_once();
 
                     const Point& offset = instance_to_print.print_object.instances()[instance_to_print.instance_id].shift;
                     std::pair<const PrintObject*, Point> this_object_copy(&instance_to_print.print_object, offset);
@@ -5189,6 +5193,7 @@ LayerResult GCode::process_layer(const Print& print,
                         gcode += this->extrude_perimeters(print, island.by_region, first_layer, false);
                         gcode += this->extrude_perimeters(print, island.by_region, first_layer, true);
                     }
+                    m_config.reduce_crossing_wall.value = saved_reduce_crossing_wall;
                 }
             }
             m_nominal_z   = saved_nominal_z;

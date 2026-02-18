@@ -59,6 +59,9 @@ struct MixedFilament
     // Whether this mixed filament is enabled (available for assignment).
     bool enabled = true;
 
+    // True when this mixed filament row was deleted from UI and should stay hidden.
+    bool deleted = false;
+
     // True when this row was user-created (custom) instead of auto-generated.
     bool custom = false;
 
@@ -78,6 +81,7 @@ struct MixedFilament
                pointillism_all_filaments == rhs.pointillism_all_filaments &&
                distribution_mode == rhs.distribution_mode &&
                enabled      == rhs.enabled &&
+               deleted      == rhs.deleted &&
                custom       == rhs.custom;
     }
     bool operator!=(const MixedFilament &rhs) const { return !(*this == rhs); }

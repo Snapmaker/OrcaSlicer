@@ -308,7 +308,8 @@ static bool parse_row_definition(const std::string &row,
                                  std::string       &gradient_component_ids,
                                  std::string       &gradient_component_weights,
                                  std::string       &manual_pattern,
-                                 int               &distribution_mode)
+                                 int               &distribution_mode,
+                                 bool              &deleted)
 {
     auto trim_copy = [](const std::string &s) {
         size_t lo = 0;
@@ -373,6 +374,7 @@ static bool parse_row_definition(const std::string &row,
     gradient_component_weights.clear();
     manual_pattern.clear();
     distribution_mode = int(MixedFilament::Simple);
+    deleted = false;
 
     size_t token_idx = 5;
     if (tokens.size() >= 6) {
@@ -408,6 +410,12 @@ static bool parse_row_definition(const std::string &row,
             int parsed_mode = distribution_mode;
             if (parse_int_token(tok.substr(1), parsed_mode))
                 distribution_mode = clamp_int(parsed_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+            continue;
+        }
+        if (tok[0] == 'd' || tok[0] == 'D') {
+            int parsed_deleted = deleted ? 1 : 0;
+            if (parse_int_token(tok.substr(1), parsed_deleted))
+                deleted = parsed_deleted != 0;
             continue;
         }
         manual_pattern = tok;
@@ -686,6 +694,7 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
             mf.ratio_b     = 1;
             mf.mix_b_percent = 50;
             mf.enabled     = true;
+            mf.deleted     = false;
             mf.custom      = false;
 
             // Try to preserve previous settings.
@@ -694,6 +703,9 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
                     prev.component_a == mf.component_a &&
                     prev.component_b == mf.component_b) {
                     mf.enabled = prev.enabled;
+                    mf.deleted = prev.deleted;
+                    if (mf.deleted)
+                        mf.enabled = false;
                     break;
                 }
             }
@@ -755,6 +767,7 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     mf.pointillism_all_filaments = false;
     mf.distribution_mode = int(MixedFilament::Simple);
     mf.enabled = true;
+    mf.deleted = false;
     mf.custom = true;
     m_mixed.push_back(std::move(mf));
     refresh_display_colors(filament_colours);
@@ -823,7 +836,8 @@ std::string MixedFilamentManager::serialize_custom_entries() const
            << (mf.pointillism_all_filaments ? 1 : 0) << ','
            << 'g' << normalized_ids << ','
            << 'w' << normalized_weights << ','
-           << 'm' << clamp_int(mf.distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+           << 'm' << clamp_int(mf.distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple)) << ','
+           << 'd' << (mf.deleted ? 1 : 0);
         const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
         if (!normalized_pattern.empty())
             ss << ',' << normalized_pattern;
@@ -862,8 +876,9 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         std::string gradient_component_weights;
         std::string manual_pattern;
         int distribution_mode = int(MixedFilament::Simple);
+        bool deleted = false;
         if (!parse_row_definition(row, a, b, enabled, custom, mix, pointillism_all_filaments,
-                                  gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode)) {
+                                  gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode, deleted)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
             continue;
@@ -891,6 +906,9 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                 it_auto->manual_pattern = normalize_manual_pattern(manual_pattern);
                 it_auto->distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
                 it_auto->mix_b_percent = it_auto->manual_pattern.empty() ? mix : mix_percent_from_normalized_pattern(it_auto->manual_pattern);
+                it_auto->deleted = deleted;
+                if (it_auto->deleted)
+                    it_auto->enabled = false;
                 ++updated_auto;
                 continue;
             }
@@ -911,6 +929,9 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         if (!mf.manual_pattern.empty())
             mf.mix_b_percent = mix_percent_from_normalized_pattern(mf.manual_pattern);
         mf.enabled = enabled;
+        mf.deleted = deleted;
+        if (mf.deleted)
+            mf.enabled = false;
         mf.custom = custom;
         m_mixed.push_back(std::move(mf));
         ++loaded_rows;
@@ -1005,7 +1026,7 @@ int MixedFilamentManager::mixed_index_from_filament_id(unsigned int filament_id,
     const size_t enabled_virtual_idx = size_t(filament_id - num_physical - 1);
     size_t enabled_seen = 0;
     for (size_t i = 0; i < m_mixed.size(); ++i) {
-        if (!m_mixed[i].enabled)
+        if (!m_mixed[i].enabled || m_mixed[i].deleted)
             continue;
         if (enabled_seen == enabled_virtual_idx)
             return int(i);
@@ -1145,7 +1166,7 @@ size_t MixedFilamentManager::enabled_count() const
 {
     size_t count = 0;
     for (const auto &mf : m_mixed)
-        if (mf.enabled)
+        if (mf.enabled && !mf.deleted)
             ++count;
     return count;
 }
@@ -1154,7 +1175,7 @@ std::vector<std::string> MixedFilamentManager::display_colors() const
 {
     std::vector<std::string> colors;
     for (const auto &mf : m_mixed)
-        if (mf.enabled)
+        if (mf.enabled && !mf.deleted)
             colors.push_back(mf.display_color);
     return colors;
 }

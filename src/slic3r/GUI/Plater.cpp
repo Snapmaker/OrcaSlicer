@@ -3235,26 +3235,40 @@ std::string MixedFilamentConfigPanel::summarize_sequence(const std::vector<unsig
 
 std::string MixedFilamentConfigPanel::blend_from_sequence(const std::vector<std::string> &colors, const std::vector<unsigned int> &seq, const std::string &fallback)
 {
-    if (seq.empty()) return fallback;
-    std::unordered_map<unsigned int, int> counts;
-    for (unsigned int id : seq) counts[id]++;
-    double r = 0, g = 0, b = 0;
-    int total = 0;
-    for (auto &kv : counts) {
-        unsigned int id = kv.first;
-        int cnt = kv.second;
-        std::string hex = (id >= 1 && id <= colors.size()) ? colors[id - 1] : fallback;
-        wxColour c(hex);
-        if (c.IsOk()) {
-            r += c.Red() * cnt;
-            g += c.Green() * cnt;
-            b += c.Blue() * cnt;
-            total += cnt;
+    if (colors.empty() || seq.empty())
+        return fallback;
+
+    std::vector<size_t> counts(colors.size() + 1, size_t(0));
+    size_t total = 0;
+    for (const unsigned int id : seq) {
+        if (id == 0 || id > colors.size())
+            continue;
+        ++counts[id];
+        ++total;
+    }
+    if (total == 0)
+        return fallback;
+
+    unsigned int first_id = 0;
+    for (size_t id = 1; id <= colors.size(); ++id) {
+        if (counts[id] > 0) {
+            first_id = unsigned(id);
+            break;
         }
     }
-    if (total <= 0) return fallback;
-    wxColour blended(int(r / total), int(g / total), int(b / total));
-    return blended.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+    if (first_id == 0 || first_id > colors.size())
+        return fallback;
+
+    std::string blended = colors[first_id - 1];
+    int acc = int(counts[first_id]);
+    for (size_t id = size_t(first_id + 1); id <= colors.size(); ++id) {
+        if (counts[id] == 0)
+            continue;
+        blended = MixedFilamentManager::blend_color(blended, colors[id - 1], acc, int(counts[id]));
+        acc += int(counts[id]);
+    }
+
+    return blended;
 }
 
 MixedFilamentConfigPanel::MixedFilamentConfigPanel(wxWindow *parent,
@@ -4160,6 +4174,42 @@ void Sidebar::update_mixed_filament_panel()
         }
         return blended;
     };
+    auto build_entry_preview_sequence = [decode_manual_pattern_ids, decode_gradient_ids, decode_gradient_weights,
+                                         build_weighted_multi_sequence, build_weighted_pair_sequence](const MixedFilament &entry) {
+        const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
+        if (!normalized_pattern.empty())
+            return decode_manual_pattern_ids(normalized_pattern, entry.component_a, entry.component_b);
+
+        const bool simple_mode = entry.distribution_mode == int(MixedFilament::Simple);
+        if (!simple_mode) {
+            const std::vector<unsigned int> gradient_ids = decode_gradient_ids(entry.gradient_component_ids);
+            if (gradient_ids.size() >= 3) {
+                const std::vector<int> gradient_weights =
+                    decode_gradient_weights(entry.gradient_component_weights, gradient_ids.size());
+                return build_weighted_multi_sequence(gradient_ids, gradient_weights);
+            }
+        }
+
+        return build_weighted_pair_sequence(entry.component_a, entry.component_b, std::clamp(entry.mix_b_percent, 0, 100));
+    };
+    auto compute_entry_display_color = [num_physical, &physical_colors, blend_from_sequence, build_entry_preview_sequence](const MixedFilament &entry) {
+        const std::vector<unsigned int> sequence = build_entry_preview_sequence(entry);
+        if (!sequence.empty())
+            return blend_from_sequence(physical_colors, sequence, "#26A69A");
+
+        if (entry.component_a == 0 || entry.component_b == 0 ||
+            entry.component_a > num_physical || entry.component_b > num_physical ||
+            entry.component_a > physical_colors.size() || entry.component_b > physical_colors.size()) {
+            return std::string("#26A69A");
+        }
+
+        const int mix_b = std::clamp(entry.mix_b_percent, 0, 100);
+        return MixedFilamentManager::blend_color(
+            physical_colors[entry.component_a - 1],
+            physical_colors[entry.component_b - 1],
+            100 - mix_b,
+            mix_b);
+    };
 
     const bool height_weighted_mode = get_mixed_mode(false);
     int   gradient_mode = height_weighted_mode ? 1 : 0;
@@ -4368,8 +4418,11 @@ void Sidebar::update_mixed_filament_panel()
         auto *header_panel = new wxPanel(row, wxID_ANY);
         header_panel->SetBackgroundColour(mixed_row_bg);
         auto *header_sizer = new wxBoxSizer(wxHORIZONTAL);
-        
-        wxColour swatch_color(mf.display_color);
+
+        const std::string synced_color = compute_entry_display_color(mf);
+        if (mf.display_color != synced_color)
+            mf.display_color = synced_color;
+        wxColour swatch_color = parse_mixed_color(mf.display_color);
         auto *swatch = new wxPanel(header_panel, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(12), FromDIP(12)));
         swatch->SetBackgroundColour(swatch_color);
         swatch->SetMinSize(wxSize(FromDIP(12), FromDIP(12)));
@@ -4475,7 +4528,7 @@ void Sidebar::update_mixed_filament_panel()
                     apply_mixed_entry_changes(mixed_id, updated_mf, true);
 
                     if (swatch) {
-                        swatch->SetBackgroundColour(wxColour(updated_mf.display_color));
+                        swatch->SetBackgroundColour(parse_mixed_color(updated_mf.display_color));
                         swatch->Refresh();
                     }
                     if (summary_label) {

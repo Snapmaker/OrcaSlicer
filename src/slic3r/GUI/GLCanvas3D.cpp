@@ -2432,23 +2432,10 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
     std::sort(model_volume_state.begin(), model_volume_state.end(), model_volume_state_lower);
     std::sort(aux_volume_state.begin(), aux_volume_state.end(), model_volume_state_lower);
 
-    // BBS: normalize painting data with current available filament count
-    // (physical + enabled mixed/virtual filaments).
-    for (unsigned int obj_idx = 0; obj_idx < (unsigned int)m_model->objects.size(); ++obj_idx) {
-        const ModelObject& model_object = *m_model->objects[obj_idx];
-        for (int volume_idx = 0; volume_idx < (int)model_object.volumes.size(); ++volume_idx) {
-            ModelVolume& model_volume = *model_object.volumes[volume_idx];
-            if (!model_volume.is_model_part())
-                continue;
-
-            unsigned int filaments_count = (unsigned int)dynamic_cast<const ConfigOptionStrings*>(m_config->option("filament_colour"))->values.size();
-            size_t available_filaments = filaments_count;
-            if (wxGetApp().preset_bundle != nullptr)
-                available_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(filaments_count);
-
-            model_volume.update_extruder_count(available_filaments);
-        }
-    }
+    // Mixed/physical filament ID normalization is handled in
+    // Plater::on_filaments_change() with explicit old->new remap.
+    // Mutating MMU painted states here during scene refresh may run before
+    // remap and corrupt virtual mixed IDs.
 
     // Release all ModelVolume based GLVolumes not found in the current Model. Find the GLVolume of a hollowed mesh.
     for (size_t volume_id = 0; volume_id < m_volumes.volumes.size(); ++volume_id) {

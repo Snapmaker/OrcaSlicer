@@ -65,6 +65,11 @@ struct MixedFilament
     // True when this row was user-created (custom) instead of auto-generated.
     bool custom = false;
 
+    // True when this row originated from an auto-generated pair. This remains
+    // true even after editing so delete logic can keep the base auto pair
+    // tombstoned instead of letting regeneration resurrect it.
+    bool origin_auto = false;
+
     // Computed display colour as "#RRGGBB".
     std::string display_color;
 
@@ -82,7 +87,8 @@ struct MixedFilament
                distribution_mode == rhs.distribution_mode &&
                enabled      == rhs.enabled &&
                deleted      == rhs.deleted &&
-               custom       == rhs.custom;
+               custom       == rhs.custom &&
+               origin_auto  == rhs.origin_auto;
     }
     bool operator!=(const MixedFilament &rhs) const { return !(*this == rhs); }
 };
@@ -125,7 +131,6 @@ public:
     void apply_gradient_settings(int   gradient_mode,
                                  float lower_bound,
                                  float upper_bound,
-                                 int   cycle_layers,
                                  bool  advanced_dithering = false);
 
     // Persist only custom rows.
@@ -196,7 +201,6 @@ private:
     int                        m_gradient_mode       = 0;
     float                      m_height_lower_bound  = 0.04f;
     float                      m_height_upper_bound  = 0.16f;
-    int                        m_cycle_layers        = 4;
     bool                       m_advanced_dithering  = false;
 };
 

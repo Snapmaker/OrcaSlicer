@@ -3663,7 +3663,7 @@ void MixedFilamentConfigPanel::build_ui()
         if (m_mix_preview) {
             const std::string summary = summarize_sequence(preview_sequence);
             m_mix_preview->set_data(m_palette, preview_sequence, same_layer_mode, wxColour(m_mf.display_color),
-                                    _L("Preview"), summary.empty() ? wxEmptyString : from_u8(summary));
+                                    _L("Preview"), summary.empty() ? wxString() : from_u8(summary));
         }
         if (m_swatch) {
             m_swatch->SetBackgroundColour(wxColour(m_mf.display_color));
@@ -3861,7 +3861,7 @@ void MixedFilamentConfigPanel::update_preview()
     if (m_mix_preview) {
         const std::string summary = summarize_sequence(initial_sequence);
         m_mix_preview->set_data(m_palette, initial_sequence, same_layer_mode, wxColour(m_mf.display_color),
-                                _L("Preview"), summary.empty() ? wxEmptyString : from_u8(summary));
+                                _L("Preview"), summary.empty() ? wxString() : from_u8(summary));
     }
 }
 

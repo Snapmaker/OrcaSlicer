@@ -23,8 +23,6 @@
   <key>CFBundleVersion</key>
   <string>@SLIC3R_BUILD_ID@</string>
   <key>CFBundleURLTypes</key>
-  <key>ATSApplicationFontsPath</key>
-  <string>fonts/</string>
   <array>
     <dict>
       <key>CFBundleURLName</key>
@@ -36,6 +34,8 @@
       </array>
     </dict>
   </array>
+  <key>ATSApplicationFontsPath</key>
+  <string>fonts/</string>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
@@ -141,6 +141,36 @@
   <dict>
     <key>ASAN_OPTIONS</key>
     <string>detect_container_overflow=0</string>
+  </dict>
+  <!-- Allow HTTP connections to localhost for local web server (required for newer macOS versions) -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <!-- Completely disable ATS for localhost (allows HTTP instead of HTTPS) -->
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+    <!-- Allow arbitrary loads for local development server -->
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+    <!-- Specific exception for localhost connections -->
+    <key>NSExceptionDomains</key>
+    <dict>
+      <!-- Allow HTTP (not HTTPS) for localhost -->
+      <key>localhost</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <true/>
+      </dict>
+      <!-- Allow HTTP for 127.0.0.1 -->
+      <key>127.0.0.1</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <false/>
+      </dict>
+    </dict>
   </dict>
 </dict>
 </plist>

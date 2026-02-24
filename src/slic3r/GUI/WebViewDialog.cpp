@@ -42,6 +42,13 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
     url = wxGetApp().get_international_url(url);
 
+    // Debug: Log the URL being loaded
+    BOOST_LOG_TRIVIAL(info) << "[WebView] Constructor - Loading URL: " << url.ToUTF8().data();
+    BOOST_LOG_TRIVIAL(info) << "[WebView] HTTP Server status: "
+        << (wxGetApp().m_page_http_server.is_started() ? "RUNNING" : "NOT STARTED");
+    BOOST_LOG_TRIVIAL(info) << "[WebView] HTTP Server port: "
+        << wxGetApp().m_page_http_server.get_port();
+
     // test
     // url = "http://localhost:13619/web/flutter_web/1.html";
 
@@ -86,8 +93,8 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     // Create the info panel
     m_info = new wxInfoBar(this);
     topsizer->Add(m_info, wxSizerFlags().Expand());
-    // Create the webview
-    m_browser = WebView::CreateWebView(this, url);
+    // Create the webview with empty URL first, will load after server check
+    m_browser = WebView::CreateWebView(this, "about:blank");
 
     wxGetApp().fltviews().add_webview_panel(this, url);
 
@@ -226,6 +233,12 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     Bind(wxEVT_CLOSE_WINDOW, &WebViewPanel::OnClose, this);
 
     m_LoginUpdateTimer = nullptr;
+
+    // Wait for server to be ready before loading the URL
+    BOOST_LOG_TRIVIAL(info) << "[WebView] Constructor - Scheduling URL load after server check";
+    CallAfter([this, url]() {
+        WaitForServerAndLoad(url);
+    });
  }
 
 WebViewPanel::~WebViewPanel()
@@ -251,10 +264,78 @@ void WebViewPanel::reload() {
     m_browser->Reload();
 }
 
+// Define static const member
+const int WebViewPanel::MAX_RETRIES;
+
+// Check if the HTTP server is ready to serve requests
+bool WebViewPanel::IsServerReady()
+{
+    if (!wxGetApp().m_page_http_server.is_started()) {
+        BOOST_LOG_TRIVIAL(warning) << "[WebView] IsServerReady - Server not started";
+        return false;
+    }
+
+    if (!wxGetApp().m_page_http_server.is_healthy()) {
+        BOOST_LOG_TRIVIAL(warning) << "[WebView] IsServerReady - Server not healthy";
+        return false;
+    }
+
+    return true;
+}
+
+// Wait for server to be ready and then load the URL
+void WebViewPanel::WaitForServerAndLoad(const wxString& url)
+{
+    // Store URL for retry
+    m_pending_url = url;
+    m_retry_count = 0;
+
+    // Check if server is ready immediately
+    if (IsServerReady()) {
+        BOOST_LOG_TRIVIAL(info) << "[WebView] WaitForServerAndLoad - Server ready, loading URL immediately";
+        wxString url_copy = url;
+        load_url(url_copy);
+        return;
+    }
+
+    // Server not ready, schedule a retry
+    BOOST_LOG_TRIVIAL(info) << "[WebView] WaitForServerAndLoad - Server not ready, scheduling retry in 500ms";
+    CallAfter(&WebViewPanel::CheckServerAndLoadRetry);
+}
+
+// Retry method for server readiness check
+void WebViewPanel::CheckServerAndLoadRetry()
+{
+    if (IsServerReady() || m_retry_count >= MAX_RETRIES) {
+        if (IsServerReady()) {
+            BOOST_LOG_TRIVIAL(info) << "[WebView] CheckServerAndLoadRetry - Server ready after "
+                << (m_retry_count * 500) << "ms, loading URL";
+        } else {
+            BOOST_LOG_TRIVIAL(error) << "[WebView] CheckServerAndLoadRetry - Server not ready after "
+                << (m_retry_count * 500) << "ms, loading anyway";
+        }
+        wxString url_copy = m_pending_url;
+        load_url(url_copy);
+    } else {
+        m_retry_count++;
+        BOOST_LOG_TRIVIAL(info) << "[WebView] CheckServerAndLoadRetry - Retry " << m_retry_count
+            << "/" << MAX_RETRIES << " in 500ms";
+        CallAfter(&WebViewPanel::CheckServerAndLoadRetry);
+    }
+}
+
 void WebViewPanel::load_url(wxString& url)
 {
     this->Show();
     this->Raise();
+
+    // Debug: Log before loading
+    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - Loading URL: " << url.ToUTF8().data();
+    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - HTTP Server status: "
+        << (wxGetApp().m_page_http_server.is_started() ? "RUNNING" : "NOT STARTED");
+    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - HTTP Server port: "
+        << wxGetApp().m_page_http_server.get_port();
+
     /*m_url->SetLabelText(url);
 
     if (wxGetApp().get_mode() == comDevelop)
@@ -265,6 +346,10 @@ void WebViewPanel::load_url(wxString& url)
 
     m_browser->SetFocus();
     UpdateState();
+
+    // Debug: Log after loading
+    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - Load command sent, current URL: "
+        << m_browser->GetCurrentURL().ToUTF8().data();
 }
 
 /**

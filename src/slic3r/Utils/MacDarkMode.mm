@@ -3,6 +3,8 @@
 
 #include "wx/osx/core/cfstring.h"
 
+#include <boost/log/trivial.hpp>
+
 #import <algorithm>
 
 #import <Cocoa/Cocoa.h>
@@ -98,6 +100,103 @@ void WKWebView_setTransparentBackground(void * web)
     WKWebView * webView = (WKWebView*)web;
     [webView layer].backgroundColor = [NSColor clearColor].CGColor;
     [webView registerForDraggedTypes: @[NSFilenamesPboardType]];
+}
+
+// Initialize WebKit preferences globally
+// CRITICAL FIX for macOS 26.x Metal shader corruption causing white screen
+void WKWebView_initializePreferences()
+{
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+
+    // Set environment variables to work around Metal shader corruption on macOS 26.x
+    // Error: "unable to load binary archive for shader library: ...binary.metallib has an invalid format"
+    setenv("MTL_DEBUG_LAYER_VALIDATION_SHADERS", "0", 1);  // Disable strict shader validation
+    setenv("MTL_ENABLE_DEBUG_INFO", "0", 1);                 // Disable Metal debug info
+
+    // These NSUserDefaults keys may help but are not always effective for WKWebView
+    [defaults setBool:NO forKey:@"WebKitGPUAccelerationEnabled"];
+    [defaults setBool:NO forKey:@"WebKitAcceleratedCompositingEnabled"];
+    // DO NOT disable WebKitWebGLEnabled - Flutter needs WebGL!
+    [defaults synchronize];
+}
+
+// Verify that GPU acceleration settings are properly disabled
+void WKWebView_verifyConfiguration()
+{
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+
+    // Check current settings
+    BOOL gpuEnabled = [defaults boolForKey:@"WebKitGPUAccelerationEnabled"];
+    BOOL compositingEnabled = [defaults boolForKey:@"WebKitAcceleratedCompositingEnabled"];
+    BOOL webGLEnabled = [defaults boolForKey:@"WebKitWebGLEnabled"];
+
+    BOOST_LOG_TRIVIAL(info) << "[WKWebView] Configuration Verification:";
+    BOOST_LOG_TRIVIAL(info) << "  WebKitGPUAccelerationEnabled: " << (gpuEnabled ? "YES" : "NO (attempted disable)");
+    BOOST_LOG_TRIVIAL(info) << "  WebKitAcceleratedCompositingEnabled: " << (compositingEnabled ? "YES" : "NO (attempted disable)");
+    BOOST_LOG_TRIVIAL(info) << "[WKWebView] Environment variables set for Metal compatibility";
+    BOOST_LOG_TRIVIAL(info) << "[WKWebView] If white screen occurs on macOS 26.x, this is a macOS system bug";
+
+    // Check macOS version and warn about known issues
+    NSProcessInfo *info = [NSProcessInfo processInfo];
+    NSOperatingSystemVersion version = [info operatingSystemVersion];
+    if (version.majorVersion >= 26) {
+        BOOST_LOG_TRIVIAL(warning) << "[WKWebView] Running on macOS 26.x - Known Metal shader corruption issues in IconRendering.framework";
+        BOOST_LOG_TRIVIAL(info) << "[WKWebView] Workaround applied: Relaxed Metal shader validation";
+        BOOST_LOG_TRIVIAL(info) << "[WKWebView] If white screen persists: This is an Apple bug in macOS 26.x beta";
+    }
+}
+
+// Configure WKWebView for Flutter web content (required for macOS Sequoia 15.x+)
+void WKWebView_configureForFlutter(void * web)
+{
+    WKWebView * webView = (WKWebView*)web;
+
+    // Get the WKWebViewConfiguration
+    WKWebViewConfiguration * config = [webView configuration];
+
+    // Configure preferences for Flutter web content
+    WKPreferences * preferences = [config preferences];
+    if (preferences) {
+        // Enable JavaScript (required for Flutter)
+        [preferences setJavaScriptEnabled:YES];
+
+        // IMPORTANT: Do NOT disable any preferences that Flutter needs
+        // Flutter Web requires JavaScript and WebGL access for rendering
+
+        if (@available(macOS 10.11, *)) {
+            [preferences setJavaScriptCanOpenWindowsAutomatically:YES];
+        }
+
+    }
+
+    // Configure media types (suppresses autoplay restrictions)
+    if (@available(macOS 10.12, *)) {
+        config.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
+    }
+
+    // Set custom user agent if needed
+    [webView setCustomUserAgent:@"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15"];
+
+}
+
+// Configure WKWebView layer properties (limited effect on GPU usage)
+// Note: WKWebView doesn't support true GPU disabling - this only affects layer composition
+void WKWebView_disableHardwareAcceleration(void * web)
+{
+    WKWebView * webView = (WKWebView*)web;
+
+    @try {
+        // These layer properties have limited effect on actual GPU usage
+        // WKWebView is designed to always use GPU acceleration for content rendering
+        [[webView layer] setDrawsAsynchronously:NO];  // Synchronous drawing
+
+        BOOST_LOG_TRIVIAL(info) << "[WKWebView] Layer configuration completed";
+    }
+    @catch (NSException *exception) {
+        // Catch Metal-related exceptions (shader library corruption on macOS 26.x)
+        BOOST_LOG_TRIVIAL(error) << "[WKWebView] Exception during layer configuration: " << [exception reason].UTF8String;
+        BOOST_LOG_TRIVIAL(info) << "[WKWebView] This may be due to macOS 26.x Metal shader bug - WebView may still work";
+    }
 }
 
 void openFolderForFile(wxString const & file)

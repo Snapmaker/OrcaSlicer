@@ -92,6 +92,10 @@ public:
     wxTimer * m_LoginUpdateTimer{nullptr};
     void OnFreshLoginStatus(wxTimerEvent &event);
 
+    // Server readiness check
+    bool IsServerReady();
+    void WaitForServerAndLoad(const wxString& url);
+
 public:
     void SendRecentList(int images);
     void SetLoginPanelVisibility(bool bshow);
@@ -156,6 +160,12 @@ private:
     // Last executed JavaScript snippet, for convenience.
     wxString m_javascript;
     wxString m_response_js;
+
+    // Server readiness retry mechanism
+    wxString m_pending_url;
+    int m_retry_count = 0;
+    static const int MAX_RETRIES = 10;
+    void CheckServerAndLoadRetry();
 
     DECLARE_EVENT_TABLE()
 };

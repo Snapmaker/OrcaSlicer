@@ -2,36 +2,27 @@
 """
 G-code Parameter Analyzer for OrcaSlicer Filament-Extruder Mapping Verification
 
-This script extracts and displays retraction-related parameters from G-code files
-to verify that filament-extruder mapping is working correctly.
-
-OrcaSlicer G-code format:
-- Configuration at END of file (not beginning)
-- Extruder parameters: 4 values (one per physical extruder)
-- Filament parameters: 8 values (one per logical filament)
-- Actual G-code uses T0-T7 for 8 filaments
+Enhanced version that:
+- Reads actual filament_extruder_map from G-code
+- Supports custom mapping verification
+- Better parameter comparison
 
 Usage:
     python analyze_gcode_params.py <gcode_file> [--extruders N] [--filaments N]
+    python analyze_gcode_params.py <gcode_file> --map "0:0,1:1,2:2,3:3,4:0,5:1,6:2,7:3"
 
 Example:
-    python analyze_gcode_params.py output.gcode --extruders 4 --filaments 8
+    python analyze_gcode_params.py output.gcode
+    python analyze_gcode_params.py output.gcode --map "4:0,5:1,6:2,7:3"
 """
 
 import re
 import sys
 import argparse
+import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-
-# Z-hop type mapping
-Z_HOP_TYPES = {
-    0: 'Auto',
-    1: 'Normal',
-    2: 'Slope',
-    3: 'Spiral'
-}
 
 @dataclass
 class AnalysisResult:
@@ -40,15 +31,21 @@ class AnalysisResult:
     extruder_count: int = 4
     filament_count: int = 8
 
-    # Config from G-code comments (end of file)
-    # Extruder-level params (4 values)
+    # Filament to extruder mapping (from G-code or user-specified)
+    filament_extruder_map: Dict[int, int] = field(default_factory=dict)
+
+    # Config from G-code comments
+    # Extruder-level params (N values for N extruders)
     extruder_retraction_length: List[float] = field(default_factory=list)
     extruder_z_hop: List[float] = field(default_factory=list)
     extruder_wipe_distance: List[float] = field(default_factory=list)
     extruder_retraction_speed: List[float] = field(default_factory=list)
-    extruder_deretraction_speed: List[float] = field(default_factory=list)
+    extruder_z_hop_types: List[str] = field(default_factory=list)
 
-    # Filament-level params (8 values)
+    # Filament-level params (8 values) - these show ACTUAL values used
+    filament_retraction_length: List[float] = field(default_factory=list)
+    filament_z_hop: List[float] = field(default_factory=list)
+    filament_wipe_distance: List[float] = field(default_factory=list)
     filament_z_hop_types: List[str] = field(default_factory=list)
 
     # Detected G-code operations
@@ -62,16 +59,41 @@ class AnalysisResult:
     wipe_events: Dict[int, List[Tuple[int, float]]] = field(default_factory=dict)
 
 
+def parse_filament_extruder_map(content: str) -> Dict[int, int]:
+    """Parse filament_extruder_map from G-code comments"""
+    mapping = {}
+    lines = content.split('\n')
+
+    for line in lines:
+        line = line.strip()
+        # Try different formats
+        # Format 1: ; filament_extruder_map = {0:0, 1:1, 2:2, 3:3, 4:0, 5:1, 6:2, 7:3}
+        match = re.search(r'filament_extruder_map\s*[=:]\s*\{([^}]+)\}', line, re.IGNORECASE)
+        if match:
+            pairs = re.findall(r'(\d+)\s*:\s*(\d+)', match.group(1))
+            for f, e in pairs:
+                mapping[int(f)] = int(e)
+            return mapping
+
+        # Format 2: ; filament_map = 0,1,2,3,0,1,2,3 (comma-separated)
+        match = re.search(r'filament_map\s*[=:]\s*([\d,]+)', line, re.IGNORECASE)
+        if match:
+            values = [int(v.strip()) for v in match.group(1).split(',')]
+            for i, e in enumerate(values):
+                mapping[i] = e
+            return mapping
+
+    return mapping
+
+
 def parse_config_section(content: str, result: AnalysisResult):
     """Parse configuration from end of G-code file"""
     lines = content.split('\n')
 
-    # Find config section (usually at end)
-    # Look for lines like: ; retraction_length = 1.51,1.52,1.53,1.54
     for line in lines:
         line = line.strip()
 
-        # Extruder-level parameters (4 values)
+        # Extruder-level parameters (N values)
         match = re.match(r'^; retraction_length = ([\d.,]+)$', line)
         if match:
             result.extruder_retraction_length = [float(v) for v in match.group(1).split(',')]
@@ -88,15 +110,28 @@ def parse_config_section(content: str, result: AnalysisResult):
         if match:
             result.extruder_retraction_speed = [float(v) for v in match.group(1).split(',')]
 
-        match = re.match(r'^; deretraction_speed = ([\d.,]+)$', line)
-        if match:
-            result.extruder_deretraction_speed = [float(v) for v in match.group(1).split(',')]
-
-        # Filament-level parameters (8 values)
+        # z_hop_types at extruder level
         match = re.match(r'^; z_hop_types = (.+)$', line)
         if match:
             values = [v.strip() for v in match.group(1).split(',')]
-            result.filament_z_hop_types = values
+            # Determine if this is extruder-level (4 values) or filament-level (8 values)
+            if len(values) <= result.extruder_count:
+                result.extruder_z_hop_types = values
+            else:
+                result.filament_z_hop_types = values
+
+        # Filament-level parameters (try to parse filament_ prefixed versions)
+        match = re.match(r'^; filament_retraction_length = ([\d.,]+)$', line)
+        if match:
+            result.filament_retraction_length = [float(v) for v in match.group(1).split(',')]
+
+        match = re.match(r'^; filament_z_hop = ([\d.,]+)$', line)
+        if match:
+            result.filament_z_hop = [float(v) for v in match.group(1).split(',')]
+
+        match = re.match(r'^; filament_wipe_distance = ([\d.,]+)$', line)
+        if match:
+            result.filament_wipe_distance = [float(v) for v in match.group(1).split(',')]
 
 
 def parse_gcode_operations(content: str, result: AnalysisResult):
@@ -110,32 +145,22 @@ def parse_gcode_operations(content: str, result: AnalysisResult):
     in_retraction = False
     wipe_start_x = 0.0
     wipe_start_y = 0.0
-    prev_z = 0.0
 
     for line_num, line in enumerate(lines, 1):
-        original_line = line
         line = line.strip()
 
-        # Skip empty lines
-        if not line:
-            continue
-
-        # Check for layer markers
-        if line.startswith(';LAYER:'):
-            try:
-                layer_num = int(line.split(':')[1])
-                if layer_num > result.total_layers:
-                    result.total_layers = layer_num
-            except:
-                pass
-            continue
-
-        # Skip pure comments
-        if line.startswith(';'):
+        if not line or line.startswith(';'):
+            # Check for layer markers
+            if line.startswith(';LAYER:'):
+                try:
+                    layer_num = int(line.split(':')[1])
+                    if layer_num > result.total_layers:
+                        result.total_layers = layer_num
+                except:
+                    pass
             continue
 
         # Parse tool changes
-        # Format: T0, T1, etc. or M900 K0.02 T1
         tool_match = re.match(r'^T(\d+)', line)
         if tool_match:
             new_tool = int(tool_match.group(1))
@@ -145,7 +170,7 @@ def parse_gcode_operations(content: str, result: AnalysisResult):
             result.tool_usage[current_tool] = result.tool_usage.get(current_tool, 0) + 1
             continue
 
-        # Also check for tool in M900 command
+        # Check for tool in other commands
         m900_match = re.search(r'T(\d+)', line)
         if line.startswith('M900') and m900_match:
             new_tool = int(m900_match.group(1))
@@ -154,7 +179,7 @@ def parse_gcode_operations(content: str, result: AnalysisResult):
             current_tool = new_tool
             result.tool_usage[current_tool] = result.tool_usage.get(current_tool, 0) + 1
 
-        # Parse G1 moves
+        # Parse G1/G0 moves
         if line.startswith('G1') or line.startswith('G0'):
             parts = line.split(';')[0].split()
             new_x, new_y, new_z, new_e = current_x, current_y, current_z, current_e
@@ -177,18 +202,16 @@ def parse_gcode_operations(content: str, result: AnalysisResult):
                     try: feedrate = float(part[1:])
                     except: pass
 
-            # Detect Z-hop (Z increase during retraction state - true z-hop)
             z_delta = new_z - current_z
             e_delta = new_e - current_e
 
-            # Z-hop is a Z lift during/after retraction
-            # We detect it when we're in retraction state (after E decrease, before E increase)
+            # Z-hop detection
             if 0.05 < z_delta < 3.0 and in_retraction:
                 if current_tool not in result.z_hop_events:
                     result.z_hop_events[current_tool] = []
                 result.z_hop_events[current_tool].append((line_num, z_delta))
 
-            # Detect retraction (E decrease)
+            # Retraction detection
             if e_delta < -0.01:
                 if current_tool not in result.retraction_events:
                     result.retraction_events[current_tool] = []
@@ -196,11 +219,11 @@ def parse_gcode_operations(content: str, result: AnalysisResult):
                 in_retraction = True
                 wipe_start_x, wipe_start_y = current_x, current_y
 
-            # Detect deretraction (E increase after retraction)
+            # Deretraction detection
             elif in_retraction and e_delta > 0.01:
                 in_retraction = False
 
-            # Detect wipe (XY move during retraction)
+            # Wipe detection
             if in_retraction:
                 xy_dist = ((new_x - wipe_start_x)**2 + (new_y - wipe_start_y)**2)**0.5
                 if xy_dist > 0.5:
@@ -211,33 +234,54 @@ def parse_gcode_operations(content: str, result: AnalysisResult):
             current_x, current_y, current_z, current_e = new_x, new_y, new_z, new_e
 
 
-def print_report(result: AnalysisResult):
+def get_mapped_extruder(filament_idx: int, mapping: Dict[int, int], extruder_count: int) -> int:
+    """Get the extruder that a filament maps to"""
+    if filament_idx in mapping:
+        return mapping[filament_idx]
+    # Fallback to modulo
+    return filament_idx % extruder_count
+
+
+def print_report(result: AnalysisResult, user_mapping: Dict[int, int] = None):
     """Print analysis report"""
+    # Use user-provided mapping if available, otherwise use detected mapping
+    mapping = user_mapping if user_mapping else result.filament_extruder_map
+
     print("=" * 80)
     print(f"OrcaSlicer G-code Analysis: {result.filename}")
     print("=" * 80)
 
+    # Mapping info
+    print("\n[Filament → Extruder Mapping]")
+    print("-" * 60)
+    if mapping:
+        print(f"Mapping source: {'User-specified' if user_mapping else 'Detected from G-code'}")
+        for f in sorted(mapping.keys()):
+            print(f"  F{f+1} → E{mapping[f]+1}")
+    else:
+        print("No mapping detected, using modulo fallback:")
+        for f in range(result.filament_count):
+            print(f"  F{f+1} → E{(f % result.extruder_count)+1}")
+
     # Configuration summary
-    print("\n[Configuration from G-code]")
+    print("\n[Extruder Configuration]")
     print("-" * 60)
 
     if result.extruder_retraction_length:
-        print(f"Extruder retraction_length: {result.extruder_retraction_length}")
+        print(f"retraction_length: {result.extruder_retraction_length}")
     if result.extruder_z_hop:
-        print(f"Extruder z_hop: {result.extruder_z_hop}")
+        print(f"z_hop: {result.extruder_z_hop}")
     if result.extruder_wipe_distance:
-        print(f"Extruder wipe_distance: {result.extruder_wipe_distance}")
-    if result.extruder_retraction_speed:
-        print(f"Extruder retraction_speed: {result.extruder_retraction_speed}")
-    if result.extruder_deretraction_speed:
-        print(f"Extruder deretraction_speed: {result.extruder_deretraction_speed}")
+        print(f"wipe_distance: {result.extruder_wipe_distance}")
+    if result.extruder_z_hop_types:
+        print(f"z_hop_types: {result.extruder_z_hop_types}")
 
+    # Filament configuration (if available)
     if result.filament_z_hop_types:
-        print(f"\nFilament z_hop_types ({len(result.filament_z_hop_types)} values):")
+        print(f"\n[Filament z_hop_types ({len(result.filament_z_hop_types)} values)]")
         for i, v in enumerate(result.filament_z_hop_types):
-            # Calculate which extruder this filament maps to (default: modulo)
-            mapped_extruder = i % result.extruder_count
-            print(f"  F{i+1}: {v} (maps to E{mapped_extruder+1})")
+            mapped_e = get_mapped_extruder(i, mapping, result.extruder_count)
+            print(f"  F{i+1}: {v} (maps to E{mapped_e+1})")
 
     # G-code statistics
     print("\n[G-code Statistics]")
@@ -247,61 +291,76 @@ def print_report(result: AnalysisResult):
     print(f"Tools used: {sorted(result.tool_usage.keys())}")
 
     # Per-tool analysis
-    print("\n[Detected Operations per Tool (Filament)]")
-    print("-" * 80)
-    print(f"{'Tool':<6} {'Z-Hops':<12} {'Avg Z-Hop':<12} {'Retractions':<14} {'Avg Retract':<14} {'Wipes':<10}")
-    print("-" * 80)
+    print("\n[Detected Operations per Tool]")
+    print("-" * 90)
+    print(f"{'Tool':<6} {'Filament':<10} {'MapsTo':<8} {'RetractAvg':<12} {'ZHopAvg':<10} {'WipeCount':<10}")
+    print("-" * 90)
 
     all_tools = set(result.z_hop_events.keys()) | set(result.retraction_events.keys()) | set(result.wipe_events.keys())
     for tool in sorted(all_tools):
-        z_hops = result.z_hop_events.get(tool, [])
         retractions = result.retraction_events.get(tool, [])
+        z_hops = result.z_hop_events.get(tool, [])
         wipes = result.wipe_events.get(tool, [])
 
-        z_hop_count = len(z_hops)
-        avg_z_hop = sum(z for _, z in z_hops) / z_hop_count if z_hops else 0
-
-        retraction_count = len(retractions)
-        avg_retract = sum(r for _, r, _ in retractions) / retraction_count if retractions else 0
-
+        avg_retract = sum(r for _, r, _ in retractions) / len(retractions) if retractions else 0
+        avg_z_hop = sum(z for _, z in z_hops) / len(z_hops) if z_hops else 0
         wipe_count = len(wipes)
-        avg_wipe = sum(w for _, w in wipes) / wipe_count if wipes else 0
 
-        # Determine mapped extruder
-        mapped_e = tool % result.extruder_count
+        mapped_e = get_mapped_extruder(tool, mapping, result.extruder_count)
 
-        print(f"T{tool}     {z_hop_count:<12} {avg_z_hop:<12.3f} {retraction_count:<14} {avg_retract:<14.3f} {wipe_count:<10} (->E{mapped_e+1})")
+        print(f"T{tool}     F{tool+1}       E{mapped_e+1}       {abs(avg_retract):<12.3f} {avg_z_hop:<10.3f} {wipe_count:<10}")
 
     # Verification summary
-    print("\n[Mapping Verification]")
-    print("-" * 60)
+    print("\n" + "=" * 80)
+    print("[VERIFICATION RESULTS]")
+    print("=" * 80)
 
     if not result.extruder_retraction_length:
-        print("WARNING: Could not find extruder configuration in G-code")
-        print("This may indicate an older G-code format or parsing issue")
-    else:
-        print("Checking if filament parameters inherit correctly from mapped extruders...")
-        print()
+        print("ERROR: Could not find extruder configuration in G-code")
+        return
 
-        # For tools 4-7 (filaments 5-8), check if values match mapped extruder
-        for tool in range(result.extruder_count, result.filament_count):
-            mapped_e = tool % result.extruder_count
+    all_passed = True
 
-            # Check Z-hop
-            if tool in result.z_hop_events and mapped_e < len(result.extruder_z_hop):
-                tool_avg_z_hop = sum(z for _, z in result.z_hop_events[tool]) / len(result.z_hop_events[tool])
-                expected_z_hop = result.extruder_z_hop[mapped_e]
-                z_hop_match = "OK" if abs(tool_avg_z_hop - expected_z_hop) < 1.0 else "MISMATCH"
-                print(f"  T{tool} (F{tool+1} -> E{mapped_e+1}): Z-hop avg={tool_avg_z_hop:.3f}mm, expected~{expected_z_hop}mm [{z_hop_match}]")
+    # Verify each filament (especially F5-F8 for 4-extruder system)
+    for f in range(result.filament_count):
+        mapped_e = get_mapped_extruder(f, mapping, result.extruder_count)
+        tool = f  # Tool number equals filament index
 
-            # Check retraction
-            if tool in result.retraction_events and mapped_e < len(result.extruder_retraction_length):
-                tool_avg_retract = sum(r for _, r, _ in result.retraction_events[tool]) / len(result.retraction_events[tool])
-                expected_retract = result.extruder_retraction_length[mapped_e]
-                retract_match = "OK" if abs(abs(tool_avg_retract) - expected_retract) < 0.5 else "MISMATCH"
-                print(f"  T{tool} (F{tool+1} -> E{mapped_e+1}): Retract avg={abs(tool_avg_retract):.3f}mm, expected~{expected_retract}mm [{retract_match}]")
+        # Skip if no data for this tool
+        if tool not in result.retraction_events:
+            continue
 
+        print(f"\nF{f+1} (T{tool}) → E{mapped_e+1}:")
+
+        # Check retraction_length
+        if tool in result.retraction_events and mapped_e < len(result.extruder_retraction_length):
+            detected = abs(sum(r for _, r, _ in result.retraction_events[tool]) / len(result.retraction_events[tool]))
+            expected = result.extruder_retraction_length[mapped_e]
+            tolerance = max(0.3, expected * 0.3)  # 30% or 0.3mm tolerance
+            passed = abs(detected - expected) < tolerance
+            status = "PASS" if passed else "FAIL"
+            if not passed:
+                all_passed = False
+            print(f"  retraction_length: detected={detected:.3f}mm, expected={expected:.3f}mm [{status}]")
+
+        # Check z_hop
+        if tool in result.z_hop_events and mapped_e < len(result.extruder_z_hop):
+            detected = sum(z for _, z in result.z_hop_events[tool]) / len(result.z_hop_events[tool])
+            expected = result.extruder_z_hop[mapped_e]
+            tolerance = max(0.2, expected * 0.5)  # 50% or 0.2mm tolerance
+            passed = abs(detected - expected) < tolerance
+            status = "PASS" if passed else "FAIL"
+            if not passed:
+                all_passed = False
+            print(f"  z_hop: detected={detected:.3f}mm, expected={expected:.3f}mm [{status}]")
+
+    # Final summary
     print("\n" + "=" * 80)
+    if all_passed:
+        print("OVERALL: ALL TESTS PASSED")
+    else:
+        print("OVERALL: SOME TESTS FAILED - Check results above")
+    print("=" * 80)
 
 
 def main():
@@ -312,6 +371,7 @@ def main():
 Examples:
   python analyze_gcode_params.py output.gcode
   python analyze_gcode_params.py output.gcode --extruders 4 --filaments 8
+  python analyze_gcode_params.py output.gcode --map "4:0,5:1,6:2,7:3"
         """
     )
     parser.add_argument('gcode_file', help='Path to G-code file to analyze')
@@ -319,8 +379,20 @@ Examples:
                         help='Number of physical extruders (default: 4)')
     parser.add_argument('--filaments', '-f', type=int, default=8,
                         help='Number of filaments (default: 8)')
+    parser.add_argument('--map', '-m', type=str, default=None,
+                        help='Custom mapping as "f1:e1,f2:e2,..." (e.g., "4:0,5:1,6:2,7:3")')
 
     args = parser.parse_args()
+
+    # Parse user-provided mapping
+    user_mapping = None
+    if args.map:
+        user_mapping = {}
+        pairs = args.map.split(',')
+        for pair in pairs:
+            if ':' in pair:
+                f, e = pair.split(':')
+                user_mapping[int(f.strip())] = int(e.strip())
 
     try:
         with open(args.gcode_file, 'r', encoding='utf-8', errors='ignore') as f:
@@ -339,12 +411,13 @@ Examples:
     )
 
     print(f"Analyzing {args.gcode_file}...")
-    print(f"Expecting {args.extruders} extruders, {args.filaments} filaments")
-    print()
+
+    # Parse mapping from G-code first
+    result.filament_extruder_map = parse_filament_extruder_map(content)
 
     parse_config_section(content, result)
     parse_gcode_operations(content, result)
-    print_report(result)
+    print_report(result, user_mapping)
 
 
 if __name__ == '__main__':

@@ -665,8 +665,6 @@ public:
                 default_vals_str += std::to_string(default_values[i]) + (i < default_values.size()-1 ? "," : "");
             }
             default_vals_str += "]";
-            BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_START: default_values=" << default_vals_str
-                << " rhs_size=" << rhs_vec->size();
         }
 
         bool modified = false;
@@ -675,29 +673,13 @@ public:
             if (!rhs_vec->is_nil(i)) {
                 // Non-nil: use filament's own value
                 this->values[i] = rhs_vec->values[i];
-                // DEBUG: 仅限算术类型
-                if constexpr (std::is_arithmetic_v<T>) {
-                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
-                        << " nil=N rhs_val=" << rhs_vec->values[i];
-                }
             } else {
                 // Nil: inherit from mapped physical extruder
                 if (i < map_indices.size() && map_indices[i] >= 0 && (size_t)map_indices[i] < default_values.size()) {
                     this->values[i] = default_values[map_indices[i]];
-                    // DEBUG: 仅限算术类型
-                    if constexpr (std::is_arithmetic_v<T>) {
-                        BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
-                            << " nil=Y map_idx=" << map_indices[i]
-                            << " inherited=" << default_values[map_indices[i]];
-                    }
                 } else if (!default_values.empty()) {
                     // Fallback: use first value
                     this->values[i] = default_values[0];
-                    // DEBUG: 仅限算术类型
-                    if constexpr (std::is_arithmetic_v<T>) {
-                        BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
-                            << " nil=Y FALLBACK default_val=" << default_values[0];
-                    }
                 }
             }
             // Check if the value actually changed

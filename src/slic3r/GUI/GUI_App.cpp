@@ -1082,7 +1082,9 @@ GUI_App::GUI_App()
     m_page_http_server.setPort(PAGE_HTTP_PORT);
     m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
     m_page_http_server.start();
-    
+    BOOST_LOG_TRIVIAL(info) << "[Flutter] Version:"<<common::get_flutter_version();
+    BOOST_LOG_TRIVIAL(info) << "[Profile] Version:" << common::get_profile_version();
+    flush_logs();
     m_fltviews.set_app(this);
 }
 

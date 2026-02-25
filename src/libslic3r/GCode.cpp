@@ -1998,6 +1998,69 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         std::ostringstream max_height_z_tip;
         max_height_z_tip<<"; max_z_height: " << std::fixed << std::setprecision(2) << max_height_z << '\n';
         file.writeln(max_height_z_tip.str());
+
+        // Orca: Output filament-extruder mapping and parameter configuration for verification
+        file.write(";\n; [Filament-Extruder Mapping Configuration]\n");
+
+        // Output filament_extruder_map
+        {
+            std::string map_str = "; filament_extruder_map: ";
+            if (!writer_mapping.empty()) {
+                // Find max filament index
+                int max_filament = 0;
+                for (const auto& pair : writer_mapping) {
+                    max_filament = std::max(max_filament, pair.first);
+                }
+                for (int i = 0; i <= max_filament; ++i) {
+                    auto it = writer_mapping.find(i);
+                    if (it != writer_mapping.end()) {
+                        map_str += std::to_string(it->second);
+                    } else {
+                        map_str += std::to_string(i % (int)m_config.retraction_length.size());
+                    }
+                    if (i < max_filament) map_str += ",";
+                }
+            } else {
+                // Fallback: use modulo mapping
+                size_t extruder_count = m_config.retraction_length.size();
+                size_t filament_count = m_config.filament_density.size();
+                for (size_t i = 0; i < filament_count; ++i) {
+                    map_str += std::to_string(i % extruder_count);
+                    if (i < filament_count - 1) map_str += ",";
+                }
+            }
+            map_str += "\n";
+            file.write(map_str);
+        }
+
+        // Output extruder parameters
+        // Use full_print_config().opt_serialize() for safe serialization (handles enums properly)
+        file.write(";\n; [Extruder Parameters]\n");
+        {
+            const DynamicPrintConfig& full_cfg = print.full_print_config();
+
+            // Helper lambda to safely serialize a config option
+            auto safe_serialize = [&full_cfg](const char* opt_name) -> std::string {
+                try {
+                    std::string val = full_cfg.opt_serialize(opt_name);
+                    return val.empty() ? "[]" : val;
+                } catch (...) {
+                    return "[]";
+                }
+            };
+
+            file.write_format("; retraction_length: %s\n", safe_serialize("retraction_length").c_str());
+            file.write_format("; z_hop: %s\n", safe_serialize("z_hop").c_str());
+            file.write_format("; wipe_distance: %s\n", safe_serialize("wipe_distance").c_str());
+            file.write_format("; z_hop_types: %s\n", safe_serialize("z_hop_types").c_str());
+
+            // Output filament override parameters (nil = inherit from extruder)
+            file.write(";\n; [Filament Overrides] (nil = inherit from mapped extruder)\n");
+            file.write_format("; filament_retraction_length: %s\n", safe_serialize("filament_retraction_length").c_str());
+            file.write_format("; filament_z_hop: %s\n", safe_serialize("filament_z_hop").c_str());
+            file.write_format("; filament_wipe_distance: %s\n", safe_serialize("filament_wipe_distance").c_str());
+            file.write_format("; filament_z_hop_types: %s\n", safe_serialize("filament_z_hop_types").c_str());
+        }
     }
 
     file.write_format("; HEADER_BLOCK_END\n\n");

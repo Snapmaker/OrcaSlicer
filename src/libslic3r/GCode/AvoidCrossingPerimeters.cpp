@@ -482,8 +482,11 @@ static inline float get_default_perimeter_spacing(const PrintObject &print_objec
     std::vector<unsigned int> printing_extruders = print_object.object_extruders();
     assert(!printing_extruders.empty());
     float avg_extruder = 0;
-    for(unsigned int extruder_id : printing_extruders)
-        avg_extruder += float(scale_(print_object.print()->config().nozzle_diameter.get_at(extruder_id)));
+    for(unsigned int extruder_id : printing_extruders) {
+        // SM Orca: nozzle_diameter是物理挤出机参数，使用physical_extruder_id访问
+        int physical_extruder_id = print_object.print()->get_physical_extruder(extruder_id);
+        avg_extruder += float(scale_(print_object.print()->config().nozzle_diameter.get_at(physical_extruder_id)));
+    }
     avg_extruder /= printing_extruders.size();
     return avg_extruder;
 }

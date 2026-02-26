@@ -894,10 +894,23 @@ public:
     // SM Orca: 获取耗材-挤出机映射表
     const std::unordered_map<int, int>& get_filament_extruder_map() const { return m_filament_extruder_map; }
     // SM Orca: 获取物理挤出机ID（根据耗材索引）
+    // 关键修复：当映射表为空时，使用模运算而不是直接返回耗材ID，避免越界
     int get_physical_extruder(int filament_idx) const {
         auto it = m_filament_extruder_map.find(filament_idx);
-        int physical_extruder_id = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
-
+        int physical_extruder_id;
+        if (it != m_filament_extruder_map.end()) {
+            // 从映射表获取
+            physical_extruder_id = it->second;
+        } else {
+            // 映射表为空或没有该耗材的映射，使用默认模运算映射
+            size_t physical_count = m_config.nozzle_diameter.values.size();
+            if (physical_count == 0) {
+                // 防止除零，使用安全的默认值
+                physical_extruder_id = 0;
+            } else {
+                physical_extruder_id = filament_idx % physical_count;
+            }
+        }
         return physical_extruder_id;
     }
     // SM Orca: Initialize filament-to-physical-extruder mapping table

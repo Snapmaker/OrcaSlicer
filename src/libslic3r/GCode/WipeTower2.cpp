@@ -1410,9 +1410,9 @@ void WipeTower2::set_extruder(size_t idx, int physical_extruder, const PrintConf
 
     m_used_filament_length.resize(std::max(m_used_filament_length.size(), idx + 1)); // makes sure that the vector is big enough so we don't have to check later
 
-    // SM Orca: 回抽参数是挤出机属性，使用 physical_extruder
-    m_filpar[idx].retract_length = config.retraction_length.get_at(physical_extruder);
-    m_filpar[idx].retract_speed  = config.retraction_speed.get_at(physical_extruder);
+    // SM Orca: 回抽参数支持耗材覆盖，继承后存储在耗材位置，使用 filament_id (idx)
+    m_filpar[idx].retract_length = config.retraction_length.get_at(idx);
+    m_filpar[idx].retract_speed  = config.retraction_speed.get_at(idx);
 }
 
 

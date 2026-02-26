@@ -57,23 +57,22 @@ void print_usage(const char* program_name) {
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  -o, --output <file>    Output file path (without extension)" << std::endl;
-    std::cout << "                         Single plate: outputs {file}.gcode or {file}.3mf" << std::endl;
-    std::cout << "                         All plates: outputs {file}.3mf (required)" << std::endl;
+    std::cout << "                         Single plate: outputs {file}.gcode or {file}.gcode.3mf" << std::endl;
+    std::cout << "                         All plates: outputs {file}.gcode.3mf" << std::endl;
     std::cout << "  -p, --plate <id>       Plate number to slice (1, 2, 3...)" << std::endl;
-    std::cout << "                         Omit or \"all\" for all plates" << std::endl;
-    std::cout << "  -f, --format <fmt>     Output format: gcode | gcode.3mf" << std::endl;
-    std::cout << "                         Single plate default: gcode" << std::endl;
-    std::cout << "                         All plates: gcode.3mf (required)" << std::endl;
+    std::cout << "                         Omit or \"all\" for all plates (default: all)" << std::endl;
+    std::cout << "  -f, --format <fmt>     Output format: gcode | gcode.3mf (default: gcode.3mf)" << std::endl;
+    std::cout << "                         Note: All plates always use gcode.3mf" << std::endl;
     std::cout << "  -r, --resources <dir>  Resources directory containing printer profiles" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;
     std::cout << "  -h, --help             Show this help message" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
-    std::cout << "  " << program_name << " model.3mf                        # All plates -> model.3mf" << std::endl;
-    std::cout << "  " << program_name << " model.3mf -p 1                   # Plate 1 -> model-p1.gcode" << std::endl;
-    std::cout << "  " << program_name << " model.3mf -p 1 -f gcode.3mf      # Plate 1 -> model-p1.3mf" << std::endl;
-    std::cout << "  " << program_name << " model.3mf -p 1 -o output         # Plate 1 -> output.gcode" << std::endl;
-    std::cout << "  " << program_name << " model.3mf -o result              # All plates -> result.3mf" << std::endl;
+    std::cout << "  " << program_name << " model.3mf                        # All plates -> model.gcode.3mf" << std::endl;
+    std::cout << "  " << program_name << " model.3mf -p 1                   # Plate 1 -> model-p1.gcode.3mf" << std::endl;
+    std::cout << "  " << program_name << " model.3mf -p 1 -f gcode          # Plate 1 -> model-p1.gcode (plain text)" << std::endl;
+    std::cout << "  " << program_name << " model.3mf -p 1 -o output         # Plate 1 -> output.gcode.3mf" << std::endl;
+    std::cout << "  " << program_name << " model.3mf -o result              # All plates -> result.gcode.3mf" << std::endl;
 }
 
 void default_status_callback(const PrintBase::SlicingStatus& status) {
@@ -102,7 +101,7 @@ std::string generate_output_path(
         base_name = input_path.parent_path().string() + "/" + input_path.stem().string();
     }
 
-    std::string extension = (format == OutputFormat::GCODE_3MF) ? ".3mf" : ".gcode";
+    std::string extension = (format == OutputFormat::GCODE_3MF) ? ".gcode.3mf" : ".gcode";
 
     if (single_plate) {
         // Add plate suffix for single plate if using default name
@@ -111,8 +110,8 @@ std::string generate_output_path(
         }
         return base_name + extension;
     } else {
-        // All plates always use .3mf
-        return base_name + ".3mf";
+        // All plates always use .gcode.3mf
+        return base_name + ".gcode.3mf";
     }
 }
 
@@ -126,7 +125,7 @@ int main(int argc, char* argv[]) {
     std::string resources_dir;
     bool verbose = false;
     int plate_id = 0;  // 0 = all plates
-    OutputFormat format = OutputFormat::GCODE;
+    OutputFormat format = OutputFormat::GCODE_3MF;  // Default to gcode.3mf
     bool format_specified = false;
 
     // Parse arguments

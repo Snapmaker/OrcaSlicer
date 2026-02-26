@@ -64,9 +64,9 @@ orca-slice-engine/
 
 | 选项 | 说明 |
 |------|------|
-| `-o, --output <文件>` | 输出文件路径（不含扩展名）。单盘输出 `{file}.gcode` 或 `{file}.3mf`；全盘输出 `{file}.3mf` |
-| `-p, --plate <id>` | 指定切片的盘号。使用数字 (1, 2, 3...) 指定单盘，`all` 或省略此参数表示全盘切片 |
-| `-f, --format <格式>` | 输出格式：`gcode`（纯文本）或 `gcode.3mf`（3MF容器）。单盘默认 gcode，全盘强制 gcode.3mf |
+| `-o, --output <文件>` | 输出文件路径（不含扩展名）。单盘输出 `{file}.gcode` 或 `{file}.gcode.3mf`；全盘输出 `{file}.gcode.3mf` |
+| `-p, --plate <id>` | 指定切片的盘号。使用数字 (1, 2, 3...) 指定单盘，`all` 或省略表示全盘（默认：全盘） |
+| `-f, --format <格式>` | 输出格式：`gcode`（纯文本）或 `gcode.3mf`（3MF容器）。默认：gcode.3mf。全盘强制 gcode.3mf |
 | `-r, --resources <目录>` | 资源目录，包含打印机预设文件 |
 | `-v, --verbose` | 启用详细日志（trace级别） |
 | `-h, --help` | 显示帮助信息 |
@@ -76,25 +76,25 @@ orca-slice-engine/
 #### 单盘切片
 
 ```bash
-# 切片第1盘 -> 输出 model-p1.gcode
+# 切片第1盘 -> 输出 model-p1.gcode.3mf（默认格式）
 ./orca-slice-engine model.3mf -p 1
 
-# 切片第2盘 -> 输出 model-p2.gcode
+# 切片第2盘 -> 输出 model-p2.gcode.3mf
 ./orca-slice-engine model.3mf -p 2
 
-# 切片第1盘，输出为 gcode.3mf 格式
-./orca-slice-engine model.3mf -p 1 -f gcode.3mf
-# -> model-p1.3mf
+# 切片第1盘，输出纯文本 gcode 格式
+./orca-slice-engine model.3mf -p 1 -f gcode
+# -> model-p1.gcode
 
 # 切片第1盘，指定输出路径
 ./orca-slice-engine model.3mf -p 1 -o /output/result
-# -> /output/result.gcode
+# -> /output/result.gcode.3mf
 ```
 
 #### 全盘切片
 
 ```bash
-# 全盘切片 -> 输出 model.3mf（包含所有盘的G-code）
+# 全盘切片 -> 输出 model.gcode.3mf（包含所有盘的G-code）
 ./orca-slice-engine model.3mf
 
 # 显式指定全盘
@@ -102,7 +102,7 @@ orca-slice-engine/
 
 # 全盘切片，指定输出路径
 ./orca-slice-engine model.3mf -o /output/result
-# -> /output/result.3mf
+# -> /output/result.gcode.3mf
 ```
 
 #### 其他选项
@@ -123,12 +123,12 @@ export ORCA_RESOURCES=/opt/orca-slicer/resources
 
 | 命令 | 输出文件 |
 |------|---------|
-| `-p 1` | `{input}-p1.gcode` |
-| `-p 1 -f gcode.3mf` | `{input}-p1.3mf` |
-| `-p 1 -o output` | `output.gcode` |
-| `-p 1 -o output -f gcode.3mf` | `output.3mf` |
-| 无 `-p` 或 `-p all` | `{input}.3mf` |
-| `-o result`（全盘） | `result.3mf` |
+| `-p 1` | `{input}-p1.gcode.3mf` |
+| `-p 1 -f gcode` | `{input}-p1.gcode` |
+| `-p 1 -o output` | `output.gcode.3mf` |
+| `-p 1 -o output -f gcode` | `output.gcode` |
+| 无 `-p` 或 `-p all` | `{input}.gcode.3mf` |
+| `-o result`（全盘） | `result.gcode.3mf` |
 
 ### 输出格式说明
 

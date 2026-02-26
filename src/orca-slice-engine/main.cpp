@@ -415,6 +415,11 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Clear model objects so GUI recognizes this as gcode.3mf
+        // GUI checks: model.objects.empty() && !has_print_instances
+        model.clear_objects();
+        BOOST_LOG_TRIVIAL(debug) << "Cleared model objects for gcode.3mf export";
+
         // Use store_bbs_3mf to create the output
         StoreParams params;
         params.path = output_path.c_str();

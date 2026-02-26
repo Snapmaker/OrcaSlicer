@@ -27,6 +27,11 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 {
     this->config.apply(print_config, true);
     m_single_extruder_multi_material = print_config.single_extruder_multi_material.value;
+    m_physical_extruder_count = print_config.nozzle_diameter.values.size();
+    if (m_physical_extruder_count == 0) {
+        m_physical_extruder_count = 1;  // 防止除零，默认为1
+        BOOST_LOG_TRIVIAL(warning) << "GCodeWriter::apply_print_config: nozzle_diameter is empty, using default physical_extruder_count=1";
+    }
     bool use_mach_limits = print_config.gcode_flavor.value == gcfMarlinLegacy || print_config.gcode_flavor.value == gcfMarlinFirmware ||
                            print_config.gcode_flavor.value == gcfKlipper || print_config.gcode_flavor.value == gcfRepRapFirmware;
     m_max_acceleration = std::lrint(use_mach_limits ? print_config.machine_max_acceleration_extruding.values.front() : 0);
@@ -46,13 +51,11 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
 {
     BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: START - Creating Extruder objects for " << extruder_ids.size() << " extruders";
-    BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: filament_extruder_map size=" << m_filament_extruder_map.size();
 
     std::sort(extruder_ids.begin(), extruder_ids.end());
     m_extruder = nullptr; // this points to object inside `m_extruders`, so should be cleared too
     m_extruders.clear();
     m_extruders.reserve(extruder_ids.size());
-    // SM Orca: 创建 Extruder 对象时传递物理挤出机ID
     for (unsigned int extruder_id : extruder_ids) {
         int physical_extruder_id = get_physical_extruder(extruder_id);
         BOOST_LOG_TRIVIAL(info) << "GCodeWriter::set_extruders: Creating Extruder - filament_id=" << extruder_id
@@ -408,7 +411,6 @@ std::string GCodeWriter::set_input_shaping(char axis, float damp, float freq) co
     return gcode.str();
 }
 
-
 std::string GCodeWriter::reset_e(bool force)
 {
     if (FLAVOR_IS(gcfMach3)
@@ -463,11 +465,8 @@ std::string GCodeWriter::toolchange_prefix() const
 
 std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
-    BOOST_LOG_TRIVIAL(info) << "SM Orca: GCodeWriter::toolchange(" << extruder_id << ") called";
 
-    // SM Orca: 记录映射信息
     int physical_extruder = get_physical_extruder(extruder_id);
-    BOOST_LOG_TRIVIAL(info) << "SM Orca: Toolchange - filament " << extruder_id << " maps to physical extruder " << physical_extruder << " (mapping table size: " << m_filament_extruder_map.size() << ")";
 
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
@@ -478,8 +477,6 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
     // if we are running a single-extruder setup, just set the extruder and return nothing
     std::ostringstream gcode;
     if (this->multiple_extruders || (this->config.filament_diameter.values.size() > 1 && !is_bbl_printers())) {
-        // SM Orca: T命令使用耗材序号（extruder_id），物理换头由固件处理
-        BOOST_LOG_TRIVIAL(info) << "SM Orca: Generating T command: T" << extruder_id;
         gcode << this->toolchange_prefix() << extruder_id;
         //BBS
         if (GCodeWriter::full_gcode_comment)
@@ -487,7 +484,6 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
         gcode << "\n";
         gcode << this->reset_e(true);
     } else {
-        BOOST_LOG_TRIVIAL(info) << "SM Orca: Toolchange - Single extruder mode, no T command generated";
     }
     return gcode.str();
 }
@@ -508,7 +504,6 @@ std::string GCodeWriter::set_speed(double F, const std::string &comment, const s
 
 std::string GCodeWriter::travel_to_xy(const Vec2d &point, const std::string &comment)
 {
-    // SM Orca: 诊断NaN输入
     if (std::isnan(point(0)) || std::isinf(point(0)) || std::isnan(point(1)) || std::isinf(point(1))) {
         BOOST_LOG_TRIVIAL(error) << "SM Orca: travel_to_xy received NaN/inf point"
             << " extruder=" << (m_extruder ? m_extruder->id() : -1)
@@ -736,7 +731,6 @@ bool GCodeWriter::will_move_z(double z) const
 
 std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std::string &comment, bool force_no_extrusion)
 {
-    // SM Orca: 诊断NaN输入
     if (std::isnan(point(0)) || std::isinf(point(0)) || std::isnan(point(1)) || std::isinf(point(1))) {
         BOOST_LOG_TRIVIAL(error) << "SM Orca: extrude_to_xy received NaN/inf point"
             << " extruder=" << (m_extruder ? m_extruder->id() : -1)

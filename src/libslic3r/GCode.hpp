@@ -198,7 +198,11 @@ public:
     void set_gcode_offset(double x, double y) { m_writer.set_xy_offset(x, y); m_processor.set_xy_offset(x, y);}
 
     // SM Orca: Set filament-extruder mapping
-    void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_writer.set_filament_extruder_map(map); m_processor.set_filament_extruder_map(map); }
+    void set_filament_extruder_map(const std::unordered_map<int, int>& map) {
+        m_writer.set_filament_extruder_map(map);
+        m_processor.set_filament_extruder_map(map);
+        if (m_cooling_buffer) m_cooling_buffer->set_filament_extruder_map(map);
+    }
 
     // Exported for the helper classes (OozePrevention, Wipe) and for the Perl binding for unit tests.
     const Vec2d&    origin() const { return m_origin; }

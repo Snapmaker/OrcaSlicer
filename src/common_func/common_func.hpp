@@ -23,6 +23,8 @@ namespace common
 
 	std::string get_flutter_version();
 
+	std::string get_profile_version();
+
 	std::string getMachineId();
 
 	std::string getLocalArea();

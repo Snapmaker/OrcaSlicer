@@ -71,6 +71,44 @@ namespace common
 #endif // _WIN32
     return machineId;
     }
+    std::string get_profile_version()
+    { 
+        std::string versionFilePath = "";
+#ifdef _WIN32
+
+       
+
+        PWSTR   pszPath    = nullptr;
+        char*   path       = new char[MAX_PATH]();
+        size_t  pathLength = 0;
+        HRESULT hr         = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &pszPath);
+        if (SUCCEEDED(hr)) {
+            wcstombs_s(&pathLength, path, MAX_PATH, pszPath, MAX_PATH);
+            CoTaskMemFree(pszPath);
+        }
+
+        std::string filePath = path;
+        versionFilePath      = filePath + "\\" + std::string("Snapmaker_Orca\\system\\Snapmaker.json");
+        delete[] path;
+#elif __APPLE__
+        const char* home_env = getenv("HOME");
+        versionFilePath      = home_env;
+        versionFilePath      = versionFilePath + "/Library/Application Support/Snapmaker_Orca/system/Snapmaker.json";
+#else
+
+    
+#endif
+        std::ifstream json_file(versionFilePath);
+        if (!json_file.is_open()) {
+            std::ifstream json_file(versionFilePath);
+            return "";
+        }
+        nlohmann::json json_data;
+        json_file >> json_data;
+        std::string str_version      = json_data.value("version", "");
+
+        return str_version;
+    }
 
     std::string get_flutter_version()
     {

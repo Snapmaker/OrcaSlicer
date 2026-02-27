@@ -422,17 +422,12 @@ public:
     // This function is useful to split values from multiple extrder / filament settings into separate configurations.
     void set_at(const ConfigOption *rhs, size_t i, size_t j) override
     {
-        // SM Orca: Debug logging
-        BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: START - this->values.size()=" << this->values.size()
-            << ", i=" << i << ", j=" << j;
-
         // It is expected that the vector value has at least one value, which is the default, if not overwritten.
         assert(! this->values.empty());
         if (this->values.size() <= i) {
             // Resize this vector, fill in the new vector fields with the copy of the first field.
             T v = this->values.front();
             this->values.resize(i + 1, v);
-            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: resized to " << this->values.size();
         }
 
         if (rhs->type() == this->type()) {
@@ -449,8 +444,7 @@ public:
                 before_ss << this->values[k];
             }
             before_ss << "]";
-            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: before this->values=" << before_ss.str();
-
+         
             // Log other vector
             std::stringstream other_ss;
             other_ss << "[";
@@ -459,8 +453,6 @@ public:
                 other_ss << other->values[k];
             }
             other_ss << "]";
-            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: other->values=" << other_ss.str()
-                << ", other->get_at(" << j << ")=" << other->get_at(j);
 
             this->values[i] = other->get_at(j);
 
@@ -472,12 +464,10 @@ public:
                 after_ss << this->values[k];
             }
             after_ss << "]";
-            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: after this->values[" << i << "]=" << this->values[i]
-                << ", full=" << after_ss.str();
+
 
         } else if (rhs->type() == this->scalar_type()) {
             this->values[i] = static_cast<const ConfigOptionSingle<T>*>(rhs)->value;
-            BOOST_LOG_TRIVIAL(error) << "ConfigOptionVector::set_at: assigned scalar value=" << this->values[i];
         } else
             throw ConfigurationError("ConfigOptionVector::set_at(): Assigning an incompatible type");
     }

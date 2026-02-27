@@ -6050,7 +6050,8 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
 };
 
 std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
-                                                           UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS};
+                                                           UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
+                                                           DOWNLOAD_FILE,FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"

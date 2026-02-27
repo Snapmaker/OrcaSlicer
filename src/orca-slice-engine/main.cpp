@@ -392,6 +392,12 @@ int main(int argc, char* argv[]) {
         BOOST_LOG_TRIVIAL(info) << "Filtered model: " << current_plate_instances.size()
             << " instances on plate " << current_plate_id;
 
+        // Skip empty plates (no instances to slice)
+        if (current_plate_instances.empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << current_plate_id;
+            continue;
+        }
+
         // Create Print object for this plate
         Print print;
         print.set_status_callback(default_status_callback);

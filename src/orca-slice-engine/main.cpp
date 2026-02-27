@@ -385,7 +385,7 @@ int main(int argc, char* argv[]) {
                 bool on_current_plate = (current_plate_instances.find(key) != current_plate_instances.end());
                 inst->printable = on_current_plate;
                 // Explicitly set print_volume_state to handle edge cases where 3MF has instances outside build volume
-                inst->print_volume_state = on_current_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Outside;
+                inst->print_volume_state = on_current_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Fully_Outside;
             }
         }
 

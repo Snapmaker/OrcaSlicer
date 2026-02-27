@@ -13,6 +13,8 @@
 #include <vector>
 #include <map>
 #include <algorithm>
+#include <sstream>
+#include <iomanip>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -347,8 +349,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Map to store gcode paths for each plate (for gcode.3mf export)
-    std::map<int, std::string> plate_gcode_paths;
+    // Structure to store slicing results for each plate
+    struct PlateSliceResult {
+        std::string gcode_path;
+        GCodeProcessorResult gcode_result;
+        double total_weight;
+        bool support_used;
+    };
+    std::map<int, PlateSliceResult> plate_results;
 
     // Process each plate
     for (int current_plate_id : plates_to_process) {
@@ -389,12 +397,19 @@ int main(int argc, char* argv[]) {
         // Export G-code
         BOOST_LOG_TRIVIAL(info) << "Exporting G-code for plate " << current_plate_id << "...";
 
-        GCodeProcessorResult gcode_result;
+        PlateSliceResult slice_result;
 
         try {
-            std::string result = print.export_gcode(gcode_output, &gcode_result, nullptr);
+            std::string result = print.export_gcode(gcode_output, &slice_result.gcode_result, nullptr);
             BOOST_LOG_TRIVIAL(info) << "G-code exported to: " << result;
-            plate_gcode_paths[current_plate_id] = result;
+            slice_result.gcode_path = result;
+
+            // Get print statistics before print object is destroyed
+            const PrintStatistics& ps = print.print_statistics();
+            slice_result.total_weight = ps.total_weight;
+            slice_result.support_used = print.is_support_used();
+
+            plate_results[current_plate_id] = slice_result;
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to export G-code for plate " << current_plate_id << ": " << e.what();
@@ -407,11 +422,103 @@ int main(int argc, char* argv[]) {
         // Package all gcode files into gcode.3mf
         BOOST_LOG_TRIVIAL(info) << "Creating gcode.3mf package...";
 
-        // Prepare plate data with gcode paths
+        // Get printer and filament metadata from config
+        std::string printer_model_id;
+        std::string nozzle_diameters_str;
+
+        if (config.has("printer_model")) {
+            printer_model_id = config.opt_string("printer_model");
+        }
+
+        if (config.has("nozzle_diameter")) {
+            auto nozzle_opt = config.option<ConfigOptionFloats>("nozzle_diameter");
+            if (nozzle_opt && !nozzle_opt->values.empty()) {
+                std::ostringstream ss;
+                ss << std::fixed << std::setprecision(2);
+                for (size_t i = 0; i < nozzle_opt->values.size(); ++i) {
+                    if (i > 0) ss << ",";
+                    ss << nozzle_opt->values[i];
+                }
+                nozzle_diameters_str = ss.str();
+            }
+        }
+
+        // Get filament type and color arrays from config
+        const ConfigOptionStrings* filament_types = nullptr;
+        const ConfigOptionStrings* filament_colors = nullptr;
+        const ConfigOptionStrings* filament_ids = nullptr;
+
+        if (config.has("filament_type")) {
+            filament_types = config.option<ConfigOptionStrings>("filament_type");
+        }
+        if (config.has("filament_colour")) {
+            filament_colors = config.option<ConfigOptionStrings>("filament_colour");
+        }
+        if (config.has("filament_settings_id")) {
+            filament_ids = config.option<ConfigOptionStrings>("filament_settings_id");
+        }
+
+        // Prepare plate data with full slicing info, same as GUI's PartPlateList::store_to_3mf_structure
         for (auto& pd : plate_data) {
-            auto it = plate_gcode_paths.find(pd->plate_index);
-            if (it != plate_gcode_paths.end()) {
-                pd->gcode_file = it->second;
+            auto it = plate_results.find(pd->plate_index);
+            if (it != plate_results.end()) {
+                PlateSliceResult& result = it->second;
+
+                // Set gcode file path
+                pd->gcode_file = result.gcode_path;
+
+                // Mark as sliced valid (required for _add_gcode_file_to_archive)
+                pd->is_sliced_valid = true;
+
+                // Set printer metadata
+                pd->printer_model_id = printer_model_id;
+                pd->nozzle_diameters = nozzle_diameters_str;
+
+                // Set print time prediction from GCodeProcessorResult
+                auto& modes = result.gcode_result.print_statistics.modes;
+                int print_time = (int)modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+                pd->gcode_prediction = std::to_string(print_time);
+
+                // Set weight from PrintStatistics
+                if (result.total_weight != 0.0) {
+                    std::ostringstream ss;
+                    ss << std::fixed << std::setprecision(2) << result.total_weight;
+                    pd->gcode_weight = ss.str();
+                }
+
+                // Set toolpath outside flag
+                pd->toolpath_outside = result.gcode_result.toolpath_outside;
+
+                // Set support used flag
+                pd->is_support_used = result.support_used;
+
+                // Set label object enabled flag
+                pd->is_label_object_enabled = result.gcode_result.label_object_enabled;
+
+                // Parse filament info from GCodeProcessorResult (fills slice_filaments_info and warnings)
+                pd->parse_filament_info(&result.gcode_result);
+
+                // Fill additional filament metadata (type, color, filament_id) from config
+                for (auto& info : pd->slice_filaments_info) {
+                    size_t idx = static_cast<size_t>(info.id);
+                    if (filament_types && idx < filament_types->values.size()) {
+                        info.type = filament_types->values[idx];
+                    }
+                    if (filament_colors && idx < filament_colors->values.size()) {
+                        info.color = filament_colors->values[idx];
+                    }
+                    if (filament_ids && idx < filament_ids->values.size()) {
+                        info.filament_id = filament_ids->values[idx];
+                    }
+                }
+
+                BOOST_LOG_TRIVIAL(info) << "Plate " << pd->plate_index
+                    << ": gcode=" << pd->gcode_file
+                    << ", prediction=" << pd->gcode_prediction << "s"
+                    << ", weight=" << pd->gcode_weight << "g"
+                    << ", support=" << (pd->is_support_used ? "yes" : "no")
+                    << ", printer=" << pd->printer_model_id
+                    << ", nozzle=" << pd->nozzle_diameters;
             }
         }
 

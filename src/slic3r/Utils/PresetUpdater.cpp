@@ -232,7 +232,11 @@ struct PresetUpdater::priv
     void sync_resources(std::string http_url, std::map<std::string, Resource> &resources, bool check_patch = false,  std::string current_version="", std::string changelog_file="");
     void sync_config(bool isAuto_check = true);
     void sync_update_flutter_resource(bool isAuto_check = true);
-    bool download_file(const std::string& url, const std::string& target_path, int timeout_sec = 30, bool* cancel_flag = nullptr);
+    bool download_file(const std::string&            url,
+                       const std::string&            target_path,
+                       const std::string&            extract_path,
+                       int timeout_sec = 30,
+                       bool*                         cancel_flag = nullptr);
     void sync_tooltip(std::string http_url, std::string language);
     void sync_plugins(std::string http_url, std::string plugin_version);
     void sync_printer_config(std::string http_url);
@@ -320,7 +324,7 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
 {
     bool res = true;
     std::string file_path = source_path.string();
-    std::string parent_path = (!dest_path.empty() ? dest_path : source_path.parent_path()).string();
+    fs::path parent_path = !dest_path.empty() ? dest_path : source_path.parent_path();
     mz_zip_archive archive;
     mz_zip_zero_struct(&archive);
 
@@ -331,6 +335,7 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
     }
 
     mz_uint num_entries = mz_zip_reader_get_num_files(&archive);
+    fs::path base_path = parent_path.lexically_normal();
 
     mz_zip_archive_file_stat stat;
     // we first loop the entries to read from the archive the .amf file only, in order to extract the version from it
@@ -338,30 +343,48 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
     {
         if (mz_zip_reader_file_stat(&archive, i, &stat))
         {
-            std::string dest_file = parent_path+"/"+stat.m_filename;
-            if (stat.m_is_directory) {
-                fs::path dest_path(dest_file);
-                if (!fs::exists(dest_path))
-                    fs::create_directories(dest_path);
-				continue;
+            fs::path full_dest = (base_path / stat.m_filename).lexically_normal();
+            // Reject paths that escape base (e.g. ".." in zip entry)
+            std::string rel_str = full_dest.lexically_relative(base_path).generic_string();
+            if (rel_str.empty() || rel_str.find("..") == 0) {
+                BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]Unzip: skip invalid path "<<stat.m_filename;
+                continue;
             }
-            else if (stat.m_uncomp_size == 0) {
+            if (stat.m_is_directory) {
+                if (!fs::exists(full_dest))
+                    fs::create_directories(full_dest);
+                continue;
+            }
+            if (stat.m_uncomp_size == 0) {
                 BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]Unzip: invalid size for file "<<stat.m_filename;
                 continue;
             }
             try
             {
-                res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_file.c_str(), 0);
+                // Ensure parent directory exists (zip often has no directory entries, e.g. "flutter_web/version.json" only)
+                fs::path parent_dir = full_dest.parent_path();
+                if (!parent_dir.empty() && !fs::exists(parent_dir))
+                    fs::create_directories(parent_dir);
+
+                std::string dest_file_encoded = encode_path(full_dest.string().c_str());
+                res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_file_encoded.c_str(), 0);
+#ifdef _WIN32
                 if (!res) {
-                    BOOST_LOG_TRIVIAL(error) << "[Orca Updater]extract file "<<stat.m_filename<<" to dest "<<dest_file<<" failed";
-                    close_zip_reader(&archive);
-                    return res;
+                    std::wstring dest_file_w = boost::nowide::widen(full_dest.generic_string());
+                    res = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, dest_file_w.c_str(), 0);
                 }
-                BOOST_LOG_TRIVIAL(info) << "[Orca Updater]successfully extract file " << stat.m_file_index << " to "<<dest_file;
+#endif
+                if (!res) {
+                    mz_zip_error zip_err = mz_zip_get_last_error(&archive);
+                    BOOST_LOG_TRIVIAL(error) << "[Orca Updater]extract file "<<stat.m_filename<<" to dest "<<full_dest.string()
+                        << " failed: " << (zip_err != MZ_ZIP_NO_ERROR ? mz_zip_get_error_string(zip_err) : "unknown");
+                    close_zip_reader(&archive);
+                    return false;
+                }
+                BOOST_LOG_TRIVIAL(info) << "[Orca Updater]successfully extract file " << stat.m_file_index << " to "<<full_dest.string();
             }
             catch (const std::exception& e)
             {
-                // ensure the zip archive is closed and rethrow the exception
                 close_zip_reader(&archive);
                 BOOST_LOG_TRIVIAL(error) << "[Orca Updater]Archive read exception:"<<e.what();
                 return false;
@@ -373,7 +396,7 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
     }
     close_zip_reader(&archive);
 
-	return true;
+    return true;
 }
 
 // Remove leftover paritally downloaded files, if any.
@@ -656,7 +679,8 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
     }
 }
 bool PresetUpdater::priv::download_file(const std::string& url,
-                                        const std::string& target_path,
+                                        const std::string& target_path, 
+                                        const std::string& extract_path,
                                         int   timeout_sec,
                                         bool* cancel_flag )
 {
@@ -676,7 +700,7 @@ bool PresetUpdater::priv::download_file(const std::string& url,
         .on_error([&url](std::string body, std::string error, unsigned http_status) {
             BOOST_LOG_TRIVIAL(error) << "Download failed: " << url << ", HTTP status: " << http_status << ", error: " << error;
         })
-        .on_complete([&](std::string body, unsigned http_status) {
+        .on_complete([&, target_path,tmp_path,extract_path](std::string body, unsigned http_status) {
             if (http_status != 200) {
                 BOOST_LOG_TRIVIAL(error) << "Download failed with HTTP status: " << http_status;
                 return;
@@ -700,12 +724,12 @@ bool PresetUpdater::priv::download_file(const std::string& url,
                 BOOST_LOG_TRIVIAL(error) << "Failed to rename temp file: " << ec.message();
                 return;
             }
-            extract_file(target_path, "../ota/profiles/");
+            extract_file(target_path, extract_path);
             BOOST_LOG_TRIVIAL(info) << "Download completed: " << target_path;
-            res = true;
+            
         })
         .timeout_max(timeout_sec)
-        .perform_sync();
+        .perform();
 
     if (fs::exists(tmp_path)) {
         fs::remove(tmp_path);
@@ -803,8 +827,19 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                     return;
                 }
 
-                if (currentPresetVersion < remoteVersion)
-                    download_file(fileUrl, fileName);
+                if (currentPresetVersion < remoteVersion) {
+                    
+                    if (fs::exists(fileName))
+                        fs::remove(fileName);    
+
+                    fs::path tmpPath = fileName;
+                    auto     dirPath = tmpPath.parent_path() / "profiles/flutter_web";
+
+                    if (fs::exists(dirPath))
+                        fs::remove_all(dirPath);   
+
+                    download_file(fileUrl, fileName, "../ota/profiles/");
+                }
                 else {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
@@ -819,7 +854,7 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server flutter update data error:" << errorMsg;
             }
         })
-        .perform_sync();
+        .perform();
 }
     // Orca: sync config update for currect App version
 void PresetUpdater::priv::sync_config(bool isAuto_check)
@@ -912,8 +947,18 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     return;
                 }
 
-                if (currentPresetVersion < remoteVersion)
-                    download_file(fileUrl, fileName);
+                if (currentPresetVersion < remoteVersion) {
+                    if (fs::exists(fileName))
+                        fs::remove(fileName);
+
+                    fs::path tmpPath = fileName;
+                    auto     dirPath = tmpPath.parent_path() / "profiles/profiles";
+
+                    if (fs::exists(dirPath))
+                        fs::remove_all(dirPath);   
+
+                    download_file(fileUrl, fileName, "../ota/profiles/profiles/");
+                }
                 else {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
@@ -928,7 +973,7 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server preset update data error:" << errorMsg;
             }
         })
-        .perform_sync();
+        .perform();
 }
 
 void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string language)
@@ -1375,7 +1420,7 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 	Updates updates;
 
 	BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:Checking for cached configuration updates...";
-    auto cache_profile_path =  cache_path / "profiles";
+    auto cache_profile_path =  cache_path / "profiles/profiles";
     if (!fs::exists(cache_profile_path))
         return updates;
 
@@ -1465,15 +1510,8 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 //BBS: switch to new BBL.json configs
 bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) const
 {
-    //std::string vendor_path;
-    //std::string vendor_name;
     if (updates.incompats.size() > 0) {
-        //if (snapshot) {
-        //	BOOST_LOG_TRIVIAL(info) << "Taking a snapshot...";
-        //	if (! GUI::Config::take_config_snapshot_cancel_on_error(*GUI::wxGetApp().app_config, Snapshot::SNAPSHOT_DOWNGRADE, "",
-        //		_u8L("Continue and install configuration updates?")))
-        //		return false;
-        //}
+
         BOOST_LOG_TRIVIAL(info) << format("[Orca Updater]:Deleting %1% incompatible bundles", updates.incompats.size());
 
         for (auto &incompat : updates.incompats) {
@@ -1481,12 +1519,6 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
             incompat.remove();
         }
     } else if (updates.updates.size() > 0) {
-        //if (snapshot) {
-        //	BOOST_LOG_TRIVIAL(info) << "Taking a snapshot...";
-        //	if (! GUI::Config::take_config_snapshot_cancel_on_error(*GUI::wxGetApp().app_config, Snapshot::SNAPSHOT_UPGRADE, "",
-        //		_u8L("Continue and install configuration updates?")))
-        //		return false;
-        //}
 
         BOOST_LOG_TRIVIAL(info) << format("[Orca Updater]:Performing %1% updates", updates.updates.size());
 
@@ -1495,28 +1527,8 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
 
             if (update.can_install)
                 update.install();
-            //if (!update.is_directory) {
-            //    vendor_path = update.source.parent_path().string();
-            //    vendor_name = update.vendor;
-            //}
+
         }
-
-        //if (!vendor_path.empty()) {
-        //    PresetBundle bundle;
-        //    // Throw when parsing invalid configuration. Only valid configuration is supposed to be provided over the air.
-        //    bundle.load_vendor_configs_from_json(vendor_path, vendor_name, PresetBundle::LoadConfigBundleAttribute::LoadSystem, ForwardCompatibilitySubstitutionRule::Disable);
-
-        //    BOOST_LOG_TRIVIAL(info) << format("Deleting %1% conflicting presets", bundle.prints.size() + bundle.filaments.size() + bundle.printers.size());
-
-        //    auto preset_remover = [](const Preset& preset) {
-        //        BOOST_LOG_TRIVIAL(info) << '\t' << preset.file;
-        //        fs::remove(preset.file);
-        //    };
-
-        //    for (const auto &preset : bundle.prints)    { preset_remover(preset); }
-        //    for (const auto &preset : bundle.filaments) { preset_remover(preset); }
-        //    for (const auto &preset : bundle.printers)  { preset_remover(preset); }
-        //}
     }
 
     return true;
@@ -1555,12 +1567,9 @@ PresetUpdater::~PresetUpdater()
 //BBS: refine the preset updater logic
 void PresetUpdater::sync(std::string http_url, std::string language, std::string plugin_version, PresetBundle *preset_bundle)
 {
-	//p->set_download_prefs(GUI::wxGetApp().app_config);
+
 	if (!p->enabled_version_check && !p->enabled_config_update) { return; }
 
-	// Copy the whole vendors data for use in the background thread
-	// Unfortunatelly as of C++11, it needs to be copied again
-	// into the closure (but perhaps the compiler can elide this).
     VendorMap vendors = preset_bundle ? preset_bundle->vendors : VendorMap{};
 
 	p->thread = std::thread([this, vendors, http_url, language, plugin_version]() {
@@ -1582,10 +1591,7 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
 			return;
         this->p->sync_plugins(http_url, plugin_version);
         this->p->sync_printer_config(http_url);
-		//if (p->cancel)
-		//	return;
-		//remove the tooltip currently
-		//this->p->sync_tooltip(http_url, language);
+	
 	});
 }
 
@@ -1603,9 +1609,7 @@ static bool reload_configs_update_gui()
 
 	// Reload global configuration
 	auto* app_config = GUI::wxGetApp().app_config;
-	// System profiles should not trigger any substitutions, user profiles may trigger substitutions, but these substitutions
-	// were already presented to the user on application start up. Just do substitutions now and keep quiet about it.
-	// However throw on substitutions in system profiles, those shall never happen with system profiles installed over the air.
+
 	GUI::wxGetApp().preset_bundle->load_presets(*app_config, ForwardCompatibilitySubstitutionRule::EnableSilentDisableSystem);
 	GUI::wxGetApp().load_current_presets();
 	GUI::wxGetApp().plater()->set_bed_shape();

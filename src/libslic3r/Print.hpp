@@ -907,16 +907,11 @@ public:
             if (physical_count == 0) {
                 // 防止除零，使用安全的默认值
                 physical_extruder_id = 0;
-                BOOST_LOG_TRIVIAL(warning) << "Print::get_physical_extruder: nozzle_diameter is empty! Using default physical_extruder=0";
+                
             } else {
                 physical_extruder_id = filament_idx % physical_count;
             }
         }
-        // SM Orca: 日志 - 映射查询
-        BOOST_LOG_TRIVIAL(info) << "Print::get_physical_extruder: filament_id=" << filament_idx
-            << " -> physical_extruder_id=" << physical_extruder_id
-            << " (map_size=" << m_filament_extruder_map.size() << ")"
-            << (it != m_filament_extruder_map.end() ? " [from_map]" : " [default_mod]");
         return physical_extruder_id;
     }
     // SM Orca: Initialize filament-to-physical-extruder mapping table

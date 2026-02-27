@@ -362,12 +362,15 @@ int main(int argc, char* argv[]) {
     for (int current_plate_id : plates_to_process) {
         BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << current_plate_id << " ===";
 
-        // Get objects_and_instances for current plate
-        std::set<std::pair<int, int>> current_plate_instances;
+        // Get instances for current plate from obj_inst_map
+        // obj_inst_map format: key=object_id (from 3MF), value=pair<instance_id, identify_id>
+        // The identify_id is stored in ModelInstance::loaded_id after 3MF load
+        std::set<int> current_plate_identify_ids;
         for (const auto& pd : plate_data) {
             if (pd->plate_index == current_plate_id) {
-                for (const auto& obj_inst : pd->objects_and_instances) {
-                    current_plate_instances.insert(obj_inst);
+                for (const auto& [object_id, inst_info] : pd->obj_inst_map) {
+                    // inst_info.second is the identify_id
+                    current_plate_identify_ids.insert(inst_info.second);
                 }
                 break;
             }
@@ -377,23 +380,27 @@ int main(int argc, char* argv[]) {
         // Only instances on current plate should be printable
         // Also set print_volume_state to ensure is_printable() returns correct value
         // is_printable() checks: object->printable && printable && (print_volume_state == ModelInstancePVS_Inside)
+        int instances_on_plate = 0;
         for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
             ModelObject* obj = model.objects[obj_idx];
             for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
                 ModelInstance* inst = obj->instances[inst_idx];
-                auto key = std::make_pair(static_cast<int>(obj_idx), static_cast<int>(inst_idx));
-                bool on_current_plate = (current_plate_instances.find(key) != current_plate_instances.end());
+                // Match instances by loaded_id (which was set from identify_id during 3MF load)
+                bool on_current_plate = (current_plate_identify_ids.find(static_cast<int>(inst->loaded_id)) != current_plate_identify_ids.end());
                 inst->printable = on_current_plate;
                 // Explicitly set print_volume_state to handle edge cases where 3MF has instances outside build volume
                 inst->print_volume_state = on_current_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Fully_Outside;
+                if (on_current_plate) {
+                    instances_on_plate++;
+                }
             }
         }
 
-        BOOST_LOG_TRIVIAL(info) << "Filtered model: " << current_plate_instances.size()
+        BOOST_LOG_TRIVIAL(info) << "Filtered model: " << instances_on_plate
             << " instances on plate " << current_plate_id;
 
         // Skip empty plates (no instances to slice)
-        if (current_plate_instances.empty()) {
+        if (instances_on_plate == 0) {
             BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << current_plate_id;
             continue;
         }

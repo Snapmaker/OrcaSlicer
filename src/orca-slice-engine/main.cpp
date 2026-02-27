@@ -362,13 +362,41 @@ int main(int argc, char* argv[]) {
     for (int current_plate_id : plates_to_process) {
         BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << current_plate_id << " ===";
 
+        // Get objects_and_instances for current plate
+        std::set<std::pair<int, int>> current_plate_instances;
+        for (const auto& pd : plate_data) {
+            if (pd->plate_index == current_plate_id) {
+                for (const auto& obj_inst : pd->objects_and_instances) {
+                    current_plate_instances.insert(obj_inst);
+                }
+                break;
+            }
+        }
+
+        // Set printable state for all model instances
+        // Only instances on current plate should be printable
+        // Also set print_volume_state to ensure is_printable() returns correct value
+        // is_printable() checks: object->printable && printable && (print_volume_state == ModelInstancePVS_Inside)
+        for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
+            ModelObject* obj = model.objects[obj_idx];
+            for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
+                ModelInstance* inst = obj->instances[inst_idx];
+                auto key = std::make_pair(static_cast<int>(obj_idx), static_cast<int>(inst_idx));
+                bool on_current_plate = (current_plate_instances.find(key) != current_plate_instances.end());
+                inst->printable = on_current_plate;
+                // Explicitly set print_volume_state to handle edge cases where 3MF has instances outside build volume
+                inst->print_volume_state = on_current_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Outside;
+            }
+        }
+
+        BOOST_LOG_TRIVIAL(info) << "Filtered model: " << current_plate_instances.size()
+            << " instances on plate " << current_plate_id;
+
         // Create Print object for this plate
         Print print;
         print.set_status_callback(default_status_callback);
 
         // Apply model and config to print
-        // Note: In headless mode, we apply the entire model
-        // The plate filtering is handled by the Print system
         auto apply_status = print.apply(model, config);
         BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
 
@@ -489,6 +517,9 @@ int main(int argc, char* argv[]) {
                 // Set toolpath outside flag
                 pd->toolpath_outside = result.gcode_result.toolpath_outside;
 
+                // Set timelapse warning code (matches GUI's PartPlate::store_to_3mf_structure)
+                pd->timelapse_warning_code = result.gcode_result.timelapse_warning_code;
+
                 // Set support used flag
                 pd->is_support_used = result.support_used;
 
@@ -534,8 +565,18 @@ int main(int argc, char* argv[]) {
         params.model = &model;
         params.config = &config;
         params.project_presets = project_presets;
-        // Strategy: include gcode but skip model data to reduce size
-        params.strategy = SaveStrategy::WithGcode | SaveStrategy::SkipModel;
+        // Set export_plate_idx for proper thumbnail relationships (0-indexed)
+        // For single plate: set to plate_id-1, for all plates: -1 (default)
+        params.export_plate_idx = single_plate ? (plate_id - 1) : -1;
+        // Strategy: match GUI's export_gcode_3mf behavior
+        // - Silence: suppress verbose output
+        // - SplitModel: match GUI export behavior
+        // - WithGcode: include gcode files
+        // - SkipModel: reduce file size by skipping model data
+        // - Zip64: support large files (>4GB)
+        params.strategy = SaveStrategy::Silence | SaveStrategy::SplitModel |
+                         SaveStrategy::WithGcode | SaveStrategy::SkipModel |
+                         SaveStrategy::Zip64;
 
         try {
             bool success = store_bbs_3mf(params);

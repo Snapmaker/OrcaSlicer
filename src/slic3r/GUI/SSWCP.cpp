@@ -3055,7 +3055,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
             long long res = 0;
             if ((oriclr.size() != 7 && oriclr.size() != 9) || oriclr[0] != '#') {
-                return -1;
+                return 0;
             }
 
             auto colorSize = oriclr.size();//7 or 9

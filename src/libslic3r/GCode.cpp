@@ -930,66 +930,17 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         if (extruder_id < 0 || !gcodegen.writer().need_toolchange(extruder_id))
             return "";
 
-        auto pick_toolchange_template_from_layer =
-            [&](int layer_idx) -> const WipeTower::ToolChangeResult* {
-            if (layer_idx < 0 || layer_idx >= int(m_tool_changes.size()))
-                return nullptr;
-            const auto& layer_changes = m_tool_changes[layer_idx];
-            for (const WipeTower::ToolChangeResult& candidate : layer_changes) {
-                if (candidate.initial_tool != candidate.new_tool)
-                    return &candidate;
-            }
-            return nullptr;
-        };
-
-        // Prefer a real toolchange template (initial_tool != new_tool). Using "empty grid"
-        // / finish-layer templates here can suppress [change_filament_gcode] injection and
-        // produce no actual emitted T-change.
-        const WipeTower::ToolChangeResult* template_tcr = nullptr;
-        if (m_layer_idx >= 0 && m_layer_idx < int(m_tool_changes.size()))
-            template_tcr = pick_toolchange_template_from_layer(m_layer_idx);
-        if (template_tcr == nullptr) {
-            const int start_back = std::min<int>(m_layer_idx - 1, int(m_tool_changes.size()) - 1);
-            for (int back = start_back; back >= 0; --back) {
-                template_tcr = pick_toolchange_template_from_layer(back);
-                if (template_tcr != nullptr)
-                    break;
-            }
-        }
-        if (template_tcr == nullptr) {
-            const int start_fwd = std::max<int>(m_layer_idx + 1, 0);
-            for (int fwd = start_fwd; fwd < int(m_tool_changes.size()); ++fwd) {
-                template_tcr = pick_toolchange_template_from_layer(fwd);
-                if (template_tcr != nullptr)
-                    break;
-            }
-        }
-
-        if (template_tcr == nullptr) {
-            BOOST_LOG_TRIVIAL(warning) << "Wipe tower local-z unplanned toolchange fallback unavailable (no real template),"
-                                       << " using raw toolchange"
-                                       << " layer_idx=" << m_layer_idx
-                                       << " extruder_id=" << extruder_id;
-            return gcodegen.set_extruder(unsigned(extruder_id),
-                                         gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
-        }
-
-        WipeTower::ToolChangeResult tcr = *template_tcr;
-        tcr.initial_tool = gcodegen.writer().extruder() ? int(gcodegen.writer().extruder()->id()) : extruder_id;
-        tcr.new_tool     = extruder_id;
-        tcr.print_z      = float(gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
-        tcr.priming      = false;
-        tcr.force_travel = true;
-
-        BOOST_LOG_TRIVIAL(debug) << "Wipe tower local-z unplanned toolchange emitted"
+        // Local-Z phase-b may introduce extra intra-layer toolchanges that were not part
+        // of the preplanned wipe tower sequence. Replaying a full wipe-tower template for
+        // each of those extra switches overprints the same tower layer at micro-step Zs
+        // and turns the tower into mush. Keep these extra switches local-Z-only by doing
+        // a direct toolchange here and leave the normal wipe tower plan untouched.
+        BOOST_LOG_TRIVIAL(debug) << "Local-Z unplanned toolchange using direct extruder switch"
                                  << " layer_idx=" << m_layer_idx
                                  << " extruder_id=" << extruder_id
                                  << " tool_change_idx=" << m_tool_change_idx;
-        std::string out;
-        out += "; local-z unplanned wipe-tower toolchange begin\n";
-        out += append_tcr2(gcodegen, tcr, extruder_id);
-        out += "; local-z unplanned wipe-tower toolchange end\n";
-        return out;
+        return gcodegen.set_extruder(unsigned(extruder_id),
+                                     gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
     };
 
     if (local_z_unplanned)
@@ -5230,6 +5181,12 @@ LayerResult GCode::process_layer(const Print& print,
                     local_z_phase_b_changed_extruder = true;
                 if (has_wipe_tower && m_wipe_tower) {
                     gcode += m_wipe_tower->tool_change(*this, int(local_extruder_id), false, true);
+                    // Local-Z phase-b uses the wipe tower outside the normal per-layer
+                    // extruder loop, so mirror the usual toolchange bookkeeping here.
+                    // This forces the next object path to refresh WIDTH/HEIGHT tags
+                    // after prime tower G-code, keeping the preview in sync with the
+                    // actual local-Z pass height.
+                    m_last_processor_extrusion_role = erWipeTower;
                 } else {
                     gcode += this->set_extruder(local_extruder_id, pass_plan.print_z);
                 }
@@ -5292,6 +5249,7 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += "; local-z phase-b restore pre-pass extruder for wipe tower\n";
                 if (m_wipe_tower) {
                     gcode += m_wipe_tower->tool_change(*this, local_z_phase_b_start_extruder, false, true);
+                    m_last_processor_extrusion_role = erWipeTower;
                 } else {
                     gcode += this->set_extruder(static_cast<unsigned int>(local_z_phase_b_start_extruder), print_z);
                 }

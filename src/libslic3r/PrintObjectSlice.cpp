@@ -1109,6 +1109,36 @@ static inline void compute_local_z_gradient_component_heights(int mix_b_percent,
     h_b = lo + pct_b * (hi - lo);
 }
 
+static bool choose_local_z_start_with_component_a(const std::vector<double> &pass_heights,
+                                                  double                     expected_h_a,
+                                                  double                     expected_h_b,
+                                                  size_t                     cadence_index)
+{
+    double err_ab = 0.0;
+    double err_ba = 0.0;
+    for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {
+        const double expected_ab = (pass_i % 2) == 0 ? expected_h_a : expected_h_b;
+        const double expected_ba = (pass_i % 2) == 0 ? expected_h_b : expected_h_a;
+        err_ab += std::abs(pass_heights[pass_i] - expected_ab);
+        err_ba += std::abs(pass_heights[pass_i] - expected_ba);
+    }
+
+    if (err_ab + 1e-6 < err_ba)
+        return true;
+    if (err_ba + 1e-6 < err_ab)
+        return false;
+
+    // When the requested component heights are equal (for example 50/50),
+    // either A/B or B/A is numerically identical. Preserve the existing
+    // row cadence so equal-split layers keep the normal local-Z A/B/A/B
+    // sequence instead of flipping AB|BA between nominal layers.
+    if (std::abs(expected_h_a - expected_h_b) <= 1e-6) {
+        return (cadence_index % 2) == 0;
+    }
+
+    return expected_h_a >= expected_h_b;
+}
+
 static std::vector<double> build_local_z_alternating_pass_heights(double base_height,
                                                                    double lower_bound,
                                                                    double upper_bound,
@@ -2259,16 +2289,10 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         double row_h_a = 0.0;
                         double row_h_b = 0.0;
                         compute_local_z_gradient_component_heights(mf.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-                        double err_ab = 0.0;
-                        double err_ba = 0.0;
-                        for (size_t pass_i = 0; pass_i < row_passes.size(); ++pass_i) {
-                            const double expected_ab = (pass_i % 2) == 0 ? row_h_a : row_h_b;
-                            const double expected_ba = (pass_i % 2) == 0 ? row_h_b : row_h_a;
-                            err_ab += std::abs(row_passes[pass_i] - expected_ab);
-                            err_ba += std::abs(row_passes[pass_i] - expected_ba);
-                        }
-                        if (err_ba + 1e-6 < err_ab)
-                            start_with_a = false;
+                        start_with_a = choose_local_z_start_with_component_a(row_passes,
+                                                                             row_h_a,
+                                                                             row_h_b,
+                                                                             row_cadence_index[row_idx]);
                     }
 
                     double z_cursor = interval.z_lo;
@@ -2375,17 +2399,11 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         double row_h_a = 0.0;
                         double row_h_b = 0.0;
                         compute_local_z_gradient_component_heights(mf.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-
-                        double err_ab = 0.0;
-                        double err_ba = 0.0;
-                        for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {
-                            const double expected_ab = (pass_i % 2) == 0 ? row_h_a : row_h_b;
-                            const double expected_ba = (pass_i % 2) == 0 ? row_h_b : row_h_a;
-                            err_ab += std::abs(pass_heights[pass_i] - expected_ab);
-                            err_ba += std::abs(pass_heights[pass_i] - expected_ba);
-                        }
-                        if (err_ba + 1e-6 < err_ab)
-                            start_with_component_a[size_t(mixed_idx)] = uint8_t(0);
+                        start_with_component_a[size_t(mixed_idx)] =
+                            choose_local_z_start_with_component_a(pass_heights,
+                                                                  row_h_a,
+                                                                  row_h_b,
+                                                                  row_cadence_index[size_t(mixed_idx)]) ? uint8_t(1) : uint8_t(0);
                     }
                 }
 

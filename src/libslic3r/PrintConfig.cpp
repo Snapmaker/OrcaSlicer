@@ -4241,8 +4241,9 @@ void PrintConfigDef::init_fff_params()
     def = this->add("dithering_local_z_mode", coBool);
     def->label = L("Local Z dithering mode");
     def->category = L("Others");
-    def->tooltip = L("Experimental local mixed-zone Z mode: split only mixed-painted zones into local Z passes while keeping base regions on the nominal layer cadence when possible.\n\n"
-                     "Current implementation focuses on perimeter validation first and may not yet cover all toolpath types.");
+    def->tooltip = L("Use Variable Layers for Color Blending\n\n"
+                     "Blend colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\n"
+                     "This setting increases color blending smoothness by splitting each blended layer according to the blend ratio. For example, a 66/33 blend at 0.12 mm layer height will print as one 0.08 mm layer and one 0.04 mm layer. At 0.20 mm layer height, a 75/25 blend will print as one 0.15 mm layer and one 0.05 mm layer.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 

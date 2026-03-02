@@ -68,15 +68,20 @@ static DynamicPrintConfig& printer_config()
     return wxGetApp().preset_bundle->printers.get_edited_preset().config;
 }
 
+static size_t total_filaments_count(size_t physical_count)
+{
+    if (wxGetApp().preset_bundle == nullptr)
+        return physical_count;
+
+    return wxGetApp().preset_bundle->mixed_filaments.total_filaments(physical_count);
+}
+
 static int filaments_count()
 {
     if (wxGetApp().preset_bundle == nullptr)
         return 0;
 
-    int physical = wxGetApp().filaments_cnt();
-    // Include enabled mixed (virtual) filaments in the count.
-    const auto &mixed_mgr = wxGetApp().preset_bundle->mixed_filaments;
-    return static_cast<int>(mixed_mgr.total_filaments(physical));
+    return static_cast<int>(total_filaments_count(size_t(std::max(wxGetApp().filaments_cnt(), 0))));
 }
 
 static void take_snapshot(const std::string& snapshot_name)
@@ -959,6 +964,7 @@ void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t
                                                                           int    replace_filament_id)
 {
     m_prevent_update_filament_in_config = true;
+    const size_t total_filaments = total_filaments_count(filaments_count);
 
     // BBS: update extruder values even when filaments_count is 1, because it may be reduced from value greater than 1
     if (m_objects)
@@ -967,7 +973,7 @@ void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t
     update_filament_colors();
 
     // set show/hide for this column
-    set_filament_column_hidden(filaments_count == 1);
+    set_filament_column_hidden(total_filaments == 1);
     // a workaround for a wrong last column width updating under OSX
     GetColumn(colEditing)->SetWidth(25);
 
@@ -977,6 +983,7 @@ void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t
 void ObjectList::update_objects_list_filament_column(size_t filaments_count)
 {
     assert(filaments_count >= 1);
+    const size_t total_filaments = total_filaments_count(filaments_count);
 
     if (printer_technology() == ptSLA)
         filaments_count = 1;
@@ -985,12 +992,12 @@ void ObjectList::update_objects_list_filament_column(size_t filaments_count)
 
     // BBS: update extruder values even when filaments_count is 1, because it may be reduced from value greater than 1
     if (m_objects)
-        update_filament_values_for_items(filaments_count);
+        update_filament_values_for_items(printer_technology() == ptSLA ? 1 : total_filaments);
 
     update_filament_colors();
 
     // set show/hide for this column
-    set_filament_column_hidden(filaments_count == 1);
+    set_filament_column_hidden((printer_technology() == ptSLA ? 1 : total_filaments) == 1);
     //a workaround for a wrong last column width updating under OSX
     auto em = em_unit(this);
     GetColumn(colEditing)->SetWidth(m_columns_width[colEditing]*em);

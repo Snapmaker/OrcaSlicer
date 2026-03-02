@@ -1,6 +1,7 @@
 #include "../libslic3r.h"
 #include "../Exception.hpp"
 #include "../Model.hpp"
+#include "../MixedFilament.hpp"
 #include "../Preset.hpp"
 #include "../Utils.hpp"
 #include "../LocalesUtils.hpp"
@@ -573,6 +574,51 @@ bool bbs_is_valid_object_type(const std::string& type)
 }
 
 namespace Slic3r {
+
+static size_t physical_filament_count_from_project_config(const DynamicPrintConfig &config)
+{
+    if (const auto *opt = config.option<ConfigOptionStrings>("filament_colour"); opt != nullptr && !opt->values.empty())
+        return opt->values.size();
+    if (const auto *opt = config.option<ConfigOptionStrings>("filament_settings_id"); opt != nullptr && !opt->values.empty())
+        return opt->values.size();
+    if (const auto *opt = config.option<ConfigOptionStrings>("filament_ids"); opt != nullptr && !opt->values.empty())
+        return opt->values.size();
+    if (const auto *opt = config.option<ConfigOptionStrings>("default_filament_colour"); opt != nullptr && !opt->values.empty())
+        return opt->values.size();
+    if (const auto *opt = config.option<ConfigOptionFloats>("nozzle_diameter"); opt != nullptr && !opt->values.empty())
+        return opt->values.size();
+    return 0;
+}
+
+static int max_supported_filament_id_from_project_config(const DynamicPrintConfig &config)
+{
+    const size_t physical_count = physical_filament_count_from_project_config(config);
+    if (physical_count == 0)
+        return std::numeric_limits<int>::max();
+
+    std::vector<std::string> physical_colors;
+    if (const auto *opt = config.option<ConfigOptionStrings>("filament_colour"); opt != nullptr)
+        physical_colors = opt->values;
+    else if (const auto *opt = config.option<ConfigOptionStrings>("default_filament_colour"); opt != nullptr)
+        physical_colors = opt->values;
+    if (physical_colors.size() < physical_count)
+        physical_colors.resize(physical_count, "#FFFFFF");
+    else if (physical_colors.size() > physical_count)
+        physical_colors.resize(physical_count);
+
+    size_t max_filament_id = physical_count;
+    if (physical_count >= 2) {
+        if (const auto *mixed_defs_opt = config.option<ConfigOptionString>("mixed_filament_definitions");
+            mixed_defs_opt != nullptr && !mixed_defs_opt->value.empty()) {
+            MixedFilamentManager mixed_mgr;
+            mixed_mgr.auto_generate(physical_colors);
+            mixed_mgr.load_custom_entries(mixed_defs_opt->value, physical_colors);
+            max_filament_id = mixed_mgr.total_filaments(physical_count);
+        }
+    }
+
+    return max_filament_id >= size_t(std::numeric_limits<int>::max()) ? std::numeric_limits<int>::max() : int(max_filament_id);
+}
 
 void PlateData::parse_filament_info(GCodeProcessorResult *result)
 {
@@ -1787,7 +1833,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     // extract slic3r print config file
                 //    _extract_print_config_from_archive(archive, stat, config, config_substitutions, filename);
                 //} else
-                if (!dont_load_config && boost::algorithm::iequals(name, BBS_PROJECT_CONFIG_FILE)) {
+                if (boost::algorithm::iequals(name, BBS_PROJECT_CONFIG_FILE)) {
                     // extract slic3r print config file
                     _extract_project_config_from_archive(archive, stat, config, config_substitutions, model);
                 }
@@ -2085,8 +2131,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             ++object_idx;
         }
 
-        const ConfigOptionStrings* filament_ids_opt = config.option<ConfigOptionStrings>("filament_settings_id");
-        int max_filament_id = filament_ids_opt ? filament_ids_opt->size() : std::numeric_limits<int>::max();
+        const int max_filament_id = max_supported_filament_id_from_project_config(config);
         for (ModelObject* mo : m_model->objects) {
             const ConfigOptionInt* extruder_opt = dynamic_cast<const ConfigOptionInt*>(mo->config.option("extruder"));
             int extruder_id = 0;

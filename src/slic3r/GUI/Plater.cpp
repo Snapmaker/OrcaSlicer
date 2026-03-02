@@ -3873,6 +3873,22 @@ void Sidebar::update_mixed_filament_panel()
     if (!p->m_panel_mixed_filaments_title || !p->m_panel_mixed_filaments_content)
         return;
 
+    auto refresh_model_canvas_colors = []() {
+        Plater *plater = wxGetApp().plater();
+        if (plater == nullptr)
+            return;
+
+        auto refresh_canvas = [](GLCanvas3D *canvas) {
+            if (canvas == nullptr || !canvas->is_initialized())
+                return;
+            canvas->update_volumes_colors_by_extruder();
+            canvas->render();
+        };
+
+        refresh_canvas(plater->get_view3D_canvas3D());
+        refresh_canvas(plater->get_assmeble_canvas3D());
+    };
+
     int prev_rows_view_y = 0;
     for (wxWindow *child : p->m_panel_mixed_filaments_content->GetChildren()) {
         if (auto *scrolled = dynamic_cast<wxScrolledWindow*>(child)) {
@@ -4325,6 +4341,7 @@ void Sidebar::update_mixed_filament_panel()
         p->m_panel_mixed_filaments_title->Hide();
         p->m_panel_mixed_filaments_content->Hide();
         Layout();
+        refresh_model_canvas_colors();
         return;
     }
 
@@ -4740,6 +4757,7 @@ void Sidebar::update_mixed_filament_panel()
     p->m_panel_mixed_filaments_content->Layout();
     m_scrolled_sizer->Layout();
     Layout();
+    refresh_model_canvas_colors();
 }
 
 void Sidebar::add_filament() {
@@ -7142,6 +7160,32 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                             << boost::format(", plate_data.size %1%, project_preset.size %2%, is_bbs_3mf %3%, file_version %4% \n") % plate_data.size() %
                                                    project_presets.size() % (en_3mf_file_type == En3mfType::From_BBS) % file_version.to_string();
 
+                    auto imported_string_count = [&config_loaded](const char *key) -> size_t {
+                        if (const auto *opt = config_loaded.option<ConfigOptionStrings>(key))
+                            return opt->values.size();
+                        return 0;
+                    };
+                    auto imported_float_count = [&config_loaded](const char *key) -> size_t {
+                        if (const auto *opt = config_loaded.option<ConfigOptionFloats>(key))
+                            return opt->values.size();
+                        return 0;
+                    };
+
+                    std::vector<std::string> imported_filament_colors;
+                    size_t imported_physical_filaments = 0;
+                    if (const auto *filament_colors_opt = config_loaded.option<ConfigOptionStrings>("filament_colour")) {
+                        imported_filament_colors = filament_colors_opt->values;
+                        imported_physical_filaments = imported_filament_colors.size();
+                    }
+                    if (imported_physical_filaments == 0)
+                        imported_physical_filaments = imported_string_count("filament_settings_id");
+                    if (imported_physical_filaments == 0)
+                        imported_physical_filaments = imported_string_count("filament_ids");
+                    if (imported_physical_filaments == 0)
+                        imported_physical_filaments = imported_string_count("default_filament_colour");
+                    if (imported_physical_filaments == 0)
+                        imported_physical_filaments = imported_float_count("nozzle_diameter");
+
                     // 1. add extruder for prusa model if the number of existing extruders is not enough
                     // 2. add extruder for BBS or Other model if only import geometry
                     if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && !load_config)) {
@@ -7154,6 +7198,57 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             }
                         }
                         int size = extruderIds.size() == 0 ? 0 : *(extruderIds.rbegin());
+                        const bool geometry_only_project_import = load_model && !load_config && imported_physical_filaments > 0;
+                        const size_t desired_physical_filaments = geometry_only_project_import ?
+                            std::min(imported_physical_filaments, size_t(MAXIMUM_EXTRUDER_NUMBER)) : 0;
+                        BOOST_LOG_TRIVIAL(info) << "3MF geometry import filament detection"
+                                                << " imported_physical=" << imported_physical_filaments
+                                                << " imported_colors=" << imported_filament_colors.size()
+                                                << " config_filament_settings_id=" << imported_string_count("filament_settings_id")
+                                                << " config_filament_ids=" << imported_string_count("filament_ids")
+                                                << " config_default_filament_colour=" << imported_string_count("default_filament_colour")
+                                                << " config_nozzle_diameter=" << imported_float_count("nozzle_diameter")
+                                                << " model_max_extruder=" << size
+                                                << " geometry_only_project_import=" << (geometry_only_project_import ? 1 : 0);
+                        if (geometry_only_project_import)
+                            size = int(desired_physical_filaments);
+
+                        PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+                        if (geometry_only_project_import && preset_bundle != nullptr) {
+                            const size_t current_num_filaments = preset_bundle->filament_presets.size();
+                            const bool current_project_empty = this->model.objects.empty();
+                            if (current_project_empty) {
+                                static const t_config_option_keys imported_project_option_keys = {
+                                    "filament_colour",
+                                    "mixed_filament_definitions",
+                                    "mixed_filament_gradient_mode",
+                                    "mixed_filament_height_lower_bound",
+                                    "mixed_filament_height_upper_bound",
+                                    "mixed_filament_advanced_dithering",
+                                    "mixed_filament_pointillism_pixel_size",
+                                    "mixed_filament_pointillism_line_gap",
+                                    "mixed_filament_surface_indentation"
+                                };
+                                preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);
+                                if (current_num_filaments != desired_physical_filaments)
+                                    preset_bundle->set_num_filaments(unsigned(desired_physical_filaments));
+                                else
+                                    preset_bundle->update_multi_material_filament_presets();
+                                BOOST_LOG_TRIVIAL(info) << "3MF geometry import applied imported project config"
+                                                        << " current_num_filaments=" << current_num_filaments
+                                                        << " desired_physical_filaments=" << desired_physical_filaments
+                                                        << " mixed_enabled=" << preset_bundle->mixed_filaments.enabled_count();
+                                wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
+                            } else if (current_num_filaments < desired_physical_filaments) {
+                                std::vector<std::string> new_colors;
+                                if (imported_filament_colors.size() > current_num_filaments) {
+                                    new_colors.assign(imported_filament_colors.begin() + current_num_filaments,
+                                                      imported_filament_colors.begin() + desired_physical_filaments);
+                                }
+                                preset_bundle->set_num_filaments(unsigned(desired_physical_filaments), new_colors);
+                                wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
+                            }
+                        }
 
                         int filament_size = sidebar->combos_filament().size();
                         while (filament_size < MAXIMUM_EXTRUDER_NUMBER && filament_size < size) {
@@ -7497,6 +7592,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             // BBS: add preset combo box re-active logic
                             // currently found only needs re-active here
                             wxGetApp().load_current_presets(false, false);
+                            // Some preset-tab refresh paths rebuild printer/filament UI from the
+                            // active presets but do not preserve the mixed manager instance.
+                            // Rebuild it explicitly from project_config before clamping object IDs.
+                            preset_bundle->update_multi_material_filament_presets();
                             // Update filament colors for the MM-printer profile in the full config
                             // to avoid black (default) colors for Extruders in the ObjectList,
                             // when for extruder colors are used filament colors

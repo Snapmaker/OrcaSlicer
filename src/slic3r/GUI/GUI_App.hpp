@@ -336,7 +336,7 @@ private:
     bool             m_side_popup_status{false};
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;
+    //HttpServer       m_http_server;
 
 public:
     HttpServer       m_page_http_server;
@@ -604,8 +604,8 @@ private:
     void            sync_preset(Preset* preset);
     void            start_sync_user_preset(bool with_progress_dlg = false);
     void            stop_sync_user_preset();
-    void            start_http_server();
-    void            stop_http_server();
+    //void            start_http_server();
+    //void            stop_http_server();
 
     // page loading http server
     void            start_page_http_server();

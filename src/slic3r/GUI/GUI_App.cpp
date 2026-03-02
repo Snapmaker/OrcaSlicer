@@ -5329,20 +5329,20 @@ void GUI_App::stop_sync_user_preset()
     }
 }
 
-void GUI_App::start_http_server()
-{
-    if (!m_http_server.is_started())
-        m_http_server.start();
-}
-void GUI_App::stop_http_server()
-{
-    m_http_server.stop();
-}
+//void GUI_App::start_http_server()
+//{
+//    if (!m_http_server.is_started())
+//        m_http_server.start();
+//}
+//void GUI_App::stop_http_server()
+//{
+//    m_http_server.stop();
+//}
 
 void GUI_App::start_page_http_server() 
 {
     if (!m_page_http_server.is_started())
-        m_page_http_server;
+        m_page_http_server.start();
 }
 void GUI_App::stop_page_http_server()
 {

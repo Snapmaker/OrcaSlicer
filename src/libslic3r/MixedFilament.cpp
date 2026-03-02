@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iomanip>
 #include <numeric>
+#include <set>
 
 namespace Slic3r {
 
@@ -231,7 +232,7 @@ static void normalize_ratio_pair(int &a, int &b)
     }
 }
 
-static void compute_gradient_ratios(MixedFilament &mf, int gradient_mode, float lower_bound, float upper_bound, int cycle_layers)
+static void compute_gradient_ratios(MixedFilament &mf, int gradient_mode, float lower_bound, float upper_bound)
 {
     if (gradient_mode == 1) {
         // Height-weighted mode:
@@ -245,12 +246,25 @@ static void compute_gradient_ratios(MixedFilament &mf, int gradient_mode, float 
         mf.ratio_b = std::max(1, safe_ratio_from_height(h_b, unit));
     } else {
         // Layer-cycle mode:
-        // distribute an integer cycle directly by blend percentages.
+        // derive a gradual integer cadence directly from the blend ratio
+        // by fixing the minority side to one layer and scaling the majority.
         const int mix_b = clamp_int(mf.mix_b_percent, 0, 100);
-        const float pct_b = float(mix_b) / 100.f;
-        const int cycle = std::max(2, cycle_layers);
-        mf.ratio_b = clamp_int(int(std::lround(pct_b * cycle)), 0, cycle);
-        mf.ratio_a = cycle - mf.ratio_b;
+        if (mix_b <= 0) {
+            mf.ratio_a = 1;
+            mf.ratio_b = 0;
+        } else if (mix_b >= 100) {
+            mf.ratio_a = 0;
+            mf.ratio_b = 1;
+        } else {
+            const int pct_b = mix_b;
+            const int pct_a = 100 - pct_b;
+            const bool b_is_major = pct_b >= pct_a;
+            const int major_pct = b_is_major ? pct_b : pct_a;
+            const int minor_pct = b_is_major ? pct_a : pct_b;
+            const int major_layers = std::max(1, int(std::lround(double(major_pct) / double(std::max(1, minor_pct)))));
+            mf.ratio_a = b_is_major ? 1 : major_layers;
+            mf.ratio_b = b_is_major ? major_layers : 1;
+        }
     }
 
     normalize_ratio_pair(mf.ratio_a, mf.ratio_b);
@@ -303,6 +317,7 @@ static bool parse_row_definition(const std::string &row,
                                  unsigned int      &b,
                                  bool              &enabled,
                                  bool              &custom,
+                                 bool              &origin_auto,
                                  int               &mix_b_percent,
                                  bool              &pointillism_all_filaments,
                                  std::string       &gradient_component_ids,
@@ -368,6 +383,7 @@ static bool parse_row_definition(const std::string &row,
     b = unsigned(values[1]);
     enabled = (values[2] != 0);
     custom = (tokens.size() == 4) ? true : (values[3] != 0);
+    origin_auto = !custom;
     mix_b_percent = clamp_int(values[4], 0, 100);
     pointillism_all_filaments = false;
     gradient_component_ids.clear();
@@ -416,6 +432,12 @@ static bool parse_row_definition(const std::string &row,
             int parsed_deleted = deleted ? 1 : 0;
             if (parse_int_token(tok.substr(1), parsed_deleted))
                 deleted = parsed_deleted != 0;
+            continue;
+        }
+        if (tok[0] == 'o' || tok[0] == 'O') {
+            int parsed_origin_auto = origin_auto ? 1 : 0;
+            if (parse_int_token(tok.substr(1), parsed_origin_auto))
+                origin_auto = parsed_origin_auto != 0;
             continue;
         }
         manual_pattern = tok;
@@ -696,6 +718,7 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
             mf.enabled     = true;
             mf.deleted     = false;
             mf.custom      = false;
+            mf.origin_auto = true;
 
             // Try to preserve previous settings.
             for (const auto &prev : old) {
@@ -769,6 +792,7 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     mf.enabled = true;
     mf.deleted = false;
     mf.custom = true;
+    mf.origin_auto = false;
     m_mixed.push_back(std::move(mf));
     refresh_display_colors(filament_colours);
 }
@@ -799,13 +823,11 @@ std::string MixedFilamentManager::normalize_manual_pattern(const std::string &pa
 void MixedFilamentManager::apply_gradient_settings(int   gradient_mode,
                                                    float lower_bound,
                                                    float upper_bound,
-                                                   int   cycle_layers,
                                                    bool  advanced_dithering)
 {
     m_gradient_mode      = (gradient_mode != 0) ? 1 : 0;
     m_height_lower_bound = std::max(0.01f, lower_bound);
     m_height_upper_bound = std::max(m_height_lower_bound, upper_bound);
-    m_cycle_layers       = std::max(2, cycle_layers);
     m_advanced_dithering = advanced_dithering;
 
     for (MixedFilament &mf : m_mixed) {
@@ -814,7 +836,7 @@ void MixedFilamentManager::apply_gradient_settings(int   gradient_mode,
             mf.ratio_b = 1;
             continue;
         }
-        compute_gradient_ratios(mf, m_gradient_mode, m_height_lower_bound, m_height_upper_bound, m_cycle_layers);
+        compute_gradient_ratios(mf, m_gradient_mode, m_height_lower_bound, m_height_upper_bound);
     }
 }
 
@@ -837,7 +859,8 @@ std::string MixedFilamentManager::serialize_custom_entries() const
            << 'g' << normalized_ids << ','
            << 'w' << normalized_weights << ','
            << 'm' << clamp_int(mf.distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple)) << ','
-           << 'd' << (mf.deleted ? 1 : 0);
+           << 'd' << (mf.deleted ? 1 : 0) << ','
+           << 'o' << (mf.origin_auto ? 1 : 0);
         const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
         if (!normalized_pattern.empty())
             ss << ',' << normalized_pattern;
@@ -858,7 +881,23 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
     size_t parsed_rows   = 0;
     size_t loaded_rows   = 0;
     size_t updated_auto  = 0;
+    size_t appended_auto = 0;
     size_t skipped_rows  = 0;
+
+    auto canonical_pair = [](unsigned int a, unsigned int b) {
+        return std::make_pair(std::min(a, b), std::max(a, b));
+    };
+
+    std::vector<MixedFilament> auto_rows;
+    auto_rows.reserve(m_mixed.size());
+    for (const MixedFilament &mf : m_mixed) {
+        if (!mf.custom)
+            auto_rows.push_back(mf);
+    }
+
+    std::vector<MixedFilament> rebuilt;
+    rebuilt.reserve(m_mixed.size() + 8);
+    std::set<std::pair<unsigned int, unsigned int>> consumed_auto_pairs;
 
     std::stringstream all(serialized);
     std::string row;
@@ -870,6 +909,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         unsigned int b = 0;
         bool enabled = true;
         bool custom = true;
+        bool origin_auto = false;
         int mix = 50;
         bool pointillism_all_filaments = false;
         std::string gradient_component_ids;
@@ -877,7 +917,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         std::string manual_pattern;
         int distribution_mode = int(MixedFilament::Simple);
         bool deleted = false;
-        if (!parse_row_definition(row, a, b, enabled, custom, mix, pointillism_all_filaments,
+        if (!parse_row_definition(row, a, b, enabled, custom, origin_auto, mix, pointillism_all_filaments,
                                   gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode, deleted)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
@@ -894,24 +934,49 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         }
 
         if (!custom) {
-            auto it_auto = std::find_if(m_mixed.begin(), m_mixed.end(), [a, b](const MixedFilament &mf) {
-                return !mf.custom && mf.component_a == a && mf.component_b == b;
-            });
-            if (it_auto != m_mixed.end()) {
-                it_auto->enabled = enabled;
-                it_auto->pointillism_all_filaments = pointillism_all_filaments;
-                it_auto->gradient_component_ids = normalize_gradient_component_ids(gradient_component_ids);
-                it_auto->gradient_component_weights =
-                    normalize_gradient_component_weights(gradient_component_weights, it_auto->gradient_component_ids.size());
-                it_auto->manual_pattern = normalize_manual_pattern(manual_pattern);
-                it_auto->distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
-                it_auto->mix_b_percent = it_auto->manual_pattern.empty() ? mix : mix_percent_from_normalized_pattern(it_auto->manual_pattern);
-                it_auto->deleted = deleted;
-                if (it_auto->deleted)
-                    it_auto->enabled = false;
-                ++updated_auto;
+            const auto key = canonical_pair(a, b);
+            if (consumed_auto_pairs.count(key) != 0) {
+                ++skipped_rows;
+                BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries duplicate auto row"
+                                           << ", row=" << row
+                                           << ", a=" << key.first
+                                           << ", b=" << key.second;
                 continue;
             }
+
+            auto it_auto = std::find_if(auto_rows.begin(), auto_rows.end(), [key, canonical_pair](const MixedFilament &mf) {
+                return canonical_pair(mf.component_a, mf.component_b) == key;
+            });
+            if (it_auto == auto_rows.end()) {
+                ++skipped_rows;
+                BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries auto row missing after regenerate"
+                                           << ", row=" << row
+                                           << ", a=" << key.first
+                                           << ", b=" << key.second;
+                continue;
+            }
+
+            MixedFilament mf = *it_auto;
+            mf.component_a = key.first;
+            mf.component_b = key.second;
+            mf.enabled = enabled;
+            mf.pointillism_all_filaments = pointillism_all_filaments;
+            mf.gradient_component_ids = normalize_gradient_component_ids(gradient_component_ids);
+            mf.gradient_component_weights =
+                normalize_gradient_component_weights(gradient_component_weights, mf.gradient_component_ids.size());
+            mf.manual_pattern = normalize_manual_pattern(manual_pattern);
+            mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+            mf.mix_b_percent = mf.manual_pattern.empty() ? mix : mix_percent_from_normalized_pattern(mf.manual_pattern);
+            mf.deleted = deleted;
+            if (mf.deleted)
+                mf.enabled = false;
+            mf.custom = false;
+            mf.origin_auto = true;
+
+            rebuilt.push_back(std::move(mf));
+            consumed_auto_pairs.insert(key);
+            ++updated_auto;
+            continue;
         }
 
         MixedFilament mf;
@@ -933,15 +998,34 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         if (mf.deleted)
             mf.enabled = false;
         mf.custom = custom;
-        m_mixed.push_back(std::move(mf));
+        mf.origin_auto = origin_auto;
+        rebuilt.push_back(std::move(mf));
         ++loaded_rows;
     }
+
+    // Keep any newly generated auto rows that were not present in serialized
+    // definitions and append them at the end to preserve existing virtual IDs.
+    for (const MixedFilament &auto_mf : auto_rows) {
+        const auto key = canonical_pair(auto_mf.component_a, auto_mf.component_b);
+        if (consumed_auto_pairs.count(key) != 0)
+            continue;
+        MixedFilament mf = auto_mf;
+        mf.component_a = key.first;
+        mf.component_b = key.second;
+        mf.custom = false;
+        mf.origin_auto = true;
+        rebuilt.push_back(std::move(mf));
+        ++appended_auto;
+    }
+
+    m_mixed = std::move(rebuilt);
     refresh_display_colors(filament_colours);
     BOOST_LOG_TRIVIAL(info) << "MixedFilamentManager::load_custom_entries"
                             << ", physical_count=" << n
                             << ", parsed_rows=" << parsed_rows
                             << ", loaded_rows=" << loaded_rows
                             << ", updated_auto_rows=" << updated_auto
+                            << ", appended_auto_rows=" << appended_auto
                             << ", skipped_rows=" << skipped_rows
                             << ", mixed_total=" << m_mixed.size();
 }

@@ -900,12 +900,14 @@ static bool apply_mixed_surface_indentation(PrintObject &print_object, std::vect
     size_t changed_states = 0;
     size_t emptied_states = 0;
     size_t overlap_clipped_states = 0;
+    size_t outside_trimmed_states = 0;
 
     for (size_t layer_id = 0; layer_id < segmentation.size(); ++layer_id) {
         if (segmentation[layer_id].size() != num_channels)
             continue;
 
         bool       layer_changed = false;
+        ExPolygons outside_trim_band;
         ExPolygons occupied;
         if (expand_outward) {
             for (size_t channel_idx = 0; channel_idx < num_channels; ++channel_idx) {
@@ -919,6 +921,25 @@ static bool apply_mixed_surface_indentation(PrintObject &print_object, std::vect
             }
             if (occupied.size() > 1)
                 occupied = union_ex(occupied);
+        } else {
+            ExPolygons layer_masks;
+            for (size_t channel_idx = 0; channel_idx < num_channels; ++channel_idx) {
+                const ExPolygons &state_masks = segmentation[layer_id][channel_idx];
+                if (!state_masks.empty())
+                    append(layer_masks, state_masks);
+            }
+            if (!layer_masks.empty()) {
+                if (layer_masks.size() > 1)
+                    layer_masks = union_ex(layer_masks);
+
+                ExPolygons layer_inner = offset_ex(layer_masks, -delta_scaled);
+                if (!layer_inner.empty() && layer_inner.size() > 1)
+                    layer_inner = union_ex(layer_inner);
+
+                outside_trim_band = layer_inner.empty() ? layer_masks : diff_ex(layer_masks, layer_inner, ApplySafetyOffset::Yes);
+                if (!outside_trim_band.empty() && outside_trim_band.size() > 1)
+                    outside_trim_band = union_ex(outside_trim_band);
+            }
         }
 
         for (size_t channel_idx = num_physical; channel_idx < num_channels; ++channel_idx) {
@@ -930,15 +951,24 @@ static bool apply_mixed_surface_indentation(PrintObject &print_object, std::vect
             if (!mixed_mgr.is_mixed(state_id, num_physical))
                 continue;
 
-            ExPolygons adjusted = offset_ex(state_masks, expand_outward ? delta_scaled : -delta_scaled);
-            if (!adjusted.empty() && adjusted.size() > 1)
-                adjusted = union_ex(adjusted);
+            ExPolygons adjusted;
+            if (expand_outward) {
+                adjusted = offset_ex(state_masks, delta_scaled);
+                if (!adjusted.empty() && adjusted.size() > 1)
+                    adjusted = union_ex(adjusted);
 
-            if (expand_outward && !adjusted.empty() && !occupied.empty()) {
-                ExPolygons clipped = diff_ex(adjusted, occupied, ApplySafetyOffset::Yes);
-                if (std::abs(area(clipped)) + EPSILON < std::abs(area(adjusted)))
-                    ++overlap_clipped_states;
-                adjusted = std::move(clipped);
+                if (!adjusted.empty() && !occupied.empty()) {
+                    ExPolygons clipped = diff_ex(adjusted, occupied, ApplySafetyOffset::Yes);
+                    if (std::abs(area(clipped)) + EPSILON < std::abs(area(adjusted)))
+                        ++overlap_clipped_states;
+                    adjusted = std::move(clipped);
+                    if (!adjusted.empty() && adjusted.size() > 1)
+                        adjusted = union_ex(adjusted);
+                }
+            } else {
+                adjusted = outside_trim_band.empty() ? state_masks : diff_ex(state_masks, outside_trim_band, ApplySafetyOffset::Yes);
+                if (std::abs(area(adjusted)) + EPSILON < std::abs(area(state_masks)))
+                    ++outside_trimmed_states;
                 if (!adjusted.empty() && adjusted.size() > 1)
                     adjusted = union_ex(adjusted);
             }
@@ -970,7 +1000,8 @@ static bool apply_mixed_surface_indentation(PrintObject &print_object, std::vect
                                << " changed_layers=" << changed_layers
                                << " changed_states=" << changed_states
                                << " emptied_states=" << emptied_states
-                               << " overlap_clipped_states=" << overlap_clipped_states;
+                               << " overlap_clipped_states=" << overlap_clipped_states
+                               << " outside_trimmed_states=" << outside_trimmed_states;
     return true;
 }
 

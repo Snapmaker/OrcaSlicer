@@ -4174,15 +4174,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.16));
 
-    def = this->add("mixed_filament_cycle_layers", coInt);
-    def->label = L("Mixed filament layer cycle");
-    def->category = L("Others");
-    def->tooltip = L("Number of layers in one alternation cycle for layer-cycle mixed filament mode.\n\n"
-                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
-    def->min = 2;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(4));
-
     def = this->add("mixed_filament_advanced_dithering", coBool);
     def->label = L("Advanced dithering");
     def->category = L("Others");

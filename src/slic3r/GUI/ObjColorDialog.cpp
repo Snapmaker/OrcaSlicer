@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <map>
 #include <sstream>
 //#include "libslic3r/FlushVolCalc.hpp"
 #include "ObjColorDialog.hpp"
@@ -395,21 +396,46 @@ bool ObjColorPanel::is_ok() {
 
 void ObjColorPanel::update_filament_ids()
 {
+    const int existing_filament_count = static_cast<int>(m_colours.size());
+    std::map<int, int> appended_filament_id_map;
+
     if (m_is_add_filament) {
-        for (auto c:m_new_add_colors) {
-            /*auto evt = new ColorEvent(EVT_ADD_CUSTOM_FILAMENT, c);
-            wxQueueEvent(wxGetApp().plater(), evt);*/
-            wxGetApp().sidebar().add_custom_filament(c);
+        std::vector<int> selected_appended_indices;
+        selected_appended_indices.reserve(m_cluster_map_filaments.size());
+        for (int mapped_filament_id : m_cluster_map_filaments) {
+            if (mapped_filament_id > existing_filament_count) {
+                selected_appended_indices.emplace_back(mapped_filament_id);
+            }
+        }
+
+        std::sort(selected_appended_indices.begin(), selected_appended_indices.end());
+        selected_appended_indices.erase(std::unique(selected_appended_indices.begin(), selected_appended_indices.end()), selected_appended_indices.end());
+
+        int next_filament_id = existing_filament_count + 1;
+        for (int combo_selection : selected_appended_indices) {
+            const int new_color_idx = combo_selection - existing_filament_count - 1;
+            if (new_color_idx < 0 || new_color_idx >= static_cast<int>(m_new_add_colors.size())) {
+                continue;
+            }
+
+            wxGetApp().sidebar().add_custom_filament(m_new_add_colors[new_color_idx]);
+            appended_filament_id_map.emplace(combo_selection, next_filament_id++);
         }
     }
-   //deal m_filament_ids
-   m_filament_ids.clear();
-   m_filament_ids.reserve(m_input_colors_size);
-   for (size_t i = 0; i < m_input_colors_size; i++) {
-       auto label = m_cluster_labels_from_algo[i];
-       m_filament_ids.emplace_back(m_cluster_map_filaments[label]);
-   }
-   m_first_extruder_id = m_cluster_map_filaments[0];
+
+    auto resolve_filament_id = [&appended_filament_id_map](int mapped_filament_id) {
+        const auto it = appended_filament_id_map.find(mapped_filament_id);
+        const int resolved_filament_id = it == appended_filament_id_map.end() ? mapped_filament_id : it->second;
+        return static_cast<unsigned char>(resolved_filament_id);
+    };
+
+    m_filament_ids.clear();
+    m_filament_ids.reserve(m_input_colors_size);
+    for (size_t i = 0; i < m_input_colors_size; i++) {
+        auto label = m_cluster_labels_from_algo[i];
+        m_filament_ids.emplace_back(resolve_filament_id(m_cluster_map_filaments[label]));
+    }
+    m_first_extruder_id = resolve_filament_id(m_cluster_map_filaments[0]);
 }
 
 wxBoxSizer *ObjColorPanel::create_approximate_match_btn_sizer(wxWindow *parent)
@@ -548,6 +574,10 @@ ComboBox *ObjColorPanel::CreateEditorCtrl(wxWindow *parent, int id) // wxRect la
 
 void ObjColorPanel::deal_approximate_match_btn()
 {
+    if (m_is_add_filament) {
+        deal_reset_btn();
+    }
+
     auto calc_color_distance = [](wxColour c1, wxColour c2) {
         float lab[2][3];
         RGB2Lab(c1.Red(), c1.Green(), c1.Blue(), &lab[0][0], &lab[0][1], &lab[0][2]);
@@ -557,7 +587,7 @@ void ObjColorPanel::deal_approximate_match_btn()
     };
     m_warning_text->SetLabelText("");
     if (m_result_icon_list.size() == 0) { return; }
-    auto map_count = m_result_icon_list[0]->bitmap_combox->GetCount() -1;
+    auto map_count = static_cast<int>(m_colours.size());
     if (map_count < 1) { return; }
     for (size_t i = 0; i < m_cluster_colours.size(); i++) {
         auto    c = m_cluster_colours[i];
@@ -720,7 +750,11 @@ void ObjColorPanel::deal_algo(char cluster_number, bool redraw_ui)
 
 void ObjColorPanel::deal_default_strategy()
 {
-    deal_add_btn();
+    if (m_colours.empty()) {
+        deal_add_btn();
+        return;
+    }
+
     deal_approximate_match_btn();
     m_warning_text->SetLabelText(_L("Note: The color has been selected, you can choose OK \nto continue or manually adjust it."));
 }

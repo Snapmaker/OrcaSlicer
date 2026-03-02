@@ -1,4 +1,4 @@
-; [1] PACK_SOURCE_DIR = compile-time only (e.g. .\build\src\Release). [2] INSTALL_DIR_RUNTIME = runtime install dir (default .\ = $EXEDIR).
+; [1] PACK_SOURCE_DIR = compile-time only (e.g. .\build\Snapmaker_Orca). [2] INSTALL_DIR_RUNTIME = runtime install dir (default .\ = $EXEDIR).
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
@@ -15,11 +15,12 @@
 !endif
 
 !ifndef SOURCE_DIR
-    !define SOURCE_DIR ".\build\src\Release"
+    !define SOURCE_DIR ".\build\Snapmaker_Orca"
 !endif
 !define PACK_SOURCE_DIR "${SOURCE_DIR}"
 
-!define INSTALL_DIR_RUNTIME "$PROGRAMFILES\Snapmaker_Orca"
+; 64-bit app: use PROGRAMFILES64 so default path is C:\Program Files\Snapmaker_Orca, not (x86)
+!define INSTALL_DIR_RUNTIME "$PROGRAMFILES64\Snapmaker_Orca"
 InstallDir "${INSTALL_DIR_RUNTIME}"
 
 !ifndef OUTPUT_FILE
@@ -43,12 +44,13 @@ VIAddVersionKey "InternalName" "${PRODUCT_NAME}"
 VIAddVersionKey "LegalTrademarks" ""
 VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 
+; Installer and uninstaller icon: set by build_and_pack.bat via /DICON_FILE=path (e.g. Snapmaker_Orca.ico or snapmaker.ico)
 !ifdef ICON_FILE
     !define MUI_ICON "${ICON_FILE}"
     !define MUI_UNICON "${ICON_FILE}"
 !else
-    !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-    !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+    !define MUI_ICON ".\resources\images\Snapmaker_Orca.ico"
+    !define MUI_UNICON ".\resources\images\Snapmaker_Orca.ico"
 !endif
 
 !define MUI_WELCOMEPAGE_TITLE "Welcome to ${PRODUCT_NAME} Setup"
@@ -93,8 +95,8 @@ Section "Main program" SecMain
     
     DetailPrint "Copying files..."
     
-    ; PACK_SOURCE_DIR = compile time only. At runtime this File extracts from embedded payload to $INSTDIR.
-    File /r /x "*.pdb" /x "*.ilk" /x "*.exp" /x "*.lib" /x "*.obj" /x "*.idb" /x "*.tlog" /x "*.h" /x "*.hpp" /x "*.c" /x "*.cpp" /x "*.cxx" /x "*.cc" /x "*.vcxproj" /x "*.vcxproj.filters" /x "*.sln" /x "*.cmake" /x "*.py" /x "*.md" /x "*.vcxproj.user" /x "CMakeFiles" /x "RelWithDebInfo" /x "Debug" /x "MinSizeRel" /x ".vs" /x "vcpkg_installed" /x "*.dir" "${PACK_SOURCE_DIR}\*.*"
+    ; PACK_SOURCE_DIR = compile time only. At runtime this File extracts from embedded payload to $INSTDIR. Exclude include and lib dirs.
+    File /r /x "*.pdb" /x "*.ilk" /x "*.exp" /x "*.lib" /x "*.obj" /x "*.idb" /x "*.tlog" /x "*.h" /x "*.hpp" /x "*.c" /x "*.cpp" /x "*.cxx" /x "*.cc" /x "*.vcxproj" /x "*.vcxproj.filters" /x "*.sln" /x "*.cmake" /x "*.py" /x "*.md" /x "*.vcxproj.user" /x "CMakeFiles" /x "RelWithDebInfo" /x "Debug" /x "MinSizeRel" /x ".vs" /x "vcpkg_installed" /x "*.dir" /x "include\*" /x "lib\*" "${PACK_SOURCE_DIR}\*.*"
     
     IfFileExists "$INSTDIR\snapmaker-orca.exe" 0 extract_error
     

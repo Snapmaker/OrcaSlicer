@@ -7,8 +7,10 @@ add_executable(${_TEST_NAME}_tests
 	test_clipper_offset.cpp
 	test_clipper_utils.cpp
 	test_config.cpp
+	test_custom_gcode.cpp
 	test_elephant_foot_compensation.cpp
 	test_geometry.cpp
+	test_mixed_filament.cpp
 	test_placeholder_parser.cpp
 	test_polygon.cpp
 	test_mutable_polygon.cpp

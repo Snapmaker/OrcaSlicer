@@ -484,10 +484,11 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
 
     if (conside_custom_gcode) {
         //BBS
-        int num_extruders = m_config.filament_colour.size();
+        const size_t num_physical = m_config.filament_colour.size();
+        const size_t num_filaments = m_mixed_filament_mgr.total_filaments(num_physical);
         if (m_model.plates_custom_gcodes.find(m_model.curr_plate_index) != m_model.plates_custom_gcodes.end()) {
             for (auto item : m_model.plates_custom_gcodes.at(m_model.curr_plate_index).gcodes) {
-                if (item.type == CustomGCode::Type::ToolChange && item.extruder <= num_extruders)
+                if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(num_filaments))
                     extruders.push_back((unsigned int)(item.extruder - 1));
             }
         }

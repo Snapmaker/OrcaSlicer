@@ -315,6 +315,7 @@ static bool use_component_b_advanced_dither(int layer_index, int ratio_a, int ra
 static bool parse_row_definition(const std::string &row,
                                  unsigned int      &a,
                                  unsigned int      &b,
+                                 uint64_t          &stable_id,
                                  bool              &enabled,
                                  bool              &custom,
                                  bool              &origin_auto,
@@ -352,13 +353,29 @@ static bool parse_row_definition(const std::string &row,
         }
     };
 
+    auto parse_uint64_token = [&trim_copy](const std::string &tok, uint64_t &out) {
+        const std::string t = trim_copy(tok);
+        if (t.empty())
+            return false;
+        try {
+            size_t consumed = 0;
+            const unsigned long long v = std::stoull(t, &consumed);
+            if (consumed != t.size())
+                return false;
+            out = uint64_t(v);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
     std::vector<std::string> tokens;
     std::stringstream ss(row);
     std::string token;
     while (std::getline(ss, token, ','))
         tokens.emplace_back(trim_copy(token));
 
-    if (tokens.size() < 4 || tokens.size() > 12)
+    if (tokens.size() < 4 || tokens.size() > 13)
         return false;
 
     int values[5] = { 0, 0, 1, 1, 50 };
@@ -381,6 +398,7 @@ static bool parse_row_definition(const std::string &row,
 
     a = unsigned(values[0]);
     b = unsigned(values[1]);
+    stable_id = 0;
     enabled = (values[2] != 0);
     custom = (tokens.size() == 4) ? true : (values[3] != 0);
     origin_auto = !custom;
@@ -438,6 +456,12 @@ static bool parse_row_definition(const std::string &row,
             int parsed_origin_auto = origin_auto ? 1 : 0;
             if (parse_int_token(tok.substr(1), parsed_origin_auto))
                 origin_auto = parsed_origin_auto != 0;
+            continue;
+        }
+        if (tok[0] == 'u' || tok[0] == 'U') {
+            uint64_t parsed_stable_id = stable_id;
+            if (parse_uint64_token(tok.substr(1), parsed_stable_id))
+                stable_id = parsed_stable_id;
             continue;
         }
         manual_pattern = tok;
@@ -685,6 +709,22 @@ static std::vector<unsigned int> build_weighted_gradient_sequence(const std::vec
 // MixedFilamentManager
 // ---------------------------------------------------------------------------
 
+uint64_t MixedFilamentManager::allocate_stable_id()
+{
+    const uint64_t stable_id = std::max<uint64_t>(1, m_next_stable_id);
+    m_next_stable_id = stable_id + 1;
+    return stable_id;
+}
+
+uint64_t MixedFilamentManager::normalize_stable_id(uint64_t stable_id)
+{
+    if (stable_id == 0)
+        return allocate_stable_id();
+    if (stable_id >= m_next_stable_id)
+        m_next_stable_id = stable_id + 1;
+    return stable_id;
+}
+
 void MixedFilamentManager::auto_generate(const std::vector<std::string> &filament_colours)
 {
     // Keep a copy of the old list so we can preserve user-modified ratios and
@@ -703,7 +743,9 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
             continue;
         if (prev.component_a == 0 || prev.component_b == 0 || prev.component_a > n || prev.component_b > n || prev.component_a == prev.component_b)
             continue;
-        custom_rows.push_back(prev);
+        MixedFilament custom = prev;
+        custom.stable_id = normalize_stable_id(custom.stable_id);
+        custom_rows.push_back(std::move(custom));
     }
 
     // Generate all C(N,2) pairwise combinations.
@@ -727,11 +769,13 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
                     prev.component_b == mf.component_b) {
                     mf.enabled = prev.enabled;
                     mf.deleted = prev.deleted;
+                    mf.stable_id = prev.stable_id;
                     if (mf.deleted)
                         mf.enabled = false;
                     break;
                 }
             }
+            mf.stable_id = normalize_stable_id(mf.stable_id);
             m_mixed.push_back(mf);
         }
     }
@@ -781,6 +825,7 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     MixedFilament mf;
     mf.component_a = component_a;
     mf.component_b = component_b;
+    mf.stable_id = allocate_stable_id();
     mf.mix_b_percent = clamp_int(mix_b_percent, 0, 100);
     mf.ratio_a = 1;
     mf.ratio_b = 1;
@@ -840,14 +885,15 @@ void MixedFilamentManager::apply_gradient_settings(int   gradient_mode,
     }
 }
 
-std::string MixedFilamentManager::serialize_custom_entries() const
+std::string MixedFilamentManager::serialize_custom_entries()
 {
     std::ostringstream ss;
     bool first = true;
-    for (const MixedFilament &mf : m_mixed) {
+    for (MixedFilament &mf : m_mixed) {
         if (!first)
             ss << ';';
         first = false;
+        mf.stable_id = normalize_stable_id(mf.stable_id);
         const std::string normalized_ids = normalize_gradient_component_ids(mf.gradient_component_ids);
         const std::string normalized_weights = normalize_gradient_component_weights(mf.gradient_component_weights, normalized_ids.size());
         ss << mf.component_a << ','
@@ -860,7 +906,8 @@ std::string MixedFilamentManager::serialize_custom_entries() const
            << 'w' << normalized_weights << ','
            << 'm' << clamp_int(mf.distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple)) << ','
            << 'd' << (mf.deleted ? 1 : 0) << ','
-           << 'o' << (mf.origin_auto ? 1 : 0);
+           << 'o' << (mf.origin_auto ? 1 : 0) << ','
+           << 'u' << mf.stable_id;
         const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
         if (!normalized_pattern.empty())
             ss << ',' << normalized_pattern;
@@ -898,6 +945,15 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
     std::vector<MixedFilament> rebuilt;
     rebuilt.reserve(m_mixed.size() + 8);
     std::set<std::pair<unsigned int, unsigned int>> consumed_auto_pairs;
+    std::set<uint64_t> used_stable_ids;
+    auto dedupe_stable_id = [this, &used_stable_ids](uint64_t stable_id) {
+        stable_id = normalize_stable_id(stable_id);
+        if (used_stable_ids.insert(stable_id).second)
+            return stable_id;
+        uint64_t replacement = allocate_stable_id();
+        used_stable_ids.insert(replacement);
+        return replacement;
+    };
 
     std::stringstream all(serialized);
     std::string row;
@@ -907,6 +963,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         ++parsed_rows;
         unsigned int a = 0;
         unsigned int b = 0;
+        uint64_t stable_id = 0;
         bool enabled = true;
         bool custom = true;
         bool origin_auto = false;
@@ -917,7 +974,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         std::string manual_pattern;
         int distribution_mode = int(MixedFilament::Simple);
         bool deleted = false;
-        if (!parse_row_definition(row, a, b, enabled, custom, origin_auto, mix, pointillism_all_filaments,
+        if (!parse_row_definition(row, a, b, stable_id, enabled, custom, origin_auto, mix, pointillism_all_filaments,
                                   gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode, deleted)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
@@ -959,6 +1016,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             MixedFilament mf = *it_auto;
             mf.component_a = key.first;
             mf.component_b = key.second;
+            mf.stable_id = dedupe_stable_id(stable_id != 0 ? stable_id : mf.stable_id);
             mf.enabled = enabled;
             mf.pointillism_all_filaments = pointillism_all_filaments;
             mf.gradient_component_ids = normalize_gradient_component_ids(gradient_component_ids);
@@ -982,6 +1040,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         MixedFilament mf;
         mf.component_a = a;
         mf.component_b = b;
+        mf.stable_id = dedupe_stable_id(stable_id);
         mf.mix_b_percent = mix;
         mf.ratio_a = 1;
         mf.ratio_b = 1;
@@ -1012,6 +1071,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         MixedFilament mf = auto_mf;
         mf.component_a = key.first;
         mf.component_b = key.second;
+        mf.stable_id = dedupe_stable_id(mf.stable_id);
         mf.custom = false;
         mf.origin_auto = true;
         rebuilt.push_back(std::move(mf));

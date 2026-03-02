@@ -4400,7 +4400,10 @@ void Sidebar::update_mixed_filament_panel()
         return wxString::Format("(F%u + F%u)", unsigned(entry.component_a), unsigned(entry.component_b));
     };
 
-    auto apply_mixed_entry_changes = [this, preset_bundle, print_cfg](size_t mixed_id, const MixedFilament &updated_mf, bool preserve_enabled = false) {
+    auto apply_mixed_entry_changes = [this, preset_bundle, print_cfg, num_physical](size_t mixed_id,
+                                                                                    const MixedFilament &updated_mf,
+                                                                                    bool preserve_enabled = false,
+                                                                                    bool rebuild_virtual_id_remap = false) {
         if (!preset_bundle)
             return;
 
@@ -4409,6 +4412,7 @@ void Sidebar::update_mixed_filament_panel()
         if (mixed_id >= mfs.size())
             return;
 
+        const std::vector<MixedFilament> old_mixed = rebuild_virtual_id_remap ? mfs : std::vector<MixedFilament>();
         MixedFilament merged = updated_mf;
         if (preserve_enabled)
             merged.enabled = mfs[mixed_id].enabled;
@@ -4435,6 +4439,9 @@ void Sidebar::update_mixed_filament_panel()
         if (wxGetApp().plater())
             wxGetApp().plater()->update_project_dirty_from_presets();
 
+        if (rebuild_virtual_id_remap)
+            preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical);
+
         int mode = 0;
         if (const ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_gradient_mode"))
             mode = opt->value ? 1 : 0;
@@ -4452,6 +4459,9 @@ void Sidebar::update_mixed_filament_panel()
         hi = std::max(lo, hi);
         mgr.apply_gradient_settings(mode, lo, hi, advanced);
         update_dynamic_filament_list();
+
+        if (rebuild_virtual_id_remap && wxGetApp().plater())
+            wxGetApp().plater()->on_filaments_change(num_physical);
     };
 
     size_t visible_mixed_idx = 0;
@@ -4507,7 +4517,7 @@ void Sidebar::update_mixed_filament_panel()
                 return;
             MixedFilament updated = mfs[mixed_id];
             updated.enabled = enabled_chk->GetValue();
-            apply_mixed_entry_changes(mixed_id, updated, false);
+            apply_mixed_entry_changes(mixed_id, updated, false, true);
         });
 
         auto *del_btn = new ScalableButton(header_panel, wxID_ANY, "cross"); 
@@ -4519,6 +4529,7 @@ void Sidebar::update_mixed_filament_panel()
                  auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
                  auto &mfs = mgr.mixed_filaments();
                  if (mixed_id < mfs.size()) {
+                     const std::vector<MixedFilament> old_mixed = mfs;
                      auto canonical_pair = [](unsigned int a, unsigned int b) {
                          return std::make_pair(std::min(a, b), std::max(a, b));
                      };
@@ -4571,10 +4582,12 @@ void Sidebar::update_mixed_filament_panel()
                      }
                      p->m_expanded_mixed_filament_rows.clear();
                      set_mixed_string("mixed_filament_definitions", mgr.serialize_custom_entries());
+                     wxGetApp().preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical);
                      notify_mixed_change();
                      if (wxGetApp().plater())
                          wxGetApp().plater()->update_project_dirty_from_presets();
-                     update_mixed_filament_panel();
+                     if (wxGetApp().plater())
+                         wxGetApp().plater()->on_filaments_change(num_physical);
                  }
              }
         });
@@ -16891,30 +16904,6 @@ void Plater::on_filaments_change(size_t num_filaments)
                 state_map[i] = EnforcerBlockerType::NONE;
             else
                 state_map[i] = EnforcerBlockerType(mapped);
-        }
-    }
-
-    // Add-flow is deterministic: old virtual filament IDs must shift by
-    // +delta_physical because physical IDs were prepended.
-    // Keep this rule authoritative to avoid stale/partial remaps.
-    if (num_filaments > old_num_filaments) {
-        const size_t delta = num_filaments - old_num_filaments;
-        const size_t old_first_virtual = old_num_filaments + 1;
-        size_t old_total = 0;
-        if (!id_remap.empty() && id_remap.size() > 1)
-            old_total = std::min(id_remap.size() - 1, state_map.size() - 1);
-        else
-            old_total = std::min((total_filaments >= delta ? total_filaments - delta : 0), state_map.size() - 1);
-
-        if (old_total >= old_first_virtual) {
-            should_remap_states = true;
-            for (size_t i = old_first_virtual; i <= old_total; ++i) {
-                const size_t mapped = i + delta;
-                if (mapped >= state_map.size() || mapped > total_filaments)
-                    state_map[i] = EnforcerBlockerType::NONE;
-                else
-                    state_map[i] = EnforcerBlockerType(mapped);
-            }
         }
     }
 

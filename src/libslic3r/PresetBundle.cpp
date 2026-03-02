@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <set>
 #include <fstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/clamp.hpp>
@@ -3365,51 +3366,84 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     // Build old->new filament ID remap for painted facet data normalization.
     // This is needed for both deletion and addition of physical filaments so
     // painted mixed states keep pointing at the same virtual mixed entries.
-    if (old_num_filaments != num_filaments || deleting_filament) {
-        const unsigned int deleted_1based = deleting_filament ? unsigned(to_delete_filament_id + 1) : 0u;
-        size_t old_enabled_mixed = 0;
-        for (const auto &mf : old_mixed)
-            if (mf.enabled)
-                ++old_enabled_mixed;
+    if (old_num_filaments != num_filaments || deleting_filament)
+        build_filament_id_remap(old_mixed, old_num_filaments, num_filaments, deleting_filament,
+                                deleting_filament ? unsigned(to_delete_filament_id + 1) : 0u);
+}
 
-        const size_t old_total_filaments = old_num_filaments + old_enabled_mixed;
-        m_last_filament_id_remap.assign(old_total_filaments + 1, 0);
+void PresetBundle::update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
+                                                  size_t old_num_filaments,
+                                                  size_t new_num_filaments)
+{
+    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u);
+}
 
-        for (unsigned int old_id = 1; old_id <= unsigned(old_num_filaments); ++old_id) {
-            unsigned int mapped = 0;
-            if (deleting_filament && old_id == deleted_1based) {
-                mapped = 0;
-            } else if (old_id <= unsigned(num_filaments)) {
-                mapped = old_id;
-                if (deleting_filament && old_id > deleted_1based)
-                    --mapped;
+void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
+                                           size_t old_num_filaments,
+                                           size_t new_num_filaments,
+                                           bool deleting_filament,
+                                           unsigned int deleted_1based)
+{
+    size_t old_enabled_mixed = 0;
+    for (const auto &mf : old_mixed)
+        if (mf.enabled)
+            ++old_enabled_mixed;
+
+    const size_t old_total_filaments = old_num_filaments + old_enabled_mixed;
+    m_last_filament_id_remap.assign(old_total_filaments + 1, 0);
+
+    for (unsigned int old_id = 1; old_id <= unsigned(old_num_filaments); ++old_id) {
+        unsigned int mapped = 0;
+        if (deleting_filament && old_id == deleted_1based) {
+            mapped = 0;
+        } else if (old_id <= unsigned(new_num_filaments)) {
+            mapped = old_id;
+            if (deleting_filament && old_id > deleted_1based)
+                --mapped;
+        }
+        m_last_filament_id_remap[old_id] = mapped;
+    }
+
+    auto canonical_pair = [](unsigned int a, unsigned int b) {
+        return std::make_pair(std::min(a, b), std::max(a, b));
+    };
+
+    std::unordered_map<uint64_t, unsigned int> new_stable_id_to_virtual_id;
+    std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>> new_pair_to_ids;
+    unsigned int next_virtual_id = unsigned(new_num_filaments + 1);
+    for (const auto &mf : this->mixed_filaments.mixed_filaments()) {
+        if (!mf.enabled)
+            continue;
+        if (mf.stable_id != 0)
+            new_stable_id_to_virtual_id.emplace(mf.stable_id, next_virtual_id);
+        new_pair_to_ids[canonical_pair(mf.component_a, mf.component_b)].push_back(next_virtual_id++);
+    }
+
+    std::map<std::pair<unsigned int, unsigned int>, size_t> used_per_pair;
+    size_t stable_id_hits = 0;
+    size_t fallback_pair_hits = 0;
+    size_t missing_hits = 0;
+    unsigned int old_virtual_id = unsigned(old_num_filaments + 1);
+    for (const auto &mf : old_mixed) {
+        if (!mf.enabled)
+            continue;
+
+        unsigned int a = mf.component_a;
+        unsigned int b = mf.component_b;
+        if (a == deleted_1based || b == deleted_1based) {
+            m_last_filament_id_remap[old_virtual_id] = 0;
+            ++missing_hits;
+        } else {
+            bool mapped_by_stable_id = false;
+            if (mf.stable_id != 0) {
+                auto it_stable = new_stable_id_to_virtual_id.find(mf.stable_id);
+                if (it_stable != new_stable_id_to_virtual_id.end()) {
+                    m_last_filament_id_remap[old_virtual_id] = it_stable->second;
+                    mapped_by_stable_id = true;
+                    ++stable_id_hits;
+                }
             }
-            m_last_filament_id_remap[old_id] = mapped;
-        }
-
-        auto canonical_pair = [](unsigned int a, unsigned int b) {
-            return std::make_pair(std::min(a, b), std::max(a, b));
-        };
-
-        std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>> new_pair_to_ids;
-        unsigned int next_virtual_id = unsigned(num_filaments + 1);
-        for (const auto &mf : this->mixed_filaments.mixed_filaments()) {
-            if (!mf.enabled)
-                continue;
-            new_pair_to_ids[canonical_pair(mf.component_a, mf.component_b)].push_back(next_virtual_id++);
-        }
-
-        std::map<std::pair<unsigned int, unsigned int>, size_t> used_per_pair;
-        unsigned int old_virtual_id = unsigned(old_num_filaments + 1);
-        for (const auto &mf : old_mixed) {
-            if (!mf.enabled)
-                continue;
-
-            unsigned int a = mf.component_a;
-            unsigned int b = mf.component_b;
-            if (a == deleted_1based || b == deleted_1based) {
-                m_last_filament_id_remap[old_virtual_id] = 0;
-            } else {
+            if (!mapped_by_stable_id) {
                 if (deleting_filament) {
                     if (a > deleted_1based)
                         --a;
@@ -3420,42 +3454,48 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
                 auto it = new_pair_to_ids.find(key);
                 if (it == new_pair_to_ids.end()) {
                     m_last_filament_id_remap[old_virtual_id] = 0;
+                    ++missing_hits;
                 } else {
                     size_t &used = used_per_pair[key];
                     if (used >= it->second.size()) {
                         m_last_filament_id_remap[old_virtual_id] = 0;
+                        ++missing_hits;
                     } else {
                         m_last_filament_id_remap[old_virtual_id] = it->second[used++];
+                        ++fallback_pair_hits;
                     }
                 }
             }
-            ++old_virtual_id;
         }
-
-        auto summarize_uint_vector = [](const std::vector<unsigned int> &values, size_t max_items = 24) {
-            std::string out = "[";
-            const size_t n = std::min(values.size(), max_items);
-            for (size_t i = 0; i < n; ++i) {
-                if (i > 0)
-                    out += ",";
-                out += std::to_string(values[i]);
-            }
-            if (values.size() > n)
-                out += ",...";
-            out += "]";
-            return out;
-        };
-
-        BOOST_LOG_TRIVIAL(warning) << "MF_REMAP preset_bundle"
-                                << " old_physical=" << old_num_filaments
-                                << " new_physical=" << num_filaments
-                                << " deleting=" << (deleting_filament ? 1 : 0)
-                                << " deleted_id=" << deleted_1based
-                                << " old_mixed_enabled=" << old_enabled_mixed
-                                << " new_mixed_enabled=" << this->mixed_filaments.enabled_count()
-                                << " remap_size=" << m_last_filament_id_remap.size()
-                                << " remap=" << summarize_uint_vector(m_last_filament_id_remap);
+        ++old_virtual_id;
     }
+
+    auto summarize_uint_vector = [](const std::vector<unsigned int> &values, size_t max_items = 24) {
+        std::string out = "[";
+        const size_t n = std::min(values.size(), max_items);
+        for (size_t i = 0; i < n; ++i) {
+            if (i > 0)
+                out += ",";
+            out += std::to_string(values[i]);
+        }
+        if (values.size() > n)
+            out += ",...";
+        out += "]";
+        return out;
+    };
+
+    BOOST_LOG_TRIVIAL(warning) << "MF_REMAP preset_bundle"
+                            << " old_physical=" << old_num_filaments
+                            << " new_physical=" << new_num_filaments
+                            << " deleting=" << (deleting_filament ? 1 : 0)
+                            << " deleted_id=" << deleted_1based
+                            << " old_mixed_enabled=" << old_enabled_mixed
+                            << " new_mixed_enabled=" << this->mixed_filaments.enabled_count()
+                            << " stable_id_hits=" << stable_id_hits
+                            << " fallback_pair_hits=" << fallback_pair_hits
+                            << " missing_hits=" << missing_hits
+                            << " remap_size=" << m_last_filament_id_remap.size()
+                            << " remap=" << summarize_uint_vector(m_last_filament_id_remap);
 }
 
 void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_print_if_incompatible, PresetSelectCompatibleType select_other_filament_if_incompatible)

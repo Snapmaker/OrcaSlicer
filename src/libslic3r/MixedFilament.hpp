@@ -27,6 +27,10 @@ struct MixedFilament
     unsigned int component_a = 1;
     unsigned int component_b = 2;
 
+    // Persistent row identity used to keep painted virtual-tool assignments
+    // stable even when the visible mixed-filament list is rebuilt.
+    uint64_t stable_id = 0;
+
     // Layer-alternation ratio.  With ratio_a = 2, ratio_b = 1 the cycle is
     // A, A, B, A, A, B, ...
     int ratio_a = 1;
@@ -77,6 +81,7 @@ struct MixedFilament
     {
         return component_a == rhs.component_a &&
                component_b == rhs.component_b &&
+               stable_id   == rhs.stable_id   &&
                ratio_a     == rhs.ratio_a     &&
                ratio_b     == rhs.ratio_b     &&
                mix_b_percent == rhs.mix_b_percent &&
@@ -133,8 +138,9 @@ public:
                                  float upper_bound,
                                  bool  advanced_dithering = false);
 
-    // Persist only custom rows.
-    std::string serialize_custom_entries() const;
+    // Persist mixed rows, including auto/deleted state, into the compact
+    // project-settings string.
+    std::string serialize_custom_entries();
     void load_custom_entries(const std::string &serialized, const std::vector<std::string> &filament_colours);
 
     // Normalize a manual mixed-pattern string into compact token form.
@@ -196,12 +202,15 @@ private:
     }
 
     void refresh_display_colors(const std::vector<std::string> &filament_colours);
+    uint64_t allocate_stable_id();
+    uint64_t normalize_stable_id(uint64_t stable_id);
 
     std::vector<MixedFilament> m_mixed;
     int                        m_gradient_mode       = 0;
     float                      m_height_lower_bound  = 0.04f;
     float                      m_height_upper_bound  = 0.16f;
     bool                       m_advanced_dithering  = false;
+    uint64_t                   m_next_stable_id      = 1;
 };
 
 } // namespace Slic3r

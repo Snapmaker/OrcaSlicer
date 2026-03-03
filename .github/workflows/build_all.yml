@@ -98,13 +98,12 @@ jobs:
         if [ -f "$notes_file" ]; then
           notes_content=$(cat "$notes_file")
         else
-          notes_content="Automated build for ${GITHUB_REPOSITORY}.
-
-- Ref: ${GITHUB_REF_NAME}
-- Commit: ${GITHUB_SHA}
-- Version: V${version}
-
-macOS artifacts published from this fork are unsigned and not notarized."
+          printf -v notes_content '%s\n\n%s\n%s\n%s\n\n%s' \
+            "Automated build for ${GITHUB_REPOSITORY}." \
+            "- Ref: ${GITHUB_REF_NAME}" \
+            "- Commit: ${GITHUB_SHA}" \
+            "- Version: V${version}" \
+            "macOS artifacts published from this fork are unsigned and not notarized."
         fi
 
         {

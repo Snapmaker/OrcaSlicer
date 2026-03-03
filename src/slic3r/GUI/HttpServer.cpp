@@ -228,10 +228,17 @@ void HttpServer::IOServer::stop_all()
 
 HttpServer::IOServer::IOServer(HttpServer& server) : server(server), acceptor(io_service)
 {
-    boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
-    acceptor.open(endpoint.protocol());
-    acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
-    acceptor.bind(endpoint);
+    try {
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
+        acceptor.open(endpoint.protocol());
+        acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        acceptor.bind(endpoint);
+    } 
+    catch (const boost::system::system_error& errorInfo)
+    {
+        BOOST_LOG_TRIVIAL(error) << "local server start failed with port:" << server.port;
+        BOOST_LOG_TRIVIAL(error) << "local server start failed with errorInfo:" << errorInfo.what();
+    }
 }
 
 HttpServer::HttpServer(boost::asio::ip::port_type port) : port(port)
@@ -258,7 +265,9 @@ bool HttpServer::is_port_available(boost::asio::ip::port_type port)
         acceptor.bind(endpoint);
         acceptor.close();
         return true;
-    } catch (const boost::system::system_error&) {
+    } catch (const boost::system::system_error& e) {
+        BOOST_LOG_TRIVIAL(error) << "the port is unavailable" << e.what();
+        BOOST_LOG_TRIVIAL(error) << "the port is unavailable"<< port;
         return false;
     }
 }
@@ -377,20 +386,20 @@ void HttpServer::restart()
 bool HttpServer::is_healthy()
 {
     if (!start_http_server || !server_) {
-        BOOST_LOG_TRIVIAL(debug) << "Health check failed: server not started or server object is null";
+        BOOST_LOG_TRIVIAL(fatal) << "Health check failed: server not started or server object is null";
         return false;
     }
     
     try {
         // 检查acceptor是否正常打开
         if (!server_->acceptor.is_open()) {
-            BOOST_LOG_TRIVIAL(debug) << "Health check failed: acceptor is not open";
+            BOOST_LOG_TRIVIAL(fatal) << "Health check failed: acceptor is not open";
             return false;
         }
         
         // 检查io_service是否正在运行
         if (server_->io_service.stopped()) {
-            BOOST_LOG_TRIVIAL(debug) << "Health check failed: io_service is stopped";
+            BOOST_LOG_TRIVIAL(fatal) << "Health check failed: io_service is stopped";
             return false;
         }
         
@@ -404,14 +413,14 @@ bool HttpServer::is_healthy()
         
         if (!ec) {
             test_socket.close();
-            BOOST_LOG_TRIVIAL(debug) << "Health check passed: test connection successful on port " << port;
+            BOOST_LOG_TRIVIAL(error) << "Health check passed: test connection successful on port " << port;
             return true;
         }
         
-        BOOST_LOG_TRIVIAL(debug) << "Health check failed: test connection failed with error: " << ec.message();
+        BOOST_LOG_TRIVIAL(fatal) << "Health check failed: test connection failed with error: " << ec.message();
         return false;
     } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(debug) << "Health check failed with exception: " << e.what();
+        BOOST_LOG_TRIVIAL(fatal) << "Health check failed with exception: " << e.what();
         return false;
     }
 }
@@ -464,7 +473,7 @@ void HttpServer::start_health_check()
             
             // 检查服务器是否健康，或者服务器是否已经停止运行
             if ((start_http_server && !is_healthy()) || !start_http_server) {
-                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed or server stopped, performing restart...";
+                BOOST_LOG_TRIVIAL(error) << "HTTP server health check failed or server stopped, performing restart...";
                 try {
                     // 在健康检查线程中直接执行重启，避免通过标志传递
                     restart();
@@ -478,7 +487,7 @@ void HttpServer::start_health_check()
                 BOOST_LOG_TRIVIAL(debug) << "HTTP server health check passed";
             }
         }
-        BOOST_LOG_TRIVIAL(info) << "Health check thread stopped";
+        BOOST_LOG_TRIVIAL(error) << "Health check thread stopped";
     });
 }
 
@@ -489,7 +498,7 @@ void HttpServer::stop_health_check()
         std::lock_guard<std::mutex> lock(m_health_check_mutex);
         
         if (!m_health_check_enabled) {
-            BOOST_LOG_TRIVIAL(debug) << "Health check is not running";
+            BOOST_LOG_TRIVIAL(error) << "Health check is not running";
             return;
         }
         
@@ -727,8 +736,9 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
     }
 
     if (trimmed_url == "/") {
-        trimmed_url = "/flutter_web/index.html"; // 默认首页
-    } else if (trimmed_url.substr(0, 11) == "/localfile/") {
+        trimmed_url = "/flutter_web/index.html"; // defualt home page
+    }
+    else if (trimmed_url.substr(0, 11) == "/localfile/") {
         auto real_path = trimmed_url.substr(11);
         auto realUTF8Path = real_path.ToStdString(wxConvUTF8);
 
@@ -752,7 +762,7 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
     }
     else
     {
-        res = wxString::FromUTF8(data_dir()) + trimmed_url;
+       res = wxString::FromUTF8(data_dir()) + trimmed_url;
     }
  
     auto strUTF8 = res.ToStdString(wxConvUTF8);

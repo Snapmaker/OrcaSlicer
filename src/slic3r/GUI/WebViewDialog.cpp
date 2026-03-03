@@ -99,9 +99,11 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     wxGetApp().fltviews().add_webview_panel(this, url);
 
     if (m_browser == nullptr) {
+        BOOST_LOG_TRIVIAL(fatal) << "Could not init m_browser";
         wxLogError("Could not init m_browser");
         return;
     }
+
     m_browser->Hide();
     SetSizer(topsizer);
 

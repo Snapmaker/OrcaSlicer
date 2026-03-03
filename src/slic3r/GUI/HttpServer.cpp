@@ -308,6 +308,7 @@ void HttpServer::start()
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         if (!start_http_server) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server:" << port;
             throw std::runtime_error("Failed to start HTTP server");
         }
 

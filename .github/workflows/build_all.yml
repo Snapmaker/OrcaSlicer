@@ -67,8 +67,105 @@ jobs:
       build-deps-only: ${{ inputs.build-deps-only || false }}
       force-build: ${{ github.event_name == 'schedule' }}
     secrets: inherit
+
+  publish_release:
+    name: Publish Release
+    needs: [build_all]
+    if: ${{ !cancelled() && needs.build_all.result == 'success' && github.event_name != 'pull_request' && github.repository != 'Snapmaker/OrcaSlicer' && inputs.build-deps-only != true }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+    - uses: actions/checkout@v5
+
+    - uses: actions/download-artifact@v4
+      with:
+        path: release-assets
+
+    - name: Compute release metadata
+      id: release_meta
+      shell: bash
+      run: |
+        ref_name="${GITHUB_REF_NAME}"
+        safe_ref=$(printf '%s' "$ref_name" | tr '/ ' '--' | tr -cd '[:alnum:]._-' )
+        version=$(grep 'set(Snapmaker_VERSION' version.inc | cut -d '"' -f2)
+        tag="v${version}"
+        title="Snapmaker Orca Full Spectrum v${version}"
+
+        # Look for a release notes file matching the version
+        notes_file="RELEASE_NOTES_v${version}.md"
+        if [ -f "$notes_file" ]; then
+          notes_content=$(cat "$notes_file")
+        else
+          notes_content="Automated build for ${GITHUB_REPOSITORY}.
+
+- Ref: ${GITHUB_REF_NAME}
+- Commit: ${GITHUB_SHA}
+- Version: V${version}
+
+macOS artifacts published from this fork are unsigned and not notarized."
+        fi
+
+        {
+          echo "tag=$tag"
+          echo "title=$title"
+          echo "version=V$version"
+          echo "notes<<NOTES_EOF"
+          echo "$notes_content"
+          echo "NOTES_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Collect release files
+      id: collect_files
+      shell: bash
+      run: |
+        mkdir -p release-upload
+        find release-assets -type f \
+          \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.zip' -o -name '*.flatpak' -o -name 'Snapmaker_Orca_profile_validator' \) \
+          -print -exec cp -f {} release-upload/ \;
+        count=$(find release-upload -maxdepth 1 -type f | wc -l | tr -d ' ')
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+        if [ "$count" -eq 0 ]; then
+          echo "::error::No release files were collected from workflow artifacts"
+          exit 1
+        fi
+        find release-upload -maxdepth 1 -type f -printf 'asset=%f\n'
+
+    - name: Create or update release
+      if: steps.collect_files.outputs.count != '0'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        tag="${{ steps.release_meta.outputs.tag }}"
+        title="${{ steps.release_meta.outputs.title }}"
+        notes_file="$RUNNER_TEMP/release-notes.md"
+        printf '%s\n' "${{ steps.release_meta.outputs.notes }}" > "$notes_file"
+
+        if gh release view "$tag" >/dev/null 2>&1; then
+          gh release edit "$tag" \
+            --title "$title" \
+            --notes-file "$notes_file" \
+            --prerelease
+        else
+          gh release create "$tag" \
+            --title "$title" \
+            --notes-file "$notes_file" \
+            --target "$GITHUB_SHA" \
+            --prerelease
+        fi
+
+        while IFS= read -r asset_name; do
+          gh release delete-asset "$tag" "$asset_name" --yes
+        done < <(gh release view "$tag" --json assets --jq '.assets[].name')
+
+        mapfile -t upload_files < <(find release-upload -maxdepth 1 -type f | sort)
+        gh release upload "$tag" "${upload_files[@]}" --clobber
+
   flatpak:
     name: "Flatpak"
+    if: ${{ github.repository == 'Snapmaker/OrcaSlicer' }}
     concurrency:
       group: flatpak-${{ matrix.variant.arch }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false

@@ -44,7 +44,7 @@ jobs:
         run: |
           curl -LJO https://github.com/SoftFever/OrcaSlicer/releases/download/nightly-builds/orca_custom_preset_tests.zip
           unzip ./orca_custom_preset_tests.zip -d ${{ github.workspace }}/resources/profiles
-          ./Snapmaker_Orca_profile_validator -p ${{ github.workspace }}/resources/profiles -l 2
+          ./OrcaSlicer_profile_validator -p ${{ github.workspace }}/resources/profiles -l 2
 
 
 

@@ -154,7 +154,7 @@ jobs:
   upload_symbols:
     name: Upload Debug Symbols to Sentry
     needs: [build_orca]
-    if: ${{ !cancelled() && needs.build_orca.result == 'success' }}
+    if: ${{ !cancelled() && needs.build_orca.result == 'success' && github.repository == 'Snapmaker/OrcaSlicer' }}
     uses: ./.github/workflows/sentry_cli.yml
     with:
       os: ${{ inputs.os }}

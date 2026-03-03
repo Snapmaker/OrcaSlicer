@@ -27,6 +27,11 @@ InstallDir "${INSTALL_DIR_RUNTIME}"
     !define OUTPUT_FILE "Snapmaker_Orca_Windows_Installer_V${VERSION}.exe"
 !endif
 
+; License page: show LICENSE.txt from repo root (same dir as this .nsi)
+!ifndef LICENSE_FILE
+    !define LICENSE_FILE ".\LICENSE.txt"
+!endif
+
 RequestExecutionLevel admin
 
 ; No /SOLID to avoid "Internal compiler error #12345: error mmapping datablock"

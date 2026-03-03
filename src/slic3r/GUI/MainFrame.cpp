@@ -2948,6 +2948,19 @@ void MainFrame::init_menubar_as_editor()
                 plater()->refresh_print();
         },
         "", nullptr, []() { return true; }, this, 1);
+        
+    append_menu_item(parent_menu, wxID_ANY, _L("TestWebview"), "",
+        [this](wxCommandEvent&) {
+            wxString url ="https://github.com/Snapmaker/";
+            m_webview->load_url(url);
+        },
+        "", nullptr, []() { return true; }, this);
+
+    append_menu_item(parent_menu, wxID_ANY, _L("ExitTestWebview"), "",
+            [this](wxCommandEvent&) {
+            wxString url = "http://127.0.0.1:13619/web/flutter_web/index.html";
+            m_webview->load_url(url);
+        }, "", nullptr, []() { return true; }, this);
     //parent_menu->Insert(1, preference_item);
 #endif
     // Help menu
@@ -2969,21 +2982,6 @@ void MainFrame::init_menubar_as_editor()
             plater()->get_current_canvas3D()->force_set_focus();
         },
         "", nullptr, []() { return true; }, this);
-
-    append_menu_item(
-        m_topbar->GetTopMenu(), wxID_ANY, _L("TestWebview"), "",
-        [this](wxCommandEvent&) { 
-            wxString url ="https://github.com/Snapmaker/";
-            m_webview->load_url(url);
-        },
-        "", nullptr, []() { return true; }, this);
-
-    append_menu_item(
-         m_topbar->GetTopMenu(), wxID_ANY, _L("ExitTestWebview"), "",
-            [this](wxCommandEvent&) { 
-            wxString url = "http://127.0.0.1:13619/web/flutter_web/index.html";
-            m_webview->load_url(url); 
-        }, "", nullptr, []() { return true; }, this);
 
     m_topbar->AddDropDownSubMenu(helpMenu, _L("Help"));
 

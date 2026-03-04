@@ -275,10 +275,19 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
 #else
-        // With WKWebView handlers need to be registered before creation
+        // Handlers must be registered before Create(). Linux (WebKit2): scheme is process-global, register once to avoid "Cannot register URI scheme ... more than once".
+        // macOS (WKWebView): scheme is per-view, each WebView needs its own handlers.
+#if defined(__linux__)
+        static bool s_wxfs_memory_handlers_registered = false;
+        if (!s_wxfs_memory_handlers_registered) {
+            webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
+            webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+            s_wxfs_memory_handlers_registered = true;
+        }
+#else
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
-        // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+#endif
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));

@@ -504,6 +504,12 @@ std::deque<wxDialog*> dialogStack;
 
 void fit_in_display(wxTopLevelWindow& window, wxSize desired_size)
 {
+    // GTK requires width >= -1 and height > 0 for gtk_window_resize/set_size_request
+    if (desired_size.GetWidth() < WINDOW_MIN_WIDTH)
+        desired_size.SetWidth(WINDOW_MIN_WIDTH);
+    if (desired_size.GetHeight() < WINDOW_MIN_HEIGHT)
+        desired_size.SetHeight(WINDOW_MIN_HEIGHT);
+
     const auto display_size = wxDisplay(window.GetParent()).GetClientArea();
     if (desired_size.GetWidth() > display_size.GetWidth()) {
         desired_size.SetWidth(display_size.GetWidth() * 4 / 5);

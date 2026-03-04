@@ -257,7 +257,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Validate resources directory
-    std::string validated_resources_dir = resources_dir();
+    std::string validated_resources_dir = resources_dir;
     if (!validated_resources_dir.empty()) {
         if (!boost::filesystem::exists(validated_resources_dir)) {
             BOOST_LOG_TRIVIAL(warning) << "Resources directory does not exist: " << validated_resources_dir;

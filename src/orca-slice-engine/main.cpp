@@ -35,6 +35,8 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/ProjectTask.hpp"
 
 using namespace Slic3r;
 
@@ -254,10 +256,30 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Validate resources directory
+    std::string validated_resources_dir = resources_dir();
+    if (!validated_resources_dir.empty()) {
+        if (!boost::filesystem::exists(validated_resources_dir)) {
+            BOOST_LOG_TRIVIAL(warning) << "Resources directory does not exist: " << validated_resources_dir;
+        } else {
+            // Check for key resources subdirectories
+            bool has_profiles = boost::filesystem::exists(validated_resources_dir + "/profiles");
+            bool has_printers = boost::filesystem::exists(validated_resources_dir + "/printers");
+            if (!has_profiles && !has_printers) {
+                BOOST_LOG_TRIVIAL(warning) << "Resources directory may be incomplete (missing profiles/printers): " << validated_resources_dir;
+            } else {
+                BOOST_LOG_TRIVIAL(info) << "Resources directory validated: " << validated_resources_dir;
+            }
+        }
+    }
+
     // Set temporary directory
     std::string temp_dir = boost::filesystem::temp_directory_path().string();
     set_temporary_dir(temp_dir);
     BOOST_LOG_TRIVIAL(debug) << "Temporary directory: " << temp_dir;
+
+    // Track temporary files for cleanup
+    std::vector<std::string> temp_files;
 
     // Load 3MF file with embedded configuration
     BOOST_LOG_TRIVIAL(info) << "Loading 3MF file...";
@@ -414,6 +436,14 @@ int main(int argc, char* argv[]) {
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Slicing failed for plate " << current_plate_id << ": " << e.what();
+            // Cleanup temp files before exit
+            for (const auto& file : temp_files) {
+                try {
+                    if (boost::filesystem::exists(file)) {
+                        boost::filesystem::remove(file);
+                    }
+                } catch (...) {}
+            }
             return EXIT_SLICING_ERROR;
         }
 
@@ -424,6 +454,7 @@ int main(int argc, char* argv[]) {
         if (format == OutputFormat::GCODE_3MF || !single_plate) {
             // Export to temp directory for later packaging
             gcode_output = temp_dir + "/plate_" + std::to_string(current_plate_id) + ".gcode";
+            temp_files.push_back(gcode_output);  // Track for cleanup
         } else {
             gcode_output = output_path;
         }
@@ -447,6 +478,14 @@ int main(int argc, char* argv[]) {
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to export G-code for plate " << current_plate_id << ": " << e.what();
+            // Cleanup temp files before exit
+            for (const auto& file : temp_files) {
+                try {
+                    if (boost::filesystem::exists(file)) {
+                        boost::filesystem::remove(file);
+                    }
+                } catch (...) {}
+            }
             return EXIT_EXPORT_ERROR;
         }
     }
@@ -488,8 +527,8 @@ int main(int argc, char* argv[]) {
         if (config.has("filament_colour")) {
             filament_colors = config.option<ConfigOptionStrings>("filament_colour");
         }
-        if (config.has("filament_settings_id")) {
-            filament_ids = config.option<ConfigOptionStrings>("filament_settings_id");
+        if (config.has("filament_ids")) {
+            filament_ids = config.option<ConfigOptionStrings>("filament_ids");
         }
 
         // Prepare plate data with full slicing info, same as GUI's PartPlateList::store_to_3mf_structure
@@ -584,22 +623,73 @@ int main(int argc, char* argv[]) {
                          SaveStrategy::WithGcode | SaveStrategy::SkipModel |
                          SaveStrategy::Zip64;
 
+        // Initialize thumbnail data vectors (empty for headless mode)
+        // GUI generates these via rendering, but we can't do that in headless mode
+        std::vector<ThumbnailData*> thumbnail_data;
+        std::vector<ThumbnailData*> no_light_thumbnail_data;
+        std::vector<ThumbnailData*> top_thumbnail_data;
+        std::vector<ThumbnailData*> pick_thumbnail_data;
+        std::vector<ThumbnailData*> calibration_thumbnail_data;
+        std::vector<PlateBBoxData*> id_bboxes;
+
+        // Initialize empty bounding boxes for each plate
+        for (size_t i = 0; i < plate_data.size(); ++i) {
+            PlateBBoxData* bbox = new PlateBBoxData();
+            id_bboxes.push_back(bbox);
+        }
+
+        params.thumbnail_data = thumbnail_data;
+        params.no_light_thumbnail_data = no_light_thumbnail_data;
+        params.top_thumbnail_data = top_thumbnail_data;
+        params.pick_thumbnail_data = pick_thumbnail_data;
+        params.calibration_thumbnail_data = calibration_thumbnail_data;
+        params.id_bboxes = id_bboxes;
+
+        // Initialize BBLProject (nullptr for headless mode, GUI uses project context)
+        params.project = nullptr;
+        params.profile = nullptr;
+
         try {
             bool success = store_bbs_3mf(params);
             if (!success) {
                 BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package";
+                // Cleanup PlateBBoxData and temp files before exit
+                for (auto* bbox : id_bboxes) { delete bbox; }
+                for (const auto& file : temp_files) {
+                    try { if (boost::filesystem::exists(file)) { boost::filesystem::remove(file); } } catch (...) {}
+                }
                 return EXIT_EXPORT_ERROR;
             }
             BOOST_LOG_TRIVIAL(info) << "gcode.3mf package created: " << output_path;
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package: " << e.what();
+            // Cleanup PlateBBoxData and temp files before exit
+            for (auto* bbox : id_bboxes) { delete bbox; }
+            for (const auto& file : temp_files) {
+                try { if (boost::filesystem::exists(file)) { boost::filesystem::remove(file); } } catch (...) {}
+            }
             return EXIT_EXPORT_ERROR;
         }
+
+        // Cleanup PlateBBoxData after successful export
+        for (auto* bbox : id_bboxes) { delete bbox; }
     }
 
     BOOST_LOG_TRIVIAL(info) << "Done!";
     std::cout << "Output: " << output_path << std::endl;
+
+    // Cleanup temporary files
+    for (const auto& file : temp_files) {
+        try {
+            if (boost::filesystem::exists(file)) {
+                boost::filesystem::remove(file);
+                BOOST_LOG_TRIVIAL(debug) << "Cleaned up temp file: " << file;
+            }
+        } catch (...) {
+            // Ignore cleanup errors
+        }
+    }
 
     // Use quick_exit to avoid crashes in global destructors
     std::quick_exit(EXIT_OK);

@@ -134,7 +134,8 @@ GuideFrame::GuideFrame(GUI_App *pGUI, long style)
         return;
     }
     m_browser->Hide();
-    m_browser->SetSize(0, 0);
+    // GTK asserts on width < -1 and height <= 0; use minimal size for hidden widget
+    m_browser->SetSize(1, 1);
 
     SetSizer(topsizer);
 
@@ -496,7 +497,7 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
                     }
                 }
 
-                wxGetApp().fltviews().reload_all();
+                wxGetApp().fltviews().relead_all();
             }
 
             this->EndModal(wxID_OK);

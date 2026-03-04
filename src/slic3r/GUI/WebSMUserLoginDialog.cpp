@@ -75,7 +75,8 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
         return;
     }
     m_browser->Hide();
-    m_browser->SetSize(0, 0);
+    // GTK asserts on width < -1 and height <= 0; use minimal size for hidden widget
+    m_browser->SetSize(1, 1);
 
     // Log backend information
     // wxLogMessage(wxWebView::GetBackendVersionInfo().ToString());

@@ -17,6 +17,11 @@
 #endif
 
 #include "sentry_wrapper/SentryWrapper.hpp"
+
+#if defined(__linux__)
+#include <mutex>
+#endif
+
 #ifdef __WIN32__
 #include <WebView2.h>
 #include <Shellapi.h>
@@ -278,12 +283,11 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         // Handlers must be registered before Create(). Linux (WebKit2): scheme is process-global, register once to avoid "Cannot register URI scheme ... more than once".
         // macOS (WKWebView): scheme is per-view, each WebView needs its own handlers.
 #if defined(__linux__)
-        static bool s_wxfs_memory_handlers_registered = false;
-        if (!s_wxfs_memory_handlers_registered) {
+        static std::once_flag s_wxfs_memory_handlers_once;
+        std::call_once(s_wxfs_memory_handlers_once, [webView]() {
             webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
             webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
-            s_wxfs_memory_handlers_registered = true;
-        }
+        });
 #else
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));

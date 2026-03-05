@@ -554,6 +554,9 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
         scaled_bitmap_name += std::to_string(vol_type);
     scaled_bitmap_name += (wxGetApp().dark_mode() ? "-dm" : "-lm");
 
+    if (!m_bitmap_cache)
+        return;
+
     wxBitmap* bmp = m_bitmap_cache->find(scaled_bitmap_name);
     if (bmp == nullptr) {
         std::vector<wxBitmap> bmps;

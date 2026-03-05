@@ -146,8 +146,10 @@ bool MarkdownTip::ShowTip(wxPoint pos, std::string const &tip, std::string const
     if (_tipView->GetParent() == this) {
         wxSize size = wxDisplay(this).GetClientArea().GetSize();
         _requestPos = pos;
+        // Ensure display size is valid
+        if (size.y <= 0) size.y = 600;
         if (pos.y + this->GetSize().y > size.y)
-            pos.y = size.y - this->GetSize().y;
+            pos.y = std::max(0, size.y - this->GetSize().y);
         this->SetPosition(pos);
         if (tipChanged || _hide) {
             _hide = false;
@@ -258,11 +260,15 @@ void MarkdownTip::OnTitleChanged(wxWebViewEvent& event)
         _lastHeight = height;
         height *= 1.25; height += 50;
         wxSize size = wxDisplay(this).GetClientArea().GetSize();
+        // Ensure display size is valid
+        if (size.y <= 0) size.y = 600;
         if (height > size.y)
             height = size.y;
         wxPoint pos = _requestPos;
         if (pos.y + height > size.y)
-            pos.y = size.y - height;
+            pos.y = std::max(0, size.y - height);
+        // Ensure height is valid
+        if (height <= 0) height = 100;
         this->SetSize({ 400, (int)height });
         this->SetPosition(pos);
     }

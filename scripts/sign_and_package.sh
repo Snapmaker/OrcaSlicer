@@ -336,7 +336,7 @@ fi
 MOUNTED_DMG=$(hdiutil info | grep "/Volumes/$DMG_VOLNAME" || true)
 if [ -n "$MOUNTED_DMG" ]; then
     echo "警告: 发现已挂载的同名卷，尝试卸载..."
-    hdiutil info | grep "/Volumes/$DMG_VOLNAME" | grep -o '/dev/disk[0-9]*' | while read disk; do
+    hdiutil info | grep "/Volumes/$DMG_VOLNAME" | grep -o '/dev/disk[0-9]*' | while read -r disk; do
         hdiutil detach "$disk" -force 2>/dev/null || true
     done
     sleep 2
@@ -416,8 +416,6 @@ if [ -z "$NOTARY_PASSWORD" ] || [ "$NOTARY_PASSWORD" = "__PLEASE_ENTER_PASSWORD_
     echo "跳过公证步骤..."
 else
     echo "✓ 密码已配置"
-    CAN_NOTARY=true
-
     echo ""
     echo "=========================================="
     echo "步骤 5/6: 提交公证"

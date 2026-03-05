@@ -149,7 +149,12 @@ bool MarkdownTip::ShowTip(wxPoint pos, std::string const &tip, std::string const
         // Ensure display size is valid
         if (size.y <= 0) size.y = 600;
         if (pos.y + this->GetSize().y > size.y)
-            pos.y = std::max(0, size.y - this->GetSize().y);
+        {
+            pos.y = 0;
+            if( (size.y - this->GetSize().y) > 0)
+                pos.y = (size.y - this->GetSize().y);
+        }
+            
         this->SetPosition(pos);
         if (tipChanged || _hide) {
             _hide = false;

@@ -270,6 +270,12 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     // Load the icon either from the exe, or from the ico file.
     SetIcon(main_frame_icon(wxGetApp().get_app_mode()));
 
+#ifdef __WXGTK__
+    // GTK/X11: set minimum size before any layout so gtk_widget_set_size_request and
+    // gtk_window_resize never see 0 or negative dimensions (avoids assertion failures).
+    SetMinSize(wxGetApp().get_min_size());
+#endif
+
     // initialize tabpanel and menubar
     init_tabpanel();
     if (wxGetApp().is_gcode_viewer())

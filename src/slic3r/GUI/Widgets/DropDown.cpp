@@ -365,15 +365,15 @@ void DropDown::messureSize()
     }
     szContent.y *= std::min((size_t)15, texts.size());
     szContent.y += texts.size() > 15 ? rowSize.y / 2 : 0;
-#ifdef __WXGTK__
-    // GTK requires width >= -1 and height > 0 for gtk_window_resize/set_size_request
-    if (szContent.x < 1) szContent.x = 1;
-    if (szContent.y < 1) szContent.y = 1;
-#endif
     wxWindow::SetSize(szContent);
 #ifdef __WXGTK__
     // Gtk has a wrapper window for popup widget
-    gtk_window_resize (GTK_WINDOW (m_widget), szContent.x, szContent.y);
+    // Fix for GNOME Platform 48 X11 backend: ensure size is valid before calling gtk_window_resize
+    int gtk_width = szContent.x;
+    int gtk_height = szContent.y;
+    if (gtk_width <= 0) gtk_width = 100;
+    if (gtk_height <= 0) gtk_height = 100;
+    gtk_window_resize(GTK_WINDOW(m_widget), gtk_width, gtk_height);
 #endif
     need_sync = false;
 }

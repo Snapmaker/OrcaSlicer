@@ -365,6 +365,11 @@ void DropDown::messureSize()
     }
     szContent.y *= std::min((size_t)15, texts.size());
     szContent.y += texts.size() > 15 ? rowSize.y / 2 : 0;
+#ifdef __WXGTK__
+    // GTK requires width >= -1 and height > 0 for gtk_window_resize/set_size_request
+    if (szContent.x < 1) szContent.x = 1;
+    if (szContent.y < 1) szContent.y = 1;
+#endif
     wxWindow::SetSize(szContent);
 #ifdef __WXGTK__
     // Gtk has a wrapper window for popup widget
@@ -384,6 +389,10 @@ void DropDown::autoPosition()
         size = rowSize;
         size.y *= std::min((size_t)15, texts.size());
         size.y += texts.size() > 15 ? rowSize.y / 2 : 0;
+#ifdef __WXGTK__
+        if (size.x < 1) size.x = 1;
+        if (size.y < 1) size.y = 1;
+#endif
         if (size != GetSize()) {
             wxWindow::SetSize(size);
             offset = wxPoint();
@@ -396,6 +405,10 @@ void DropDown::autoPosition()
         if (GetPosition().y + size.y + 10 > drect.GetBottom()) {
             if (use_content_width && texts.size() <= 15) size.x += 6;
             size.y = drect.GetBottom() - GetPosition().y - 10;
+#ifdef __WXGTK__
+            if (size.y < 1) size.y = 1;
+            if (size.x < 1) size.x = 1;
+#endif
             wxWindow::SetSize(size);
             if (selection >= 0) {
                 if (offset.y + rowSize.y * (selection + 1) > size.y)

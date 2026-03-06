@@ -1484,6 +1484,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate->locked = it->second->locked;
             plate->plate_index = it->second->plate_index-1;
             plate->obj_inst_map = it->second->obj_inst_map;
+            // Convert obj_inst_map to objects_and_instances for cloud slicing engine
+            plate->objects_and_instances.clear();
+            for (const auto& entry : it->second->obj_inst_map) {
+                plate->objects_and_instances.emplace_back(entry.first, entry.second.first);
+            }
             plate->gcode_file = it->second->gcode_file;
             plate->gcode_prediction = it->second->gcode_prediction;
             plate->gcode_weight = it->second->gcode_weight;
@@ -2144,6 +2149,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->plate_index = it->second->plate_index-1;
             plate_data_list[it->first-1]->plate_name = it->second->plate_name;
             plate_data_list[it->first-1]->obj_inst_map = it->second->obj_inst_map;
+            // Convert obj_inst_map to objects_and_instances for cloud slicing engine
+            plate_data_list[it->first-1]->objects_and_instances.clear();
+            for (const auto& entry : it->second->obj_inst_map) {
+                plate_data_list[it->first-1]->objects_and_instances.emplace_back(entry.first, entry.second.first);
+            }
             plate_data_list[it->first-1]->gcode_file = (m_load_restore || it->second->gcode_file.empty()) ? it->second->gcode_file : m_backup_path + "/" + it->second->gcode_file;
             plate_data_list[it->first-1]->gcode_prediction = it->second->gcode_prediction;
             plate_data_list[it->first-1]->gcode_weight = it->second->gcode_weight;

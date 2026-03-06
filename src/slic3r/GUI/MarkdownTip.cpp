@@ -270,8 +270,13 @@ void MarkdownTip::OnTitleChanged(wxWebViewEvent& event)
         if (height > size.y)
             height = size.y;
         wxPoint pos = _requestPos;
-        if (pos.y + height > size.y)
-            pos.y = std::max(0, size.y - height);
+        if (pos.y + height > size.y) 
+        {
+            pos.y= 0;
+            if(size.y-height>0)
+                pos.y = size.y - height;
+        }
+             
         // Ensure height is valid
         if (height <= 0) height = 100;
         this->SetSize({ 400, (int)height });

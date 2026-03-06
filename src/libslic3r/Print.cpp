@@ -2246,8 +2246,10 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     gcode.do_export(this, path.c_str(), result, thumbnail_cb);
 
     //BBS
-    result->conflict_result = m_conflict_result;
-    return path.c_str();
+        if (result != nullptr) {
+            result->conflict_result = m_conflict_result;
+        }
+        return path.c_str();
 }
 
 void Print::_make_skirt()

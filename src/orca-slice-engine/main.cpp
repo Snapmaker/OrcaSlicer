@@ -37,7 +37,7 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/ProjectTask.hpp"
-#include "libslic3r/Geometry/BoundingBox.hpp"
+#include "libslic3r/BoundingBox.hpp"
 
 using namespace Slic3r;
 

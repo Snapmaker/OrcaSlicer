@@ -619,7 +619,12 @@ int main(int argc, char* argv[]) {
         params.project_presets = project_presets;
         // Set export_plate_idx for proper thumbnail relationships (0-indexed)
         // For single plate: set to plate_id-1, for all plates: -1 (default)
-        params.export_plate_idx = single_plate ? (plate_id - 1) : -1;
+        // For multi-plate export, set export_plate_idx based on the plate data
+        if (single_plate) {
+            params.export_plate_idx = plate_id - 1;  // Single plate: 0, 1, 2...
+        } else {
+            params.export_plate_idx = -1;  // Multi-plate: export all plates
+        }
         // Strategy: match GUI's export_gcode_3mf behavior
         // - Silence: suppress verbose output
         // - SplitModel: match GUI export behavior

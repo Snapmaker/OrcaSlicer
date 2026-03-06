@@ -328,7 +328,7 @@ rm -f "$FINAL_DMG_PATH"
 # 彻底清理所有可能冲突的挂载点
 echo "清理所有可能冲突的挂载点..."
 # 检查 hdiutil info 中所有 Snapmaker 相关的挂载点并卸载
-hdiutil info | grep "Snapmaker" | grep "/dev/disk" | grep -o '/dev/disk[0-9]*' | while read disk; do
+hdiutil info | grep "Snapmaker" | grep "/dev/disk" | grep -o '/dev/disk[0-9]*' | while read -r disk; do
     echo "  卸载磁盘: $disk"
     hdiutil detach "$disk" -force 2>/dev/null || true
 done

@@ -39,7 +39,7 @@ ENTITLEMENTS="$PROJECT_DIR/scripts/disable_validation.entitlements"
 # ============================================
 NOTARY_APPLE_ID="snapmaker-app@snapmaker.com"
 NOTARY_TEAM_ID="5NGD3B3V37"
-NOTARY_KEYCHAIN_PROFILE="snapmaker"
+#NOTARY_KEYCHAIN_PROFILE="snapmaker"
 NOTARY_PASSWORD="guhi-nuxy-mgnh-cbqs"
 
 echo "=========================================="
@@ -403,7 +403,7 @@ if [ -z "$NOTARY_PASSWORD" ] || [ "$NOTARY_PASSWORD" = "__PLEASE_ENTER_PASSWORD_
     echo "跳过公证步骤..."
 else
     echo "✓ 密码已配置"
-    CAN_NOTARY=true
+    #CAN_NOTARY=true
 
     echo ""
     echo "=========================================="

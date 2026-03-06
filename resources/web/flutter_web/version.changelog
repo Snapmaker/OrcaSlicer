@@ -1,4 +1,9 @@
+#  Changelog
 
-# Changelog
+## 2026-03-06
 
-- 优化获取延时摄影文件
+### Features
+- Feature: Added a new model entry
+
+### Bugfix
+  Fixed the issue where devices would automatically disconnect when connected over Lan network

@@ -107,7 +107,7 @@ mkdir -p "$STAGING_DIR"
 
 # 清理所有可能的残留挂载点（在开始工作前）
 echo "清理可能的残留挂载点..."
-for mount_point in /Volumes/Snapmaker* /Volumes/Snapmaker*; do
+for mount_point in /Volumes/Snapmaker*; do
     if [ -d "$mount_point" ]; then
         echo "  卸载: $mount_point"
         hdiutil detach "$mount_point" -force 2>/dev/null || true
@@ -325,57 +325,44 @@ DMG_VOLNAME="Snapmaker_Orca"
 FINAL_DMG_PATH="$BUILD_DIR/$DMG_NAME"
 rm -f "$FINAL_DMG_PATH"
 
-# 再次清理可能残留的挂载点
+# 彻底清理所有可能冲突的挂载点
+echo "清理所有可能冲突的挂载点..."
+# 检查 hdiutil info 中所有 Snapmaker 相关的挂载点并卸载
+hdiutil info | grep "Snapmaker" | grep "/dev/disk" | grep -o '/dev/disk[0-9]*' | while read disk; do
+    echo "  卸载磁盘: $disk"
+    hdiutil detach "$disk" -force 2>/dev/null || true
+done
+sleep 1
+
+# 额外检查 /Volumes 目录
 if [ -d "/Volumes/$DMG_VOLNAME" ]; then
     echo "检测到残留挂载点 /Volumes/$DMG_VOLNAME，正在强制卸载..."
     hdiutil detach "/Volumes/$DMG_VOLNAME" -force 2>/dev/null || true
-    sleep 2
-fi
-
-# 检查是否有同名 DMG 已挂载
-MOUNTED_DMG=$(hdiutil info | grep "/Volumes/$DMG_VOLNAME" || true)
-if [ -n "$MOUNTED_DMG" ]; then
-    echo "警告: 发现已挂载的同名卷，尝试卸载..."
-    hdiutil info | grep "/Volumes/$DMG_VOLNAME" | grep -o '/dev/disk[0-9]*' | while read disk; do
-        hdiutil detach "$disk" -force 2>/dev/null || true
-    done
-    sleep 2
+    sleep 1
 fi
 
 echo "创建 DMG: $FINAL_DMG_PATH (卷名: $DMG_VOLNAME)"
-if ! hdiutil create \
+hdiutil create \
     -volname "$DMG_VOLNAME" \
     -srcfolder "$DMG_CONTENT_DIR" \
     -ov \
     -format UDZO \
     -imagekey zlib-level=9 \
-    -o "$FINAL_DMG_PATH"; then
-    echo ""
-    echo "错误: hdiutil create 失败"
-    echo "尝试使用替代方法创建 DMG..."
+    -o "$FINAL_DMG_PATH"
 
-    # 备用方案：使用 mktemp 创建临时卷名
-    TEMP_VOLNAME="Snapmaker_Orca_$$"
-    if hdiutil create \
-        -volname "$TEMP_VOLNAME" \
-        -srcfolder "$DMG_CONTENT_DIR" \
-        -ov \
-        -format UDZO \
-        -imagekey zlib-level=9 \
-        -o "$FINAL_DMG_PATH"; then
-        echo "使用临时卷名创建成功"
-    else
-        echo "错误: DMG 创建失败，请手动检查 /Volumes 目录"
-        echo "运行 'ls -la /Volumes/' 查看挂载点"
-        echo "运行 'hdiutil info' 查看所有挂载的磁盘镜像"
-        exit 1
-    fi
+if [ ! -f "$FINAL_DMG_PATH" ]; then
+    echo ""
+    echo "错误: DMG 创建失败"
+    echo "请手动检查 /Volumes 目录"
+    echo "运行 'ls -la /Volumes/' 查看挂载点"
+    echo "运行 'hdiutil info' 查看所有挂载的磁盘镜像"
+    exit 1
 fi
 [ ! -f "$FINAL_DMG_PATH" ] && echo "错误: 未生成 DMG" && exit 1
 
 # 签名 DMG
 echo "签名 DMG..."
-codesign --force --timestamp --sign "$CERTIFICATE_ID" "$FINAL_DMG_PATH"
+codesign --force --options runtime --timestamp --sign "$CERTIFICATE_ID" "$FINAL_DMG_PATH"
 
 echo "验证 DMG 签名..."
 codesign -vvv "$FINAL_DMG_PATH" 2>&1 | head -3

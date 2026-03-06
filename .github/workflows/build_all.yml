@@ -73,7 +73,7 @@ jobs:
       group: flatpak-${{ matrix.variant.arch }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
       options: --privileged
       volumes:
         - /usr/local/lib/android:/usr/local/lib/android

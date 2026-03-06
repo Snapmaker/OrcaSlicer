@@ -37,6 +37,7 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/ProjectTask.hpp"
+#include "libslic3r/Geometry/BoundingBox.hpp"
 
 using namespace Slic3r;
 
@@ -430,6 +431,42 @@ int main(int argc, char* argv[]) {
         // Create Print object for this plate
         Print print;
         print.set_status_callback(default_status_callback);
+
+        // Set plate index and origin for multi-plate support
+        // Calculate plate origin based on printer bed size and plate position
+        // This matches GUI's PartPlateList::compute_origin() logic
+        print.set_plate_index(current_plate_id - 1);  // 0-indexed
+
+        // Get printable area dimensions from config
+        double bed_width = 200.0;   // Default fallback
+        double bed_depth = 200.0;   // Default fallback
+
+        if (config.has("printable_area")) {
+            auto printable_area_opt = config.option<ConfigOptionPoints>("printable_area");
+            if (printable_area_opt && !printable_area_opt->values.empty()) {
+                // Calculate bounding box of printable area
+                BoundingBoxf3 bbox;
+                for (const Vec2d& pt : printable_area_opt->values) {
+                    bbox.merge(Vec3d(pt.x(), pt.y(), 0));
+                }
+                bed_width = bbox.size().x();
+                bed_depth = bbox.size().y();
+            }
+        }
+
+        // Calculate plate origin using same formula as GUI
+        // LOGICAL_PART_PLATE_GAP = 0.2 (1/5)
+        // For now, assume 1 column layout (simple case for most printers)
+        const double plate_gap = 0.2;  // 1/5
+        Vec3d plate_origin(
+            0,  // x: always 0 for single column
+            -(current_plate_id - 1) * bed_depth * (1.0 + plate_gap),  // y: negative offset for each plate
+            0   // z: always 0
+        );
+
+        print.set_plate_origin(plate_origin);
+        BOOST_LOG_TRIVIAL(info) << "Plate " << current_plate_id << " origin: ("
+            << plate_origin.x() << ", " << plate_origin.y() << ", " << plate_origin.z() << ")";
 
         // Apply model and config to print
         auto apply_status = print.apply(model, config);

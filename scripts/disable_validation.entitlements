@@ -14,9 +14,6 @@
     <!-- Allow DYLD environment variables -->
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
-    <!-- REQUIRED for macOS 26.x (Sequoia) WKWebView process management -->
-    <key>com.apple.runningboard.assertions.webkit</key>
-    <true/>
     <!-- Explicitly disable App Sandbox (this app needs full filesystem/network access) -->
     <key>com.apple.security.app-sandbox</key>
     <false/>

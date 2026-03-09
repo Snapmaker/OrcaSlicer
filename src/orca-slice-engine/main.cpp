@@ -460,8 +460,13 @@ int main(int argc, char* argv[]) {
                 for (const Vec2d& pt : printable_area_opt->values) {
                     bbox.merge(pt);
                 }
-                plate_width = bbox.size().x();
-                plate_depth = bbox.size().y();
+                // Apply same offset as GUI's Bed3D::Axes::DefaultTipRadius
+                // GUI calculates bed bounding box with axes tip radius offset
+                // See: src/slic3r/GUI/3DScene.cpp Bed3D::Axes::DefaultTipRadius = 2.5
+                // The bounding_box calculation subtracts 2.5 * 0.5 = 1.25 from each side
+                constexpr double BED_AXES_TIP_RADIUS = 1.25;  // 2.5 * 0.5
+                plate_width = bbox.size().x() - BED_AXES_TIP_RADIUS;
+                plate_depth = bbox.size().y() - BED_AXES_TIP_RADIUS;
             }
         }
 

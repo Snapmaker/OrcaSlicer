@@ -3058,28 +3058,18 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
             long long res = 0;
             if ((oriclr.size() != 7 && oriclr.size() != 9) || oriclr[0] != '#') {
-                return -1;
+                return 0;
             }
 
-            if (oriclr.size() == 7) {
-                for (int i = 1; i <= 6; ++i) {
-                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
-                    } else {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
-                    }
-                }
-            } else {
-                for (int i = 1; i <= 8; ++i) {
-                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
-                    } else {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
-                    }
-                }
+            auto colorSize = oriclr.size();//7 or 9
+            for (auto i = 1; i < colorSize; i++)
+            {
+                if (oriclr[colorSize - i] - '0' >= 0 && oriclr[colorSize - i] - '0' <= 9) {
+                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - '0');
+                } else {
+                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - 'A' + 10);
+                }   
             }
-
-            
 
             return res;
         };

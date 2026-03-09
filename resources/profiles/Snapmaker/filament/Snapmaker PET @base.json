@@ -1,0 +1,11 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "false",
+  "name": "Snapmaker PET @base",
+  "filament_id": "2549587591",
+  "inherits": "fdm_filament_pet",
+  "filament_density": [
+    "1.25"
+  ]
+}

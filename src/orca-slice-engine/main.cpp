@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <cmath>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -54,6 +55,13 @@ enum class OutputFormat {
     GCODE,
     GCODE_3MF
 };
+
+// Compute column count for plate grid layout (matches GUI's PartPlate.hpp logic)
+inline int compute_colum_count(int count) {
+    float value = sqrt((float)count);
+    float round_value = round(value);
+    return (value > round_value) ? (round_value + 1) : round_value;
+}
 
 void print_usage(const char* program_name) {
     std::cout << "OrcaSlicer Cloud Slicing Engine v" << SLIC3R_VERSION << std::endl;
@@ -464,7 +472,8 @@ int main(int argc, char* argv[]) {
         // origin.x = col * plate_stride_x
         // origin.y = -row * plate_stride_y (negative Y for downward layout)
         const double LOGICAL_PART_PLATE_GAP = 0.2;  // 1/5, same as GUI
-        const int plate_cols = 1;  // Engine uses single-column layout
+        // Calculate column count dynamically based on total plates (matches GUI logic)
+        const int plate_cols = compute_colum_count(static_cast<int>(plates_to_process.size()));
 
         int row = plate_index / plate_cols;
         int col = plate_index % plate_cols;

@@ -435,33 +435,47 @@ int main(int argc, char* argv[]) {
         // Set plate index and origin for multi-plate support
         // Calculate plate origin based on printer bed size and plate position
         // This matches GUI's PartPlateList::compute_origin() logic
-        print.set_plate_index(current_plate_id - 1);  // 0-indexed
+        // plate_index is 0-based (plate 1 in 3MF = index 0)
+        int plate_index = current_plate_id - 1;
+        print.set_plate_index(plate_index);
 
-        // Get printable area dimensions from config
-        double bed_width = 200.0;   // Default fallback
-        double bed_depth = 200.0;   // Default fallback
+        // Get plate dimensions from printable_area config
+        // GUI uses bed bounding box size as plate size
+        double plate_width = 200.0;   // Default fallback
+        double plate_depth = 200.0;   // Default fallback
 
         if (config.has("printable_area")) {
             auto printable_area_opt = config.option<ConfigOptionPoints>("printable_area");
             if (printable_area_opt && !printable_area_opt->values.empty()) {
-                // Calculate bounding box of printable area
-                BoundingBoxf3 bbox;
+                // Calculate bounding box of printable area (same as GUI)
+                BoundingBoxf bbox;
                 for (const Vec2d& pt : printable_area_opt->values) {
-                    bbox.merge(Vec3d(pt.x(), pt.y(), 0));
+                    bbox.merge(pt);
                 }
-                bed_width = bbox.size().x();
-                bed_depth = bbox.size().y();
+                plate_width = bbox.size().x();
+                plate_depth = bbox.size().y();
             }
         }
 
-        // Calculate plate origin using same formula as GUI
-        // LOGICAL_PART_PLATE_GAP = 0.2 (1/5)
-        // For now, assume 1 column layout (simple case for most printers)
-        const double plate_gap = 0.2;  // 1/5
+        // Calculate plate origin using exact same formula as GUI's PartPlateList
+        // See: src/slic3r/GUI/PartPlate.cpp compute_shape_position() and plate_stride_x/y()
+        // LOGICAL_PART_PLATE_GAP = 1/5 = 0.2
+        // plate_stride = plate_size * (1 + gap)
+        // origin.x = col * plate_stride_x
+        // origin.y = -row * plate_stride_y (negative Y for downward layout)
+        const double LOGICAL_PART_PLATE_GAP = 0.2;  // 1/5, same as GUI
+        const int plate_cols = 1;  // Engine uses single-column layout
+
+        int row = plate_index / plate_cols;
+        int col = plate_index % plate_cols;
+
+        double plate_stride_x = plate_width * (1.0 + LOGICAL_PART_PLATE_GAP);
+        double plate_stride_y = plate_depth * (1.0 + LOGICAL_PART_PLATE_GAP);
+
         Vec3d plate_origin(
-            0,  // x: always 0 for single column
-            -(current_plate_id - 1) * bed_depth * (1.0 + plate_gap),  // y: negative offset for each plate
-            0   // z: always 0
+            col * plate_stride_x,   // x offset for column
+            -row * plate_stride_y,  // y offset for row (negative)
+            0                       // z always 0
         );
 
         print.set_plate_origin(plate_origin);
@@ -632,6 +646,12 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // Copy objects_and_instances from obj_inst_map (matches GUI's PartPlate.cpp:5358-5362)
+                pd->objects_and_instances.clear();
+                for (const auto& entry : pd->obj_inst_map) {
+                    pd->objects_and_instances.emplace_back(entry.first, entry.second.first);
+                }
+
                 BOOST_LOG_TRIVIAL(info) << "Plate " << pd->plate_index
                     << ": gcode=" << pd->gcode_file
                     << ", prediction=" << pd->gcode_prediction << "s"
@@ -641,11 +661,6 @@ int main(int argc, char* argv[]) {
                     << ", nozzle=" << pd->nozzle_diameters;
             }
         }
-
-        // Clear model objects so GUI recognizes this as gcode.3mf
-        // GUI checks: model.objects.empty() && !has_print_instances
-        model.clear_objects();
-        BOOST_LOG_TRIVIAL(debug) << "Cleared model objects for gcode.3mf export";
 
         // Use store_bbs_3mf to create the output
         StoreParams params;

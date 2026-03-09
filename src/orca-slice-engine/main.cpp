@@ -460,12 +460,8 @@ int main(int argc, char* argv[]) {
                 for (const Vec2d& pt : printable_area_opt->values) {
                     bbox.merge(pt);
                 }
-                // GUI uses bed bounding box size minus DefaultTipRadius for plate size
-                // See: src/slic3r/GUI/Plater.cpp:9167
-                // DefaultTipRadius = 2.5 * DefaultStemRadius = 2.5 * 0.5 = 1.25
-                constexpr double BED_AXES_TIP_RADIUS = 1.25;
-                plate_width = bbox.size().x() - BED_AXES_TIP_RADIUS;
-                plate_depth = bbox.size().y() - BED_AXES_TIP_RADIUS;
+                plate_width = bbox.size().x();
+                plate_depth = bbox.size().y();
             }
         }
 

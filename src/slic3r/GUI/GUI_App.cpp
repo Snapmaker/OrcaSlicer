@@ -3660,6 +3660,8 @@ if (res) {
             load_current_presets();
             update_publish_status();
             mainframe->refresh_plugin_tips();
+
+            m_fltviews.reload_all();
             // BBS: remove SLA related message
         }
     } catch (std::exception &) {
@@ -5976,7 +5978,9 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
         // so we put it into an inner scope
         PreferencesDialog dlg(mainframe, open_on_tab, highlight_option);
         dlg.ShowModal();
-        this->plater_->get_current_canvas3D()->force_set_focus();
+        GLCanvas3D* canvas = this->plater_->get_current_canvas3D();
+        if (canvas)
+            canvas->force_set_focus();
         // BBS
         //app_layout_changed = dlg.settings_layout_changed();
 #if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
@@ -6727,6 +6731,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         wxGetApp().sidebar().update_nozzle_settings();
         update_publish_status();
         mainframe->refresh_plugin_tips();
+        m_fltviews.reload_all();
         // BBS: remove SLA related message
     }
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);

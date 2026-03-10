@@ -658,6 +658,7 @@ struct Sidebar::priv
     Button*             m_btn_add_pattern = nullptr;               // Add pattern button
     Button*             m_btn_toggle_mixed_filaments = nullptr;   // Collapse/expand toggle button
     bool                m_mixed_filaments_collapsed = false;      // Collapse state
+    bool                m_skip_mixed_filament_sync_once = false;  // Local edits already mutated manager in place.
     std::unordered_set<size_t> m_expanded_mixed_filament_rows;    // Expanded row editors
     wxStaticLine* m_staticline2;
     wxPanel* m_panel_project_title;
@@ -1471,7 +1472,7 @@ Sidebar::Sidebar(Plater *parent)
             // Persist the custom entries so they survive the clear/load cycle in update_mixed_filament_panel
             if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
-            update_mixed_filament_panel();
+            update_mixed_filament_panel(false);
             m_scrolled_sizer->Layout();
         }
     });
@@ -1497,7 +1498,7 @@ Sidebar::Sidebar(Plater *parent)
             // Persist the custom entries so they survive the clear/load cycle in update_mixed_filament_panel
             if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
-            update_mixed_filament_panel();
+            update_mixed_filament_panel(false);
             m_scrolled_sizer->Layout();
         }
     });
@@ -2266,11 +2267,15 @@ void Sidebar::on_filaments_change(size_t num_filaments)
     if (num_filaments == choices.size()) {
         // Project load may keep the same physical filament count while mixed
         // definitions changed. Refresh mixed panel even without count changes.
+        const bool sync_manager = !p->m_skip_mixed_filament_sync_once;
+        p->m_skip_mixed_filament_sync_once = false;
         update_ui_from_settings();
         update_dynamic_filament_list();
-        update_mixed_filament_panel();
+        update_mixed_filament_panel(sync_manager);
         return;
     }
+
+    p->m_skip_mixed_filament_sync_once = false;
 
     if (choices.size() == 1 || num_filaments == 1)
         choices[0]->GetDropDown().Invalidate();
@@ -3867,11 +3872,14 @@ void MixedFilamentConfigPanel::update_preview()
 
 } // namespace
 
-void Sidebar::update_mixed_filament_panel()
+void Sidebar::update_mixed_filament_panel(bool sync_manager)
 {
     // Check for new collapsible structure
     if (!p->m_panel_mixed_filaments_title || !p->m_panel_mixed_filaments_content)
         return;
+
+    wxWindowUpdateLocker noUpdates_sidebar(this);
+    wxWindowUpdateLocker noUpdates_mixed_panel(p->m_panel_mixed_filaments_content);
 
     auto refresh_model_canvas_colors = []() {
         Plater *plater = wxGetApp().plater();
@@ -4292,10 +4300,12 @@ void Sidebar::update_mixed_filament_panel()
     const std::string mixed_definitions = get_mixed_string("mixed_filament_definitions");
 
     auto &mixed_mgr = preset_bundle->mixed_filaments;
-    mixed_mgr.auto_generate(physical_colors);
-    mixed_mgr.clear_custom_entries();
-    mixed_mgr.load_custom_entries(mixed_definitions, physical_colors);
-    mixed_mgr.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
+    if (sync_manager) {
+        mixed_mgr.auto_generate(physical_colors);
+        mixed_mgr.clear_custom_entries();
+        mixed_mgr.load_custom_entries(mixed_definitions, physical_colors);
+        mixed_mgr.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
+    }
 
     // During project load, sidebar may refresh before physical filament combos
     // finish syncing. Avoid overwriting persisted mixed definitions while the
@@ -4477,8 +4487,10 @@ void Sidebar::update_mixed_filament_panel()
         mgr.apply_gradient_settings(mode, lo, hi, advanced);
         update_dynamic_filament_list();
 
-        if (rebuild_virtual_id_remap && wxGetApp().plater())
+        if (rebuild_virtual_id_remap && wxGetApp().plater()) {
+            p->m_skip_mixed_filament_sync_once = true;
             wxGetApp().plater()->on_filaments_change(num_physical);
+        }
     };
 
     size_t visible_mixed_idx = 0;
@@ -4603,8 +4615,10 @@ void Sidebar::update_mixed_filament_panel()
                      notify_mixed_change();
                      if (wxGetApp().plater())
                          wxGetApp().plater()->update_project_dirty_from_presets();
-                     if (wxGetApp().plater())
+                     if (wxGetApp().plater()) {
+                         p->m_skip_mixed_filament_sync_once = true;
                          wxGetApp().plater()->on_filaments_change(num_physical);
+                     }
                  }
              }
         });

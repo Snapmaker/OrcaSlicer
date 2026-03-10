@@ -156,7 +156,7 @@ public:
     void edit_filament();
 
     void on_filaments_delete(size_t filament_id);
-    void update_mixed_filament_panel();
+    void update_mixed_filament_panel(bool sync_manager = true);
     // BBS
     void on_bed_type_change(BedType bed_type);
     void load_ams_list(std::string const & device, MachineObject* obj);

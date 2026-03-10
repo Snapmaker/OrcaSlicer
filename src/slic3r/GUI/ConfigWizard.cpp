@@ -1797,7 +1797,13 @@ void ConfigWizard::priv::load_pages()
             index->add_page(page_diams);
             //index->add_page(page_temps);
         }
-   
+
+        // Add 3rd party vendor printer pages (e.g. Generic Klipper, Marlin, etc.)
+        for (auto &pair : pages_3rdparty) {
+            if (pair.second.first  != nullptr) { index->add_page(pair.second.first); }
+            if (pair.second.second != nullptr) { index->add_page(pair.second.second); }
+        }
+
     // Filaments & Materials
         if (any_fff_selected) { index->add_page(page_filaments); }
     }
@@ -1967,7 +1973,7 @@ void ConfigWizard::priv::create_3rdparty_pages()
             add_page(pageSLA);
         }
 
-        //pages_3rdparty.insert({vendor->id, {pageFFF, pageSLA}});
+        pages_3rdparty.insert({vendor->id, {pageFFF, pageSLA}});
     }
 }
 

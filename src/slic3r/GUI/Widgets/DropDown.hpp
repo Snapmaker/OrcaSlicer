@@ -30,7 +30,7 @@ class DropDown : public PopupWindow
 
     wxSize textSize;
     wxSize iconSize;
-    wxSize rowSize;
+    wxSize rowSize{100, 30};  // Initialize with default values
 
     StateHandler state_handler;
     StateColor   text_color;

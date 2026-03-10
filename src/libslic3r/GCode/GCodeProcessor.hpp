@@ -235,6 +235,11 @@ class Print;
         mutable std::mutex result_mutex;
         GCodeProcessorResult& operator=(const GCodeProcessorResult &other)
         {
+            // Note: result_mutex is intentionally NOT copied - std::mutex cannot be copied or moved.
+            // The destination object will use its own mutex. This is safe because the mutex is only
+            // used for thread-safety during gcode processing, and assignment happens either:
+            // 1) After processing is complete (when extracting results), or
+            // 2) On freshly constructed objects (which have their own valid mutex)
             filename = other.filename;
             id = other.id;
             moves = other.moves;
@@ -258,6 +263,13 @@ class Print;
             warnings = other.warnings;
             bed_type = other.bed_type;
             bed_match_result = other.bed_match_result;
+            required_nozzle_HRC = other.required_nozzle_HRC;
+            filament_vitrification_temperature = other.filament_vitrification_temperature;
+            nozzle_hrc = other.nozzle_hrc;
+            nozzle_type = other.nozzle_type;
+            support_traditional_timelapse = other.support_traditional_timelapse;
+            backtrace_enabled = other.backtrace_enabled;
+            conflict_result = other.conflict_result;
 #if ENABLE_GCODE_VIEWER_STATISTICS
             time = other.time;
 #endif

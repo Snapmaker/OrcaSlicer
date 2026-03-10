@@ -1079,7 +1079,11 @@ int CLI::run(int argc, char **argv)
         return CLI_INVALID_PARAMS;
     }
     BOOST_LOG_TRIVIAL(info) << "finished setup params, argc="<< argc << std::endl;
+#ifdef SLIC3R_GUI
     std::string temp_path = wxFileName::GetTempDir().utf8_str().data();
+#else
+    std::string temp_path = boost::filesystem::temp_directory_path().string();
+#endif
     set_temporary_dir(temp_path);
 
     m_extra_config.apply(m_config, true);

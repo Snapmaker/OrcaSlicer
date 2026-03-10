@@ -18,6 +18,11 @@ set(PAHO_MQTT_C_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt/externals/paho-mqtt-c" CA
 
 add_subdirectory(libslic3r)
 
+# Cloud slicing engine - headless build
+if (NOT SLIC3R_GUI)
+    add_subdirectory(orca-slice-engine)
+endif()
+
 if (SLIC3R_GUI)
     # imgui, imguizmo, and hidapi are now included from deps_src
 

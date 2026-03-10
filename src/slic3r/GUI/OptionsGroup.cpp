@@ -645,6 +645,10 @@ void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const b
 		const std::string  &opt_key   = itOption.first;
 		int 			    opt_index = itOption.second;
 
+		// SM Orca: Debug logging - track parameter changes from UI
+		BOOST_LOG_TRIVIAL(error) << "ConfigOptionsGroup::on_change_OG: opt_id=" << opt_id
+			<< ", opt_key=" << opt_key << ", opt_index=" << opt_index;
+
 		this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
 	}
 
@@ -1227,18 +1231,12 @@ void ExtruderOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const
 
         auto 				itOption = it->second;
         const std::string& opt_key = itOption.first;
+        int opt_index = itOption.second;
 
-        auto opt = m_config->option(opt_key);
-        const ConfigOptionVectorBase* opt_vec = dynamic_cast<const ConfigOptionVectorBase*>(opt);
-        if (opt_vec != nullptr) {
-            for (int opt_index = 0; opt_index < opt_vec->size(); opt_index++) {
-                this->change_opt_value(opt_key, value, opt_index);
-            }
-        }
-        else {
-            int opt_index = itOption.second;
-            this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
-        }
+        // SM Orca: FIX - Only modify the specific extruder's value, not all extruders
+        // The original code iterated through all indices and set them to the same value,
+        // which caused all extruders to have identical values when editing one extruder
+        this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
     }
 
     OptionsGroup::on_change_OG(opt_id, value);

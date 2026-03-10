@@ -144,7 +144,8 @@ public:
 
 
 	// Set the extruder properties.
-    void set_extruder(size_t idx, const PrintConfig& config);
+    // SM Orca: 添加 physical_extruder 参数，用于支持耗材-挤出机映射
+    void set_extruder(size_t idx, int physical_extruder, const PrintConfig& config);
 
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
@@ -269,6 +270,8 @@ public:
         std::vector<float>  ramming_speed;
         float               nozzle_diameter;
         float               filament_area;
+        // SM Orca: Store per-filament perimeter width for correct brim generation
+        float               perimeter_width = 0.f;
     };
 
 private:

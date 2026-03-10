@@ -33,7 +33,7 @@ static inline void show_notification_extruders_limit_exceeded()
 
 void GLGizmoMmuSegmentation::on_opening()
 {
-    if (wxGetApp().filaments_cnt() > int(GLGizmoMmuSegmentation::EXTRUDERS_LIMIT))
+    if (get_extruders_colors().size() > GLGizmoMmuSegmentation::EXTRUDERS_LIMIT)
         show_notification_extruders_limit_exceeded();
 }
 
@@ -89,15 +89,21 @@ static std::vector<int> get_extruder_id_for_volumes(const ModelObject &model_obj
     return extruders_idx;
 }
 
-void GLGizmoMmuSegmentation::init_extruders_data()
+void GLGizmoMmuSegmentation::init_extruders_data(const std::vector<ColorRGBA> &extruder_colors)
 {
-    m_extruders_colors      = get_extruders_colors();
-    m_selected_extruder_idx = 0;
+    const size_t old_selected = m_selected_extruder_idx;
+    m_extruders_colors = extruder_colors;
+    m_selected_extruder_idx = m_extruders_colors.empty() ? 0 : std::min(old_selected, m_extruders_colors.size() - 1);
 
     // keep remap table consistent with current extruder count
     m_extruder_remap.resize(m_extruders_colors.size());
     for (size_t i = 0; i < m_extruder_remap.size(); ++i)
         m_extruder_remap[i] = i;
+}
+
+void GLGizmoMmuSegmentation::init_extruders_data()
+{
+    init_extruders_data(get_extruders_colors());
 }
 
 bool GLGizmoMmuSegmentation::on_init()
@@ -188,18 +194,20 @@ void GLGizmoMmuSegmentation::data_changed(bool is_serializing)
         return;
 
     ModelObject* model_object = m_c->selection_info()->model_object();
-    int prev_extruders_count = int(m_extruders_colors.size());
-    if (prev_extruders_count != wxGetApp().filaments_cnt()) {
-        if (wxGetApp().filaments_cnt() > int(GLGizmoMmuSegmentation::EXTRUDERS_LIMIT))
+    const std::vector<ColorRGBA> current_extruder_colors = get_extruders_colors();
+    const int prev_extruders_count = int(m_extruders_colors.size());
+    const int current_extruders_count = int(current_extruder_colors.size());
+    if (prev_extruders_count != current_extruders_count) {
+        if (current_extruder_colors.size() > GLGizmoMmuSegmentation::EXTRUDERS_LIMIT)
             show_notification_extruders_limit_exceeded();
 
-        this->init_extruders_data();
+        this->init_extruders_data(current_extruder_colors);
         // Reinitialize triangle selectors because of change of extruder count need also change the size of GLIndexedVertexArray
-        if (prev_extruders_count != wxGetApp().filaments_cnt())
+        if (prev_extruders_count != current_extruders_count)
             this->init_model_triangle_selectors();
     }
-    else if (get_extruders_colors() != m_extruders_colors) {
-        this->init_extruders_data();
+    else if (current_extruder_colors != m_extruders_colors) {
+        this->init_extruders_data(current_extruder_colors);
         this->update_triangle_selectors_colors();
     }
     else if (model_object != nullptr && get_extruder_id_for_volumes(*model_object) != m_volumes_extruder_idxs) {
@@ -251,14 +259,14 @@ static void render_extruders_combo(const std::string& label,
                                    size_t& selection_idx)
 {
     assert(!extruders_colors.empty());
-    assert(extruders_colors.size() == extruders_colors.size());
+    assert(extruders.size() == extruders_colors.size());
 
     size_t selection_out = selection_idx;
     // It is necessary to use BeginGroup(). Otherwise, when using SameLine() is called, then other items will be drawn inside the combobox.
     ImGui::BeginGroup();
     ImVec2 combo_pos = ImGui::GetCursorScreenPos();
     if (ImGui::BeginCombo(label.c_str(), "")) {
-        for (size_t extruder_idx = 0; extruder_idx < std::min(extruders.size(), GLGizmoMmuSegmentation::EXTRUDERS_LIMIT); ++extruder_idx) {
+        for (size_t extruder_idx = 0; extruder_idx < extruders.size(); ++extruder_idx) {
             ImGui::PushID(int(extruder_idx));
             ImVec2 start_position = ImGui::GetCursorScreenPos();
 
@@ -371,6 +379,9 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     const float buttons_width = remove_btn_width + filter_btn_width + remap_btn_width + m_imgui->scaled(2.f);
     const float minimal_slider_width = m_imgui->scaled(4.f);
     const float color_button_width = m_imgui->calc_text_size(std::string_view{""}).x + m_imgui->scaled(1.75f);
+    const size_t total_filament_count = m_extruders_colors.size();
+    const std::string max_filament_label = std::to_string(std::max<size_t>(total_filament_count, 1));
+    const ImVec2 max_filament_label_size = ImGui::CalcTextSize(max_filament_label.c_str(), NULL, true);
 
     float caption_max = 0.f;
     float total_text_max = 0.f;
@@ -390,7 +401,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     float window_width = minimal_slider_width + sliders_left_width + slider_icon_width;
     const int max_filament_items_per_line = 8;
     const float empty_button_width = m_imgui->calc_button_size("").x;
-    const float filament_item_width = empty_button_width + m_imgui->scaled(1.5f);
+    const float filament_item_width = std::max(empty_button_width, max_filament_label_size.x + m_imgui->scaled(1.4f)) + m_imgui->scaled(1.5f);
 
     window_width = std::max(window_width, total_text_max);
     window_width = std::max(window_width, buttons_width);
@@ -410,17 +421,15 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     m_imgui->text(m_desc.at("filaments"));
 
     float start_pos_x = ImGui::GetCursorPos().x;
-    const ImVec2 max_label_size = ImGui::CalcTextSize("99", NULL, true);
-    const float item_spacing = m_imgui->scaled(0.8f);
-    size_t n_extruder_colors = std::min((size_t)EnforcerBlockerType::ExtruderMax, m_extruders_colors.size());
-    for (int extruder_idx = 0; extruder_idx < n_extruder_colors; extruder_idx++) {
+    size_t n_extruder_colors = std::min(GLGizmoMmuSegmentation::EXTRUDERS_LIMIT, m_extruders_colors.size());
+    for (size_t extruder_idx = 0; extruder_idx < n_extruder_colors; ++extruder_idx) {
         const ColorRGBA &extruder_color = m_extruders_colors[extruder_idx];
         ImVec4           color_vec      = ImGuiWrapper::to_ImVec4(extruder_color);
         std::string color_label = std::string("##extruder color ") + std::to_string(extruder_idx);
         std::string item_text = std::to_string(extruder_idx + 1);
         const ImVec2 label_size = ImGui::CalcTextSize(item_text.c_str(), NULL, true);
 
-        const ImVec2 button_size(max_label_size.x + m_imgui->scaled(0.5f),0.f);
+        const ImVec2 button_size(max_filament_label_size.x + m_imgui->scaled(0.5f), 0.f);
 
         float button_offset = start_pos_x;
         if (extruder_idx % max_filament_items_per_line != 0) {
@@ -449,7 +458,12 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         color_button_high = ImGui::GetCursorPos().y - color_button - 2.0;
         if (color_picked) { m_selected_extruder_idx = extruder_idx; }
 
-        if (extruder_idx < 16 && ImGui::IsItemHovered()) m_imgui->tooltip(_L("Shortcut Key ") + std::to_string(extruder_idx + 1), max_tooltip_width);
+        if (ImGui::IsItemHovered()) {
+            if (extruder_idx < 9)
+                m_imgui->tooltip(_L("Shortcut Key ") + std::to_string(extruder_idx + 1), max_tooltip_width);
+            else
+                m_imgui->tooltip(wxString::Format(_L("Filament %d"), int(extruder_idx + 1)), max_tooltip_width);
+        }
 
         // draw filament id
         float gray = 0.299 * extruder_color.r() + 0.587 * extruder_color.g() + 0.114 * extruder_color.b();
@@ -464,6 +478,21 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     }
     //ImGui::NewLine();
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.1));
+
+    if (n_extruder_colors > 0) {
+        int selected_filament = int(m_selected_extruder_idx) + 1;
+        ImGui::AlignTextToFramePadding();
+        m_imgui->text(_L("Selected filament"));
+        ImGui::SameLine();
+        ImGui::PushItemWidth(m_imgui->scaled(4.5f));
+        if (ImGui::InputInt("##selected_filament", &selected_filament, 1, 10, ImGuiInputTextFlags_CharsDecimal)) {
+            selected_filament = std::clamp(selected_filament, 1, int(n_extruder_colors));
+            m_selected_extruder_idx = size_t(selected_filament - 1);
+        }
+        ImGui::SameLine();
+        m_imgui->text(wxString::Format(_L("/ %d"), int(n_extruder_colors)));
+        ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.1));
+    }
 
     m_imgui->text(m_desc.at("tool_type"));
 
@@ -857,9 +886,10 @@ void GLGizmoMmuSegmentation::update_from_model_object(bool first_update)
 
     // Extruder colors need to be reloaded before calling init_model_triangle_selectors to render painted triangles
     // using colors from loaded 3MF and not from printer profile in Slicer.
+    const std::vector<ColorRGBA> current_extruder_colors = get_extruders_colors();
     if (int prev_extruders_count = int(m_extruders_colors.size());
-        prev_extruders_count != wxGetApp().filaments_cnt() || get_extruders_colors() != m_extruders_colors)
-        this->init_extruders_data();
+        prev_extruders_count != int(current_extruder_colors.size()) || current_extruder_colors != m_extruders_colors)
+        this->init_extruders_data(current_extruder_colors);
 
     this->init_model_triangle_selectors();
 }
@@ -907,7 +937,7 @@ wxString GLGizmoMmuSegmentation::handle_snapshot_action_name(bool shift_down, GL
     if (shift_down)
         action_name = _L("Remove painted color");
     else {
-        action_name        = GUI::format(_L("Painted using: Filament %1%"), m_selected_extruder_idx);
+        action_name        = GUI::format(_L("Painted using: Filament %1%"), m_selected_extruder_idx + 1);
     }
     return action_name;
 }
@@ -993,15 +1023,20 @@ void GLGizmoMmuSegmentation::render_filament_remap_ui(float window_width, float 
 {
     size_t n_extr = std::min((size_t)EnforcerBlockerType::ExtruderMax, m_extruders_colors.size());
 
-    const ImVec2 max_label_size = ImGui::CalcTextSize("99", NULL, true);
+    const std::string max_label = std::to_string(std::max<size_t>(n_extr, 1));
+    const ImVec2 max_label_size = ImGui::CalcTextSize(max_label.c_str(), NULL, true);
     const ImVec2 button_size(max_label_size.x + m_imgui->scaled(0.5f), 0.f);
+    const int max_items_per_line = 8;
+    const float item_width = button_size.x + m_imgui->scaled(1.5f);
+    const float start_pos_x = ImGui::GetCursorPosX();
 
     for (int src = 0; src < (int)n_extr; ++src) {
-        const ColorRGBA &src_col = m_extruders_colors[src];          // keep for text contrast
         const ColorRGBA &dst_col = m_extruders_colors[m_extruder_remap[src]];
         ImVec4 col_vec = ImGuiWrapper::to_ImVec4(dst_col);
 
-        if (src) ImGui::SameLine();
+        if (src % max_items_per_line != 0) {
+            ImGui::SameLine(start_pos_x + item_width * (src % max_items_per_line));
+        }
         std::string btn_id = "##remap_src_" + std::to_string(src);
         
         ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoInputs |
@@ -1062,11 +1097,13 @@ void GLGizmoMmuSegmentation::render_filament_remap_ui(float window_width, float 
         ImGui::PushStyleColor(ImGuiCol_Border, m_is_dark_mode ? ImVec4(0.5f, 0.5f, 0.5f, 1.0f) : ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
         
         if (ImGui::BeginPopup(pop_id.c_str())) {
+            const float popup_start_pos_x = ImGui::GetCursorPosX();
             
             for (int dst = 0; dst < (int)n_extr; ++dst) {
                 const ColorRGBA &dst_col_popup = m_extruders_colors[dst];
                 ImVec4 dst_vec = ImGuiWrapper::to_ImVec4(dst_col_popup);
-                if (dst) ImGui::SameLine();
+                if (dst % max_items_per_line != 0)
+                    ImGui::SameLine(popup_start_pos_x + item_width * (dst % max_items_per_line));
                 std::string dst_btn = "##dst_" + std::to_string(src) + "_" + std::to_string(dst);
                 
                 // Apply same styling to destination buttons

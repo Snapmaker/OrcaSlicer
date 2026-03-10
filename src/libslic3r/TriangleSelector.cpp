@@ -1448,7 +1448,12 @@ void TriangleSelector::get_facets(std::vector<indexed_triangle_set>& facets_per_
 {
     facets_per_type.clear();
 
-    for (int type = (int)EnforcerBlockerType::NONE; type <= (int)EnforcerBlockerType::ExtruderMax; type++) {
+    int max_state = int(EnforcerBlockerType::NONE);
+    for (const Triangle &tr : m_triangles)
+        if (tr.valid() && !tr.is_split())
+            max_state = std::max(max_state, int(tr.get_state()));
+
+    for (int type = int(EnforcerBlockerType::NONE); type <= max_state; ++type) {
         facets_per_type.emplace_back();
         indexed_triangle_set& its = facets_per_type.back();
         std::vector<int> vertex_map(m_vertices.size(), -1);
@@ -1642,9 +1647,10 @@ void TriangleSelector::get_seed_fill_contour_recursive(const int facet_idx, cons
 
 TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
     // Each original triangle of the mesh is assigned a number encoding its state
-    // or how it is split. Each triangle is encoded by 4 bits (xxyy) or 8 bits (zzzzxxyy):
+    // or how it is split. Each triangle is encoded by 4 bits (xxyy) or by
+    // 4 bits plus one or more extension nibbles:
     // leaf triangle: xx = EnforcerBlockerType (Only values 0, 1, and 2. Value 3 is used as an indicator for additional 4 bits.), yy = 0
-    // leaf triangle: xx = 0b11, yy = 0b00, zzzz = EnforcerBlockerType (subtracted by 3)
+    // leaf triangle: xx = 0b11, yy = 0b00, zzzz... = EnforcerBlockerType (subtracted by 3) in base-15 chunks
     // non-leaf:      xx = special side, yy = number of split sides
     // These are bitwise appended and formed into one 64-bit integer.
 
@@ -1687,14 +1693,17 @@ TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
                     data.used_states[n] = true;
 
                 if (n >= 3) {
-                    assert(n <= 16);
-                    if (n <= 16) {
-                        // Store "11" plus 4 bits of (n-3).
-                        data.bitstream.insert(data.bitstream.end(), { true, true });
-                        n -= 3;
+                    // Store "11" plus one or more 4-bit chunks of (n - 3), where
+                    // 0b1111 indicates that another chunk follows.
+                    data.bitstream.insert(data.bitstream.end(), { true, true });
+                    n -= 3;
+                    while (n >= 15) {
                         for (size_t bit_idx = 0; bit_idx < 4; ++bit_idx)
-                            data.bitstream.push_back(n & (uint64_t(0b0001) << bit_idx));
+                            data.bitstream.push_back(uint64_t(0b1111) & (uint64_t(0b0001) << bit_idx));
+                        n -= 15;
                     }
+                    for (size_t bit_idx = 0; bit_idx < 4; ++bit_idx)
+                        data.bitstream.push_back(n & (uint64_t(0b0001) << bit_idx));
                 } else {
                     // Simple case, compatible with PrusaSlicer 2.3.1 and older for storing paint on supports and seams.
                     // Store 2 bits of n.
@@ -1890,7 +1899,16 @@ void TriangleSelector::TriangleSplittingData::update_used_states(const size_t bi
         if (const bool is_split = (code & 0b11) != 0; is_split)
             continue;
 
-        const uint8_t facet_state = (code & 0b1100) == 0b1100 ? read_next_nibble() + 3 : code >> 2;
+        size_t facet_state = code >> 2;
+        if ((code & 0b1100) == 0b1100) {
+            size_t extension_count = 0;
+            size_t next_code = read_next_nibble();
+            while (next_code == 0b1111) {
+                ++extension_count;
+                next_code = read_next_nibble();
+            }
+            facet_state = next_code + 15 * extension_count + 3;
+        }
         assert(facet_state < this->used_states.size());
         if (facet_state >= this->used_states.size())
             continue;
@@ -1920,9 +1938,19 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
         auto num_children_or_state = [&next_nibble]() -> int {
             int code               = next_nibble();
             int num_of_split_sides = code & 0b11;
-            return num_of_split_sides == 0 ?
-                ((code & 0b1100) == 0b1100 ? next_nibble() + 3 : code >> 2) :
-                - num_of_split_sides - 1;
+            if (num_of_split_sides != 0)
+                return - num_of_split_sides - 1;
+
+            if ((code & 0b1100) != 0b1100)
+                return code >> 2;
+
+            int extension_count = 0;
+            int next_code = next_nibble();
+            while (next_code == 0b1111) {
+                ++extension_count;
+                next_code = next_nibble();
+            }
+            return next_code + 15 * extension_count + 3;
         };
 
         int state = num_children_or_state();

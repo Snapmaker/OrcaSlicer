@@ -589,7 +589,8 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     // Calculate where the priming lines should be - very naive test not detecting parallelograms etc.
     const std::vector<Vec2d>& bed_points = config.printable_area.values;
     BoundingBoxf bb(bed_points);
-    m_bed_width = float(bb.size().x());
+    m_bed_width  = float(bb.size().x());
+    m_bed_height = float(bb.size().y());
     m_bed_shape = (bed_points.size() == 4 ? RectangularBed : CircularBed);
 
     if (m_bed_shape == CircularBed) {
@@ -1338,6 +1339,26 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
         double r = std::tan(Geometry::deg2rad(m_wipe_tower_cone_angle/2.f)) * (m_wipe_tower_height - z);
         Vec2f center = (wt_box.lu + wt_box.rd) / 2.;
         double w = wt_box.lu.y() - wt_box.ld.y();
+
+        // BBS: clamp cone radius to bed boundary to prevent out-of-range toolhead movements
+        // (issue #121: stabilization cone exceeds bed bounds for small beds like Snapmaker A250).
+        // Coordinates inside supported_rectangle are tower-local (origin = tower lower-left corner);
+        // the absolute position of the arc center on the bed is m_wipe_tower_pos + center.
+        if (m_bed_shape == RectangularBed && r > 0.0) {
+            Vec2f abs_center = m_wipe_tower_pos + center;
+            // Maximum r that keeps the arc (scaled by 1/support_scale in X) within the bed.
+            // Arc X spans: abs_center.x ± r/support_scale  →  max_r_x * support_scale is the limit.
+            float max_r_x = std::min(
+                abs_center.x() - m_bed_bottom_left.x(),
+                m_bed_bottom_left.x() + m_bed_width - abs_center.x()) * float(support_scale);
+            // Arc Y spans: abs_center.y ± r  →  direct limit.
+            float max_r_y = std::min(
+                abs_center.y() - m_bed_bottom_left.y(),
+                m_bed_bottom_left.y() + m_bed_height - abs_center.y());
+            float max_r_bed = std::min(max_r_x, max_r_y);
+            if (max_r_bed > 0.f && r > double(max_r_bed))
+                r = double(max_r_bed);
+        }
         enum Type {
             Arc,
             Corner,

@@ -214,6 +214,7 @@ private:
         CustomBed
     } m_bed_shape;
     float m_bed_width; // width of the bed bounding box
+    float m_bed_height; // height (depth) of the bed bounding box
     Vec2f m_bed_bottom_left; // bottom-left corner coordinates (for rectangular beds)
 
 	float m_perimeter_width = 0.4f * Width_To_Nozzle_Ratio; // Width of an extrusion line, also a perimeter spacing for 100% infill.

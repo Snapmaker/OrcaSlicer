@@ -75,7 +75,7 @@
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
 #include "sentry_wrapper/SentryWrapper.hpp"
-
+#include "GenericDownloadDialog.hpp"
 
 #define UPDATE_BUSER    true
 #define UPDATE_BUAUTO   false
@@ -2260,7 +2260,8 @@ static wxMenu* generate_help_menu()
     //        //TODO
     //    });
     // Check New Version
-    append_menu_item(helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
+    append_menu_item(
+        helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
         [](wxCommandEvent&) {
             wxGetApp().check_new_version_sf(true, UPDATE_BUSER);
         }, "", nullptr, []() {
@@ -4018,6 +4019,47 @@ void MainFrame::RunScript(wxString js)
 {
     if (m_webview != nullptr)
         m_webview->RunScript(js);
+}
+
+void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::string& fileName, std::string completeFilePath)
+{
+    // std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
+    // std::string           filename     = "test_for_download.3mf";
+
+    GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, fileName, completeFilePath);
+    auto res = dlg.ShowModal();
+
+    if (res != wxID_OK)
+        return;
+
+    if (completeFilePath.empty()) {
+        auto downloadPath = wxGetApp().app_config->get("download_path");
+        completeFilePath  = downloadPath + "/" + fileName;
+    }
+    if (!boost::filesystem::exists(completeFilePath)) 
+    {
+        BOOST_LOG_TRIVIAL(warning) << boost::format("the file '%1%' not exists") % completeFilePath;
+        return;
+    }
+
+    // Auto-open project if it's a .3mf file
+    boost::filesystem::path path(completeFilePath);
+    std::string             extension = boost::algorithm::to_lower_copy(path.extension().string());
+    if (extension == ".3mf") {
+        BOOST_LOG_TRIVIAL(info) << boost::format("GenericDownloadDialog: Auto-opening project file '%1%'") % completeFilePath;
+        wxString wx_file_path = wxString::FromUTF8(completeFilePath.c_str());
+        if (wxGetApp().can_load_project() && wxGetApp().mainframe && wxGetApp().mainframe->plater()) {
+            wxGetApp().mainframe->plater()->load_project(wx_file_path);
+        }
+    }
+    else
+    {
+        // Not a valid 3mf file, show error message
+        wxString msg = wxString::Format(_L("The downloaded file '%s' is not a valid 3MF project file."), fileName);
+        MessageDialog(this, msg, _L("Invalid File"), wxOK | wxICON_WARNING).ShowModal();
+    }
+
+    
 }
 
 void MainFrame::technology_changed()

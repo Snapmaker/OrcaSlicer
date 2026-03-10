@@ -96,6 +96,22 @@ void WebPreprintDialog::set_display_file_name(const std::string& filename) {
 void WebPreprintDialog::set_gcode_file_name(const std::string& filename)
 { m_gcode_file_name = filename; }
 
+void WebPreprintDialog::set_finish(bool flag)
+{
+    m_finish = flag;
+    // BBS: Don't call EndModal here to avoid conflict with sw_FinishFilamentMapping()
+    // The external sw_FinishFilamentMapping() function will handle EndModal based on m_finish flag
+}
+
+void WebPreprintDialog::SafeEndModal(int returnCode)
+{
+    // BBS: Prevent duplicate EndModal calls which can cause crashes
+    if (IsModal() && !m_modal_ended) {
+        m_modal_ended = true;
+        EndModal(returnCode);
+    }
+}
+
 void WebPreprintDialog::reload()
 {
     load_url(m_prePrint_url);
@@ -123,8 +139,16 @@ bool WebPreprintDialog::run()
     }
 
     this->load_url(real_url);
-    if (this->ShowModal() == wxID_OK) {
-        return true;
+    
+    // BBS: Reset flags before showing modal
+    m_finish = false;
+    m_modal_ended = false;
+    
+    int result = this->ShowModal();
+    
+    // BBS: Check finish flag to determine return value
+    if (result == wxID_OK || (result == wxID_CANCEL && m_finish)) {
+        return m_finish;
     }
     return false;
 }
@@ -186,7 +210,15 @@ void WebPreprintDialog::OnClose(wxCloseEvent& evt)
 {
     auto noti_manager = wxGetApp().mainframe->plater()->get_notification_manager();
     noti_manager->close_notification_of_type(NotificationType::PrintHostUpload);
-    evt.Skip();
+    
+    // BBS: Use SafeEndModal to prevent duplicate EndModal calls
+    // This ensures consistency with sw_FinishFilamentMapping() and prevents crashes
+    SafeEndModal(wxID_CANCEL);
+    
+    // If not modal or already ended, skip the event
+    if (!IsModal() || m_modal_ended) {
+        evt.Skip();
+    }
 }
 
 }} // namespace Slic3r::GUI 

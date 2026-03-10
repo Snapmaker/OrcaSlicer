@@ -27,6 +27,13 @@ public:
     void        reset(const Vec3d &position);
     void        set_current_extruder(unsigned int extruder_id) { m_current_extruder = extruder_id; }
     std::string process_layer(std::string &&gcode, size_t layer_id, bool flush);
+    // SM Orca: Set filament to physical extruder mapping for correct parameter access
+    void        set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
+    // SM Orca: Get physical extruder ID from filament ID
+    int         get_physical_extruder(int filament_idx) const {
+        auto it = m_filament_extruder_map.find(filament_idx);
+        return (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
+    }
 
 private:
 	CoolingBuffer& operator=(const CoolingBuffer&) = delete;
@@ -55,6 +62,8 @@ private:
     // the PrintConfig slice of FullPrintConfig is constant, thus no thread synchronization is required.
     const PrintConfig          &m_config;
     unsigned int                m_current_extruder;
+    // SM Orca: Filament to physical extruder mapping for correct parameter access
+    std::unordered_map<int, int> m_filament_extruder_map;
     //BBS: current fan speed
     int                         m_current_fan_speed;
 };

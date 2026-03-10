@@ -2,7 +2,7 @@
 #include "SSWCP.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
-#include "WCPDownloadManager.hpp"
+#include "DownloadManager.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
@@ -3005,10 +3005,11 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
         if (wxGetApp().get_web_preprint_dialog()) {
             WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
             if (dialog) {
+                // BBS: Use SafeEndModal to prevent duplicate EndModal calls
                 if(dialog->is_finish()){
-                    dialog->EndModal(wxID_OK);
+                    dialog->SafeEndModal(wxID_OK);
                 }else{
-                    dialog->EndModal(wxID_CANCEL);
+                    dialog->SafeEndModal(wxID_CANCEL);
                 }
             }
         }
@@ -3058,28 +3059,18 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
             long long res = 0;
             if ((oriclr.size() != 7 && oriclr.size() != 9) || oriclr[0] != '#') {
-                return -1;
+                return 0;
             }
 
-            if (oriclr.size() == 7) {
-                for (int i = 1; i <= 6; ++i) {
-                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
-                    } else {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
-                    }
-                }
-            } else {
-                for (int i = 1; i <= 8; ++i) {
-                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
-                    } else {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
-                    }
-                }
+            auto colorSize = oriclr.size();//7 or 9
+            for (auto i = 1; i < colorSize; i++)
+            {
+                if (oriclr[colorSize - i] - '0' >= 0 && oriclr[colorSize - i] - '0' <= 9) {
+                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - '0');
+                } else {
+                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - 'A' + 10);
+                }   
             }
-
-            
 
             return res;
         };
@@ -3190,13 +3181,9 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         
         response["thumbnails"] = thumbnails;
 
-        
-        
         // file name
         response["filename"] = SSWCP::get_display_filename();
         response["filepath"] = SSWCP::get_active_filename();
-
-        
 
         m_res_data = response;
         send_to_js();
@@ -4304,6 +4291,8 @@ void SSWCP_UserLogin_Instance::process()
         sw_GetUserUpdatePrivacy();
     } else if (m_cmd == DOWNLOAD_FILE) {
         sw_DownloadFile();
+    } else if (m_cmd == DOWNLOAD_FILE_AND_OPEN) {
+        sw_DownloadFileAndOpen();
     } else if (m_cmd == CANCEL_DOWNLOAD) {
         sw_CancelDownload();
     } else if (m_cmd == FILE_VIEW) {
@@ -4390,7 +4379,8 @@ void SSWCP_UserLogin_Instance::sw_GetUserUpdatePrivacy()
 
 }
 
-void SSWCP_UserLogin_Instance::sw_DownloadFile() {
+void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
+{
     try {
         std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
@@ -4400,28 +4390,86 @@ void SSWCP_UserLogin_Instance::sw_DownloadFile() {
             return;
         }
 
-        // Use WCP Download Manager
-        WCPDownloadManager* download_mgr = wxGetApp().wcp_download_manager();
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
-            handle_general_fail(-1, "WCP Download Manager not available");
+            handle_general_fail(-1, "Download Manager not available");
             return;
         }
 
-        // Start download task
-        size_t task_id = download_mgr->start_download(fileUrl, fileName, shared_from_this());
+        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+
+        m_status = 0;
+        m_msg    = "success";
+        send_to_js();
+        finish_job();
+
+    } catch (std::exception& e) {
+        handle_general_fail(-1, e.what());
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_DownloadFile() 
+{
+    try {
+        std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
+        std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
+
+        if (fileUrl.empty() || fileName.empty()) {
+            handle_general_fail(-1, "file_url and file_name are required");
+            return;
+        }
+
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
+        if (!download_mgr) {
+            handle_general_fail(-1, "Download Manager not available");
+            return;
+        }
         
-        // Return task ID to Flutter
+        //only download file and don't do anything.
+        //wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+
+        m_status  = 0;
+        m_msg     = "success";
+        send_to_js();
+        finish_job();
+
+    } catch (std::exception& e) {
+        handle_general_fail(-1, e.what());
+    }
+}
+
+void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
+    try {
+        std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
+        std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
+
+        if (fileUrl.empty() || fileName.empty()) {
+            handle_general_fail(-1, "file_url and file_name are required");
+            return;
+        }
+
+        // Use Download Manager
+        DownloadManager* download_mgr = wxGetApp().download_manager();
+        if (!download_mgr) {
+            handle_general_fail(-1, "Download Manager not available");
+            return;
+        }
+        size_t task_id = download_mgr->start_wcp_download(fileUrl,
+                                                          fileName,
+                                                          shared_from_this(),
+                                                          true); 
+        
         json response;
         response["task_id"] = task_id;
         response["file_name"] = fileName;
         response["file_url"] = fileUrl;
         m_res_data = response;
         m_status = 0;
-        m_msg = "Download started";
+        m_msg = "success";
         send_to_js();
-        // Note: Do not call finish_job() here, as download is asynchronous
-        // The manager will send progress updates and completion/error messages via WCP
-        
+              
     } catch (std::exception& e) {
         handle_general_fail(-1, e.what());
     }
@@ -4436,7 +4484,7 @@ void SSWCP_UserLogin_Instance::sw_CancelDownload() {
             return;
         }
         
-        WCPDownloadManager* download_mgr = wxGetApp().wcp_download_manager();
+        DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
             handle_general_fail(-1, "WCP Download Manager not available");
             return;
@@ -5996,7 +6044,8 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
 };
 
 std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
-                                                           UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS};
+                                                           UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
+                                                           DOWNLOAD_FILE,FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"

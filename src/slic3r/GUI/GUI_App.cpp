@@ -13,7 +13,7 @@
 #include "slic3r/GUI/WebPresetDialog.hpp"
 
 #include "slic3r/GUI/SSWCP.hpp"
-#include "slic3r/GUI/WCPDownloadManager.hpp"
+#include "slic3r/GUI/DownloadManager.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
 #include "slic3r/Config/Version.hpp"
 
@@ -1066,7 +1066,7 @@ GUI_App::GUI_App()
     , m_imgui(new ImGuiWrapper())
 	, m_removable_drive_manager(std::make_unique<RemovableDriveManager>())
     , m_downloader(std::make_unique<Downloader>())
-    , m_wcp_download_manager(&WCPDownloadManager::getInstance())
+    , m_download_manager(&DownloadManager::getInstance())
 	, m_other_instance_message_handler(std::make_unique<OtherInstanceMessageHandler>())
 {
 	//app config initializes early becasuse it is used in instance checking in Snapmaker_Orca.cpp
@@ -1082,7 +1082,9 @@ GUI_App::GUI_App()
     m_page_http_server.setPort(PAGE_HTTP_PORT);
     m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
     m_page_http_server.start();
-    
+    BOOST_LOG_TRIVIAL(info) << "[Flutter] Version:"<<common::get_flutter_version();
+    BOOST_LOG_TRIVIAL(info) << "[Profile] Version:" << common::get_profile_version();
+    flush_logs();
     m_fltviews.set_app(this);
 }
 
@@ -4895,7 +4897,7 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
             BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;            
           }
         })
-        .perform_sync();
+        .perform();
 }
 void GUI_App::process_network_msg(std::string dev_id, std::string msg)
 {
@@ -6482,9 +6484,9 @@ Downloader* GUI_App::downloader()
     return m_downloader.get();
 }
 
-WCPDownloadManager* GUI_App::wcp_download_manager()
+DownloadManager* GUI_App::download_manager()
 {
-    return m_wcp_download_manager;
+    return m_download_manager;
 }
 
 void GUI_App::load_url(wxString url)
@@ -6979,16 +6981,7 @@ bool GUI_App::config_wizard_startup()
         BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
         return true;
-    } /*else if (get_app_config()->legacy_datadir()) {
-        // Looks like user has legacy pre-vendorbundle data directory,
-        // explain what this is and run the wizard
-
-        MsgDataLegacy dlg;
-        dlg.ShowModal();
-
-        run_wizard(ConfigWizard::RR_DATA_LEGACY);
-        return true;
-    }*/
+    } 
 
     if (isAgree.empty()) 
     {

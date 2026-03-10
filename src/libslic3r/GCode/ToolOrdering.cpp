@@ -263,6 +263,7 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
 {
     m_is_BBL_printer = object.print()->is_BBL_printer();
     m_print_full_config = &object.print()->full_print_config();
+    m_print_config_ptr = &object.print()->config();
     m_print_object_ptr = &object;
     // Mixed filament support.
     m_mixed_mgr   = &object.print()->mixed_filament_manager();
@@ -1033,7 +1034,7 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         return false;
     };
 
-    std::optional<unsigned int>current_extruder_id;
+    std::optional<unsigned int> current_extruder_id;
     for (int i = 0; i < m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
         if (lt.extruders.empty())

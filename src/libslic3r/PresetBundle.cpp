@@ -9,6 +9,9 @@
 #include "common_func/common_func.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <cstdlib>
 #include <set>
 #include <fstream>
 #include <unordered_map>
@@ -31,6 +34,30 @@
 //#define SLIC3R_PROFILE_USE_PRESETS_SUBDIR
 
 namespace Slic3r {
+
+namespace {
+
+bool startup_profile_enabled()
+{
+    static const bool enabled = [] {
+        const char* value = std::getenv("ORCA_STARTUP_PROFILE");
+        if (value == nullptr)
+            return false;
+
+        std::string normalized(value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+    }();
+    return enabled;
+}
+
+void startup_profile_log(const std::string& message)
+{
+    if (startup_profile_enabled())
+        BOOST_LOG_TRIVIAL(warning) << "[StartupProfile] " << message;
+}
+
+} // namespace
 
 static std::vector<std::string> s_project_options {
     "flush_volumes_vector",
@@ -250,6 +277,10 @@ void PresetBundle::copy_files(const std::string& from)
 PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, ForwardCompatibilitySubstitutionRule substitution_rule,
                                                       const PresetPreferences& preferred_selection/* = PresetPreferences()*/)
 {
+    const bool startup_profile = startup_profile_enabled();
+    const auto total_start     = std::chrono::steady_clock::now();
+    auto       phase_start     = total_start;
+
     // First load the vendor specific system presets.
     PresetsConfigSubstitutions substitutions;
     std::string errors_cummulative;
@@ -258,6 +289,13 @@ PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, Forward
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" enter, substitution_rule %1%, preferred printer_model_id %2%")%substitution_rule%preferred_selection.printer_model_id;
     //BBS: change system config to json
     std::tie(substitutions, errors_cummulative) = this->load_system_presets_from_json(substitution_rule);
+    if (startup_profile) {
+        const auto now = std::chrono::steady_clock::now();
+        startup_profile_log("PresetBundle::load_presets step=load_system_presets_from_json step_ms=" +
+                            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - phase_start).count()) +
+                            " total_ms=" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - total_start).count()));
+        phase_start = now;
+    }
 
     // BBS load preset from user's folder, load system default if
     // BBS: change directories by design
@@ -267,16 +305,34 @@ PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, Forward
     } else {
         load_user_presets(dir_user_presets, substitution_rule);
     }
+    if (startup_profile) {
+        const auto now = std::chrono::steady_clock::now();
+        startup_profile_log("PresetBundle::load_presets step=load_user_presets step_ms=" +
+                            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - phase_start).count()) +
+                            " total_ms=" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - total_start).count()));
+        phase_start = now;
+    }
 
     this->update_multi_material_filament_presets();
     this->update_compatible(PresetSelectCompatibleType::Never);
 
     this->load_selections(config, preferred_selection);
+    if (startup_profile) {
+        const auto now = std::chrono::steady_clock::now();
+        startup_profile_log("PresetBundle::load_presets step=post_load_selection step_ms=" +
+                            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - phase_start).count()) +
+                            " total_ms=" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now - total_start).count()));
+    }
 
     set_calibrate_printer("");
 
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" finished, returned substitutions %1%")%substitutions.size();
+    if (startup_profile) {
+        const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - total_start).count();
+        startup_profile_log("PresetBundle::load_presets end substitutions=" + std::to_string(substitutions.size()) +
+                            " total_ms=" + std::to_string(total_ms));
+    }
     return substitutions;
 }
 
@@ -1204,6 +1260,9 @@ void PresetBundle::remove_users_preset(AppConfig &config, std::map<std::string, 
 //BBS: add json related logic, load system presets from json
 std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_presets_from_json(ForwardCompatibilitySubstitutionRule compatibility_rule)
 {
+    const bool startup_profile = startup_profile_enabled();
+    const auto total_start     = std::chrono::steady_clock::now();
+
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, compatibility_rule %1%")%compatibility_rule;
     if (compatibility_rule == ForwardCompatibilitySubstitutionRule::EnableSystemSilent)
@@ -1245,6 +1304,7 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
 
     for (auto &vendor_name : vendor_names)
     {
+        const auto vendor_start = std::chrono::steady_clock::now();
         if (validation_mode && !vendor_to_validate.empty() && vendor_name != vendor_to_validate && vendor_name != ORCA_FILAMENT_LIBRARY)
             continue;
 
@@ -1279,6 +1339,12 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
                 errors_cummulative += "\n";
             }
         }
+
+        if (startup_profile) {
+            const auto vendor_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - vendor_start).count();
+            startup_profile_log("PresetBundle::load_system_presets_from_json vendor=" + vendor_name +
+                                " vendor_ms=" + std::to_string(vendor_ms));
+        }
     }
 
     if (first) {
@@ -1286,9 +1352,14 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
 		this->reset(false);
 	}
 
-	this->update_system_maps();
+    this->update_system_maps();
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" finished, errors_cummulative %1%")%errors_cummulative;
+    if (startup_profile) {
+        const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - total_start).count();
+        startup_profile_log("PresetBundle::load_system_presets_from_json end vendor_count=" + std::to_string(vendor_names.size()) +
+                            " total_ms=" + std::to_string(total_ms));
+    }
     return std::make_pair(std::move(substitutions), errors_cummulative);
 }
 
@@ -2729,6 +2800,9 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
 std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_from_json(
     const std::string &path, const std::string &vendor_name, LoadConfigBundleAttributes flags, ForwardCompatibilitySubstitutionRule compatibility_rule, const PresetBundle* base_bundle)
 {
+    const bool startup_profile = startup_profile_enabled();
+    const auto total_start     = std::chrono::steady_clock::now();
+
     // Enable substitutions for user config bundle, throw an exception when loading a system profile.
     ConfigSubstitutionContext  substitution_context { compatibility_rule };
     PresetsConfigSubstitutions substitutions;
@@ -2828,6 +2902,14 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         throw ConfigurationError((boost::format("Failed loading configuration file %1%: %2%\nSuggest cleaning the directory %3% firstly")
                 %root_file %err.what() % path).str());
         //goto __error_process;
+    }
+
+    if (startup_profile) {
+        startup_profile_log("PresetBundle::load_vendor_configs_from_json vendor=" + vendor_name +
+                            " machine_models=" + std::to_string(machine_model_subfiles.size()) +
+                            " process=" + std::to_string(process_subfiles.size()) +
+                            " filaments=" + std::to_string(filament_subfiles.size()) +
+                            " machines=" + std::to_string(machine_subfiles.size()));
     }
 
     if (flags.has(LoadConfigBundleAttribute::LoadFilamentOnly)) {
@@ -3171,6 +3253,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
     presets = &this->prints;
     configs.clear();
     filament_id_maps.clear();
+    auto process_start = std::chrono::steady_clock::now();
     for (auto& subfile : process_subfiles)
     {
         std::string reason = parse_subfile(substitution_context, substitutions, flags, subfile, configs, filament_id_maps, presets, presets_loaded);
@@ -3182,12 +3265,18 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
             throw ConfigurationError((boost::format("Failed loading configuration file %1%\nSuggest cleaning the directory %2% firstly") % subfile_path % path).str());
         }
     }
+    if (startup_profile) {
+        const auto process_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - process_start).count();
+        startup_profile_log("PresetBundle::load_vendor_configs_from_json vendor=" + vendor_name +
+                            " section=process section_ms=" + std::to_string(process_ms));
+    }
 
     //3.2) paste the filaments
     presets = &this->filaments;
     configs.clear();
     filament_id_maps.clear();
     const auto is_orca_lib = vendor_name == ORCA_FILAMENT_LIBRARY;
+    auto filament_start = std::chrono::steady_clock::now();
     for (auto& subfile : filament_subfiles)
     {
         std::string reason = parse_subfile(substitution_context, substitutions, flags, subfile, configs, filament_id_maps, presets,
@@ -3200,6 +3289,11 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
             throw ConfigurationError((boost::format("Failed loading configuration file %1%\nSuggest cleaning the directory %2% firstly") % subfile_path % path).str());
         }
     }
+    if (startup_profile) {
+        const auto filament_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - filament_start).count();
+        startup_profile_log("PresetBundle::load_vendor_configs_from_json vendor=" + vendor_name +
+                            " section=filament section_ms=" + std::to_string(filament_ms));
+    }
     if (is_orca_lib) {
         m_config_maps      = configs;
         m_filament_id_maps = filament_id_maps;
@@ -3209,6 +3303,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
     presets = &this->printers;
     configs.clear();
     filament_id_maps.clear();
+    auto machine_start = std::chrono::steady_clock::now();
     for (auto& subfile : machine_subfiles)
     {
         std::string reason = parse_subfile(substitution_context, substitutions, flags, subfile, configs, filament_id_maps, presets, presets_loaded);
@@ -3219,6 +3314,14 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", got error when parse printer setting from %1%") % subfile_path;
             throw ConfigurationError((boost::format("Failed loading configuration file %1%\nSuggest cleaning the directory %2% firstly") % subfile_path % path).str());
         }
+    }
+    if (startup_profile) {
+        const auto machine_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - machine_start).count();
+        const auto total_ms   = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - total_start).count();
+        startup_profile_log("PresetBundle::load_vendor_configs_from_json vendor=" + vendor_name +
+                            " section=machine section_ms=" + std::to_string(machine_ms) +
+                            " presets_loaded=" + std::to_string(presets_loaded) +
+                            " total_ms=" + std::to_string(total_ms));
     }
 
     //BBS: add config related logs

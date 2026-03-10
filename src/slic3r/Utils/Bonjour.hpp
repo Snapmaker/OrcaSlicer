@@ -162,6 +162,7 @@ public:
 	void send();
 	void async_receive();
 	void cancel();
+	bool is_usable() const { return m_socket_usable; }
 protected:
 	void receive_handler(SharedSession session, const boost::system::error_code& error, size_t bytes);
 	virtual SharedSession create_session() const = 0;

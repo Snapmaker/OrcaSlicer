@@ -6026,6 +6026,16 @@ void PrintConfigDef::init_fff_params()
     def->max = 300.;
     def->set_default_value(new ConfigOptionPercent(100.));
 
+    def = this->add("local_z_wipe_tower_purge_lines", coFloat);
+    def->label = L("Local-Z mini wipe lines");
+    def->tooltip = L("Number of purge lines reserved for each runtime Local-Z wipe tower toolchange. "
+                     "Higher values improve cleanup but increase tower depth. "
+                     "Only used when Local-Z dithering and the prime tower are enabled.");
+    def->sidetext = L("lines");
+    def->mode = comAdvanced;
+    def->min = 1.0;
+    def->set_default_value(new ConfigOptionFloat(3.0));
+
     def = this->add("idle_temperature", coInts);
     def->label = L("Idle temperature");
     def->tooltip = L("Nozzle temperature when the tool is currently not used in multi-tool setups. "

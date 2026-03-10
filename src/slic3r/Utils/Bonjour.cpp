@@ -23,18 +23,20 @@ namespace {
 
 void quarantine_socket(udp::socket& socket, bool& socket_usable, const char* action, const std::exception& e)
 {
-#ifdef __APPLE__
 	socket_usable = false;
 	boost::system::error_code ec;
 	socket.cancel(ec);
 	socket.close(ec);
 	BOOST_LOG_TRIVIAL(error) << action << ": " << e.what();
-#else
-	(void) socket;
-	(void) socket_usable;
-	(void) action;
-	BOOST_LOG_TRIVIAL(error) << e.what();
-#endif
+}
+
+template <typename SocketT>
+void retain_usable_socket(std::vector<SocketT*>& sockets, SocketT* socket)
+{
+	if (socket->is_usable())
+		sockets.emplace_back(socket);
+	else
+		delete socket;
 }
 
 }
@@ -699,20 +701,18 @@ UdpSocket::UdpSocket( Bonjour::ReplyFn replyfn, const asio::ip::address& multica
 
 UdpSocket::~UdpSocket()
 {
-	try {
+	boost::system::error_code ec;
 		// 取消所有异步操作
-		socket.cancel();
+		socket.cancel(ec);
 		
 		// 关闭socket
-		if (socket.is_open()) {
-			socket.close();
-		}
+		if (socket.is_open())
+			socket.close(ec);
 		
-		BOOST_LOG_TRIVIAL(debug) << "UdpSocket destroyed, socket closed";
-	}
-	catch (const std::exception& e) {
-		BOOST_LOG_TRIVIAL(error) << "Error closing socket in destructor: " << e.what();
-	}
+		if (ec)
+			BOOST_LOG_TRIVIAL(error) << "Error closing socket in destructor: " << ec.message();
+		else
+			BOOST_LOG_TRIVIAL(debug) << "UdpSocket destroyed, socket closed";
 }
 
 void UdpSocket::cancel()
@@ -941,13 +941,13 @@ void Bonjour::priv::lookup_perform()
 		}
 		// create ipv4 socket for each interface
 		// each will send to querry to for both ipv4 and ipv6
-		for (const auto& intrfc : interfaces) 		
-			sockets.emplace_back(new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP4, intrfc, io_service));
+		for (const auto& intrfc : interfaces)
+			retain_usable_socket(sockets, new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP4, intrfc, io_service));
 	} else {
 		BOOST_LOG_TRIVIAL(info) << "Failed to resolve ipv4 interfaces: " << ec.message();
 	}
 	if (sockets.empty())
-		sockets.emplace_back(new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP4, io_service));
+		retain_usable_socket(sockets, new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP4, io_service));
 	// ipv6 interfaces
 	interfaces.clear();
 	//udp::resolver::query query(host, PORT, boost::asio::ip::resolver_query_base::numeric_service);
@@ -962,9 +962,9 @@ void Bonjour::priv::lookup_perform()
 		// create ipv6 socket for each interface
 		// each will send to querry to for both ipv4 and ipv6
 		for (const auto& intrfc : interfaces)
-			sockets.emplace_back(new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP6, intrfc, io_service));
+			retain_usable_socket(sockets, new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP6, intrfc, io_service));
 		if (interfaces.empty())
-			sockets.emplace_back(new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP6, io_service));
+			retain_usable_socket(sockets, new LookupSocket(txt_keys, service, service_dn, protocol, replyfn, BonjourRequest::MCAST_IP6, io_service));
 	} else {
 		BOOST_LOG_TRIVIAL(info)<< "Failed to resolve ipv6 interfaces: " << ec.message();
 	}
@@ -1047,12 +1047,12 @@ void Bonjour::priv::resolve_perform()
 		// create ipv4 socket for each interface
 		// each will send to querry to for both ipv4 and ipv6
 		for (const auto& intrfc : interfaces)
-			sockets.emplace_back(new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP4, intrfc, io_service));
+			retain_usable_socket(sockets, new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP4, intrfc, io_service));
 	} else {
 		BOOST_LOG_TRIVIAL(info) << "Failed to resolve ipv4 interfaces: " << ec.message();
 	}
 	if (sockets.empty())
-		sockets.emplace_back(new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP4, io_service));
+		retain_usable_socket(sockets, new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP4, io_service));
 
 	// ipv6 interfaces
 	interfaces.clear();
@@ -1066,9 +1066,9 @@ void Bonjour::priv::resolve_perform()
 		// create ipv6 socket for each interface
 		// each will send to querry to for both ipv4 and ipv6
 		for (const auto& intrfc : interfaces) 
-			sockets.emplace_back(new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP6, intrfc, io_service));
+			retain_usable_socket(sockets, new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP6, intrfc, io_service));
 		if (interfaces.empty())
-			sockets.emplace_back(new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP6, io_service));
+			retain_usable_socket(sockets, new ResolveSocket(hostname, reply_callback, BonjourRequest::MCAST_IP6, io_service));
 	} else {
 		BOOST_LOG_TRIVIAL(info) << "Failed to resolve ipv6 interfaces: " << ec.message();
 	}

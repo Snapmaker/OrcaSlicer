@@ -40,6 +40,9 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
     };
     m_max_jerk_z = print_config.machine_max_jerk_z.values.front();
     m_max_jerk_e = print_config.machine_max_jerk_e.values.front();
+    // BBS: store bed bounding box for spiral lift boundary check
+    if (!print_config.printable_area.values.empty())
+        m_bed_bbox = BoundingBoxf(print_config.printable_area.values);
 }
 
 void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
@@ -485,11 +488,30 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
         if (delta(2) > 0 && delta_no_z.norm() != 0.0f)    {
             //BBS: SpiralLift
             if (m_to_lift_type == LiftType::SpiralLift && this->is_current_position_clear()) {
-                //BBS: todo: check the arc move all in bed area, if not, then use lazy lift
                 double radius = delta(2) / (2 * PI * atan(this->extruder()->travel_slope()));
                 Vec2d ij_offset = radius * delta_no_z.normalized();
                 ij_offset = { -ij_offset(1), ij_offset(0) };
-                slop_move = this->_spiral_travel_to_z(target(2), ij_offset, "spiral lift Z");
+                // BBS: check if the spiral arc stays within the bed boundary; fall back to lazy lift if not
+                Vec2d arc_center = Vec2d(source(0), source(1)) + ij_offset;
+                bool spiral_in_bed = !m_bed_bbox.defined ||
+                    (arc_center.x() - radius >= m_bed_bbox.min.x() &&
+                     arc_center.x() + radius <= m_bed_bbox.max.x() &&
+                     arc_center.y() - radius >= m_bed_bbox.min.y() &&
+                     arc_center.y() + radius <= m_bed_bbox.max.y());
+                if (spiral_in_bed) {
+                    slop_move = this->_spiral_travel_to_z(target(2), ij_offset, "spiral lift Z");
+                } else if (atan2(delta(2), delta_no_z.norm()) < this->extruder()->travel_slope()) {
+                    // Spiral arc would go outside bed boundary; use lazy lift instead
+                    Vec2d temp = delta_no_z.normalized() * delta(2) / tan(this->extruder()->travel_slope());
+                    Vec3d slope_top_point = Vec3d(temp(0), temp(1), delta(2)) + source;
+                    GCodeG1Formatter w0;
+                    w0.emit_xyz(slope_top_point);
+                    w0.emit_f(travel_speed * 60.0);
+                    w0.emit_comment(GCodeWriter::full_gcode_comment, comment);
+                    slop_move = w0.string();
+                } else {
+                    slop_move = _travel_to_z(target.z(), "normal lift Z");
+                }
             }
             //BBS: LazyLift
             else if (m_to_lift_type == LiftType::LazyLift &&

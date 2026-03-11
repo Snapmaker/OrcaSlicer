@@ -1156,6 +1156,7 @@ void MainFrame::init_tabpanel() {
         wxString url = evt.GetString();
         wxString key = evt.GetAPIkey();
         //select_tab(MainFrame::tpMonitor);
+        m_printer_view->Show();
         m_printer_view->load_url(url, key);
     });
     m_printer_view->Hide();
@@ -1255,6 +1256,7 @@ void MainFrame::show_device(bool bBBLPrinter) {
                 wxString url = evt.GetString();
                 wxString key = evt.GetAPIkey();
                 // select_tab(MainFrame::tpMonitor);
+                m_printer_view->Show();
                 m_printer_view->load_url(url, key);
             });
         }

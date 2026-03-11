@@ -77,7 +77,7 @@ void print_usage(const char* program_name) {
     std::cout << "  -f, --format <fmt>     Output format: gcode | gcode.3mf (default: gcode.3mf)" << std::endl;
     std::cout << "                         Note: All plates always use gcode.3mf" << std::endl;
     std::cout << "  -r, --resources <dir>  Resources directory containing printer profiles" << std::endl;
-    std::cout << "  -t, --timestamp <ts>   Fixed timestamp for reproducible G-code output" << std::endl;
+    // std::cout << "  -t, --timestamp <ts>   Fixed timestamp for reproducible G-code output" << std::endl;
     std::cout << "                         Format: YYYY-MM-DD HH:MM:SS (e.g., \"2024-01-01 12:00:00\")" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;
     std::cout << "  -h, --help             Show this help message" << std::endl;
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
     std::string input_file;
     std::string output_base;
     std::string resources_dir;
-    std::string custom_timestamp;  // Custom timestamp for reproducible builds
+    // std::string custom_timestamp;  // Custom timestamp for reproducible builds
     bool verbose = false;
     int plate_id = 0;  // 0 = all plates
     OutputFormat format = OutputFormat::GCODE_3MF;  // Default to gcode.3mf
@@ -190,9 +190,9 @@ int main(int argc, char* argv[]) {
                 return EXIT_INVALID_ARGS;
             }
         }
-        else if ((arg == "-t" || arg == "--timestamp") && i + 1 < argc) {
-            custom_timestamp = argv[++i];
-        }
+        // else if ((arg == "-t" || arg == "--timestamp") && i + 1 < argc) {
+        //     custom_timestamp = argv[++i];
+        // }
         else if (arg[0] != '-') {
             if (input_file.empty()) {
                 input_file = arg;
@@ -527,10 +527,10 @@ int main(int argc, char* argv[]) {
         // Modifying offsets here would cause double-subtraction and incorrect output.
 
         // Set custom timestamp for reproducible G-code output (engine mode)
-        if (!custom_timestamp.empty()) {
-            print.set_gcode_timestamp(custom_timestamp);
-            BOOST_LOG_TRIVIAL(info) << "Using custom G-code timestamp: " << custom_timestamp;
-        }
+        // if (!custom_timestamp.empty()) {
+        //     print.set_gcode_timestamp(custom_timestamp);
+        //     BOOST_LOG_TRIVIAL(info) << "Using custom G-code timestamp: " << custom_timestamp;
+        // }
 
         // Apply model and config to print
         auto apply_status = print.apply(model, config);

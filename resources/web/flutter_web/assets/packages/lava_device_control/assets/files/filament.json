@@ -43,11 +43,11 @@
             {
               "serie": "",
               "description": ""
-            },  
+            },
             {
               "serie": "HF",
               "description": ""
-            } 
+            }
           ]
         },
         {
@@ -57,11 +57,11 @@
             {
               "serie": "95A",
               "description": ""
-            },  
+            },
             {
               "serie": "95A HF",
               "description": ""
-            }  
+            }
           ]
         }
       ]
@@ -75,15 +75,15 @@
           "description": "",
           "series": [
             {
-              "serie": "Lite",
+              "serie": "PolyLite",
               "description": ""
             },
             {
-              "serie": "Terra",
+              "serie": "PolyTerra",
               "description": ""
             },
             {
-              "serie": "Sonic",
+              "serie": "PolySonic",
               "description": ""
             }
           ]
@@ -91,12 +91,22 @@
         {
           "material": "PETG",
           "description": "",
-          "series": []
+          "series": [
+            {
+              "serie": "PolyLite",
+              "description": ""
+            }
+          ]
         },
         {
           "material": "ABS",
           "description": "",
-          "series": []
+          "series": [
+            {
+              "serie": "PolyLite",
+              "description": ""
+            }
+          ]
         }
       ]
     },
@@ -143,7 +153,7 @@
             {
               "serie": "95A HF",
               "description": ""
-            }, 
+            },
             {
               "serie": "90A",
               "description": ""
@@ -211,7 +221,7 @@
             {
               "serie": "HF",
               "description": ""
-            } 
+            }
           ]
         },
         {
@@ -238,128 +248,132 @@
     }
   ],
   "filament_special_series": [
-    "85A","90A","95A", "95A HF", "HF"
+    "85A",
+    "90A",
+    "95A",
+    "95A HF",
+    "HF"
   ],
   "filament_color": [
     {
-      "name": "Ivory White",
-      "hex": "#FFFFFF",
-      "type": "PLA MATTE",
-      "sku": "34046"
+      "rgba": "#FFFFFFFF",
+      "name": "White",
+      "name_zh": "白色"
     },
     {
-      "name": "Carbon Black",
-      "hex": "#000000",
-      "type": "PLA MATTE",
-      "sku": "34049"
+      "rgba": "#E0E0E0FF",
+      "name": "Light Gray",
+      "name_zh": "浅灰色"
     },
     {
-      "name": "Lava Orange",
-      "hex": "#F78E0E",
-      "type": "PLA MATTE",
-      "sku": "34047"
-    },
-    {
-      "name": "Sunburst Yellow",
-      "hex": "#F0BE02",
-      "type": "PLA MATTE",
-      "sku": "34048"
-    },
-    {
-      "name": "Moss Mist",
-      "hex": "#BEC9A5",
-      "type": "PLA MATTE",
-      "sku": "34050"
-    },
-    {
-      "name": "Pine Green",
-      "hex": "#519F61",
-      "type": "PLA MATTE",
-      "sku": "34051"
-    },
-    {
-      "name": "Engine Red",
-      "hex": "#DE1619",
-      "type": "PLA MATTE",
-      "sku": "34052"
-    },
-    {
-      "name": "Ash Grey",
-      "hex": "#9B9EA0",
-      "type": "PLA MATTE",
-      "sku": "34053"
-    },
-    {
-      "name": "Celestial Blue",
-      "hex": "#8BD5EE",
-      "type": "PLA MATTE",
-      "sku": "34054"
-    },
-    {
-      "name": "Sakura Pink",
-      "hex": "#F3D6E5",
-      "type": "PLA MATTE",
-      "sku": "34055"
-    },
-    {
-      "name": "Pearl White",
-      "hex": "#E2DEDB",
-      "type": "PLA HS",
-      "sku": "34031"
-    },
-    {
-      "name": "Black",
-      "hex": "#080A0D",
-      "type": "PLA HS",
-      "sku": "34032"
-    },
-    {
+      "rgba": "#8C9099FF",
       "name": "Grey",
-      "hex": "#8C9099",
-      "type": "PLA HS",
-      "sku": "34033"
+      "name_zh": "灰色"
     },
     {
-      "name": "Blue",
-      "hex": "#003776",
-      "type": "PLA HS",
-      "sku": "34034"
+      "rgba": "#000000FF",
+      "name": "Black",
+      "name_zh": "黑色"
     },
     {
-      "name": "Red",
-      "hex": "#E72F1D",
-      "type": "PLA HS",
-      "sku": "34035"
-    },
-    {
-      "name": "Purple",
-      "hex": "#6C5BB1",
-      "type": "PLA HS",
-      "sku": "34036"
-    },
-    {
-      "name": "Orange",
-      "hex": "#F97429",
-      "type": "PLA HS",
-      "sku": "34037"
-    },
-    {
-      "name": "Green",
-      "hex": "#2D9E59",
-      "type": "PLA HS",
-      "sku": "34038"
-    },
-    {
-      "name": "Yellow",
-      "hex": "#F4C032",
-      "type": "PLA HS",
-      "sku": "34039"
-    },
-    {
+      "rgba": "#6F4C2FFF",
       "name": "Brown",
-      "hex": "#6F4C2F",
-      "type": "PLA HS",
-      "sku": "34040"
+      "name_zh": "棕色"
+    },
+    {
+      "rgba": "#FEE5A5FF",
+      "name": "Butter Cream",
+      "name_zh": "奶油黄"
+    },
+    {
+      "rgba": "#F4C032FF",
+      "name": "Yellow",
+      "name_zh": "黄色"
+    },
+    {
+      "rgba": "#F8F81CFF",
+      "name": "Fluorescent Yellow",
+      "name_zh": "荧光黄色"
+    },
+    {
+      "rgba": "#BEC9A5FF",
+      "name": "Gray Green",
+      "name_zh": "灰绿色"
+    },
+    {
+      "rgba": "#2D9E59FF",
+      "name": "Green",
+      "name_zh": "绿色"
+    },
+    {
+      "rgba": "#39FF14FF",
+      "name": "Fluorescent Green",
+      "name_zh": "荧光绿色"
+    },
+    {
+      "rgba": "#1B5E20FF",
+      "name": "Dark Green",
+      "name_zh": "深绿色"
+    },
+    {
+      "rgba": "#8BD5EEFF",
+      "name": "Light Blue",
+      "name_zh": "浅蓝色"
+    },
+    {
+      "rgba": "#4DB6ACFF",
+      "name": "Teal",
+      "name_zh": "青绿色"
+    },
+    {
+      "rgba": "#1E88E5FF",
+      "name": "Blue",
+      "name_zh": "蓝色"
+    },
+    {
+      "rgba": "#003776FF",
+      "name": "Dark Blue",
+      "name_zh": "深蓝色"
+    },
+    {
+      "rgba": "#6C5BB1FF",
+      "name": "Blue Violet",
+      "name_zh": "蓝紫色"
+    },
+    {
+      "rgba": "#8E24AAFF",
+      "name": "Purple",
+      "name_zh": "紫色"
+    },
+    {
+      "rgba": "#D81B60FF",
+      "name": "Magenta",
+      "name_zh": "品红色"
+    },
+    {
+      "rgba": "#F55A7CFF",
+      "name": "Pink",
+      "name_zh": "粉红色"
+    },
+    {
+      "rgba": "#E72F1DFF",
+      "name": "Red",
+      "name_zh": "红色"
+    },
+    {
+      "rgba": "#F3D6E5FF",
+      "name": "Light Pink",
+      "name_zh": "浅粉色"
+    },
+    {
+      "rgba": "#F78E0EFF",
+      "name": "Orange",
+      "name_zh": "橙色"
+    },
+    {
+      "rgba": "#E65100FF",
+      "name": "Deep Orange",
+      "name_zh": "深橙色"
     }
   ]
 }

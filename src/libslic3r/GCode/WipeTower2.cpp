@@ -2390,9 +2390,13 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>> 
     }
 #endif
 
-    m_rib_length = std::max({m_rib_length, sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width)});
+    // 计算对角线长度
+    float diagonal = std::sqrt(m_wipe_tower_depth * m_wipe_tower_depth +
+                               m_wipe_tower_width * m_wipe_tower_width);
+    m_rib_length = std::max({m_rib_length, diagonal});
     m_rib_length += m_extra_rib_length;
-    m_rib_length = std::max(0.f, m_rib_length);
+    // 确保rib_length不小于对角线长度（防止负值extra_rib_length导致问题）
+    m_rib_length = std::max(diagonal, m_rib_length);
     m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) /
                                              2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
 
@@ -2487,6 +2491,15 @@ Polygon WipeTower2::generate_rib_polygon(const WipeTower::box_coordinates& wt_bo
     Line    line_2(Point::new_scale(Vec2f{a, 0}), Point::new_scale(Vec2f{0, b}));
     float   diagonal_extra_length = std::max(0.f, m_rib_length - (float) unscaled(line_1.length())) / 2.f;
     diagonal_extra_length         = scaled(get_current_layer_rib_len(this->m_z_pos, this->m_wipe_tower_height, diagonal_extra_length));
+
+    // Add boundary constraint: ensure extension doesn't exceed tower boundaries
+    float max_safe_extension = std::min(
+        (m_wipe_tower_width - unscaled(line_1.length())) / 2.0f,
+        (m_wipe_tower_depth - unscaled(line_1.length())) / 2.0f
+    );
+    max_safe_extension = std::max(0.f, max_safe_extension);  // Prevent negative values
+    diagonal_extra_length = std::min<coord_t>(diagonal_extra_length, scaled(max_safe_extension));
+
     Point y_shift{0, scaled(this->m_y_shift)};
 
     line_1.extend(double(diagonal_extra_length));
@@ -2497,16 +2510,36 @@ Polygon WipeTower2::generate_rib_polygon(const WipeTower::box_coordinates& wt_bo
     Polygon poly_1 = generate_rectange(line_1, diagonal_width);
     Polygon poly_2 = generate_rectange(line_2, diagonal_width);
     Polygon poly;
-    poly.points.push_back(Point::new_scale(wt_box.ld));
-    poly.points.push_back(Point::new_scale(wt_box.rd));
-    poly.points.push_back(Point::new_scale(wt_box.ru));
-    poly.points.push_back(Point::new_scale(wt_box.lu));
+    poly.points.push_back(Point::new_scale(wt_box.ld) - y_shift);
+    poly.points.push_back(Point::new_scale(wt_box.rd) - y_shift);
+    poly.points.push_back(Point::new_scale(wt_box.ru) - y_shift);
+    poly.points.push_back(Point::new_scale(wt_box.lu) - y_shift);
 
     Polygons p_1_2 = union_({poly_1, poly_2, poly});
     // Polygon            res_poly = p_1_2.front();
     // for (auto &p : res_poly.points) res.push_back(unscale(p).cast<float>());
     /*if (p_1_2.front().points.size() != 16)
         std::cout << "error " << std::endl;*/
+
+    // 验证结果
+    BoundingBox bbox = get_extents(p_1_2.front());
+    BoundingBox expected = get_extents(poly);
+    if (!expected.contains(bbox)) {
+        BOOST_LOG_TRIVIAL(warning) << "Rib polygon exceeds tower boundaries at z=" << m_z_pos;
+    }
+
+    // 可选：验证顶点数
+    if (p_1_2.front().points.size() != 16) {
+        BOOST_LOG_TRIVIAL(debug) << "Rib polygon has " << p_1_2.front().points.size()
+                                 << " vertices (expected 16)";
+    }
+
+    // 计算rib_offset（仅在第一层）
+    if (m_z_pos < 0.01f) {  // 第一层判断
+        BoundingBox bbox = get_extents(p_1_2.front());
+        m_rib_offset = Vec2f(-unscaled<float>(bbox.min.x()), -unscaled<float>(bbox.min.y()));
+    }
+
     return p_1_2.front();
 };
 
@@ -2544,10 +2577,6 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
         insert_skip_polygon = wall_polygon;
     }
     writer.generate_path(result_wall, feedrate, retract_length, retract_speed, m_used_fillet);
-    //if (m_cur_layer_id == 0) {
-    //    BoundingBox bbox = get_extents(result_wall);
-    //    m_rib_offset     = Vec2f(-unscaled<float>(bbox.min.x()), -unscaled<float>(bbox.min.y()));
-    //}
 
     return insert_skip_polygon;
 }

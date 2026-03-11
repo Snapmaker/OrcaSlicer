@@ -1729,6 +1729,22 @@ arrangement::ArrangePolygon PartPlate::estimate_wipe_tower_polygon(const Dynamic
     Vec3d wipe_tower_size = estimate_wipe_tower_size(config, w, v, plate_extruder_size, use_global_objects);
 	int plate_width=m_width, plate_depth=m_depth;
 	float depth = wipe_tower_size(1);
+
+    // 验证rib_width不超过塔尺寸的一半
+    WipeTowerWallType wall_type = config.opt_enum<WipeTowerWallType>("wipe_tower_wall_type");
+    if (wall_type == WipeTowerWallType::wtwRib) {
+        const ConfigOption* rib_width_opt = config.option("wipe_tower_rib_width");
+        if (rib_width_opt) {
+            float rib_width = rib_width_opt->getFloat();
+            float max_rib_width = std::min(w, depth) / 2.f;
+            if (rib_width > max_rib_width) {
+                BOOST_LOG_TRIVIAL(warning) << "wipe_tower_rib_width (" << rib_width
+                                           << "mm) exceeds maximum safe value (" << max_rib_width
+                                           << "mm) for tower dimensions. It will be clamped during generation.";
+            }
+        }
+    }
+
 	float margin = WIPE_TOWER_MARGIN + tower_brim_width, wp_brim_width = 0.f;
 	const ConfigOption* wipe_tower_brim_width_opt = config.option("prime_tower_brim_width");
 	if (wipe_tower_brim_width_opt) {

@@ -779,7 +779,23 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("wipe_tower_extra_rib_length", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwRib);
     toggle_line("wipe_tower_rib_width", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwRib);
     toggle_line("wipe_tower_fillet_wall", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwRib);
-    
+
+    // 根据wall_type控制相关字段
+    if (have_prime_tower && !is_BBL_Printer) {
+        auto wall_type = config->opt_enum<WipeTowerWallType>("wipe_tower_wall_type");
+
+        // Rib相关参数只在Rib模式下显示
+        bool is_rib_wall = (wall_type == WipeTowerWallType::wtwRib);
+        for (auto el : {"wipe_tower_extra_rib_length", "wipe_tower_rib_width", "wipe_tower_fillet_wall"})
+            toggle_line(el, is_rib_wall);
+
+        // Cone相关参数只在Cone模式下显示
+        bool is_cone_wall = (wall_type == WipeTowerWallType::wtwCone);
+        toggle_line("wipe_tower_cone_angle", is_cone_wall);
+
+        // 关键：Rib模式下禁用width编辑（自动计算）
+        toggle_field("prime_tower_width", !is_rib_wall);
+    }
 
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && !is_BBL_Printer);
 

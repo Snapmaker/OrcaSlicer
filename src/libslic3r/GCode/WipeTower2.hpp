@@ -60,6 +60,7 @@ public:
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
+    Vec2f get_rib_offset() const { return m_rib_offset; }
 
 
 
@@ -214,6 +215,7 @@ private:
     float  m_rib_width                    = 10;
     float  m_extra_rib_length             = 0;
     float  m_rib_length                   = 0;
+    Vec2f  m_rib_offset                   = Vec2f::Zero();
 
     bool   m_enable_arc_fitting           = false;
 

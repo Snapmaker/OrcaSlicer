@@ -2822,23 +2822,10 @@ void MainFrame::init_menubar_as_editor()
             [this](wxCommandEvent&) { m_plater->toggle_show_wireframe(); m_plater->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT)); }, this,
             [this]() { return m_plater->is_wireframe_enabled(); }, [this]() { return m_plater->is_show_wireframe(); }, this);*/
 
-        //viewMenu->AppendSeparator();
-        ////BBS orthogonal view
-        //append_menu_check_item(viewMenu, wxID_ANY, _L("Show Edges(TODO)"), _L("Show Edges."),
-        //    [this](wxCommandEvent& evt) {
-        //        wxGetApp().app_config->set("show_build_edges", evt.GetInt() == 1 ? "true" : "false");
-        //    }, nullptr, [this]() {return can_select(); }, [this]() {
-        //        std::string show_build_edges = wxGetApp().app_config->get("show_build_edges");
-        //        return show_build_edges.compare("true") == 0;
-        //    }, this);
     }
 
     wxWindowID config_id_base = wxWindow::NewControlId(int(ConfigMenuCnt));
-    //TODO remove
-    //auto config_wizard_name = _(ConfigWizard::name(true) + "(Debug)");
-    //const auto config_wizard_tooltip = from_u8((boost::format(_utf8(L("Run %s"))) % config_wizard_name).str());
-    //auto config_item = new wxMenuItem(m_topbar->GetTopMenu(), ConfigMenuWizard + config_id_base, config_wizard_name, config_wizard_tooltip);
-#ifdef __APPLE__
+   #ifdef __APPLE__
     wxWindowID bambu_studio_id_base = wxWindow::NewControlId(int(2));
     wxMenu* parent_menu = m_menubar->OSXGetAppleMenu();
     //auto preference_item = new wxMenuItem(parent_menu, OrcaSlicerMenuPreferences + bambu_studio_id_base, _L("Preferences") + "\t" + ctrl + ",", "");
@@ -2847,98 +2834,11 @@ void MainFrame::init_menubar_as_editor()
     auto preference_item = new wxMenuItem(parent_menu, ConfigMenuPreferences + config_id_base, _L("Preferences") + "\t" + ctrl + "P", "");
 
 #endif
-    //auto printer_item = new wxMenuItem(parent_menu, ConfigMenuPrinter + config_id_base, _L("Printer"), "");
-    //auto language_item = new wxMenuItem(parent_menu, ConfigMenuLanguage + config_id_base, _L("Switch Language"), "");
-//    parent_menu->Bind(wxEVT_MENU, [this, config_id_base](wxEvent& event) {
-//        switch (event.GetId() - config_id_base) {
-//        //case ConfigMenuLanguage:
-//        //{
-//        //    /* Before change application language, let's check unsaved changes on 3D-Scene
-//        //     * and draw user's attention to the application restarting after a language change
-//        //     */
-//        //    {
-//        //        // the dialog needs to be destroyed before the call to switch_language()
-//        //        // or sometimes the application crashes into wxDialogBase() destructor
-//        //        // so we put it into an inner scope
-//        //        wxString title = _L("Language selection");
-//        //        wxMessageDialog dialog(nullptr,
-//        //            _L("Switching the language requires application restart.\n") + "\n\n" +
-//        //            _L("Do you want to continue?"),
-//        //            title,
-//        //            wxICON_QUESTION | wxOK | wxCANCEL);
-//        //        if (dialog.ShowModal() == wxID_CANCEL)
-//        //            return;
-//        //    }
-//
-//        //    wxGetApp().switch_language();
-//        //    break;
-//        //}
-//        //case ConfigMenuWizard:
-//        //{
-//        //    wxGetApp().run_wizard(ConfigWizard::RR_USER);
-//        //    break;
-//        //}
-//        case ConfigMenuPrinter:
-//        {
-//            wxGetApp().params_dialog()->Popup();
-//            wxGetApp().get_tab(Preset::TYPE_PRINTER)->restore_last_select_item();
-//            break;
-//        }
-//        case ConfigMenuPreferences:
-//        {
-//            CallAfter([this] {
-//                PreferencesDialog dlg(this);
-//                dlg.ShowModal();
-//#if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-//                if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
-//#else
-//                if (dlg.seq_top_layer_only_changed())
-//#endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-//                    plater()->refresh_print();
-//#if ENABLE_CUSTOMIZABLE_FILES_ASSOCIATION_ON_WIN
-//#ifdef _WIN32
-//                /*
-//                if (wxGetApp().app_config()->get("associate_3mf") == "true")
-//                    wxGetApp().associate_3mf_files();
-//                if (wxGetApp().app_config()->get("associate_stl") == "true")
-//                    wxGetApp().associate_stl_files();
-//                /*if (wxGetApp().app_config()->get("associate_step") == "true")
-//                    wxGetApp().associate_step_files();*/
-//#endif // _WIN32
-//#endif
-//            });
-//            break;
-//        }
-//        default:
-//            break;
-//        }
-//    });
+   
 
 #ifdef __APPLE__
     wxString about_title = wxString::Format(_L("&About %s"), SLIC3R_APP_FULL_NAME);
-    //auto about_item = new wxMenuItem(parent_menu, Snapmaker_OrcaMenuAbout + bambu_studio_id_base, about_title, "");
-        //parent_menu->Bind(wxEVT_MENU, [this, bambu_studio_id_base](wxEvent& event) {
-        //    switch (event.GetId() - bambu_studio_id_base) {
-        //        case Snapmaker_OrcaMenuAbout:
-        //            Slic3r::GUI::about();
-        //            break;
-        //        case Snapmaker_OrcaMenuPreferences:
-        //            CallAfter([this] {
-        //                PreferencesDialog dlg(this);
-        //                dlg.ShowModal();
-        //#if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-        //                if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
-        //#else
-        //                if (dlg.seq_top_layer_only_changed())
-        //#endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-        //                    plater()->refresh_print();
-        //            });
-        //            break;
-        //        default:
-        //            break;
-        //    }
-        //});
-    //parent_menu->Insert(0, about_item);
+
     append_menu_item(
         parent_menu, wxID_ANY, _L(about_title), "",
         [this](wxCommandEvent &) { Slic3r::GUI::about();},
@@ -2978,10 +2878,7 @@ void MainFrame::init_menubar_as_editor()
             plater()->get_current_canvas3D()->force_set_focus();
         },
         "", nullptr, []() { return true; }, this);
-    //m_topbar->AddDropDownMenuItem(preference_item);
-    //m_topbar->AddDropDownMenuItem(printer_item);
-    //m_topbar->AddDropDownMenuItem(language_item);
-    //m_topbar->AddDropDownMenuItem(config_item);
+
     m_topbar->AddDropDownSubMenu(helpMenu, _L("Help"));
 
     // SoftFever calibrations

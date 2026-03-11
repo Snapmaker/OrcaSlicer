@@ -2,7 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Allow dynamic loading of libraries without signature validation. Used for 3dconnection drivers. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <!-- Allow JIT compilation (required for JavaScript/WKWebView on macOS) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- Allow unsigned executable memory (required for JIT/WKWebView) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Allow DYLD environment variables -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <!-- Explicitly disable App Sandbox (this app needs full filesystem/network access) -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
 </dict>
 </plist>

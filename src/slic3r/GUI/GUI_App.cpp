@@ -2526,6 +2526,8 @@ bool GUI_App::on_init_inner()
                 }
                 if (!skip_this_version || evt.GetInt() != 0) {                    
                     wxString            extmsg = wxString::FromUTF8(version_info.description);
+                    if(!m_updateDialog)
+                        return;
                     m_updateDialog->update_version_info(extmsg, version_info.version_str);
                     if (evt.GetInt() != 0) {
                         m_updateDialog->m_button_skip_version->Hide();
@@ -2669,12 +2671,15 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
-    m_updateDialog = new UpdateVersionDialog(mainframe);
-    m_updateDialog->Hide();
-    m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
-        auto downloadUlr = m_updateDialog->getUrl();
-        wxLaunchDefaultBrowser(downloadUlr);
-    });
+    if (!m_updateDialog)
+    {
+        m_updateDialog = new UpdateVersionDialog(mainframe);
+        m_updateDialog->Hide();
+        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
+            auto downloadUlr = m_updateDialog->getUrl();
+            wxLaunchDefaultBrowser(downloadUlr);
+        });
+    }
 
     // hide settings tabs after first Layout
     if (is_editor()) {
@@ -3530,6 +3535,15 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     switch_window_pools();
     mainframe = new MainFrame();
+
+    if (!m_updateDialog) {
+        m_updateDialog = new UpdateVersionDialog(mainframe);
+        m_updateDialog->Hide();
+        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
+            auto downloadUlr = m_updateDialog->getUrl();
+            wxLaunchDefaultBrowser(downloadUlr);
+        });
+    }
     if (is_editor())
         // hide settings tabs after first Layout
         mainframe->select_tab(size_t(MainFrame::tp3DEditor));
@@ -5317,20 +5331,20 @@ void GUI_App::stop_sync_user_preset()
     }
 }
 
-void GUI_App::start_http_server()
-{
-    if (!m_http_server.is_started())
-        m_http_server.start();
-}
-void GUI_App::stop_http_server()
-{
-    m_http_server.stop();
-}
+//void GUI_App::start_http_server()
+//{
+//    if (!m_http_server.is_started())
+//        m_http_server.start();
+//}
+//void GUI_App::stop_http_server()
+//{
+//    m_http_server.stop();
+//}
 
 void GUI_App::start_page_http_server() 
 {
     if (!m_page_http_server.is_started())
-        m_page_http_server;
+        m_page_http_server.start();
 }
 void GUI_App::stop_page_http_server()
 {

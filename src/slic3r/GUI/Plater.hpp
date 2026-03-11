@@ -157,6 +157,7 @@ public:
 
     void on_filaments_delete(size_t filament_id);
     void update_mixed_filament_panel(bool sync_manager = true);
+    std::vector<unsigned int> get_ui_ordered_filament_ids() const;
     // BBS
     void on_bed_type_change(BedType bed_type);
     void load_ams_list(std::string const & device, MachineObject* obj);

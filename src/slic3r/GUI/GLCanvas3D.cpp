@@ -113,6 +113,30 @@ float RetinaHelper::get_scale_factor() { return float(m_window->GetContentScaleF
 #undef Convex
 #endif
 
+static std::vector<unsigned int> get_ui_ordered_filament_ids(Plater *plater, size_t total_filaments)
+{
+    std::vector<unsigned int> ordered_ids;
+    if (plater != nullptr)
+        ordered_ids = plater->sidebar().get_ui_ordered_filament_ids();
+
+    std::vector<unsigned int> sanitized_ids;
+    sanitized_ids.reserve(total_filaments);
+    std::vector<bool> used(total_filaments + 1, false);
+    for (const unsigned int filament_id : ordered_ids) {
+        if (filament_id == 0 || filament_id > total_filaments || used[filament_id])
+            continue;
+        used[filament_id] = true;
+        sanitized_ids.emplace_back(filament_id);
+    }
+
+    for (unsigned int filament_id = 1; filament_id <= total_filaments; ++filament_id) {
+        if (!used[filament_id])
+            sanitized_ids.emplace_back(filament_id);
+    }
+
+    return sanitized_ids;
+}
+
 GLCanvas3D::LayersEditing::~LayersEditing()
 {
     if (m_z_texture_id != 0) {
@@ -3304,8 +3328,16 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
                 if (keyCode < '7')  keyCode += 10;
                 m_timer_set_color.Stop();
             }
-            if (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation)
-                obj_list->set_extruder_for_selected_items(keyCode - '0');
+            if (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation) {
+                const int display_filament_id = keyCode - '0';
+                const size_t total_filaments = wxGetApp().plater()->get_extruder_colors_from_plater_config().size();
+                const std::vector<unsigned int> ordered_filament_ids =
+                    get_ui_ordered_filament_ids(wxGetApp().plater(), total_filaments);
+                if (display_filament_id >= 1 && size_t(display_filament_id) <= ordered_filament_ids.size())
+                    obj_list->set_extruder_for_selected_items(int(ordered_filament_ids[size_t(display_filament_id - 1)]));
+                else
+                    obj_list->set_extruder_for_selected_items(display_filament_id);
+            }
             break;
         }
 
@@ -3847,8 +3879,11 @@ void GLCanvas3D::on_render_timer(wxTimerEvent& evt)
 void GLCanvas3D::on_set_color_timer(wxTimerEvent& evt)
 {
     auto obj_list = wxGetApp().obj_list();
-    if (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation)
-        obj_list->set_extruder_for_selected_items(1);
+    if (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation) {
+        const std::vector<unsigned int> ordered_filament_ids =
+            get_ui_ordered_filament_ids(wxGetApp().plater(), wxGetApp().plater()->get_extruder_colors_from_plater_config().size());
+        obj_list->set_extruder_for_selected_items(ordered_filament_ids.empty() ? 1 : int(ordered_filament_ids.front()));
+    }
     m_timer_set_color.Stop();
 }
 
@@ -8354,27 +8389,51 @@ void GLCanvas3D::_render_paint_toolbar() const
 #endif
     int em_unit = wxGetApp().em_unit() / 10;
 
-    std::vector<std::string> colors = wxGetApp().plater()->get_extruder_colors_from_plater_config();
-    int extruder_num = colors.size();
+    const std::vector<std::string> actual_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config();
+    const std::vector<unsigned int> display_filament_ids =
+        get_ui_ordered_filament_ids(wxGetApp().plater(), actual_colors.size());
+    std::vector<std::string> colors;
+    colors.reserve(display_filament_ids.size());
+    for (const unsigned int filament_id : display_filament_ids) {
+        if (filament_id >= 1 && filament_id <= actual_colors.size())
+            colors.emplace_back(actual_colors[filament_id - 1]);
+    }
+
+    const int extruder_num = int(colors.size());
     std::vector<std::string> filament_text_first_line;
     std::vector<std::string> filament_text_second_line;
     {
         auto preset_bundle = wxGetApp().preset_bundle;
-        for (auto filament_name : preset_bundle->filament_presets) {
-            for (auto iter = preset_bundle->filaments.lbegin(); iter != preset_bundle->filaments.end(); iter++) {
-                if (filament_name.compare(iter->name) == 0) {
+        const size_t physical_count = preset_bundle ? preset_bundle->filament_presets.size() : 0;
+        filament_text_first_line.reserve(colors.size());
+        filament_text_second_line.reserve(colors.size());
+        for (size_t display_idx = 0; display_idx < display_filament_ids.size(); ++display_idx) {
+            const unsigned int actual_filament_id = display_filament_ids[display_idx];
+            bool label_found = false;
+            if (preset_bundle != nullptr && actual_filament_id >= 1 && actual_filament_id <= physical_count) {
+                const std::string &filament_name = preset_bundle->filament_presets[size_t(actual_filament_id - 1)];
+                for (auto iter = preset_bundle->filaments.lbegin(); iter != preset_bundle->filaments.end(); ++iter) {
+                    if (filament_name.compare(iter->name) != 0)
+                        continue;
+
                     std::string display_filament_type;
                     iter->config.get_filament_type(display_filament_type);
                     auto pos = display_filament_type.find(' ');
                     if (pos != std::string::npos) {
                         filament_text_first_line.push_back(display_filament_type.substr(0, pos));
                         filament_text_second_line.push_back(display_filament_type.substr(pos + 1));
-                    }
-                    else {
+                    } else {
                         filament_text_first_line.push_back(display_filament_type);
                         filament_text_second_line.push_back("");
                     }
+                    label_found = true;
+                    break;
                 }
+            }
+
+            if (!label_found) {
+                filament_text_first_line.push_back("Mixed");
+                filament_text_second_line.push_back("Filament");
             }
         }
     }
@@ -8417,8 +8476,11 @@ void GLCanvas3D::_render_paint_toolbar() const
         if (disabled)
             ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
         if (ImGui::Button(("##filament_button" + std::to_string(i)).c_str(), button_size)) {
-            if (!ImGui::IsMouseHoveringRect(left_arrow_button.Min, left_arrow_button.Max) && !ImGui::IsMouseHoveringRect(right_arrow_button.Min, right_arrow_button.Max))
-                wxPostEvent(m_canvas, IntEvent(EVT_GLTOOLBAR_FILLCOLOR, i + 1));
+            if (!ImGui::IsMouseHoveringRect(left_arrow_button.Min, left_arrow_button.Max) && !ImGui::IsMouseHoveringRect(right_arrow_button.Min, right_arrow_button.Max)) {
+                const int actual_filament_id =
+                    i < int(display_filament_ids.size()) ? int(display_filament_ids[size_t(i)]) : i + 1;
+                wxPostEvent(m_canvas, IntEvent(EVT_GLTOOLBAR_FILLCOLOR, actual_filament_id));
+            }
         }
         if (ImGui::IsItemHovered() && i < 9) {
             if (!ImGui::IsMouseHoveringRect(left_arrow_button.Min, left_arrow_button.Max) && !ImGui::IsMouseHoveringRect(right_arrow_button.Min, right_arrow_button.Max)) {

@@ -85,7 +85,12 @@ protected:
     ColorRGBA get_cursor_hover_color() const override;
     void on_set_state() override;
 
-    EnforcerBlockerType get_left_button_state_type() const override { return EnforcerBlockerType(m_selected_extruder_idx + 1); }
+    EnforcerBlockerType get_left_button_state_type() const override
+    {
+        if (m_selected_extruder_idx < m_display_filament_ids.size())
+            return EnforcerBlockerType(m_display_filament_ids[m_selected_extruder_idx]);
+        return EnforcerBlockerType::Extruder1;
+    }
     EnforcerBlockerType get_right_button_state_type() const override { return EnforcerBlockerType(-1); }
 
     void on_render_input_window(float x, float y, float bottom_limit) override;
@@ -103,6 +108,7 @@ protected:
     // BBS
     size_t                            m_selected_extruder_idx = 0;
     std::vector<ColorRGBA>            m_extruders_colors;
+    std::vector<unsigned int>         m_display_filament_ids;
     std::vector<int>                  m_volumes_extruder_idxs;
 
     // BBS

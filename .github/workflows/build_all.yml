@@ -11,6 +11,8 @@ on:
      - 'src/**'
      - '**/CMakeLists.txt'
      - 'version.inc'
+     - 'CHANGELOG*.md'
+     - 'RELEASE_NOTES*.md'
      - 'localization/**'
      - 'resources/**'
      - ".github/workflows/build_*.yml"
@@ -26,6 +28,8 @@ on:
      - 'src/**'
      - '**/CMakeLists.txt'
      - 'version.inc'
+     - 'CHANGELOG*.md'
+     - 'RELEASE_NOTES*.md'
      - ".github/workflows/build_*.yml"
      - 'build_linux.sh'
      - 'build_release_vs2022.bat'
@@ -93,11 +97,17 @@ jobs:
         tag="v${version}"
         title="Snapmaker Orca Full Spectrum v${version}"
 
-        # Look for a release notes file matching the version
-        notes_file="RELEASE_NOTES_v${version}.md"
-        if [ -f "$notes_file" ]; then
-          notes_content=$(cat "$notes_file")
-        else
+        notes_content=""
+        for notes_file in \
+          "CHANGELOG_v${version}.md" \
+          "RELEASE_NOTES_v${version}.md"; do
+          if [ -f "$notes_file" ]; then
+            notes_content=$(cat "$notes_file")
+            break
+          fi
+        done
+
+        if [ -z "$notes_content" ]; then
           printf -v notes_content '%s\n\n%s\n%s\n%s\n\n%s' \
             "Automated build for ${GITHUB_REPOSITORY}." \
             "- Ref: ${GITHUB_REF_NAME}" \

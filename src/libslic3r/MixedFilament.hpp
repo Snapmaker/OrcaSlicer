@@ -146,6 +146,7 @@ public:
     // Normalize a manual mixed-pattern string into compact token form.
     // Accepts separators and A/B aliases. Returns empty string if invalid.
     static std::string normalize_manual_pattern(const std::string &pattern);
+    static int         mix_percent_from_manual_pattern(const std::string &pattern);
 
     // ---- Queries --------------------------------------------------------
 
@@ -164,6 +165,19 @@ public:
                          float        layer_print_z = 0.f,
                          float        layer_height  = 0.f,
                          bool         force_height_weighted = false) const;
+    unsigned int resolve_perimeter(unsigned int filament_id,
+                                   size_t       num_physical,
+                                   int          layer_index,
+                                   int          perimeter_index,
+                                   float        layer_print_z = 0.f,
+                                   float        layer_height  = 0.f,
+                                   bool         force_height_weighted = false) const;
+    std::vector<unsigned int> ordered_perimeter_extruders(unsigned int filament_id,
+                                                          size_t       num_physical,
+                                                          int          layer_index,
+                                                          float        layer_print_z = 0.f,
+                                                          float        layer_height  = 0.f,
+                                                          bool         force_height_weighted = false) const;
 
     // Map virtual filament ID (1-based, after physical IDs) to index into
     // m_mixed. Virtual IDs enumerate enabled mixed rows only.

@@ -60,6 +60,45 @@ unsigned int resolve_mixed_with_layer_heights(const MixedFilamentManager *mixed_
     return mixed_mgr->resolve(filament_id_1based, num_physical, layer_index, layer_print_z, layer_height);
 }
 
+bool has_grouped_manual_pattern(const MixedFilamentManager *mixed_mgr,
+                                size_t                      num_physical,
+                                unsigned int                filament_id_1based)
+{
+    if (!(mixed_mgr && mixed_mgr->is_mixed(filament_id_1based, num_physical)))
+        return false;
+    const MixedFilament *mixed_row = mixed_mgr->mixed_filament_from_id(filament_id_1based, num_physical);
+    if (mixed_row == nullptr)
+        return false;
+    const std::string normalized = MixedFilamentManager::normalize_manual_pattern(mixed_row->manual_pattern);
+    return normalized.find(',') != std::string::npos;
+}
+
+void append_unique_preserve_order(std::vector<unsigned int> &dst, unsigned int value)
+{
+    if (std::find(dst.begin(), dst.end(), value) == dst.end())
+        dst.emplace_back(value);
+}
+
+unsigned int grouped_manual_pattern_mixed_filament_id_for_layer(const LayerTools& layer_tools,
+                                                                unsigned int      configured_filament_id_1based)
+{
+    if (layer_tools.mixed_mgr == nullptr || layer_tools.num_physical == 0)
+        return 0;
+
+    if (has_grouped_manual_pattern(layer_tools.mixed_mgr, layer_tools.num_physical, configured_filament_id_1based))
+        return configured_filament_id_1based;
+    return 0;
+}
+
+void remove_duplicates_preserve_order(std::vector<unsigned int> &values)
+{
+    std::vector<unsigned int> ordered;
+    ordered.reserve(values.size());
+    for (unsigned int value : values)
+        append_unique_preserve_order(ordered, value);
+    values = std::move(ordered);
+}
+
 } // namespace
 
 
@@ -639,11 +678,34 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 }
 
                 if (something_nonoverriddable){
-                    unsigned int wall_ext = (extruder_override == 0) ? region.config().wall_filament.value : extruder_override;
-                    wall_ext = resolve_mixed(wall_ext, layerCount, float(layer->print_z), float(layer->height));
-               		layer_tools.extruders.emplace_back(wall_ext);
-                    if (layerCount == 0) {
-                        firstLayerExtruders.emplace_back(wall_ext);
+                    const unsigned int configured_wall = (extruder_override == 0) ? region.config().wall_filament.value : extruder_override;
+                    unsigned int       wall_ext        = resolve_mixed(configured_wall, layerCount, float(layer->print_z), float(layer->height));
+                    const unsigned int grouped_id =
+                        grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_wall);
+                    if (grouped_id != 0) {
+                        const std::vector<unsigned int> ordered =
+                            m_mixed_mgr->ordered_perimeter_extruders(grouped_id,
+                                                                     m_num_physical,
+                                                                     layerCount,
+                                                                     float(layer->print_z),
+                                                                     float(layer->height));
+                        if (ordered.size() >= 2) {
+                            layer_tools.preserve_extruder_order = true;
+                            for (unsigned int extruder_id : ordered) {
+                                layer_tools.extruders.emplace_back(extruder_id);
+                                if (layerCount == 0 &&
+                                    std::find(firstLayerExtruders.begin(), firstLayerExtruders.end(), int(extruder_id)) == firstLayerExtruders.end())
+                                    firstLayerExtruders.emplace_back(int(extruder_id));
+                            }
+                        } else {
+                            layer_tools.extruders.emplace_back(wall_ext);
+                            if (layerCount == 0)
+                                firstLayerExtruders.emplace_back(wall_ext);
+                        }
+                    } else {
+                        layer_tools.extruders.emplace_back(wall_ext);
+                        if (layerCount == 0)
+                            firstLayerExtruders.emplace_back(wall_ext);
                     }
                 }
 
@@ -696,8 +758,10 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
     const_cast<PrintObject&>(object).object_first_layer_wall_extruders = firstLayerExtruders;
     
     for (auto& layer : m_layer_tools) {
-        // Sort and remove duplicates
-        sort_remove_duplicates(layer.extruders);
+        if (layer.preserve_extruder_order)
+            remove_duplicates_preserve_order(layer.extruders);
+        else
+            sort_remove_duplicates(layer.extruders);
 
         // make sure that there are some tools for each object layer (e.g. tall wiping object will result in empty extruders vector)
         if (layer.extruders.empty() && layer.has_object)
@@ -739,6 +803,10 @@ void ToolOrdering::reorder_extruders(unsigned int last_extruder_id)
             if (lt.extruders.front() == 0)
                 // Pop the "don't care" extruder, the "don't care" region will be merged with the next one.
                 lt.extruders.erase(lt.extruders.begin());
+            if (lt.preserve_extruder_order) {
+                last_extruder_id = lt.extruders.back();
+                continue;
+            }
             // Reorder the extruders to start with the last one.
             for (size_t i = 1; i < lt.extruders.size(); ++ i)
                 if (lt.extruders[i] == last_extruder_id) {
@@ -789,27 +857,29 @@ void ToolOrdering::reorder_extruders(std::vector<unsigned int> tool_order_layer0
     // Reorder the extruders of first layer
     {
         LayerTools& lt = m_layer_tools[0];
-        std::vector<unsigned int> layer0_extruders = lt.extruders;
-        lt.extruders.clear();
-        for (unsigned int extruder_id : tool_order_layer0) {
-            auto iter = std::find(layer0_extruders.begin(), layer0_extruders.end(), extruder_id);
-            if (iter != layer0_extruders.end()) {
-                lt.extruders.push_back(extruder_id);
-                *iter = (unsigned int)-1;
+        if (!lt.preserve_extruder_order) {
+            std::vector<unsigned int> layer0_extruders = lt.extruders;
+            lt.extruders.clear();
+            for (unsigned int extruder_id : tool_order_layer0) {
+                auto iter = std::find(layer0_extruders.begin(), layer0_extruders.end(), extruder_id);
+                if (iter != layer0_extruders.end()) {
+                    lt.extruders.push_back(extruder_id);
+                    *iter = (unsigned int)-1;
+                }
             }
-        }
 
-        for (unsigned int extruder_id : layer0_extruders) {
-            if (extruder_id == 0)
-                continue;
+            for (unsigned int extruder_id : layer0_extruders) {
+                if (extruder_id == 0)
+                    continue;
 
-            if (extruder_id != (unsigned int)-1)
-                lt.extruders.push_back(extruder_id);
-        }
+                if (extruder_id != (unsigned int)-1)
+                    lt.extruders.push_back(extruder_id);
+            }
 
-        // all extruders are zero
-        if (lt.extruders.empty()) {
-            lt.extruders.push_back(tool_order_layer0[0]);
+            // all extruders are zero
+            if (lt.extruders.empty()) {
+                lt.extruders.push_back(tool_order_layer0[0]);
+            }
         }
     }
 
@@ -825,6 +895,10 @@ void ToolOrdering::reorder_extruders(std::vector<unsigned int> tool_order_layer0
             if (lt.extruders.front() == 0)
                 // Pop the "don't care" extruder, the "don't care" region will be merged with the next one.
                 lt.extruders.erase(lt.extruders.begin());
+            if (lt.preserve_extruder_order) {
+                last_extruder_id = lt.extruders.back();
+                continue;
+            }
             // Reorder the extruders to start with the last one.
             for (size_t i = 1; i < lt.extruders.size(); ++i)
                 if (lt.extruders[i] == last_extruder_id) {
@@ -1039,6 +1113,10 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         LayerTools& lt = m_layer_tools[i];
         if (lt.extruders.empty())
             continue;
+        if (lt.preserve_extruder_order) {
+            current_extruder_id = lt.extruders.back();
+            continue;
+        }
 
         std::vector<int> custom_extruder_seq;
         if (get_custom_seq(i, custom_extruder_seq) && !custom_extruder_seq.empty()) {

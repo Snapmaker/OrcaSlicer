@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
 #include <sstream>
@@ -122,4 +123,72 @@ TEST_CASE("Mixed filament remap keeps later painted colors stable when an earlie
     CHECK(remap[6] == virtual_id_for_stable_id(mixed, 4, stable_id_6));
     CHECK(remap[7] == virtual_id_for_stable_id(mixed, 4, stable_id_7));
     CHECK(remap[8] == virtual_id_for_stable_id(mixed, 4, stable_id_8));
+}
+
+TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#0000FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("1/1/1/1/1/1/1/2, 1/1/1/2/1/1/1/1");
+    REQUIRE(row.manual_pattern == "11111112,11121111");
+
+    const std::string serialized = mgr.serialize_custom_entries();
+
+    MixedFilamentManager loaded;
+    loaded.load_custom_entries(serialized, colors);
+    REQUIRE(loaded.mixed_filaments().size() == 1);
+    CHECK(loaded.mixed_filaments().front().manual_pattern == "11111112,11121111");
+    CHECK(loaded.mixed_filaments().front().mix_b_percent == 13);
+}
+
+TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by inset", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#00FFFF", "#FF00FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("12,21");
+    REQUIRE(row.manual_pattern == "12,21");
+
+    const unsigned int mixed_filament_id = 3;
+    CHECK(mgr.resolve(mixed_filament_id, 2, 0) == 1);
+    CHECK(mgr.resolve(mixed_filament_id, 2, 1) == 2);
+
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 0, 0) == 1);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 0) == 2);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 0, 1) == 2);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 1) == 1);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 0, 3) == 2);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 3) == 1);
+
+    const std::vector<unsigned int> ordered_layer0 = mgr.ordered_perimeter_extruders(mixed_filament_id, 2, 0);
+    const std::vector<unsigned int> ordered_layer1 = mgr.ordered_perimeter_extruders(mixed_filament_id, 2, 1);
+    REQUIRE(ordered_layer0.size() == 2);
+    REQUIRE(ordered_layer1.size() == 2);
+    CHECK(ordered_layer0[0] == 1);
+    CHECK(ordered_layer0[1] == 2);
+    CHECK(ordered_layer1[0] == 2);
+    CHECK(ordered_layer1[1] == 1);
+}
+
+TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
+{
+    ExtrusionPath src(erPerimeter);
+    src.inset_idx = 3;
+
+    ExtrusionPath copied(src);
+    CHECK(copied.inset_idx == 3);
+
+    ExtrusionPath assigned(erExternalPerimeter);
+    assigned.inset_idx = 0;
+    assigned = src;
+    CHECK(assigned.inset_idx == 3);
 }

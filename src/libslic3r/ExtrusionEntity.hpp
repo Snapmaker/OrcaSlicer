@@ -170,7 +170,9 @@ public:
         , m_can_reverse(rhs.m_can_reverse)
         , m_role(rhs.m_role)
         , m_no_extrusion(rhs.m_no_extrusion)
-    {}
+    {
+        this->inset_idx = rhs.inset_idx;
+    }
     ExtrusionPath(ExtrusionPath &&rhs)
         : polyline(std::move(rhs.polyline))
         , mm3_per_mm(rhs.mm3_per_mm)
@@ -179,7 +181,9 @@ public:
         , m_can_reverse(rhs.m_can_reverse)
         , m_role(rhs.m_role)
         , m_no_extrusion(rhs.m_no_extrusion)
-    {}
+    {
+        this->inset_idx = rhs.inset_idx;
+    }
     ExtrusionPath(const Polyline &polyline, const ExtrusionPath &rhs)
         : polyline(polyline)
         , mm3_per_mm(rhs.mm3_per_mm)
@@ -188,7 +192,9 @@ public:
         , m_can_reverse(rhs.m_can_reverse)
         , m_role(rhs.m_role)
         , m_no_extrusion(rhs.m_no_extrusion)
-    {}
+    {
+        this->inset_idx = rhs.inset_idx;
+    }
     ExtrusionPath(Polyline &&polyline, const ExtrusionPath &rhs)
         : polyline(std::move(polyline))
         , mm3_per_mm(rhs.mm3_per_mm)
@@ -197,7 +203,9 @@ public:
         , m_can_reverse(rhs.m_can_reverse)
         , m_role(rhs.m_role)
         , m_no_extrusion(rhs.m_no_extrusion)
-    {}
+    {
+        this->inset_idx = rhs.inset_idx;
+    }
 
     ExtrusionPath& operator=(const ExtrusionPath& rhs) {
         m_can_reverse = rhs.m_can_reverse;
@@ -207,6 +215,7 @@ public:
         this->width = rhs.width;
         this->height = rhs.height;
         this->polyline = rhs.polyline;
+        this->inset_idx = rhs.inset_idx;
         return *this;
     }
     ExtrusionPath& operator=(ExtrusionPath&& rhs) {
@@ -217,6 +226,7 @@ public:
         this->width = rhs.width;
         this->height = rhs.height;
         this->polyline = std::move(rhs.polyline);
+        this->inset_idx = rhs.inset_idx;
         return *this;
     }
 

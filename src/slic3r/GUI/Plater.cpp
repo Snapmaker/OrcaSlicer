@@ -3467,7 +3467,8 @@ void MixedFilamentConfigPanel::build_ui()
                                         wxSize(FromDIP(200), -1), wxTE_PROCESS_ENTER);
         m_pattern_ctrl->SetToolTip(_L("Manual repeating pattern. Use 1/2 or A/B for component A/B, "
                                       "and 3..9 for direct physical filament IDs. "
-                                      "Example: 1/1/1/1/2/2/2/2 or 1/2/3/4."));
+                                      "Use commas to define deeper perimeter patterns, for example 12,21. "
+                                      "Example: 1/1/1/1/2/2/2/2, 12,21, or 1/2/3/4."));
         pattern_row->Add(m_pattern_ctrl, 1, wxALIGN_CENTER_VERTICAL);
         root->Add(pattern_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
 
@@ -3581,8 +3582,7 @@ void MixedFilamentConfigPanel::build_ui()
             if (into_u8(m_pattern_ctrl->GetValue()) != normalized)
                 m_pattern_ctrl->ChangeValue(from_u8(normalized));
             m_mf.manual_pattern = normalized;
-            const int count_b = int(std::count(normalized.begin(), normalized.end(), '2'));
-            m_mf.mix_b_percent = std::clamp((100 * count_b + int(normalized.size()) / 2) / std::max(1, int(normalized.size())), 0, 100);
+            m_mf.mix_b_percent = MixedFilamentManager::mix_percent_from_manual_pattern(normalized);
             m_mf.pointillism_all_filaments = false;
             m_mf.gradient_component_ids.clear();
             m_mf.gradient_component_weights.clear();

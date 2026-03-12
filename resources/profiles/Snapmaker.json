@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.43.02",
+  "version": "02.02.44.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -1322,8 +1322,32 @@
     {
       "name": "Snapmaker TPU 95A @U1 base",
       "sub_path":"filament/Snapmaker TPU 95A @U1 base.json"
+    },
+
+    {
+      "name": "fdm_filament_common_poly",
+      "sub_path": "filament/fdm_filament_common_poly.json"
+    },
+    {
+      "name": "fdm_filament_pla_poly",
+      "sub_path": "filament/fdm_filament_pla_poly.json"
+    },
+    {
+      "name": "Polymaker PLA @U1 base",
+      "sub_path": "filament/Polymaker PLA @U1 base.json"
+    },
+    {
+      "name": "Polymaker General PLA Family @U1",
+      "sub_path": "filament/Polymaker General PLA Family @U1.json"
+    },
+    {
+      "name": "Polymaker Silk PLA Family @U1",
+      "sub_path": "filament/Polymaker Silk PLA Family @U1.json"
+    },
+    {
+      "name": "Polymaker Tough PLA Family @U1",
+      "sub_path": "filament/Polymaker Tough PLA Family @U1.json"
     }
-    
   ],
   "machine_list": [
     {

@@ -37,6 +37,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
         wxLogError("Could not init m_browser");
         return;
     }
+    BOOST_LOG_TRIVIAL(fatal) << "init and printer webview address:" << &m_browser;
 
     m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this);
     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
@@ -47,16 +48,6 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
     update_mode();
-
-    // Log backend information
-    /* m_browser->GetUserAgent() may lead crash
-    if (wxGetApp().get_mode() == comDevelop) {
-        wxLogMessage(wxWebView::GetBackendVersionInfo().ToString());
-        wxLogMessage("Backend: %s Version: %s", m_browser->GetClassInfo()->GetClassName(),
-            wxWebView::GetBackendVersionInfo().ToString());
-        wxLogMessage("User Agent: %s", m_browser->GetUserAgent());
-    }
-    */
 
     //Zoom
     m_zoomFactor = 100;
@@ -80,8 +71,6 @@ PrinterWebView::~PrinterWebView()
 
 void PrinterWebView::load_url(wxString& url, wxString apikey)
 {
-//    this->Show();
-//    this->Raise();
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;
@@ -92,11 +81,10 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     } else {
         wxGetApp().fltviews().remove_printer_view(this);
     }
-
-    m_browser->LoadURL(url);
-
+    BOOST_LOG_TRIVIAL(fatal) << "load and printer webview address:" << &m_browser;
     m_browser->Show();
-    //m_browser->SetFocus();
+    m_browser->LoadURL(url);
+       
     UpdateState();
 }
 

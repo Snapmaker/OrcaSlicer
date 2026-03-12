@@ -413,7 +413,7 @@ bool HttpServer::is_healthy()
         
         if (!ec) {
             test_socket.close();
-            BOOST_LOG_TRIVIAL(error) << "Health check passed: test connection successful on port " << port;
+            BOOST_LOG_TRIVIAL(debug) << "Health check passed: test connection successful on port " << port;
             return true;
         }
         

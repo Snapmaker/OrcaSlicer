@@ -1102,23 +1102,6 @@ void MainFrame::init_tabpanel() {
         if (panel)
             panel->SetFocus();
 
-        /*switch (sel) {
-        case TabPosition::tpHome:
-            show_option(false);
-            break;
-        case TabPosition::tp3DEditor:
-            show_option(true);
-            break;
-        case TabPosition::tpPreview:
-            show_option(true);
-            break;
-        case TabPosition::tpMonitor:
-            show_option(false);
-            break;
-        default:
-            show_option(false);
-            break;
-        }*/
     });
 
     if (wxGetApp().is_editor()) {
@@ -1151,9 +1134,9 @@ void MainFrame::init_tabpanel() {
         wxString key = evt.GetAPIkey();
         //select_tab(MainFrame::tpMonitor);
         m_printer_view->Show();
-         m_printer_view->load_url(url, key);
+        m_printer_view->load_url(url, key);
     });
-    m_printer_view->Hide();
+    //m_printer_view->Hide();
 
     if (wxGetApp().is_enable_multi_machine()) {
         m_multi_machine = new MultiMachinePage(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
@@ -1192,7 +1175,7 @@ void MainFrame::show_device(bool bBBLPrinter) {
             return;
         // Remove printer view
         if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
-            m_printer_view->Show(false);
+            //m_printer_view->Show(false);
             m_tabpanel->RemovePage(idx);
         }
 
@@ -1254,7 +1237,7 @@ void MainFrame::show_device(bool bBBLPrinter) {
                 m_printer_view->load_url(url, key);
             });
         }
-        m_printer_view->Show(false);
+        //m_printer_view->Show(false);
         m_tabpanel->InsertPage(tpMonitor, m_printer_view, _L("Device"), std::string("tab_monitor_active"),
                                std::string("tab_monitor_active"));
     }
@@ -2850,17 +2833,19 @@ void MainFrame::init_menubar_as_editor()
         },
         "", nullptr, []() { return true; }, this, 1);
         
-    append_menu_item(parent_menu, wxID_ANY, _L("TestWebview"), "",
+    append_menu_item(parent_menu, wxID_ANY, _L("TestDevicePage"), "",
         [this](wxCommandEvent&) {
             wxString url ="https://github.com/Snapmaker/";
-            m_webview->load_url(url);
+            m_printer_view->load_url(url);
         },
         "", nullptr, []() { return true; }, this);
 
-    append_menu_item(parent_menu, wxID_ANY, _L("ExitTestWebview"), "",
+    append_menu_item(parent_menu, wxID_ANY, _L("ExitTestDevicePage"), "",
             [this](wxCommandEvent&) {
-            wxString url = "http://127.0.0.1:13619/web/flutter_web/index.html";
-            m_webview->load_url(url);
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+            auto     real_url = wxGetApp().get_international_url(url);
+
+            m_printer_view->load_url(real_url);
         }, "", nullptr, []() { return true; }, this);
     //parent_menu->Insert(1, preference_item);
 #endif

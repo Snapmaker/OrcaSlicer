@@ -1344,18 +1344,27 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
         // (issue #121: stabilization cone exceeds bed bounds for small beds like Snapmaker A250).
         // Coordinates inside supported_rectangle are tower-local (origin = tower lower-left corner);
         // the absolute position of the arc center on the bed is m_wipe_tower_pos + center.
-        if (m_bed_shape == RectangularBed && r > 0.0) {
+        // Extended to all bed shapes: rectangular uses exact margins, circular checks distance from
+        // bed center, custom/unknown falls back to bounding-box (conservative).
+        if (r > 0.0) {
             Vec2f abs_center = m_wipe_tower_pos + center;
-            // Maximum r that keeps the arc (scaled by 1/support_scale in X) within the bed.
-            // Arc X spans: abs_center.x ± r/support_scale  →  max_r_x * support_scale is the limit.
-            float max_r_x = std::min(
-                abs_center.x() - m_bed_bottom_left.x(),
-                m_bed_bottom_left.x() + m_bed_width - abs_center.x()) * float(support_scale);
-            // Arc Y spans: abs_center.y ± r  →  direct limit.
-            float max_r_y = std::min(
-                abs_center.y() - m_bed_bottom_left.y(),
-                m_bed_bottom_left.y() + m_bed_height - abs_center.y());
-            float max_r_bed = std::min(max_r_x, max_r_y);
+            float max_r_bed = 0.f;
+            if (m_bed_shape == CircularBed) {
+                // Circular bed: arc must not protrude beyond the bed circle.
+                // bed circle: center=(m_bed_bottom_left.x+m_bed_width/2, ..+m_bed_height/2), radius=m_bed_width/2
+                Vec2f bed_center = m_bed_bottom_left + Vec2f(m_bed_width / 2.f, m_bed_height / 2.f);
+                float dist_to_bed_edge = m_bed_width / 2.f - (abs_center - bed_center).norm();
+                max_r_bed = std::max(0.f, dist_to_bed_edge);
+            } else {
+                // Rectangular bed or custom/unknown: use bounding-box margins (conservative for non-rectangular).
+                float max_r_x = std::min(
+                    abs_center.x() - m_bed_bottom_left.x(),
+                    m_bed_bottom_left.x() + m_bed_width - abs_center.x()) * float(support_scale);
+                float max_r_y = std::min(
+                    abs_center.y() - m_bed_bottom_left.y(),
+                    m_bed_bottom_left.y() + m_bed_height - abs_center.y());
+                max_r_bed = std::min(max_r_x, max_r_y);
+            }
             if (max_r_bed > 0.f && r > double(max_r_bed))
                 r = double(max_r_bed);
         }

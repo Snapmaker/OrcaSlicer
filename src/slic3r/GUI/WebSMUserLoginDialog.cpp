@@ -176,6 +176,10 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
         info->set_user_login(true);
         info->set_user_token(token);
 
+        // BBS: persist login token so it survives app restart (issue #116)
+        if (wxGetApp().app_config)
+            wxGetApp().app_config->set("sm_user_token", token);
+
         this->EndModal(wxID_OK);
 
         wxGetApp().CallAfter([info, this]() {
@@ -191,9 +195,15 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                                 json data = response["data"];
                                 if (data.count("nickname")) {
                                     wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
+                                    if (wxGetApp().app_config)
+                                        wxGetApp().app_config->set("sm_user_name", data["nickname"].get<std::string>());
                                 }
                                 if (data.count("icon")) {
                                     wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
+                                    if (wxGetApp().app_config) {
+                                        wxGetApp().app_config->set("sm_user_icon_url", data["icon"].get<std::string>());
+                                        wxGetApp().app_config->save();
+                                    }
                                 }
                             }
                         });

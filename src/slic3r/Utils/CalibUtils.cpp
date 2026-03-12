@@ -722,8 +722,8 @@ void CalibUtils::calib_temptue(const CalibInfo &calib_info, wxString &error_mess
     auto obj_bb      = model.objects[0]->bounding_box_exact();
     auto block_count = lround((350 - params.start) / 5 + 1);
     if (block_count > 0) {
-        // add EPSILON offset to avoid cutting at the exact location where the flat surface is
-        auto new_height = block_count * 10.0 + EPSILON;
+        // subtract EPSILON to cut just below each flat block surface, avoiding non-manifold geometry on macOS/Linux
+        auto new_height = block_count * 10.0 - EPSILON;
         if (new_height < obj_bb.size().z()) {
             cut_model(model, new_height, ModelObjectCutAttribute::KeepLower);
         }
@@ -733,7 +733,7 @@ void CalibUtils::calib_temptue(const CalibInfo &calib_info, wxString &error_mess
     obj_bb      = model.objects[0]->bounding_box_exact();
     block_count = lround((350 - params.end) / 5);
     if (block_count > 0) {
-        auto new_height = block_count * 10.0 + EPSILON;
+        auto new_height = block_count * 10.0 - EPSILON;
         if (new_height < obj_bb.size().z()) {
             cut_model(model, new_height, ModelObjectCutAttribute::KeepUpper);
         }
@@ -822,7 +822,7 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     auto obj_bb = obj->bounding_box_exact();
     double height = (params.end - params.start + 1) / params.step;
     if (height < obj_bb.size().z()) {
-        cut_model(model, height, ModelObjectCutAttribute::KeepLower);
+        cut_model(model, height - EPSILON, ModelObjectCutAttribute::KeepLower);
     }
 
     auto new_params  = params;
@@ -880,7 +880,7 @@ void CalibUtils::calib_VFA(const CalibInfo &calib_info, wxString &error_message)
     auto obj_bb = model.objects[0]->bounding_box_exact();
     auto height = 5 * ((params.end - params.start) / params.step + 1);
     if (height < obj_bb.size().z()) {
-        cut_model(model, height, ModelObjectCutAttribute::KeepLower);
+        cut_model(model, height - EPSILON, ModelObjectCutAttribute::KeepLower);
     }
     else {
         error_message = _L("The start, end or step is not valid value.");
@@ -935,7 +935,7 @@ void CalibUtils::calib_retraction(const CalibInfo &calib_info, wxString &error_m
     auto obj_bb = obj->bounding_box_exact();
     auto height = 1.0 + 0.4 + ((params.end - params.start)) / params.step;
     if (height < obj_bb.size().z()) {
-        cut_model(model, height, ModelObjectCutAttribute::KeepLower);
+        cut_model(model, height - EPSILON, ModelObjectCutAttribute::KeepLower);
     }
 
     DynamicPrintConfig full_config;

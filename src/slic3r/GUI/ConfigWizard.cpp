@@ -2614,6 +2614,7 @@ bool ConfigWizard::priv::apply_config(AppConfig *app_config, PresetBundle *prese
 
     // Update the selections from the compatibilty.
     preset_bundle->export_selections(*app_config);
+    app_config->save();  // BBS: flush filament selections immediately (issue #101)
 
     // Update Preset Combobox
     //auto evt = new SimpleEvent(EVT_UPDATE_PRESET_CB);

@@ -2003,6 +2003,22 @@ void GUI_App::init_app_config()
     }
     set_logging_level(Slic3r::level_string_to_boost(app_config->get("log_severity_level")));
 
+    // BBS: restore Snapmaker login state from AppConfig (issue #116)
+    // WebKit on macOS/Linux does not persist session cookies, so we serialise the token ourselves.
+    if (app_config) {
+        std::string sm_token = app_config->get("sm_user_token");
+        if (!sm_token.empty()) {
+            m_login_userinfo.set_user_token(sm_token);
+            m_login_userinfo.set_user_login(true);
+            std::string sm_name = app_config->get("sm_user_name");
+            if (!sm_name.empty())
+                m_login_userinfo.set_user_name(sm_name);
+            std::string sm_icon = app_config->get("sm_user_icon_url");
+            if (!sm_icon.empty())
+                m_login_userinfo.set_user_icon_url(sm_icon);
+        }
+    }
+
 }
 
 // returns true if found newer version and user agreed to use it
@@ -3685,6 +3701,13 @@ void GUI_App::sm_request_user_logout()
 {
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.clear();
+        // BBS: erase persisted login state so credentials are not restored on next launch (issue #116)
+        if (app_config) {
+            app_config->set("sm_user_token", "");
+            app_config->set("sm_user_name", "");
+            app_config->set("sm_user_icon_url", "");
+            app_config->save();
+        }
     }
     try {
         if (!sm_login_dlg) {
@@ -3698,6 +3721,7 @@ void GUI_App::sm_request_user_logout()
         ;
     }
 }
+
 
 //BBS
 void GUI_App::request_login(bool show_user_info)

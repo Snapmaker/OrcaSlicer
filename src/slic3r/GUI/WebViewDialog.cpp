@@ -253,12 +253,7 @@ void WebViewPanel::reload() {
 
 void WebViewPanel::load_url(wxString& url)
 {
-    this->Show();
-    this->Raise();
-    /*m_url->SetLabelText(url);
 
-    if (wxGetApp().get_mode() == comDevelop)
-        wxLogMessage(m_url->GetValue());*/
     m_browser->LoadURL(url);
 
     wxGetApp().fltviews().add_webview_panel(this, url);

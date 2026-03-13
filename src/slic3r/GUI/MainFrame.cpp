@@ -1132,11 +1132,8 @@ void MainFrame::init_tabpanel() {
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
         wxString url = evt.GetString();
         wxString key = evt.GetAPIkey();
-        //select_tab(MainFrame::tpMonitor);
-        m_printer_view->Show();
         m_printer_view->load_url(url, key);
     });
-    //m_printer_view->Hide();
 
     if (wxGetApp().is_enable_multi_machine()) {
         m_multi_machine = new MultiMachinePage(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
@@ -1232,12 +1229,9 @@ void MainFrame::show_device(bool bBBLPrinter) {
             Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
                 wxString url = evt.GetString();
                 wxString key = evt.GetAPIkey();
-                // select_tab(MainFrame::tpMonitor);
-                m_printer_view->Show();
                 m_printer_view->load_url(url, key);
             });
         }
-        //m_printer_view->Show(false);
         m_tabpanel->InsertPage(tpMonitor, m_printer_view, _L("Device"), std::string("tab_monitor_active"),
                                std::string("tab_monitor_active"));
     }

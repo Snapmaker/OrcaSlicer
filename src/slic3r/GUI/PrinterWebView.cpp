@@ -69,8 +69,6 @@ PrinterWebView::~PrinterWebView()
 
 void PrinterWebView::load_url(wxString& url, wxString apikey)
 {
-//    this->Show();
-//    this->Raise();
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;

@@ -37,20 +37,8 @@ namespace GUI {
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
  {
-    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=1");
-    // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
-    // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
+    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=1");    
     url = wxGetApp().get_international_url(url);
-
-    // Debug: Log the URL being loaded
-    BOOST_LOG_TRIVIAL(info) << "[WebView] Constructor - Loading URL: " << url.ToUTF8().data();
-    BOOST_LOG_TRIVIAL(info) << "[WebView] HTTP Server status: "
-        << (wxGetApp().m_page_http_server.is_started() ? "RUNNING" : "NOT STARTED");
-    BOOST_LOG_TRIVIAL(info) << "[WebView] HTTP Server port: "
-        << wxGetApp().m_page_http_server.get_port();
-
-    // test
-    // url = "http://localhost:13619/web/flutter_web/1.html";
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
     
@@ -93,8 +81,8 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     // Create the info panel
     m_info = new wxInfoBar(this);
     topsizer->Add(m_info, wxSizerFlags().Expand());
-    // Create the webview with empty URL first, will load after server check
-    m_browser = WebView::CreateWebView(this, "about:blank");
+    // Create the webview
+    m_browser = WebView::CreateWebView(this, url);
 
     wxGetApp().fltviews().add_webview_panel(this, url);
 
@@ -108,16 +96,6 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     SetSizer(topsizer);
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
-
-    // Log backend information
-    /* m_browser->GetUserAgent() may lead crash
-    if (wxGetApp().get_mode() == comDevelop) {
-        wxLogMessage(wxWebView::GetBackendVersionInfo().ToString());
-        wxLogMessage("Backend: %s Version: %s", m_browser->GetClassInfo()->GetClassName(),
-            wxWebView::GetBackendVersionInfo().ToString());
-        wxLogMessage("User Agent: %s", m_browser->GetUserAgent());
-    }
-    */
 
     // Create the Tools menu
     m_tools_menu = new wxMenu();
@@ -328,30 +306,12 @@ void WebViewPanel::CheckServerAndLoadRetry()
 
 void WebViewPanel::load_url(wxString& url)
 {
-    this->Show();
-    this->Raise();
-
-    // Debug: Log before loading
-    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - Loading URL: " << url.ToUTF8().data();
-    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - HTTP Server status: "
-        << (wxGetApp().m_page_http_server.is_started() ? "RUNNING" : "NOT STARTED");
-    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - HTTP Server port: "
-        << wxGetApp().m_page_http_server.get_port();
-
-    /*m_url->SetLabelText(url);
-
-    if (wxGetApp().get_mode() == comDevelop)
-        wxLogMessage(m_url->GetValue());*/
     m_browser->LoadURL(url);
 
     wxGetApp().fltviews().add_webview_panel(this, url);
 
     m_browser->SetFocus();
     UpdateState();
-
-    // Debug: Log after loading
-    BOOST_LOG_TRIVIAL(info) << "[WebView] load_url - Load command sent, current URL: "
-        << m_browser->GetCurrentURL().ToUTF8().data();
 }
 
 /**

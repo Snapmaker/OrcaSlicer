@@ -3065,10 +3065,10 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 }
             } else {
                 for (int i = 1; i <= 8; ++i) {
-                    if (oriclr[7 - i] - '0' >= 0 && oriclr[7 - i] - '0' <= 9) {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - '0');
+                    if (oriclr[9 - i] - '0' >= 0 && oriclr[9 - i] - '0' <= 9) {
+                        res += std::pow(16, i - 1) * (oriclr[9 - i] - '0');
                     } else {
-                        res += std::pow(16, i - 1) * (oriclr[7 - i] - 'A' + 10);
+                        res += std::pow(16, i - 1) * (oriclr[9 - i] - 'A' + 10);
                     }
                 }
             }

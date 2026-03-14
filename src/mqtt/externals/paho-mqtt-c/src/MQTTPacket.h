@@ -28,7 +28,9 @@
 #include "LinkedList.h"
 #include "Clients.h"
 
+#if !defined(__bool_true_false_are_defined) && !defined(__cplusplus) && (__STDC_VERSION__ < 202311L)
 typedef unsigned int bool;
+#endif
 typedef void* (*pf)(int, unsigned char, char*, size_t);
 
 #include "MQTTProperties.h"

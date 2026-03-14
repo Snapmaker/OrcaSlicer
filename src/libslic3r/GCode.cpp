@@ -715,7 +715,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     // For Snapmaker Artision
     gcodegen.m_next_wipe_x = 0;
     gcodegen.m_next_wipe_y = 0;
-    auto transformed_pos   = Eigen::Rotation2Df(wipe_tower_rotation) * tcr.start_pos + wipe_tower_offset;
+    Vec2f transformed_pos  = Eigen::Rotation2Df(wipe_tower_rotation) * tcr.start_pos + wipe_tower_offset;
     gcodegen.m_next_wipe_x = transformed_pos(0);
     gcodegen.m_next_wipe_y = transformed_pos(1);
 

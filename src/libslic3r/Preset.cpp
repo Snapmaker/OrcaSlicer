@@ -2640,7 +2640,6 @@ std::vector<std::string> PresetCollection::diameters_of_selected_printer()
     std::set<std::string> diameters;
     auto printer_model = m_edited_preset.config.opt_string("printer_model");
     for (auto &preset : m_presets) {
-        // 仅统计在「选择打印机」中勾选过的喷嘴（is_visible），与侧栏直径下拉是否禁用一致
         if (preset.is_visible && preset.config.opt_string("printer_model") == printer_model)
             diameters.insert(preset.config.opt_string("printer_variant"));
     }

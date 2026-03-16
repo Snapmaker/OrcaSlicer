@@ -2600,7 +2600,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         } else {
             auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
             if (diameters.size() < 2) {
-                diameter_combo->Enable(false);  // 仅 0/1 种直径时无可选，禁用下拉
+                diameter_combo->Enable(false);
             }
             for (auto& diameter : diameters) {
                 wxString str = diameter + "mm";

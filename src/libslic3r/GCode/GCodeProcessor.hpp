@@ -392,10 +392,37 @@ class Print;
             FeedrateProfile feedrate_profile;
             Trapezoid trapezoid;
 
+            // === Klipper-specific fields for junction deviation time estimation ===
+            float deceleration{ 0.0f };           // mm/s^2 (separate from acceleration for Klipper)
+            float junction_deviation{ 0.05f };    // Klipper junction deviation parameter
+            Vec3f axes_r{ Vec3f::Zero() };        // Normalized motion direction vector
+            bool is_kinematic_move{ true };
+
+            // v²-based velocity fields (Klipper uses velocity squared for efficiency)
+            float max_start_v2{ 0.0f };           // Maximum start velocity² (mm²/s²)
+            float max_smoothed_v2{ 0.0f };        // Maximum smoothed velocity² (for accel_to_decel)
+            float max_cruise_v2{ 0.0f };          // Maximum cruise velocity²
+            float delta_v2{ 0.0f };               // Velocity change² during acceleration
+            float smooth_delta_v2{ 0.0f };        // Smooth velocity change² (for deceleration)
+            float start_v2{ 0.0f };               // Actual start velocity²
+            float cruise_v2{ 0.0f };              // Actual cruise velocity²
+            float end_v2{ 0.0f };                 // Actual end velocity²
+            float min_move_t{ 0.0f };             // Minimum move time (distance / nominal_rate)
+
             // Calculates this block's trapezoid
             void calculate_trapezoid();
 
             float time() const;
+
+            // === Klipper-specific methods ===
+            // Prepare block for Klipper-style time calculation
+            void prepare_klipper();
+            // Calculate junction speed with previous block using junction deviation
+            void calc_junction(const TimeBlock& prev);
+            // Set junction velocities
+            void set_junction(float s_v2, float c_v2, float e_v2);
+            // Calculate move time using Klipper's v²-based algorithm
+            float calc_move_time_klipper() const;
         };
 
 
@@ -411,10 +438,22 @@ class Print;
                 AxisCoords axis_feedrate; // mm/s
                 AxisCoords abs_axis_feedrate; // mm/s
 
-                //BBS: unit vector of enter speed and exit speed in x-y-z space. 
+                //BBS: unit vector of enter speed and exit speed in x-y-z space.
                 //For line move, there are same. For arc move, there are different.
                 Vec3f enter_direction;
                 Vec3f exit_direction;
+
+                // === Klipper-specific fields for junction deviation time estimation ===
+                float deceleration{ 0.0f };           // mm/s^2 (separate deceleration for Klipper)
+                float junction_deviation{ 0.05f };    // Klipper junction deviation parameter
+                float square_corner_velocity{ 5.0f }; // mm/s - Klipper SCV parameter
+
+                // v²-based velocity tracking (Klipper uses velocity squared for efficiency)
+                float max_start_v2{ 0.0f };           // Maximum start velocity² at junction
+                float max_cruise_v2{ 0.0f };          // Maximum cruise velocity²
+                float next_junction_v2{ 0.0f };       // Junction velocity² with next block
+                float max_smoothed_v2{ 0.0f };        // Maximum smoothed velocity²
+                float smooth_delta_v2{ 0.0f };        // Smooth velocity change²
 
                 void reset();
             };
@@ -682,6 +721,11 @@ class Print;
         std::unordered_map<int, int> m_filament_extruder_map;
         GCodeFlavor m_flavor;
         float       m_nozzle_volume;
+
+        // === Klipper-specific time estimation fields ===
+        bool m_is_klipper{ false };                     // True if firmware is Klipper
+        float m_klipper_square_corner_velocity{ 5.0f }; // mm/s - Klipper SCV parameter
+        float m_klipper_accel_to_decel{ 0.0f };         // mm/s^2 - Klipper separate deceleration limit
         AxisCoords m_start_position; // mm
         AxisCoords m_end_position; // mm
         AxisCoords m_origin; // mm

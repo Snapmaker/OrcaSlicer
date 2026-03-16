@@ -212,6 +212,167 @@ float GCodeProcessor::TimeBlock::time() const
         + trapezoid.deceleration_time(distance, acceleration);
 }
 
+// ============================================================================
+// Klipper-specific time estimation methods
+// These implement Klipper's junction deviation algorithm with v²-based calculations
+// ============================================================================
+
+void GCodeProcessor::TimeBlock::prepare_klipper()
+{
+    // Initialize v² values from feedrate_profile
+    // Klipper uses velocity squared (v²) for efficient calculations
+    start_v2 = feedrate_profile.entry * feedrate_profile.entry;
+    cruise_v2 = feedrate_profile.cruise * feedrate_profile.cruise;
+    end_v2 = feedrate_profile.exit * feedrate_profile.exit;
+
+    // Calculate cruise velocity squared (maximum velocity in this block)
+    max_cruise_v2 = cruise_v2;
+
+    // Calculate delta_v2 (velocity change during acceleration/deceleration)
+    // For acceleration: delta_v2 = cruise_v2 - start_v2
+    // For deceleration: delta_v2 = cruise_v2 - end_v2
+    delta_v2 = std::max(cruise_v2 - start_v2, cruise_v2 - end_v2);
+
+    // Calculate smooth_delta_v2 for deceleration phase
+    smooth_delta_v2 = cruise_v2 - end_v2;
+
+    // Calculate minimum move time using v² formula
+    // t_accel = (v_cruise² - v_start²) / (2 * accel * v_cruise)
+    // t_decel = (v_cruise² - v_end²) / (2 * decel * v_cruise)
+    // For simplicity, use the maximum of accel/decel time
+    if (acceleration > 0.0f && cruise_v2 > start_v2) {
+        float accel_time = (cruise_v2 - start_v2) / (2.0f * acceleration * std::sqrt(cruise_v2));
+        float decel_time = 0.0f;
+        if (deceleration > 0.0f && cruise_v2 > end_v2) {
+            decel_time = (cruise_v2 - end_v2) / (2.0f * deceleration * std::sqrt(cruise_v2));
+        }
+        // Cruise time - use trapezoid distances calculated by calculate_trapezoid()
+        float cruise_dist = distance;
+        if (trapezoid.accelerate_until > 0) cruise_dist -= trapezoid.accelerate_until;
+        if (trapezoid.decelerate_after > 0 && trapezoid.decelerate_after < distance) {
+            cruise_dist -= (distance - trapezoid.decelerate_after);
+        }
+        float cruise_time = cruise_dist / std::sqrt(cruise_v2);
+        min_move_t = accel_time + cruise_time + decel_time;
+    } else {
+        min_move_t = distance / std::sqrt(cruise_v2);
+    }
+}
+
+void GCodeProcessor::TimeBlock::calc_junction(const TimeBlock& prev)
+{
+    // Calculate junction deviation velocity using Klipper's algorithm
+    // junction_deviation = scv² * (√2 - 1) / accel
+    // junction_v² = 2 * accel * junction_deviation / (1 - cos(θ))
+    // where cos(θ) = dot product of normalized direction vectors
+
+    if (junction_deviation <= 0.0f) {
+        // Default to SCV-based calculation if junction_deviation not set
+        float scv2 = 5.0f * 5.0f; // Default SCV = 5 mm/s
+        if (acceleration > 0.0f) {
+            junction_deviation = scv2 * (std::sqrt(2.0f) - 1.0f) / acceleration;
+        } else {
+            junction_deviation = 0.05f; // Fallback default
+        }
+    }
+
+    // Calculate the junction angle using direction vectors
+    // cos(θ) = prev.axes_r · axes_r
+    float cos_theta = prev.axes_r.x() * axes_r.x() +
+                      prev.axes_r.y() * axes_r.y() +
+                      prev.axes_r.z() * axes_r.z();
+
+    // Clamp cos_theta to valid range
+    cos_theta = std::max(-1.0f, std::min(1.0f, cos_theta));
+
+    // For nearly collinear moves (cos_theta ≈ 1), junction speed can be high
+    // For 180° turns (cos_theta ≈ -1), junction speed must be near zero
+    float sin_theta2 = 1.0f - cos_theta * cos_theta;
+
+    if (sin_theta2 < 0.0001f) {
+        // Nearly collinear, use cruise velocity
+        max_start_v2 = std::min(prev.max_cruise_v2, max_cruise_v2);
+    } else {
+        // Calculate junction velocity squared using junction deviation
+        // v²_junction = 2 * accel * junction_deviation * sin(θ) / (1 - cos(θ))
+        // Using identity: sin(θ) / (1 - cos(θ)) = (1 + cos(θ)) / sin(θ)
+        float tan_theta2 = sin_theta2 / (1.0f + cos_theta);
+        max_start_v2 = 2.0f * acceleration * junction_deviation * tan_theta2;
+
+        // Limit to cruise velocities
+        max_start_v2 = std::min(max_start_v2, prev.max_cruise_v2);
+        max_start_v2 = std::min(max_start_v2, max_cruise_v2);
+    }
+
+    // Ensure non-negative
+    max_start_v2 = std::max(0.0f, max_start_v2);
+}
+
+void GCodeProcessor::TimeBlock::set_junction(float s_v2, float c_v2, float e_v2)
+{
+    start_v2 = s_v2;
+    cruise_v2 = c_v2;
+    end_v2 = e_v2;
+
+    // Recalculate delta_v2 values
+    delta_v2 = std::max(cruise_v2 - start_v2, cruise_v2 - end_v2);
+    smooth_delta_v2 = cruise_v2 - end_v2;
+}
+
+float GCodeProcessor::TimeBlock::calc_move_time_klipper() const
+{
+    // Calculate move time using Klipper's v²-based algorithm
+    // Time = (sqrt(start_v2 + 2*accel*dist) - sqrt(start_v2)) / accel
+    //      + cruise_distance / sqrt(cruise_v2)
+    //      + (sqrt(cruise_v2) - sqrt(end_v2)) / decel
+
+    if (distance <= 0.0f) return 0.0f;
+
+    float accel = acceleration > 0.0f ? acceleration : 1.0f;
+    float decel = deceleration > 0.0f ? deceleration : accel;
+
+    float start_v = std::sqrt(start_v2);
+    float cruise_v = std::sqrt(cruise_v2);
+    float end_v = std::sqrt(end_v2);
+
+    // Calculate acceleration distance
+    float accel_dist = 0.0f;
+    if (cruise_v > start_v + 0.0001f) {
+        accel_dist = (cruise_v2 - start_v2) / (2.0f * accel);
+    }
+
+    // Calculate deceleration distance
+    float decel_dist = 0.0f;
+    if (cruise_v > end_v + 0.0001f) {
+        decel_dist = (cruise_v2 - end_v2) / (2.0f * decel);
+    }
+
+    // If accel + decel exceeds distance, we don't reach cruise speed
+    if (accel_dist + decel_dist > distance) {
+        // Triangle profile - solve for peak velocity
+        // d_total = (v_peak² - v_start²)/(2a) + (v_peak² - v_end²)/(2d)
+        // Rearranging to find v_peak²
+        float v_peak2 = (2.0f * accel * decel * distance + decel * start_v2 + accel * end_v2)
+                        / (accel + decel);
+        v_peak2 = std::max(start_v2, std::max(end_v2, v_peak2));
+        float v_peak = std::sqrt(v_peak2);
+
+        // Calculate times for triangle profile
+        float t_accel = (v_peak - start_v) / accel;
+        float t_decel = (v_peak - end_v) / decel;
+        return t_accel + t_decel;
+    }
+
+    // Trapezoid profile
+    float cruise_dist = distance - accel_dist - decel_dist;
+
+    float t_accel = accel_dist > 0.0f ? (cruise_v - start_v) / accel : 0.0f;
+    float t_cruise = cruise_dist / cruise_v;
+    float t_decel = decel_dist > 0.0f ? (cruise_v - end_v) / decel : 0.0f;
+
+    return t_accel + t_cruise + t_decel;
+}
+
 void GCodeProcessor::TimeMachine::State::reset()
 {
     feedrate = 0.0f;
@@ -221,6 +382,15 @@ void GCodeProcessor::TimeMachine::State::reset()
     //BBS
     enter_direction = { 0.0f, 0.0f, 0.0f };
     exit_direction = { 0.0f, 0.0f, 0.0f };
+    // Klipper-specific fields
+    deceleration = 0.0f;
+    junction_deviation = 0.05f;
+    square_corner_velocity = 5.0f;
+    max_start_v2 = 0.0f;
+    max_cruise_v2 = 0.0f;
+    next_junction_v2 = 0.0f;
+    max_smoothed_v2 = 0.0f;
+    smooth_delta_v2 = 0.0f;
 }
 
 void GCodeProcessor::TimeMachine::CustomGCodeTime::reset()
@@ -352,7 +522,10 @@ void GCodeProcessor::TimeMachine::calculate_time(size_t keep_last_n_blocks, floa
     size_t n_blocks_process = blocks.size() - keep_last_n_blocks;
     for (size_t i = 0; i < n_blocks_process; ++i) {
         const TimeBlock& block = blocks[i];
-        float block_time = block.time();
+        // Use Klipper time calculation if junction_deviation is set (indicates Klipper mode)
+        float block_time = (block.junction_deviation > 0.0f && block.max_cruise_v2 > 0.0f)
+            ? block.calc_move_time_klipper()
+            : block.time();
         if (i == 0)
             block_time += additional_time;
 
@@ -904,6 +1077,10 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         if (m_flavor == gcfMarlinLegacy || m_flavor == gcfKlipper) {
             // Legacy Marlin does not have separate travel acceleration, it uses the 'extruding' value instead.
             m_time_processor.machine_limits.machine_max_acceleration_travel = m_time_processor.machine_limits.machine_max_acceleration_extruding;
+        }
+        // SM Orca: Detect Klipper firmware and enable Klipper-specific time estimation
+        if (m_flavor == gcfKlipper) {
+            m_is_klipper = true;
         }
         if (m_flavor == gcfRepRapFirmware) {
             // RRF does not support setting min feedrates. Set them to zero.
@@ -3052,6 +3229,13 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
         block.layer_id = std::max<unsigned int>(1, m_layer_id);
         block.flags.prepare_stage = m_processing_start_custom_gcode;
 
+        // Klipper-specific: Set direction vector and deceleration for junction deviation calculation
+        if (m_is_klipper) {
+            block.axes_r = curr.enter_direction;
+            block.deceleration = curr.deceleration;
+            block.junction_deviation = curr.junction_deviation;
+        }
+
         //BBS: limite the cruise according to centripetal acceleration
         //Only need to handle when both prev and curr segment has movement in x-y plane
         if ((prev.exit_direction(0) != 0.0f || prev.exit_direction(1) != 0.0f) &&
@@ -3139,38 +3323,56 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
             // Pick the smaller of the nominal speeds. Higher speed shall not be achieved at the junction during coasting.
             vmax_junction = prev_speed_larger ? block.feedrate_profile.cruise : prev.feedrate;
 
-            float v_factor = 1.0f;
-            bool limited = false;
+            // === Klipper junction deviation calculation ===
+            if (m_is_klipper) {
+                // Use Klipper's junction deviation algorithm instead of Marlin jerk
+                // Prepare the previous block for Klipper calculation if not done
+                if (!blocks.empty()) {
+                    TimeBlock& prev_block = blocks.back();
+                    if (prev_block.max_cruise_v2 == 0.0f) {
+                        prev_block.max_cruise_v2 = prev_block.feedrate_profile.cruise * prev_block.feedrate_profile.cruise;
+                        prev_block.axes_r = prev.enter_direction;
+                    }
+                    // Calculate junction using junction deviation
+                    block.calc_junction(prev_block);
+                    vmax_junction = std::sqrt(block.max_start_v2);
+                }
+            }
+            // === End Klipper junction deviation calculation ===
+            else {
+                // Original Marlin jerk-based calculation
+                float v_factor = 1.0f;
+                bool limited = false;
 
-            for (unsigned char a = X; a <= E; ++a) {
-                // Limit an axis. We have to differentiate coasting from the reversal of an axis movement, or a full stop.
-                if (a == X) {
-                    Vec3f exit_v = prev.feedrate * (prev.exit_direction);
-                    if (prev_speed_larger)
-                        exit_v *= smaller_speed_factor;
-                    Vec3f entry_v = block.feedrate_profile.cruise * (curr.enter_direction);
-                    Vec3f jerk_v = entry_v - exit_v;
-                    jerk_v = Vec3f(abs(jerk_v.x()), abs(jerk_v.y()), abs(jerk_v.z()));
-                    Vec3f max_xyz_jerk_v = get_xyz_max_jerk(static_cast<PrintEstimatedStatistics::ETimeMode>(i));
+                for (unsigned char a = X; a <= E; ++a) {
+                    // Limit an axis. We have to differentiate coasting from the reversal of an axis movement, or a full stop.
+                    if (a == X) {
+                        Vec3f exit_v = prev.feedrate * (prev.exit_direction);
+                        if (prev_speed_larger)
+                            exit_v *= smaller_speed_factor;
+                        Vec3f entry_v = block.feedrate_profile.cruise * (curr.enter_direction);
+                        Vec3f jerk_v = entry_v - exit_v;
+                        jerk_v = Vec3f(abs(jerk_v.x()), abs(jerk_v.y()), abs(jerk_v.z()));
+                        Vec3f max_xyz_jerk_v = get_xyz_max_jerk(static_cast<PrintEstimatedStatistics::ETimeMode>(i));
 
-                    for (size_t i = 0; i < 3; i++)
-                    {
-                        if (jerk_v[i] > max_xyz_jerk_v[i]) {
-                            v_factor *= max_xyz_jerk_v[i] / jerk_v[i];
-                            jerk_v *= v_factor;
-                            limited = true;
+                        for (size_t i = 0; i < 3; i++)
+                        {
+                            if (jerk_v[i] > max_xyz_jerk_v[i]) {
+                                v_factor *= max_xyz_jerk_v[i] / jerk_v[i];
+                                jerk_v *= v_factor;
+                                limited = true;
+                            }
                         }
                     }
-                }
-                else if (a == Y || a == Z) {
-                    continue;
-                }
-                else {
-                    float v_exit = prev.axis_feedrate[a];
-                    float v_entry = curr.axis_feedrate[a];
+                    else if (a == Y || a == Z) {
+                        continue;
+                    }
+                    else {
+                        float v_exit = prev.axis_feedrate[a];
+                        float v_entry = curr.axis_feedrate[a];
 
-                    if (prev_speed_larger)
-                        v_exit *= smaller_speed_factor;
+                        if (prev_speed_larger)
+                            v_exit *= smaller_speed_factor;
 
                     if (limited) {
                         v_exit *= v_factor;
@@ -3202,6 +3404,7 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
 
             if (limited)
                 vmax_junction *= v_factor;
+            } // end else (Marlin jerk-based calculation)
 
             // Now the transition velocity is known, which maximizes the shared exit / entry velocity while
             // respecting the jerk factors, it may be possible, that applying separate safe exit / entry velocities will achieve faster prints.
@@ -3222,6 +3425,11 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
 
         // calculates block trapezoid
         block.calculate_trapezoid();
+
+        // Klipper-specific: Initialize v² values for time calculation
+        if (m_is_klipper) {
+            block.prepare_klipper();
+        }
 
         // updates previous
         prev = curr;
@@ -4145,33 +4353,78 @@ void GCodeProcessor::process_M205(const GCodeReader::GCodeLine& line)
 
 void GCodeProcessor::process_SET_VELOCITY_LIMIT(const GCodeReader::GCodeLine& line)
 {
-    // handle SQUARE_CORNER_VELOCITY
+    // This is a Klipper-specific command, mark firmware as Klipper
+    m_is_klipper = true;
+
+    // Handle SQUARE_CORNER_VELOCITY - Klipper uses this for junction deviation, NOT jerk
     std::regex pattern("\\sSQUARE_CORNER_VELOCITY\\s*=\\s*([0-9]*\\.*[0-9]*)");
     std::smatch matches;
     if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
-        float _jerk = 0;
+        float scv = 0;
         try
         {
-            _jerk = std::stof(matches[1]);
+            scv = std::stof(matches[1]);
+            m_klipper_square_corner_velocity = scv;
+            // Update square_corner_velocity in State for each time machine
+            for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
+                m_time_processor.machines[i].curr.square_corner_velocity = scv;
+            }
         }
         catch (...){}
+        // For backwards compatibility with non-Klipper time estimation, also set jerk
+        // But for Klipper time estimation, SCV is used for junction_deviation calculation
         for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
-            set_option_value(m_time_processor.machine_limits.machine_max_jerk_x, i, _jerk);
-            set_option_value(m_time_processor.machine_limits.machine_max_jerk_y, i, _jerk);
+            set_option_value(m_time_processor.machine_limits.machine_max_jerk_x, i, scv);
+            set_option_value(m_time_processor.machine_limits.machine_max_jerk_y, i, scv);
         }
     }
 
-    pattern = std::regex("\\sACCEL\\s*=\\s*([0-9]*\\.*[0-9]*)");
+    // Handle ACCEL_TO_DECEL - Klipper-specific separate deceleration limit
+    pattern = std::regex("\\sACCEL_TO_DECEL\\s*=\\s*([0-9]*\\.*[0-9]*)");
     if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
-        float _accl = 0;
+        float accel_to_decel = 0;
         try
         {
-            _accl = std::stof(matches[1]);
+            accel_to_decel = std::stof(matches[1]);
+            m_klipper_accel_to_decel = accel_to_decel;
+            // Set deceleration for each time machine state
+            for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
+                m_time_processor.machines[i].curr.deceleration = accel_to_decel;
+            }
+        }
+        catch (...) {}
+    }
+
+    float current_accel = 0.0f;
+    pattern = std::regex("\\sACCEL\\s*=\\s*([0-9]*\\.*[0-9]*)");
+    if (std::regex_search(line.raw(), matches, pattern) && matches.size() == 2) {
+        try
+        {
+            current_accel = std::stof(matches[1]);
         }
         catch (...) {}
         for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
-            set_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
-            set_travel_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), _accl);
+            set_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), current_accel);
+            set_travel_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i), current_accel);
+            // If ACCEL_TO_DECEL not set, use ACCEL as deceleration (Klipper default)
+            if (m_klipper_accel_to_decel == 0.0f) {
+                m_time_processor.machines[i].curr.deceleration = current_accel;
+            }
+        }
+    }
+
+    // SM Orca: Calculate and update junction_deviation from SCV and ACCEL
+    // Formula: junction_deviation = scv² * (√2 - 1) / accel
+    // This must be done after both SCV and ACCEL are parsed
+    if (m_klipper_square_corner_velocity > 0.0f) {
+        for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
+            float accel = get_acceleration(static_cast<PrintEstimatedStatistics::ETimeMode>(i));
+            if (accel > 0.0f) {
+                float scv = m_klipper_square_corner_velocity;
+                // junction_deviation = scv² * (√2 - 1) / accel
+                float junction_dev = scv * scv * (std::sqrt(2.0f) - 1.0f) / accel;
+                m_time_processor.machines[i].curr.junction_deviation = junction_dev;
+            }
         }
     }
 

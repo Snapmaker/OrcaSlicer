@@ -44,3 +44,4 @@ deps_src/build/
 nul
 .omc/
 .claude-flow/
+.swarm/

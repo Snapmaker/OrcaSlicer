@@ -650,33 +650,57 @@ public:
         if (cnt < 1)
             return false;
 
-        // Save original values as the default source for physical extruders
-        std::vector<T> default_values = this->values;
+        // SM Orca: Fix - Build correct default_values BEFORE modifying this->values
+        // Each filament index should map to its corresponding physical extruder value
+        std::vector<T> default_values;
+        default_values.reserve(rhs_vec->size());
 
-        // Extend array to rhs_vec size
-        if (this->values.empty())
-            this->values.resize(rhs_vec->size());
-        else
-            this->values.resize(rhs_vec->size(), this->values.front());
+        for (size_t i = 0; i < rhs_vec->size(); ++i) {
+            size_t extruder_idx = (i < map_indices.size() && map_indices[i] >= 0)
+                ? (size_t)map_indices[i]
+                : (i % this->values.size());
 
+            if (extruder_idx < this->values.size()) {
+                default_values.push_back(this->values[extruder_idx]);
+            } else {
+                default_values.push_back(this->values.front());
+            }
+        }
 
+        // DEBUG: Print default_values (only for arithmetic types)
+        if constexpr (std::is_arithmetic_v<T>) {
+            std::string default_vals_str = "[";
+            for (size_t i = 0; i < default_values.size() && i < 8; ++i) {
+                default_vals_str += std::to_string(default_values[i]) + (i < default_values.size()-1 ? "," : "");
+            }
+            default_vals_str += "]";
+            BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_START: default_values=" << default_vals_str
+                << " rhs_size=" << rhs_vec->size();
+        }
+
+        // Now resize this->values
+        this->values.resize(rhs_vec->size());
 
         bool modified = false;
         for (size_t i = 0; i < rhs_vec->size(); ++i) {
-            T old_value = (i < this->values.size()) ? this->values[i] : T();
+            T old_value = this->values[i];
             if (!rhs_vec->is_nil(i)) {
                 // Non-nil: use filament's own value
                 this->values[i] = rhs_vec->values[i];
+                // DEBUG: Only for arithmetic types
+                if constexpr (std::is_arithmetic_v<T>) {
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
+                        << " nil=N rhs_val=" << rhs_vec->values[i];
+                }
             } else {
                 // Nil: inherit from mapped physical extruder
-                if (i < map_indices.size() && map_indices[i] >= 0 && (size_t)map_indices[i] < default_values.size()) {
-                    this->values[i] = default_values[map_indices[i]];
-                } else if (!default_values.empty()) {
-                    // Fallback: use first value
-                    this->values[i] = default_values[0];
+                this->values[i] = default_values[i];
+                // DEBUG: Only for arithmetic types
+                if constexpr (std::is_arithmetic_v<T>) {
+                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
+                        << " nil=Y inherited=" << default_values[i];
                 }
             }
-            // Check if the value actually changed
             if (this->values[i] != old_value)
                 modified = true;
         }

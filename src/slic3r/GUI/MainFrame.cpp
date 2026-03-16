@@ -2826,7 +2826,15 @@ void MainFrame::init_menubar_as_editor()
                 plater()->refresh_print();
         },
         "", nullptr, []() { return true; }, this, 1);
-        
+      
+    append_menu_item(
+        parent_menu, wxID_ANY, _L("ReloadHomeAndDevicePage"), "",
+        [this](wxCommandEvent&) { 
+        m_webview->reload();
+        m_printer_view->reload();
+    },
+    "", nullptr, []() { return true; }, this);
+
     append_menu_item(parent_menu, wxID_ANY, _L("TestDevicePage"), "",
         [this](wxCommandEvent&) {
             wxString url ="https://github.com/Snapmaker/";

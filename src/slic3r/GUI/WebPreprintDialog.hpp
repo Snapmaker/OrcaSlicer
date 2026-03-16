@@ -19,6 +19,9 @@ public:
 
     void reload();
 
+    /** Reload current page in WebView (e.g. recover from white screen after debugger breakpoint). */
+    void RecoverWebView();
+
     void set_gcode_file_name(const std::string& filename);
 
     void set_display_file_name(const std::string& filename);
@@ -34,6 +37,9 @@ public:
     bool is_finish() { return m_finish; }
 
     void set_finish(bool flag) { m_finish = flag; }
+
+    /** End modal once; safe to call from SSWCP or from OnClose. Prevents double EndModal. */
+    void EndModalWithResult(int code);
 
 private:
     void OnClose(wxCloseEvent& evt);
@@ -53,6 +59,7 @@ private:
     bool        m_switch_to_device  = false;
 
     bool  m_finish = false;
+    bool  m_modal_ended = false;  // guard against double EndModal (SSWCP vs OnClose)
     DECLARE_EVENT_TABLE()
 };
 

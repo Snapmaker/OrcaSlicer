@@ -56,12 +56,6 @@ WebPreprintDialog::WebPreprintDialog()
     CenterOnParent();
 
     wxGetApp().UpdateDlgDarkUI(this);
-
-    auto ptr = wxGetApp().get_web_device_dialog();
-    if (ptr) {
-        delete ptr;
-    }
-
     wxGetApp().set_web_preprint_dialog(this);
 }
 
@@ -99,6 +93,14 @@ void WebPreprintDialog::set_gcode_file_name(const std::string& filename)
 void WebPreprintDialog::reload()
 {
     load_url(m_prePrint_url);
+}
+
+void WebPreprintDialog::RecoverWebView()
+{
+    if (!m_browser)
+        return;
+    m_browser->Reload();
+    Layout();
 }
 
 void WebPreprintDialog::load_url(wxString &url)
@@ -183,11 +185,21 @@ void WebPreprintDialog::OnScriptMessage(wxWebViewEvent &evt)
 
 }
 
+void WebPreprintDialog::EndModalWithResult(int code)
+{
+    if (m_modal_ended)
+        return;
+    m_modal_ended = true;
+    EndModal(code);
+}
+
 void WebPreprintDialog::OnClose(wxCloseEvent& evt)
 {
     auto noti_manager = wxGetApp().mainframe->plater()->get_notification_manager();
     noti_manager->close_notification_of_type(NotificationType::PrintHostUpload);
-    evt.Skip();
+    // End modal once when user closes via title bar (X). Do not Skip() so caller owns destruction.
+    // EndModalWithResult guards against double EndModal if SSWCP already ended the modal.
+    EndModalWithResult(wxID_CANCEL);
 }
 
 }} // namespace Slic3r::GUI 

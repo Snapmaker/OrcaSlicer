@@ -43,8 +43,6 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
     m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterWebView::OnScriptMessage, this, m_browser->GetId());
 
-    SetSizer(topsizer);
-
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
     update_mode();
@@ -54,7 +52,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     //Connect the idle events
     Bind(wxEVT_CLOSE_WINDOW, &PrinterWebView::OnClose, this);
-
+    SetSizer(topsizer);
  }
 
 PrinterWebView::~PrinterWebView()
@@ -82,10 +80,8 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
         wxGetApp().fltviews().remove_printer_view(this);
     }
     BOOST_LOG_TRIVIAL(fatal) << "load and printer webview address:" << &m_browser;
-    m_browser->Show();
+ 
     m_browser->LoadURL(url);
-       
-    UpdateState();
 }
 
 void PrinterWebView::reload()
@@ -107,15 +103,6 @@ void PrinterWebView::update_mode()
 {
     // m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
     m_browser->EnableAccessToDevTools(true);
-}
-
-/**
- * Method that retrieves the current state from the web control and updates the
- * GUI the reflect this current state.
- */
-void PrinterWebView::UpdateState() {
-  // SetTitle(m_browser->GetCurrentTitle());
-
 }
 
 void PrinterWebView::OnClose(wxCloseEvent& evt)

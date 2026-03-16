@@ -3006,9 +3006,9 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
             WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
             if (dialog) {
                 if(dialog->is_finish()){
-                    dialog->EndModal(wxID_OK);
+                    dialog->EndModalWithResult(wxID_OK);
                 }else{
-                    dialog->EndModal(wxID_CANCEL);
+                    dialog->EndModalWithResult(wxID_CANCEL);
                 }
             }
         }
@@ -3952,37 +3952,37 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
 
 
 void SSWCP_MachineConnect_Instance::sw_connect_other_device() {
-    try {
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        wxGetApp().CallAfter([weak_self](){
-            
-            auto config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
-            config->set("print_host", "");
-            config->set("printhost_apikey", "");
+    //try {
+    //    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    //    wxGetApp().CallAfter([weak_self](){
+    //        
+    //        auto config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    //        config->set("print_host", "");
+    //        config->set("printhost_apikey", "");
 
-            auto dialog = SMPhysicalPrinterDialog(wxGetApp().mainframe->plater()->GetParent()); //  todo
-            int res = dialog.ShowModal();
+    //        auto dialog = SMPhysicalPrinterDialog(wxGetApp().mainframe->plater()->GetParent()); //  todo
+    //        int res = dialog.ShowModal();
 
-            dialog.EndModal(1);
+    //        dialog.EndModal(1);
 
-            if (dialog.m_connected) {
-                auto device_dialog = wxGetApp().get_web_device_dialog();
-                if (device_dialog) {
-                    device_dialog->EndModal(1);
-                }
-            } else {
-                auto self = weak_self.lock();
-                if (self) {
-                    self->handle_general_fail();
-                }
-            }
-            
-            
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
+    //        if (dialog.m_connected) {
+    //            auto device_dialog = wxGetApp().get_web_device_dialog();
+    //            if (device_dialog) {
+    //                device_dialog->EndModal(1);
+    //            }
+    //        } else {
+    //            auto self = weak_self.lock();
+    //            if (self) {
+    //                self->handle_general_fail();
+    //            }
+    //        }
+    //        
+    //        
+    //    });
+    //}
+    //catch (std::exception& e) {
+    //    handle_general_fail();
+    //}
 }
 
 
@@ -4520,7 +4520,7 @@ void SSWCP_MachineManage_Instance::process()
     if (m_cmd == "sw_GetLocalDevices") {
         sw_GetLocalDevices();
     } else if (m_cmd == "sw_AddDevice") {
-        sw_AddDevice();
+        //sw_AddDevice(); not use
     } else if (m_cmd == "sw_SubscribeLocalDevices") {
         sw_SubscribeLocalDevices();
     } else if (m_cmd == "sw_RenameDevice") {
@@ -4621,20 +4621,20 @@ void SSWCP_PageStateChange_Instance::sw_UnsubscribePageStateChange()
 
 void SSWCP_MachineManage_Instance::sw_AddDevice()
 {
-    try {
-        wxGetApp().CallAfter([] {
-            if (wxGetApp().web_device_dialog)
-                delete wxGetApp().web_device_dialog;
+    //try {
+    //    wxGetApp().CallAfter([] {
+    //        if (wxGetApp().web_device_dialog)
+    //            delete wxGetApp().web_device_dialog;
 
-            wxGetApp().web_device_dialog = new WebDeviceDialog;
-            wxGetApp().web_device_dialog->run();
-        });
-        send_to_js();
-        
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
+    //        wxGetApp().web_device_dialog = new WebDeviceDialog;
+    //        wxGetApp().web_device_dialog->run();
+    //    });
+    //    send_to_js();
+    //    
+    //    finish_job();
+    //} catch (std::exception& e) {
+    //    handle_general_fail();
+    //}
 }
 
 void SSWCP_MachineManage_Instance::sw_RenameDevice()
@@ -5586,7 +5586,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             wxGetApp().update_mode();
                                         }
                                     });
-                                } else {
+                                } 
+                                else {
                                     wxGetApp().CallAfter([connect_params, ip, host, link_mode, id, userid]() {
                                         // 是否为连接过的设备
                                         DeviceInfo  query_info;
@@ -5720,14 +5721,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     // wcp订阅
                                     json data = devices;
                                     wxGetApp().device_card_notify(data);
-
-                                    /*MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine
-                                    Connected"), wxICON_QUESTION | wxOK); msg_window.ShowModal();*/
-
-                                    auto dialog = wxGetApp().get_web_device_dialog();
-                                    if (dialog) {
-                                        dialog->EndModal(1);
-                                    }
 
                                     wxGetApp().app_config->set("use_new_connect", "true");
                                     wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(reload_device_view);

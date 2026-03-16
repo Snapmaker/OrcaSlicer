@@ -320,7 +320,6 @@ private:
 
 public:
     // device dialog
-    WebDeviceDialog* web_device_dialog{ nullptr };
     WebPreprintDialog* web_preprint_dialog{ nullptr };
 
 private:
@@ -378,7 +377,6 @@ private:
     }
     void      get_connect_host(std::shared_ptr<PrintHost>& output);
     void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
-    wxDialog* get_web_device_dialog() { return web_device_dialog; }
     void                       set_web_preprint_dialog(WebPreprintDialog* obj) { web_preprint_dialog = obj; }
     wxDialog*                  get_web_preprint_dialog() { return web_preprint_dialog; }
       //try again when subscription fails

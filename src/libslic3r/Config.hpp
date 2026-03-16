@@ -667,17 +667,6 @@ public:
             }
         }
 
-        // DEBUG: Print default_values (only for arithmetic types)
-        if constexpr (std::is_arithmetic_v<T>) {
-            std::string default_vals_str = "[";
-            for (size_t i = 0; i < default_values.size() && i < 8; ++i) {
-                default_vals_str += std::to_string(default_values[i]) + (i < default_values.size()-1 ? "," : "");
-            }
-            default_vals_str += "]";
-            BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_START: default_values=" << default_vals_str
-                << " rhs_size=" << rhs_vec->size();
-        }
-
         // Now resize this->values
         this->values.resize(rhs_vec->size());
 
@@ -687,19 +676,9 @@ public:
             if (!rhs_vec->is_nil(i)) {
                 // Non-nil: use filament's own value
                 this->values[i] = rhs_vec->values[i];
-                // DEBUG: Only for arithmetic types
-                if constexpr (std::is_arithmetic_v<T>) {
-                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
-                        << " nil=N rhs_val=" << rhs_vec->values[i];
-                }
             } else {
                 // Nil: inherit from mapped physical extruder
                 this->values[i] = default_values[i];
-                // DEBUG: Only for arithmetic types
-                if constexpr (std::is_arithmetic_v<T>) {
-                    BOOST_LOG_TRIVIAL(error) << "DEBUG_APPLY_OVERRIDE_IDX: i=" << i
-                        << " nil=Y inherited=" << default_values[i];
-                }
             }
             if (this->values[i] != old_value)
                 modified = true;

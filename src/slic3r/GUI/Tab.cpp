@@ -1129,8 +1129,16 @@ void Tab::update_dirty()
         return;
 
     if (m_presets_choice) {
+        // Store previous dirty state
+        bool was_dirty = m_presets->get_edited_preset().is_dirty;
+
         m_presets_choice->update_dirty();
-        on_presets_changed();
+
+        // Only notify if dirty state changed
+        bool is_dirty = m_presets->get_edited_preset().is_dirty;
+        if (was_dirty != is_dirty) {
+            on_presets_changed();
+        }
     } else {
         m_presets->update_dirty();
     }

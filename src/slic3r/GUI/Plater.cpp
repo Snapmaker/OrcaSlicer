@@ -645,6 +645,7 @@ struct Sidebar::priv
     // BBS printer config
     StaticBox* m_panel_printer_title = nullptr;
     ScalableButton* m_printer_icon = nullptr;
+    ScalableButton* m_printerinfo_syncbtn = nullptr;
     ScalableButton* m_printer_setting = nullptr;
     wxStaticText* m_text_printer_settings = nullptr;
     wxPanel* m_panel_printer_content = nullptr;
@@ -988,17 +989,77 @@ Sidebar::Sidebar(Plater *parent)
         p->m_printer_icon = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "printer");
         p->m_text_printer_settings = new Label(p->m_panel_printer_title, _L("Printer"), LB_PROPAGATE_MOUSE_EVENT);
 
-        p->m_printer_icon->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
-            //auto wizard_t = new ConfigWizard(wxGetApp().mainframe);
-            //wizard_t->run(ConfigWizard::RR_USER, ConfigWizard::SP_CUSTOM);
+        // Use ams_fila_sync icon (sync_nozzle_info.svg does not exist in resources)
+        p->m_printerinfo_syncbtn = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "printer");
+        p->m_printerinfo_syncbtn->SetToolTip(_L("sync nozzle info"));
+        p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
+            bool hasConnectDevice = false;
+            auto devices = wxGetApp().app_config->get_devices();
+            for (const auto& device : devices) {
+                if (device.connected)
+                    hasConnectDevice = true;
+            }
+
+            if (!hasConnectDevice)
+            {
+                // showdialog tips no connect device
+                wxTheApp->CallAfter([this]() {
+                    MessageDialog dlg(wxGetApp().mainframe,
+                                      _L("No device connected. Please connect a printer in Home or Device page."),
+                                      _L("Unbound device"), wxOK);
+                    dlg.ShowModal();
+                    });                
+                return;        
+            }
+
+            std::string                machine_type = "";
+            std::vector<std::string>   nozzle_diameters;
+            std::string                device_name = "";
+            std::shared_ptr<PrintHost> host = nullptr;
+            wxGetApp().get_connect_host(host);
+            if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type == "Snapmaker U1")
+            {
+                if (nozzle_diameters.size() <= 0)
+                {
+                    wxTheApp->CallAfter([this]() {
+                        MessageDialog dlgEx(wxGetApp().mainframe,
+                                            _L("No printer nozzle information detected. Please go to printer configuration nozzles."),
+                                            _L("Printer has no nozzle information"), wxOK);
+                        dlgEx.ShowModal();
+                    });    
+
+                    return;
+                }
+
+                bool res = false;
+                std::string headNozzleSize = nozzle_diameters[0];
+                for (int i = 1; i < nozzle_diameters.size(); i++)
+                {
+                    if (headNozzleSize != nozzle_diameters[i])
+                    {
+                        res = true;
+                        break;
+                    }
+                }
+
+                if (res)
+                {
+                    //select the someone nozzle size to show
+                    return;
+                }
+
+                wxTheApp->CallAfter([this]() {
+                    MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle information synchronization successful"),
+                                         _L("Nozzle information synchronization results"), wxOK);
+                    dlg_Ex.ShowModal();
+                });
+            }
+            
             });
-
-
+        
         p->m_printer_setting = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "settings");
+        p->m_printer_setting->SetToolTip(_L("settings"));
         p->m_printer_setting->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-            // p->editing_filament = -1;
-            // wxGetApp().params_dialog()->Popup();
-            // wxGetApp().get_tab(Preset::TYPE_FILAMENT)->restore_last_select_item();
             wxGetApp().run_wizard(ConfigWizard::RR_USER, ConfigWizard::SP_PRINTERS);
             });
 
@@ -1007,18 +1068,14 @@ Sidebar::Sidebar(Plater *parent)
         h_sizer_title->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
         h_sizer_title->Add(p->m_text_printer_settings, 0, wxALIGN_CENTER);
         h_sizer_title->AddStretchSpacer();
+        h_sizer_title->Add(p->m_printerinfo_syncbtn, 0, wxALIGN_CENTER);
+        h_sizer_title->wxSizer::AddSpacer(FromDIP(10));
         h_sizer_title->Add(p->m_printer_setting, 0, wxALIGN_CENTER);
         h_sizer_title->AddSpacer(FromDIP(SidebarProps::TitlebarMargin()));
         h_sizer_title->SetMinSize(-1, 3 * em);
 
         p->m_panel_printer_title->SetSizer(h_sizer_title);
         p->m_panel_printer_title->Layout();
-
-        // 1.2 Add spliters around title bar
-        // add spliter 1
-        //auto spliter_1 = new ::StaticLine(p->scrolled);
-        //spliter_1->SetBackgroundColour("#A6A9AA");
-        //scrolled_sizer->Add(spliter_1, 0, wxEXPAND);
 
         // add printer title
         scrolled_sizer->Add(p->m_panel_printer_title, 0, wxEXPAND | wxALL, 0);
@@ -1892,6 +1949,21 @@ void Sidebar::update_presets(Preset::Type preset_type)
     case Preset::TYPE_PRINTER:
     {
         // update_nozzle_settings();
+        PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+        if (preset_bundle)
+        {
+            std::string model_id = preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle);
+
+            if (model_id == "SM_U1") {
+                p->m_printerinfo_syncbtn->Show();    
+            }
+            else
+            {
+                p->m_printerinfo_syncbtn->Hide();    
+            }
+
+        }
+
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
 
@@ -1922,6 +1994,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": exit.");
+
 }
 
 //BBS
@@ -1973,6 +2046,7 @@ void Sidebar::msw_rescale()
     p->m_panel_filament_title->GetSizer()
         ->SetMinSize(-1, 3 * wxGetApp().em_unit());
     p->m_printer_icon->msw_rescale();
+    p->m_printerinfo_syncbtn->msw_rescale();
     p->m_printer_setting->msw_rescale();
     p->m_filament_icon->msw_rescale();
     p->m_bpButton_add_filament->msw_rescale();
@@ -2044,6 +2118,7 @@ void Sidebar::sys_color_changed()
     //for (wxWindow* btn : std::vector<wxWindow*>{ p->btn_reslice, p->btn_export_gcode })
     //    wxGetApp().UpdateDarkUI(btn, true);
     p->m_printer_icon->msw_rescale();
+    p->m_printerinfo_syncbtn->msw_rescale();
     p->m_printer_setting->msw_rescale();
     p->m_filament_icon->msw_rescale();
     p->m_bpButton_add_filament->msw_rescale();

@@ -1172,7 +1172,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     std::string auth_code  = cn_params["code"].get<std::string>();
 
     std::string sub_msg             = "success";
-    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 1, sub_msg);
+    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 0, sub_msg);
     if (!response_subscribed) {
         return false;
     }
@@ -1415,10 +1415,10 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     std::string no_sub_msg              = "success";
-    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 1, no_sub_msg);
+    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 0, no_sub_msg);
 
     std::string res_sub_msg         = "success";
-    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 1, res_sub_msg);
+    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 0, res_sub_msg);
     
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 订阅主题结果 - 通知主题: " << (notification_subscribed ? "成功" : "失败")
                            << ", 响应主题: " << (response_subscribed ? "成功" : "失败");
@@ -1485,8 +1485,8 @@ void Moonraker_Mqtt::async_subscribe_machine_info(const std::string& hash, std::
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 使用SN主题: " << main_layer;
         wcp_loger.add_log("使用SN主题: " + main_layer, false, "", "Moonraker_Mqtt", "info");
         std::string sub_msg    = "success";
-        bool        res_status = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1, sub_msg) : false;
-        bool res_notification  = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_notification_topic, 1, sub_msg) : false;
+        bool        res_status = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 0, sub_msg) : false;
+        bool res_notification  = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_notification_topic, 0, sub_msg) : false;
 
         if (!res_status || !res_notification) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 订阅状态主题失败";

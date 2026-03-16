@@ -315,6 +315,9 @@ public:
 public:
     int getUpdateItemCount() { return m_presetitems.size(); }  
 
+public:
+    int getUpdateItemCount() { return m_presetitems.size(); }  
+
 private:
     std::vector<PresetItem> m_presetitems;
     // preset names which are modified in SavePresetDialog and related types

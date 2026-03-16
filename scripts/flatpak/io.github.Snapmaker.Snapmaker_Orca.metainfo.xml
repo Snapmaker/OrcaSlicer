@@ -1,11 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop">
+<<<<<<<< HEAD:scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.metainfo.xml
     <id>io.github.Snapmaker.Snapmaker_Orca</id>
     <launchable type="desktop-id">io.github.Snapmaker.Snapmaker_Orca.desktop</launchable>
     <provides>
         <id>io.github.Snapmaker.Snapmaker_Orca.desktop</id>
     </provides>
     <name>Snapmaker_Orca</name>
+========
+    <id>io.github.softfever.Snapmaker_Orca</id>
+    <launchable type="desktop-id">io.github.softfever.Snapmaker_Orca.desktop</launchable>
+    <provides>
+        <id>io.github.softfever.Snapmaker_Orca.desktop</id>
+    </provides>
+    <name>Snapmaker_Orca</name>
+    <!-- hehe hadess @ppd 
+    ... seriously though, thanks -->
+>>>>>>>> main:scripts/flatpak/io.github.softfever.Snapmaker_Orca.metainfo.xml
     <summary>Get even more perfect prints!</summary>
     <developer_name>Snapmaker</developer_name>
     <url type="homepage">https://github.com/Snapmaker/OrcaSlicer</url>
@@ -23,12 +34,18 @@
     </recommends>
     <screenshots>
 	    <screenshot type="default">
-		    <image>https://raw.githubusercontent.com/powpingdone/com.github.softfever.orcaslicer/master/images/1.png</image>
+		    <image>https://raw.githubusercontent.com/powpingdone/com.github.softfever.Snapmaker_Orca/master/images/1.png</image>
 		    <caption>A model ready to be sliced on a buildplate.</caption>
 	    </screenshot>
 	    <screenshot>
+<<<<<<<< HEAD:scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.metainfo.xml
 		<image>https://raw.githubusercontent.com/powpingdone/com.github.softfever.orcaslicer/master/images/2.png</image>
 		<caption>A calibration test ready to be printed out.</caption>
+========
+		<image>https://raw.githubusercontent.com/powpingdone/com.github.softfever.Snapmaker_Orca/master/images/2.png
+	</image>
+	<caption>A calibration test ready to be printed out.</caption>
+>>>>>>>> main:scripts/flatpak/io.github.softfever.Snapmaker_Orca.metainfo.xml
 	    </screenshot>
     </screenshots>
     <description>

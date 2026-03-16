@@ -1,5 +1,6 @@
 #include "WebView.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/OrcaLocalHandler.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
 
 #include <boost/log/trivial.hpp>
@@ -322,6 +323,80 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     webView->EnableAccessToDevTools();
     return webView;
 }
+
+wxWebView* WebView::CreateWebViewWithLocalRoot(wxWindow *parent, wxString const &url, wxString const &localRootPath)
+{
+    auto url2 = url;
+#ifdef __WIN32__
+    url2.Replace("\\", "/");
+#endif
+    if (!url2.empty()) { url2 = wxURI(url2).BuildURI(); }
+    BOOST_LOG_TRIVIAL(trace) << "CreateWebViewWithLocalRoot: " << url2.ToUTF8() << " root=" << localRootPath.ToUTF8();
+
+#ifdef __WIN32__
+    wxWebView* webView = new WebViewEdge;
+#elif defined(__WXOSX__)
+    wxWebView* webView = new WebViewWebKit;
+#else
+    auto webView = wxWebView::New();
+#endif
+    if (!webView)
+        return nullptr;
+
+    webView->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+
+#ifdef __WIN32__
+    webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52", SLIC3R_VERSION,
+        Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+    webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath)));
+#else
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath)));
+    webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+    webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
+        Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+#endif
+
+#ifdef __WXMAC__
+    WKWebView* wkWebView = (WKWebView*)webView->GetNativeBackend();
+    if (wkWebView)
+        Slic3r::GUI::WKWebView_setTransparentBackground(wkWebView);
+#endif
+
+    auto addScriptMessageHandler = [](wxWebView* wv) {
+        Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
+        if (!wv->AddScriptMessageHandler("wx"))
+            wxLogError("Could not add script message handler");
+        Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
+    };
+#ifndef __WIN32__
+    webView->CallAfter([webView, addScriptMessageHandler] {
+#endif
+        if (Slic3r::GUI::wxGetApp().is_adding_script_handler())
+            g_delay_webviews.push_back(webView);
+        else {
+            addScriptMessageHandler(webView);
+            while (!g_delay_webviews.empty()) {
+                auto views = std::move(g_delay_webviews);
+                for (auto wv : views)
+                    addScriptMessageHandler(wv);
+            }
+        }
+#ifndef __WIN32__
+    });
+#endif
+    webView->EnableContextMenu(true);
+    webView->SetRefData(new WebViewRef(webView));
+    g_webviews.push_back(webView);
+    webView->EnableAccessToDevTools();
+    return webView;
+}
+
 #if wxUSE_WEBVIEW_EDGE
 bool WebView::CheckWebViewRuntime()
 {

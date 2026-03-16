@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scheme Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; min-height: 100%; font-family: system-ui, sans-serif; }
+    body { padding: 24px; background: #f5f5f5; color: #333; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { color: #0d6efd; margin: 0 0 8px 0; }
+    p.hint { color: #666; font-size: 14px; margin: 0 0 20px 0; }
+    button { background: #0d6efd; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 8px; margin-bottom: 8px; }
+    button:hover { background: #0b5ed7; }
+    .gallery { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 20px; }
+    .gallery img { max-width: 200px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    .api-result { margin-top: 16px; padding: 12px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+    .api-result.error { background: #fee; color: #c00; }
+    .bridge-section { margin-top: 8px; padding: 16px; background: #e8f4fd; border-radius: 8px; border: 1px solid #b6d4fe; }
+    .bridge-log { min-height: 80px; margin-top: 12px; padding: 12px; background: #fff; border-radius: 8px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+    .bridge-log-placeholder { color: #999; }
+    .bridge-log .msg { margin: 8px 0; padding: 8px; border-radius: 4px; }
+    .bridge-log .msg-sent { background: #e3f2fd; border-left: 4px solid #2196f3; }
+    .bridge-log .msg-recv { background: #e8f5e9; border-left: 4px solid #4caf50; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>orca:// Scheme Demo</h1>
+    <p class="hint">Images loaded via <code>orca://app/</code> - on-demand disk read, no memory buffering.</p>
+    <button id="btn">Show images from temp folder</button>
+    <button id="btnHttp">HTTP Request (axios)</button>
+
+    <div class="bridge-section">
+      <h2 style="color:#0d6efd; font-size:16px; margin:24px 0 12px 0;">Web ↔ C++ 双向通信</h2>
+      <p class="hint" style="margin:0 0 12px 0;">通过 window.wx.postMessage 发送，C++ 通过 RunScript 回复</p>
+      <button id="btnBridge">Web → C++ 发送消息</button>
+      <button id="btnVersion">获取 App 版本</button>
+      <div id="bridgeLog" class="bridge-log">
+        <div class="bridge-log-placeholder">点击上方按钮测试通信，C++ 回复将显示在此</div>
+      </div>
+    </div>
+
+    <div id="gallery" class="gallery"></div>
+    <div id="apiResult" class="api-result" style="display:none;"></div>
+  </div>
+  <script>
+    document.getElementById('btn').onclick = function() {
+      var g = document.getElementById('gallery');
+      g.innerHTML = '';
+      ['img1.png', 'img2.png', 'img3.png'].forEach(function(name) {
+        var img = document.createElement('img');
+        img.src = name;
+        img.alt = name;
+        g.appendChild(img);
+      });
+    };
+
+    document.getElementById('btnHttp').onclick = function() {
+      var el = document.getElementById('apiResult');
+      el.style.display = 'block';
+      el.className = 'api-result';
+      el.textContent = 'Requesting...';
+
+      axios.get('https://jsonplaceholder.typicode.com/posts/1')
+        .then(function(res) {
+          el.textContent = 'Status: ' + res.status + '\n' +
+            'Headers: ' + JSON.stringify(res.headers, null, 2) + '\n\n' +
+            'Data: ' + JSON.stringify(res.data, null, 2);
+        })
+        .catch(function(err) {
+          el.className = 'api-result error';
+          el.textContent = 'Error: ' + (err.message || err) + '\n' +
+            (err.response ? 'Status: ' + err.response.status + '\n' + JSON.stringify(err.response.data, null, 2) : '');
+        });
+    };
+
+    // PostMessage: Web <-> C++ 双向通信
+    var bridgeLog = document.getElementById('bridgeLog');
+    function appendLog(dir, text) {
+      var placeholder = bridgeLog.querySelector('.bridge-log-placeholder');
+      if (placeholder) placeholder.remove();
+      var div = document.createElement('div');
+      div.className = 'msg msg-' + dir;
+      div.textContent = (dir === 'sent' ? '→ 发送: ' : '← 收到: ') + text;
+      bridgeLog.appendChild(div);
+      bridgeLog.scrollTop = bridgeLog.scrollHeight;
+    }
+    function sendToCpp(type) {
+      if (!window.wx || !window.wx.postMessage) {
+        appendLog('recv', 'window.wx.postMessage 不可用');
+        return;
+      }
+      var msg = { type: type, seq: Date.now(), payload: {} };
+      window.wx.postMessage(JSON.stringify(msg));
+      appendLog('sent', JSON.stringify(msg, null, 2));
+    }
+    document.getElementById('btnBridge').onclick = function() { sendToCpp('ping'); };
+    document.getElementById('btnVersion').onclick = function() { sendToCpp('get_app_version'); };
+
+    window.addEventListener('message', function(e) {
+      if (e.source !== window) return;
+      try {
+        var data = JSON.parse(e.data);
+        if (data.type === 'pong') {
+          appendLog('recv', JSON.stringify(data, null, 2));
+        }
+      } catch (err) {}
+    });
+  </script>
+</body>
+</html>

@@ -71,6 +71,11 @@ set(SLIC3R_RC_VERSION "${ORCA_VERSION_MAJOR},${ORCA_VERSION_MINOR},${ORCA_VERSIO
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
+# Copy orca_scheme_demo files to resources (demo verification in one place)
+set(ORCA_SCHEME_DEMO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/orca_scheme_demo")
+file(MAKE_DIRECTORY "${SLIC3R_RESOURCES_DIR}/web/webtext")
+file(COPY "${ORCA_SCHEME_DEMO_DIR}/demo.html" DESTINATION "${SLIC3R_RESOURCES_DIR}/web/webtext")
+
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Release")
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (default Release)" FORCE)

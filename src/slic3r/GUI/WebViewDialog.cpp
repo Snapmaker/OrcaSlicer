@@ -37,7 +37,7 @@ namespace GUI {
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
  {
-    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=1");
+  wxString url = wxString::FromUTF8("http://localhost:7357/?locale=zh-cn-US&path=1&dark_mode=1&path=1");
     // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
     // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
     url = wxGetApp().get_international_url(url);
@@ -46,7 +46,7 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     // url = "http://localhost:13619/web/flutter_web/1.html";
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
-    
+
 #if !BBL_RELEASE_TO_PUBLIC
     // Create the button
     bSizer_toolbar = new wxBoxSizer(wxHORIZONTAL);
@@ -232,7 +232,7 @@ WebViewPanel::~WebViewPanel()
 {
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << " Start";
     SetEvtHandlerEnabled(false);
-    
+
     delete m_tools_menu;
 
     SSWCP::on_webview_delete(m_browser);
@@ -480,16 +480,16 @@ void WebViewPanel::SendDesignStaffpick(bool on)
 void WebViewPanel::OpenModelDetail(std::string id, NetworkAgent *agent)
 {
     std::string url;
-    if ((agent ? agent->get_model_mall_detail_url(&url, id) : get_model_mall_detail_url(&url, id)) == 0) 
+    if ((agent ? agent->get_model_mall_detail_url(&url, id) : get_model_mall_detail_url(&url, id)) == 0)
     {
-        if (url.find("?") != std::string::npos) 
-        { 
+        if (url.find("?") != std::string::npos)
+        {
             url += "&from=Snapmaker_Orca";
         } else {
             url += "?from=Snapmaker_Orca";
         }
-        
-        wxLaunchDefaultBrowser(url); 
+
+        wxLaunchDefaultBrowser(url);
     }
 }
 
@@ -908,7 +908,7 @@ void WebViewPanel::OnError(wxWebViewEvent& event)
     case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
     BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":PrinterWebView error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
-    
+
 }
 
 

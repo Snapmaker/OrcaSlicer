@@ -7,6 +7,8 @@ class WebView
 {
 public:
     static wxWebView *CreateWebView(wxWindow *parent, wxString const &url);
+    /// Create WebView with orca:// scheme handler for local directory (on-demand disk read).
+    static wxWebView *CreateWebViewWithLocalRoot(wxWindow *parent, wxString const &url, wxString const &localRootPath);
 #if wxUSE_WEBVIEW_EDGE
     static bool CheckWebViewRuntime();
     static bool DownloadAndInstallWebViewRuntime();

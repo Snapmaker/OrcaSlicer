@@ -2296,7 +2296,7 @@ void WipeTower2::plan_toolchange(float z_par, float layer_height_par, unsigned i
 
 // Helper function for square algorithm: calculate toolchange depth based on current width
 // This is ported from BambuStudio and is needed for the square algorithm
-WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, int new_tool,
+WipeTower2::WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, int new_tool,
                                                       float layer_height, float wipe_volume,
                                                       float purge_volume)
 {

@@ -8,47 +8,27 @@
 #include "slic3r/GUI/Widgets/WebView.hpp"
 
 #include <wx/sizer.h>
-#include <wx/stdpaths.h>
-#include <wx/filename.h>
-#include <wx/file.h>
-#include <wx/filefn.h>
 #include <wx/event.h>
+#include <wx/file.h>
+#include <wx/filename.h>
 
 namespace Slic3r {
 namespace GUI {
-
-namespace {
-
-wxString setup_temp_demo()
-{
-    wxString tempBase = wxStandardPaths::Get().GetTempDir();
-    wxString demoDir = tempBase + wxFileName::GetPathSeparator() + "orca_webtext_temp";
-    if (!wxFileName::DirExists(demoDir))
-        wxFileName::Mkdir(demoDir, 0755, wxPATH_MKDIR_FULL);
-
-    std::string res = Slic3r::resources_dir() + "/web/login/";
-    wxString srcImg = from_u8(res + "disconnect.png");
-    if (wxFileExists(srcImg)) {
-        wxString sep = wxFileName::GetPathSeparator();
-        wxCopyFile(srcImg, demoDir + sep + "img1.png", true);
-        wxCopyFile(srcImg, demoDir + sep + "img2.png", true);
-        wxCopyFile(srcImg, demoDir + sep + "img3.png", true);
-    }
-
-    wxFileName fn = wxFileName::DirName(demoDir);
-    fn.MakeAbsolute();
-    return fn.GetFullPath();
-}
-
-} // namespace
 
 WebTextPanel::WebTextPanel(wxWindow *parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
 {
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxString rootPath = setup_temp_demo();
+    // Point rootPath to the Flutter web build output directory.
+    // The orca:// scheme handler maps orca://app/<path> → rootPath/<path>.
+    // wxString rootPath = "/Users/jgfan/code/flutter_web_app/build/web";
 
+
+    wxString rootPath = "/Users/jgfan/code/lava_app/orca/build/flutter_web";
+//    /Users/jgfan/code/flutter_web_app/build/web
+    // Use SetPage instead of LoadURL: wxWebView has a bug where HTML loaded via
+    // custom scheme is displayed as plain text. SetPage injects HTML correctly.
     m_browser = WebView::CreateWebViewWithLocalRoot(this, "", rootPath);
     if (m_browser == nullptr) {
         wxLogError("WebTextPanel: Could not init m_browser");
@@ -58,19 +38,16 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
     SetSizer(topsizer);
 
-    // Load HTML from resources/web/webtext/demo.html
-    // Use SetPage with base URL orca://app/ so HTML renders correctly.
-    wxString htmlPath = from_u8(Slic3r::resources_dir() + "/web/webtext/demo.html");
+    // Read index.html and inject with base URL orca://app/ so relative paths resolve correctly.
+    wxString htmlPath = rootPath + wxFileName::GetPathSeparator() + "index.html";
     wxString html;
-    if (wxFileExists(htmlPath)) {
-        wxFile f(htmlPath, wxFile::read);
-        if (f.IsOpened()) {
-            f.ReadAll(&html);
-        }
-    }
+    wxFile f(htmlPath, wxFile::read);
+    if (f.IsOpened())
+        f.ReadAll(&html);
+
     if (html.empty())
-        html = "<html><body><p>demo.html not found</p></body></html>";
-    m_browser->SetPage(html, "orca://app/");
+        html = "<html><body><p>index.html not found</p></body></html>";
+    m_browser->SetPage(html, "orca://app?path=1&locale=zh-cn");
 
     Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WebTextPanel::OnScriptMessage, this);
 }

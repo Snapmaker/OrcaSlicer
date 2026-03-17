@@ -22,6 +22,10 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
 {
     wxURI u(uri);
     wxString path = u.GetPath();
+
+    // Debug: log the request
+    BOOST_LOG_TRIVIAL(info) << "OrcaLocalHandler::GetFile uri=" << uri.ToUTF8() << " path=" << path.ToUTF8() << " root=" << m_root.ToUTF8();
+
     if (path.empty())
         return nullptr;
 
@@ -52,12 +56,24 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
         mime = "text/css";
     else if (path.Lower().EndsWith(".js"))
         mime = "application/javascript";
+    else if (path.Lower().EndsWith(".json"))
+        mime = "application/json";
+    else if (path.Lower().EndsWith(".wasm"))
+        mime = "application/wasm";
     else if (path.Lower().EndsWith(".png"))
         mime = "image/png";
     else if (path.Lower().EndsWith(".jpg") || path.Lower().EndsWith(".jpeg"))
         mime = "image/jpeg";
     else if (path.Lower().EndsWith(".svg"))
         mime = "image/svg+xml";
+    else if (path.Lower().EndsWith(".ttf"))
+        mime = "font/ttf";
+    else if (path.Lower().EndsWith(".woff"))
+        mime = "font/woff";
+    else if (path.Lower().EndsWith(".woff2"))
+        mime = "font/woff2";
+    else if (path.Lower().EndsWith(".ico"))
+        mime = "image/x-icon";
 
     return new wxFSFile(stream, uri, mime, wxEmptyString, wxDateTime::Now());
 }

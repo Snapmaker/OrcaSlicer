@@ -1949,19 +1949,23 @@ void Sidebar::update_presets(Preset::Type preset_type)
     case Preset::TYPE_PRINTER:
     {
         // update_nozzle_settings();
-        PresetBundle* preset_bundle = wxGetApp().preset_bundle;
-        if (preset_bundle)
+        auto machineName = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+
+        auto printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        auto        printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+        if (printer_model_opt)
         {
-            std::string model_id = preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle);
+            std::string printer_model   = printer_model_opt->value;
+            bool        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
 
-            if (model_id == "SM_U1") {
-                p->m_printerinfo_syncbtn->Show();    
-            }
-            else
+            if (is_snapmaker_u1)
             {
-                p->m_printerinfo_syncbtn->Hide();    
+                p->m_printerinfo_syncbtn->Show();
+            } 
+            else 
+            {
+                p->m_printerinfo_syncbtn->Hide();
             }
-
         }
 
         update_all_preset_comboboxes();

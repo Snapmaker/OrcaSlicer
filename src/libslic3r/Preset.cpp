@@ -2865,13 +2865,28 @@ bool PresetCollection::select_preset_by_name(const std::string &name_w_suffix, b
         // Preset found by its name and it is visible.
         idx = it - m_presets.begin();
     else {
-        // Find the first visible preset.
-        for (size_t i = m_default_suppressed ? m_num_default_presets : 0; i < m_presets.size(); ++ i)
-            if (m_presets[i].is_visible) {
-                idx = i;
-                break;
+        bool found = false;
+        //Only U1 cancel current preset and select the other avalibale preset to show and not switch the other machine 
+        if (m_type == Preset::Type::TYPE_PRINTER && it != m_presets.end() && it->name == name && !it->is_visible) {
+            std::string printer_model = it->config.opt_string("printer_model");
+            if (!printer_model.empty()) {
+                for (size_t i = m_default_suppressed ? m_num_default_presets : 0; i < m_presets.size(); ++i) {
+                    if (m_presets[i].is_visible && m_presets[i].config.opt_string("printer_model") == printer_model) {
+                        idx = i;
+                        found = true;
+                        break;
+                    }
+                }
             }
-        // If the first visible preset was not found, return the 0th element, which is the default preset.
+        }
+        if (!found) {
+            // Find the first visible preset.
+            for (size_t i = m_default_suppressed ? m_num_default_presets : 0; i < m_presets.size(); ++ i)
+                if (m_presets[i].is_visible) {
+                    idx = i;
+                    break;
+                }
+        }
     }
 
     // 2) Select the new preset.

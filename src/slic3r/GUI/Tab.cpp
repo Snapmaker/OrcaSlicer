@@ -3848,8 +3848,8 @@ void TabFilament::toggle_options()
             toggle_line("hot_plate_temp", true);
             toggle_line("textured_plate_temp_initial_layer", true);
             toggle_line("textured_plate_temp", true);
-            toggle_line("graphic_effect_steel_plate_temp_initial_layer", true);
-            toggle_line("graphic_effect_steel_plate_temp", true);
+            toggle_line("graphic_effect_steel_plate_temp_initial_layer", is_snapmaker_u1);
+            toggle_line("graphic_effect_steel_plate_temp", is_snapmaker_u1);
         } else {
             BedType curr_bed_type = m_preset_bundle->printers.get_edited_preset().get_default_bed_type(m_preset_bundle);
             toggle_line("supertack_plate_temp_initial_layer", curr_bed_type == btSuperTack);

@@ -167,6 +167,13 @@
     "#F78E0EFF": "Orange",
     "#E65100FF": "Deep Orange"
   },
+  "model_detail": {
+    "introduction": "Model Description",
+    "copyright_title": "Copyright Notice",
+    "published_at": "Published: {}",
+    "expand_all": "Expand All",
+    "print_preparation": "Print Configuration"
+  },
   "title": "Discovery Device",
   "add device": "Add Device",
   "input_ip_address": "Enter IP address",
@@ -1257,8 +1264,6 @@
   "Nozzle": "Nozzle",
   "Model Library": "Model Library",
   "Print Plates": "Print Plates",
-  "Copyright Notice": "Copyright Notice",
-  "Model Description": "Model Description",
   "Recommendation for You": "Recommendation for You",
   "units": "units",
   "Total": "Total",

@@ -221,9 +221,10 @@ void GCodeProcessor::TimeBlock::prepare_klipper()
 {
     // Initialize v² values from feedrate_profile
     // Klipper uses velocity squared (v²) for efficient calculations
-    start_v2 = feedrate_profile.entry * feedrate_profile.entry;
-    cruise_v2 = feedrate_profile.cruise * feedrate_profile.cruise;
-    end_v2 = feedrate_profile.exit * feedrate_profile.exit;
+    // Ensure feedrate values are non-negative before squaring
+    start_v2 = std::max(0.0f, feedrate_profile.entry) * std::max(0.0f, feedrate_profile.entry);
+    cruise_v2 = std::max(0.0f, feedrate_profile.cruise) * std::max(0.0f, feedrate_profile.cruise);
+    end_v2 = std::max(0.0f, feedrate_profile.exit) * std::max(0.0f, feedrate_profile.exit);
 
     // Calculate cruise velocity squared (maximum velocity in this block)
     max_cruise_v2 = cruise_v2;
@@ -231,20 +232,29 @@ void GCodeProcessor::TimeBlock::prepare_klipper()
     // Calculate delta_v2 (velocity change during acceleration/deceleration)
     // For acceleration: delta_v2 = cruise_v2 - start_v2
     // For deceleration: delta_v2 = cruise_v2 - end_v2
-    delta_v2 = std::max(cruise_v2 - start_v2, cruise_v2 - end_v2);
+    delta_v2 = std::max(0.0f, std::max(cruise_v2 - start_v2, cruise_v2 - end_v2));
 
-    // Calculate smooth_delta_v2 for deceleration phase
-    smooth_delta_v2 = cruise_v2 - end_v2;
+    // Calculate smooth_delta_v2 for deceleration phase (ensure non-negative)
+    smooth_delta_v2 = std::max(0.0f, cruise_v2 - end_v2);
 
     // Calculate minimum move time using v² formula
     // t_accel = (v_cruise² - v_start²) / (2 * accel * v_cruise)
     // t_decel = (v_cruise² - v_end²) / (2 * decel * v_cruise)
     // For simplicity, use the maximum of accel/decel time
+    float cruise_v = std::sqrt(cruise_v2);
+
+    // Handle edge case where cruise velocity is zero or very small
+    if (cruise_v < 0.0001f) {
+        // Fall back to simple distance-based time estimate
+        min_move_t = distance > 0.0f ? distance / 1.0f : 0.0f;  // Assume 1 mm/s minimum
+        return;
+    }
+
     if (acceleration > 0.0f && cruise_v2 > start_v2) {
-        float accel_time = (cruise_v2 - start_v2) / (2.0f * acceleration * std::sqrt(cruise_v2));
+        float accel_time = (cruise_v2 - start_v2) / (2.0f * acceleration * cruise_v);
         float decel_time = 0.0f;
         if (deceleration > 0.0f && cruise_v2 > end_v2) {
-            decel_time = (cruise_v2 - end_v2) / (2.0f * deceleration * std::sqrt(cruise_v2));
+            decel_time = (cruise_v2 - end_v2) / (2.0f * deceleration * cruise_v);
         }
         // Cruise time - use trapezoid distances calculated by calculate_trapezoid()
         float cruise_dist = distance;
@@ -252,10 +262,11 @@ void GCodeProcessor::TimeBlock::prepare_klipper()
         if (trapezoid.decelerate_after > 0 && trapezoid.decelerate_after < distance) {
             cruise_dist -= (distance - trapezoid.decelerate_after);
         }
-        float cruise_time = cruise_dist / std::sqrt(cruise_v2);
-        min_move_t = accel_time + cruise_time + decel_time;
+        cruise_dist = std::max(0.0f, cruise_dist);  // Ensure non-negative
+        float cruise_time = cruise_dist / cruise_v;
+        min_move_t = std::max(0.0f, accel_time + cruise_time + decel_time);
     } else {
-        min_move_t = distance / std::sqrt(cruise_v2);
+        min_move_t = distance / cruise_v;
     }
 }
 
@@ -266,14 +277,14 @@ void GCodeProcessor::TimeBlock::calc_junction(const TimeBlock& prev)
     // junction_v² = 2 * accel * junction_deviation / (1 - cos(θ))
     // where cos(θ) = dot product of normalized direction vectors
 
+    // Ensure we have valid acceleration
+    float accel = acceleration > 0.0f ? acceleration : 1000.0f;  // Default 1000 mm/s²
+
     if (junction_deviation <= 0.0f) {
         // Default to SCV-based calculation if junction_deviation not set
         float scv2 = 5.0f * 5.0f; // Default SCV = 5 mm/s
-        if (acceleration > 0.0f) {
-            junction_deviation = scv2 * (std::sqrt(2.0f) - 1.0f) / acceleration;
-        } else {
-            junction_deviation = 0.05f; // Fallback default
-        }
+        junction_deviation = scv2 * (std::sqrt(2.0f) - 1.0f) / accel;
+        junction_deviation = std::max(0.001f, junction_deviation);  // Ensure positive
     }
 
     // Calculate the junction angle using direction vectors
@@ -282,26 +293,34 @@ void GCodeProcessor::TimeBlock::calc_junction(const TimeBlock& prev)
                       prev.axes_r.y() * axes_r.y() +
                       prev.axes_r.z() * axes_r.z();
 
-    // Clamp cos_theta to valid range
-    cos_theta = std::max(-1.0f, std::min(1.0f, cos_theta));
+    // Clamp cos_theta to valid range (avoid numerical issues at boundaries)
+    cos_theta = std::max(-0.9999f, std::min(0.9999f, cos_theta));
 
     // For nearly collinear moves (cos_theta ≈ 1), junction speed can be high
     // For 180° turns (cos_theta ≈ -1), junction speed must be near zero
     float sin_theta2 = 1.0f - cos_theta * cos_theta;
+    sin_theta2 = std::max(0.0f, sin_theta2);  // Ensure non-negative due to floating point errors
 
     if (sin_theta2 < 0.0001f) {
         // Nearly collinear, use cruise velocity
         max_start_v2 = std::min(prev.max_cruise_v2, max_cruise_v2);
     } else {
         // Calculate junction velocity squared using junction deviation
-        // v²_junction = 2 * accel * junction_deviation * sin(θ) / (1 - cos(θ))
-        // Using identity: sin(θ) / (1 - cos(θ)) = (1 + cos(θ)) / sin(θ)
-        float tan_theta2 = sin_theta2 / (1.0f + cos_theta);
-        max_start_v2 = 2.0f * acceleration * junction_deviation * tan_theta2;
+        // Klipper formula: v²_junction = 2 * accel * junction_deviation / (1 - cos(θ))
+        float one_minus_cos = 1.0f - cos_theta;
+        // Avoid division by near-zero when cos_theta ≈ 1 (collinear)
+        if (one_minus_cos < 0.0001f) {
+            // Nearly collinear, use cruise velocity
+            max_start_v2 = std::min(prev.max_cruise_v2, max_cruise_v2);
+        } else {
+            max_start_v2 = 2.0f * accel * junction_deviation / one_minus_cos;
 
-        // Limit to cruise velocities
-        max_start_v2 = std::min(max_start_v2, prev.max_cruise_v2);
-        max_start_v2 = std::min(max_start_v2, max_cruise_v2);
+            // Limit to cruise velocities (ensure they are valid first)
+            float prev_cruise_v2 = std::max(0.0f, prev.max_cruise_v2);
+            float curr_cruise_v2 = std::max(0.0f, max_cruise_v2);
+            max_start_v2 = std::min(max_start_v2, prev_cruise_v2);
+            max_start_v2 = std::min(max_start_v2, curr_cruise_v2);
+        }
     }
 
     // Ensure non-negative
@@ -310,13 +329,14 @@ void GCodeProcessor::TimeBlock::calc_junction(const TimeBlock& prev)
 
 void GCodeProcessor::TimeBlock::set_junction(float s_v2, float c_v2, float e_v2)
 {
-    start_v2 = s_v2;
-    cruise_v2 = c_v2;
-    end_v2 = e_v2;
+    // Ensure all v² values are non-negative
+    start_v2 = std::max(0.0f, s_v2);
+    cruise_v2 = std::max(0.0f, c_v2);
+    end_v2 = std::max(0.0f, e_v2);
 
-    // Recalculate delta_v2 values
-    delta_v2 = std::max(cruise_v2 - start_v2, cruise_v2 - end_v2);
-    smooth_delta_v2 = cruise_v2 - end_v2;
+    // Recalculate delta_v2 values (ensure non-negative)
+    delta_v2 = std::max(0.0f, std::max(cruise_v2 - start_v2, cruise_v2 - end_v2));
+    smooth_delta_v2 = std::max(0.0f, cruise_v2 - end_v2);
 }
 
 float GCodeProcessor::TimeBlock::calc_move_time_klipper() const
@@ -331,20 +351,33 @@ float GCodeProcessor::TimeBlock::calc_move_time_klipper() const
     float accel = acceleration > 0.0f ? acceleration : 1.0f;
     float decel = deceleration > 0.0f ? deceleration : accel;
 
-    float start_v = std::sqrt(start_v2);
-    float cruise_v = std::sqrt(cruise_v2);
-    float end_v = std::sqrt(end_v2);
+    // Ensure v² values are non-negative to avoid NaN from sqrt
+    float start_v = std::sqrt(std::max(0.0f, start_v2));
+    float cruise_v = std::sqrt(std::max(0.0f, cruise_v2));
+    float end_v = std::sqrt(std::max(0.0f, end_v2));
 
-    // Calculate acceleration distance
+    // If cruise velocity is zero or invalid, fall back to simple time calculation
+    if (cruise_v < 0.0001f) {
+        // Use a minimum velocity to avoid division by zero
+        cruise_v = std::max(start_v, end_v);
+        if (cruise_v < 0.0001f) {
+            // All velocities are essentially zero, return distance-based estimate
+            return distance / 1.0f;  // Assume 1 mm/s minimum
+        }
+    }
+
+    // Calculate acceleration distance (only if accelerating)
     float accel_dist = 0.0f;
     if (cruise_v > start_v + 0.0001f) {
         accel_dist = (cruise_v2 - start_v2) / (2.0f * accel);
+        accel_dist = std::max(0.0f, accel_dist);  // Ensure non-negative
     }
 
-    // Calculate deceleration distance
+    // Calculate deceleration distance (only if decelerating)
     float decel_dist = 0.0f;
     if (cruise_v > end_v + 0.0001f) {
         decel_dist = (cruise_v2 - end_v2) / (2.0f * decel);
+        decel_dist = std::max(0.0f, decel_dist);  // Ensure non-negative
     }
 
     // If accel + decel exceeds distance, we don't reach cruise speed
@@ -354,21 +387,28 @@ float GCodeProcessor::TimeBlock::calc_move_time_klipper() const
         // Rearranging to find v_peak²
         float v_peak2 = (2.0f * accel * decel * distance + decel * start_v2 + accel * end_v2)
                         / (accel + decel);
-        v_peak2 = std::max(start_v2, std::max(end_v2, v_peak2));
+        // Ensure v_peak² is at least as large as start_v² and end_v², and non-negative
+        v_peak2 = std::max(0.0f, std::max(start_v2, std::max(end_v2, v_peak2)));
         float v_peak = std::sqrt(v_peak2);
 
-        // Calculate times for triangle profile
-        float t_accel = (v_peak - start_v) / accel;
-        float t_decel = (v_peak - end_v) / decel;
-        return t_accel + t_decel;
+        // Calculate times for triangle profile (ensure non-negative)
+        float t_accel = v_peak > start_v ? (v_peak - start_v) / accel : 0.0f;
+        float t_decel = v_peak > end_v ? (v_peak - end_v) / decel : 0.0f;
+        return std::max(0.0f, t_accel + t_decel);
     }
 
     // Trapezoid profile
     float cruise_dist = distance - accel_dist - decel_dist;
+    cruise_dist = std::max(0.0f, cruise_dist);  // Ensure non-negative
 
     float t_accel = accel_dist > 0.0f ? (cruise_v - start_v) / accel : 0.0f;
-    float t_cruise = cruise_dist / cruise_v;
+    float t_cruise = cruise_v > 0.0f ? cruise_dist / cruise_v : 0.0f;
     float t_decel = decel_dist > 0.0f ? (cruise_v - end_v) / decel : 0.0f;
+
+    // Ensure all times are non-negative
+    t_accel = std::max(0.0f, t_accel);
+    t_cruise = std::max(0.0f, t_cruise);
+    t_decel = std::max(0.0f, t_decel);
 
     return t_accel + t_cruise + t_decel;
 }
@@ -3326,6 +3366,9 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
             // === Klipper junction deviation calculation ===
             if (m_is_klipper) {
                 // Use Klipper's junction deviation algorithm instead of Marlin jerk
+                // Always set max_cruise_v2 for the current block
+                block.max_cruise_v2 = block.feedrate_profile.cruise * block.feedrate_profile.cruise;
+
                 // Prepare the previous block for Klipper calculation if not done
                 if (!blocks.empty()) {
                     TimeBlock& prev_block = blocks.back();
@@ -3335,7 +3378,7 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
                     }
                     // Calculate junction using junction deviation
                     block.calc_junction(prev_block);
-                    vmax_junction = std::sqrt(block.max_start_v2);
+                    vmax_junction = std::sqrt(std::max(0.0f, block.max_start_v2));
                 }
             }
             // === End Klipper junction deviation calculation ===

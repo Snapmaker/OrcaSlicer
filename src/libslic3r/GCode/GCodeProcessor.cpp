@@ -221,51 +221,15 @@ float GCodeProcessor::TimeBlock::time() const
 
 void GCodeProcessor::TimeBlock::prepare_klipper()
 {
-    // Initialize v² values from feedrate_profile
-    // Klipper uses velocity squared (v²) for efficient calculations
-    // Ensure feedrate values are non-negative before squaring
-    start_v2 = std::max(0.0f, feedrate_profile.entry) * std::max(0.0f, feedrate_profile.entry);
-    cruise_v2 = std::max(0.0f, feedrate_profile.cruise) * std::max(0.0f, feedrate_profile.cruise);
-    end_v2 = std::max(0.0f, feedrate_profile.exit) * std::max(0.0f, feedrate_profile.exit);
-
-    // Calculate cruise velocity squared (maximum velocity in this block)
-    max_cruise_v2 = cruise_v2;
-
-    // Calculate delta_v2 and smooth_delta_v2 using CrealityPrint formula
-    delta_v2 = 2.0f * acceleration * distance;
+    // Simple CrealityPrint-style prepare() - no complex time calculations
+    // Core formulas: delta_v2 = 2 * accel * dist, smooth_delta_v2 = 2 * decel * dist
+    nominal_rate    = std::max(nominal_rate, 1e-6f);
+    min_move_t      = distance / nominal_rate;
+    max_start_v2    = 0;
+    max_cruise_v2   = nominal_rate * nominal_rate;
+    delta_v2        = 2.0f * acceleration * distance;
+    max_smoothed_v2 = 0;
     smooth_delta_v2 = 2.0f * deceleration * distance;
-
-    // Calculate minimum move time using v² formula
-    // t_accel = (v_cruise² - v_start²) / (2 * accel * v_cruise)
-    // t_decel = (v_cruise² - v_end²) / (2 * decel * v_cruise)
-    // For simplicity, use the maximum of accel/decel time
-    float cruise_v = std::sqrt(cruise_v2);
-
-    // Handle edge case where cruise velocity is zero or very small
-    if (cruise_v < 0.0001f) {
-        // Fall back to simple distance-based time estimate
-        min_move_t = distance > 0.0f ? distance / 1.0f : 0.0f;  // Assume 1 mm/s minimum
-        return;
-    }
-
-    if (acceleration > 0.0f && cruise_v2 > start_v2) {
-        float accel_time = (cruise_v2 - start_v2) / (2.0f * acceleration * cruise_v);
-        float decel_time = 0.0f;
-        if (deceleration > 0.0f && cruise_v2 > end_v2) {
-            decel_time = (cruise_v2 - end_v2) / (2.0f * deceleration * cruise_v);
-        }
-        // Cruise time - use trapezoid distances calculated by calculate_trapezoid()
-        float cruise_dist = distance;
-        if (trapezoid.accelerate_until > 0) cruise_dist -= trapezoid.accelerate_until;
-        if (trapezoid.decelerate_after > 0 && trapezoid.decelerate_after < distance) {
-            cruise_dist -= (distance - trapezoid.decelerate_after);
-        }
-        cruise_dist = std::max(0.0f, cruise_dist);  // Ensure non-negative
-        float cruise_time = cruise_dist / cruise_v;
-        min_move_t = std::max(0.0f, accel_time + cruise_time + decel_time);
-    } else {
-        min_move_t = distance / cruise_v;
-    }
 }
 
 float GCodeProcessor::TimeBlock::extruder_calc_juntion(const TimeBlock& prev)

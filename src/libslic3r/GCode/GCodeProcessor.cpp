@@ -231,13 +231,9 @@ void GCodeProcessor::TimeBlock::prepare_klipper()
     // Calculate cruise velocity squared (maximum velocity in this block)
     max_cruise_v2 = cruise_v2;
 
-    // Calculate delta_v2 (velocity change during acceleration/deceleration)
-    // For acceleration: delta_v2 = cruise_v2 - start_v2
-    // For deceleration: delta_v2 = cruise_v2 - end_v2
-    delta_v2 = std::max(0.0f, std::max(cruise_v2 - start_v2, cruise_v2 - end_v2));
-
-    // Calculate smooth_delta_v2 for deceleration phase (ensure non-negative)
-    smooth_delta_v2 = std::max(0.0f, cruise_v2 - end_v2);
+    // Calculate delta_v2 and smooth_delta_v2 using CrealityPrint formula
+    delta_v2 = 2.0f * acceleration * distance;
+    smooth_delta_v2 = 2.0f * deceleration * distance;
 
     // Calculate minimum move time using v² formula
     // t_accel = (v_cruise² - v_start²) / (2 * accel * v_cruise)
@@ -496,7 +492,7 @@ void GCodeProcessor::TimeMachine::simulate_st_synchronize(float additional_time)
     if (!enabled)
         return;
 
-    calculate_time(0, additional_time);
+    calculate_time_klipper(0, additional_time);
 }
 
 static void planner_forward_pass_kernel(GCodeProcessor::TimeBlock& prev, GCodeProcessor::TimeBlock& curr)

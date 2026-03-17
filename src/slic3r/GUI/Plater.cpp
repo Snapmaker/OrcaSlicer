@@ -2614,12 +2614,37 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         
         
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
+
+            auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+            if (printer_model_opt) {
+                std::string printer_model   = printer_model_opt->value;
+                bool        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+
+                if (is_snapmaker_u1)
+                {
+                    //check the config has flags to tips switch nozzle and all nozzle will be changed to the same type
+                    auto  notShow = wxGetApp().app_config->get("app", "sync_diameter_flags");
+                    if (notShow != "true")
+                    {
+                        RichMessageDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe),
+                                              _L("Note: After modification, the dimensions of the other three nozzles will also be adjusted to the same size."),
+                                              _L("Set nozzle diameter"), 
+                                               wxYES);
+                        dlg.ShowCheckBox(_L("not note again"), false);
+                        auto res = dlg.ShowModal();
+                        bool isCheckBox = dlg.IsCheckBoxChecked();
+
+                        wxGetApp().app_config->set("app", "sync_diameter_flags", isCheckBox);     
+                    }
+                }
+            }
+
             auto diameter = diameter_combo->GetValue().substr(0, 3);
             auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
             if (preset == nullptr) {
-                MessageDialog dlg(nullptr, _L(""), _L(""));
-                dlg.ShowModal();
-                return false;
+                BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+                return;
             }
             preset->is_visible = true; // force visible
             
@@ -2628,7 +2653,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                 p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
             }
 
-            return wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+            wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+            event.Skip();
         });
         
         auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;

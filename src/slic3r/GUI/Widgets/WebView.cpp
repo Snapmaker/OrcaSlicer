@@ -291,6 +291,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #ifdef __WXMAC__
         WKWebView * wkWebView = (WKWebView *) webView->GetNativeBackend();
         Slic3r::GUI::WKWebView_setTransparentBackground(wkWebView);
+        // BBS: fix #58 / #167 - allow localhost fetch from device/home tab WebViews
+        Slic3r::GUI::WKWebView_allowLocalNetworkAccess(wkWebView);
 #endif
         auto addScriptMessageHandler = [] (wxWebView *webView) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": begin to add script message handler for wx.";

@@ -167,6 +167,13 @@
     "#F78E0EFF": "橙色",
     "#E65100FF": "深橙色"
   },
+  "model_detail": {
+    "introduction": "模型描述",
+    "copyright_title": "版权声明",
+    "published_at": "发布于：{}",
+    "expand_all": "展开全部",
+    "print_preparation": "打印配置"
+  },
   "title": "发现设备",
   "description": "发现设备",
   "add device": "添加设备",
@@ -1503,8 +1510,6 @@
   "Nozzle": "喷嘴",
   "Model Library":"模型库",
   "Print Plates": "打印盘",
-  "Copyright Notice": "版权说明",
-  "Model Description": "模型简介",
   "Recommendation for You": "官方推荐",
   "units": "个",
   "Total": "总量",

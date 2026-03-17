@@ -3555,6 +3555,12 @@ void TabFilament::build()
         line.append_option(optgroup->get_option("textured_plate_temp"));
         optgroup->append_line(line);
 
+        line = {L("Graphic Effect Steel Plate"), 
+                L("Bed temperature when the Graphic Effect Steel Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Steel Plate.")};
+        line.append_option(optgroup->get_option("graphic_effect_steel_plate_temp_initial_layer"));
+        line.append_option(optgroup->get_option("graphic_effect_steel_plate_temp"));
+        optgroup->append_line(line);
+
         optgroup->m_on_change = [this](t_config_option_key opt_key, boost::any value)
         {
             DynamicPrintConfig& filament_config = wxGetApp().preset_bundle->filaments.get_edited_preset().config;
@@ -3821,6 +3827,8 @@ void TabFilament::toggle_options()
             toggle_line("hot_plate_temp", true);
             toggle_line("textured_plate_temp_initial_layer", true);
             toggle_line("textured_plate_temp", true);
+            toggle_line("graphic_effect_steel_plate_temp_initial_layer", true);
+            toggle_line("graphic_effect_steel_plate_temp", true);
         } else {
             // 不支持多床型：只显示当前选择的床型
             
@@ -3838,6 +3846,8 @@ void TabFilament::toggle_options()
             toggle_line("hot_plate_temp", curr_bed_type == btPEI);
             toggle_line("textured_plate_temp_initial_layer", curr_bed_type == btPTE);
             toggle_line("textured_plate_temp", curr_bed_type == btPTE);
+            toggle_line("graphic_effect_steel_plate_temp_initial_layer", curr_bed_type == btGESP);
+            toggle_line("graphic_effect_steel_plate_temp", curr_bed_type == btGESP);
         }
 
 

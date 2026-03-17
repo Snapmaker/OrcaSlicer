@@ -1196,6 +1196,7 @@ Sidebar::Sidebar(Plater *parent)
         m_bed_type_list = new ComboBox(p->panel_printer_preset, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
         const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
         if (bed_type_def && bed_type_def->enum_keys_map) {
+            //changed the combobox data
             for (auto item : bed_type_def->enum_labels) {
                 m_bed_type_list->AppendString(_L(item));
             }
@@ -1822,8 +1823,14 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
     show_SEMM_buttons(/*cfg.opt_bool("single_extruder_multi_material")*/true);
 
     //p->m_staticText_filament_settings->Update();
-
-    if (is_bbl_vendor || cfg.opt_bool("support_multi_bed_types")) {
+    auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+    bool is_snapmaker_u1 = false;
+    if (printer_model_opt) {
+        std::string printer_model   = printer_model_opt->value;
+        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+    }
+    if (is_bbl_vendor || cfg.opt_bool("support_multi_bed_types") || is_snapmaker_u1) {
         m_bed_type_list->Enable();
         // Orca: don't update bed type if loading project
         if (!p->plater->is_loading_project()) {

@@ -759,6 +759,16 @@ void PrintConfigDef::init_fff_params()
     def->full_label = L("Bed temperature");
     def->min = 0;
     def->max = 300;
+    def->set_default_value(new ConfigOptionInts{45});//todo by alves will be update the mini temp
+
+    def             = this->add("graphic_effect_steel_plate_temp", coInts);
+    def->label      = L("Other layers");
+    def->tooltip    = L("Bed temperature for layers except the initial one. "
+                           "A value of 0 means the filament does not support printing on the Graphic Effect Steel Plate.");
+    def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
+    def->full_label = L("Bed temperature");
+    def->min        = 0;
+    def->max        = 300;
     def->set_default_value(new ConfigOptionInts{45});
 
     def = this->add("supertack_plate_temp_initial_layer", coInts);
@@ -818,6 +828,16 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->min = 0;
     def->max = 300;
+    def->set_default_value(new ConfigOptionInts{45});
+
+    def             = this->add("graphic_effect_steel_plate_temp_initial_layer", coInts);
+    def->label      = L("Initial layer");
+    def->full_label = L("Initial layer bed temperature");
+    def->tooltip    = L("Bed temperature of the initial layer. "
+                           "A value of 0 means the filament does not support printing on the Graphic Effect Steel Plate.");
+    def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
+    def->min        = 0;
+    def->max        = 300;
     def->set_default_value(new ConfigOptionInts{45});
 
     def = this->add("curr_bed_type", coEnum);

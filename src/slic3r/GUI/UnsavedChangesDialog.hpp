@@ -311,9 +311,7 @@ public:
             :name(preset_name), type(preset_type), save_to_project(save_project)
         {
         }
-    };
-public:
-    int getUpdateItemCount() { return m_presetitems.size(); }  
+    }; 
 
 public:
     int getUpdateItemCount() { return m_presetitems.size(); }  

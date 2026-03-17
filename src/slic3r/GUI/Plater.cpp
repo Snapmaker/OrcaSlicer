@@ -1196,10 +1196,10 @@ Sidebar::Sidebar(Plater *parent)
         m_bed_type_list = new ComboBox(p->panel_printer_preset, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
         const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
         if (bed_type_def && bed_type_def->enum_keys_map) {
-            //changed the combobox data
-            for (auto item : bed_type_def->enum_labels) {
+            for (const auto& item : bed_type_def->enum_labels)
                 m_bed_type_list->AppendString(_L(item));
-            }
+            for (const auto& v : bed_type_def->enum_values)
+                m_bed_type_combo_enum_values.push_back(v);
         }
 
         // 添加链接事件等
@@ -1825,12 +1825,51 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
     //p->m_staticText_filament_settings->Update();
     auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
     auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-    bool is_snapmaker_u1 = false;
+    bool is_snapmaker_u1   = false;
     if (printer_model_opt) {
-        std::string printer_model   = printer_model_opt->value;
+        std::string printer_model = printer_model_opt->value;
         is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
-    if (is_bbl_vendor || cfg.opt_bool("support_multi_bed_types") || is_snapmaker_u1) {
+    bool support_multi_bed_types = cfg.opt_bool("support_multi_bed_types");
+    const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
+    const t_config_enum_values* keys_map = bed_type_def ? bed_type_def->enum_keys_map : nullptr;
+
+    m_bed_type_list->Clear();
+    m_bed_type_combo_enum_values.clear();
+    if (bed_type_def && keys_map) {
+        if (is_snapmaker_u1 && !support_multi_bed_types) {
+            for (const auto& item : bed_type_def->enum_labels_u1)
+                m_bed_type_list->AppendString(_L(item));
+            for (const auto& v : bed_type_def->enum_values_u1)
+                m_bed_type_combo_enum_values.push_back(v);
+        } else if (is_snapmaker_u1 && support_multi_bed_types) {
+            for (const auto& item : bed_type_def->enum_labels_ex)
+                m_bed_type_list->AppendString(_L(item));
+            for (const auto& v : bed_type_def->enum_values_ex)
+                m_bed_type_combo_enum_values.push_back(v);
+        } else {
+            for (const auto& item : bed_type_def->enum_labels)
+                m_bed_type_list->AppendString(_L(item));
+            for (const auto& v : bed_type_def->enum_values)
+                m_bed_type_combo_enum_values.push_back(v);
+        }
+    }
+
+    auto get_key_for_bed_type = [keys_map](BedType bt) -> std::string {
+        if (!keys_map) return {};
+        for (const auto& item : *keys_map)
+            if ((BedType)item.second == bt) return item.first;
+        return {};
+    };
+    auto get_selection_index = [&]() -> int {
+        BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+        std::string key = get_key_for_bed_type(curr);
+        for (size_t i = 0; i < m_bed_type_combo_enum_values.size(); ++i)
+            if (m_bed_type_combo_enum_values[i] == key) return (int)i;
+        return 0;
+    };
+
+    if (is_bbl_vendor || support_multi_bed_types || is_snapmaker_u1) {
         m_bed_type_list->Enable();
         // Orca: don't update bed type if loading project
         if (!p->plater->is_loading_project()) {
@@ -1856,22 +1895,32 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             }
             
             // Orca: Update proj_config directly to avoid callback context issues
+            if (is_snapmaker_u1 && !support_multi_bed_types) {
+                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP) {
+                    bed_type_to_use = btPTE;
+                    wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
+                    wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
+                }
+            }
+
             wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type_to_use));
-            
-            // Orca: Update UI without triggering callback to avoid unintended side effects
-            // The callback should only be triggered by user manual changes, not by preset switching
-            m_bed_type_list->SetSelection((int)bed_type_to_use - 1);
+            int sel_idx = get_selection_index();
+            m_bed_type_list->SetSelection(sel_idx);
+        } else {
+            if (is_snapmaker_u1 && !support_multi_bed_types) {
+                BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+                if (curr != btPTE && curr != btPEI && curr != btGESP) {
+                    wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
+                    m_bed_type_list->SetSelection(0);
+                } else
+                    m_bed_type_list->SetSelection(get_selection_index());
+            } else
+                m_bed_type_list->SetSelection(get_selection_index());
         }
     } else {
-        // Orca: 不支持多床型时，从配置读取默认床型
         BedType default_bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
-        
-        // Orca: 即使不支持多床型，也需要保存床型到 project_config，确保数据一致性
         wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(default_bed_type));
-        
-        // Orca: combobox don't have the btDefault option, so we need to -1
-        // Orca: use Select instead of SelectAndNotify to avoid overwriting printer settings when switching printers
-        m_bed_type_list->Select((int)default_bed_type - 1);
+        m_bed_type_list->SetSelection(get_selection_index());
         m_bed_type_list->Disable();
     }
 
@@ -7494,7 +7543,10 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
 {
     ComboBox* combo = static_cast<ComboBox*>(evt.GetEventObject());
     int selection = combo->GetSelection();
-    std::string bed_type_name = print_config_def.get("curr_bed_type")->enum_values[selection];
+    const std::vector<std::string>& combo_values = sidebar->get_bed_type_combo_enum_values();
+    std::string bed_type_name = (combo_values.size() > (size_t)selection)
+        ? combo_values[selection]
+        : print_config_def.get("curr_bed_type")->enum_values[selection];
 
     PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
     DynamicPrintConfig& proj_config = wxGetApp().preset_bundle->project_config;

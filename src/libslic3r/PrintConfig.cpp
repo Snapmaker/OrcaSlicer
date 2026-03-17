@@ -392,7 +392,8 @@ static const t_config_enum_values s_keys_map_BedType = {
     { "Engineering Plate",  btEP  },
     { "High Temp Plate",    btPEI  },
     { "Textured PEI Plate", btPTE },
-    { "Textured Cool Plate", btPCT }
+    { "Textured Cool Plate", btPCT },
+    { "Graphic Effect Steel Plate", btGESP }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(BedType)
 
@@ -858,6 +859,28 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.emplace_back(L("Textured PEI Plate"));
     def->enum_labels.emplace_back(L("Textured Cool Plate"));
     def->enum_labels.emplace_back(L("Cool Plate (SuperTack)"));
+    // U1 only 3
+    def->enum_values_u1.emplace_back("Textured PEI Plate");
+    def->enum_values_u1.emplace_back("High Temp Plate");
+    def->enum_values_u1.emplace_back("Graphic Effect Steel Plate");
+    def->enum_labels_u1.emplace_back(L("Textured PEI Plate"));
+    def->enum_labels_u1.emplace_back(L("Smooth High Temp Plate"));
+    def->enum_labels_u1.emplace_back(L("Graphic Effect Steel Plate"));
+    // U1 use 7 when open support_multi_bed_types
+    def->enum_values_ex.emplace_back("Cool Plate");
+    def->enum_values_ex.emplace_back("Engineering Plate");
+    def->enum_values_ex.emplace_back("High Temp Plate");
+    def->enum_values_ex.emplace_back("Textured PEI Plate");
+    def->enum_values_ex.emplace_back("Textured Cool Plate");
+    def->enum_values_ex.emplace_back("Supertack Plate");
+    def->enum_values_ex.emplace_back("Graphic Effect Steel Plate");
+    def->enum_labels_ex.emplace_back(L("Smooth Cool Plate"));
+    def->enum_labels_ex.emplace_back(L("Engineering Plate"));
+    def->enum_labels_ex.emplace_back(L("Smooth High Temp Plate"));
+    def->enum_labels_ex.emplace_back(L("Textured PEI Plate"));
+    def->enum_labels_ex.emplace_back(L("Textured Cool Plate"));
+    def->enum_labels_ex.emplace_back(L("Cool Plate (SuperTack)"));
+    def->enum_labels_ex.emplace_back(L("Graphic Effect Steel Plate"));
     def->set_default_value(new ConfigOptionEnum<BedType>(btPC));
 
     // Orca: allow profile maker to set default bed type in machine profile

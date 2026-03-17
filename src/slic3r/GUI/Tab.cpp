@@ -3810,11 +3810,32 @@ void TabFilament::toggle_options()
     {
         bool pa = m_config->opt_bool("enable_pressure_advance", 0);
         toggle_option("pressure_advance", pa);
-        
+
         // BBS: 控制床温选项的显示
         auto support_multi_bed_types = is_BBL_printer || cfg.opt_bool("support_multi_bed_types");
-        if (support_multi_bed_types) {
-            // 支持多床型：显示所有床温选项
+        bool is_snapmaker_u1 = false;
+        if (auto printer_model_opt = cfg.option<ConfigOptionString>("printer_model")) {
+            std::string printer_model = printer_model_opt->value;
+            is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+        }
+        if (is_snapmaker_u1 && !support_multi_bed_types) {
+            // U1 default show 3 plates
+            toggle_line("supertack_plate_temp_initial_layer", false);
+            toggle_line("supertack_plate_temp", false);
+            toggle_line("cool_plate_temp_initial_layer", false);
+            toggle_line("cool_plate_temp", false);
+            toggle_line("textured_cool_plate_temp_initial_layer", false);
+            toggle_line("textured_cool_plate_temp", false);
+            toggle_line("eng_plate_temp_initial_layer", false);
+            toggle_line("eng_plate_temp", false);
+            toggle_line("hot_plate_temp_initial_layer", true);
+            toggle_line("hot_plate_temp", true);
+            toggle_line("textured_plate_temp_initial_layer", true);
+            toggle_line("textured_plate_temp", true);
+            toggle_line("graphic_effect_steel_plate_temp_initial_layer", true);
+            toggle_line("graphic_effect_steel_plate_temp", true);
+        } else if (support_multi_bed_types) {
+            // u1 has 7 plates
             toggle_line("supertack_plate_temp_initial_layer", true);
             toggle_line("cool_plate_temp", true);
             toggle_line("cool_plate_temp_initial_layer", true);
@@ -3830,10 +3851,7 @@ void TabFilament::toggle_options()
             toggle_line("graphic_effect_steel_plate_temp_initial_layer", true);
             toggle_line("graphic_effect_steel_plate_temp", true);
         } else {
-            // 不支持多床型：只显示当前选择的床型
-            
             BedType curr_bed_type = m_preset_bundle->printers.get_edited_preset().get_default_bed_type(m_preset_bundle);
-           
             toggle_line("supertack_plate_temp_initial_layer", curr_bed_type == btSuperTack);
             toggle_line("supertack_plate_temp", curr_bed_type == btSuperTack);
             toggle_line("cool_plate_temp_initial_layer", curr_bed_type == btPC);

@@ -395,8 +395,13 @@ class Print;
             // === Klipper-specific fields for junction deviation time estimation ===
             float deceleration{ 0.0f };           // mm/s^2 (separate from acceleration for Klipper)
             float junction_deviation{ 0.05f };    // Klipper junction deviation parameter
-            Vec3f axes_r{ Vec3f::Zero() };        // Normalized motion direction vector
+            Vec3f axes_r{ 1.0f, 0.0f, 0.0f };      // Normalized motion direction vector (default X direction)
             bool is_kinematic_move{ true };
+
+            // Additional Klipper fields for accurate time estimation
+            float extruder_e{ 0.0f };           // Extruder E position (for extruder_calc_juntion)
+            float instant_corner_v{ 10.0f };    // Instantaneous corner velocity (mm/s)
+            float nominal_rate{ 0.0f };         // Nominal velocity (mm/s)
 
             // v²-based velocity fields (Klipper uses velocity squared for efficiency)
             float max_start_v2{ 0.0f };           // Maximum start velocity² (mm²/s²)
@@ -417,6 +422,8 @@ class Print;
             // === Klipper-specific methods ===
             // Prepare block for Klipper-style time calculation
             void prepare_klipper();
+            // Calculate extruder junction velocity limit
+            float extruder_calc_juntion(const TimeBlock& prev);
             // Calculate junction speed with previous block using junction deviation
             void calc_junction(const TimeBlock& prev);
             // Set junction velocities
@@ -446,14 +453,18 @@ class Print;
                 // === Klipper-specific fields for junction deviation time estimation ===
                 float deceleration{ 0.0f };           // mm/s^2 (separate deceleration for Klipper)
                 float junction_deviation{ 0.05f };    // Klipper junction deviation parameter
-                float square_corner_velocity{ 5.0f }; // mm/s - Klipper SCV parameter
+                float square_corner_velocity{ 8.0f }; // mm/s - Klipper SCV parameter (typical default)
 
                 // v²-based velocity tracking (Klipper uses velocity squared for efficiency)
                 float max_start_v2{ 0.0f };           // Maximum start velocity² at junction
-                float max_cruise_v2{ 0.0f };          // Maximum cruise velocity²
-                float next_junction_v2{ 0.0f };       // Junction velocity² with next block
+                float max_cruise_v2{ 9999.0f };       // Maximum cruise velocity² (Klipper uses high default)
+                float next_junction_v2{ 9999.0f };    // Junction velocity² with next block (Klipper uses high default)
                 float max_smoothed_v2{ 0.0f };        // Maximum smoothed velocity²
                 float smooth_delta_v2{ 0.0f };        // Smooth velocity change²
+
+                // Additional Klipper state fields
+                float delta_v2{ 99999.0f };           // Velocity change² during acceleration (high default for Klipper)
+                float acc{ 1000.0f };                 // Default acceleration (mm/s²)
 
                 void reset();
             };
@@ -510,6 +521,12 @@ class Print;
             // Simulates firmware st_synchronize() call
             void simulate_st_synchronize(float additional_time = 0.0f);
             void calculate_time(size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
+
+            // Klipper-specific lookahead planning function
+            void flush_time(std::vector<TimeBlock>& queue, bool lazy);
+
+            // Klipper-specific time calculation using flush_time
+            void calculate_time_klipper(size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
         };
 
         struct TimeProcessor

@@ -30,6 +30,8 @@
 #endif
 
 #include <chrono>
+#include <algorithm>
+#include <tuple>
 
 static const float DEFAULT_TOOLPATH_WIDTH = 0.4f;
 static const float DEFAULT_TOOLPATH_HEIGHT = 0.2f;
@@ -270,61 +272,85 @@ void GCodeProcessor::TimeBlock::prepare_klipper()
     }
 }
 
+float GCodeProcessor::TimeBlock::extruder_calc_juntion(const TimeBlock& prev)
+{
+    // 使用 extruder_e 字段计算挤出机转角速度限制
+    float diff_r = extruder_e - prev.extruder_e;
+    if (!std::isfinite(diff_r)) return max_cruise_v2;
+
+    float denom = std::abs(diff_r);
+    if (denom > 1e-7f) {
+        float inv = instant_corner_v / denom;
+        return inv * inv;
+    }
+    return max_cruise_v2;
+}
+
 void GCodeProcessor::TimeBlock::calc_junction(const TimeBlock& prev)
 {
-    // Calculate junction deviation velocity using Klipper's algorithm
-    // junction_deviation = scv² * (√2 - 1) / accel
-    // junction_v² = 2 * accel * junction_deviation / (1 - cos(θ))
-    // where cos(θ) = dot product of normalized direction vectors
+    // Calculate junction velocity using CrealityPrint/Klipper's full algorithm
+    // This includes: R_jd factor, centripetal velocity limiting, extruder limiting
 
-    // Ensure we have valid acceleration
-    float accel = acceleration > 0.0f ? acceleration : 1000.0f;  // Default 1000 mm/s²
-
-    if (junction_deviation <= 0.0f) {
-        // Default to SCV-based calculation if junction_deviation not set
-        float scv2 = 5.0f * 5.0f; // Default SCV = 5 mm/s
-        junction_deviation = scv2 * (std::sqrt(2.0f) - 1.0f) / accel;
-        junction_deviation = std::max(0.001f, junction_deviation);  // Ensure positive
+    if (!is_kinematic_move || !prev.is_kinematic_move) {
+        return;
     }
 
-    // Calculate the junction angle using direction vectors
-    // cos(θ) = prev.axes_r · axes_r
-    float cos_theta = prev.axes_r.x() * axes_r.x() +
-                      prev.axes_r.y() * axes_r.y() +
-                      prev.axes_r.z() * axes_r.z();
+    // Calculate extruder junction velocity limit
+    float extruder_v2 = extruder_calc_juntion(prev);
 
-    // Clamp cos_theta to valid range (avoid numerical issues at boundaries)
-    cos_theta = std::max(-0.9999f, std::min(0.9999f, cos_theta));
+    // Calculate junction angle using direction vectors
+    // cos(θ) = -prev.axes_r · axes_r (negative because we want the exterior angle)
+    float junction_cos_theta = -(prev.axes_r.x() * axes_r.x() +
+                                  prev.axes_r.y() * axes_r.y() +
+                                  prev.axes_r.z() * axes_r.z());
 
-    // For nearly collinear moves (cos_theta ≈ 1), junction speed can be high
-    // For 180° turns (cos_theta ≈ -1), junction speed must be near zero
-    float sin_theta2 = 1.0f - cos_theta * cos_theta;
-    sin_theta2 = std::max(0.0f, sin_theta2);  // Ensure non-negative due to floating point errors
+    // Skip if nearly collinear (cos_theta ≈ 1)
+    if (junction_cos_theta > 0.999999f) return;
+    junction_cos_theta = std::max(junction_cos_theta, -0.999999f);
 
-    if (sin_theta2 < 0.0001f) {
-        // Nearly collinear, use cruise velocity
-        max_start_v2 = std::min(prev.max_cruise_v2, max_cruise_v2);
-    } else {
-        // Calculate junction velocity squared using junction deviation
-        // Klipper formula: v²_junction = 2 * accel * junction_deviation / (1 - cos(θ))
-        float one_minus_cos = 1.0f - cos_theta;
-        // Avoid division by near-zero when cos_theta ≈ 1 (collinear)
-        if (one_minus_cos < 0.0001f) {
-            // Nearly collinear, use cruise velocity
-            max_start_v2 = std::min(prev.max_cruise_v2, max_cruise_v2);
-        } else {
-            max_start_v2 = 2.0f * accel * junction_deviation / one_minus_cos;
+    // Calculate trigonometric factors for junction velocity
+    // sin(θ/2) = sqrt((1 - cos(θ)) / 2)
+    float sin_theta_d2 = std::sqrt(0.5f * (1.0f - junction_cos_theta));
+    // R_jd factor: sin(θ/2) / (1 - sin(θ/2))
+    float R_jd = sin_theta_d2 / (1.0f - sin_theta_d2);
+    // tan(θ/2) = sin(θ/2) / cos(θ/2) = sin(θ/2) / sqrt((1 + cos(θ)) / 2)
+    float tan_theta_d2 = sin_theta_d2 / std::sqrt(0.5f * (1.0f + junction_cos_theta));
 
-            // Limit to cruise velocities (ensure they are valid first)
-            float prev_cruise_v2 = std::max(0.0f, prev.max_cruise_v2);
-            float curr_cruise_v2 = std::max(0.0f, max_cruise_v2);
-            max_start_v2 = std::min(max_start_v2, prev_cruise_v2);
-            max_start_v2 = std::min(max_start_v2, curr_cruise_v2);
-        }
-    }
+    // Ensure valid acceleration values
+    float accel = acceleration > 0.0f ? acceleration : 1000.0f;
+    float prev_accel = prev.acceleration > 0.0f ? prev.acceleration : accel;
+
+    // Calculate centripetal velocity limits
+    // v²_centripetal = 0.5 * distance * tan(θ/2) * acceleration
+    float move_centripetal_v2 = 0.5f * distance * tan_theta_d2 * accel;
+    float prev_move_centripetal_v2 = 0.5f * prev.distance * tan_theta_d2 * prev_accel;
+
+    // Ensure junction_deviation is valid
+    float jd = junction_deviation > 0.0f ? junction_deviation : 0.05f;
+    float prev_jd = prev.junction_deviation > 0.0f ? prev.junction_deviation : 0.05f;
+
+    // Calculate maximum start velocity² using ALL limiting factors (CrealityPrint formula)
+    // Factors: R_jd * junction_deviation * acceleration (current and previous)
+    //          Centripetal limits (current and previous)
+    //          Extruder limit
+    //          Cruise velocity limits (current and previous)
+    //          Previous block's remaining velocity
+    max_start_v2 = std::min({
+        R_jd * jd * accel,
+        R_jd * prev_jd * prev_accel,
+        move_centripetal_v2,
+        prev_move_centripetal_v2,
+        extruder_v2,
+        max_cruise_v2,
+        prev.max_cruise_v2,
+        prev.max_start_v2 + prev.delta_v2
+    });
 
     // Ensure non-negative
     max_start_v2 = std::max(0.0f, max_start_v2);
+
+    // Calculate smoothed velocity for deceleration planning
+    max_smoothed_v2 = std::min(max_start_v2, prev.max_smoothed_v2 + prev.smooth_delta_v2);
 }
 
 void GCodeProcessor::TimeBlock::set_junction(float s_v2, float c_v2, float e_v2)
@@ -422,15 +448,17 @@ void GCodeProcessor::TimeMachine::State::reset()
     //BBS
     enter_direction = { 0.0f, 0.0f, 0.0f };
     exit_direction = { 0.0f, 0.0f, 0.0f };
-    // Klipper-specific fields
+    // Klipper-specific fields - use CrealityPrint defaults for accurate estimation
     deceleration = 0.0f;
     junction_deviation = 0.05f;
-    square_corner_velocity = 5.0f;
+    square_corner_velocity = 8.0f;  // Match typical Klipper firmware default
+    delta_v2 = 99999.0f;
     max_start_v2 = 0.0f;
-    max_cruise_v2 = 0.0f;
-    next_junction_v2 = 0.0f;
+    max_cruise_v2 = 9999.0f;
+    next_junction_v2 = 9999.0f;
     max_smoothed_v2 = 0.0f;
     smooth_delta_v2 = 0.0f;
+    acc = 1000.0f;  // Default acceleration
 }
 
 void GCodeProcessor::TimeMachine::CustomGCodeTime::reset()
@@ -539,6 +567,119 @@ static void recalculate_trapezoids(std::vector<GCodeProcessor::TimeBlock>& block
         next->trapezoid = block.trapezoid;
         next->flags.recalculate = false;
     }
+}
+
+void GCodeProcessor::TimeMachine::flush_time(std::vector<TimeBlock>& queue, bool lazy)
+{
+    float junction_flush = 0.250f;  // 前瞻时间窗口 (秒)
+    bool update_flush_count = lazy;
+    size_t flush_count = queue.size();
+    std::vector<std::tuple<TimeBlock*, float, float>> delayed;
+    float next_end_v2 = 0.0f, next_smoothed_v2 = 0.0f, peak_cruise_v2 = 0.0f;
+
+    // 反向遍历队列
+    for (int i = static_cast<int>(flush_count) - 1; i >= 0; --i) {
+        TimeBlock* move = &(queue[i]);
+
+        // 计算可达速度
+        float reachable_start_v2 = next_end_v2 + move->delta_v2;
+        float start_v2 = std::min(move->max_start_v2, reachable_start_v2);
+        float reachable_smoothed_v2 = next_smoothed_v2 + move->smooth_delta_v2;
+        float smoothed_v2 = std::min(move->max_smoothed_v2, reachable_smoothed_v2);
+
+        // 处理平滑速度
+        if (smoothed_v2 < reachable_smoothed_v2) {
+            if ((smoothed_v2 + move->smooth_delta_v2 > next_smoothed_v2) || !delayed.empty()) {
+                if (update_flush_count && peak_cruise_v2 > 0.0f) {
+                    flush_count = static_cast<size_t>(i);
+                    update_flush_count = false;
+                }
+                peak_cruise_v2 = std::min(move->max_cruise_v2, 0.5f * (smoothed_v2 + reachable_smoothed_v2));
+
+                // 处理延迟队列
+                if (!delayed.empty()) {
+                    if (!update_flush_count && i < static_cast<int>(flush_count)) {
+                        float mc_v2 = peak_cruise_v2;
+                        for (auto it = delayed.rbegin(); it != delayed.rend(); ++it) {
+                            TimeBlock* m = std::get<0>(*it);
+                            float ms_v2 = std::get<1>(*it);
+                            float me_v2 = std::get<2>(*it);
+                            mc_v2 = std::min(mc_v2, ms_v2);
+                            m->set_junction(std::min(ms_v2, mc_v2), mc_v2, std::min(me_v2, mc_v2));
+                        }
+                    }
+                    delayed.clear();
+                }
+            }
+            if (!update_flush_count && i < static_cast<int>(flush_count)) {
+                float cruise_v2 = std::min({0.5f * (start_v2 + reachable_start_v2), move->max_cruise_v2, peak_cruise_v2});
+                move->set_junction(std::min(start_v2, cruise_v2), cruise_v2, std::min(next_end_v2, cruise_v2));
+            }
+        } else {
+            delayed.emplace_back(move, start_v2, next_end_v2);
+        }
+
+        next_end_v2 = start_v2;
+        next_smoothed_v2 = smoothed_v2;
+    }
+
+    if (update_flush_count || flush_count == 0)
+        return;
+
+    std::vector<TimeBlock> result(queue.begin(), queue.begin() + flush_count);
+    queue.erase(queue.begin(), queue.begin() + flush_count);
+    queue = result;
+}
+
+void GCodeProcessor::TimeMachine::calculate_time_klipper(size_t keep_last_n_blocks, float additional_time)
+{
+    if (!enabled || blocks.size() < 2)
+        return;
+
+    // 使用 flush_time 进行前瞻规划 (替代 forward_pass + reverse_pass)
+    flush_time(blocks, false);
+
+    // 计算梯形
+    for (size_t i = 0; i < blocks.size(); i++) {
+        blocks[i].calculate_trapezoid();
+    }
+
+    // 累积时间
+    size_t n_blocks_process = blocks.size();
+    for (size_t i = 0; i < n_blocks_process; ++i) {
+        const TimeBlock& block = blocks[i];
+        // 使用 Klipper 时间计算
+        float block_time = block.calc_move_time_klipper();
+        if (i == 0)
+            block_time += additional_time;
+
+        time += block_time;
+        gcode_time.cache += block_time;
+
+        // 统计各类移动时间
+        if (!block.flags.prepare_stage || block.move_type != EMoveType::Travel)
+            moves_time[static_cast<size_t>(block.move_type)] += block_time;
+        roles_time[static_cast<size_t>(block.role)] += block_time;
+
+        // 层时间统计
+        if (block.layer_id >= layers_time.size()) {
+            const size_t curr_size = layers_time.size();
+            layers_time.resize(block.layer_id);
+            for (size_t j = curr_size; j < layers_time.size(); ++j) {
+                layers_time[j] = 0.0f;
+            }
+        }
+        layers_time[block.layer_id - 1] += block_time;
+
+        // 准备时间
+        if (block.flags.prepare_stage)
+            prepare_time += block_time;
+
+        // G1 时间缓存
+        g1_times_cache.push_back({ block.g1_line_id, block.remaining_internal_g1_lines, time });
+    }
+
+    blocks.clear();
 }
 
 void GCodeProcessor::TimeMachine::calculate_time(size_t keep_last_n_blocks, float additional_time)

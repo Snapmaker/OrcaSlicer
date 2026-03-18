@@ -10,21 +10,22 @@
 namespace Slic3r {
 namespace GUI {
 
-OrcaLocalHandler::OrcaLocalHandler(const wxString& scheme, const wxString& rootPath)
+OrcaLocalHandler::OrcaLocalHandler(const wxString& scheme, const wxString& rootPath,
+                                   const wxString& userAssetsRoot)
     : wxWebViewHandler(scheme)
 {
     m_root = rootPath;
     if (!m_root.empty() && m_root.Last() != wxFileName::GetPathSeparator())
         m_root += wxFileName::GetPathSeparator();
+    m_userAssetsRoot = userAssetsRoot;
+    if (!m_userAssetsRoot.empty() && m_userAssetsRoot.Last() != wxFileName::GetPathSeparator())
+        m_userAssetsRoot += wxFileName::GetPathSeparator();
 }
 
 wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
 {
     wxURI u(uri);
     wxString path = u.GetPath();
-
-    // Debug: log the request
-    BOOST_LOG_TRIVIAL(info) << "OrcaLocalHandler::GetFile uri=" << uri.ToUTF8() << " path=" << path.ToUTF8() << " root=" << m_root.ToUTF8();
 
     if (path.empty())
         return nullptr;
@@ -37,8 +38,23 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
     if (path.Contains(".."))
         return nullptr;
 
-    path.Replace("/", wxString(wxFileName::GetPathSeparator()));
-    wxString fullPath = m_root + path;
+    wxString fullPath;
+    wxString pathForMime = path;
+
+    // orca://app/user_assets/xxx -> m_userAssetsRoot/xxx
+    if (!m_userAssetsRoot.empty() && path.Lower().StartsWith("user_assets")) {
+        wxString sub = path.Mid(11);  // skip "user_assets"
+        while (sub.Length() > 0 && (sub[0] == '/' || sub[0] == '\\'))
+            sub = sub.Mid(1);
+        if (sub.Contains("..")) return nullptr;
+        sub.Replace("/", wxString(wxFileName::GetPathSeparator()));
+        fullPath = m_userAssetsRoot + sub;
+    } else {
+        path.Replace("/", wxString(wxFileName::GetPathSeparator()));
+        fullPath = m_root + path;
+    }
+
+    BOOST_LOG_TRIVIAL(trace) << "OrcaLocalHandler::GetFile uri=" << uri.ToUTF8() << " fullPath=" << fullPath.ToUTF8();
 
     if (!wxFileExists(fullPath))
         return nullptr;
@@ -50,32 +66,34 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
     }
 
     wxString mime = "application/octet-stream";
-    if (path.Lower().EndsWith(".html") || path.Lower().EndsWith(".htm"))
+    if (pathForMime.Lower().EndsWith(".html") || pathForMime.Lower().EndsWith(".htm"))
         mime = "text/html; charset=utf-8";
-    else if (path.Lower().EndsWith(".css"))
+    else if (pathForMime.Lower().EndsWith(".css"))
         mime = "text/css";
-    else if (path.Lower().EndsWith(".js"))
+    else if (pathForMime.Lower().EndsWith(".js"))
         mime = "application/javascript";
-    else if (path.Lower().EndsWith(".json"))
+    else if (pathForMime.Lower().EndsWith(".json"))
         mime = "application/json";
-    else if (path.Lower().EndsWith(".wasm"))
+    else if (pathForMime.Lower().EndsWith(".wasm"))
         mime = "application/wasm";
-    else if (path.Lower().EndsWith(".png"))
+    else if (pathForMime.Lower().EndsWith(".png"))
         mime = "image/png";
-    else if (path.Lower().EndsWith(".jpg") || path.Lower().EndsWith(".jpeg"))
+    else if (pathForMime.Lower().EndsWith(".jpg") || pathForMime.Lower().EndsWith(".jpeg"))
         mime = "image/jpeg";
-    else if (path.Lower().EndsWith(".svg"))
+    else if (pathForMime.Lower().EndsWith(".svg"))
         mime = "image/svg+xml";
-    else if (path.Lower().EndsWith(".ttf"))
+    else if (pathForMime.Lower().EndsWith(".ttf"))
         mime = "font/ttf";
-    else if (path.Lower().EndsWith(".woff"))
+    else if (pathForMime.Lower().EndsWith(".woff"))
         mime = "font/woff";
-    else if (path.Lower().EndsWith(".woff2"))
+    else if (pathForMime.Lower().EndsWith(".woff2"))
         mime = "font/woff2";
-    else if (path.Lower().EndsWith(".ico"))
+    else if (pathForMime.Lower().EndsWith(".ico"))
         mime = "image/x-icon";
 
-    return new wxFSFile(stream, uri, mime, wxEmptyString, wxDateTime::Now());
+    wxFSFile * ff = new wxFSFile(stream, uri, mime, wxEmptyString, wxDateTime::Now());
+    
+    return ff;
 }
 
 } // namespace GUI

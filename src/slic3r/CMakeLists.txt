@@ -429,6 +429,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/WebViewDialog.hpp
     GUI/OrcaLocalHandler.cpp
     GUI/OrcaLocalHandler.hpp
+    GUI/OrcaBridge.cpp
+    GUI/OrcaBridge.hpp
     GUI/WebTextPanel.cpp
     GUI/WebTextPanel.hpp
     GUI/Widgets/AMSControl.cpp

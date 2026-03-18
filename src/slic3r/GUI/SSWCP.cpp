@@ -3020,6 +3020,7 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
     try {
+        auto  data2  = m_param_data.dump();
         std::string filename = m_param_data.count("filename") ? m_param_data["filename"].get<std::string>() : "";
 
         if (filename == "") {
@@ -3121,6 +3122,25 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 object[std::to_string(item.first)] = std::to_string(item.second); 
             }
             response["filament_extruder_map"] = object;
+        }
+
+        //nozzle info
+        PartPlate*  cur_plate        = wxGetApp().plater()->get_partplate_list().get_curr_plate();      
+        if (cur_plate)
+        {
+            auto*  nozzle_opt = cur_plate->fff_print()->config().option<ConfigOptionFloats>("nozzle_diameter");
+            std::vector<std::string> nozzle_list;
+            if (nozzle_opt) {
+                for (float d : nozzle_opt->values) {
+                    nozzle_list.push_back(std::abs(d - 0.2f) < 1e-5f ? "0.2" :
+                                          std::abs(d - 0.4f) < 1e-5f ? "0.4" :
+                                          std::abs(d - 0.6f) < 1e-5f ? "0.6" :
+                                          std::abs(d - 0.8f) < 1e-5f ? "0.8" :
+                                                                       std::to_string(d));
+                }
+
+                response["nozzle_info"] = nozzle_list;
+            }
         }
 
         // printer model

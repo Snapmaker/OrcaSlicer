@@ -3020,7 +3020,6 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
     try {
-        auto  data2  = m_param_data.dump();
         std::string filename = m_param_data.count("filename") ? m_param_data["filename"].get<std::string>() : "";
 
         if (filename == "") {

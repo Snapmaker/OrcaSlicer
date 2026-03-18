@@ -290,7 +290,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #endif
         auto addScriptMessageHandler = [] (wxWebView *webView) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": begin to add script message handler for wx.";
-            Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
+            Slic3r::GUI::wxGetApp( ).set_adding_script_handler(true);
             if (!webView->AddScriptMessageHandler("wx"))
                 wxLogError("Could not add script message handler");
             Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
@@ -324,7 +324,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     return webView;
 }
 
-wxWebView* WebView::CreateWebViewWithLocalRoot(wxWindow *parent, wxString const &url, wxString const &localRootPath)
+wxWebView* WebView::CreateWebViewWithLocalRoot(wxWindow *parent, wxString const &url, wxString const &localRootPath,
+                                               wxString const &userAssetsRoot)
 {
     auto url2 = url;
 #ifdef __WIN32__
@@ -352,11 +353,11 @@ wxWebView* WebView::CreateWebViewWithLocalRoot(wxWindow *parent, wxString const 
     webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
-    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath)));
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath, userAssetsRoot)));
 #else
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
-    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath)));
+    webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath, userAssetsRoot)));
     webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
     webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
         Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));

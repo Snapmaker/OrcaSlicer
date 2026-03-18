@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "description": "Flutter/Web 与 C++ 桥接配置，Flutter 项目可覆盖此文件实现自定义桥接",
+  "handlers": [
+    {
+      "cmd": "get_app_version",
+      "response": {
+        "version": "${SLIC3R_VERSION}",
+        "platform": "${PLATFORM}"
+      }
+    },
+    {
+      "cmd": "ping",
+      "response": { "pong": true, "msg": "Hello from C++" }
+    }
+  ],
+  "native_commands": [
+    "open_file_dialog",
+    "get_printer_list",
+    "connect_device"
+  ]
+}

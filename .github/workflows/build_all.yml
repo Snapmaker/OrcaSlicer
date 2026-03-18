@@ -36,9 +36,6 @@ on:
      - 'build_release_macos.sh'
      - 'scripts/flatpak/**'
 
-  schedule:
-      - cron: '35 7 * * *' # run once a day near midnight US Pacific time
-
   workflow_dispatch: # allows for manual dispatch
     inputs:
       build-deps-only:

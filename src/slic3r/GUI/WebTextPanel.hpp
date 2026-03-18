@@ -26,6 +26,7 @@ private:
     void RunScript(const wxString& javascript);
 
     wxWebView* m_browser{ nullptr };
+    bool m_orca_url_loaded{ false };  // Windows: 首次 EVT_SIZE 后加载 https://orca.local/
 };
 
 } // namespace GUI

@@ -1703,51 +1703,34 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     bool use_new_connection = appconfig->get("use_new_connect") == "true";
 
-    // 隐藏所有按钮（使用 combo 内部的按钮）
+    auto printer_config     = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto printer_model_opt  = printer_config.option<ConfigOptionString>("printer_model");
+    bool is_snapmaker_u1    = false;
+    if (printer_model_opt) {
+        std::string printer_model = printer_model_opt->value;
+        is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+    }
+
     p->combo_printer->set_show_machine_connecting_button(false);
     p->combo_printer->set_show_connection_button(false);
 
     if (preset_bundle.use_bbl_network()) {
-        //only show connection button for not-BBL printer
-        // connection_btn->Hide(); // 已在上面隐藏
-        //only show sync-ams button for BBL printer
         ams_btn->Show();
-        //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
-        // connection_btn->Hide(); // 已在上面隐藏
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
 
         const auto& edit_preset = preset_bundle.printers.get_edited_preset();
 
-        std::string local_name = "";
-        if (edit_preset.is_system) {
-            local_name = edit_preset.name;
-        } else {
-            const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
-            if (base_preset)
-                local_name = base_preset->name;
-            else
-                local_name = "";
-        }
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
-
-        // Snapmaker U1
-        std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
-        bool        is_test          = (test_preset_name == local_name);
-
-
         static bool is_sm_page = false;
 
-        if (!use_new_connection && !is_test && reload_printer_view) {
+        if (!use_new_connection && !is_snapmaker_u1 && reload_printer_view) {
 
             p->combo_printer->set_show_connection_button(true);
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             wxString apikey;
             if (url.empty()) {
-                // url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
                 std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
                 url                  = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
             }
@@ -1761,7 +1744,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    // 加载二代机页面
                     url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=3");
                 }
             }
@@ -1775,41 +1757,36 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                              MainFrame::PrintSelectType::eSendGcode;
             p_mainframe->set_print_button_to_default(print_btn_type);
 
-            auto devices = wxGetApp().app_config->get_devices();
-            std::string preset_name = "";
-            for (const auto& device : devices) {
-                if (device.connected) {
-                    preset_name = device.preset_name;
-                    break;
-                }
-            }
+            if (is_snapmaker_u1) {
 
-            if (preset_name != "") {
-                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), '('), preset_name.end());
-                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
-
-                if (local_name == preset_name) {
-                    p->combo_printer->set_show_machine_connecting_button(true);
+                auto        devices     = wxGetApp().app_config->get_devices();
+                bool hasOnlineMachine = false;
+                for (const auto& device : devices) {
+                    if (device.connected) {
+                        hasOnlineMachine = true;
+                        break;
+                    }
                 }
+
+                if(hasOnlineMachine)
+                    p->combo_printer->set_show_machine_connecting_button(true);                
             }
             else {
-                // 未连接机器
+    
                 wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
                 if (!is_sm_page && reload_printer_view) {
-                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                    wxGetApp().mainframe->load_printer_url(real_url); 
                     is_sm_page = true;
-                }
-                    
+                }                   
             }
 
-            if (!p->combo_printer->get_show_machine_connecting_button() && !is_test) {
+            if (!p->combo_printer->get_show_machine_connecting_button() && !is_snapmaker_u1) {
                 p->combo_printer->set_show_connection_button(true);
             }
         }
-
     }
 
     if (cfg.opt_bool("pellet_modded_printer")) {
@@ -1822,14 +1799,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     show_SEMM_buttons(/*cfg.opt_bool("single_extruder_multi_material")*/true);
 
-    //p->m_staticText_filament_settings->Update();
-    auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-    bool is_snapmaker_u1   = false;
-    if (printer_model_opt) {
-        std::string printer_model = printer_model_opt->value;
-        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
-    }
     bool support_multi_bed_types = cfg.opt_bool("support_multi_bed_types");
     const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
     const t_config_enum_values* keys_map = bed_type_def ? bed_type_def->enum_keys_map : nullptr;
@@ -1924,13 +1893,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         m_bed_type_list->Disable();
     }
 
-    // Update the print choosers to only contain the compatible presets, update the dirty flags.
-    //BBS
-
-    // Update the printer choosers, update the dirty flags.
-    //p->combo_printer->update();
-    // Update the filament choosers to only contain the compatible presets, update the color preview,
-    // update the dirty flags.
     if (print_tech == ptFFF) {
         for (PlaterPresetComboBox* cb : p->combos_filament)
             cb->update();
@@ -1941,9 +1903,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         update_printer_thumbnail();
     }
         
-
-    // Orca:: show device tab based on vendor type
-    
     p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !use_new_connection);
     p_mainframe->m_tabpanel->SetSelection(p_mainframe->m_tabpanel->GetSelection());
 }
@@ -13914,19 +13873,17 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     // Snapmaker U1
     const auto preset = wxGetApp().preset_bundle->printers.get_edited_preset();
-    std::string local_name = "";
-    if (preset.is_system) {
-        local_name = preset.name;
-    } else {
-        const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(preset);
-        local_name              = base_preset->name;
+    auto       printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto       printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+    bool       is_snapmaker_u1   = false;
+    if (printer_model_opt) {
+        std::string printer_model = printer_model_opt->value;
+        is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
-    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
 
-    if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
-        // 先不创建job，直接创建上传 / 上传下载对话框
-        // 获取默认文件名
+    if (wxGetApp().app_config->get("use_new_connect") == "true" || is_snapmaker_u1) {
+        // firstly upload and open upload download dialog,
+        // get default name       
         // Obtain default output path
         fs::path default_output_file;
         try {
@@ -13949,12 +13906,12 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             default_output_file.replace_extension("3mf");
         }
 
-        // 获取文件路径
+        // get file path
         auto file_path = get_partplate_list().get_curr_plate()->get_tmp_gcode_path();
         upload_job.upload_data.source_path = file_path;
         upload_job.upload_data.upload_path = default_output_file;
 
-        // 选择上传 or 打印
+        // upload or print
         // Repetier specific: Query the server for the list of file groups.
         wxArrayString groups;
 
@@ -13967,7 +13924,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
                                 config->get_bool("open_device_tab_post_upload"));
         dlg.init();
         if (dlg.ShowModal() == wxID_CANCEL) {
-            // 如果用户取消操作，直接返回
             return;
         }
         config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());

@@ -2,6 +2,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/OrcaLocalHandler.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <boost/log/trivial.hpp>
 
@@ -103,6 +104,30 @@ DWORD DownloadAndInstallWV2RT() {
 class WebViewEdge : public wxWebViewEdge
 {
 public:
+    /// SetVirtualHostNameToFolderMapping：https://orca.local/* → localFolderPath/*
+    /// 方案文档：Windows 下用虚拟主机替代 orca://，不走 TCP、不被代理拦截
+    bool SetupOrcaScheme(const wxString& localFolderPath)
+    {
+        ICoreWebView2* webView2 = (ICoreWebView2*)GetNativeBackend();
+        if (webView2) {
+            ICoreWebView2_3* webView2_3 = nullptr;
+            HRESULT hr = webView2->QueryInterface(IID_ICoreWebView2_3, (void**)&webView2_3);
+            if (SUCCEEDED(hr) && webView2_3) {
+                hr = webView2_3->SetVirtualHostNameToFolderMapping(
+                    L"orca.local", localFolderPath.wc_str(),
+                    COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+                webView2_3->Release();
+                if (SUCCEEDED(hr)) {
+                    BOOST_LOG_TRIVIAL(info) << "WebViewEdge: orca.local mapped to " << localFolderPath.ToUTF8();
+                    return true;
+                }
+            }
+            return false;
+        }
+        pendingOrcaFolder = localFolderPath;
+        return true;
+    }
+
     bool SetUserAgent(const wxString &userAgent)
     {
         bool dark = userAgent.Contains("dark");
@@ -152,6 +177,12 @@ public:
 
     void DoGetClientSize(int *x, int *y) const override
     {
+        if (!pendingOrcaFolder.empty()) {
+            auto thiz = const_cast<WebViewEdge*>(this);
+            auto folder = std::move(thiz->pendingOrcaFolder);
+            thiz->pendingOrcaFolder.clear();
+            thiz->SetupOrcaScheme(folder);
+        }
         if (!pendingUserAgent.empty()) {
             auto thiz = const_cast<WebViewEdge *>(this);
             auto userAgent = std::move(thiz->pendingUserAgent);
@@ -167,6 +198,7 @@ public:
         wxWebViewEdge::DoGetClientSize(x, y);
     };
 private:
+    wxString pendingOrcaFolder;
     wxString pendingUserAgent;
     COREWEBVIEW2_PREFERRED_COLOR_SCHEME pendingColorScheme = COREWEBVIEW2_PREFERRED_COLOR_SCHEME_AUTO;
 };
@@ -351,6 +383,8 @@ wxWebView* WebView::CreateWebViewWithLocalRoot(wxWindow *parent, wxString const 
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52", SLIC3R_VERSION,
         Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
     webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+    // SetVirtualHostNameToFolderMapping：https://orca.local/ → localRootPath，替代 orca://
+    WebView::SetupOrcaScheme(webView, localRootPath);
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new Slic3r::GUI::OrcaLocalHandler("orca", localRootPath, userAssetsRoot)));
@@ -409,6 +443,13 @@ bool WebView::CheckWebViewRuntime()
 bool WebView::DownloadAndInstallWebViewRuntime()
 {
     return DownloadAndInstallWV2RT() == 0;
+}
+
+bool WebView::SetupOrcaScheme(wxWebView* webView, wxString const& localFolderPath)
+{
+    auto* edge = dynamic_cast<WebViewEdge*>(webView);
+    if (!edge) return false;
+    return edge->SetupOrcaScheme(localFolderPath);
 }
 #endif
 void WebView::LoadUrl(wxWebView * webView, wxString const &url)

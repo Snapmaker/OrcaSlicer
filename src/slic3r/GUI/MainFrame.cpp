@@ -1072,6 +1072,12 @@ void MainFrame::init_tabpanel() {
                 wxWebView* printer_webview = m_printer_view->get_browser();
                 wxGetApp().page_state_notify_webview(printer_webview, "inactive");
             }
+        } else if (prev_monitored_tab == tpWebText && sel != tpWebText) {
+            // Leaving WebTextPanel (test tab)
+            if (m_web_text) {
+                wxWebView* wv = m_web_text->get_browser();
+                if (wv) wv->Refresh();
+            }
         }
 
         // Send "active" to current tab if entering a monitored tab
@@ -1089,6 +1095,13 @@ void MainFrame::init_tabpanel() {
                 wxGetApp().page_state_notify_webview(printer_webview, "active");
             }
             prev_monitored_tab = tpMonitor;
+        } else if (panel == m_web_text) {
+            // Entering WebTextPanel (test tab): force WebView refresh to reduce WebView2 buffer ghosting
+            if (m_web_text) {
+                wxWebView* wv = m_web_text->get_browser();
+                if (wv) wv->Refresh();
+            }
+            prev_monitored_tab = tpWebText;
         } else {
             // Update prev_monitored_tab only when leaving a monitored tab
             if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor) {

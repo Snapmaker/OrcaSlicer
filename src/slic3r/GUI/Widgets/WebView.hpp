@@ -13,6 +13,8 @@ public:
 #if wxUSE_WEBVIEW_EDGE
     static bool CheckWebViewRuntime();
     static bool DownloadAndInstallWebViewRuntime();
+    /// SetVirtualHostNameToFolderMapping：https://orca.local/* → localFolderPath/*
+    static bool SetupOrcaScheme(wxWebView* webView, wxString const& localFolderPath);
 #endif
     static void LoadUrl(wxWebView * webView, wxString const &url);
 

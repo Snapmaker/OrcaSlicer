@@ -424,7 +424,7 @@ static std::string get_bed_temp_key(const BedType type)
         return "textured_plate_temp";
 
     if (type == btGESP)
-        return "graphic_effect_steel_plate_temp";
+        return "graphic_effect_plate_temp";
 
     return "";
 }
@@ -450,7 +450,7 @@ static std::string get_bed_temp_1st_layer_key(const BedType type)
         return "textured_plate_temp_initial_layer";
 
     if (type == btGESP)
-        return "graphic_effect_steel_plate_temp_initial_layer";
+        return "graphic_effect_plate_temp_initial_layer";
 
     return "";
 }

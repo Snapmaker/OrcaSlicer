@@ -135,7 +135,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "eng_plate_temp_initial_layer",
         "hot_plate_temp_initial_layer",
         "textured_plate_temp_initial_layer",
-        "graphic_effect_steel_plate_temp_initial_layer",
+        "graphic_effect_plate_temp_initial_layer",
         "gcode_add_line_number",
         "layer_change_gcode",
         "time_lapse_gcode",
@@ -283,7 +283,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "eng_plate_temp"
             || opt_key == "hot_plate_temp"
             || opt_key == "textured_plate_temp" 
-            || opt_key == "graphic_effect_steel_plate_temp"
+            || opt_key == "graphic_effect_plate_temp"
             || opt_key == "enable_prime_tower"
             || opt_key == "prime_tower_width"
             || opt_key == "prime_tower_brim_width"

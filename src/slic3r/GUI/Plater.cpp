@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <numeric>
 #include <vector>
+#include <set>
 #include <string>
 #include <regex>
 #include <future>
@@ -126,6 +127,7 @@
 #include "Widgets/Label.hpp"
 #include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/RadioGroup.hpp"
+#include "Widgets/DialogButtons.hpp"
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/Button.hpp"
 
@@ -210,6 +212,69 @@ wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
 #define PRINTER_PANEL_SIZE_SMALL (wxSize(FromDIP(98), FromDIP(68)))
 #define PRINTER_PANEL_SIZE_WIDEN (wxSize(FromDIP(136), FromDIP(68)))
 #define PRINTER_PANEL_SIZE (wxSize(FromDIP(98), FromDIP(98)))
+
+// Nozzle diameter selection when multiple diameters are reported (e.g. U1 sync).
+// diameters_raw: list from device (may have duplicates or fewer than 4). Dedup and full-list logic inside.
+namespace {
+class NozzleDiameterSelectDialog : public DPIDialog
+{
+    RadioGroup* m_radio = nullptr;
+    std::vector<std::string> m_diameters;
+
+public:
+    NozzleDiameterSelectDialog(wxWindow* parent, const wxString& message, const wxString& caption,
+                               const std::vector<std::string>& diameters_raw)
+        : DPIDialog(parent, wxID_ANY, caption, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+    {
+        static const std::vector<std::string> full_list = {"0.2", "0.4", "0.6", "0.8"};
+        std::set<std::string> returned_set(diameters_raw.begin(), diameters_raw.end());
+        std::vector<bool> item_enabled(full_list.size(), true);
+        bool any_enabled = false;
+        for (size_t i = 0; i < full_list.size(); ++i) {
+            bool in = (returned_set.count(full_list[i]) > 0);
+            item_enabled[i] = in;
+            if (in) any_enabled = true;
+        }
+        if (!any_enabled)
+            item_enabled.assign(full_list.size(), true);
+        m_diameters = full_list;
+
+        SetBackgroundColour(*wxWHITE);
+        wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
+        wxStaticText* msg = new wxStaticText(this, wxID_ANY, message);
+        msg->Wrap(FromDIP(400));
+        sizer->Add(msg, 0, wxALL, FromDIP(10));
+        std::vector<wxString> labels;
+        for (const auto& d : m_diameters)
+            labels.push_back(_L("Nozzle") + ": " + from_u8(d) + "mm");
+        m_radio = new RadioGroup(this, labels, wxHORIZONTAL, 2);
+        for (size_t i = 0; i < item_enabled.size(); ++i)
+            if (!item_enabled[i])
+                m_radio->SetItemEnabled((int)i, false);
+        int first = 0;
+        for (; first < (int)item_enabled.size(); ++first)
+            if (item_enabled[first]) break;
+        if (first >= (int)item_enabled.size()) first = 0;
+        m_radio->SetSelection(first, false);
+        sizer->Add(m_radio, 0, wxALL, FromDIP(10));
+        auto* btns = new DialogButtons(this, {"OK", "Cancel"});
+        btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+        btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+        sizer->Add(btns, 0, wxEXPAND);
+        SetSizer(sizer);
+        Layout();
+        Fit();
+        Centre(wxBOTH);
+        wxGetApp().UpdateDlgDarkUI(this);
+    }
+    int GetSelection() const { return m_radio ? m_radio->GetSelection() : -1; }
+    std::string GetSelectedDiameter() const {
+        int idx = GetSelection();
+        return (idx >= 0 && idx < (int)m_diameters.size()) ? m_diameters[idx] : std::string();
+    }
+    void on_dpi_changed(const wxRect& suggested_rect) override {}
+};
+} // namespace
 
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
 {
@@ -1044,7 +1109,28 @@ Sidebar::Sidebar(Plater *parent)
 
                 if (res)
                 {
-                    //select the someone nozzle size to show
+                    //std::vector<std::string> diameters_raw = nozzle_diameters;
+                    std::vector<std::string> diameters_raw = {"0.2", "0.8"};
+                    wxTheApp->CallAfter([this, diameters_raw]() {
+                        NozzleDiameterSelectDialog dlg(
+                            wxGetApp().mainframe,
+                            _L("Tip: The current version does not support multi-nozzle mixed diameter printing. "
+                               "Inconsistent printer nozzle diameters detected; please select the nozzle to be used for this print."),
+                            _L("Set nozzle diameter"),
+                            diameters_raw);
+                        if (dlg.ShowModal() == wxID_OK) {
+                            std::string sel = dlg.GetSelectedDiameter();
+                            if (!sel.empty()) {
+                                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, sel);
+                                if (preset) {
+                                    preset->is_visible = true;
+                                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                                    wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+                                }
+                            }
+                        }
+                    });
                     return;
                 }
 
@@ -2669,7 +2755,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             }
 
             wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-            event.Skip();
+            // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
         });
         
         auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;

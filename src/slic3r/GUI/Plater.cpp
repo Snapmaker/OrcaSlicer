@@ -5,6 +5,7 @@
 #include "common_func/common_func.hpp"
 
 #include <cstddef>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <algorithm>
@@ -12,12 +13,14 @@
 #include <numeric>
 #include <memory>
 #include <limits>
+#include <thread>
 #include <vector>
 #include <string>
 #include <unordered_set>
 #include <regex>
 #include <future>
 #include <functional>
+#include <sstream>
 #include <boost/algorithm/string.hpp>
 #include <boost/iterator/counting_iterator.hpp>
 #include <boost/optional.hpp>
@@ -48,8 +51,10 @@
 #include <wx/event.h>
 #include <wx/wrapsizer.h>
 #include <wx/choice.h>
+#include <wx/gauge.h>
 #include <wx/slider.h>
 #include <wx/textctrl.h>
+#include <wx/weakref.h>
 #ifdef _WIN32
 #include <wx/richtooltip.h>
 #include <wx/custombgwin.h>
@@ -57,6 +62,7 @@
 #endif
 #include <wx/clrpicker.h>
 #include <wx/spinctrl.h>
+#include <wx/timer.h>
 #include <wx/tokenzr.h>
 #include <wx/aui/aui.h>
 
@@ -2498,6 +2504,317 @@ bool try_parse_color_match_hex(const wxString &value, wxColour &color_out)
     return true;
 }
 
+std::vector<unsigned int> decode_color_match_gradient_ids(const std::string &value)
+{
+    std::vector<unsigned int> ids;
+    bool seen[10] = { false };
+    for (const char ch : value) {
+        if (ch < '1' || ch > '9')
+            continue;
+        const unsigned int id = unsigned(ch - '0');
+        if (seen[id])
+            continue;
+        seen[id] = true;
+        ids.emplace_back(id);
+    }
+    return ids;
+}
+
+std::vector<int> decode_color_match_gradient_weights(const std::string &value, size_t expected_components)
+{
+    std::vector<int> weights;
+    if (value.empty() || expected_components == 0)
+        return weights;
+
+    std::string token;
+    for (const char ch : value) {
+        if (ch >= '0' && ch <= '9') {
+            token.push_back(ch);
+            continue;
+        }
+        if (!token.empty()) {
+            weights.emplace_back(std::max(0, std::atoi(token.c_str())));
+            token.clear();
+        }
+    }
+    if (!token.empty())
+        weights.emplace_back(std::max(0, std::atoi(token.c_str())));
+    if (weights.size() != expected_components)
+        weights.clear();
+    return weights;
+}
+
+std::vector<int> normalize_color_match_weights(const std::vector<int> &weights, size_t count)
+{
+    std::vector<int> out = weights;
+    if (out.size() != count)
+        out.assign(count, count > 0 ? int(100 / count) : 0);
+
+    int sum = 0;
+    for (int &value : out) {
+        value = std::max(0, value);
+        sum += value;
+    }
+    if (sum <= 0 && count > 0) {
+        out.assign(count, 0);
+        out[0] = 100;
+        return out;
+    }
+
+    std::vector<double> remainders(count, 0.0);
+    int assigned = 0;
+    for (size_t idx = 0; idx < count; ++idx) {
+        const double exact = 100.0 * double(out[idx]) / double(sum);
+        out[idx] = int(std::floor(exact));
+        remainders[idx] = exact - double(out[idx]);
+        assigned += out[idx];
+    }
+
+    int missing = std::max(0, 100 - assigned);
+    while (missing > 0) {
+        size_t best_idx = 0;
+        double best_remainder = -1.0;
+        for (size_t idx = 0; idx < remainders.size(); ++idx) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        ++out[best_idx];
+        remainders[best_idx] = 0.0;
+        --missing;
+    }
+
+    return out;
+}
+
+std::vector<unsigned int> build_color_match_sequence(const std::vector<unsigned int> &ids, const std::vector<int> &weights);
+wxColour blend_sequence_filament_mixer(const std::vector<wxColour> &palette, const std::vector<unsigned int> &sequence);
+
+MixedColorMatchRecipeResult build_pair_color_match_candidate(const std::vector<wxColour> &palette,
+                                                             unsigned int                  component_a,
+                                                             unsigned int                  component_b,
+                                                             int                           mix_b_percent)
+{
+    MixedColorMatchRecipeResult candidate;
+    if (component_a == 0 || component_b == 0 || component_a == component_b)
+        return candidate;
+    if (component_a > palette.size() || component_b > palette.size())
+        return candidate;
+
+    candidate.valid         = true;
+    candidate.component_a   = component_a;
+    candidate.component_b   = component_b;
+    candidate.mix_b_percent = std::clamp(mix_b_percent, 0, 100);
+    candidate.preview_color = blend_pair_filament_mixer(palette[component_a - 1], palette[component_b - 1],
+                                                        float(candidate.mix_b_percent) / 100.f);
+    return candidate;
+}
+
+MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<wxColour>      &palette,
+                                                              const std::vector<unsigned int> &ids,
+                                                              const std::vector<int>          &weights)
+{
+    MixedColorMatchRecipeResult candidate;
+    if (ids.size() < 3 || ids.size() != weights.size())
+        return candidate;
+
+    std::vector<std::pair<int, unsigned int>> weighted_ids;
+    weighted_ids.reserve(ids.size());
+    for (size_t idx = 0; idx < ids.size(); ++idx) {
+        if (ids[idx] == 0 || ids[idx] > palette.size() || ids[idx] > 9)
+            return candidate;
+        if (weights[idx] <= 0)
+            continue;
+        weighted_ids.emplace_back(weights[idx], ids[idx]);
+    }
+    if (weighted_ids.size() < 3)
+        return candidate;
+
+    std::sort(weighted_ids.begin(), weighted_ids.end(), [](const auto &lhs, const auto &rhs) {
+        if (lhs.first != rhs.first)
+            return lhs.first > rhs.first;
+        return lhs.second < rhs.second;
+    });
+
+    std::vector<unsigned int> ordered_ids;
+    std::vector<int>          ordered_weights;
+    ordered_ids.reserve(weighted_ids.size());
+    ordered_weights.reserve(weighted_ids.size());
+    for (const auto &[weight, filament_id] : weighted_ids) {
+        ordered_ids.emplace_back(filament_id);
+        ordered_weights.emplace_back(weight);
+    }
+
+    const std::vector<unsigned int> sequence = build_color_match_sequence(ordered_ids, ordered_weights);
+    if (sequence.empty())
+        return candidate;
+
+    candidate.valid       = true;
+    candidate.component_a = ordered_ids[0];
+    candidate.component_b = ordered_ids[1];
+    const int pair_weight_total = ordered_weights[0] + ordered_weights[1];
+    candidate.mix_b_percent = pair_weight_total > 0 ?
+        std::clamp(int(std::lround(100.0 * double(ordered_weights[1]) / double(pair_weight_total))), 0, 100) :
+        50;
+    for (const unsigned int filament_id : ordered_ids)
+        candidate.gradient_component_ids.push_back(char('0' + filament_id));
+    {
+        std::ostringstream weights_ss;
+        for (size_t weight_idx = 0; weight_idx < ordered_weights.size(); ++weight_idx) {
+            if (weight_idx > 0)
+                weights_ss << '/';
+            weights_ss << ordered_weights[weight_idx];
+        }
+        candidate.gradient_component_weights = weights_ss.str();
+    }
+    candidate.preview_color = blend_sequence_filament_mixer(palette, sequence);
+    return candidate;
+}
+
+std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeResult &recipe, size_t num_physical)
+{
+    std::vector<int> weights(num_physical, 0);
+    if (!recipe.valid || num_physical == 0)
+        return weights;
+
+    if (!recipe.gradient_component_ids.empty()) {
+        const std::vector<unsigned int> ids = decode_color_match_gradient_ids(recipe.gradient_component_ids);
+        const std::vector<int> raw_weights =
+            normalize_color_match_weights(decode_color_match_gradient_weights(recipe.gradient_component_weights, ids.size()), ids.size());
+        if (ids.size() != raw_weights.size())
+            return weights;
+        for (size_t idx = 0; idx < ids.size(); ++idx) {
+            if (ids[idx] >= 1 && ids[idx] <= num_physical)
+                weights[ids[idx] - 1] = raw_weights[idx];
+        }
+        return weights;
+    }
+
+    if (recipe.component_a >= 1 && recipe.component_a <= num_physical)
+        weights[recipe.component_a - 1] = std::max(0, 100 - std::clamp(recipe.mix_b_percent, 0, 100));
+    if (recipe.component_b >= 1 && recipe.component_b <= num_physical)
+        weights[recipe.component_b - 1] = std::max(0, std::clamp(recipe.mix_b_percent, 0, 100));
+    return weights;
+}
+
+std::string summarize_color_match_recipe(const MixedColorMatchRecipeResult &recipe)
+{
+    if (!recipe.valid)
+        return {};
+
+    std::vector<unsigned int> ids;
+    std::vector<int>          weights;
+    if (!recipe.gradient_component_ids.empty()) {
+        ids = decode_color_match_gradient_ids(recipe.gradient_component_ids);
+        weights = normalize_color_match_weights(
+            decode_color_match_gradient_weights(recipe.gradient_component_weights, ids.size()), ids.size());
+    } else {
+        ids = { recipe.component_a, recipe.component_b };
+        weights = { std::max(0, 100 - std::clamp(recipe.mix_b_percent, 0, 100)),
+                    std::max(0, std::clamp(recipe.mix_b_percent, 0, 100)) };
+    }
+    if (ids.empty() || ids.size() != weights.size())
+        return {};
+
+    std::ostringstream out;
+    for (size_t idx = 0; idx < ids.size(); ++idx) {
+        if (idx > 0)
+            out << '/';
+        out << 'F' << ids[idx];
+    }
+    out << ' ';
+    for (size_t idx = 0; idx < weights.size(); ++idx) {
+        if (idx > 0)
+            out << '/';
+        out << weights[idx] << '%';
+    }
+    return out.str();
+}
+
+wxBitmap make_color_match_swatch_bitmap(const wxColour &color, const wxSize &size)
+{
+    wxBitmap bmp(size.GetWidth(), size.GetHeight());
+    wxMemoryDC dc(bmp);
+    dc.SetBackground(wxBrush(wxColour(255, 255, 255)));
+    dc.Clear();
+    dc.SetPen(wxPen(wxColour(120, 120, 120), 1));
+    dc.SetBrush(wxBrush(color.IsOk() ? color : wxColour("#26A69A")));
+    dc.DrawRectangle(0, 0, size.GetWidth(), size.GetHeight());
+    dc.SelectObject(wxNullBitmap);
+    return bmp;
+}
+
+std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::vector<std::string> &physical_colors)
+{
+    std::vector<MixedColorMatchRecipeResult> presets;
+    if (physical_colors.size() < 2)
+        return presets;
+
+    std::vector<wxColour> palette;
+    palette.reserve(physical_colors.size());
+    for (const std::string &hex : physical_colors)
+        palette.emplace_back(parse_mixed_color(hex));
+
+    constexpr size_t k_max_presets = 48;
+    std::unordered_set<std::string> seen_colors;
+    auto add_candidate = [&presets, &seen_colors](MixedColorMatchRecipeResult candidate) {
+        if (!candidate.valid)
+            return;
+        const std::string color_key = normalize_color_match_hex(candidate.preview_color.GetAsString(wxC2S_HTML_SYNTAX)).ToStdString();
+        if (color_key.empty() || !seen_colors.insert(color_key).second)
+            return;
+        presets.emplace_back(std::move(candidate));
+    };
+
+    constexpr int pair_ratios[] = { 25, 50, 75 };
+    for (size_t left_idx = 0; left_idx < palette.size() && presets.size() < k_max_presets; ++left_idx) {
+        for (size_t right_idx = left_idx + 1; right_idx < palette.size() && presets.size() < k_max_presets; ++right_idx) {
+            for (const int mix_b_percent : pair_ratios) {
+                add_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent));
+                if (presets.size() >= k_max_presets)
+                    break;
+            }
+        }
+    }
+
+    const size_t triple_limit = std::min<size_t>(palette.size(), 6);
+    const std::vector<int> equal_triple_weights = normalize_color_match_weights({ 1, 1, 1 }, 3);
+    for (size_t first_idx = 0; first_idx + 2 < triple_limit && presets.size() < k_max_presets; ++first_idx) {
+        for (size_t second_idx = first_idx + 1; second_idx + 1 < triple_limit && presets.size() < k_max_presets; ++second_idx) {
+            for (size_t third_idx = second_idx + 1; third_idx < triple_limit && presets.size() < k_max_presets; ++third_idx) {
+                const std::vector<unsigned int> ids = {
+                    unsigned(first_idx + 1),
+                    unsigned(second_idx + 1),
+                    unsigned(third_idx + 1)
+                };
+                add_candidate(build_multi_color_match_candidate(palette, ids, equal_triple_weights));
+                for (size_t dominant_idx = 0; dominant_idx < ids.size() && presets.size() < k_max_presets; ++dominant_idx) {
+                    std::vector<int> dominant_weights(ids.size(), 25);
+                    dominant_weights[dominant_idx] = 50;
+                    add_candidate(build_multi_color_match_candidate(palette, ids, dominant_weights));
+                }
+            }
+        }
+    }
+
+    const size_t quad_limit = std::min<size_t>(palette.size(), 5);
+    for (size_t first_idx = 0; first_idx + 3 < quad_limit && presets.size() < k_max_presets; ++first_idx) {
+        for (size_t second_idx = first_idx + 1; second_idx + 2 < quad_limit && presets.size() < k_max_presets; ++second_idx) {
+            for (size_t third_idx = second_idx + 1; third_idx + 1 < quad_limit && presets.size() < k_max_presets; ++third_idx) {
+                for (size_t fourth_idx = third_idx + 1; fourth_idx < quad_limit && presets.size() < k_max_presets; ++fourth_idx) {
+                    add_candidate(build_multi_color_match_candidate(
+                        palette,
+                        { unsigned(first_idx + 1), unsigned(second_idx + 1), unsigned(third_idx + 1), unsigned(fourth_idx + 1) },
+                        { 25, 25, 25, 25 }));
+                }
+            }
+        }
+    }
+
+    return presets;
+}
+
 double color_delta_e00(const wxColour &lhs, const wxColour &rhs)
 {
     float lhs_l = 0.f, lhs_a = 0.f, lhs_b = 0.f;
@@ -2607,76 +2924,10 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
             best = std::move(candidate);
     };
 
-    auto build_multi_color_candidate = [&palette](const std::vector<unsigned int> &ids,
-                                                  const std::vector<int>          &weights) {
-        MixedColorMatchRecipeResult candidate;
-        if (ids.size() < 3 || ids.size() != weights.size())
-            return candidate;
-
-        std::vector<std::pair<int, unsigned int>> weighted_ids;
-        weighted_ids.reserve(ids.size());
-        for (size_t idx = 0; idx < ids.size(); ++idx) {
-            if (ids[idx] == 0 || ids[idx] > 9)
-                return candidate;
-            if (weights[idx] <= 0)
-                continue;
-            weighted_ids.emplace_back(weights[idx], ids[idx]);
-        }
-        if (weighted_ids.size() < 3)
-            return candidate;
-
-        std::sort(weighted_ids.begin(), weighted_ids.end(), [](const auto &lhs, const auto &rhs) {
-            if (lhs.first != rhs.first)
-                return lhs.first > rhs.first;
-            return lhs.second < rhs.second;
-        });
-
-        std::vector<unsigned int> ordered_ids;
-        std::vector<int>          ordered_weights;
-        ordered_ids.reserve(weighted_ids.size());
-        ordered_weights.reserve(weighted_ids.size());
-        for (const auto &[weight, filament_id] : weighted_ids) {
-            ordered_ids.emplace_back(filament_id);
-            ordered_weights.emplace_back(weight);
-        }
-
-        const std::vector<unsigned int> sequence = build_color_match_sequence(ordered_ids, ordered_weights);
-        if (sequence.empty())
-            return candidate;
-
-        candidate.valid         = true;
-        candidate.component_a   = ordered_ids[0];
-        candidate.component_b   = ordered_ids[1];
-        const int pair_weight_total = ordered_weights[0] + ordered_weights[1];
-        candidate.mix_b_percent = pair_weight_total > 0 ?
-            std::clamp(int(std::lround(100.0 * double(ordered_weights[1]) / double(pair_weight_total))), 0, 100) :
-            50;
-        for (const unsigned int filament_id : ordered_ids)
-            candidate.gradient_component_ids.push_back(char('0' + filament_id));
-        {
-            std::ostringstream weights_ss;
-            for (size_t weight_idx = 0; weight_idx < ordered_weights.size(); ++weight_idx) {
-                if (weight_idx > 0)
-                    weights_ss << '/';
-                weights_ss << ordered_weights[weight_idx];
-            }
-            candidate.gradient_component_weights = weights_ss.str();
-        }
-        candidate.preview_color = blend_sequence_filament_mixer(palette, sequence);
-        return candidate;
-    };
-
     for (size_t left_idx = 0; left_idx < palette.size(); ++left_idx) {
         for (size_t right_idx = left_idx + 1; right_idx < palette.size(); ++right_idx) {
-            for (int mix_b_percent = 1; mix_b_percent < 100; ++mix_b_percent) {
-                MixedColorMatchRecipeResult candidate;
-                candidate.valid         = true;
-                candidate.component_a   = unsigned(left_idx + 1);
-                candidate.component_b   = unsigned(right_idx + 1);
-                candidate.mix_b_percent = mix_b_percent;
-                candidate.preview_color = blend_pair_filament_mixer(palette[left_idx], palette[right_idx], float(mix_b_percent) / 100.f);
-                consider_candidate(std::move(candidate));
-            }
+            for (int mix_b_percent = 1; mix_b_percent < 100; ++mix_b_percent)
+                consider_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent));
         }
     }
 
@@ -2732,7 +2983,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                 for (int weight_a = 1; weight_a <= 98; ++weight_a) {
                     for (int weight_b = 1; weight_a + weight_b <= 99; ++weight_b) {
                         const int weight_c = 100 - weight_a - weight_b;
-                        consider_candidate(build_multi_color_candidate(ids, { weight_a, weight_b, weight_c }));
+                        consider_candidate(build_multi_color_match_candidate(palette, ids, { weight_a, weight_b, weight_c }));
                     }
                 }
             }
@@ -2760,7 +3011,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                         for (int weight_b = 1; weight_a + weight_b <= 98; ++weight_b) {
                             for (int weight_c = 1; weight_a + weight_b + weight_c <= 99; ++weight_c) {
                                 const int weight_d = 100 - weight_a - weight_b - weight_c;
-                                consider_candidate(build_multi_color_candidate(ids, { weight_a, weight_b, weight_c, weight_d }));
+                                consider_candidate(build_multi_color_match_candidate(palette, ids, { weight_a, weight_b, weight_c, weight_d }));
                             }
                         }
                     }
@@ -2771,45 +3022,784 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
 
     return best;
 }
+class MixedFilamentColorMapPanel : public wxPanel
+{
+public:
+    MixedFilamentColorMapPanel(wxWindow                        *parent,
+                               const std::vector<unsigned int> &filament_ids,
+                               const std::vector<wxColour>     &palette,
+                               const std::vector<int>          &initial_weights,
+                               const wxSize                    &min_size)
+        : wxPanel(parent, wxID_ANY, wxDefaultPosition, min_size, wxBORDER_SIMPLE)
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        SetMinSize(min_size);
+        m_render_timer.SetOwner(this);
+
+        m_colors.reserve(filament_ids.size());
+        for (const unsigned int filament_id : filament_ids) {
+            if (filament_id >= 1 && filament_id <= palette.size())
+                m_colors.emplace_back(palette[filament_id - 1]);
+            else
+                m_colors.emplace_back(wxColour("#26A69A"));
+        }
+        if (m_colors.empty())
+            m_colors.emplace_back(wxColour("#26A69A"));
+
+        set_normalized_weights(initial_weights, false);
+
+        Bind(wxEVT_PAINT, &MixedFilamentColorMapPanel::on_paint, this);
+        Bind(wxEVT_LEFT_DOWN, &MixedFilamentColorMapPanel::on_left_down, this);
+        Bind(wxEVT_LEFT_UP, &MixedFilamentColorMapPanel::on_left_up, this);
+        Bind(wxEVT_MOTION, &MixedFilamentColorMapPanel::on_mouse_move, this);
+        Bind(wxEVT_MOUSE_CAPTURE_LOST, &MixedFilamentColorMapPanel::on_capture_lost, this);
+        Bind(wxEVT_SIZE, &MixedFilamentColorMapPanel::on_size, this);
+        Bind(wxEVT_TIMER, &MixedFilamentColorMapPanel::on_render_timer, this, m_render_timer.GetId());
+    }
+
+    ~MixedFilamentColorMapPanel() override
+    {
+        if (HasCapture())
+            ReleaseMouse();
+        if (m_render_timer.IsRunning())
+            m_render_timer.Stop();
+    }
+
+    std::vector<int> normalized_weights() const
+    {
+        return m_weights;
+    }
+
+    wxColour selected_color() const
+    {
+        std::vector<double> weights;
+        weights.reserve(m_weights.size());
+        for (const int weight : m_weights)
+            weights.emplace_back(double(std::max(0, weight)));
+        return blend_multi_filament_mixer(m_colors, weights);
+    }
+
+    void set_normalized_weights(const std::vector<int> &weights, bool notify)
+    {
+        m_weights = normalize_color_match_weights(weights, m_colors.size());
+        initialize_cursor_from_weights();
+        Refresh();
+        if (notify)
+            emit_changed();
+    }
+
+private:
+    enum class GeometryMode {
+        Point,
+        Line,
+        Triangle,
+        TriangleWithCenter,
+        Radial
+    };
+
+    struct AnchorPoint {
+        double x { 0.5 };
+        double y { 0.5 };
+    };
+
+    struct Vec2 {
+        double x { 0.0 };
+        double y { 0.0 };
+    };
+
+    GeometryMode geometry_mode() const
+    {
+        if (m_colors.size() <= 1)
+            return GeometryMode::Point;
+        if (m_colors.size() == 2)
+            return GeometryMode::Line;
+        if (m_colors.size() == 3)
+            return GeometryMode::Triangle;
+        if (m_colors.size() == 4)
+            return GeometryMode::TriangleWithCenter;
+        return GeometryMode::Radial;
+    }
+
+    wxRect canvas_rect() const
+    {
+        const wxSize size = GetClientSize();
+        return wxRect(0, 0, std::max(1, size.GetWidth()), std::max(1, size.GetHeight()));
+    }
+
+    static Vec2 make_vec(double x, double y)
+    {
+        return Vec2 { x, y };
+    }
+
+    static Vec2 add_vec(const Vec2 &lhs, const Vec2 &rhs)
+    {
+        return Vec2 { lhs.x + rhs.x, lhs.y + rhs.y };
+    }
+
+    static Vec2 sub_vec(const Vec2 &lhs, const Vec2 &rhs)
+    {
+        return Vec2 { lhs.x - rhs.x, lhs.y - rhs.y };
+    }
+
+    static Vec2 scale_vec(const Vec2 &value, double factor)
+    {
+        return Vec2 { value.x * factor, value.y * factor };
+    }
+
+    static double dot_vec(const Vec2 &lhs, const Vec2 &rhs)
+    {
+        return lhs.x * rhs.x + lhs.y * rhs.y;
+    }
+
+    static double length_sq(const Vec2 &value)
+    {
+        return dot_vec(value, value);
+    }
+
+    static double dist_sq(const Vec2 &lhs, const Vec2 &rhs)
+    {
+        return length_sq(sub_vec(lhs, rhs));
+    }
+
+    std::array<Vec2, 3> simplex_vertices() const
+    {
+        return { make_vec(0.50, 0.05), make_vec(0.08, 0.94), make_vec(0.92, 0.94) };
+    }
+
+    Vec2 simplex_center() const
+    {
+        const auto vertices = simplex_vertices();
+        return make_vec((vertices[0].x + vertices[1].x + vertices[2].x) / 3.0,
+                        (vertices[0].y + vertices[1].y + vertices[2].y) / 3.0);
+    }
+
+    std::vector<AnchorPoint> radial_anchor_points() const
+    {
+        std::vector<AnchorPoint> anchors;
+        const size_t count = m_colors.size();
+        anchors.reserve(count);
+        if (count == 0)
+            return anchors;
+        if (count == 1) {
+            anchors.emplace_back(AnchorPoint { 0.5, 0.5 });
+            return anchors;
+        }
+        if (count == 2) {
+            anchors.emplace_back(AnchorPoint { 0.0, 0.5 });
+            anchors.emplace_back(AnchorPoint { 1.0, 0.5 });
+            return anchors;
+        }
+        if (count == 3) {
+            anchors.emplace_back(AnchorPoint { 0.0, 0.5 });
+            anchors.emplace_back(AnchorPoint { 1.0, 0.0 });
+            anchors.emplace_back(AnchorPoint { 1.0, 1.0 });
+            return anchors;
+        }
+        if (count == 4) {
+            anchors.emplace_back(AnchorPoint { 0.0, 0.0 });
+            anchors.emplace_back(AnchorPoint { 1.0, 0.0 });
+            anchors.emplace_back(AnchorPoint { 1.0, 1.0 });
+            anchors.emplace_back(AnchorPoint { 0.0, 1.0 });
+            return anchors;
+        }
+
+        constexpr double k_pi = 3.14159265358979323846;
+        const double center_x = 0.5;
+        const double center_y = 0.5;
+        const double radius = 0.45;
+        for (size_t idx = 0; idx < count; ++idx) {
+            const double angle = (2.0 * k_pi * double(idx)) / double(count);
+            anchors.emplace_back(AnchorPoint { center_x + radius * std::cos(angle), center_y + radius * std::sin(angle) });
+        }
+        return anchors;
+    }
+
+    std::vector<AnchorPoint> anchor_points() const
+    {
+        std::vector<AnchorPoint> anchors;
+        switch (geometry_mode()) {
+        case GeometryMode::Point:
+            anchors.emplace_back(AnchorPoint { 0.5, 0.5 });
+            break;
+        case GeometryMode::Line:
+            anchors.emplace_back(AnchorPoint { 0.06, 0.5 });
+            anchors.emplace_back(AnchorPoint { 0.94, 0.5 });
+            break;
+        case GeometryMode::Triangle: {
+            const auto vertices = simplex_vertices();
+            for (const Vec2 &vertex : vertices)
+                anchors.emplace_back(AnchorPoint { vertex.x, vertex.y });
+            break;
+        }
+        case GeometryMode::TriangleWithCenter: {
+            const auto vertices = simplex_vertices();
+            for (const Vec2 &vertex : vertices)
+                anchors.emplace_back(AnchorPoint { vertex.x, vertex.y });
+            const Vec2 center = simplex_center();
+            anchors.emplace_back(AnchorPoint { center.x, center.y });
+            break;
+        }
+        case GeometryMode::Radial:
+            anchors = radial_anchor_points();
+            break;
+        }
+        return anchors;
+    }
+
+    static std::array<double, 3> triangle_barycentric(const Vec2 &point, const std::array<Vec2, 3> &triangle)
+    {
+        const Vec2 &a = triangle[0];
+        const Vec2 &b = triangle[1];
+        const Vec2 &c = triangle[2];
+        const double denom = ((b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y));
+        if (std::abs(denom) <= 1e-9)
+            return { 1.0, 0.0, 0.0 };
+        const double w0 = ((b.y - c.y) * (point.x - c.x) + (c.x - b.x) * (point.y - c.y)) / denom;
+        const double w1 = ((c.y - a.y) * (point.x - c.x) + (a.x - c.x) * (point.y - c.y)) / denom;
+        const double w2 = 1.0 - w0 - w1;
+        return { w0, w1, w2 };
+    }
+
+    static bool point_in_triangle(const Vec2 &point, const std::array<Vec2, 3> &triangle)
+    {
+        const auto barycentric = triangle_barycentric(point, triangle);
+        constexpr double eps = 1e-6;
+        return barycentric[0] >= -eps && barycentric[1] >= -eps && barycentric[2] >= -eps;
+    }
+
+    static Vec2 closest_point_on_segment(const Vec2 &point, const Vec2 &start, const Vec2 &end)
+    {
+        const Vec2 edge = sub_vec(end, start);
+        const double edge_len_sq = length_sq(edge);
+        if (edge_len_sq <= 1e-9)
+            return start;
+        const double t = std::clamp(dot_vec(sub_vec(point, start), edge) / edge_len_sq, 0.0, 1.0);
+        return add_vec(start, scale_vec(edge, t));
+    }
+
+    static Vec2 closest_point_on_triangle(const Vec2 &point, const std::array<Vec2, 3> &triangle)
+    {
+        if (point_in_triangle(point, triangle))
+            return point;
+
+        Vec2 best = triangle[0];
+        double best_dist = std::numeric_limits<double>::max();
+        for (int edge_idx = 0; edge_idx < 3; ++edge_idx) {
+            const Vec2 candidate = closest_point_on_segment(point, triangle[edge_idx], triangle[(edge_idx + 1) % 3]);
+            const double candidate_dist = dist_sq(point, candidate);
+            if (candidate_dist < best_dist) {
+                best_dist = candidate_dist;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    Vec2 normalized_point_from_mouse(const wxMouseEvent &evt) const
+    {
+        const wxRect rect = canvas_rect();
+        const int width = std::max(1, rect.GetWidth() - 1);
+        const int height = std::max(1, rect.GetHeight() - 1);
+        return make_vec(
+            std::clamp(double(evt.GetX() - rect.GetLeft()) / double(width), 0.0, 1.0),
+            std::clamp(double(evt.GetY() - rect.GetTop()) / double(height), 0.0, 1.0));
+    }
+
+    Vec2 clamp_point_to_geometry(const Vec2 &point) const
+    {
+        switch (geometry_mode()) {
+        case GeometryMode::Point:
+            return make_vec(0.5, 0.5);
+        case GeometryMode::Line:
+            return make_vec(std::clamp(point.x, 0.0, 1.0), 0.5);
+        case GeometryMode::Triangle:
+        case GeometryMode::TriangleWithCenter:
+            return closest_point_on_triangle(point, simplex_vertices());
+        case GeometryMode::Radial:
+            return make_vec(std::clamp(point.x, 0.0, 1.0), std::clamp(point.y, 0.0, 1.0));
+        }
+        return point;
+    }
+
+    std::vector<double> simplex_weights_from_pos(const Vec2 &point) const
+    {
+        const auto triangle = simplex_vertices();
+        const Vec2 clamped = closest_point_on_triangle(point, triangle);
+        const auto barycentric = triangle_barycentric(clamped, triangle);
+
+        if (geometry_mode() == GeometryMode::Triangle)
+            return { std::max(0.0, barycentric[0]), std::max(0.0, barycentric[1]), std::max(0.0, barycentric[2]) };
+
+        const double shared = std::max(0.0, std::min({ barycentric[0], barycentric[1], barycentric[2] }));
+        return {
+            std::max(0.0, barycentric[0] - shared),
+            std::max(0.0, barycentric[1] - shared),
+            std::max(0.0, barycentric[2] - shared),
+            std::max(0.0, shared * 3.0)
+        };
+    }
+
+    Vec2 triangle_point_from_weights() const
+    {
+        const auto vertices = simplex_vertices();
+        double total = 0.0;
+        for (size_t idx = 0; idx < 3 && idx < m_weights.size(); ++idx)
+            total += std::max(0, m_weights[idx]);
+        if (total <= 0.0)
+            return simplex_center();
+
+        Vec2 out = make_vec(0.0, 0.0);
+        for (size_t idx = 0; idx < 3 && idx < m_weights.size(); ++idx) {
+            const double weight = double(std::max(0, m_weights[idx])) / total;
+            out = add_vec(out, scale_vec(vertices[idx], weight));
+        }
+        return out;
+    }
+
+    void initialize_cursor_from_grid_search()
+    {
+        double best_x = 0.5;
+        double best_y = 0.5;
+        double best_error = std::numeric_limits<double>::max();
+        constexpr int grid = 96;
+        for (int y_idx = 0; y_idx <= grid; ++y_idx) {
+            for (int x_idx = 0; x_idx <= grid; ++x_idx) {
+                const Vec2 point = clamp_point_to_geometry(make_vec(double(x_idx) / double(grid), double(y_idx) / double(grid)));
+                const std::vector<int> probe = normalized_weights_from_pos(point.x, point.y);
+                if (probe.size() != m_weights.size())
+                    continue;
+                double error = 0.0;
+                for (size_t idx = 0; idx < probe.size(); ++idx) {
+                    const double delta = double(probe[idx] - m_weights[idx]);
+                    error += delta * delta;
+                }
+                if (error < best_error) {
+                    best_error = error;
+                    best_x = point.x;
+                    best_y = point.y;
+                }
+            }
+        }
+        m_cursor_x = best_x;
+        m_cursor_y = best_y;
+        m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
+    }
+
+    std::vector<double> raw_weights_from_pos(double normalized_x, double normalized_y) const
+    {
+        switch (geometry_mode()) {
+        case GeometryMode::Point:
+            return { 1.0 };
+        case GeometryMode::Line: {
+            const double t = std::clamp(normalized_x, 0.0, 1.0);
+            return { 1.0 - t, t };
+        }
+        case GeometryMode::Triangle:
+        case GeometryMode::TriangleWithCenter:
+            return simplex_weights_from_pos(make_vec(normalized_x, normalized_y));
+        case GeometryMode::Radial:
+            break;
+        }
+
+        const std::vector<AnchorPoint> anchors = radial_anchor_points();
+        std::vector<double> out(anchors.size(), 0.0);
+        if (anchors.empty())
+            return out;
+
+        constexpr double eps = 1e-8;
+        size_t exact_idx = size_t(-1);
+        for (size_t idx = 0; idx < anchors.size(); ++idx) {
+            const double dx = normalized_x - anchors[idx].x;
+            const double dy = normalized_y - anchors[idx].y;
+            const double d2 = dx * dx + dy * dy;
+            if (d2 <= eps) {
+                exact_idx = idx;
+                break;
+            }
+            out[idx] = 1.0 / std::max(1e-6, d2);
+        }
+        if (exact_idx != size_t(-1)) {
+            std::fill(out.begin(), out.end(), 0.0);
+            out[exact_idx] = 1.0;
+            return out;
+        }
+
+        double sum = 0.0;
+        for (const double value : out)
+            sum += value;
+        if (sum <= 0.0) {
+            out.assign(out.size(), 0.0);
+            out[0] = 1.0;
+            return out;
+        }
+        for (double &value : out)
+            value /= sum;
+        return out;
+    }
+
+    std::vector<int> normalized_weights_from_pos(double normalized_x, double normalized_y) const
+    {
+        std::vector<int> raw_weights;
+        const std::vector<double> raw = raw_weights_from_pos(normalized_x, normalized_y);
+        raw_weights.reserve(raw.size());
+        for (const double value : raw)
+            raw_weights.emplace_back(std::max(0, int(std::lround(value * 100.0))));
+        return normalize_color_match_weights(raw_weights, raw.size());
+    }
+
+    void initialize_cursor_from_weights()
+    {
+        if (m_weights.empty()) {
+            m_cursor_x = 0.5;
+            m_cursor_y = 0.5;
+            return;
+        }
+
+        switch (geometry_mode()) {
+        case GeometryMode::Point:
+            m_cursor_x = 0.5;
+            m_cursor_y = 0.5;
+            break;
+        case GeometryMode::Line: {
+            const int total = std::accumulate(m_weights.begin(), m_weights.end(), 0);
+            const double t = total > 0 && m_weights.size() >= 2 ? double(std::max(0, m_weights[1])) / double(total) : 0.5;
+            m_cursor_x = std::clamp(t, 0.0, 1.0);
+            m_cursor_y = 0.5;
+            m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
+            break;
+        }
+        case GeometryMode::Triangle: {
+            const Vec2 point = triangle_point_from_weights();
+            m_cursor_x = point.x;
+            m_cursor_y = point.y;
+            m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
+            break;
+        }
+        case GeometryMode::TriangleWithCenter:
+        case GeometryMode::Radial:
+            initialize_cursor_from_grid_search();
+            break;
+        }
+    }
+
+    void emit_changed()
+    {
+        wxCommandEvent evt(wxEVT_SLIDER, GetId());
+        evt.SetEventObject(this);
+        ProcessWindowEvent(evt);
+    }
+
+    void update_from_mouse(const wxMouseEvent &evt, bool notify)
+    {
+        const Vec2 point = clamp_point_to_geometry(normalized_point_from_mouse(evt));
+        m_cursor_x = point.x;
+        m_cursor_y = point.y;
+        m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
+        Refresh();
+        if (notify)
+            emit_changed();
+    }
+
+    wxColour canvas_background_color() const
+    {
+        return GetBackgroundColour().IsOk() ? GetBackgroundColour() : wxColour(245, 245, 245);
+    }
+
+    bool cached_bitmap_matches(const wxSize &size, const wxColour &background) const
+    {
+        return m_cached_bitmap.IsOk() && m_cached_bitmap_size == size && m_cached_background == background;
+    }
+
+    void schedule_cached_bitmap_render()
+    {
+        if (!m_render_timer.IsRunning())
+            m_render_timer.StartOnce(80);
+    }
+
+    void render_cached_bitmap(const wxSize &size, const wxColour &background)
+    {
+        const int width = size.GetWidth();
+        const int height = size.GetHeight();
+        if (width <= 0 || height <= 0)
+            return;
+
+        wxImage image(width, height);
+        unsigned char *data = image.GetData();
+        if (data != nullptr) {
+            for (int y = 0; y < height; ++y) {
+                const double normalized_y = (height > 1) ? double(y) / double(height - 1) : 0.5;
+                for (int x = 0; x < width; ++x) {
+                    const double normalized_x = (width > 1) ? double(x) / double(width - 1) : 0.5;
+                    const int data_idx = (y * width + x) * 3;
+                    bool paint_pixel = true;
+                    if (geometry_mode() == GeometryMode::Triangle || geometry_mode() == GeometryMode::TriangleWithCenter)
+                        paint_pixel = point_in_triangle(make_vec(normalized_x, normalized_y), simplex_vertices());
+
+                    const wxColour color = paint_pixel ?
+                        blend_multi_filament_mixer(m_colors, raw_weights_from_pos(normalized_x, normalized_y)) :
+                        background;
+                    data[data_idx + 0] = color.Red();
+                    data[data_idx + 1] = color.Green();
+                    data[data_idx + 2] = color.Blue();
+                }
+            }
+        }
+
+        m_cached_bitmap = wxBitmap(image);
+        m_cached_bitmap_size = size;
+        m_cached_background = background;
+    }
+
+    void draw_cached_bitmap(wxAutoBufferedPaintDC &dc, const wxRect &rect)
+    {
+        if (!m_cached_bitmap.IsOk())
+            return;
+
+        if (m_cached_bitmap_size == rect.GetSize()) {
+            dc.DrawBitmap(m_cached_bitmap, rect.GetLeft(), rect.GetTop(), false);
+            return;
+        }
+
+        wxMemoryDC memdc;
+        memdc.SelectObject(m_cached_bitmap);
+        dc.StretchBlit(rect.GetLeft(), rect.GetTop(), rect.GetWidth(), rect.GetHeight(),
+                       &memdc, 0, 0, m_cached_bitmap_size.GetWidth(), m_cached_bitmap_size.GetHeight());
+        memdc.SelectObject(wxNullBitmap);
+    }
+
+    void on_paint(wxPaintEvent &)
+    {
+        wxAutoBufferedPaintDC dc(this);
+        dc.SetBackground(wxBrush(GetBackgroundColour()));
+        dc.Clear();
+
+        const wxRect rect = canvas_rect();
+        const int width = rect.GetWidth();
+        const int height = rect.GetHeight();
+        if (width <= 0 || height <= 0)
+            return;
+
+        const wxColour background = canvas_background_color();
+        if (!cached_bitmap_matches(rect.GetSize(), background)) {
+            if (!m_cached_bitmap.IsOk())
+                render_cached_bitmap(rect.GetSize(), background);
+            else
+                schedule_cached_bitmap_render();
+        }
+        draw_cached_bitmap(dc, rect);
+
+        if (geometry_mode() == GeometryMode::Triangle || geometry_mode() == GeometryMode::TriangleWithCenter) {
+            const auto triangle = simplex_vertices();
+            wxPoint points[3] = {
+                wxPoint(rect.GetLeft() + int(std::lround(triangle[0].x * double(std::max(1, width - 1)))),
+                        rect.GetTop()  + int(std::lround(triangle[0].y * double(std::max(1, height - 1))))),
+                wxPoint(rect.GetLeft() + int(std::lround(triangle[1].x * double(std::max(1, width - 1)))),
+                        rect.GetTop()  + int(std::lround(triangle[1].y * double(std::max(1, height - 1))))),
+                wxPoint(rect.GetLeft() + int(std::lround(triangle[2].x * double(std::max(1, width - 1)))),
+                        rect.GetTop()  + int(std::lround(triangle[2].y * double(std::max(1, height - 1)))))
+            };
+            dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
+            dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            dc.DrawPolygon(3, points);
+            if (geometry_mode() == GeometryMode::TriangleWithCenter) {
+                const Vec2 center = simplex_center();
+                const wxPoint center_pt(rect.GetLeft() + int(std::lround(center.x * double(std::max(1, width - 1)))),
+                                        rect.GetTop()  + int(std::lround(center.y * double(std::max(1, height - 1)))));
+                dc.SetPen(wxPen(wxColour(180, 180, 180), 1, wxPENSTYLE_DOT));
+                for (const wxPoint &vertex : points)
+                    dc.DrawLine(center_pt, vertex);
+            }
+        } else {
+            dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
+            dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            dc.DrawRectangle(rect);
+        }
+
+        dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+
+        const auto anchors = anchor_points();
+        for (size_t idx = 0; idx < anchors.size() && idx < m_colors.size(); ++idx) {
+            const int anchor_x = rect.GetLeft() + int(std::lround(anchors[idx].x * double(std::max(1, width - 1))));
+            const int anchor_y = rect.GetTop() + int(std::lround(anchors[idx].y * double(std::max(1, height - 1))));
+            dc.SetPen(wxPen(wxColour(30, 30, 30), 1));
+            dc.SetBrush(wxBrush(m_colors[idx]));
+            dc.DrawCircle(wxPoint(anchor_x, anchor_y), FromDIP(4));
+        }
+
+        const int cursor_x = rect.GetLeft() + int(std::lround(m_cursor_x * double(std::max(1, width - 1))));
+        const int cursor_y = rect.GetTop() + int(std::lround(m_cursor_y * double(std::max(1, height - 1))));
+        dc.SetPen(wxPen(wxColour(255, 255, 255), 3));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawCircle(wxPoint(cursor_x, cursor_y), FromDIP(7));
+        dc.SetPen(wxPen(wxColour(30, 30, 30), 1));
+        dc.DrawCircle(wxPoint(cursor_x, cursor_y), FromDIP(7));
+    }
+
+    void on_left_down(wxMouseEvent &evt)
+    {
+        if (!HasCapture())
+            CaptureMouse();
+        m_dragging = true;
+        update_from_mouse(evt, true);
+    }
+
+    void on_left_up(wxMouseEvent &evt)
+    {
+        if (m_dragging)
+            update_from_mouse(evt, true);
+        m_dragging = false;
+        if (HasCapture())
+            ReleaseMouse();
+    }
+
+    void on_mouse_move(wxMouseEvent &evt)
+    {
+        if (m_dragging && evt.LeftIsDown())
+            update_from_mouse(evt, true);
+    }
+
+    void on_capture_lost(wxMouseCaptureLostEvent &)
+    {
+        m_dragging = false;
+    }
+
+    void on_size(wxSizeEvent &evt)
+    {
+        if (m_cached_bitmap.IsOk())
+            schedule_cached_bitmap_render();
+        Refresh(false);
+        evt.Skip();
+    }
+
+    void on_render_timer(wxTimerEvent &)
+    {
+        const wxRect rect = canvas_rect();
+        render_cached_bitmap(rect.GetSize(), canvas_background_color());
+        Refresh(false);
+    }
+
+private:
+    std::vector<wxColour>     m_colors;
+    std::vector<int>          m_weights;
+    wxBitmap                  m_cached_bitmap;
+    wxSize                    m_cached_bitmap_size;
+    wxColour                  m_cached_background;
+    wxTimer                   m_render_timer;
+    double                    m_cursor_x { 0.5 };
+    double                    m_cursor_y { 0.5 };
+    bool                      m_dragging { false };
+};
 
 class MixedFilamentColorMatchDialog : public DPIDialog
 {
 public:
-    MixedFilamentColorMatchDialog(wxWindow *parent, const wxColour &initial_color)
+    MixedFilamentColorMatchDialog(wxWindow *parent,
+                                  const std::vector<std::string> &physical_colors,
+                                  const wxColour &initial_color)
         : DPIDialog(parent ? parent : static_cast<wxWindow *>(wxGetApp().mainframe),
                     wxID_ANY,
                     _L("Add Color"),
                     wxDefaultPosition,
                     wxDefaultSize,
                     wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+        , m_physical_colors(physical_colors)
     {
-        const wxColour safe_initial = initial_color.IsOk() ? initial_color : wxColour("#FF6600");
+        m_recipe_timer.SetOwner(this);
+        m_loading_timer.SetOwner(this);
 
-        SetMinSize(wxSize(FromDIP(360), -1));
+        m_palette.reserve(m_physical_colors.size());
+        for (const std::string &hex : m_physical_colors)
+            m_palette.emplace_back(parse_mixed_color(hex));
+
+        const wxColour safe_initial = initial_color.IsOk() ? initial_color :
+            (m_palette.size() >= 2 ? blend_pair_filament_mixer(m_palette[0], m_palette[1], 0.5f) : wxColour("#26A69A"));
+        std::vector<int> initial_weights(m_palette.size(), 0);
+        if (!initial_weights.empty())
+            initial_weights[0] = 100;
+        if (initial_weights.size() >= 2) {
+            initial_weights[0] = 50;
+            initial_weights[1] = 50;
+        }
+
+        std::vector<unsigned int> filament_ids;
+        filament_ids.reserve(m_palette.size());
+        for (size_t idx = 0; idx < m_palette.size(); ++idx)
+            filament_ids.emplace_back(unsigned(idx + 1));
+
+        SetMinSize(wxSize(FromDIP(430), FromDIP(520)));
 
         auto *root = new wxBoxSizer(wxVERTICAL);
-        auto *description = new wxStaticText(this, wxID_ANY,
-                                             _L("Pick a target color. The closest 2-color, 3-color, or 4-color ratio mix will be created from the current physical filaments."));
-        description->Wrap(FromDIP(320));
+        auto *description = new wxStaticText(
+            this, wxID_ANY,
+            _L("Pick from the current filament gamut. The dialog previews the closest 2-color, 3-color, or 4-color FilamentMixer recipe before it is added."));
+        description->Wrap(FromDIP(390));
         root->Add(description, 0, wxEXPAND | wxALL, FromDIP(12));
 
-        auto *input_grid = new wxFlexGridSizer(2, FromDIP(8), FromDIP(8));
-        input_grid->AddGrowableCol(1, 1);
+        m_color_map = new MixedFilamentColorMapPanel(this, filament_ids, m_palette, initial_weights,
+                                                     wxSize(FromDIP(260), FromDIP(260)));
+        root->Add(m_color_map, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
 
-        input_grid->Add(new wxStaticText(this, wxID_ANY, _L("Picker")), 0, wxALIGN_CENTER_VERTICAL);
-        m_picker = new wxColourPickerCtrl(this, wxID_ANY, safe_initial);
-        input_grid->Add(m_picker, 0, wxEXPAND);
-
-        input_grid->Add(new wxStaticText(this, wxID_ANY, _L("Hex")), 0, wxALIGN_CENTER_VERTICAL);
+        auto *hex_row = new wxBoxSizer(wxHORIZONTAL);
+        hex_row->Add(new wxStaticText(this, wxID_ANY, _L("Hex")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
         m_hex_input = new wxTextCtrl(this, wxID_ANY, normalize_color_match_hex(safe_initial.GetAsString(wxC2S_HTML_SYNTAX)),
                                      wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
-        input_grid->Add(m_hex_input, 1, wxEXPAND);
+        m_hex_input->SetToolTip(_L("Enter a hex color like #00FF88. The picker will snap to the closest supported FilamentMixer color."));
+        hex_row->Add(m_hex_input, 1, wxALIGN_CENTER_VERTICAL);
+        hex_row->AddSpacer(FromDIP(8));
+        m_classic_picker = new wxColourPickerCtrl(this, wxID_ANY, safe_initial);
+        m_classic_picker->SetToolTip(_L("Classic color picker. The result will snap to the closest supported FilamentMixer color."));
+        hex_row->Add(m_classic_picker, 0, wxALIGN_CENTER_VERTICAL);
+        root->Add(hex_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
 
-        input_grid->Add(new wxStaticText(this, wxID_ANY, _L("Preview")), 0, wxALIGN_CENTER_VERTICAL);
-        m_preview = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(72), FromDIP(24)), wxBORDER_SIMPLE);
-        input_grid->Add(m_preview, 0, wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL);
+        auto *summary_grid = new wxFlexGridSizer(2, FromDIP(8), FromDIP(8));
+        summary_grid->AddGrowableCol(1, 1);
 
-        root->Add(input_grid, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
+        summary_grid->Add(new wxStaticText(this, wxID_ANY, _L("Requested")), 0, wxALIGN_CENTER_VERTICAL);
+        auto *selected_row = new wxBoxSizer(wxHORIZONTAL);
+        m_selected_preview = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(72), FromDIP(24)), wxBORDER_SIMPLE);
+        selected_row->Add(m_selected_preview, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        m_selected_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
+        selected_row->Add(m_selected_label, 1, wxALIGN_CENTER_VERTICAL);
+        summary_grid->Add(selected_row, 1, wxEXPAND);
+
+        summary_grid->Add(new wxStaticText(this, wxID_ANY, _L("Creates")), 0, wxALIGN_CENTER_VERTICAL);
+        auto *recipe_row = new wxBoxSizer(wxHORIZONTAL);
+        m_recipe_preview = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(72), FromDIP(24)), wxBORDER_SIMPLE);
+        recipe_row->Add(m_recipe_preview, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        m_recipe_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
+        m_recipe_label->Wrap(FromDIP(280));
+        recipe_row->Add(m_recipe_label, 1, wxALIGN_CENTER_VERTICAL);
+        summary_grid->Add(recipe_row, 1, wxEXPAND);
+
+        root->Add(summary_grid, 0, wxEXPAND | wxALL, FromDIP(12));
+
+        m_delta_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
+        root->Add(m_delta_label, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
+
+        m_presets = build_color_match_presets(m_physical_colors);
+        if (!m_presets.empty()) {
+            auto *presets_label = new wxStaticText(this, wxID_ANY, _L("Exact preset mixes"));
+            root->Add(presets_label, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
+
+            auto *presets_host = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(96)),
+                                                      wxVSCROLL | wxBORDER_SIMPLE);
+            presets_host->SetScrollRate(FromDIP(6), FromDIP(6));
+            auto *presets_sizer = new wxWrapSizer(wxHORIZONTAL, wxWRAPSIZER_DEFAULT_FLAGS);
+            for (const MixedColorMatchRecipeResult &preset : m_presets) {
+                auto *button = new wxBitmapButton(presets_host, wxID_ANY,
+                                                  make_color_match_swatch_bitmap(preset.preview_color, wxSize(FromDIP(30), FromDIP(20))),
+                                                  wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+                const wxString tooltip = from_u8(summarize_color_match_recipe(preset)) + "\n" +
+                    normalize_color_match_hex(preset.preview_color.GetAsString(wxC2S_HTML_SYNTAX));
+                button->SetToolTip(tooltip);
+                button->Bind(wxEVT_BUTTON, [this, preset](wxCommandEvent &) { apply_preset(preset); });
+                presets_sizer->Add(button, 0, wxALL, FromDIP(2));
+            }
+            presets_host->SetSizer(presets_sizer);
+            presets_host->FitInside();
+            root->Add(presets_host, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
+        }
 
         m_error_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
         m_error_label->SetForegroundColour(wxColour(196, 67, 63));
@@ -2818,33 +3808,84 @@ public:
         if (wxSizer *button_sizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL))
             root->Add(button_sizer, 0, wxEXPAND | wxALL, FromDIP(12));
 
+        m_loading_panel = new wxPanel(this, wxID_ANY);
+        m_loading_panel->SetMinSize(wxSize(-1, FromDIP(24)));
+        auto *loading_row = new wxBoxSizer(wxHORIZONTAL);
+        m_loading_label = new wxStaticText(m_loading_panel, wxID_ANY, " ");
+        loading_row->Add(m_loading_label, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        m_loading_gauge = new wxGauge(m_loading_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(150), FromDIP(8)),
+                                      wxGA_HORIZONTAL | wxGA_SMOOTH);
+        m_loading_gauge->SetValue(0);
+        m_loading_gauge->Enable(false);
+        loading_row->Add(m_loading_gauge, 0, wxALIGN_CENTER_VERTICAL);
+        m_loading_panel->SetSizer(loading_row);
+        root->Add(m_loading_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(12));
+
         SetSizerAndFit(root);
 
-        m_picker->Bind(wxEVT_COLOURPICKER_CHANGED, [this](wxColourPickerEvent &evt) {
-            if (m_syncing)
-                return;
-            set_selected_color(evt.GetColour(), true);
-        });
-        m_hex_input->Bind(wxEVT_TEXT, [this](wxCommandEvent &) {
-            if (m_syncing)
-                return;
-            wxColour parsed;
-            update_dialog_state(try_parse_color_match_hex(m_hex_input->GetValue(), parsed), parsed);
-        });
-        m_hex_input->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent &) {
-            wxColour parsed;
-            if (!try_parse_color_match_hex(m_hex_input->GetValue(), parsed))
-                return;
-            m_selected_color = parsed;
-            EndModal(wxID_OK);
-        });
+        m_selected_target = safe_initial;
+        m_requested_target = safe_initial;
+        sync_inputs_to_requested();
+        update_dialog_state();
 
-        set_selected_color(safe_initial, true);
+        if (m_color_map) {
+            m_color_map->Bind(wxEVT_SLIDER, [this](wxCommandEvent &) {
+                if (!m_color_map)
+                    return;
+                request_recipe_match(m_color_map->selected_color(), true, _L("Matching closest supported mix..."));
+            });
+        }
+
+        if (m_hex_input) {
+            m_hex_input->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent &) {
+                apply_hex_input(true);
+            });
+            m_hex_input->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &evt) {
+                apply_hex_input(false);
+                evt.Skip();
+            });
+        }
+        if (m_classic_picker) {
+            m_classic_picker->Bind(wxEVT_COLOURPICKER_CHANGED, [this](wxColourPickerEvent &evt) {
+                if (m_syncing_inputs)
+                    return;
+                apply_requested_target(evt.GetColour());
+            });
+        }
+
+        Bind(wxEVT_TIMER, [this](wxTimerEvent &) { refresh_selected_recipe(); }, m_recipe_timer.GetId());
+        Bind(wxEVT_TIMER, [this](wxTimerEvent &) {
+            if (m_loading_gauge && m_recipe_loading)
+                m_loading_gauge->Pulse();
+        }, m_loading_timer.GetId());
+        if (wxWindow *ok_button = FindWindow(wxID_OK)) {
+            ok_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
+                if (m_recipe_refresh_pending)
+                    refresh_selected_recipe();
+                if (m_recipe_loading || !m_selected_recipe.valid)
+                    return;
+                evt.Skip();
+            });
+        }
+
         CentreOnParent();
         wxGetApp().UpdateDlgDarkUI(this);
     }
 
-    wxColour selected_color() const { return m_selected_color; }
+    ~MixedFilamentColorMatchDialog() override
+    {
+        if (m_recipe_timer.IsRunning())
+            m_recipe_timer.Stop();
+        if (m_loading_timer.IsRunning())
+            m_loading_timer.Stop();
+    }
+
+    void begin_initial_recipe_load()
+    {
+        request_recipe_match(m_requested_target, false, _L("Calculating closest supported mix..."));
+    }
+
+    MixedColorMatchRecipeResult selected_recipe() const { return m_selected_recipe; }
 
     void on_dpi_changed(const wxRect &suggested_rect) override
     {
@@ -2855,51 +3896,235 @@ public:
     }
 
 private:
-    void set_selected_color(const wxColour &color, bool sync_hex)
+    void set_recipe_loading(bool loading, const wxString &message)
     {
-        if (!color.IsOk())
-            return;
+        m_recipe_loading = loading;
+        if (!message.empty())
+            m_loading_message = message;
 
-        m_syncing = true;
-        m_selected_color = color;
-        if (m_picker)
-            m_picker->SetColour(color);
-        if (sync_hex && m_hex_input)
-            m_hex_input->ChangeValue(normalize_color_match_hex(color.GetAsString(wxC2S_HTML_SYNTAX)));
-        m_syncing = false;
-
-        update_dialog_state(true, color);
-    }
-
-    void update_dialog_state(bool valid, const wxColour &parsed_color)
-    {
-        if (valid) {
-            m_selected_color = parsed_color;
-            if (m_picker && m_picker->GetColour() != parsed_color) {
-                m_syncing = true;
-                m_picker->SetColour(parsed_color);
-                m_syncing = false;
+        if (m_loading_label)
+            m_loading_label->SetLabel(loading ? m_loading_message : wxString(" "));
+        if (m_loading_gauge) {
+            if (loading) {
+                m_loading_gauge->Enable(true);
+                m_loading_gauge->Pulse();
+                if (!m_loading_timer.IsRunning())
+                    m_loading_timer.Start(100);
+            } else {
+                if (m_loading_timer.IsRunning())
+                    m_loading_timer.Stop();
+                m_loading_gauge->SetValue(0);
+                m_loading_gauge->Enable(false);
             }
         }
+    }
 
-        if (m_preview) {
-            m_preview->SetBackgroundColour(valid ? parsed_color : wxColour("#26A69A"));
-            m_preview->Refresh();
+    void sync_inputs_to_requested()
+    {
+        m_syncing_inputs = true;
+        if (m_hex_input)
+            m_hex_input->ChangeValue(normalize_color_match_hex(m_requested_target.GetAsString(wxC2S_HTML_SYNTAX)));
+        if (m_classic_picker)
+            m_classic_picker->SetColour(m_requested_target);
+        m_syncing_inputs = false;
+    }
+
+    bool apply_requested_target(const wxColour &requested_target)
+    {
+        request_recipe_match(requested_target, false, _L("Matching closest supported mix..."));
+        return true;
+    }
+
+    bool apply_hex_input(bool show_invalid_error)
+    {
+        if (!m_hex_input || m_syncing_inputs)
+            return false;
+
+        wxColour parsed;
+        if (!try_parse_color_match_hex(m_hex_input->GetValue(), parsed)) {
+            if (show_invalid_error && m_error_label)
+                m_error_label->SetLabel(_L("Use a valid hex color like #00FF88."));
+            return false;
         }
-        if (m_error_label)
-            m_error_label->SetLabel(valid ? wxEmptyString : _L("Use a valid hex color like #FF6600."));
+
+        return apply_requested_target(parsed);
+    }
+
+    void request_recipe_match(const wxColour &requested_target, bool debounce, const wxString &loading_message)
+    {
+        m_requested_target = requested_target;
+        m_selected_target = requested_target;
+        sync_inputs_to_requested();
+
+        ++m_recipe_request_token;
+        set_recipe_loading(true, loading_message);
+
+        if (m_recipe_timer.IsRunning())
+            m_recipe_timer.Stop();
+        m_recipe_refresh_pending = debounce;
+        update_dialog_state();
+
+        if (debounce) {
+            m_recipe_timer.StartOnce(120);
+            return;
+        }
+
+        launch_recipe_match(m_recipe_request_token, requested_target);
+    }
+
+    void refresh_selected_recipe()
+    {
+        m_recipe_refresh_pending = false;
+        launch_recipe_match(m_recipe_request_token, m_requested_target);
+    }
+
+    void launch_recipe_match(size_t request_token, const wxColour &requested_target)
+    {
+        const std::vector<std::string> physical_colors = m_physical_colors;
+        wxWeakRef<wxWindow> weak_self(this);
+        std::thread([weak_self, physical_colors, requested_target, request_token]() {
+            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target);
+            wxGetApp().CallAfter([weak_self, requested_target, recipe = std::move(recipe), request_token]() mutable {
+                if (!weak_self)
+                    return;
+                auto *self = static_cast<MixedFilamentColorMatchDialog *>(weak_self.get());
+                self->handle_recipe_result(request_token, requested_target, std::move(recipe));
+            });
+        }).detach();
+    }
+
+    void handle_recipe_result(size_t request_token, const wxColour &requested_target, MixedColorMatchRecipeResult recipe)
+    {
+        if (request_token != m_recipe_request_token)
+            return;
+
+        m_has_recipe_result = true;
+        m_selected_recipe = std::move(recipe);
+        set_recipe_loading(false, wxEmptyString);
+
+        if (m_selected_recipe.valid) {
+            m_selected_target = m_selected_recipe.preview_color;
+            if (m_color_map)
+                m_color_map->set_normalized_weights(expand_color_match_recipe_weights(m_selected_recipe, m_palette.size()), false);
+            sync_inputs_to_requested();
+        } else {
+            m_selected_target = requested_target;
+        }
+
+        update_dialog_state();
+    }
+
+    void apply_preset(MixedColorMatchRecipeResult preset)
+    {
+        preset.delta_e = 0.0;
+        ++m_recipe_request_token;
+        m_requested_target = preset.preview_color;
+        m_selected_target = preset.preview_color;
+        m_selected_recipe = std::move(preset);
+        m_has_recipe_result = true;
+        m_recipe_refresh_pending = false;
+        if (m_recipe_timer.IsRunning())
+            m_recipe_timer.Stop();
+        set_recipe_loading(false, wxEmptyString);
+        if (m_color_map)
+            m_color_map->set_normalized_weights(expand_color_match_recipe_weights(m_selected_recipe, m_palette.size()), false);
+        sync_inputs_to_requested();
+        update_dialog_state();
+    }
+
+    void update_dialog_state()
+    {
+        const wxColour fallback = wxColour("#26A69A");
+        if (m_selected_preview) {
+            m_selected_preview->SetBackgroundColour(m_requested_target.IsOk() ? m_requested_target : fallback);
+            m_selected_preview->Refresh();
+        }
+        if (m_selected_label)
+            m_selected_label->SetLabel(m_requested_target.IsOk() ?
+                normalize_color_match_hex(m_requested_target.GetAsString(wxC2S_HTML_SYNTAX)) :
+                normalize_color_match_hex(fallback.GetAsString(wxC2S_HTML_SYNTAX)));
+
+        const bool valid = m_selected_recipe.valid;
+        const wxColour recipe_color = (valid && m_selected_recipe.preview_color.IsOk()) ?
+            m_selected_recipe.preview_color :
+            (m_requested_target.IsOk() ? m_requested_target : fallback);
+        if (m_recipe_preview) {
+            m_recipe_preview->SetBackgroundColour(recipe_color);
+            m_recipe_preview->Refresh();
+        }
+        if (m_recipe_label) {
+            if (m_recipe_loading) {
+                m_recipe_label->SetLabel(m_loading_message);
+            } else if (valid) {
+                const wxString recipe_summary = from_u8(summarize_color_match_recipe(m_selected_recipe));
+                const wxString recipe_hex = normalize_color_match_hex(recipe_color.GetAsString(wxC2S_HTML_SYNTAX));
+                m_recipe_label->SetLabel(recipe_summary + "  " + recipe_hex);
+            } else if (m_has_recipe_result) {
+                m_recipe_label->SetLabel(_L("No supported 2-color, 3-color, or 4-color recipe found."));
+            } else {
+                m_recipe_label->SetLabel(wxEmptyString);
+            }
+        }
+        if (m_delta_label) {
+            if (m_recipe_loading && m_requested_target.IsOk()) {
+                m_delta_label->SetLabel(wxString::Format(_L("Matching %s..."),
+                                                         normalize_color_match_hex(m_requested_target.GetAsString(wxC2S_HTML_SYNTAX))));
+            } else if (valid && m_requested_target.IsOk()) {
+                m_delta_label->SetLabel(wxString::Format(_L("Requested %s, closest recipe delta: %.2f"),
+                                                         normalize_color_match_hex(m_requested_target.GetAsString(wxC2S_HTML_SYNTAX)),
+                                                         m_selected_recipe.delta_e));
+            } else {
+                m_delta_label->SetLabel(wxEmptyString);
+            }
+        }
+        if (m_error_label) {
+            if (m_recipe_loading)
+                m_error_label->SetLabel(wxEmptyString);
+            else if (!valid && m_has_recipe_result)
+                m_error_label->SetLabel(_L("Unable to create a color mix from the current physical filament colors."));
+            else if (m_hex_input && !m_syncing_inputs) {
+                wxColour parsed;
+                if (!try_parse_color_match_hex(m_hex_input->GetValue(), parsed))
+                    m_error_label->SetLabel(_L("Use a valid hex color like #00FF88."));
+                else
+                    m_error_label->SetLabel(wxEmptyString);
+            } else {
+                m_error_label->SetLabel(wxEmptyString);
+            }
+        }
         if (wxWindow *ok_button = FindWindow(wxID_OK))
-            ok_button->Enable(valid);
+            ok_button->Enable(valid && !m_recipe_loading && !m_recipe_refresh_pending);
 
         Layout();
     }
 
-    wxColourPickerCtrl *m_picker      = nullptr;
-    wxTextCtrl         *m_hex_input   = nullptr;
-    wxPanel            *m_preview     = nullptr;
-    wxStaticText       *m_error_label = nullptr;
-    wxColour            m_selected_color { wxColour("#FF6600") };
-    bool                m_syncing = false;
+private:
+    std::vector<std::string>                m_physical_colors;
+    std::vector<wxColour>                   m_palette;
+    std::vector<MixedColorMatchRecipeResult> m_presets;
+    MixedFilamentColorMapPanel             *m_color_map        = nullptr;
+    wxTextCtrl                             *m_hex_input        = nullptr;
+    wxColourPickerCtrl                     *m_classic_picker   = nullptr;
+    wxPanel                                *m_loading_panel    = nullptr;
+    wxStaticText                           *m_loading_label    = nullptr;
+    wxGauge                                *m_loading_gauge    = nullptr;
+    wxPanel                                *m_selected_preview = nullptr;
+    wxStaticText                           *m_selected_label   = nullptr;
+    wxPanel                                *m_recipe_preview   = nullptr;
+    wxStaticText                           *m_recipe_label     = nullptr;
+    wxStaticText                           *m_delta_label      = nullptr;
+    wxStaticText                           *m_error_label      = nullptr;
+    wxColour                                m_requested_target { wxColour("#26A69A") };
+    wxColour                                m_selected_target { wxColour("#26A69A") };
+    MixedColorMatchRecipeResult             m_selected_recipe;
+    wxTimer                                 m_recipe_timer;
+    wxTimer                                 m_loading_timer;
+    wxString                                m_loading_message;
+    size_t                                  m_recipe_request_token { 0 };
+    bool                                    m_has_recipe_result { false };
+    bool                                    m_recipe_loading { false };
+    bool                                    m_recipe_refresh_pending { false };
+    bool                                    m_syncing_inputs { false };
 };
 
 class MixedGradientSelector : public wxPanel
@@ -3127,14 +4352,12 @@ public:
                                const std::vector<int> &initial_weights)
         : wxDialog(parent, wxID_ANY, _L("Gradient Mix Weights"), wxDefaultPosition, wxDefaultSize,
                    wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
-        , m_filament_ids(filament_ids)
     {
-        m_weights = normalize_weights(initial_weights, filament_ids.size());
         m_colors.reserve(filament_ids.size());
-        for (size_t i = 0; i < filament_ids.size(); ++i) {
-            const unsigned int id = filament_ids[i];
-            if (id >= 1 && id <= palette.size())
-                m_colors.emplace_back(palette[id - 1]);
+        m_weights = normalize_color_match_weights(initial_weights, filament_ids.size());
+        for (const unsigned int filament_id : filament_ids) {
+            if (filament_id >= 1 && filament_id <= palette.size())
+                m_colors.emplace_back(palette[filament_id - 1]);
             else
                 m_colors.emplace_back(wxColour("#26A69A"));
         }
@@ -3145,16 +4368,9 @@ public:
         auto *hint = new wxStaticText(this, wxID_ANY, _L("Pick a point in the gradient map to control multi-filament mix."));
         root->Add(hint, 0, wxEXPAND | wxALL, FromDIP(10));
 
-        m_canvas = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(240), FromDIP(240)), wxBORDER_SIMPLE);
-        m_canvas->SetBackgroundStyle(wxBG_STYLE_PAINT);
-        m_canvas->SetMinSize(wxSize(FromDIP(220), FromDIP(220)));
-        root->Add(m_canvas, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(10));
-
-        m_canvas->Bind(wxEVT_PAINT, &MixedGradientWeightsDialog::on_canvas_paint, this);
-        m_canvas->Bind(wxEVT_LEFT_DOWN, &MixedGradientWeightsDialog::on_canvas_left_down, this);
-        m_canvas->Bind(wxEVT_LEFT_UP, &MixedGradientWeightsDialog::on_canvas_left_up, this);
-        m_canvas->Bind(wxEVT_MOTION, &MixedGradientWeightsDialog::on_canvas_motion, this);
-        m_canvas->Bind(wxEVT_MOUSE_CAPTURE_LOST, &MixedGradientWeightsDialog::on_canvas_capture_lost, this);
+        m_color_map = new MixedFilamentColorMapPanel(this, filament_ids, palette, initial_weights,
+                                                     wxSize(FromDIP(240), FromDIP(240)));
+        root->Add(m_color_map, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(10));
 
         for (size_t i = 0; i < filament_ids.size(); ++i) {
             auto *row = new wxBoxSizer(wxHORIZONTAL);
@@ -3173,177 +4389,22 @@ public:
         root->Add(CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxALL, FromDIP(8));
         SetSizerAndFit(root);
         SetMinSize(wxSize(FromDIP(380), std::max(GetSize().GetHeight(), FromDIP(460))));
-
-        initialize_cursor_from_weights();
         update_weight_labels();
+
+        if (m_color_map) {
+            m_color_map->Bind(wxEVT_SLIDER, [this](wxCommandEvent &) {
+                m_weights = m_color_map ? m_color_map->normalized_weights() : m_weights;
+                update_weight_labels();
+            });
+        }
     }
 
     std::vector<int> normalized_weights() const
     {
-        return m_weights;
+        return m_color_map ? m_color_map->normalized_weights() : m_weights;
     }
 
 private:
-    struct AnchorPoint {
-        double x { 0.5 };
-        double y { 0.5 };
-    };
-
-    static std::vector<int> normalize_weights(const std::vector<int> &weights, size_t n)
-    {
-        std::vector<int> out = weights;
-        if (out.size() != n)
-            out.assign(n, (n > 0) ? int(100 / n) : 0);
-        int sum = 0;
-        for (int &v : out) {
-            v = std::max(0, v);
-            sum += v;
-        }
-        if (sum <= 0 && n > 0) {
-            out.assign(n, 0);
-            out[0] = 100;
-            return out;
-        }
-        std::vector<double> rem(n, 0.);
-        int assigned = 0;
-        for (size_t i = 0; i < n; ++i) {
-            const double exact = 100.0 * double(out[i]) / double(sum);
-            out[i] = int(std::floor(exact));
-            rem[i] = exact - double(out[i]);
-            assigned += out[i];
-        }
-        int missing = std::max(0, 100 - assigned);
-        while (missing > 0) {
-            size_t best_idx = 0;
-            double best_rem = -1.0;
-            for (size_t i = 0; i < rem.size(); ++i) {
-                if (rem[i] > best_rem) {
-                    best_rem = rem[i];
-                    best_idx = i;
-                }
-            }
-            ++out[best_idx];
-            rem[best_idx] = 0.0;
-            --missing;
-        }
-        return out;
-    }
-
-    std::vector<AnchorPoint> anchor_points() const
-    {
-        std::vector<AnchorPoint> anchors;
-        const size_t n = m_colors.size();
-        anchors.reserve(n);
-        if (n == 0)
-            return anchors;
-        if (n == 1) {
-            anchors.emplace_back(AnchorPoint{0.5, 0.5});
-            return anchors;
-        }
-        if (n == 2) {
-            anchors.emplace_back(AnchorPoint{0.0, 0.5});
-            anchors.emplace_back(AnchorPoint{1.0, 0.5});
-            return anchors;
-        }
-        if (n == 3) {
-            anchors.emplace_back(AnchorPoint{0.0, 0.5});
-            anchors.emplace_back(AnchorPoint{1.0, 0.0});
-            anchors.emplace_back(AnchorPoint{1.0, 1.0});
-            return anchors;
-        }
-        if (n == 4) {
-            anchors.emplace_back(AnchorPoint{0.0, 0.0});
-            anchors.emplace_back(AnchorPoint{1.0, 0.0});
-            anchors.emplace_back(AnchorPoint{1.0, 1.0});
-            anchors.emplace_back(AnchorPoint{0.0, 1.0});
-            return anchors;
-        }
-
-        constexpr double k_pi = 3.14159265358979323846;
-        const double cx = 0.5;
-        const double cy = 0.5;
-        const double r = 0.45;
-        for (size_t i = 0; i < n; ++i) {
-            const double ang = (2.0 * k_pi * double(i)) / double(n);
-            anchors.emplace_back(AnchorPoint{cx + r * std::cos(ang), cy + r * std::sin(ang)});
-        }
-        return anchors;
-    }
-
-    std::vector<double> raw_weights_from_pos(double nx, double ny) const
-    {
-        const std::vector<AnchorPoint> anchors = anchor_points();
-        std::vector<double> out(anchors.size(), 0.0);
-        if (anchors.empty())
-            return out;
-
-        constexpr double eps = 1e-8;
-        size_t exact_idx = size_t(-1);
-        for (size_t i = 0; i < anchors.size(); ++i) {
-            const double dx = nx - anchors[i].x;
-            const double dy = ny - anchors[i].y;
-            const double d2 = dx * dx + dy * dy;
-            if (d2 <= eps) {
-                exact_idx = i;
-                break;
-            }
-            out[i] = 1.0 / std::max(1e-6, d2);
-        }
-        if (exact_idx != size_t(-1)) {
-            std::fill(out.begin(), out.end(), 0.0);
-            out[exact_idx] = 1.0;
-            return out;
-        }
-
-        double sum = 0.0;
-        for (double v : out)
-            sum += v;
-        if (sum <= 0.0) {
-            out.assign(out.size(), 0.0);
-            out[0] = 1.0;
-            return out;
-        }
-        for (double &v : out)
-            v /= sum;
-        return out;
-    }
-
-    std::vector<int> normalized_weights_from_pos(double nx, double ny) const
-    {
-        std::vector<int> raw;
-        const std::vector<double> w = raw_weights_from_pos(nx, ny);
-        raw.reserve(w.size());
-        for (double v : w)
-            raw.emplace_back(std::max(0, int(std::lround(v * 100.0))));
-        return normalize_weights(raw, w.size());
-    }
-
-    wxColour blended_color(const std::vector<double> &weights) const
-    {
-        return blend_multi_filament_mixer(m_colors, weights);
-    }
-
-    wxRect canvas_rect() const
-    {
-        if (!m_canvas)
-            return wxRect(0, 0, 1, 1);
-        const wxSize sz = m_canvas->GetClientSize();
-        return wxRect(0, 0, std::max(1, sz.GetWidth()), std::max(1, sz.GetHeight()));
-    }
-
-    void set_cursor_from_mouse(const wxMouseEvent &evt)
-    {
-        const wxRect rect = canvas_rect();
-        const int w = std::max(1, rect.GetWidth() - 1);
-        const int h = std::max(1, rect.GetHeight() - 1);
-        m_cursor_x = std::clamp(double(evt.GetX() - rect.GetLeft()) / double(w), 0.0, 1.0);
-        m_cursor_y = std::clamp(double(evt.GetY() - rect.GetTop()) / double(h), 0.0, 1.0);
-        m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
-        update_weight_labels();
-        if (m_canvas)
-            m_canvas->Refresh();
-    }
-
     void update_weight_labels()
     {
         for (size_t i = 0; i < m_weight_labels.size() && i < m_weights.size(); ++i) {
@@ -3353,140 +4414,25 @@ private:
         Layout();
     }
 
-    void initialize_cursor_from_weights()
-    {
-        if (m_weights.empty()) {
-            m_cursor_x = 0.5;
-            m_cursor_y = 0.5;
-            return;
-        }
-        double best_x = 0.5;
-        double best_y = 0.5;
-        double best_err = std::numeric_limits<double>::max();
-        constexpr int grid = 80;
-        for (int yi = 0; yi <= grid; ++yi) {
-            const double ny = double(yi) / double(grid);
-            for (int xi = 0; xi <= grid; ++xi) {
-                const double nx = double(xi) / double(grid);
-                const std::vector<int> probe = normalized_weights_from_pos(nx, ny);
-                if (probe.size() != m_weights.size())
-                    continue;
-                double err = 0.0;
-                for (size_t i = 0; i < probe.size(); ++i) {
-                    const double d = double(probe[i] - m_weights[i]);
-                    err += d * d;
-                }
-                if (err < best_err) {
-                    best_err = err;
-                    best_x = nx;
-                    best_y = ny;
-                }
-            }
-        }
-        m_cursor_x = best_x;
-        m_cursor_y = best_y;
-        m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
-    }
-
-    void on_canvas_paint(wxPaintEvent &)
-    {
-        if (!m_canvas)
-            return;
-        wxAutoBufferedPaintDC dc(m_canvas);
-        dc.SetBackground(wxBrush(m_canvas->GetBackgroundColour()));
-        dc.Clear();
-
-        const wxRect rect = canvas_rect();
-        const int w = rect.GetWidth();
-        const int h = rect.GetHeight();
-        if (w <= 0 || h <= 0)
-            return;
-
-        wxImage img(w, h);
-        unsigned char *data = img.GetData();
-        if (data) {
-            for (int y = 0; y < h; ++y) {
-                const double ny = (h > 1) ? double(y) / double(h - 1) : 0.5;
-                for (int x = 0; x < w; ++x) {
-                    const double nx = (w > 1) ? double(x) / double(w - 1) : 0.5;
-                    const std::vector<double> raw = raw_weights_from_pos(nx, ny);
-                    const wxColour c = blended_color(raw);
-                    const int idx = (y * w + x) * 3;
-                    data[idx + 0] = c.Red();
-                    data[idx + 1] = c.Green();
-                    data[idx + 2] = c.Blue();
-                }
-            }
-        }
-        dc.DrawBitmap(wxBitmap(img), rect.GetLeft(), rect.GetTop(), false);
-
-        dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
-        dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.DrawRectangle(rect);
-
-        const auto anchors = anchor_points();
-        for (size_t i = 0; i < anchors.size() && i < m_colors.size(); ++i) {
-            const int ax = rect.GetLeft() + int(std::lround(anchors[i].x * double(std::max(1, w - 1))));
-            const int ay = rect.GetTop() + int(std::lround(anchors[i].y * double(std::max(1, h - 1))));
-            dc.SetPen(wxPen(wxColour(30, 30, 30), 1));
-            dc.SetBrush(wxBrush(m_colors[i]));
-            dc.DrawCircle(wxPoint(ax, ay), FromDIP(4));
-        }
-
-        const int cx = rect.GetLeft() + int(std::lround(m_cursor_x * double(std::max(1, w - 1))));
-        const int cy = rect.GetTop() + int(std::lround(m_cursor_y * double(std::max(1, h - 1))));
-        dc.SetPen(wxPen(wxColour(255, 255, 255), 3));
-        dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.DrawCircle(wxPoint(cx, cy), FromDIP(7));
-        dc.SetPen(wxPen(wxColour(30, 30, 30), 1));
-        dc.DrawCircle(wxPoint(cx, cy), FromDIP(7));
-    }
-
-    void on_canvas_left_down(wxMouseEvent &evt)
-    {
-        if (!m_canvas)
-            return;
-        if (!m_canvas->HasCapture())
-            m_canvas->CaptureMouse();
-        m_dragging = true;
-        set_cursor_from_mouse(evt);
-    }
-
-    void on_canvas_left_up(wxMouseEvent &evt)
-    {
-        if (!m_canvas)
-            return;
-        if (m_dragging)
-            set_cursor_from_mouse(evt);
-        m_dragging = false;
-        if (m_canvas->HasCapture())
-            m_canvas->ReleaseMouse();
-    }
-
-    void on_canvas_motion(wxMouseEvent &evt)
-    {
-        if (m_dragging && evt.LeftIsDown())
-            set_cursor_from_mouse(evt);
-    }
-
-    void on_canvas_capture_lost(wxMouseCaptureLostEvent &)
-    {
-        m_dragging = false;
-    }
-
 private:
-    std::vector<unsigned int> m_filament_ids;
-    wxPanel                  *m_canvas { nullptr };
-    std::vector<wxColour>     m_colors;
-    std::vector<int>          m_weights;
-    std::vector<wxStaticText*> m_weight_labels;
-    double                     m_cursor_x { 0.5 };
-    double                     m_cursor_y { 0.5 };
-    bool                       m_dragging { false };
+    MixedFilamentColorMapPanel *m_color_map { nullptr };
+    std::vector<wxColour>       m_colors;
+    std::vector<int>            m_weights;
+    std::vector<wxStaticText*>  m_weight_labels;
 };
 
 // Forward declaration for MixedMixPreview (defined below)
 class MixedMixPreview;
+
+struct MixedFilamentPreviewSettings
+{
+    double nominal_layer_height { 0.2 };
+    double mixed_lower_bound { 0.04 };
+    double mixed_upper_bound { 0.16 };
+    double preferred_a_height { 0.0 };
+    double preferred_b_height { 0.0 };
+    bool   local_z_mode { false };
+};
 
 // Inline editor panel for configuring a single mixed filament
 class MixedFilamentConfigPanel : public wxPanel
@@ -3500,15 +4446,19 @@ public:
                              size_t num_physical,
                              const std::vector<std::string> &physical_colors,
                              const std::vector<wxColour> &palette,
+                             const MixedFilamentPreviewSettings &preview_settings,
                              OnChangeFn on_change = {});
 
     // Get the updated mixed filament data
     MixedFilament get_mixed_filament() const { return m_mf; }
     bool has_changes() const { return m_has_changes; }
+    static int effective_local_z_preview_mix_b_percent(const MixedFilament &mf,
+                                                       const MixedFilamentPreviewSettings &preview_settings);
 
 private:
     void build_ui();
     void update_preview();
+    void update_local_z_breakdown();
     void update_component_picker_visuals();
 
     size_t                          m_mixed_id;
@@ -3516,6 +4466,7 @@ private:
     size_t                          m_num_physical;
     std::vector<std::string>        m_physical_colors;
     std::vector<wxColour>           m_palette;
+    MixedFilamentPreviewSettings    m_preview_settings;
     bool                            m_has_changes = false;
 
     wxChoice                       *m_choice_a = nullptr;
@@ -3537,8 +4488,11 @@ private:
     MixedGradientSelector          *m_blend_selector = nullptr;
     wxStaticText                   *m_blend_label = nullptr;
     wxTextCtrl                     *m_pattern_ctrl = nullptr;
+    wxCheckBox                     *m_local_z_limit_checkbox = nullptr;
+    wxSpinCtrl                     *m_local_z_limit_spin = nullptr;
     std::vector<wxButton*>          m_pattern_quick_buttons;
     MixedMixPreview                *m_mix_preview = nullptr;
+    wxStaticText                   *m_breakdown_label = nullptr;
     wxPanel                        *m_swatch = nullptr;
     std::shared_ptr<std::vector<int>> m_selected_weight_state;
     OnChangeFn                       m_on_change;
@@ -3551,9 +4505,21 @@ private:
     static std::vector<int> normalize_gradient_weights(const std::vector<int> &w, size_t n);
     static std::string encode_gradient_weights(const std::vector<int> &w);
     static std::vector<unsigned int> build_weighted_pair_sequence(unsigned int a, unsigned int b, int percent_b);
-    static std::vector<unsigned int> build_weighted_multi_sequence(const std::vector<unsigned int> &ids, const std::vector<int> &weights);
+    static std::vector<unsigned int> build_weighted_multi_sequence(const std::vector<unsigned int> &ids,
+                                                                   const std::vector<int> &weights,
+                                                                   size_t max_cycle_limit = 0);
     static std::string summarize_sequence(const std::vector<unsigned int> &seq);
+    static std::string summarize_local_z_breakdown(const MixedFilament &mf,
+                                                   const std::vector<int> &weights,
+                                                   const MixedFilamentPreviewSettings &preview_settings);
     static std::string blend_from_sequence(const std::vector<std::string> &colors, const std::vector<unsigned int> &seq, const std::string &fallback);
+    static std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_height,
+                                                                  double lower_bound,
+                                                                  double upper_bound,
+                                                                  double preferred_a_height,
+                                                                  double preferred_b_height,
+                                                                  int mix_b_percent,
+                                                                  int max_sublayers_limit);
 };
 
 class MixedMixPreview : public wxPanel
@@ -3818,37 +4784,161 @@ std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_pair_sequence
     return seq;
 }
 
-std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_multi_sequence(const std::vector<unsigned int> &ids, const std::vector<int> &weights)
+static void reduce_weight_counts_to_cycle_limit(std::vector<int> &counts, size_t cycle_limit)
+{
+    if (counts.empty() || cycle_limit == 0)
+        return;
+
+    int total = std::accumulate(counts.begin(), counts.end(), 0);
+    if (total <= 0 || size_t(total) <= cycle_limit)
+        return;
+
+    std::vector<size_t> positive_indices;
+    positive_indices.reserve(counts.size());
+    for (size_t i = 0; i < counts.size(); ++i)
+        if (counts[i] > 0)
+            positive_indices.emplace_back(i);
+
+    if (positive_indices.empty()) {
+        counts.assign(counts.size(), 0);
+        return;
+    }
+
+    std::vector<int> reduced(counts.size(), 0);
+    if (cycle_limit < positive_indices.size()) {
+        std::sort(positive_indices.begin(), positive_indices.end(), [&counts](size_t lhs, size_t rhs) {
+            if (counts[lhs] != counts[rhs])
+                return counts[lhs] > counts[rhs];
+            return lhs < rhs;
+        });
+        for (size_t i = 0; i < cycle_limit; ++i)
+            reduced[positive_indices[i]] = 1;
+        counts = std::move(reduced);
+        return;
+    }
+
+    size_t remaining_slots = cycle_limit;
+    for (const size_t idx : positive_indices) {
+        reduced[idx] = 1;
+        --remaining_slots;
+    }
+
+    int total_extras = 0;
+    std::vector<int> extra_counts(counts.size(), 0);
+    for (const size_t idx : positive_indices) {
+        extra_counts[idx] = std::max(0, counts[idx] - 1);
+        total_extras += extra_counts[idx];
+    }
+    if (remaining_slots == 0 || total_extras <= 0) {
+        counts = std::move(reduced);
+        return;
+    }
+
+    std::vector<double> remainders(counts.size(), -1.0);
+    size_t assigned_slots = 0;
+    for (const size_t idx : positive_indices) {
+        if (extra_counts[idx] == 0)
+            continue;
+        const double exact = double(remaining_slots) * double(extra_counts[idx]) / double(total_extras);
+        const int assigned = int(std::floor(exact));
+        reduced[idx] += assigned;
+        assigned_slots += size_t(assigned);
+        remainders[idx] = exact - double(assigned);
+    }
+
+    size_t missing_slots = remaining_slots > assigned_slots ? (remaining_slots - assigned_slots) : size_t(0);
+    while (missing_slots > 0) {
+        size_t best_idx = size_t(-1);
+        double best_remainder = -1.0;
+        int    best_extra = -1;
+        for (const size_t idx : positive_indices) {
+            if (extra_counts[idx] == 0)
+                continue;
+            if (remainders[idx] > best_remainder ||
+                (std::abs(remainders[idx] - best_remainder) <= 1e-9 && extra_counts[idx] > best_extra) ||
+                (std::abs(remainders[idx] - best_remainder) <= 1e-9 && extra_counts[idx] == best_extra && idx < best_idx)) {
+                best_idx = idx;
+                best_remainder = remainders[idx];
+                best_extra = extra_counts[idx];
+            }
+        }
+        if (best_idx == size_t(-1))
+            break;
+        ++reduced[best_idx];
+        remainders[best_idx] = -1.0;
+        --missing_slots;
+    }
+
+    counts = std::move(reduced);
+}
+
+std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_multi_sequence(const std::vector<unsigned int> &ids,
+                                                                                  const std::vector<int> &weights,
+                                                                                  size_t max_cycle_limit)
 {
     std::vector<unsigned int> seq;
     if (ids.empty())
         return seq;
 
-    std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
-    constexpr int k_cycle = 48;
+    std::vector<unsigned int> filtered_ids;
     std::vector<int> counts;
-    counts.reserve(normalized.size());
-    for (const int w : normalized)
-        counts.emplace_back(std::max(1, int(std::round((double(w) / 100.0) * k_cycle))));
+    filtered_ids.reserve(ids.size());
+    counts.reserve(ids.size());
 
-    int cycle = std::accumulate(counts.begin(), counts.end(), 0);
-    while (cycle > k_cycle) {
-        auto it = std::max_element(counts.begin(), counts.end());
-        if (it == counts.end() || *it <= 1)
-            break;
-        --(*it);
-        --cycle;
+    std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        const int weight = (i < normalized.size()) ? std::max(0, normalized[i]) : 0;
+        if (weight <= 0)
+            continue;
+        filtered_ids.emplace_back(ids[i]);
+        counts.emplace_back(weight);
     }
-    if (cycle <= 0)
+    if (filtered_ids.empty()) {
+        filtered_ids = ids;
+        counts.assign(ids.size(), 1);
+    }
+
+    int g = 0;
+    for (const int c : counts)
+        g = std::gcd(g, std::max(1, c));
+    if (g > 1) {
+        for (int &c : counts)
+            c = std::max(1, c / g);
+    }
+
+    constexpr size_t k_max_cycle = 48;
+    const size_t effective_cycle_limit =
+        max_cycle_limit > 0 ? std::min(k_max_cycle, std::max<size_t>(1, max_cycle_limit)) : k_max_cycle;
+    reduce_weight_counts_to_cycle_limit(counts, effective_cycle_limit);
+
+    std::vector<unsigned int> reduced_ids;
+    std::vector<int> reduced_counts;
+    reduced_ids.reserve(filtered_ids.size());
+    reduced_counts.reserve(counts.size());
+    for (size_t i = 0; i < counts.size(); ++i) {
+        if (counts[i] <= 0)
+            continue;
+        reduced_ids.emplace_back(filtered_ids[i]);
+        reduced_counts.emplace_back(counts[i]);
+    }
+    if (reduced_ids.empty())
+        return seq;
+    filtered_ids = std::move(reduced_ids);
+    counts = std::move(reduced_counts);
+
+    const int total = std::accumulate(counts.begin(), counts.end(), 0);
+    if (total <= 0)
         return seq;
 
-    seq.reserve(size_t(cycle));
+    const size_t cycle = size_t(total);
+
+    seq.reserve(cycle);
     std::vector<int> emitted(counts.size(), 0);
-    for (int pos = 0; pos < cycle; ++pos) {
+    for (size_t pos = 0; pos < cycle; ++pos) {
         size_t best_idx = 0;
         double best_score = -1e9;
         for (size_t i = 0; i < counts.size(); ++i) {
-            const double target = double((pos + 1) * counts[i]) / double(std::max(1, cycle));
+            const double target = double(pos + 1) * double(counts[i]) / double(total);
             const double score = target - double(emitted[i]);
             if (score > best_score) {
                 best_score = score;
@@ -3856,9 +4946,325 @@ std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_multi_sequenc
             }
         }
         ++emitted[best_idx];
-        seq.emplace_back(ids[best_idx]);
+        seq.emplace_back(filtered_ids[best_idx]);
     }
+    if (seq.empty())
+        seq = filtered_ids;
     return seq;
+}
+
+
+std::vector<double> MixedFilamentConfigPanel::build_local_z_preview_pass_heights(double nominal_layer_height,
+                                                                                 double lower_bound,
+                                                                                 double upper_bound,
+                                                                                 double preferred_a_height,
+                                                                                 double preferred_b_height,
+                                                                                 int mix_b_percent,
+                                                                                 int max_sublayers_limit)
+{
+    if (nominal_layer_height <= EPSILON)
+        return {};
+
+    const double base_height = nominal_layer_height;
+    const double lo = std::max<double>(0.01, lower_bound);
+    const double hi = std::max<double>(lo, upper_bound);
+    const size_t max_passes_limit = max_sublayers_limit >= 2 ? size_t(max_sublayers_limit) : size_t(0);
+
+    auto fit_pass_heights_to_interval = [](std::vector<double> &passes, double total_height, double local_lo, double local_hi) {
+        if (passes.empty() || total_height <= EPSILON)
+            return false;
+
+        const auto within = [local_lo, local_hi](double value) {
+            return value >= local_lo - 1e-6 && value <= local_hi + 1e-6;
+        };
+
+        double sum = 0.0;
+        for (const double h : passes)
+            sum += h;
+
+        double delta = total_height - sum;
+        if (std::abs(delta) > 1e-6) {
+            if (delta > 0.0) {
+                for (double &h : passes) {
+                    if (delta <= 1e-6)
+                        break;
+                    const double room = local_hi - h;
+                    if (room <= 1e-6)
+                        continue;
+                    const double take = std::min(room, delta);
+                    h += take;
+                    delta -= take;
+                }
+            } else {
+                for (auto it = passes.rbegin(); it != passes.rend() && delta < -1e-6; ++it) {
+                    const double room = *it - local_lo;
+                    if (room <= 1e-6)
+                        continue;
+                    const double take = std::min(room, -delta);
+                    *it -= take;
+                    delta += take;
+                }
+            }
+        }
+
+        if (std::abs(delta) > 1e-6)
+            return false;
+        return std::all_of(passes.begin(), passes.end(), within);
+    };
+
+    auto build_uniform = [&fit_pass_heights_to_interval, base_height, lo, hi, max_passes_limit]() {
+        std::vector<double> out;
+        size_t min_passes = size_t(std::max<double>(1.0, std::ceil((base_height - EPSILON) / hi)));
+        size_t max_passes = size_t(std::max<double>(1.0, std::floor((base_height + EPSILON) / lo)));
+        size_t pass_count = min_passes;
+
+        if (max_passes >= min_passes) {
+            const double target_step = 0.5 * (lo + hi);
+            const size_t target_passes =
+                size_t(std::max<double>(1.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
+            pass_count = std::clamp(target_passes, min_passes, max_passes);
+        }
+
+        if (max_passes_limit > 0 && pass_count > max_passes_limit)
+            pass_count = max_passes_limit;
+
+        if (pass_count == 1 && base_height >= 2.0 * lo - EPSILON && max_passes >= 2)
+            pass_count = 2;
+
+        if (pass_count <= 1) {
+            out.emplace_back(base_height);
+            return out;
+        }
+
+        out.assign(pass_count, base_height / double(pass_count));
+        double accumulated = 0.0;
+        for (size_t i = 0; i + 1 < out.size(); ++i)
+            accumulated += out[i];
+        out.back() = std::max<double>(EPSILON, base_height - accumulated);
+        if (!fit_pass_heights_to_interval(out, base_height, lo, hi) && max_passes_limit == 0) {
+            out.assign(pass_count, base_height / double(pass_count));
+            accumulated = 0.0;
+            for (size_t i = 0; i + 1 < out.size(); ++i)
+                accumulated += out[i];
+            out.back() = std::max<double>(EPSILON, base_height - accumulated);
+        }
+        return out;
+    };
+
+    auto build_alternating = [&build_uniform, &fit_pass_heights_to_interval, base_height, lo, hi, max_passes_limit](double gradient_h_a, double gradient_h_b) {
+        if (base_height < 2.0 * lo - EPSILON)
+            return std::vector<double>{ base_height };
+
+        const double cycle_h = std::max<double>(EPSILON, gradient_h_a + gradient_h_b);
+        const double ratio_a = std::clamp(gradient_h_a / cycle_h, 0.0, 1.0);
+
+        size_t min_passes = size_t(std::max<double>(2.0, std::ceil((base_height - EPSILON) / hi)));
+        if ((min_passes % 2) != 0)
+            ++min_passes;
+
+        size_t max_passes = size_t(std::max<double>(2.0, std::floor((base_height + EPSILON) / lo)));
+        if ((max_passes % 2) != 0)
+            --max_passes;
+        if (max_passes_limit > 0) {
+            size_t capped_limit = std::max<size_t>(2, max_passes_limit);
+            if ((capped_limit % 2) != 0)
+                --capped_limit;
+            if (capped_limit >= 2)
+                max_passes = std::min(max_passes, capped_limit);
+        }
+        if (max_passes < 2)
+            return build_uniform();
+        if (min_passes > max_passes)
+            min_passes = max_passes;
+        if (min_passes < 2)
+            min_passes = 2;
+        if ((min_passes % 2) != 0)
+            ++min_passes;
+        if (min_passes > max_passes)
+            return build_uniform();
+
+        const double target_step = 0.5 * (lo + hi);
+        size_t target_passes =
+            size_t(std::max<double>(2.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
+        if ((target_passes % 2) != 0) {
+            const size_t round_up = (target_passes < max_passes) ? (target_passes + 1) : max_passes;
+            const size_t round_down = (target_passes > min_passes) ? (target_passes - 1) : min_passes;
+            if (round_up > max_passes)
+                target_passes = round_down;
+            else if (round_down < min_passes)
+                target_passes = round_up;
+            else
+                target_passes = ((round_up - target_passes) <= (target_passes - round_down)) ? round_up : round_down;
+        }
+        target_passes = std::clamp(target_passes, min_passes, max_passes);
+
+        bool                has_best           = false;
+        std::vector<double> best_passes;
+        double              best_ratio_error   = 0.0;
+        size_t              best_pass_distance = 0;
+        double              best_max_height    = 0.0;
+        size_t              best_pass_count    = 0;
+
+        for (size_t pass_count = min_passes; pass_count <= max_passes; pass_count += 2) {
+            const size_t pair_count = pass_count / 2;
+            if (pair_count == 0)
+                continue;
+            const double pair_h = base_height / double(pair_count);
+
+            const double h_a_min = std::max(lo, pair_h - hi);
+            const double h_a_max = std::min(hi, pair_h - lo);
+            if (h_a_min > h_a_max + EPSILON)
+                continue;
+
+            const double h_a = std::clamp(pair_h * ratio_a, h_a_min, h_a_max);
+            const double h_b = pair_h - h_a;
+
+            std::vector<double> out;
+            out.reserve(pass_count);
+            for (size_t pair_idx = 0; pair_idx < pair_count; ++pair_idx) {
+                out.emplace_back(h_a);
+                out.emplace_back(h_b);
+            }
+            if (!fit_pass_heights_to_interval(out, base_height, lo, hi))
+                continue;
+
+            const double ratio_actual = (h_a + h_b > EPSILON) ? (h_a / (h_a + h_b)) : 0.5;
+            const double ratio_error  = std::abs(ratio_actual - ratio_a);
+            const size_t pass_distance =
+                (pass_count > target_passes) ? (pass_count - target_passes) : (target_passes - pass_count);
+            const double max_height = std::max(h_a, h_b);
+
+            const bool better_ratio         = !has_best || (ratio_error + 1e-6 < best_ratio_error);
+            const bool similar_ratio        = has_best && std::abs(ratio_error - best_ratio_error) <= 1e-6;
+            const bool better_distance      = similar_ratio && (pass_distance < best_pass_distance);
+            const bool similar_distance     = similar_ratio && (pass_distance == best_pass_distance);
+            const bool better_max_height    = similar_distance && (max_height + 1e-6 < best_max_height);
+            const bool similar_max_height   = similar_distance && std::abs(max_height - best_max_height) <= 1e-6;
+            const bool better_pass_count    = similar_max_height && (pass_count > best_pass_count);
+
+            if (better_ratio || better_distance || better_max_height || better_pass_count) {
+                has_best = true;
+                best_passes = std::move(out);
+                best_ratio_error = ratio_error;
+                best_pass_distance = pass_distance;
+                best_max_height = max_height;
+                best_pass_count = pass_count;
+            }
+        }
+
+        return has_best ? best_passes : build_uniform();
+    };
+
+    if (preferred_a_height > EPSILON || preferred_b_height > EPSILON) {
+        std::vector<double> cadence_unit;
+        if (preferred_a_height > EPSILON)
+            cadence_unit.push_back(std::clamp(preferred_a_height, lo, hi));
+        if (preferred_b_height > EPSILON)
+            cadence_unit.push_back(std::clamp(preferred_b_height, lo, hi));
+
+        if (!cadence_unit.empty()) {
+            std::vector<double> out;
+            out.reserve(size_t(std::ceil(base_height / lo)) + 2);
+
+            double z_used = 0.0;
+            size_t idx = 0;
+            size_t guard = 0;
+            while (z_used + cadence_unit[idx] < base_height - EPSILON && guard++ < 100000) {
+                out.push_back(cadence_unit[idx]);
+                z_used += cadence_unit[idx];
+                idx = (idx + 1) % cadence_unit.size();
+            }
+
+            const double remainder = base_height - z_used;
+            if (remainder > EPSILON)
+                out.push_back(remainder);
+
+            if (fit_pass_heights_to_interval(out, base_height, lo, hi) &&
+                (max_passes_limit == 0 || out.size() <= max_passes_limit))
+                return out;
+        }
+
+        if (preferred_a_height > EPSILON && preferred_b_height > EPSILON)
+            return build_alternating(preferred_a_height, preferred_b_height);
+        return build_uniform();
+    }
+
+    const int mix_b = std::clamp(mix_b_percent, 0, 100);
+    const double pct_b = double(mix_b) / 100.0;
+    const double pct_a = 1.0 - pct_b;
+    const double gradient_h_a = lo + pct_a * (hi - lo);
+    const double gradient_h_b = lo + pct_b * (hi - lo);
+    return build_alternating(gradient_h_a, gradient_h_b);
+}
+
+int MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(const MixedFilament &mf,
+                                                                      const MixedFilamentPreviewSettings &preview_settings)
+{
+    if (!preview_settings.local_z_mode)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+    if (!normalized_pattern.empty() || mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    const std::vector<unsigned int> gradient_ids = decode_gradient_ids(mf.gradient_component_ids);
+    if (gradient_ids.size() >= 3)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    const std::vector<double> pass_heights = build_local_z_preview_pass_heights(preview_settings.nominal_layer_height,
+                                                                                 preview_settings.mixed_lower_bound,
+                                                                                 preview_settings.mixed_upper_bound,
+                                                                                 preview_settings.preferred_a_height,
+                                                                                 preview_settings.preferred_b_height,
+                                                                                 mf.mix_b_percent,
+                                                                                 0);
+    if (pass_heights.empty())
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    double expected_h_a = preview_settings.preferred_a_height;
+    double expected_h_b = preview_settings.preferred_b_height;
+    if (expected_h_a <= EPSILON && expected_h_b <= EPSILON) {
+        const int mix_b = std::clamp(mf.mix_b_percent, 0, 100);
+        const double pct_b = double(mix_b) / 100.0;
+        const double pct_a = 1.0 - pct_b;
+        const double lo = std::max<double>(0.01, preview_settings.mixed_lower_bound);
+        const double hi = std::max<double>(lo, preview_settings.mixed_upper_bound);
+        expected_h_a = lo + pct_a * (hi - lo);
+        expected_h_b = lo + pct_b * (hi - lo);
+    }
+
+    auto choose_start_with_component_a = [](const std::vector<double> &passes, double local_expected_h_a, double local_expected_h_b) {
+        double err_ab = 0.0;
+        double err_ba = 0.0;
+        for (size_t pass_i = 0; pass_i < passes.size(); ++pass_i) {
+            const double expected_ab = (pass_i % 2) == 0 ? local_expected_h_a : local_expected_h_b;
+            const double expected_ba = (pass_i % 2) == 0 ? local_expected_h_b : local_expected_h_a;
+            err_ab += std::abs(passes[pass_i] - expected_ab);
+            err_ba += std::abs(passes[pass_i] - expected_ba);
+        }
+        if (err_ab + 1e-6 < err_ba)
+            return true;
+        if (err_ba + 1e-6 < err_ab)
+            return false;
+        return local_expected_h_a >= local_expected_h_b;
+    };
+
+    const bool start_with_a = choose_start_with_component_a(pass_heights, expected_h_a, expected_h_b);
+    double total_a = 0.0;
+    double total_b = 0.0;
+    for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {
+        const bool even_pass = (pass_i % 2) == 0;
+        const bool pass_is_a = even_pass ? start_with_a : !start_with_a;
+        if (pass_is_a)
+            total_a += pass_heights[pass_i];
+        else
+            total_b += pass_heights[pass_i];
+    }
+
+    const double total = total_a + total_b;
+    if (total <= EPSILON)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+    return std::clamp(int(std::lround(100.0 * total_b / total)), 0, 100);
 }
 
 std::string MixedFilamentConfigPanel::summarize_sequence(const std::vector<unsigned int> &seq)
@@ -3875,6 +5281,154 @@ std::string MixedFilamentConfigPanel::summarize_sequence(const std::vector<unsig
         out += wxString::Format("%d%%", int(100 * p.first / int(seq.size()))).ToStdString();
     }
     return out;
+}
+
+std::string MixedFilamentConfigPanel::summarize_local_z_breakdown(const MixedFilament &mf,
+                                                                 const std::vector<int> &weights,
+                                                                 const MixedFilamentPreviewSettings &preview_settings)
+{
+    const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+    if (!normalized_pattern.empty())
+        return "Local-Z breakdown: manual pattern rows do not use pair decomposition.";
+
+    if (mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return "Local-Z breakdown: same-layer mode does not use local-Z pair decomposition.";
+
+    auto pair_name = [](unsigned int a, unsigned int b) {
+        std::ostringstream ss;
+        ss << 'F' << a << "+F" << b;
+        return ss.str();
+    };
+    auto pair_split = [](unsigned int a, unsigned int b, int weight_a, int weight_b) {
+        const int safe_a = std::max(0, weight_a);
+        const int safe_b = std::max(0, weight_b);
+        const int total  = std::max(1, safe_a + safe_b);
+        const int pct_a  = int(std::lround(100.0 * double(safe_a) / double(total)));
+        const int pct_b  = std::max(0, 100 - pct_a);
+
+        std::ostringstream ss;
+        ss << 'F' << a << "/F" << b << " " << safe_a << ':' << safe_b << " (" << pct_a << '/' << pct_b << ')';
+        return ss.str();
+    };
+    auto cadence_entry = [&pair_name](unsigned int a, unsigned int b, int weight, int total) {
+        const int pct = int(std::lround(100.0 * double(std::max(0, weight)) / double(std::max(1, total))));
+        std::ostringstream ss;
+        ss << pair_name(a, b) << ' ' << pct << '%';
+        return ss.str();
+    };
+
+    const std::vector<unsigned int> ids = decode_gradient_ids(mf.gradient_component_ids);
+    if (ids.size() >= 4) {
+        const std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
+        const std::vector<unsigned int> pair_tokens = { 1, 2 };
+        const std::vector<int> pair_weights = {
+            std::max(1, normalized[0] + normalized[1]),
+            std::max(1, normalized[2] + normalized[3])
+        };
+        const size_t max_pair_layers =
+            (preview_settings.local_z_mode && mf.local_z_max_sublayers >= 2) ?
+                std::max<size_t>(1, size_t(mf.local_z_max_sublayers) / 2) :
+                size_t(0);
+        const std::vector<unsigned int> uncapped_pair_sequence = build_weighted_multi_sequence(pair_tokens, pair_weights);
+        const std::vector<unsigned int> effective_pair_sequence =
+            max_pair_layers > 0 ? build_weighted_multi_sequence(pair_tokens, pair_weights, max_pair_layers) : uncapped_pair_sequence;
+        const std::vector<unsigned int> &pair_sequence = effective_pair_sequence.empty() ? uncapped_pair_sequence : effective_pair_sequence;
+        const int pair_ab_weight = int(std::count(pair_sequence.begin(), pair_sequence.end(), 1u));
+        const int pair_cd_weight = int(std::count(pair_sequence.begin(), pair_sequence.end(), 2u));
+        const int pair_total = std::max(1, int(pair_sequence.size()));
+
+        std::ostringstream ss;
+        ss << "Local-Z layer cadence: "
+           << cadence_entry(ids[0], ids[1], pair_ab_weight, pair_total)
+           << ", "
+           << cadence_entry(ids[2], ids[3], pair_cd_weight, pair_total)
+           << ".\nPair splits: "
+           << pair_split(ids[0], ids[1], normalized[0], normalized[1])
+           << ", "
+           << pair_split(ids[2], ids[3], normalized[2], normalized[3])
+           << '.';
+        if (!preview_settings.local_z_mode && mf.local_z_max_sublayers >= 2)
+            ss << "\nSaved row limit will apply when Local-Z dithering mode is enabled in print settings.";
+        if (preview_settings.local_z_mode && mf.local_z_max_sublayers >= 2) {
+            ss << "\nEffective Local-Z stack: " << (pair_total * 2) << " sublayers over " << pair_total << " pair layers";
+            if (uncapped_pair_sequence.size() > pair_sequence.size())
+                ss << " (uncapped " << (uncapped_pair_sequence.size() * 2) << ')';
+            ss << '.';
+        }
+        return ss.str();
+    }
+
+    if (ids.size() == 3) {
+        const std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
+        const std::vector<unsigned int> pair_tokens = { 1, 2, 3 };
+        const std::vector<int> pair_weights = {
+            std::max(1, normalized[0] + normalized[1]),
+            std::max(1, normalized[0] + normalized[2]),
+            std::max(1, normalized[1] + normalized[2])
+        };
+        const size_t max_pair_layers =
+            (preview_settings.local_z_mode && mf.local_z_max_sublayers >= 2) ?
+                std::max<size_t>(1, size_t(mf.local_z_max_sublayers) / 2) :
+                size_t(0);
+        const std::vector<unsigned int> uncapped_pair_sequence = build_weighted_multi_sequence(pair_tokens, pair_weights);
+        const std::vector<unsigned int> effective_pair_sequence =
+            max_pair_layers > 0 ? build_weighted_multi_sequence(pair_tokens, pair_weights, max_pair_layers) : uncapped_pair_sequence;
+        const std::vector<unsigned int> &pair_sequence = effective_pair_sequence.empty() ? uncapped_pair_sequence : effective_pair_sequence;
+        const int pair_ab_weight = int(std::count(pair_sequence.begin(), pair_sequence.end(), 1u));
+        const int pair_ac_weight = int(std::count(pair_sequence.begin(), pair_sequence.end(), 2u));
+        const int pair_bc_weight = int(std::count(pair_sequence.begin(), pair_sequence.end(), 3u));
+        const int pair_total     = std::max(1, int(pair_sequence.size()));
+
+        std::ostringstream ss;
+        ss << "Local-Z layer cadence: "
+           << cadence_entry(ids[0], ids[1], pair_ab_weight, pair_total)
+           << ", "
+           << cadence_entry(ids[0], ids[2], pair_ac_weight, pair_total)
+           << ", "
+           << cadence_entry(ids[1], ids[2], pair_bc_weight, pair_total)
+           << ".\nPair splits: "
+           << pair_split(ids[0], ids[1], normalized[0], normalized[1])
+           << ", "
+           << pair_split(ids[0], ids[2], normalized[0], normalized[2])
+           << ", "
+           << pair_split(ids[1], ids[2], normalized[1], normalized[2])
+           << '.';
+        if (!preview_settings.local_z_mode && mf.local_z_max_sublayers >= 2)
+            ss << "\nSaved row limit will apply when Local-Z dithering mode is enabled in print settings.";
+        if (preview_settings.local_z_mode && mf.local_z_max_sublayers >= 2) {
+            ss << "\nEffective Local-Z stack: " << (pair_total * 2) << " sublayers over " << pair_total << " pair layers";
+            if (uncapped_pair_sequence.size() > pair_sequence.size())
+                ss << " (uncapped " << (uncapped_pair_sequence.size() * 2) << ')';
+            ss << '.';
+        }
+        return ss.str();
+    }
+
+    if (mf.component_a >= 1 && mf.component_b >= 1 && mf.component_a != mf.component_b) {
+        const int pct_b = std::clamp(mf.mix_b_percent, 0, 100);
+        const int pct_a = 100 - pct_b;
+        std::ostringstream ss;
+        ss << "Local-Z pair split: requested F" << mf.component_a << "/F" << mf.component_b
+           << ' ' << pct_a << '/' << pct_b;
+        if (preview_settings.local_z_mode) {
+            const std::vector<double> effective_passes = build_local_z_preview_pass_heights(preview_settings.nominal_layer_height,
+                                                                                            preview_settings.mixed_lower_bound,
+                                                                                            preview_settings.mixed_upper_bound,
+                                                                                            preview_settings.preferred_a_height,
+                                                                                            preview_settings.preferred_b_height,
+                                                                                            mf.mix_b_percent,
+                                                                                            0);
+            if (!effective_passes.empty()) {
+                const int effective_pct_b = effective_local_z_preview_mix_b_percent(mf, preview_settings);
+                ss << ", effective " << (100 - effective_pct_b) << '/' << effective_pct_b
+                   << " over " << effective_passes.size() << " sublayers";
+            }
+        }
+        ss << '.';
+        return ss.str();
+    }
+
+    return "Local-Z breakdown: unavailable.";
 }
 
 std::string MixedFilamentConfigPanel::blend_from_sequence(const std::vector<std::string> &colors, const std::vector<unsigned int> &seq, const std::string &fallback)
@@ -3921,6 +5475,7 @@ MixedFilamentConfigPanel::MixedFilamentConfigPanel(wxWindow *parent,
                                                    size_t num_physical,
                                                    const std::vector<std::string> &physical_colors,
                                                    const std::vector<wxColour> &palette,
+                                                   const MixedFilamentPreviewSettings &preview_settings,
                                                    OnChangeFn on_change)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE)
     , m_mixed_id(mixed_id)
@@ -3928,6 +5483,7 @@ MixedFilamentConfigPanel::MixedFilamentConfigPanel(wxWindow *parent,
     , m_num_physical(num_physical)
     , m_physical_colors(physical_colors)
     , m_palette(palette)
+    , m_preview_settings(preview_settings)
     , m_selected_weight_state(std::make_shared<std::vector<int>>())
     , m_on_change(on_change)
 {
@@ -4126,6 +5682,38 @@ void MixedFilamentConfigPanel::build_ui()
     preview_row->Add(m_mix_preview, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
     root->Add(preview_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
 
+    const bool local_z_limit_supported = multi_gradient_row &&
+                                         row_distribution_mode != int(MixedFilament::SameLayerPointillisme);
+    if (local_z_limit_supported) {
+        auto *local_z_limit_row = new wxBoxSizer(wxHORIZONTAL);
+        m_local_z_limit_checkbox = new wxCheckBox(this, wxID_ANY, _L("Limit Local-Z"));
+        m_local_z_limit_checkbox->SetValue(m_mf.local_z_max_sublayers >= 2);
+        m_local_z_limit_checkbox->SetForegroundColour(is_dark ? wxColour(236, 236, 236) : wxColour(20, 20, 20));
+        m_local_z_limit_checkbox->SetToolTip(
+            _L("Store a per-color Local-Z cadence cap. It applies when Local-Z dithering mode is enabled in print settings."));
+        local_z_limit_row->Add(m_local_z_limit_checkbox, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, gap);
+
+        auto *local_z_limit_label = new wxStaticText(this, wxID_ANY, _L("Max sublayers"));
+        local_z_limit_label->SetForegroundColour(is_dark ? wxColour(236, 236, 236) : wxColour(20, 20, 20));
+        local_z_limit_row->Add(local_z_limit_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, std::max(FromDIP(3), gap / 2));
+
+        const int initial_local_z_limit = std::max(2, m_mf.local_z_max_sublayers > 0 ? m_mf.local_z_max_sublayers : 6);
+        m_local_z_limit_spin = new wxSpinCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(72), -1),
+                                              wxSP_ARROW_KEYS | wxALIGN_RIGHT | wxTE_PROCESS_ENTER, 2, 999, initial_local_z_limit);
+        m_local_z_limit_spin->SetToolTip(
+            _L("Maximum number of Local-Z sublayers this color may use before its cadence repeats."));
+        local_z_limit_row->Add(m_local_z_limit_spin, 0, wxALIGN_CENTER_VERTICAL);
+
+        const bool enable_local_z_limit_controls = m_local_z_limit_checkbox->GetValue();
+        m_local_z_limit_spin->Enable(enable_local_z_limit_controls);
+        root->Add(local_z_limit_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
+    }
+
+    m_breakdown_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
+    m_breakdown_label->SetForegroundColour(is_dark ? wxColour(210, 210, 210) : wxColour(72, 72, 72));
+    m_breakdown_label->Wrap(FromDIP(360));
+    root->Add(m_breakdown_label, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
+
     // Bind events
     auto apply_changes = [this]() {
         m_has_changes = true;
@@ -4138,12 +5726,21 @@ void MixedFilamentConfigPanel::build_ui()
         }
         update_component_picker_visuals();
 
+        if (m_local_z_limit_spin)
+            m_local_z_limit_spin->Enable(m_local_z_limit_checkbox != nullptr &&
+                                         m_local_z_limit_checkbox->GetValue());
+
         const bool preserve_same_layer_mode = m_mf.distribution_mode == int(MixedFilament::SameLayerPointillisme);
         m_mf.component_a = unsigned(a);
         m_mf.component_b = unsigned(b);
+        m_mf.local_z_max_sublayers =
+            (m_local_z_limit_checkbox != nullptr && m_local_z_limit_checkbox->GetValue() && m_local_z_limit_spin != nullptr) ?
+                std::max(2, m_local_z_limit_spin->GetValue()) :
+                0;
 
         bool simple_mode = true;
         bool same_layer_mode = false;
+        int preview_mix_b_percent = std::clamp(m_mf.mix_b_percent, 0, 100);
         std::vector<unsigned int> preview_sequence;
 
         if (m_pattern_ctrl) {
@@ -4213,14 +5810,26 @@ void MixedFilamentConfigPanel::build_ui()
             } else {
                 m_mf.gradient_component_ids.clear();
                 m_mf.gradient_component_weights.clear();
-                preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, m_mf.mix_b_percent);
+                preview_mix_b_percent = effective_local_z_preview_mix_b_percent(m_mf, m_preview_settings);
+                preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, preview_mix_b_percent);
             }
         }
         m_mf.custom = true;
 
         const std::vector<unsigned int> selected_gradient_ids = decode_gradient_ids(m_mf.gradient_component_ids);
         if (preview_sequence.empty())
-            preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, m_mf.mix_b_percent);
+            preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, preview_mix_b_percent);
+
+        if (m_blend_selector && selected_gradient_ids.size() >= 3) {
+            std::vector<wxColour> corner_colors;
+            corner_colors.reserve(selected_gradient_ids.size());
+            for (const unsigned int id : selected_gradient_ids) {
+                if (id >= 1 && id <= m_palette.size())
+                    corner_colors.emplace_back(m_palette[id - 1]);
+            }
+            if (corner_colors.size() >= 3)
+                m_blend_selector->set_multi_preview(corner_colors, *m_selected_weight_state);
+        }
 
         if (selected_gradient_ids.size() >= 3 || !preview_sequence.empty()) {
             m_mf.display_color = blend_from_sequence(m_physical_colors, preview_sequence, "#26A69A");
@@ -4231,17 +5840,17 @@ void MixedFilamentConfigPanel::build_ui()
                 } else {
                     m_blend_label->SetLabel(wxString::Format(simple_mode ? _L("Simple %d%%/%d%%") :
                                                                (same_layer_mode ? _L("Pointillisme %d%%/%d%%") : _L("%d%%/%d%%")),
-                                                               100 - m_mf.mix_b_percent, m_mf.mix_b_percent));
+                                                               100 - preview_mix_b_percent, preview_mix_b_percent));
                 }
             }
         } else {
             m_mf.display_color = MixedFilamentManager::blend_color(
                 m_physical_colors[size_t(a - 1)], m_physical_colors[size_t(b - 1)],
-                100 - m_mf.mix_b_percent, m_mf.mix_b_percent);
+                100 - preview_mix_b_percent, preview_mix_b_percent);
             if (m_blend_label)
                 m_blend_label->SetLabel(wxString::Format(simple_mode ? _L("Simple %d%%/%d%%") :
                                                            (same_layer_mode ? _L("Pointillisme %d%%/%d%%") : _L("%d%%/%d%%")),
-                                                           100 - m_mf.mix_b_percent, m_mf.mix_b_percent));
+                                                           100 - preview_mix_b_percent, preview_mix_b_percent));
         }
 
         if (m_mix_preview) {
@@ -4249,6 +5858,7 @@ void MixedFilamentConfigPanel::build_ui()
             m_mix_preview->set_data(m_palette, preview_sequence, same_layer_mode, wxColour(m_mf.display_color),
                                     _L("Preview"), summary.empty() ? wxString() : from_u8(summary));
         }
+        update_local_z_breakdown();
         if (m_swatch) {
             m_swatch->SetBackgroundColour(wxColour(m_mf.display_color));
             m_swatch->Refresh();
@@ -4332,6 +5942,16 @@ void MixedFilamentConfigPanel::build_ui()
         m_choice_d->Bind(wxEVT_CHOICE, [apply_changes](wxCommandEvent&) { apply_changes(); });
     if (m_blend_selector)
         m_blend_selector->Bind(wxEVT_SLIDER, [apply_changes](wxCommandEvent&) { apply_changes(); });
+    if (m_local_z_limit_checkbox)
+        m_local_z_limit_checkbox->Bind(wxEVT_CHECKBOX, [apply_changes](wxCommandEvent &) { apply_changes(); });
+    if (m_local_z_limit_spin) {
+        m_local_z_limit_spin->Bind(wxEVT_SPINCTRL, [apply_changes](wxCommandEvent &) { apply_changes(); });
+        m_local_z_limit_spin->Bind(wxEVT_TEXT_ENTER, [apply_changes](wxCommandEvent &) { apply_changes(); });
+        m_local_z_limit_spin->Bind(wxEVT_KILL_FOCUS, [apply_changes](wxFocusEvent &evt) {
+            apply_changes();
+            evt.Skip();
+        });
+    }
 
     if (m_blend_selector) {
         m_blend_selector->Bind(wxEVT_BUTTON, [this, apply_changes](wxCommandEvent&) {
@@ -4447,7 +6067,20 @@ void MixedFilamentConfigPanel::update_preview()
         if (initial_gradient_ids.size() >= 3)
             initial_sequence = build_weighted_multi_sequence(initial_gradient_ids, *m_selected_weight_state);
         else
-            initial_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, std::clamp(m_mf.mix_b_percent, 0, 100));
+            initial_sequence = build_weighted_pair_sequence(m_mf.component_a,
+                                                            m_mf.component_b,
+                                                            effective_local_z_preview_mix_b_percent(m_mf, m_preview_settings));
+
+        if (m_blend_selector && initial_gradient_ids.size() >= 3) {
+            std::vector<wxColour> corner_colors;
+            corner_colors.reserve(initial_gradient_ids.size());
+            for (const unsigned int id : initial_gradient_ids) {
+                if (id >= 1 && id <= m_palette.size())
+                    corner_colors.emplace_back(m_palette[id - 1]);
+            }
+            if (corner_colors.size() >= 3)
+                m_blend_selector->set_multi_preview(corner_colors, *m_selected_weight_state);
+        }
     }
 
     if (m_mix_preview) {
@@ -4455,6 +6088,24 @@ void MixedFilamentConfigPanel::update_preview()
         m_mix_preview->set_data(m_palette, initial_sequence, same_layer_mode, wxColour(m_mf.display_color),
                                 _L("Preview"), summary.empty() ? wxString() : from_u8(summary));
     }
+    update_local_z_breakdown();
+}
+
+void MixedFilamentConfigPanel::update_local_z_breakdown()
+{
+    if (!m_breakdown_label)
+        return;
+
+    std::vector<int> weights = *m_selected_weight_state;
+    const std::vector<unsigned int> ids = decode_gradient_ids(m_mf.gradient_component_ids);
+    if (!ids.empty())
+        weights = normalize_gradient_weights(weights, ids.size());
+
+    const std::string breakdown = summarize_local_z_breakdown(m_mf, weights, m_preview_settings);
+    m_breakdown_label->SetLabel(from_u8(breakdown));
+    m_breakdown_label->Wrap(FromDIP(360));
+    m_breakdown_label->Show(!breakdown.empty());
+    Layout();
 }
 
 class MixedFilamentDragHandle : public wxPanel
@@ -4539,14 +6190,15 @@ MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow *parent,
                                                            const std::vector<std::string> &physical_colors,
                                                            const wxColour &initial_color)
 {
-    MixedFilamentColorMatchDialog dlg(parent, initial_color);
+    MixedFilamentColorMatchDialog dlg(parent, physical_colors, initial_color);
+    dlg.begin_initial_recipe_load();
     if (dlg.ShowModal() != wxID_OK) {
         MixedColorMatchRecipeResult cancelled;
         cancelled.cancelled = true;
         return cancelled;
     }
 
-    return build_best_color_match_recipe(physical_colors, dlg.selected_color());
+    return dlg.selected_recipe();
 }
 
 void Sidebar::update_mixed_filament_panel(bool sync_manager)
@@ -4782,36 +6434,72 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return ss.str();
     };
-    auto build_weighted_multi_sequence = [normalize_gradient_weights](const std::vector<unsigned int> &ids, const std::vector<int> &weights) {
+    auto build_weighted_multi_sequence = [normalize_gradient_weights](const std::vector<unsigned int> &ids,
+                                                                      const std::vector<int> &weights,
+                                                                      size_t max_cycle_limit) {
         if (ids.empty())
             return std::vector<unsigned int>();
-        std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
-        std::vector<unsigned int> sequence;
-        int total = 0;
-        for (int w : normalized)
-            total += std::max(0, w);
-        if (total <= 0)
-            return std::vector<unsigned int>(ids.begin(), ids.end());
-        constexpr int k_cycle = 48;
+
+        std::vector<unsigned int> filtered_ids;
         std::vector<int> counts;
-        counts.reserve(normalized.size());
-        for (int w : normalized)
-            counts.emplace_back(std::max(1, int(std::round((double(w) / 100.0) * k_cycle))));
-        int cycle = std::accumulate(counts.begin(), counts.end(), 0);
-        while (cycle > k_cycle) {
-            auto it = std::max_element(counts.begin(), counts.end());
-            if (it == counts.end() || *it <= 1)
-                break;
-            --(*it);
-            --cycle;
+        filtered_ids.reserve(ids.size());
+        counts.reserve(ids.size());
+
+        std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
+        for (size_t i = 0; i < ids.size(); ++i) {
+            const int weight = (i < normalized.size()) ? std::max(0, normalized[i]) : 0;
+            if (weight <= 0)
+                continue;
+            filtered_ids.emplace_back(ids[i]);
+            counts.emplace_back(weight);
         }
-        sequence.reserve(size_t(cycle));
+        if (filtered_ids.empty()) {
+            filtered_ids = ids;
+            counts.assign(ids.size(), 1);
+        }
+
+        int g = 0;
+        for (const int c : counts)
+            g = std::gcd(g, std::max(1, c));
+        if (g > 1) {
+            for (int &c : counts)
+                c = std::max(1, c / g);
+        }
+
+        constexpr size_t k_max_cycle = 48;
+        const size_t effective_cycle_limit =
+            max_cycle_limit > 0 ? std::min(k_max_cycle, std::max<size_t>(1, max_cycle_limit)) : k_max_cycle;
+        reduce_weight_counts_to_cycle_limit(counts, effective_cycle_limit);
+
+        std::vector<unsigned int> reduced_ids;
+        std::vector<int> reduced_counts;
+        reduced_ids.reserve(filtered_ids.size());
+        reduced_counts.reserve(counts.size());
+        for (size_t i = 0; i < counts.size(); ++i) {
+            if (counts[i] <= 0)
+                continue;
+            reduced_ids.emplace_back(filtered_ids[i]);
+            reduced_counts.emplace_back(counts[i]);
+        }
+        if (reduced_ids.empty())
+            return std::vector<unsigned int>();
+        filtered_ids = std::move(reduced_ids);
+        counts = std::move(reduced_counts);
+
+        const int total = std::accumulate(counts.begin(), counts.end(), 0);
+        if (total <= 0)
+            return std::vector<unsigned int>(filtered_ids.begin(), filtered_ids.end());
+
+        const size_t cycle = size_t(total);
+
+        std::vector<unsigned int> sequence;
+        sequence.reserve(cycle);
         std::vector<int> emitted(counts.size(), 0);
-        for (int pos = 0; pos < cycle; ++pos) {
+        for (size_t pos = 0; pos < cycle; ++pos) {
             size_t best_idx = 0;
             double best_score = -1e9;
             for (size_t i = 0; i < counts.size(); ++i) {
-                const double target = double((pos + 1) * counts[i]) / double(std::max(1, cycle));
+                const double target = double(pos + 1) * double(counts[i]) / double(total);
                 const double score = target - double(emitted[i]);
                 if (score > best_score) {
                     best_score = score;
@@ -4819,10 +6507,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
                 }
             }
             ++emitted[best_idx];
-            sequence.emplace_back(ids[best_idx]);
+            sequence.emplace_back(filtered_ids[best_idx]);
         }
         if (sequence.empty())
-            sequence = ids;
+            sequence = filtered_ids;
         return sequence;
     };
     auto decode_manual_pattern_ids = [num_physical](const std::string &pattern, unsigned int component_a, unsigned int component_b) {
@@ -4868,6 +6556,30 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             sequence.emplace_back((b_after > b_before) ? component_b : component_a);
         }
         return sequence;
+    };
+    const bool height_weighted_mode = get_mixed_mode(false);
+    int   gradient_mode = height_weighted_mode ? 1 : 0;
+    float lower_bound   = std::max(0.01f, get_mixed_float("mixed_filament_height_lower_bound", 0.04f));
+    float upper_bound   = std::max(lower_bound, get_mixed_float("mixed_filament_height_upper_bound", 0.16f));
+    float preferred_local_z_a = std::max(0.f, get_mixed_float("mixed_color_layer_height_a", 0.f));
+    float preferred_local_z_b = std::max(0.f, get_mixed_float("mixed_color_layer_height_b", 0.f));
+    float nominal_layer_height = 0.2f;
+    if (print_cfg && print_cfg->has("layer_height"))
+        nominal_layer_height = float(print_cfg->opt_float("layer_height"));
+    nominal_layer_height = std::max(0.01f, nominal_layer_height);
+    const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
+    float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
+    float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
+    float mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.f), -2.f, 2.f);
+    bool  advanced_dithering = get_mixed_bool("mixed_filament_advanced_dithering", false);
+    const std::string mixed_definitions = get_mixed_string("mixed_filament_definitions");
+    const MixedFilamentPreviewSettings preview_settings {
+        nominal_layer_height,
+        lower_bound,
+        upper_bound,
+        preferred_local_z_a,
+        preferred_local_z_b,
+        local_z_mode
     };
     auto summarize_sequence = [num_physical](const std::vector<unsigned int> &sequence) {
         if (sequence.empty() || num_physical == 0)
@@ -4930,7 +6642,8 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         return blended;
     };
     auto build_entry_preview_sequence = [decode_manual_pattern_ids, decode_gradient_ids, decode_gradient_weights,
-                                         build_weighted_multi_sequence, build_weighted_pair_sequence](const MixedFilament &entry) {
+                                         build_weighted_multi_sequence,
+                                         build_weighted_pair_sequence, preview_settings](const MixedFilament &entry) {
         const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
         if (!normalized_pattern.empty())
             return decode_manual_pattern_ids(normalized_pattern, entry.component_a, entry.component_b);
@@ -4941,11 +6654,12 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             if (gradient_ids.size() >= 3) {
                 const std::vector<int> gradient_weights =
                     decode_gradient_weights(entry.gradient_component_weights, gradient_ids.size());
-                return build_weighted_multi_sequence(gradient_ids, gradient_weights);
+                return build_weighted_multi_sequence(gradient_ids, gradient_weights, 0);
             }
         }
 
-        return build_weighted_pair_sequence(entry.component_a, entry.component_b, std::clamp(entry.mix_b_percent, 0, 100));
+        const int effective_mix_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(entry, preview_settings);
+        return build_weighted_pair_sequence(entry.component_a, entry.component_b, effective_mix_b);
     };
     auto compute_entry_display_color = [num_physical, &physical_colors, blend_from_sequence, build_entry_preview_sequence](const MixedFilament &entry) {
         const std::vector<unsigned int> sequence = build_entry_preview_sequence(entry);
@@ -4966,16 +6680,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             mix_b);
     };
 
-    const bool height_weighted_mode = get_mixed_mode(false);
-    int   gradient_mode = height_weighted_mode ? 1 : 0;
-    float lower_bound   = std::max(0.01f, get_mixed_float("mixed_filament_height_lower_bound", 0.04f));
-    float upper_bound   = std::max(lower_bound, get_mixed_float("mixed_filament_height_upper_bound", 0.16f));
-    float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
-    float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
-    float mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.f), -2.f, 2.f);
-    bool  advanced_dithering = get_mixed_bool("mixed_filament_advanced_dithering", false);
-    const std::string mixed_definitions = get_mixed_string("mixed_filament_definitions");
-
     auto &mixed_mgr = preset_bundle->mixed_filaments;
     if (sync_manager) {
         mixed_mgr.auto_generate(physical_colors);
@@ -4991,6 +6695,8 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         set_mixed_mode(height_weighted_mode);
         set_mixed_float("mixed_filament_height_lower_bound", lower_bound);
         set_mixed_float("mixed_filament_height_upper_bound", upper_bound);
+        set_mixed_float("mixed_color_layer_height_a", preferred_local_z_a);
+        set_mixed_float("mixed_color_layer_height_b", preferred_local_z_b);
         set_mixed_float("mixed_filament_pointillism_pixel_size", pointillism_pixel_size);
         set_mixed_float("mixed_filament_pointillism_line_gap", pointillism_line_gap);
         set_mixed_float("mixed_filament_surface_indentation", mixed_surface_indentation);
@@ -5376,7 +7082,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             return row->GetClientRect().Contains(local);
         };
 
-        auto ensure_editor = [this, mixed_id, num_physical, physical_colors, palette, preset_bundle,
+        auto ensure_editor = [this, mixed_id, num_physical, physical_colors, palette, preview_settings, preset_bundle,
                               editor_host, editor_sizer, swatch, summary_label, header_panel, row,
                               rows_scroller, mixed_summary_text, apply_mixed_entry_changes]() {
             if (!preset_bundle || !editor_sizer || editor_sizer->GetItemCount() > 0)
@@ -5387,7 +7093,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             if (mixed_id >= mfs.size())
                 return;
 
-            auto *editor = new MixedFilamentConfigPanel(editor_host, mixed_id, mfs[mixed_id], num_physical, physical_colors, palette,
+            auto *editor = new MixedFilamentConfigPanel(editor_host, mixed_id, mfs[mixed_id], num_physical, physical_colors, palette, preview_settings,
                 [this, mixed_id, swatch, summary_label, header_panel, row, rows_scroller, mixed_summary_text, apply_mixed_entry_changes](const MixedFilament &updated_mf) {
                     apply_mixed_entry_changes(mixed_id, updated_mf, true);
 

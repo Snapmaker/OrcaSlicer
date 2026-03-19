@@ -333,6 +333,7 @@ static bool parse_row_definition(const std::string &row,
                                  std::string       &gradient_component_weights,
                                  std::string       &manual_pattern,
                                  int               &distribution_mode,
+                                 int               &local_z_max_sublayers,
                                  bool              &deleted)
 {
     auto trim_copy = [](const std::string &s) {
@@ -416,6 +417,7 @@ static bool parse_row_definition(const std::string &row,
     gradient_component_weights.clear();
     manual_pattern.clear();
     distribution_mode = int(MixedFilament::Simple);
+    local_z_max_sublayers = 0;
     deleted = false;
 
     size_t token_idx = 5;
@@ -456,6 +458,12 @@ static bool parse_row_definition(const std::string &row,
             int parsed_mode = distribution_mode;
             if (parse_int_token(tok.substr(1), parsed_mode))
                 distribution_mode = clamp_int(parsed_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+            continue;
+        }
+        if (tok[0] == 'z' || tok[0] == 'Z') {
+            int parsed_max_sublayers = local_z_max_sublayers;
+            if (parse_int_token(tok.substr(1), parsed_max_sublayers))
+                local_z_max_sublayers = std::max(0, parsed_max_sublayers);
             continue;
         }
         if (tok[0] == 'd' || tok[0] == 'D') {
@@ -911,6 +919,7 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     mf.gradient_component_weights.clear();
     mf.pointillism_all_filaments = false;
     mf.distribution_mode = int(MixedFilament::Simple);
+    mf.local_z_max_sublayers = 0;
     mf.enabled = true;
     mf.deleted = false;
     mf.custom = true;
@@ -998,6 +1007,7 @@ std::string MixedFilamentManager::serialize_custom_entries()
            << 'g' << normalized_ids << ','
            << 'w' << normalized_weights << ','
            << 'm' << clamp_int(mf.distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple)) << ','
+           << 'z' << std::max(0, mf.local_z_max_sublayers) << ','
            << 'd' << (mf.deleted ? 1 : 0) << ','
            << 'o' << (mf.origin_auto ? 1 : 0) << ','
            << 'u' << mf.stable_id;
@@ -1068,9 +1078,11 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         std::string gradient_component_weights;
         std::string manual_pattern;
         int distribution_mode = int(MixedFilament::Simple);
+        int local_z_max_sublayers = 0;
         bool deleted = false;
         if (!parse_row_definition(row, a, b, stable_id, enabled, custom, origin_auto, mix, pointillism_all_filaments,
-                                  gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode, deleted)) {
+                                  gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode,
+                                  local_z_max_sublayers, deleted)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
             continue;
@@ -1117,6 +1129,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                 normalize_gradient_component_weights(gradient_component_weights, mf.gradient_component_ids.size());
             mf.manual_pattern = normalize_manual_pattern(manual_pattern);
             mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+            mf.local_z_max_sublayers = std::max(0, local_z_max_sublayers);
             mf.mix_b_percent = mf.manual_pattern.empty() ? mix : mix_percent_from_normalized_pattern(mf.manual_pattern);
             mf.deleted = deleted;
             if (mf.deleted)
@@ -1143,6 +1156,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             normalize_gradient_component_weights(gradient_component_weights, mf.gradient_component_ids.size());
         mf.manual_pattern = normalize_manual_pattern(manual_pattern);
         mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+        mf.local_z_max_sublayers = std::max(0, local_z_max_sublayers);
         if (!mf.manual_pattern.empty())
             mf.mix_b_percent = mix_percent_from_normalized_pattern(mf.manual_pattern);
         mf.enabled = enabled;

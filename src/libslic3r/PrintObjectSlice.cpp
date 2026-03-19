@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <numeric>
 
 #include <tbb/parallel_for.h>
@@ -1061,7 +1062,10 @@ static bool sanitize_local_z_pass_heights(std::vector<double> &passes, double ba
     return fit_pass_heights_to_interval(passes, base_height, lo, hi);
 }
 
-static std::vector<double> build_uniform_local_z_pass_heights(double base_height, double lo, double hi)
+static std::vector<double> build_uniform_local_z_pass_heights(double base_height,
+                                                              double lo,
+                                                              double hi,
+                                                              size_t max_passes_limit = 0)
 {
     std::vector<double> out;
     if (base_height <= EPSILON)
@@ -1076,6 +1080,12 @@ static std::vector<double> build_uniform_local_z_pass_heights(double base_height
         const size_t target_passes =
             size_t(std::max<double>(1.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
         pass_count = std::clamp(target_passes, min_passes, max_passes);
+    }
+
+    if (max_passes_limit > 0) {
+        const size_t capped_limit = std::max<size_t>(1, max_passes_limit);
+        if (pass_count > capped_limit)
+            pass_count = capped_limit;
     }
 
     if (pass_count == 1 && base_height >= 2.0 * lo - EPSILON && max_passes >= 2)
@@ -1143,7 +1153,8 @@ static std::vector<double> build_local_z_alternating_pass_heights(double base_he
                                                                    double lower_bound,
                                                                    double upper_bound,
                                                                    double gradient_h_a,
-                                                                   double gradient_h_b)
+                                                                   double gradient_h_b,
+                                                                   size_t max_passes_limit = 0)
 {
     if (base_height <= EPSILON)
         return {};
@@ -1163,8 +1174,23 @@ static std::vector<double> build_local_z_alternating_pass_heights(double base_he
     size_t max_passes = size_t(std::max<double>(2.0, std::floor((base_height + EPSILON) / lo)));
     if ((max_passes % 2) != 0)
         --max_passes;
-    if (max_passes < 2 || min_passes > max_passes)
-        return build_uniform_local_z_pass_heights(base_height, lo, hi);
+    if (max_passes_limit > 0) {
+        size_t capped_limit = std::max<size_t>(2, max_passes_limit);
+        if ((capped_limit % 2) != 0)
+            --capped_limit;
+        if (capped_limit >= 2)
+            max_passes = std::min(max_passes, capped_limit);
+    }
+    if (max_passes < 2)
+        return build_uniform_local_z_pass_heights(base_height, lo, hi, max_passes_limit);
+    if (min_passes > max_passes)
+        min_passes = max_passes;
+    if (min_passes < 2)
+        min_passes = 2;
+    if ((min_passes % 2) != 0)
+        ++min_passes;
+    if (min_passes > max_passes)
+        return build_uniform_local_z_pass_heights(base_height, lo, hi, max_passes_limit);
 
     const double target_step = 0.5 * (lo + hi);
     size_t target_passes =
@@ -1240,7 +1266,38 @@ static std::vector<double> build_local_z_alternating_pass_heights(double base_he
 
     if (has_best)
         return best_passes;
-    return build_uniform_local_z_pass_heights(base_height, lo, hi);
+    return build_uniform_local_z_pass_heights(base_height, lo, hi, max_passes_limit);
+}
+
+static std::vector<double> build_local_z_two_pass_heights(double base_height,
+                                                          double lower_bound,
+                                                          double upper_bound,
+                                                          double gradient_h_a,
+                                                          double gradient_h_b)
+{
+    if (base_height <= EPSILON)
+        return {};
+
+    const double lo = std::max<double>(0.01, lower_bound);
+    const double hi = std::max<double>(lo, upper_bound);
+    if (base_height < 2.0 * lo - EPSILON || base_height > 2.0 * hi + EPSILON)
+        return { base_height };
+
+    const double cycle_h = std::max<double>(EPSILON, gradient_h_a + gradient_h_b);
+    const double ratio_a = std::clamp(gradient_h_a / cycle_h, 0.0, 1.0);
+
+    const double h_a_min = std::max(lo, base_height - hi);
+    const double h_a_max = std::min(hi, base_height - lo);
+    if (h_a_min > h_a_max + EPSILON)
+        return { base_height };
+
+    const double h_a = std::clamp(base_height * ratio_a, h_a_min, h_a_max);
+    const double h_b = base_height - h_a;
+
+    std::vector<double> out { h_a, h_b };
+    if (!fit_pass_heights_to_interval(out, base_height, lo, hi))
+        return { base_height };
+    return out;
 }
 
 static std::vector<double> build_local_z_shared_pass_heights(double base_height, double lower_bound, double upper_bound)
@@ -1277,7 +1334,8 @@ static std::vector<double> build_local_z_pass_heights(double base_height,
                                                       double lower_bound,
                                                       double upper_bound,
                                                       double preferred_a,
-                                                      double preferred_b)
+                                                      double preferred_b,
+                                                      size_t max_passes_limit = 0)
 {
     if (base_height <= EPSILON)
         return {};
@@ -1308,11 +1366,20 @@ static std::vector<double> build_local_z_pass_heights(double base_height,
         if (remainder > EPSILON)
             out.push_back(remainder);
 
-        if (fit_pass_heights_to_interval(out, base_height, lo, hi))
+        if (fit_pass_heights_to_interval(out, base_height, lo, hi) &&
+            (max_passes_limit == 0 || out.size() <= max_passes_limit))
             return out;
+
+        if (max_passes_limit > 0 && preferred_a > EPSILON && preferred_b > EPSILON)
+            return build_local_z_alternating_pass_heights(base_height,
+                                                          lower_bound,
+                                                          upper_bound,
+                                                          preferred_a,
+                                                          preferred_b,
+                                                          max_passes_limit);
     }
 
-    return build_uniform_local_z_pass_heights(base_height, lo, hi);
+    return build_uniform_local_z_pass_heights(base_height, lo, hi, max_passes_limit);
 }
 
 static std::vector<unsigned int> decode_manual_pattern_sequence(const MixedFilament &mf, size_t num_physical)
@@ -1387,8 +1454,97 @@ static std::vector<int> decode_gradient_component_weights(const MixedFilament &m
     return out;
 }
 
+static void reduce_weight_counts_to_cycle_limit(std::vector<int> &counts, size_t cycle_limit)
+{
+    if (counts.empty() || cycle_limit == 0)
+        return;
+
+    int total = std::accumulate(counts.begin(), counts.end(), 0);
+    if (total <= 0 || size_t(total) <= cycle_limit)
+        return;
+
+    std::vector<size_t> positive_indices;
+    positive_indices.reserve(counts.size());
+    for (size_t i = 0; i < counts.size(); ++i)
+        if (counts[i] > 0)
+            positive_indices.emplace_back(i);
+
+    if (positive_indices.empty()) {
+        counts.assign(counts.size(), 0);
+        return;
+    }
+
+    std::vector<int> reduced(counts.size(), 0);
+    if (cycle_limit < positive_indices.size()) {
+        std::sort(positive_indices.begin(), positive_indices.end(), [&counts](size_t lhs, size_t rhs) {
+            if (counts[lhs] != counts[rhs])
+                return counts[lhs] > counts[rhs];
+            return lhs < rhs;
+        });
+        for (size_t i = 0; i < cycle_limit; ++i)
+            reduced[positive_indices[i]] = 1;
+        counts = std::move(reduced);
+        return;
+    }
+
+    size_t remaining_slots = cycle_limit;
+    for (const size_t idx : positive_indices) {
+        reduced[idx] = 1;
+        --remaining_slots;
+    }
+
+    int total_extras = 0;
+    std::vector<int> extra_counts(counts.size(), 0);
+    for (const size_t idx : positive_indices) {
+        extra_counts[idx] = std::max(0, counts[idx] - 1);
+        total_extras += extra_counts[idx];
+    }
+    if (remaining_slots == 0 || total_extras <= 0) {
+        counts = std::move(reduced);
+        return;
+    }
+
+    std::vector<double> remainders(counts.size(), -1.0);
+    size_t assigned_slots = 0;
+    for (const size_t idx : positive_indices) {
+        if (extra_counts[idx] == 0)
+            continue;
+        const double exact = double(remaining_slots) * double(extra_counts[idx]) / double(total_extras);
+        const int assigned = int(std::floor(exact));
+        reduced[idx] += assigned;
+        assigned_slots += size_t(assigned);
+        remainders[idx] = exact - double(assigned);
+    }
+
+    size_t missing_slots = remaining_slots > assigned_slots ? (remaining_slots - assigned_slots) : size_t(0);
+    while (missing_slots > 0) {
+        size_t best_idx = size_t(-1);
+        double best_remainder = -1.0;
+        int    best_extra = -1;
+        for (const size_t idx : positive_indices) {
+            if (extra_counts[idx] == 0)
+                continue;
+            if (remainders[idx] > best_remainder ||
+                (std::abs(remainders[idx] - best_remainder) <= 1e-9 && extra_counts[idx] > best_extra) ||
+                (std::abs(remainders[idx] - best_remainder) <= 1e-9 && extra_counts[idx] == best_extra && idx < best_idx)) {
+                best_idx = idx;
+                best_remainder = remainders[idx];
+                best_extra = extra_counts[idx];
+            }
+        }
+        if (best_idx == size_t(-1))
+            break;
+        ++reduced[best_idx];
+        remainders[best_idx] = -1.0;
+        --missing_slots;
+    }
+
+    counts = std::move(reduced);
+}
+
 static std::vector<unsigned int> build_weighted_gradient_sequence(const std::vector<unsigned int> &ids,
-                                                                  const std::vector<int>          &weights)
+                                                                  const std::vector<int>          &weights,
+                                                                  size_t                           max_cycle_limit = 0)
 {
     if (ids.empty())
         return {};
@@ -1417,32 +1573,40 @@ static std::vector<unsigned int> build_weighted_gradient_sequence(const std::vec
             c = std::max(1, c / g);
     }
 
-    int cycle = std::accumulate(counts.begin(), counts.end(), 0);
-    constexpr int k_max_cycle = 48;
-    if (cycle > k_max_cycle) {
-        const double scale = double(k_max_cycle) / double(cycle);
-        for (int &c : counts)
-            c = std::max(1, int(std::round(double(c) * scale)));
-        cycle = std::accumulate(counts.begin(), counts.end(), 0);
-        while (cycle > k_max_cycle) {
-            auto it = std::max_element(counts.begin(), counts.end());
-            if (it == counts.end() || *it <= 1)
-                break;
-            --(*it);
-            --cycle;
-        }
+    constexpr size_t k_max_cycle = 48;
+    const size_t effective_cycle_limit =
+        max_cycle_limit > 0 ? std::min(k_max_cycle, std::max<size_t>(1, max_cycle_limit)) : k_max_cycle;
+    reduce_weight_counts_to_cycle_limit(counts, effective_cycle_limit);
+
+    std::vector<unsigned int> reduced_ids;
+    std::vector<int>          reduced_counts;
+    reduced_ids.reserve(filtered_ids.size());
+    reduced_counts.reserve(counts.size());
+    for (size_t i = 0; i < counts.size(); ++i) {
+        if (counts[i] <= 0)
+            continue;
+        reduced_ids.emplace_back(filtered_ids[i]);
+        reduced_counts.emplace_back(counts[i]);
     }
-    if (cycle <= 0)
+    if (reduced_ids.empty())
+        return {};
+    filtered_ids = std::move(reduced_ids);
+    counts = std::move(reduced_counts);
+
+    const int total = std::accumulate(counts.begin(), counts.end(), 0);
+    if (total <= 0)
         return {};
 
+    const size_t cycle = size_t(total);
+
     std::vector<unsigned int> sequence;
-    sequence.reserve(size_t(cycle));
+    sequence.reserve(cycle);
     std::vector<int> emitted(counts.size(), 0);
-    for (int pos = 0; pos < cycle; ++pos) {
+    for (size_t pos = 0; pos < cycle; ++pos) {
         size_t best_idx = 0;
         double best_score = -1e9;
         for (size_t i = 0; i < counts.size(); ++i) {
-            const double target = double((pos + 1) * counts[i]) / double(cycle);
+            const double target = double(pos + 1) * double(counts[i]) / double(total);
             const double score = target - double(emitted[i]);
             if (score > best_score) {
                 best_score = score;
@@ -1532,6 +1696,21 @@ static bool local_z_eligible_mixed_row(const MixedFilament &mf)
            mf.distribution_mode != int(MixedFilament::SameLayerPointillisme);
 }
 
+struct LocalZActivePair
+{
+    unsigned int component_a = 0;
+    unsigned int component_b = 0;
+    int          mix_b_percent = 50;
+    bool         uses_layer_cycle_sequence = false;
+
+    bool valid_pair(size_t num_physical) const
+    {
+        return component_a > 0 && component_a <= num_physical &&
+               component_b > 0 && component_b <= num_physical &&
+               component_a != component_b;
+    }
+};
+
 static size_t unique_extruder_count(const std::vector<unsigned int> &sequence, size_t num_physical)
 {
     if (sequence.empty() || num_physical == 0)
@@ -1548,6 +1727,100 @@ static size_t unique_extruder_count(const std::vector<unsigned int> &sequence, s
         }
     }
     return unique_count;
+}
+
+static void append_local_z_pair_option(std::vector<LocalZActivePair> &out,
+                                       unsigned int                   component_a,
+                                       unsigned int                   component_b,
+                                       int                            weight_a,
+                                       int                            weight_b)
+{
+    if (component_a == 0 || component_b == 0 || component_a == component_b)
+        return;
+
+    LocalZActivePair pair;
+    pair.component_a = component_a;
+    pair.component_b = component_b;
+    pair.uses_layer_cycle_sequence = true;
+
+    const int safe_weight_a = std::max(0, weight_a);
+    const int safe_weight_b = std::max(0, weight_b);
+    const int pair_total    = std::max(1, safe_weight_a + safe_weight_b);
+    pair.mix_b_percent =
+        std::clamp(int(std::lround(100.0 * double(safe_weight_b) / double(pair_total))), 1, 99);
+    out.emplace_back(pair);
+}
+
+static std::vector<LocalZActivePair> build_local_z_pair_cycle_for_row(const MixedFilament &mf, size_t num_physical)
+{
+    std::vector<LocalZActivePair> pair_options;
+    if (!mf.enabled || num_physical == 0 || mf.distribution_mode == int(MixedFilament::Simple))
+        return pair_options;
+
+    const std::vector<unsigned int> gradient_ids = decode_gradient_component_ids(mf, num_physical);
+    if (gradient_ids.size() < 3)
+        return pair_options;
+
+    std::vector<int> gradient_weights = decode_gradient_component_weights(mf, gradient_ids.size());
+    if (gradient_weights.empty())
+        gradient_weights.assign(gradient_ids.size(), 1);
+
+    std::vector<int> pair_weights;
+    if (gradient_ids.size() >= 4) {
+        append_local_z_pair_option(pair_options, gradient_ids[0], gradient_ids[1], gradient_weights[0], gradient_weights[1]);
+        append_local_z_pair_option(pair_options, gradient_ids[2], gradient_ids[3], gradient_weights[2], gradient_weights[3]);
+        pair_weights.emplace_back(std::max(1, gradient_weights[0] + gradient_weights[1]));
+        pair_weights.emplace_back(std::max(1, gradient_weights[2] + gradient_weights[3]));
+    } else {
+        append_local_z_pair_option(pair_options, gradient_ids[0], gradient_ids[1], gradient_weights[0], gradient_weights[1]);
+        append_local_z_pair_option(pair_options, gradient_ids[0], gradient_ids[2], gradient_weights[0], gradient_weights[2]);
+        append_local_z_pair_option(pair_options, gradient_ids[1], gradient_ids[2], gradient_weights[1], gradient_weights[2]);
+        pair_weights.emplace_back(std::max(1, gradient_weights[0] + gradient_weights[1]));
+        pair_weights.emplace_back(std::max(1, gradient_weights[0] + gradient_weights[2]));
+        pair_weights.emplace_back(std::max(1, gradient_weights[1] + gradient_weights[2]));
+    }
+
+    if (pair_options.size() < 2 || pair_options.size() != pair_weights.size())
+        return {};
+
+    std::vector<unsigned int> pair_ids(pair_options.size(), 0);
+    for (size_t idx = 0; idx < pair_ids.size(); ++idx)
+        pair_ids[idx] = unsigned(idx + 1);
+
+    const size_t max_pair_layers =
+        mf.local_z_max_sublayers >= 2 ? std::max<size_t>(1, size_t(mf.local_z_max_sublayers) / 2) : size_t(0);
+    const std::vector<unsigned int> pair_sequence = build_weighted_gradient_sequence(pair_ids, pair_weights, max_pair_layers);
+    if (pair_sequence.empty())
+        return {};
+
+    std::vector<LocalZActivePair> out;
+    out.reserve(pair_sequence.size());
+    for (const unsigned int pair_token : pair_sequence) {
+        if (pair_token < 1 || pair_token > pair_options.size())
+            continue;
+        out.emplace_back(pair_options[size_t(pair_token - 1)]);
+    }
+    return out;
+}
+
+static LocalZActivePair derive_local_z_active_pair(const MixedFilament               &mf,
+                                                   const std::vector<LocalZActivePair> &pair_cycle,
+                                                   size_t                              num_physical,
+                                                   int                                 cadence_index)
+{
+    LocalZActivePair out;
+
+    if (!pair_cycle.empty()) {
+        const int cycle_i = int(pair_cycle.size());
+        const size_t pos  = size_t(((cadence_index % cycle_i) + cycle_i) % cycle_i);
+        return pair_cycle[pos];
+    }
+
+    out.component_a = mf.component_a;
+    out.component_b = mf.component_b;
+    out.mix_b_percent = std::clamp(mf.mix_b_percent, 0, 100);
+    out.uses_layer_cycle_sequence = false;
+    return out;
 }
 
 static bool split_masks_pointillism_stripes(const ExPolygons               &source_masks,
@@ -2031,6 +2304,14 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         return;
     }
 
+    std::vector<std::vector<LocalZActivePair>> row_pair_cycles(mixed_rows.size());
+    std::vector<uint8_t>                       row_uses_layer_cycle_pair(mixed_rows.size(), uint8_t(0));
+    for (size_t row_idx = 0; row_idx < mixed_rows.size(); ++row_idx) {
+        row_pair_cycles[row_idx] = build_local_z_pair_cycle_for_row(mixed_rows[row_idx], num_physical);
+        if (!row_pair_cycles[row_idx].empty())
+            row_uses_layer_cycle_pair[row_idx] = uint8_t(1);
+    }
+
     BOOST_LOG_TRIVIAL(debug) << "Local-Z plan start"
                              << " object=" << object_name
                              << " layers=" << print_object.layer_count()
@@ -2063,6 +2344,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     // Keep local-Z cadence isolated per mixed row so independent painted zones
     // do not influence each other when resolving fallback cadence.
     std::vector<int> row_cadence_index(mixed_rows.size(), 0);
+    // Multi-color layer-cycle rows choose a pair once per nominal layer/zone
+    // and rotate that pair independently from per-subpass A/B cadence.
+    std::vector<int> row_layer_cycle_index(mixed_rows.size(), 0);
     // Reset row cadence at the start of each disjoint painted zone.
     std::vector<uint8_t> row_active_prev_layer(mixed_rows.size(), uint8_t(0));
     for (size_t layer_id = 0; layer_id < print_object.layer_count(); ++layer_id) {
@@ -2111,15 +2395,30 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 dominant_mixed_idx  = size_t(mixed_idx);
             }
         }
-        if (dominant_mixed_idx < mixed_rows.size()) {
-            compute_local_z_gradient_component_heights(mixed_rows[dominant_mixed_idx].mix_b_percent, mixed_lower, mixed_upper,
-                                                       dominant_gradient_h_a, dominant_gradient_h_b);
-            dominant_gradient_valid = true;
-        }
         for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
             if (row_active_this_layer[row_idx] != 0 && row_active_prev_layer[row_idx] == 0) {
-                row_cadence_index[row_idx] = 0;
+                row_cadence_index[row_idx]     = 0;
+                row_layer_cycle_index[row_idx] = 0;
             }
+        }
+        std::vector<LocalZActivePair> row_active_pairs(mixed_rows.size());
+        for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
+            if (row_active_this_layer[row_idx] == 0 || !local_z_eligible_mixed_row(mixed_rows[row_idx]))
+                continue;
+
+            const int cadence_index = row_uses_layer_cycle_pair[row_idx] != 0
+                ? row_layer_cycle_index[row_idx]
+                : row_cadence_index[row_idx];
+            row_active_pairs[row_idx] =
+                derive_local_z_active_pair(mixed_rows[row_idx], row_pair_cycles[row_idx], num_physical, cadence_index);
+        }
+        if (dominant_mixed_idx < mixed_rows.size()) {
+            const LocalZActivePair &dominant_pair = row_active_pairs[dominant_mixed_idx];
+            const int dominant_mix_b_percent =
+                dominant_pair.valid_pair(num_physical) ? dominant_pair.mix_b_percent : mixed_rows[dominant_mixed_idx].mix_b_percent;
+            compute_local_z_gradient_component_heights(dominant_mix_b_percent, mixed_lower, mixed_upper,
+                                                       dominant_gradient_h_a, dominant_gradient_h_b);
+            dominant_gradient_valid = true;
         }
         total_mixed_state_layers += mixed_state_count;
         if (!mixed_masks.empty())
@@ -2196,12 +2495,17 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
 
                 double row_h_a = 0.0;
                 double row_h_b = 0.0;
-                compute_local_z_gradient_component_heights(mixed_rows[row_idx].mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-                std::vector<double> row_passes = build_local_z_alternating_pass_heights(interval.base_height,
-                                                                                         mixed_lower,
-                                                                                         mixed_upper,
-                                                                                         row_h_a,
-                                                                                         row_h_b);
+                const LocalZActivePair &active_pair = row_active_pairs[row_idx];
+                const int row_mix_b_percent =
+                    active_pair.valid_pair(num_physical) ? active_pair.mix_b_percent : mixed_rows[row_idx].mix_b_percent;
+                compute_local_z_gradient_component_heights(row_mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
+                std::vector<double> row_passes = active_pair.uses_layer_cycle_sequence
+                    ? build_local_z_two_pass_heights(interval.base_height, mixed_lower, mixed_upper, row_h_a, row_h_b)
+                    : build_local_z_alternating_pass_heights(interval.base_height,
+                                                             mixed_lower,
+                                                             mixed_upper,
+                                                             row_h_a,
+                                                             row_h_b);
                 if (row_passes.empty())
                     row_passes.emplace_back(interval.base_height);
                 if (!sanitize_local_z_pass_heights(row_passes, interval.base_height, mixed_lower, mixed_upper))
@@ -2226,15 +2530,27 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     if (pass_heights.size() > 1)
                         ++alternating_height_intervals;
                 } else if (dominant_gradient_valid) {
-                    pass_heights = build_local_z_alternating_pass_heights(interval.base_height, mixed_lower, mixed_upper,
-                                                                          dominant_gradient_h_a, dominant_gradient_h_b);
+                    const bool dominant_uses_pair_cycle =
+                        dominant_mixed_idx < mixed_rows.size() && row_active_pairs[dominant_mixed_idx].uses_layer_cycle_sequence;
+                    pass_heights = dominant_uses_pair_cycle
+                        ? build_local_z_two_pass_heights(interval.base_height, mixed_lower, mixed_upper,
+                                                         dominant_gradient_h_a, dominant_gradient_h_b)
+                        : build_local_z_alternating_pass_heights(interval.base_height,
+                                                                 mixed_lower,
+                                                                 mixed_upper,
+                                                                 dominant_gradient_h_a,
+                                                                 dominant_gradient_h_b);
                     if (pass_heights.size() > 1)
                         ++alternating_height_intervals;
                 } else {
                     pass_heights = build_uniform_local_z_pass_heights(interval.base_height, mixed_lower, mixed_upper);
                 }
             } else {
-                pass_heights = build_local_z_pass_heights(interval.base_height, mixed_lower, mixed_upper, preferred_a, preferred_b);
+                pass_heights = build_local_z_pass_heights(interval.base_height,
+                                                          mixed_lower,
+                                                          mixed_upper,
+                                                          preferred_a,
+                                                          preferred_b);
             }
         }
         else
@@ -2276,26 +2592,29 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     if (state_masks.empty())
                         continue;
 
-                    const MixedFilament &mf = mixed_rows[row_idx];
                     const std::vector<double> &row_passes_raw = isolated_row_pass_heights[row_idx];
                     const std::vector<double> row_passes = row_passes_raw.empty()
                         ? std::vector<double>{ interval.base_height }
                         : row_passes_raw;
-                    const bool valid_pair = mf.component_a > 0 && mf.component_a <= num_physical &&
-                                            mf.component_b > 0 && mf.component_b <= num_physical;
+                    const LocalZActivePair &active_pair = row_active_pairs[row_idx];
+                    const bool valid_pair = active_pair.valid_pair(num_physical);
+                    const int orientation_cadence_index = active_pair.uses_layer_cycle_sequence
+                        ? row_layer_cycle_index[row_idx]
+                        : row_cadence_index[row_idx];
 
                     bool start_with_a = true;
                     if (valid_pair && preferred_a <= EPSILON && preferred_b <= EPSILON) {
                         double row_h_a = 0.0;
                         double row_h_b = 0.0;
-                        compute_local_z_gradient_component_heights(mf.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
+                        compute_local_z_gradient_component_heights(active_pair.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
                         start_with_a = choose_local_z_start_with_component_a(row_passes,
                                                                              row_h_a,
                                                                              row_h_b,
-                                                                             row_cadence_index[row_idx]);
+                                                                             orientation_cadence_index);
                     }
 
                     double z_cursor = interval.z_lo;
+                    bool   row_used = false;
                     for (size_t pass_i = 0; pass_i < row_passes.size(); ++pass_i) {
                         if (z_cursor >= interval.z_hi - EPSILON)
                             break;
@@ -2321,16 +2640,19 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         if (valid_pair) {
                             const bool even_pass = (pass_i % 2) == 0;
                             target_extruder = even_pass
-                                ? (start_with_a ? mf.component_a : mf.component_b)
-                                : (start_with_a ? mf.component_b : mf.component_a);
+                                ? (start_with_a ? active_pair.component_a : active_pair.component_b)
+                                : (start_with_a ? active_pair.component_b : active_pair.component_a);
                             ++strict_ab_assignments;
                         }
                         if (target_extruder == 0) {
                             const unsigned int state_id = row_state_ids[row_idx];
                             if (state_id != 0) {
+                                const int resolve_cadence_index = active_pair.uses_layer_cycle_sequence
+                                    ? row_layer_cycle_index[row_idx]
+                                    : row_cadence_index[row_idx];
                                 target_extruder = mixed_mgr.resolve(state_id,
                                                                     num_physical,
-                                                                    row_cadence_index[row_idx],
+                                                                    resolve_cadence_index,
                                                                     float(plan.print_z),
                                                                     float(plan.flow_height),
                                                                     force_height_resolve);
@@ -2345,9 +2667,13 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         }
 
                         isolated_plans.emplace_back(std::move(plan));
-                        ++row_cadence_index[row_idx];
+                        row_used = true;
+                        if (!active_pair.uses_layer_cycle_sequence)
+                            ++row_cadence_index[row_idx];
                         z_cursor = z_next;
                     }
+                    if (row_used && active_pair.uses_layer_cycle_sequence)
+                        ++row_layer_cycle_index[row_idx];
                 }
 
                 if (!isolated_plans.empty()) {
@@ -2381,35 +2707,32 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 // maps thicker/thinner subpasses to the intended component.
                 std::vector<uint8_t> start_with_component_a(mixed_rows.size(), uint8_t(1));
                 if (preferred_a <= EPSILON && preferred_b <= EPSILON) {
-                    for (size_t channel_idx = 0; channel_idx < segmentation[layer_id].size(); ++channel_idx) {
-                        const ExPolygons &state_masks = segmentation[layer_id][channel_idx];
-                        if (state_masks.empty())
+                    for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
+                        if (row_active_this_layer[row_idx] == 0 || !local_z_eligible_mixed_row(mixed_rows[row_idx]))
                             continue;
 
-                        const unsigned int state_id = unsigned(channel_idx + 1);
-                        if (!mixed_mgr.is_mixed(state_id, num_physical))
-                            continue;
-                        const int mixed_idx = mixed_mgr.mixed_index_from_filament_id(state_id, num_physical);
-                        if (mixed_idx < 0 || size_t(mixed_idx) >= mixed_rows.size())
-                            continue;
-                        const MixedFilament &mf = mixed_rows[size_t(mixed_idx)];
-                        if (!local_z_eligible_mixed_row(mf))
+                        const LocalZActivePair &active_pair = row_active_pairs[row_idx];
+                        if (!active_pair.valid_pair(num_physical))
                             continue;
 
                         double row_h_a = 0.0;
                         double row_h_b = 0.0;
-                        compute_local_z_gradient_component_heights(mf.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-                        start_with_component_a[size_t(mixed_idx)] =
+                        const int orientation_cadence_index = active_pair.uses_layer_cycle_sequence
+                            ? row_layer_cycle_index[row_idx]
+                            : row_cadence_index[row_idx];
+                        compute_local_z_gradient_component_heights(active_pair.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
+                        start_with_component_a[row_idx] =
                             choose_local_z_start_with_component_a(pass_heights,
                                                                   row_h_a,
                                                                   row_h_b,
-                                                                  row_cadence_index[size_t(mixed_idx)]) ? uint8_t(1) : uint8_t(0);
+                                                                  orientation_cadence_index) ? uint8_t(1) : uint8_t(0);
                     }
                 }
 
                 double z_cursor = interval.z_lo;
                 size_t pass_idx = 0;
                 interval.sublayer_height = *std::min_element(pass_heights.begin(), pass_heights.end());
+                std::vector<uint8_t> row_seen_sequence_in_interval(mixed_rows.size(), uint8_t(0));
                 for (const double pass_height_nominal : pass_heights) {
                     if (z_cursor >= interval.z_hi - EPSILON)
                         break;
@@ -2444,23 +2767,28 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         const MixedFilament &mf = mixed_rows[row_idx];
                         if (!local_z_eligible_mixed_row(mf))
                             continue;
+                        const LocalZActivePair &active_pair = row_active_pairs[row_idx];
                         row_seen_in_pass[row_idx] = uint8_t(1);
+                        if (active_pair.uses_layer_cycle_sequence)
+                            row_seen_sequence_in_interval[row_idx] = uint8_t(1);
                         ++forced_height_resolve_calls;
                         unsigned int target_extruder = 0;
-                        if (mf.component_a > 0 && mf.component_a <= num_physical &&
-                            mf.component_b > 0 && mf.component_b <= num_physical) {
+                        if (active_pair.valid_pair(num_physical)) {
                             const bool start_a = start_with_component_a[row_idx] != 0;
                             const bool even_pass = (pass_idx % 2) == 0;
                             // Local-Z mode alternates A/B on every subpass.
                             target_extruder = even_pass
-                                ? (start_a ? mf.component_a : mf.component_b)
-                                : (start_a ? mf.component_b : mf.component_a);
+                                ? (start_a ? active_pair.component_a : active_pair.component_b)
+                                : (start_a ? active_pair.component_b : active_pair.component_a);
                             ++strict_ab_assignments;
                         }
                         if (target_extruder == 0) {
+                            const int resolve_cadence_index = active_pair.uses_layer_cycle_sequence
+                                ? row_layer_cycle_index[row_idx]
+                                : row_cadence_index[row_idx];
                             target_extruder = mixed_mgr.resolve(state_id,
                                                                 num_physical,
-                                                                row_cadence_index[row_idx],
+                                                                resolve_cadence_index,
                                                                 float(plan.print_z),
                                                                 float(plan.flow_height),
                                                                 force_height_resolve);
@@ -2488,10 +2816,13 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     ++total_generated_sublayer_cnt;
                     ++pass_idx;
                     for (size_t mixed_idx = 0; mixed_idx < row_seen_in_pass.size(); ++mixed_idx)
-                        if (row_seen_in_pass[mixed_idx] != 0)
+                        if (row_seen_in_pass[mixed_idx] != 0 && row_uses_layer_cycle_pair[mixed_idx] == 0)
                             ++row_cadence_index[mixed_idx];
                     z_cursor = z_next;
                 }
+                for (size_t row_idx = 0; row_idx < row_seen_sequence_in_interval.size(); ++row_idx)
+                    if (row_seen_sequence_in_interval[row_idx] != 0)
+                        ++row_layer_cycle_index[row_idx];
             }
             if (!interval_has_split_painted_masks)
                 ++split_intervals_without_painted_masks;
@@ -2527,10 +2858,13 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     continue;
                 row_seen_in_interval[row_idx] = uint8_t(1);
                 ++forced_height_resolve_calls;
+                const int resolve_cadence_index = row_uses_layer_cycle_pair[row_idx] != 0
+                    ? row_layer_cycle_index[row_idx]
+                    : row_cadence_index[row_idx];
                 const unsigned int target_extruder =
                     mixed_mgr.resolve(state_id,
                                       num_physical,
-                                      row_cadence_index[row_idx],
+                                      resolve_cadence_index,
                                       float(plan.print_z),
                                       float(plan.flow_height),
                                       force_height_resolve);
@@ -2549,7 +2883,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             ++total_generated_sublayer_cnt;
             for (size_t mixed_idx = 0; mixed_idx < row_seen_in_interval.size(); ++mixed_idx)
                 if (row_seen_in_interval[mixed_idx] != 0)
-                    ++row_cadence_index[mixed_idx];
+                    (row_uses_layer_cycle_pair[mixed_idx] != 0 ? row_layer_cycle_index[mixed_idx] : row_cadence_index[mixed_idx])++;
         }
 
         if (interval.has_mixed_paint) {

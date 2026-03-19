@@ -60,6 +60,9 @@ struct MixedFilament
     // - SameLayerPointillisme: split painted masks in XY on each layer.
     int distribution_mode = int(Simple);
 
+    // Optional Local-Z cap for this mixed row. 0 disables the cap.
+    int local_z_max_sublayers = 0;
+
     // Whether this mixed filament is enabled (available for assignment).
     bool enabled = true;
 
@@ -90,6 +93,7 @@ struct MixedFilament
                gradient_component_weights == rhs.gradient_component_weights &&
                pointillism_all_filaments == rhs.pointillism_all_filaments &&
                distribution_mode == rhs.distribution_mode &&
+               local_z_max_sublayers == rhs.local_z_max_sublayers &&
                enabled      == rhs.enabled &&
                deleted      == rhs.deleted &&
                custom       == rhs.custom &&

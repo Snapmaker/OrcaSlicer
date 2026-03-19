@@ -1,8 +1,4 @@
-<<<<<<<< HEAD:scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
 app-id: io.github.Snapmaker.Snapmaker_Orca
-========
-app-id: io.github.softfever.Snapmaker_Orca
->>>>>>>> main:scripts/flatpak/io.github.softfever.Snapmaker_Orca.yml
 runtime: org.gnome.Platform
 runtime-version: "48"
 sdk: org.gnome.Sdk
@@ -18,14 +14,9 @@ finish-args:
   - --filesystem=xdg-run/gvfs
   - --filesystem=/run/media
   - --filesystem=/media
-<<<<<<<< HEAD:scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
   - --filesystem=/run/spnav.sock:ro
   # Allow Snapmaker_Orca to talk to other instances
   - --talk-name=io.github.Snapmaker.Snapmaker_Orca.InstanceCheck.*
-========
-  # Allow Snapmaker_Orca to talk to other instances
-  - --talk-name=io.github.softfever.Snapmaker_Orca.InstanceCheck.*
->>>>>>>> main:scripts/flatpak/io.github.softfever.Snapmaker_Orca.yml
   - --system-talk-name=org.freedesktop.UDisks2
   - --env=SPNAV_SOCKET=/run/spnav.sock
 
@@ -185,11 +176,7 @@ modules:
 
       # MPFR
       - type: file
-<<<<<<<< HEAD:scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
         url: https://www.mpfr.org/mpfr-4.2.2/mpfr-4.2.2.tar.bz2
-========
-        url: https://www.mpfr.org/mpfr-current/mpfr-4.2.2.tar.bz2
->>>>>>>> main:scripts/flatpak/io.github.softfever.Snapmaker_Orca.yml
         dest: external-packages/MPFR
         sha256: 9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b
 
@@ -312,15 +299,7 @@ modules:
 
       # AppData metainfo for Gnome Software & Co.
       - type: file
-<<<<<<<< HEAD:scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
         path: io.github.Snapmaker.Snapmaker_Orca.metainfo.xml
-========
-        path: io.github.softfever.Snapmaker_Orca.metainfo.xml
-
-      # script to set dark theme variant
-      - type: file
-        path: set-dark-theme-variant.py
->>>>>>>> main:scripts/flatpak/io.github.softfever.Snapmaker_Orca.yml
 
       # start-up script
       - type: file

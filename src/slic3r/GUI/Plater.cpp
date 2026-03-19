@@ -1109,8 +1109,8 @@ Sidebar::Sidebar(Plater *parent)
 
                 if (res)
                 {
-                    //std::vector<std::string> diameters_raw = nozzle_diameters;
-                    std::vector<std::string> diameters_raw = {"0.2", "0.8"};
+                    std::vector<std::string> diameters_raw = nozzle_diameters;
+                    //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
                     wxTheApp->CallAfter([this, diameters_raw]() {
                         NozzleDiameterSelectDialog dlg(
                             wxGetApp().mainframe,
@@ -1124,6 +1124,19 @@ Sidebar::Sidebar(Plater *parent)
                                 auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, sel);
                                 if (preset) {
                                     preset->is_visible = true;
+
+                                    auto diameter = sel;
+                                    auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+                                    if (preset == nullptr) {
+                                        BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+                                        return;
+                                    }
+                                    preset->is_visible = true; // force visible
+
+                                    for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
+                                        p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+                                    }
+
                                     wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
                                     wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
                                     wxGetApp().plater()->sidebar().update_nozzle_settings(true);
@@ -2750,7 +2763,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             preset->is_visible = true; // force visible
             
             for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                // 当前原则上不支持两个头使用不同的喷嘴型号
+                //set all nozzle use the diameter
                 p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
             }
 

@@ -1,9 +1,55 @@
 cmake_minimum_required(VERSION 3.13)
 
+# Verify that your CMake version is exactly 3.31.x series or lower on windows
+if ( ((MSVC) OR (WIN32)) AND (${CMAKE_VERSION} VERSION_GREATER_EQUAL "4.0") )
+    message(FATAL_ERROR "Only cmake versions between 3.13.x and 3.31.x is supported on windows. Detected version: ${CMAKE_VERSION}")
+endif()
+
+if (WIN32)
+    # Detect known CI environments
+    set(IS_CI FALSE)
+    if(DEFINED ENV{CI})
+        set(IS_CI TRUE)
+    elseif(DEFINED ENV{GITHUB_ACTIONS})
+        set(IS_CI TRUE)
+    elseif(DEFINED ENV{GITLAB_CI})
+        set(IS_CI TRUE)
+    elseif(DEFINED ENV{TF_BUILD})
+        set(IS_CI TRUE)
+    elseif(DEFINED ENV{BUILD_NUMBER}) # Jenkins
+        set(IS_CI TRUE)
+    endif()
+
+    # Detect common misconfiguration (Strawberry Perl in PATH before CMake)
+    # We use ENV to check the PATH order
+    string(REPLACE "\\" "/" ENV_PATH "$ENV{PATH}")
+    string(FIND "${ENV_PATH}" "Strawberry/c/bin" STRAWBERRY_POS)
+    string(FIND "${ENV_PATH}" "Program Files/CMake/bin" CMAKE_POS)
+
+    if (STRAWBERRY_POS GREATER -1 AND CMAKE_POS GREATER -1 AND STRAWBERRY_POS LESS CMAKE_POS)
+        set(_warning_text "
+#############################################################
+Detected Strawberry Perl's 'c/bin' appearing before CMake in PATH.
+This is known to cause CMake to misbehave (e.g., missing modules).
+Please adjust your PATH so that:
+C:\\Program Files\\CMake\\bin
+appears before:
+C:\\Strawberry\\c\\bin
+You can do this in Environment Variables settings.
+#############################################################
+        ")
+
+        if(NOT IS_CI)
+            message(FATAL_ERROR "${_warning_text}")
+        endif()
+    endif()
+endif ()
+
 if (APPLE)
-    # if CMAKE_OSX_DEPLOYMENT_TARGET is not set, set it to 11.3
+    # Require macOS 12.0+ (Monterey) as minimum version
+    # This ensures proper "requires macOS 12.0" system dialog instead of crash on older systems
     if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.3" CACHE STRING "Minimum OS X deployment version" FORCE)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum OS X deployment version" FORCE)
     endif ()
     message(STATUS "CMAKE_OSX_DEPLOYMENT_TARGET: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif ()
@@ -14,12 +60,32 @@ include("version.inc")
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
+# Set SLIC3R_BUILD_ID from Snapmaker_VERSION if not already defined
+if(NOT DEFINED SLIC3R_BUILD_ID OR SLIC3R_BUILD_ID STREQUAL "")
+    set(SLIC3R_BUILD_ID "${Snapmaker_VERSION}")
+endif()
+
+# Create Windows RC compatible version format (comma-separated: MAJOR,MINOR,PATCH,0)
+set(SLIC3R_RC_VERSION "${ORCA_VERSION_MAJOR},${ORCA_VERSION_MINOR},${ORCA_VERSION_PATCH},0")
+
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Release")
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (default Release)" FORCE)
+endif()
+
+find_package(Git)
+if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    # Check current Git commit hash
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} log -1 --format=%h
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_COMMIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    add_definitions("-DGIT_COMMIT_HASH=\"${GIT_COMMIT_HASH}\"")
 endif()
 
 if(DEFINED ENV{SLIC3R_STATIC})
@@ -42,6 +108,14 @@ option(SLIC3R_MSVC_COMPILE_PARALLEL "Compile on Visual Studio in parallel" 1)
 option(SLIC3R_MSVC_PDB          "Generate PDB files on MSVC in Release mode" 1)
 option(SLIC3R_PERL_XS           "Compile XS Perl module and enable Perl unit and integration tests" 0)
 option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
+
+# Sentry crash reporting - enabled only on Windows by default
+if (WIN32 OR APPLE)
+    set(SLIC3R_SENTRY_DEFAULT ON)
+else()
+    set(SLIC3R_SENTRY_DEFAULT OFF)
+endif()
+option(SLIC3R_SENTRY            "Enable Sentry crash reporting SDK" ${SLIC3R_SENTRY_DEFAULT})
 # If SLIC3R_FHS is 1 -> SLIC3R_DESKTOP_INTEGRATION is always 0, othrewise variable.
 CMAKE_DEPENDENT_OPTION(SLIC3R_DESKTOP_INTEGRATION "Allow perfoming desktop integration during runtime" 1 "NOT SLIC3R_FHS" 0)
 
@@ -50,6 +124,15 @@ set(OPENVDB_FIND_MODULE_PATH "" CACHE PATH "Path to OpenVDB installation's find 
 set(SLIC3R_GTK "2" CACHE STRING "GTK version to use with wxWidgets on Linux")
 
 set(IS_CROSS_COMPILE FALSE)
+
+option (COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." OFF)
+if (${COLORED_OUTPUT})
+    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+        add_compile_options (-fdiagnostics-color=always)
+    elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+        add_compile_options (-fcolor-diagnostics)
+    endif ()
+endif ()
 
 if (APPLE)
     set(CMAKE_FIND_FRAMEWORK LAST)
@@ -68,13 +151,13 @@ endif ()
 
 # Proposal for C++ unit tests and sandboxes
 option(SLIC3R_BUILD_SANDBOXES   "Build development sandboxes" OFF)
-option(SLIC3R_BUILD_TESTS       "Build unit tests" OFF)
+option(BUILD_TESTS       "Build unit tests" OFF)
 option(ORCA_TOOLS       "Build Orca tools" OFF)
 
 if (IS_CROSS_COMPILE)
     message("Detected cross compilation setup. Tests and encoding checks will be forcedly disabled!")
     set(SLIC3R_PERL_XS OFF CACHE BOOL "" FORCE)
-    set(SLIC3R_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 endif ()
 
 # Print out the SLIC3R_* cache options
@@ -207,7 +290,7 @@ if(WIN32)
     if(WIN10SDK_INCLUDE_PATH)
         message("Building with Win10 Netfabb STL fixing service support")
         add_definitions(-DHAS_WIN10SDK)
-        include_directories("${WIN10SDK_INCLUDE_PATH}")
+        include_directories(SYSTEM "${WIN10SDK_INCLUDE_PATH}")
     else()
         message("Building without Win10 Netfabb STL fixing service support")
     endif()
@@ -235,7 +318,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Threads REQUIRED)
 
     find_package(DBus REQUIRED)
-    include_directories(${DBUS_INCLUDE_DIRS})
+    include_directories(SYSTEM ${DBUS_INCLUDE_DIRS})
 endif()
 
 if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUXX)
@@ -281,7 +364,7 @@ if (NOT MSVC AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMP
         add_compile_options(-Wno-deprecated-declarations)
     endif()
 
-    if (${CMAKE_CXX_COMPILER_ID} STREQUAL "AppleClang" AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 15)
+    if((${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "AppleClang") AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 15)
         add_compile_options(-Wno-error=enum-constexpr-conversion)
     endif()
 
@@ -297,9 +380,13 @@ if (NOT MSVC AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMP
         add_compile_options(-Wno-unknown-pragmas)
     endif()
 
-    # Bit of a hack for flatpak building: compress the debug info with zstd to save space in CI 
+    # Bit of a hack for flatpak building: compress the debug info with zstd to save space in CI
     if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 13.0)
         add_compile_options(-gz=zstd)
+    endif()
+
+    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 14)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=template-id-cdtor" )
     endif()
 
 endif()
@@ -326,6 +413,13 @@ endif ()
 if (APPLE)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
+    
+    # Generate debug symbols for Release builds on macOS (required for dSYM generation and Sentry crash reporting)
+    # This adds -g flag to produce DWARF debug info that dsymutil can extract
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} -g")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g")
 endif ()
 
 if(MSVC)
@@ -340,11 +434,11 @@ message(STATUS "LIBDIR: ${LIBDIR}")
 message(STATUS "LIBDIR_BIN: ${LIBDIR_BIN}")
 
 # For the bundled boost libraries (boost::nowide)
-include_directories(${LIBDIR})
+include_directories(SYSTEM ${LIBDIR})
 # For generated header files
-include_directories(${LIBDIR_BIN}/platform)
+include_directories(SYSTEM ${LIBDIR_BIN}/dev-utils/platform)
 # For ligigl
-include_directories(${LIBDIR}/libigl)
+include_directories(SYSTEM ${LIBDIR}/libigl)
 
 if(WIN32)
     add_definitions(-D_USE_MATH_DEFINES -D_WIN32 -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS)
@@ -407,12 +501,17 @@ if(SLIC3R_STATIC)
     set(Boost_USE_STATIC_LIBS ON)
     # Use boost libraries linked statically to the C++ runtime.
     # set(Boost_USE_STATIC_RUNTIME ON)
+else()
+    add_definitions(-DBOOST_LOG_DYN_LINK)
 endif()
 #set(Boost_DEBUG ON)
 # set(Boost_COMPILER "-mgw81")
 # boost::process was introduced first in version 1.64.0,
 # boost::beast::detail::base64 was introduced first in version 1.66.0
-find_package(Boost 1.66 REQUIRED COMPONENTS system filesystem thread log locale regex chrono atomic date_time iostreams program_options)
+if(POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)
+endif()
+find_package(Boost 1.83.0 REQUIRED COMPONENTS system filesystem thread log log_setup locale regex chrono atomic date_time iostreams program_options nowide)
 
 add_library(boost_libs INTERFACE)
 add_library(boost_headeronly INTERFACE)
@@ -429,7 +528,7 @@ endif()
 function(slic3r_remap_configs targets from_Cfg to_Cfg)
     if(MSVC)
         string(TOUPPER ${from_Cfg} from_CFG)
-    
+
         foreach(tgt ${targets})
             if(TARGET ${tgt})
                 set_target_properties(${tgt} PROPERTIES MAP_IMPORTED_CONFIG_${from_CFG} ${to_Cfg})
@@ -438,7 +537,7 @@ function(slic3r_remap_configs targets from_Cfg to_Cfg)
     endif()
 endfunction()
 
-target_include_directories(boost_headeronly INTERFACE ${Boost_INCLUDE_DIRS})
+target_include_directories(boost_headeronly SYSTEM INTERFACE ${Boost_INCLUDE_DIRS})
 target_link_libraries(boost_libs INTERFACE boost_headeronly ${Boost_LIBRARIES})
 
 # Find and configure intel-tbb
@@ -448,7 +547,7 @@ endif()
 set(TBB_DEBUG 1)
 set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO RelWithDebInfo Release "")
 find_package(TBB REQUIRED)
-# include_directories(${TBB_INCLUDE_DIRS})
+# include_directories(SYSTEM ${TBB_INCLUDE_DIRS})
 # add_definitions(${TBB_DEFINITIONS})
 # if(MSVC)
 #     # Suppress implicit linking of the TBB libraries by the Visual Studio compiler.
@@ -459,6 +558,15 @@ find_package(TBB REQUIRED)
 
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
+if (SLIC3R_SENTRY)
+    find_package(Sentry QUIET)
+    if (NOT Sentry_FOUND)
+        message(WARNING "Sentry SDK not found. SLIC3R_SENTRY will be disabled. "
+                        "Build deps with Sentry support or use -DSLIC3R_SENTRY=OFF")
+        set(SLIC3R_SENTRY OFF CACHE BOOL "Enable Sentry crash reporting SDK" FORCE)
+    endif()
+endif()
+find_package(Freetype REQUIRED)
 
 
 add_library(libcurl INTERFACE)
@@ -466,6 +574,34 @@ target_link_libraries(libcurl INTERFACE CURL::libcurl)
 
 find_package(ZLIB REQUIRED)
 target_link_libraries(libcurl INTERFACE ZLIB::ZLIB)
+
+if (SLIC3R_SENTRY)
+    add_library(sentry INTERFACE)
+    target_link_libraries(sentry INTERFACE sentry::sentry)
+
+    # Add sentry library directory and link sentry.lib explicitly for Windows
+    if (WIN32 AND CMAKE_PREFIX_PATH)
+        # Try to find sentry.lib in the install prefix
+        file(GLOB _sentry_lib "${CMAKE_PREFIX_PATH}/lib/sentry.lib")
+        if (_sentry_lib)
+            target_link_directories(sentry INTERFACE "${CMAKE_PREFIX_PATH}/lib")
+            target_link_libraries(sentry INTERFACE "sentry.lib")
+            message(STATUS "Found sentry.lib at: ${CMAKE_PREFIX_PATH}/lib")
+        else()
+            message(WARNING "sentry.lib not found in ${CMAKE_PREFIX_PATH}/lib. Sentry SDK may not have been built yet.")
+        endif()
+    	elseif (APPLE AND CMAKE_PREFIX_PATH)
+		# Try to find libsentry.dylib in the install prefix for macOS
+		file(GLOB _sentry_lib "${CMAKE_PREFIX_PATH}/lib/libsentry.dylib")
+		if (_sentry_lib)
+			target_link_directories(sentry INTERFACE "${CMAKE_PREFIX_PATH}/lib")
+			target_link_libraries(sentry INTERFACE "sentry")
+			message(STATUS "Found libsentry.dylib at: ${CMAKE_PREFIX_PATH}/lib")
+		else()
+			message(WARNING "libsentry.dylib not found in ${CMAKE_PREFIX_PATH}/lib. Sentry SDK may not have been built yet.")
+		endif()
+	endif()
+endif()
 
 # Fixing curl's cmake config script bugs
 if (NOT WIN32)
@@ -490,7 +626,7 @@ if (SLIC3R_STATIC AND NOT SLIC3R_STATIC_EXCLUDE_CURL)
         find_package(OpenSSL REQUIRED)
         message("OpenSSL include dir: ${OPENSSL_INCLUDE_DIR}")
         message("OpenSSL libraries: ${OPENSSL_LIBRARIES}")
-        target_include_directories(libcurl INTERFACE ${OPENSSL_INCLUDE_DIR})
+        target_include_directories(libcurl SYSTEM INTERFACE ${OPENSSL_INCLUDE_DIR})
         target_link_libraries(libcurl INTERFACE ${OPENSSL_LIBRARIES})
     endif()
 endif()
@@ -556,7 +692,7 @@ add_custom_target(gettext_make_pot
     COMMAND xgettext --keyword=L --keyword=_L --keyword=_u8L --keyword=L_CONTEXT:1,2c --keyword=_L_PLURAL:1,2 --add-comments=TRN --from-code=UTF-8 --no-location --debug --boost
         -f "${BBL_L18N_DIR}/list.txt"
         -o "${BBL_L18N_DIR}/Snapmaker_Orca.pot"
-	COMMAND hintsToPot ${SLIC3R_RESOURCES_DIR} ${BBL_L18N_DIR}	
+	COMMAND hintsToPot ${SLIC3R_RESOURCES_DIR} ${BBL_L18N_DIR}
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     COMMENT "Generate pot file from strings in the source tree"
 )
@@ -611,11 +747,9 @@ endif ()
 
 find_path(SPNAV_INCLUDE_DIR spnav.h)
 if (SPNAV_INCLUDE_DIR)
-    find_library(HAVE_SPNAV spnav)
-    if (HAVE_SPNAV)
+    find_library(SPNAV_LIB NAMES libspnav.a) # Force linking libspnav statically
+    if (SPNAV_LIB)
         add_definitions(-DHAVE_SPNAV)
-        add_library(libspnav SHARED IMPORTED)
-        target_link_libraries(libspnav INTERFACE spnav)
         message(STATUS "SPNAV library found")
     else()
         message(STATUS "SPNAV library NOT found, Spacenavd not supported")
@@ -626,10 +760,12 @@ endif()
 
 set(TOP_LEVEL_PROJECT_DIR ${PROJECT_SOURCE_DIR})
 function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
-    if ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "8")
-        set(_bits 64)
-    elseif ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4")
-        set(_bits 32)
+    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64")
+        set(_arch "x64")
+    elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86")
+        set(_arch "x86")
+    else ()
+        message(FATAL_ERROR "Unable to detect architecture")
     endif ()
 
     get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -646,10 +782,18 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         message ("set out_dir to CMAKE_CURRENT_BINARY_DIR: ${_out_dir}")
     endif ()
 
-    file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win${_bits}/libgmp-10.dll
-            ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win${_bits}/libmpfr-4.dll
-            ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win${_bits}/WebView2Loader.dll
+    file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_arch}/libgmp-10.dll
+            ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_arch}/libmpfr-4.dll
+            ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
         DESTINATION ${_out_dir})
+
+    # Copy Sentry and Crashpad artifacts if they were built by deps
+    if (SLIC3R_SENTRY AND EXISTS "${CMAKE_PREFIX_PATH}/bin/sentry.dll")
+        file(COPY "${CMAKE_PREFIX_PATH}/bin/sentry.dll"
+                  "${CMAKE_PREFIX_PATH}/bin/crashpad_handler.exe"
+            DESTINATION ${_out_dir}
+        )
+    endif()
 
     file(COPY ${CMAKE_PREFIX_PATH}/bin/occt/TKBO.dll
             ${CMAKE_PREFIX_PATH}/bin/occt/TKBRep.dll
@@ -680,7 +824,8 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
          DESTINATION ${_out_dir})
 
-    set(${output_dlls}
+    # Build the DLL list in a local variable first
+    set(_dll_list
         ${_out_dir}/libgmp-10.dll
         ${_out_dir}/libmpfr-4.dll
         ${_out_dir}/WebView2Loader.dll
@@ -713,14 +858,24 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         ${_out_dir}/TKXSBase.dll
 
         ${_out_dir}/freetype.dll
-
-        PARENT_SCOPE
     )
-    
+
+    # Add Sentry DLLs to the list if Sentry is enabled
+    if (SLIC3R_SENTRY)
+        list(APPEND _dll_list
+            ${_out_dir}/sentry.dll
+            ${_out_dir}/crashpad_handler.exe
+        )
+    endif()
+
+    # Set the output variable in parent scope (only once, with complete list)
+    set(${output_dlls} ${_dll_list} PARENT_SCOPE)
+
 endfunction()
 
 
 # libslic3r, Snapmaker_Orca GUI and the Snapmaker_Orca executable.
+add_subdirectory(deps_src)
 add_subdirectory(src)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Snapmaker_Orca_app_gui)
 
@@ -737,18 +892,13 @@ if(SLIC3R_BUILD_SANDBOXES)
     add_subdirectory(sandboxes)
 endif()
 
-if(SLIC3R_BUILD_TESTS)
+if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
 if (NOT WIN32 AND NOT APPLE)
     set(SLIC3R_APP_CMD "snapmaker-orca")
-    configure_file(${LIBDIR}/platform/unix/build_appimage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/build_appimage.sh @ONLY)
-endif()
-
-option(BUILD_BBS_TEST_TOOLS          "Build bbs test tools" OFF)
-if(BUILD_BBS_TEST_TOOLS)
-    add_subdirectory(bbs_test_tools)
+    configure_file(${LIBDIR}/dev-utils/platform/unix/build_appimage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/build_appimage.sh USE_SOURCE_PERMISSIONS @ONLY)
 endif()
 
 
@@ -756,7 +906,7 @@ endif()
 if (WIN32)
     install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "./resources")
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
-    include(InstallRequiredSystemLibraries) 
+    include(InstallRequiredSystemLibraries)
     install (PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ".")
 elseif (SLIC3R_FHS)
     # CMAKE_INSTALL_FULL_DATAROOTDIR: read-only architecture-independent data root (share)
@@ -764,7 +914,7 @@ elseif (SLIC3R_FHS)
     install(DIRECTORY ${SLIC3R_RESOURCES_DIR}/ DESTINATION ${SLIC3R_FHS_RESOURCES}
         PATTERN "*/udev" EXCLUDE
     )
-    install(FILES src/platform/unix/Snapmaker_Orca.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+    install(FILES src/dev-utils/platform/unix/Snapmaker_Orca.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
     foreach(SIZE 32 128 192)
         install(FILES ${SLIC3R_RESOURCES_DIR}/images/Snapmaker_Orca_${SIZE}px.png
             DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${SIZE}x${SIZE}/apps RENAME Snapmaker_Orca.png
@@ -773,12 +923,12 @@ elseif (SLIC3R_FHS)
 elseif (CMAKE_MACOSX_BUNDLE)
     # install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "${CMAKE_INSTALL_PREFIX}/Snapmaker Orca.app/Contents/resources")
 else ()
-    install(FILES src/platform/unix/Snapmaker_Orca.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/resources/applications)
+    install(FILES src/dev-utils/platform/unix/Snapmaker_Orca.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/resources/applications)
     install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources")
 endif ()
 
 install(FILES ${CMAKE_SOURCE_DIR}/LICENSE.txt DESTINATION ".")
-configure_file(${LIBDIR}/platform/unix/fhs.hpp.in ${LIBDIR_BIN}/platform/unix/fhs.hpp)
+configure_file(${LIBDIR}/dev-utils/platform/unix/fhs.hpp.in ${LIBDIR_BIN}/dev-utils/platform/unix/fhs.hpp)
 
 set (CPACK_PACKAGE_NAME "Snapmaker_Orca")
 set (CPACK_PACKAGE_VENDOR "Snapmaker")

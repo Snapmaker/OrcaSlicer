@@ -71,6 +71,9 @@ static const std::map<const wchar_t, std::string> font_icons = {
     {ImGui::GapFillIcon            , "gap_fill"                      },
     {ImGui::FoldButtonIcon         , "im_fold"                       },
     {ImGui::UnfoldButtonIcon       , "im_unfold"                     },
+    {ImGui::gCodeButtonIcon        , "im_code"                       }, //ORCA
+    {ImGui::VisibleIcon            , "im_visible"                    }, //ORCA
+    {ImGui::HiddenIcon             , "im_hidden"                     }, //ORCA
     {ImGui::SphereButtonIcon       , "toolbar_modifier_sphere"       },
     // dark mode icon
     {ImGui::MinimalizeDarkButton       , "notification_minimalize_dark"       },
@@ -161,7 +164,9 @@ const ImVec4 ImGuiWrapper::COL_BUTTON_HOVERED    = COL_ORANGE_LIGHT;
 const ImVec4 ImGuiWrapper::COL_BUTTON_ACTIVE     = COL_BUTTON_HOVERED;
 
 //BBS
-
+const ImVec4 ImGuiWrapper::COL_RED               = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+const ImVec4 ImGuiWrapper::COL_GREEN             = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+const ImVec4 ImGuiWrapper::COL_BLUE              = ImVec4(0.0f, 0.0f, 1.0f, 1.0f);
 const ImVec4 ImGuiWrapper::COL_BLUE_LIGHT        = ImVec4(0.122f, 0.557f, 0.918f, 1.0f);
 const ImVec4 ImGuiWrapper::COL_GREEN_LIGHT       = { 0.f, 156 / 255.f, 136 / 255.f, 0.25f }; // ORCA used on various places like text selection bg. Replaced with orca color
 const ImVec4 ImGuiWrapper::COL_HOVER             = { 0.933f, 0.933f, 0.933f, 1.0f };
@@ -171,6 +176,8 @@ const ImVec4 ImGuiWrapper::COL_SEPARATOR_DARK    = { 0.24f, 0.24f, 0.27f, 1.0f }
 const ImVec4 ImGuiWrapper::COL_TITLE_BG          = { 0.745f, 0.745f, 0.745f, 1.0f };
 const ImVec4 ImGuiWrapper::COL_WINDOW_BG         = { 1.000f, 1.000f, 1.000f, 1.0f };
 const ImVec4 ImGuiWrapper::COL_WINDOW_BG_DARK    = { 45 / 255.f, 45 / 255.f, 49 / 255.f, 1.f };
+const ImVec4 ImGuiWrapper::COL_TOOLBAR_BG        = { 250 / 255.f, 250 / 255.f, 250 / 255.f, 1.f }; // ORCA color matches with toolbar_background.png
+const ImVec4 ImGuiWrapper::COL_TOOLBAR_BG_DARK   = { 57  / 255.f, 60  / 255.f, 66  / 255.f, 1.f }; // ORCA color matches with toolbar_background_dark.png
 const ImVec4 ImGuiWrapper::COL_ORCA              = to_ImVec4(ColorRGBA::ORCA());
 
 int ImGuiWrapper::TOOLBAR_WINDOW_FLAGS = ImGuiWindowFlags_AlwaysAutoResize
@@ -414,7 +421,7 @@ void ImGuiWrapper::set_language(const std::string &language)
     }
     else if (lang == "en") {
         ranges = ImGui::GetIO().Fonts->GetGlyphRangesEnglish(); // Basic Latin
-    } 
+    }
     else{
         ranges = ImGui::GetIO().Fonts->GetGlyphRangesOthers();
     }
@@ -556,6 +563,15 @@ ImVec2 ImGuiWrapper::calc_text_size(const wxString &text,
 #endif*/
 
     return size;
+}
+
+float ImGuiWrapper::find_widest_text(std::vector<wxString> &text_list)
+{
+    float width = .0f;
+    for(const wxString &text : text_list) {
+        width = std::max(width, this->calc_text_size(text).x);
+    }
+    return width;
 }
 
 ImVec2 ImGuiWrapper::calc_button_size(const wxString &text, const ImVec2 &button_size) const
@@ -754,6 +770,7 @@ bool ImGuiWrapper::bbl_slider_float(const std::string& label, float* v, float v_
     bool ret = ImGui::BBLSliderFloat(str_label.c_str(), v, v_min, v_max, format, power);
 
     m_last_slider_status.hovered = ImGui::IsItemHovered();
+    m_last_slider_status.edited = ImGui::IsItemEdited();
     m_last_slider_status.clicked = ImGui::IsItemClicked();
     m_last_slider_status.deactivated_after_edit = ImGui::IsItemDeactivatedAfterEdit();
 
@@ -856,6 +873,10 @@ bool ImGuiWrapper::radio_button(const wxString &label, bool active)
     return ImGui::RadioButton(label_utf8.c_str(), active);
 }
 
+ImVec4 ImGuiWrapper::to_ImVec4(const ColorRGB &color) {
+    return {color.r(), color.g(), color.b(), 1.0};
+}
+
 bool ImGuiWrapper::input_double(const std::string &label, const double &value, const std::string &format)
 {
     return ImGui::InputDouble(label.c_str(), const_cast<double*>(&value), 0.0f, 0.0f, format.c_str(), ImGuiInputTextFlags_CharsDecimal);
@@ -941,6 +962,19 @@ void ImGuiWrapper::text(const wxString &label)
 {
     auto label_utf8 = into_u8(label);
     ImGuiWrapper::text(label_utf8.c_str());
+}
+
+void ImGuiWrapper::warning_text(const char *label)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::to_ImVec4(ColorRGB::WARNING()));
+    this->text(label);
+    ImGui::PopStyleColor();
+}
+
+void ImGuiWrapper::warning_text(const wxString &all_text)
+{
+    auto label_utf8 = into_u8(all_text);
+    warning_text(label_utf8.c_str());
 }
 
 void ImGuiWrapper::text_colored(const ImVec4& color, const char* label)
@@ -1579,9 +1613,9 @@ bool begin_menu(const char *label, bool enabled)
     return menu_is_open;
 }
 
-void end_menu() 
-{ 
-    ImGui::EndMenu(); 
+void end_menu()
+{
+    ImGui::EndMenu();
 }
 
 bool menu_item_with_icon(const char *label, const char *shortcut, ImVec2 icon_size /* = ImVec2(0, 0)*/, ImU32 icon_color /* = 0*/, bool selected /* = false*/, bool enabled /* = true*/, bool* hovered/* = nullptr*/)

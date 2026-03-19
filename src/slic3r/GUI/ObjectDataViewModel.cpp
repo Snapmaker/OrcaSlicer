@@ -69,9 +69,10 @@ const std::map<InfoItemType, InfoItemAtributes> INFO_ITEMS{
 //           info_item Type                         info_item Name              info_item BitmapName
             { InfoItemType::CustomSupports,      {L("Support painting"),       "toolbar_support" },     },
             //{ InfoItemType::CustomSeam,          {L("Paint-on seam"),           "seam_" },             },
-            { InfoItemType::MmuSegmentation,     {L("Color painting"),          "mmu_segmentation"},  },
+            { InfoItemType::MmSegmentation,     {L("Color painting"),          "mmu_segmentation"},  },
             //{ InfoItemType::Sinking,             {L("Sinking"),                 "objlist_sinking"}, },
             { InfoItemType::CutConnectors,       {L("Cut connectors"),          "cut_connectors" },    },
+            { InfoItemType::FuzzySkin,           {L("Paint-on fuzzy skin"),     "objlist_fuzzy_skin_paint" }, },
 };
 
 ObjectDataViewModelNode::ObjectDataViewModelNode(ObjectDataViewModelNode*   parent,
@@ -157,7 +158,7 @@ ObjectDataViewModelNode::ObjectDataViewModelNode(ObjectDataViewModelNode* parent
             parent->GetNthChild(i)->SetIdx(i + 1);
     }
     const std::string label_range = (boost::format(" %.2f-%.2f ") % layer_range.first % layer_range.second).str();
-    m_name = _(L("Range")) + label_range + "(" + _(L("mm")) + ")";
+    m_name = _(L("Range")) + label_range + "(" + _("mm") + ")";
     m_bmp = create_scaled_bitmap(LayerIcon);
 
     set_icons();
@@ -406,6 +407,11 @@ void ObjectDataViewModelNode::UpdateExtruderAndColorIcon(wxString extruder /*= "
         }
     }
 
+    if (extruder_idx == 0) {
+        m_extruder_bmp = *get_default_extruder_color_icon();
+        return;
+    }
+
     if (extruder_idx > 0) --extruder_idx;
     // Create the bitmap with color bars.
     std::vector<wxBitmap*> bmps = get_extruder_color_icons(false);// use wide icons
@@ -548,6 +554,9 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
         scaled_bitmap_name += std::to_string(vol_type);
     scaled_bitmap_name += (wxGetApp().dark_mode() ? "-dm" : "-lm");
 
+    if (!m_bitmap_cache)
+        return;
+
     wxBitmap* bmp = m_bitmap_cache->find(scaled_bitmap_name);
     if (bmp == nullptr) {
         std::vector<wxBitmap> bmps;
@@ -568,7 +577,8 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
         }
         bmp = m_bitmap_cache->insert(scaled_bitmap_name, bmps);
     }
-
+    if (!bmp)
+        return;
     node->SetBitmap(*bmp);
 }
 
@@ -583,7 +593,7 @@ wxDataViewItem ObjectDataViewModel::AddObject(ModelObject *model_object, std::st
 {
     // get object node params
     wxString name = from_u8(model_object->name);
-    int extruder = model_object->config.has("extruder") ? model_object->config.extruder() : 1;
+    int extruder = model_object->config.has("extruder") ? model_object->config.extruder() : 0;
     int plate_idx = -1;
     ObjectDataViewModelNode* plate_node = nullptr;
     for (auto plate : m_plates) {

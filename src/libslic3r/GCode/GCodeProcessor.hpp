@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <optional>
+#include <unordered_map>
 
 namespace Slic3r {
 
@@ -162,6 +163,7 @@ class Print;
             float width{ 0.0f }; // mm
             float height{ 0.0f }; // mm
             float mm3_per_mm{ 0.0f };
+            float travel_dist{ 0.0f }; // mm
             float fan_speed{ 0.0f }; // percentage
             float temperature{ 0.0f }; // Celsius degrees
             float time{ 0.0f }; // s
@@ -272,6 +274,7 @@ class Print;
         static const std::vector<std::string> Reserved_Tags_compatible;
         static const std::string Flush_Start_Tag;
         static const std::string Flush_End_Tag;
+        static const std::string External_Purge_Tag;
     public:
         enum class ETags : unsigned char
         {
@@ -379,7 +382,7 @@ class Print;
             EMoveType move_type{ EMoveType::Noop };
             ExtrusionRole role{ erNone };
             unsigned int g1_line_id{ 0 };
-            unsigned int remaining_internal_g1_lines;
+            unsigned int remaining_internal_g1_lines{ 0 };
             unsigned int layer_id{ 0 };
             float distance{ 0.0f }; // mm
             float acceleration{ 0.0f }; // mm/s^2
@@ -428,7 +431,7 @@ class Print;
             struct G1LinesCacheItem
             {
                 unsigned int id;
-                unsigned int remaining_internal_g1_lines;
+                unsigned int remaining_internal_g1_lines{ 0 };
                 float elapsed_time;
             };
 
@@ -494,15 +497,10 @@ class Print;
             float filament_unload_times;
             //Orca:  time for tool change
             float machine_tool_change_time;
-            bool  disable_m73;
 
             std::array<TimeMachine, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> machines;
 
             void reset();
-
-            // post process the file with the given filename to add remaining time lines M73
-            // and updates moves' gcode ids accordingly
-            void post_process(const std::string& filename, std::vector<GCodeProcessorResult::MoveVertex>& moves, std::vector<size_t>& lines_ends, size_t total_layer_num);
         };
 
         struct UsedFilaments  // filaments per ColorChange
@@ -680,6 +678,8 @@ class Print;
         EPositioningType m_global_positioning_type;
         EPositioningType m_e_local_positioning_type;
         std::vector<Vec3f> m_extruder_offsets;
+        // SM Orca: 耗材到物理挤出机的映射
+        std::unordered_map<int, int> m_filament_extruder_map;
         GCodeFlavor m_flavor;
         float       m_nozzle_volume;
         AxisCoords m_start_position; // mm
@@ -708,6 +708,7 @@ class Print;
         float m_forced_width; // mm
         float m_forced_height; // mm
         float m_mm3_per_mm;
+        float m_travel_dist; // mm
         float m_fan_speed; // percentage
         float m_z_offset; // mm
         ExtrusionRole m_extrusion_role;
@@ -733,7 +734,9 @@ class Print;
         int m_seams_count;
         bool m_single_extruder_multi_material;
         float m_preheat_time;
+        int m_delta_temperature;
         int m_preheat_steps;
+        bool m_disable_m73;
 #if ENABLE_GCODE_VIEWER_STATISTICS
         std::chrono::time_point<std::chrono::high_resolution_clock> m_start_time;
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
@@ -755,6 +758,8 @@ class Print;
         static const std::vector<std::pair<GCodeProcessor::EProducer, std::string>> Producers;
         EProducer m_producer;
 
+        DynamicConfig m_current_config;
+
         TimeProcessor m_time_processor;
         UsedFilaments m_used_filaments;
 
@@ -774,6 +779,16 @@ class Print;
 
         void apply_config(const PrintConfig& config);
         void set_print(Print* print) { m_print = print; }
+        // SM Orca: 设置耗材到物理挤出机的映射
+        void set_filament_extruder_map(const std::unordered_map<int, int>& map) {
+            m_filament_extruder_map = map;
+        }
+        // SM Orca: 获取物理挤出机ID（根据耗材索引）
+        int get_physical_extruder(int filament_idx) const {
+            auto it = m_filament_extruder_map.find(filament_idx);
+            int physical_extruder_id = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
+            return physical_extruder_id;
+        }
         void enable_stealth_time_estimator(bool enabled);
         bool is_stealth_time_estimator_enabled() const {
             return m_time_processor.machines[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].enabled;
@@ -784,7 +799,10 @@ class Print;
         const GCodeProcessorResult& get_result() const { return m_result; }
         GCodeProcessorResult& result() { return m_result; }
         GCodeProcessorResult&& extract_result() { return std::move(m_result); }
+        DynamicConfig&              current_dynamic_config() { return m_current_config; }
 
+
+        GCodeReader& parser() { return m_parser; }
         // Load a G-code into a stand-alone G-code viewer.
         // throws CanceledException through print->throw_if_canceled() (sent by the caller as callback).
         void process_file(const std::string& filename, std::function<void()> cancel_callback = nullptr);

@@ -5,7 +5,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 
 #include <wx/sizer.h>
 #include <wx/toolbar.h>
@@ -25,6 +25,7 @@
 
 #include <sstream>
 #include <slic3r/GUI/Widgets/WebView.hpp>
+#include "sentry_wrapper/SentryWrapper.hpp"
 using namespace std;
 
 using namespace nlohmann;
@@ -41,6 +42,24 @@ int SMUserLogin::web_sequence_id = 20000;
 
 SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker Orca")
 {
+    // url
+    auto region = wxGetApp().app_config->get_country_code();
+    if (region.find("CN") == std::string::npos) {
+        TargetUrl     = "https://id.snapmaker.com?from=orca";
+        LogoutUrl     = "https://id.snapmaker.com/logout?from=orca";
+        m_hostUrl     = "https://id.snapmaker.com";
+        m_accountUrl  = "https://id.snapmaker.com";
+        m_userInfoUrl = "https://id.snapmaker.com/api/common/accounts/current";
+        m_home_url    = "https://www.snapmaker.com/";
+    } else {
+        TargetUrl     = "https://id.snapmaker.cn?from=orca";
+        LogoutUrl     = "https://id.snapmaker.cn/logout?from=orca";
+        m_hostUrl     = "https://id.snapmaker.cn";
+        m_accountUrl  = "https://api.snapmaker.cn";
+        m_userInfoUrl = "https://api.snapmaker.cn/api/common/accounts/current";
+        m_home_url    = "https://www.snapmaker.cn/";
+    }
+
     SetBackgroundColour(*wxWHITE);
 
     BOOST_LOG_TRIVIAL(info) << "login url = " << TargetUrl.ToStdString();
@@ -72,7 +91,7 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     Bind(wxEVT_WEBVIEW_NEWWINDOW, &SMUserLogin::OnNewWindow, this, m_browser->GetId());
     Bind(wxEVT_WEBVIEW_TITLE_CHANGED, &SMUserLogin::OnTitleChanged, this, m_browser->GetId());
     Bind(wxEVT_WEBVIEW_FULLSCREEN_CHANGED, &SMUserLogin::OnFullScreenChanged, this, m_browser->GetId());
-    Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &SMUserLogin::OnScriptMessage, this, m_browser->GetId());
+    //Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &SMUserLogin::OnScriptMessage, this, m_browser->GetId());
 
     // Connect the idle events
     // Bind(wxEVT_IDLE, &SMUserLogin::OnIdle, this);
@@ -182,40 +201,42 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
 
         this->EndModal(wxID_OK);
 
-        wxGetApp().CallAfter([info, this]() {
+        wxGetApp().CallAfter([token, this]() {
             std::string url  = m_userInfoUrl.ToStdString();
             auto http = Http::get(url);
-            std::string token = info->get_user_token();
             http.header("Authorization",token);
             http.on_complete([&](std::string body, unsigned status) {
                     if (status == 200) {
+                        std::string user_id = "";
                         json response = json::parse(body);
-                        wxGetApp().CallAfter([this, response]() {
-                            if (response.count("data")) {
-                                json data = response["data"];
-                                if (data.count("nickname")) {
-                                    wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
-                                    if (wxGetApp().app_config)
-                                        wxGetApp().app_config->set("sm_user_name", data["nickname"].get<std::string>());
-                                }
-                                if (data.count("icon")) {
-                                    wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
-                                    if (wxGetApp().app_config) {
-                                        wxGetApp().app_config->set("sm_user_icon_url", data["icon"].get<std::string>());
-                                        wxGetApp().app_config->save();
-                                    }
-                                }
+                        if (response.count("data")) {
+                            json data = response["data"];
+                            if (data.count("id")) {
+                                wxGetApp().sm_get_userinfo()->set_user_id(std::to_string(data["id"].get<int>()));
+                                user_id = std::to_string(data["id"].get<int>());
                             }
-                        });
+                            if (data.count("nickname")) {
+                                wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
+                            }
+                            if (data.count("icon")) {
+                                wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
+                            }
+                            if (data.count("account")) {
+                                wxGetApp().sm_get_userinfo()->set_user_account(data["account"].get<std::string>());
+                            }
+                        }
+                        string userInfo = BP_LOGIN_USER_ID + std::string(":") + user_id;
+                        sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
+                        wxGetApp().sm_get_userinfo()->set_user_token(token);
+                        wxGetApp().sm_get_userinfo()->set_user_login(true);
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
-                   
+                    std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) + "\n" + error + "\n" + body;
+                    sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
                 })
-                .perform(); 
+                .perform_sync(); 
         });
-        this->RunScript("document.cookie = '';");
-        // load_url(m_home_url);
     }
     UpdateState();
 }
@@ -292,12 +313,11 @@ void SMUserLogin::OnScriptMessage(wxWebViewEvent &evt)
         }
         if (strCmd == "user_login") {
             j["data"]["autotest_token"] = m_AutotestToken;
-            wxGetApp().handle_script_message(j.dump());
             Close();
         }
         else if (strCmd == "get_localhost_url") {
             BOOST_LOG_TRIVIAL(info) << "thirdparty_login: get_localhost_url";
-            wxGetApp().start_http_server();
+            //wxGetApp().start_http_server();
             std::string sequence_id = j["sequence_id"].get<std::string>();
             CallAfter([this, sequence_id] {
                 json ack_j;
@@ -374,42 +394,21 @@ void SMUserLogin::OnRunScriptArrayWithEmulationLevel(wxCommandEvent &WXUNUSED(ev
 /**
  * Callback invoked when a loading error occurs
  */
-void SMUserLogin::OnError(wxWebViewEvent &evt)
+void SMUserLogin::OnError(wxWebViewEvent &event)
 {
-#define WX_ERROR_CASE(type) \
-    case type: category = #type; break;
-
-    wxString category;
-    switch (evt.GetInt()) {
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_CONNECTION);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_CERTIFICATE);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_AUTH);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_SECURITY);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_NOT_FOUND);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_REQUEST);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_USER_CANCELLED);
-        WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_OTHER);
+    auto e = "unknown error";
+    switch (event.GetInt()) {
+    case wxWEBVIEW_NAV_ERR_CONNECTION: e = "wxWEBVIEW_NAV_ERR_CONNECTION"; break;
+    case wxWEBVIEW_NAV_ERR_CERTIFICATE: e = "wxWEBVIEW_NAV_ERR_CERTIFICATE"; break;
+    case wxWEBVIEW_NAV_ERR_AUTH: e = "wxWEBVIEW_NAV_ERR_AUTH"; break;
+    case wxWEBVIEW_NAV_ERR_SECURITY: e = "wxWEBVIEW_NAV_ERR_SECURITY"; break;
+    case wxWEBVIEW_NAV_ERR_NOT_FOUND: e = "wxWEBVIEW_NAV_ERR_NOT_FOUND"; break;
+    case wxWEBVIEW_NAV_ERR_REQUEST: e = "wxWEBVIEW_NAV_ERR_REQUEST"; break;
+    case wxWEBVIEW_NAV_ERR_USER_CANCELLED: e = "wxWEBVIEW_NAV_ERR_USER_CANCELLED"; break;
+    case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
-
-    if( evt.GetInt()==wxWEBVIEW_NAV_ERR_CONNECTION )
-    {
-        if(m_timer!=NULL)
-            m_timer->Stop();
-
-        m_networkOk = false;
-
-        if (m_networkOk==false)
-            ShowErrorPage();
-    }
-
-    // wxLogMessage("%s", "Error; url='" + evt.GetURL() + "', error='" +
-    // category + " (" + evt.GetString() + ")'");
-
-    // Show the info bar with an error
-    // m_info->ShowMessage(_L("An error occurred loading ") + evt.GetURL() +
-    // "\n" + "'" + category + "'", wxICON_ERROR);
-
-    UpdateState();
+    BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":SMUserLogin error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
+    
 }
 
 void SMUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))

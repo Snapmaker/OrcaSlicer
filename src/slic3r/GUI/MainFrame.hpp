@@ -156,6 +156,7 @@ class MainFrame : public DPIFrame
     {
         FileHistory(int max) : wxFileHistory(max) {}
         std::wstring GetThumbnailUrl(int index) const;
+        std::string  GetThumbnailUrl_str(int index) const;
 
         virtual void AddFileToHistory(const wxString &file);
         virtual void RemoveFileFromHistory(size_t i);
@@ -245,7 +246,7 @@ public:
     void update_layout();
 
 	// Called when closing the application and when switching the application language.
-	void 		shutdown();
+	void 		shutdown(bool isRecreate = false);
 
     Plater*     plater() { return m_plater; }
 
@@ -281,6 +282,7 @@ public:
 #endif
     //BBS
     void        show_log_window();
+    void        export_logs();
 
     void        update_ui_from_settings();
     //BBS
@@ -333,8 +335,10 @@ public:
 
     void        add_to_recent_projects(const wxString& filename);
     void        get_recent_projects(boost::property_tree::wptree &tree, int images);
+    void        get_recent_projects(nlohmann::json& data, int images);
     void        open_recent_project(size_t file_id, wxString const & filename);
     void        remove_recent_project(size_t file_id, wxString const &filename);
+    void        sm_remove_recent_project(wxString const& filename);
 
     void        technology_changed();
 
@@ -344,7 +348,11 @@ public:
     void        load_printer_url();
     bool        is_printer_view() const;
     void        refresh_plugin_tips();
-    void RunScript(wxString js);
+    void        RunScript(wxString js);
+
+    void        downloadOpenProject(const std::string& fileUrl, 
+                                    const std::string& fileName, 
+                                    std::string completeFilePath = "");
 
     //SoftFever
     void show_device(bool bBBLPrinter);
@@ -354,6 +362,9 @@ public:
     MaxVolumetricSpeed_Test_Dlg* m_vol_test_dlg { nullptr };
     VFA_Test_Dlg* m_vfa_test_dlg { nullptr };
     Retraction_Test_Dlg* m_retraction_calib_dlg{ nullptr };
+    Input_Shaping_Freq_Test_Dlg* m_IS_freq_calib_dlg{ nullptr };
+    Input_Shaping_Damp_Test_Dlg* m_IS_damp_calib_dlg{ nullptr };
+    Junction_Deviation_Test_Dlg* m_junction_deviation_calib_dlg{ nullptr };
 
     // BBS. Replace title bar and menu bar with top bar.
     BBLTopbar*            m_topbar{ nullptr };
@@ -410,12 +421,7 @@ public:
 };
 
 wxDECLARE_EVENT(EVT_HTTP_ERROR, wxCommandEvent);
-wxDECLARE_EVENT(EVT_USER_LOGIN, wxCommandEvent);
-wxDECLARE_EVENT(EVT_USER_LOGIN_HANDLE, wxCommandEvent);
-wxDECLARE_EVENT(EVT_CHECK_PRIVACY_VER, wxCommandEvent);
-wxDECLARE_EVENT(EVT_CHECK_PRIVACY_SHOW, wxCommandEvent);
 wxDECLARE_EVENT(EVT_SHOW_IP_DIALOG, wxCommandEvent);
-wxDECLARE_EVENT(EVT_SET_SELECTED_MACHINE, wxCommandEvent);
 wxDECLARE_EVENT(EVT_UPDATE_MACHINE_LIST, wxCommandEvent);
 wxDECLARE_EVENT(EVT_UPDATE_PRESET_CB, SimpleEvent);
 

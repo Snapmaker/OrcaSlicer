@@ -97,6 +97,8 @@ public:
     // Whether using bbl's device tab
     bool use_bbl_device_tab();
 
+    bool backup_user_folder() const;
+
     //BBS: project embedded preset logic
     PresetsConfigSubstitutions load_project_embedded_presets(std::vector<Preset*> project_presets, ForwardCompatibilitySubstitutionRule substitution_rule);
     std::vector<Preset*> get_current_project_embedded_presets();
@@ -113,6 +115,7 @@ public:
     // BBS
     void            set_num_filaments(unsigned int n, std::string new_col = "");
     void            set_num_filaments(unsigned int n, std::vector<std::string> new_colors);
+    void            update_num_filaments(unsigned int to_del_filament_id);
     unsigned int sync_ams_list(unsigned int & unknowns);
     //BBS: check whether this is the only edited filament
     bool is_the_only_edited_filament(unsigned int filament_index);
@@ -133,6 +136,8 @@ public:
                                                                                                std::string &      nozzle_temp_max,
                                                                                                std::string &      preset_setting_id);
 
+    Preset *                    get_similar_printer_preset(std::string printer_model, std::string printer_variant);
+    
     PresetCollection            prints;
     PresetCollection            sla_prints;
     PresetCollection            filaments;
@@ -147,6 +152,10 @@ public:
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
+
+    // Snapmaker
+    std::map<int, std::pair<std::string, std::string>> machine_filaments;
+
     // Calibrate
     Preset const * calibrate_printer = nullptr;
     std::set<Preset const *> calibrate_filaments;
@@ -160,7 +169,12 @@ public:
     // and the system profiles will point to the VendorProfile instances owned by PresetBundle::vendors.
     VendorMap                   vendors;
 
-    struct ObsoletePresets {
+    // Orca: for OrcaFilamentLibrary
+    std::map<std::string, DynamicPrintConfig> m_config_maps;
+    std::map<std::string, std::string> m_filament_id_maps;
+
+        struct ObsoletePresets
+    {
         std::vector<std::string> prints;
         std::vector<std::string> sla_prints;
         std::vector<std::string> filaments;
@@ -212,9 +226,9 @@ public:
     // Don't do any config substitutions when loading a system profile, perform and report substitutions otherwise.
     /*std::pair<PresetsConfigSubstitutions, size_t> load_configbundle(
         const std::string &path, LoadConfigBundleAttributes flags, ForwardCompatibilitySubstitutionRule compatibility_rule);*/
-    //BBS: add json related logic
+    //Orca: load config bundle from json, pass the base bundle to support cross vendor inheritance
     std::pair<PresetsConfigSubstitutions, size_t> load_vendor_configs_from_json(
-        const std::string &path, const std::string &vendor_name, LoadConfigBundleAttributes flags, ForwardCompatibilitySubstitutionRule compatibility_rule);
+        const std::string &path, const std::string &vendor_name, LoadConfigBundleAttributes flags, ForwardCompatibilitySubstitutionRule compatibility_rule, const PresetBundle* base_bundle = nullptr);
 
     // Export a config bundle file containing all the presets and the names of the active presets.
     //void                        export_configbundle(const std::string &path, bool export_system_settings = false, bool export_physical_printers = false);
@@ -234,7 +248,7 @@ public:
 
     // Read out the number of extruders from an active printer preset,
     // update size and content of filament_presets.
-    void                        update_multi_material_filament_presets();
+    void                        update_multi_material_filament_presets(size_t to_delete_filament_id = size_t(-1));
 
     // Update the is_compatible flag of all print and filament presets depending on whether they are marked
     // as compatible with the currently selected printer (and print in case of filament presets).
@@ -266,6 +280,8 @@ public:
     static const char* SM_DEFAULT_PRINTER_MODEL;
     static const char* SM_DEFAULT_PRINTER_VARIANT;
     static const char* SM_DEFAULT_FILAMENT;
+    static const char *ORCA_FILAMENT_LIBRARY;
+
 
     static std::array<Preset::Type, 3>  types_list(PrinterTechnology pt) {
         if (pt == ptFFF)
@@ -274,12 +290,7 @@ public:
     }
 
     // Orca: for validation only
-    bool has_errors() const
-    {
-        if (m_errors != 0 || printers.m_errors != 0 || filaments.m_errors != 0 || prints.m_errors != 0)
-            return true;
-        return false;
-    }
+    bool has_errors() const;
 
 private:
     //std::pair<PresetsConfigSubstitutions, std::string> load_system_presets(ForwardCompatibilitySubstitutionRule compatibility_rule);

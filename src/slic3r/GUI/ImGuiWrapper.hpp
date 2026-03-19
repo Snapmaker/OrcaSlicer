@@ -107,7 +107,7 @@ public:
     static ImVec2 calc_text_size(const std::string& text, bool  hide_text_after_double_hash = false, float wrap_width = -1.0f);
     static ImVec2 calc_text_size(const wxString &text, bool  hide_text_after_double_hash = false, float wrap_width = -1.0f);
     ImVec2 calc_button_size(const wxString &text, const ImVec2 &button_size = ImVec2(0, 0)) const;
-
+    float find_widest_text(std::vector<wxString> &text_list);
     ImVec2 get_item_spacing() const;
     float  get_slider_float_height() const;
     const LastSliderStatus& get_last_slider_status() const { return m_last_slider_status; }
@@ -134,6 +134,7 @@ public:
     bool button(const wxString& label, float width, float height);
     bool button(const wxString& label, const ImVec2 &size, bool enable); // default size = ImVec2(0.f, 0.f)
     bool radio_button(const wxString &label, bool active);
+    static ImVec4          to_ImVec4(const ColorRGB &color);
     bool input_double(const std::string &label, const double &value, const std::string &format = "%.3f");
     bool input_double(const wxString &label, const double &value, const std::string &format = "%.3f");
     bool input_vec3(const std::string &label, const Vec3d &value, float width, const std::string &format = "%.3f");
@@ -144,6 +145,8 @@ public:
     static void text(const char *label);
     static void text(const std::string &label);
     static void text(const wxString &label);
+    void warning_text(const char *all_text);
+    void warning_text(const wxString &all_text);
     static void text_colored(const ImVec4& color, const char* label);
     static void text_colored(const ImVec4& color, const std::string& label);
     static void text_colored(const ImVec4& color, const wxString& label);
@@ -323,6 +326,9 @@ public:
     static const ImVec4 COL_BUTTON_ACTIVE;
 
     //BBS add more colors
+    static const ImVec4 COL_RED;
+    static const ImVec4 COL_GREEN;
+    static const ImVec4 COL_BLUE;
     static const ImVec4 COL_BLUE_LIGHT;
     static const ImVec4 COL_GREEN_LIGHT;
     static const ImVec4 COL_HOVER;
@@ -330,6 +336,8 @@ public:
     static const ImVec4 COL_TITLE_BG;
     static const ImVec4 COL_WINDOW_BG;
     static const ImVec4 COL_WINDOW_BG_DARK;
+    static const ImVec4 COL_TOOLBAR_BG;
+    static const ImVec4 COL_TOOLBAR_BG_DARK;
     static const ImVec4 COL_SEPARATOR;
     static const ImVec4 COL_SEPARATOR_DARK;
     static const ImVec4 COL_ORCA;

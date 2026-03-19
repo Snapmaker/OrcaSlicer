@@ -7,6 +7,7 @@
 #include "MsgDialog.hpp"
 #include "format.hpp"
 #include "Widgets/StaticLine.hpp"
+#include "Widgets/LabeledStaticBox.hpp"
 
 #include <utility>
 #include <wx/bookctrl.h>
@@ -257,10 +258,10 @@ void OptionsGroup::activate_line(Line& line)
         ) {
         // BBS: new layout
         const auto h_sizer = new wxBoxSizer(wxHORIZONTAL);
-        sizer->Add(h_sizer, 1, wxEXPAND | wxALL, wxOSX ? 0 : 15);
+        sizer->Add(h_sizer, 1, wxEXPAND | wxALL, (wxOSX && !staticbox) ? 0 : 15);
         if (line.widget != nullptr) {
             // description lines
-            sizer->Add(line.widget(this->ctrl_parent()), 0, wxEXPAND | wxALL, wxOSX ? 0 : 15);
+            sizer->Add(line.widget(this->ctrl_parent()), 0, wxEXPAND | wxALL, (wxOSX && !staticbox) ? 0 : 15);
             return;
         }
         if (!line.get_extra_widgets().empty()) {
@@ -281,9 +282,9 @@ void OptionsGroup::activate_line(Line& line)
 		// BBS: new layout
 		custom_ctrl->SetLabel("");
 		if (is_legend_line)
-			sizer->Add(custom_ctrl, 0, wxEXPAND | wxLEFT, wxOSX ? 0 : 10);
+			sizer->Add(custom_ctrl, 0, wxEXPAND | wxLEFT, (wxOSX && !staticbox) ? 0 : 10);
 		else
-            sizer->Add(custom_ctrl, 0, wxEXPAND | wxALL, wxOSX || !staticbox ? 0 : 5);
+            sizer->Add(custom_ctrl, 0, wxEXPAND | wxALL, !staticbox ? 0 : 5);
     }
 
 	// Set sidetext width for a better alignment of options in line
@@ -303,7 +304,7 @@ void OptionsGroup::activate_line(Line& line)
 
 		// BBS: new layout
 		const auto h_sizer = new wxBoxSizer(wxHORIZONTAL);
-		sizer->Add(h_sizer, 1, wxEXPAND | wxALL, wxOSX ? 0 : 5);
+		sizer->Add(h_sizer, 1, wxEXPAND | wxALL, (wxOSX && !staticbox) ? 0 : 5);
 		if (is_window_field(field))
 			h_sizer->Add(field->getWindow(), 1, wxEXPAND | wxLEFT, option.opt.multiline ? 0 : titleWidth * wxGetApp().em_unit());
 		if (is_sizer_field(field))
@@ -470,14 +471,11 @@ bool OptionsGroup::activate(std::function<void()> throw_if_canceled/* = [](){}*/
 
 	try {
 		if (staticbox) {
-			wxStaticBox * stb = new wxStaticBox(m_parent, wxID_ANY, _(title));
-			if (!wxOSX) stb->SetBackgroundStyle(wxBG_STYLE_PAINT);
-            stb->SetBackgroundColour(m_parent->GetBackgroundColour());
-			stb->SetFont(wxOSX ? wxGetApp().normal_font() : wxGetApp().bold_font());
-			wxGetApp().UpdateDarkUI(stb);
-			// BBS: new layout
-			sizer = new wxStaticBoxSizer(stb, wxVERTICAL);
+            // ORCA match style of wxStaticBox between platforms
+			LabeledStaticBox * stb = new LabeledStaticBox(m_parent, _(title));
+			//wxGetApp().UpdateDarkUI(stb);
 			this->stb = stb;
+			sizer = new wxStaticBoxSizer(stb, wxVERTICAL);
 		}
 		else {
 			// BBS: new layout
@@ -511,7 +509,7 @@ bool OptionsGroup::activate(std::function<void()> throw_if_canceled/* = [](){}*/
 		static_cast<wxFlexGridSizer*>(m_grid_sizer)->SetFlexibleDirection(wxBOTH);
 		static_cast<wxFlexGridSizer*>(m_grid_sizer)->AddGrowableCol(grow_col);
 
-		sizer->Add(m_grid_sizer, 0, wxEXPAND | wxALL, wxOSX || !staticbox ? 0 : 5);
+		sizer->Add(m_grid_sizer, 0, wxEXPAND | wxALL, !staticbox ? 0 : 5);
 
 		// activate lines
 		for (Line& line: m_lines) {
@@ -647,6 +645,10 @@ void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const b
 		const std::string  &opt_key   = itOption.first;
 		int 			    opt_index = itOption.second;
 
+		// SM Orca: Debug logging - track parameter changes from UI
+		BOOST_LOG_TRIVIAL(error) << "ConfigOptionsGroup::on_change_OG: opt_id=" << opt_id
+			<< ", opt_key=" << opt_key << ", opt_index=" << opt_index;
+
 		this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
 	}
 
@@ -729,27 +731,6 @@ void ConfigOptionsGroup::on_kill_focus(const std::string& opt_key)
 
 void ConfigOptionsGroup::reload_config()
 {
-#if 0
-    // BBS
-    auto bed_type_field = this->get_field("bed_type");
-    int default_bed_type = BedType::btPC;
-    if (bed_type_field != nullptr) {
-        auto iter = m_opt_map.find("bed_temperature");
-        const ConfigOptionDef& option = m_options.at("bed_temperature").opt;
-        if (iter != m_opt_map.end()) {
-            for (int bed_type = BedType::btPC; bed_type < BedType::btCount; bed_type++) {
-                int bed_temp = boost::any_cast<int>(config_value("bed_temperature", bed_type, option.gui_flags == "serialized"));
-                if (bed_temp != 0) {
-                    default_bed_type = bed_type;
-                    break;
-                }
-            }
-        }
-
-        bed_type_field->set_value(default_bed_type, false);
-    }
-#endif
-
 	for (auto &kvp : m_opt_map) {
 		// Name of the option field (name of the configuration key, possibly suffixed with '#' and the index of a scalar inside a vector.
 		const std::string &opt_id    = kvp.first;
@@ -758,11 +739,6 @@ void ConfigOptionsGroup::reload_config()
 		// index in the vector option, zero for scalars
 		int 			   opt_index = kvp.second.second;
 		const ConfigOptionDef &option = m_options.at(opt_id).opt;
-#if 0
-        // BBS
-        if ((opt_id == "bed_temperature" || opt_id == "bed_temperature_initial_layer") && bed_type_field != nullptr)
-            opt_index = default_bed_type;
-#endif
 		this->set_value(opt_id, config_value(opt_key, opt_index, option.gui_flags == "serialized"));
 	}
 }
@@ -1255,18 +1231,12 @@ void ExtruderOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const
 
         auto 				itOption = it->second;
         const std::string& opt_key = itOption.first;
+        int opt_index = itOption.second;
 
-        auto opt = m_config->option(opt_key);
-        const ConfigOptionVectorBase* opt_vec = dynamic_cast<const ConfigOptionVectorBase*>(opt);
-        if (opt_vec != nullptr) {
-            for (int opt_index = 0; opt_index < opt_vec->size(); opt_index++) {
-                this->change_opt_value(opt_key, value, opt_index);
-            }
-        }
-        else {
-            int opt_index = itOption.second;
-            this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
-        }
+        // SM Orca: FIX - Only modify the specific extruder's value, not all extruders
+        // The original code iterated through all indices and set them to the same value,
+        // which caused all extruders to have identical values when editing one extruder
+        this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
     }
 
     OptionsGroup::on_change_OG(opt_id, value);

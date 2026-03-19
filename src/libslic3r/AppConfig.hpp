@@ -18,11 +18,62 @@ using namespace nlohmann;
 #define ENV_PRE_HOST		"2"
 #define ENV_PRODUCT_HOST	"3"
 
+#define SETTING_PROJECT_LOAD_BEHAVIOUR "project_load_behaviour"
+#define OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_ALL "load_all"
+#define OPTION_PROJECT_LOAD_BEHAVIOUR_ASK_WHEN_RELEVANT "ask_when_relevant"
+#define OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK "always_ask"
+#define OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_GEOMETRY "load_geometry_only"
+
 #define SUPPORT_DARK_MODE
 //#define _MSW_DARK_MODE
 
 
 namespace Slic3r {
+
+struct DeviceInfo {
+    std::string ip;
+    std::string dev_id;
+    std::string dev_name;
+    std::string model_name;
+    std::string preset_name;  // 关联的打印机预设名称
+    bool        connected;
+	std::string img;
+	std::vector<std::string> nozzle_sizes;
+    std::string              sn;
+    int              protocol;
+    std::string              api_key;
+    std::string              user;
+    std::string              password;
+    std::string              ca;
+    std::string              cert;
+    std::string              key;
+    std::string              clientId;
+    int              port;
+    std::string              link_mode;
+    std::string              userid;
+    std::string              id;
+
+
+    
+    // 用于JSON序列化
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key,
+		user, password, ca, cert, key, clientId, port, link_mode, userid, id)
+};
+
+// Connected LAN mode BambuLab printer
+struct BBLocalMachine
+{
+    std::string dev_name;
+    std::string dev_ip;
+    std::string dev_id; /* serial number */
+    std::string printer_type; /* model_id */
+
+    bool operator==(const BBLocalMachine& other) const
+    {
+        return dev_name == other.dev_name && dev_ip == other.dev_ip && dev_id == other.dev_id && printer_type == other.printer_type;
+    }
+    bool operator!=(const BBLocalMachine& other) const { return !operator==(other); }
+};
 
 class AppConfig
 {
@@ -152,7 +203,8 @@ public:
 	{
 		auto it = m_storage.find(section);
 		if (it != m_storage.end()) {
-			it->second.erase(key);
+            it->second.erase(key);
+            m_dirty = true;
 		}
 	}
 
@@ -194,11 +246,34 @@ public:
             return "";
         return m_printer_settings[printer][name];
     }
-    std::string set_printer_setting(std::string printer, std::string name, std::string value) {
-        return m_printer_settings[printer][name] = value;
-        m_dirty                = true;
+    void set_printer_setting(std::string printer, std::string name, std::string value) {
+        m_printer_settings[printer][name] = value;
+        m_dirty = true;
     }
 
+	const std::map<std::string, BBLocalMachine>& get_local_machines() const { return m_local_machines; }
+	void erase_local_machine(std::string dev_id)
+    {
+        auto it = m_local_machines.find(dev_id);
+        if (it != m_local_machines.end()) {
+            m_local_machines.erase(it);
+            m_dirty = true;
+        }
+    }
+    void update_local_machine(const BBLocalMachine& machine)
+    {
+        auto it = m_local_machines.find(machine.dev_id);
+        if (it != m_local_machines.end()) {
+            const auto& current = it->second;
+            if (machine != current) {
+                m_local_machines[machine.dev_id] = machine;
+                m_dirty = true;
+            }
+        } else {
+            m_local_machines[machine.dev_id] = machine;
+            m_dirty = true;
+        }
+    }
 
     const std::vector<std::string> &get_filament_presets() const { return m_filament_presets; }
     void set_filament_presets(const std::vector<std::string> &filament_presets){
@@ -249,9 +324,9 @@ public:
 	// Get the Slic3r version check url.
 	// This returns a hardcoded string unless it is overriden by "version_check_url" in the ini file.
 	std::string 		version_check_url(bool stable_only = false) const;
-
-	// Get the Orca profile update url.
-	std::string 		profile_update_url() const;
+	std::string 		get_version_upgrade_url(bool stable_only = false);
+	std::string 		get_preset_upgrade_url();
+	std::string 		get_web_resource_upgrade_url();
 
 	// Returns the original Slic3r version found in the ini file before it was overwritten
 	// by the current version
@@ -299,6 +374,16 @@ public:
     static const std::string SECTION_MATERIALS;
     static const std::string SECTION_EMBOSS_STYLE;
 
+    // 添加设备相关的方法
+    void save_device_info(const DeviceInfo& device);
+    void remove_device_info(const std::string& dev_id);
+    std::vector<DeviceInfo> get_devices() const;
+    bool get_device_info(const std::string& dev_id, DeviceInfo& info) const;
+    void                    clear_device_info();
+
+	void clear_filament_extruder_map();
+    std::unordered_map<int, int>& get_filament_extruder_map_ref();
+
 private:
 	template<typename T>
 	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const 
@@ -338,8 +423,16 @@ private:
 
 	std::vector<PrinterCaliInfo>								m_printer_cali_infos;
 
+	std::map<std::string, BBLocalMachine>						m_local_machines;
+
     // 添加耗材名称映射表
     static const std::map<std::string, std::string> filament_name_map;
+
+    // 添加设备信息存储
+    std::vector<DeviceInfo> m_device_list;
+
+	// 耗材喷嘴映射表
+    std::unordered_map<int, int> filament_extruder_map;
 };
 
 } // namespace Slic3r

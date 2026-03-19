@@ -1,0 +1,10 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- 外圈光晕效果 -->
+    <circle cx="8" cy="8" r="7.5" fill="#00AE42" fill-opacity="0.2"/>
+    
+    <!-- 内部实心圆 -->
+    <circle cx="8" cy="8" r="4" fill="#00AE42">
+        <!-- 添加渐变使其看起来更立体 -->
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite"/>
+    </circle>
+</svg>

@@ -285,7 +285,8 @@ AboutDialog::AboutDialog()
     
 
     // SM Beta
-    text_list.push_back(_L("Snapmaker Orca beta is forked from Orca Slicer by SoftFever."));
+    text_list.push_back(_L("Note: The firmware version of SnapmakerU1 should be no less than") + " " + std::string(MIN_FIRM_VER));
+    text_list.push_back(_L("Snapmaker Orca is forked from Orca Slicer by SoftFever."));
     text_list.push_back(_L("OrcaSlicer is forked from Bambu Studio by Bambu Lab."));
     text_list.push_back(_L("Bambu Studio is forked from PrusaSlicer by Prusa Research, which is from Slic3r by Alessandro Ranellucci and the RepRap community. Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill."));
     text_list.push_back(_L("Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."));
@@ -332,7 +333,7 @@ AboutDialog::AboutDialog()
 
     copyright_hor_sizer->Add(copyright_ver_sizer, 0, wxLEFT, FromDIP(20));
 
-    wxStaticText *html_text = new wxStaticText(this, wxID_ANY, "Copyright (C) 2024 Snapmaker All Rights Reserved", wxDefaultPosition, wxDefaultSize);
+    wxStaticText *html_text = new wxStaticText(this, wxID_ANY, "Copyright © 2024-2026 Snapmaker. All rights reserved.", wxDefaultPosition, wxDefaultSize);
     html_text->SetForegroundColour(wxColour(107, 107, 107));
 
     copyright_ver_sizer->Add(html_text, 0, wxALL , 0);

@@ -175,6 +175,7 @@ private:
     bool		m_prevent_list_events = false;		// We use this flag to avoid circular event handling Select()
                                                     // happens to fire a wxEVT_LIST_ITEM_SELECTED on OSX, whose event handler
                                                     // calls this method again and again and again
+    bool        m_prevent_list_manipulation = false;
 
     bool        m_prevent_update_filament_in_config = false; // We use this flag to avoid updating of the extruder value in config
                                                              // during updating of the extruder count.
@@ -220,6 +221,8 @@ public:
     void                create_objects_ctrl();
     // BBS
     void                update_objects_list_filament_column(size_t filaments_count);
+    void                update_objects_list_filament_column_when_delete_filament(size_t filament_id, size_t filaments_count, int replace_filament_id = -1);
+    void                update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id = -1);
     void                update_filament_colors();
     // show/hide "Extruder" column for Objects List
     void                set_filament_column_hidden(const bool hide) const;
@@ -443,7 +446,6 @@ public:
     void set_extruder_for_selected_items(const int extruder);
     wxDataViewItemArray reorder_volumes_and_get_selection(int obj_idx, std::function<bool(const ModelVolume*)> add_to_selection = nullptr);
     void apply_volumes_order();
-    bool has_paint_on_segmentation();
 
     // BBS
     void on_plate_added(PartPlate* part_plate);

@@ -1,10 +1,12 @@
+var VendorPriority = new Array("Snapmaker");
+
 function OnInit()
 {
 	//let strInput=JSON.stringify(cData);
 	//HandleStudio(strInput);
-	
+
 	TranslatePage();
-	
+
 	RequestProfile();
 }
 
@@ -52,21 +54,22 @@ function HandleModelList( pVal )
 		return;
 
     pModel=pVal['model'];
-	
+
 	let nTotal=pModel.length;
 	let ModelHtml={};
+	let VendorHtmlArray={};
 	for(let n=0;n<nTotal;n++)
 	{
 		let OneModel=pModel[n];
-		
+
 		let strVendor=OneModel['vendor'];
-		
+
 		//Add Vendor Html Node
-		if($(".OneVendorBlock[vendor='"+strVendor+"']").length==0)
+		if(!VendorHtmlArray.hasOwnProperty(strVendor))
 		{
 			let sVV=strVendor;
 			if( sVV=="BBL" )
-				sVV="Bambu Lab";			
+				sVV="Bambu Lab";
 			if( sVV=="Custom")
 				sVV="Custom Printer";
 			if( sVV=="Other")
@@ -83,30 +86,48 @@ function HandleModelList( pVal )
 '<div class="PrinterArea">	'+
 '</div>'+
 '</div>';
-			
-			$('#Content').append(HtmlNewVendor);
+
+			VendorHtmlArray[strVendor]=HtmlNewVendor;
 		}
-		
+
 		let ModelName=OneModel['model'];
-		
+
 		//Collect Html Node Nozzel Html
 		if( !ModelHtml.hasOwnProperty(strVendor))
 			ModelHtml[strVendor]='';
-			
+
 		let NozzleArray=OneModel['nozzle_diameter'].split(';');
 		let HtmlNozzel='';
 		for(let m=0;m<NozzleArray.length;m++)
 		{
 			let nNozzel=NozzleArray[m];
-			HtmlNozzel += '<div class="pNozzel TextS2"><input type="checkbox" model="' + OneModel['model'] + '" nozzel="' + nNozzel + '" vendor="' + strVendor +'" onclick="CheckBoxOnclick(this)" /><span>'+nNozzel+'</span><span class="trans" tid="t13">mm nozzle</span></div>';
+			/* ORCA use label tag to allow checkbox to toggle when user ckicked to text */
+			HtmlNozzel += '<label class="pNozzel TextS2"><input type="checkbox" model="' + OneModel['model'] + '" nozzel="' + nNozzel + '" vendor="' + strVendor +'" onclick="CheckBoxOnclick(this)" /><span>'+nNozzel+'</span><span class="trans" tid="t13">mm nozzle</span></label>';
 		}
-		
+
 		let CoverImage=OneModel['cover'];
 		ModelHtml[strVendor]+='<div class="PrinterBlock">'+
 '	<div class="PImg"><img src="'+CoverImage+'"  /></div>'+
-'    <div class="PName">'+OneModel['model']+'</div>'+ HtmlNozzel +'</div>';
+'    <div class="PName">'+OneModel['name']+'</div>'+ HtmlNozzel +'</div>';
 	}
-	
+
+	//Append Vendor blocks in priority order
+	for(let n=0;n<VendorPriority.length;n++)
+	{
+		let strVendor=VendorPriority[n];
+		if(VendorHtmlArray.hasOwnProperty(strVendor))
+		{
+			$('#Content').append(VendorHtmlArray[strVendor]);
+			delete VendorHtmlArray[strVendor];
+		}
+	}
+
+	//Append remaining vendors
+	for(let key in VendorHtmlArray)
+	{
+		$('#Content').append(VendorHtmlArray[key]);
+	}
+
 	//Update Nozzel Html Append
 	for( let key in ModelHtml )
 	{
@@ -216,18 +237,21 @@ function FilterModelList(keyword) {
 
 	let nTotal = pModel.length;
 	let ModelHtml = {};
+	let VendorHtmlArray = {};
+	let kwSplit = keyword.toLowerCase().match(/\S+/g) || [];
 
 	$('#Content').empty();
 	for (let n = 0; n < nTotal; n++) {
 		let OneModel = pModel[n];
 
 		let strVendor = OneModel['vendor'];
-		let ModelName = OneModel['model'];
-		if (ModelName.toLowerCase().indexOf(keyword.toLowerCase()) == -1)
+		let search = (OneModel['name'] + '\0' + strVendor).toLowerCase();
+
+		if (!kwSplit.every(s => search.includes(s)))
 			continue;
 
 		//Add Vendor Html Node
-		if ($(".OneVendorBlock[vendor='" + strVendor + "']").length == 0) {
+		if (!VendorHtmlArray.hasOwnProperty(strVendor)) {
 			let sVV = strVendor;
 			if (sVV == "BBL")
 				sVV = "Bambu Lab";
@@ -248,7 +272,7 @@ function FilterModelList(keyword) {
 				'</div>' +
 				'</div>';
 
-			$('#Content').append(HtmlNewVendor);
+			VendorHtmlArray[strVendor] = HtmlNewVendor;
 		}
 
 		//Collect Html Node Nozzel Html
@@ -259,13 +283,28 @@ function FilterModelList(keyword) {
 		let HtmlNozzel = '';
 		for (let m = 0; m < NozzleArray.length; m++) {
 			let nNozzel = NozzleArray[m];
-			HtmlNozzel += '<div class="pNozzel TextS2"><input type="checkbox" model="' + OneModel['model'] + '" nozzel="' + nNozzel + '" vendor="' + strVendor + '" onclick="CheckBoxOnclick(this)" /><span>' + nNozzel + '</span><span class="trans" tid="t13">mm nozzle</span></div>';
+			/* ORCA use label tag to allow checkbox to toggle when user ckicked to text */
+			HtmlNozzel += '<label class="pNozzel TextS2"><input type="checkbox" model="' + OneModel['model'] + '" nozzel="' + nNozzel + '" vendor="' + strVendor + '" onclick="CheckBoxOnclick(this)" /><span>' + nNozzel + '</span><span class="trans" tid="t13">mm nozzle</span></label>';
 		}
 
 		let CoverImage = OneModel['cover'];
 		ModelHtml[strVendor] += '<div class="PrinterBlock">' +
 			'	<div class="PImg"><img src="' + CoverImage + '"  /></div>' +
-			'    <div class="PName">' + OneModel['model'] + '</div>' + HtmlNozzel + '</div>';
+			'    <div class="PName">' + OneModel['name'] + '</div>' + HtmlNozzel + '</div>';
+	}
+
+	//Append Vendor blocks in priority order
+	for (let n = 0; n < VendorPriority.length; n++) {
+		let strVendor = VendorPriority[n];
+		if (VendorHtmlArray.hasOwnProperty(strVendor)) {
+			$('#Content').append(VendorHtmlArray[strVendor]);
+			delete VendorHtmlArray[strVendor];
+		}
+	}
+
+	//Append remaining vendors
+	for (let key in VendorHtmlArray) {
+		$('#Content').append(VendorHtmlArray[key]);
 	}
 
 	//Update Nozzel Html Append

@@ -14,6 +14,7 @@
 
 namespace Slic3r
 {
+static const double wipe_tower_wall_infill_overlap = 0.0;
 
 inline float align_round(float value, float base)
 {
@@ -667,18 +668,20 @@ WipeTower::WipeTower(const PrintConfig& config, int plate_idx, Vec3d plate_origi
 
 
 
-void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
+void WipeTower::set_extruder(size_t idx, int physical_extruder, const PrintConfig& config)
 {
     //while (m_filpar.size() < idx+1)   // makes sure the required element is in the vector
     m_filpar.push_back(FilamentParameters());
 
+    // SM Orca: 耗材属性使用 idx (filament index)
     m_filpar[idx].material = config.filament_type.get_at(idx);
     // m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
     m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
     // BBS
     m_filpar[idx].is_support = config.filament_is_support.get_at(idx);
-    m_filpar[idx].nozzle_temperature = config.nozzle_temperature.get_at(idx);
-    m_filpar[idx].nozzle_temperature_initial_layer = config.nozzle_temperature_initial_layer.get_at(idx);
+    // SM Orca: 温度是挤出机属性，使用 physical_extruder
+    m_filpar[idx].nozzle_temperature = config.nozzle_temperature.get_at(physical_extruder);
+    m_filpar[idx].nozzle_temperature_initial_layer = config.nozzle_temperature_initial_layer.get_at(physical_extruder);
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
     // Otherwise, the defaults will be used to turn off the SE stuff.
@@ -697,14 +700,19 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
 #endif
 
     m_filpar[idx].filament_area = float((M_PI/4.f) * pow(config.filament_diameter.get_at(idx), 2)); // all extruders are assumed to have the same filament diameter at this point
-    float nozzle_diameter = float(config.nozzle_diameter.get_at(idx));
+    // SM Orca: 喷嘴直径是挤出机属性，使用 physical_extruder
+    float nozzle_diameter = float(config.nozzle_diameter.get_at(physical_extruder));
     m_filpar[idx].nozzle_diameter = nozzle_diameter; // to be used in future with (non-single) multiextruder MM
 
     float max_vol_speed = float(config.filament_max_volumetric_speed.get_at(idx));
     if (max_vol_speed!= 0.f)
         m_filpar[idx].max_e_speed = (max_vol_speed / filament_area());
 
-    m_perimeter_width = nozzle_diameter * Width_To_Nozzle_Ratio; // all extruders are now assumed to have the same diameter
+    // SM Orca: Store per-filament perimeter width and also set the global one
+    // Note: m_perimeter_width gets overwritten with each set_extruder() call
+    // The brim should use m_filpar[0].perimeter_width for consistency
+    m_filpar[idx].perimeter_width = nozzle_diameter * Width_To_Nozzle_Ratio;
+    m_perimeter_width = m_filpar[idx].perimeter_width; // all extruders are now assumed to have the same diameter
     // BBS: remove useless config
 #if 0
     if (m_semm) {
@@ -726,7 +734,7 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
 // Returns gcode to prime the nozzles at the front edge of the print bed.
 std::vector<WipeTower::ToolChangeResult> WipeTower::prime(
 	// print_z of the first layer.
-	float 						initial_layer_print_height, 
+	float 						initial_layer_print_height,
 	// Extruder indices, in the order to be primed. The last extruder will later print the wipe tower brim, print brim and the object.
 	const std::vector<unsigned int> &tools,
 	// If true, the last priming are will be the same as the other priming areas, and the rest of the wipe will be performed inside the wipe tower.
@@ -743,7 +751,7 @@ WipeTower::ToolChangeResult WipeTower::tool_change(size_t tool, bool extrude_per
     float wipe_depth = 0.f;
 	float wipe_length = 0.f;
     float purge_volume = 0.f;
-	
+
 	// Finds this toolchange info
 	if (tool != (unsigned int)(-1))
 	{
@@ -803,12 +811,30 @@ WipeTower::ToolChangeResult WipeTower::tool_change(size_t tool, bool extrude_per
             box_coordinates wt_box(Vec2f(0.f, (m_current_shape == SHAPE_REVERSED) ? m_layer_info->toolchanges_depth() - m_layer_info->depth : 0.f),
                 m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
             // align the perimeter
+
+            Vec2f pos = initial_position;
+            switch (m_cur_layer_id % 4){
+            case 0:
+                pos = wt_box.ld;
+                break;
+            case 1:
+                pos = wt_box.rd;
+                break;
+            case 2:
+                pos = wt_box.ru;
+                break;
+            case 3:
+                pos = wt_box.lu;
+                break;
+            default: break;
+            }
+            writer.set_initial_position(pos, m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
+
             wt_box = align_perimeter(wt_box);
             writer.rectangle(wt_box);
-            writer.travel(initial_position);
         }
 
-        if (first_toolchange_to_nonsoluble) {
+        {
             writer.travel(Vec2f(0, 0));
             writer.travel(initial_position);
         }
@@ -850,7 +876,7 @@ void WipeTower::toolchange_Unload(
 #if 0
 	float xl = cleaning_box.ld.x() + 1.f * m_perimeter_width;
 	float xr = cleaning_box.rd.x() - 1.f * m_perimeter_width;
-	
+
 	const float line_width = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;       // desired ramming line thickness
 	const float y_step = line_width * m_filpar[m_current_tool].ramming_step_multiplicator * m_extra_spacing; // spacing between lines in mm
 
@@ -1109,9 +1135,9 @@ void WipeTower::toolchange_Wipe(
         }
 
         if (m_left_to_right)
-            writer.extrude(xr + 0.25f * m_perimeter_width, writer.y(), wipe_speed);
+            writer.extrude(xr + wipe_tower_wall_infill_overlap * m_perimeter_width, writer.y(), wipe_speed);
         else
-            writer.extrude(xl - 0.25f * m_perimeter_width, writer.y(), wipe_speed);
+            writer.extrude(xl - wipe_tower_wall_infill_overlap * m_perimeter_width, writer.y(), wipe_speed);
 
         // BBS: recover the flow in non-bridging area
         if (need_change_flow) {
@@ -1140,7 +1166,7 @@ void WipeTower::toolchange_Wipe(
     //writer.add_wipe_point(writer.x(), writer.y())
     //      .add_wipe_point(writer.x(), writer.y() - dy)
     //      .add_wipe_point(! m_left_to_right ? m_wipe_tower_width : 0.f, writer.y() - dy);
-    // BBS: modify the wipe_path after toolchange 
+    // BBS: modify the wipe_path after toolchange
     writer.add_wipe_point(writer.x(), writer.y())
           .add_wipe_point(! m_left_to_right ? m_wipe_tower_width : 0.f, writer.y());
 
@@ -1286,7 +1312,10 @@ WipeTower::ToolChangeResult WipeTower::finish_layer(bool extrude_perimeter, bool
     }
 
     // brim chamfer
-    float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
+    // SM Orca: Use first filament's perimeter width for consistent brim spacing
+    // The brim is generated once for the entire wipe tower and should use a consistent spacing
+    float brim_perimeter_width = m_filpar.empty() ? m_perimeter_width : m_filpar[0].perimeter_width;
+    float spacing = brim_perimeter_width - m_layer_height * float(1. - M_PI_4);
     // How many perimeters shall the brim have?
     int loops_num = (m_wipe_tower_brim_width + spacing / 2.f) / spacing;
     const float max_chamfer_width = 3.f;
@@ -1474,7 +1503,7 @@ void WipeTower::plan_tower()
 	m_wipe_tower_depth = 0.f;
 	for (auto& layer : m_plan)
 		layer.depth = 0.f;
-	
+
     float max_depth_for_all = 0;
     for (int layer_index = int(m_plan.size()) - 1; layer_index >= 0; --layer_index)
 	{
@@ -1483,7 +1512,7 @@ void WipeTower::plan_tower()
             this_layer_depth = min_wipe_tower_depth;
 
 		m_plan[layer_index].depth = this_layer_depth;
-		
+
 		if (this_layer_depth > m_wipe_tower_depth - m_perimeter_width)
 			m_wipe_tower_depth = this_layer_depth + m_perimeter_width;
 
@@ -1493,7 +1522,7 @@ void WipeTower::plan_tower()
 				m_plan[i].depth = this_layer_depth;
 		}
 
-        if (m_enable_timelapse_print && layer_index == 0) 
+        if (m_enable_timelapse_print && layer_index == 0)
             max_depth_for_all = m_plan[0].depth;
     }
 
@@ -1601,10 +1630,11 @@ void WipeTower::generate(std::vector<std::vector<WipeTower::ToolChangeResult>> &
         used = 0.f;
 
     m_old_temperature = -1; // reset last temperature written in the gcode
-
+    int index = 0;
     std::vector<WipeTower::ToolChangeResult> layer_result;
 	for (auto layer : m_plan)
 	{
+        m_cur_layer_id = index++;
         set_layer(layer.z, layer.height, 0, false/*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
         // BBS
         //m_internal_rotation += 180.f;
@@ -1628,14 +1658,14 @@ void WipeTower::generate(std::vector<std::vector<WipeTower::ToolChangeResult>> &
             // if there is no toolchange switching to non-soluble, finish layer
             // will be called at the very beginning. That's the last possibility
             // where a nonsoluble tool can be.
-            if (m_enable_timelapse_print) { 
+            if (m_enable_timelapse_print) {
                 timelapse_wall = only_generate_out_wall();
             }
             finish_layer_tcr = finish_layer(m_enable_timelapse_print ? false : true, layer.extruder_fill);
         }
 
         for (int i=0; i<int(layer.tool_changes.size()); ++i) {
-            if (i == 0 && m_enable_timelapse_print) { 
+            if (i == 0 && m_enable_timelapse_print) {
                 timelapse_wall = only_generate_out_wall();
             }
 

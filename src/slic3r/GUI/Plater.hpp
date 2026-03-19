@@ -107,6 +107,15 @@ using ColorEvent = Event<wxColour>;
 wxDECLARE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
 const wxString DEFAULT_PROJECT_NAME = "Untitled";
 
+class SidebarProps
+{
+public:
+    static int TitlebarMargin();
+    static int ContentMargin();
+    static int IconSpacing();
+    static int ElementSpacing();
+};
+
 class Sidebar : public wxPanel
 {
     ConfigOptionMode    m_mode;
@@ -126,7 +135,7 @@ public:
     void create_printer_preset();
     void init_filament_combo(PlaterPresetComboBox **combo, const int filament_idx);
     void remove_unused_filament_combos(const size_t current_extruder_count);
-    void update_all_preset_comboboxes();
+    void update_all_preset_comboboxes(bool reload_printer_view = true);
     //void update_partplate(PartPlateList& list);
     void update_presets(Slic3r::Preset::Type preset_type);
     //BBS
@@ -140,9 +149,13 @@ public:
     void jump_to_option(const std::string& opt_key, Preset::Type type, const std::wstring& category);
     // BBS. Add on_filaments_change() method.
     void on_filaments_change(size_t num_filaments);
+    void change_filament(size_t from_id, size_t to_id);
     void add_filament();
-    void delete_filament();
+    void delete_filament(size_t filament_id  = size_t(-1), int replace_filament_id = -1); // 0 base, -1 means default
     void add_custom_filament(wxColour new_col);
+    void edit_filament();
+
+    void on_filaments_delete(size_t filament_id);
     // BBS
     void on_bed_type_change(BedType bed_type);
     void load_ams_list(std::string const & device, MachineObject* obj);
@@ -151,6 +164,8 @@ public:
     // Orca
     void show_SEMM_buttons(bool bshow);
     void update_dynamic_filament_list();
+
+    void update_nozzle_settings(bool switch_machine = false);
 
     ObjectList*             obj_list();
     ObjectSettings*         obj_settings();
@@ -189,6 +204,7 @@ public:
     std::vector<PlaterPresetComboBox*>&   combos_filament();
     Search::OptionsSearcher&        get_searcher();
     std::string&                    get_search_line();
+    void                            update_printer_thumbnail();
 
 private:
     struct priv;
@@ -197,6 +213,7 @@ private:
     wxBoxSizer* m_scrolled_sizer = nullptr;
     ComboBox* m_bed_type_list = nullptr;
     ScalableButton* connection_btn = nullptr;
+    ScalableButton* machine_connecting_btn = nullptr;
     ScalableButton* ams_btn = nullptr;
 };
 
@@ -257,6 +274,8 @@ public:
     void reload_gcode_from_disk();
     void refresh_print();
 
+    void update_nozzle_settings();
+
     // SoftFever
     void calib_pa(const Calib_Params& params);
     void calib_flowrate(bool is_linear, int pass);
@@ -264,6 +283,9 @@ public:
     void calib_max_vol_speed(const Calib_Params& params);
     void calib_retraction(const Calib_Params& params);
     void calib_VFA(const Calib_Params& params);
+    void calib_input_shaping_freq(const Calib_Params& params);
+    void calib_input_shaping_damp(const Calib_Params& params);
+    void calib_junction_deviation(const Calib_Params& params);
 
     BuildVolume_Type get_build_volume_type() const;
 
@@ -467,6 +489,7 @@ public:
     bool leave_gizmos_stack();
 
     void on_filaments_change(size_t extruders_count);
+    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1);
     // BBS
     void on_bed_type_change(BedType bed_type);
     bool update_filament_colors_in_full_config();
@@ -482,6 +505,9 @@ public:
     void update_menus();
     // BBS
     //void show_action_buttons(const bool is_ready_to_slice) const;
+
+    void             set_global_filament_map(const std::vector<int>& filament_map);
+    std::vector<int> get_global_filament_map() const;
 
     wxString get_project_filename(const wxString& extension = wxEmptyString) const;
     wxString get_export_gcode_filename(const wxString& extension = wxEmptyString, bool only_filename = false, bool export_all = false) const;
@@ -766,6 +792,7 @@ public:
     wxMenu* instance_menu();
     wxMenu* layer_menu();
     wxMenu* multi_selection_menu();
+    wxMenu*     filament_action_menu(int active_filament_id);
     int     GetPlateIndexByRightMenuInLeftUI();
     void    SetPlateIndexByRightMenuInLeftUI(int);
     static bool has_illegal_filename_characters(const wxString& name);
@@ -811,6 +838,7 @@ private:
     int start_next_slice();
 
     void _calib_pa_pattern(const Calib_Params& params);
+    void _calib_pa_pattern_gen_gcode();
     void _calib_pa_tower(const Calib_Params& params);
     void _calib_pa_select_added_objects();
 

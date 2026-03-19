@@ -117,7 +117,7 @@ void resolve_path_from_var(const std::string& var, std::vector<std::string>& pat
     wxString wxdirs;
     if (! wxGetEnv(boost::nowide::widen(var), &wxdirs) || wxdirs.empty() )
         return;
-    std::string dirs = boost::nowide::narrow(wxdirs);
+    std::string dirs = into_u8(wxdirs);
     for (size_t i = dirs.find(':'); i != std::string::npos; i = dirs.find(':'))
     {
         paths.push_back(dirs.substr(0, i));
@@ -302,7 +302,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
             // if all failed - try creating default home folder
             if (i == target_candidates.size() - 1) {
                 // create $HOME/.local/share
-                create_path(boost::nowide::narrow(wxFileName::GetHomeDir()), ".local/share/icons" + icon_theme_dirs);
+                create_path(into_u8(wxFileName::GetHomeDir()), ".local/share/icons" + icon_theme_dirs);
                 // copy icon
                 target_dir_icons = GUI::format("%1%/.local/share",wxFileName::GetHomeDir());
                 std::string icon_path = GUI::format("%1%/images/Snapmaker_Orca.png",resources_dir());
@@ -354,7 +354,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
             // if all failed - try creating default home folder
             if (i == target_candidates.size() - 1) {
                 // create $HOME/.local/share
-                create_path(boost::nowide::narrow(wxFileName::GetHomeDir()), ".local/share/applications");
+                create_path(into_u8(wxFileName::GetHomeDir()), ".local/share/applications");
                 // create desktop file
                 target_dir_desktop = GUI::format("%1%/.local/share",wxFileName::GetHomeDir());
                 std::string path = GUI::format("%1%/applications/Snapmaker_Orca%2%.desktop", target_dir_desktop, version_suffix);
@@ -379,7 +379,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
         return;
     }
     // save path to desktop file
-    app_config->set("desktop_integration_app_path", GUI::format("%1%/applications/Snapmaker_Orca%2%.desktop", target_dir_desktop, version_suffix));
+    app_config->set("desktop_integration_app_path", GUI::format("%1%/applications/Snapmaker Orca%2%.desktop", target_dir_desktop, version_suffix));
 
     // Repeat for Gcode viewer - use same paths as for slicer files
     // Do NOT add gcode viewer desktop file on ChromeOS
@@ -562,7 +562,7 @@ void DesktopIntegrationDialog::perform_downloader_desktop_integration(std::strin
     // if all failed - try creating default home folder
     if (!candidate_found) {
         // create $HOME/.local/share
-        create_path(boost::nowide::narrow(wxFileName::GetHomeDir()), ".local/share/applications");
+        create_path(into_u8(wxFileName::GetHomeDir()), ".local/share/applications");
         // create desktop file
         target_dir_desktop = GUI::format("%1%/.local/share", wxFileName::GetHomeDir());
         std::string path = GUI::format("%1%/applications/Snapmaker_OrcaURLProtocol-%2%%3%.desktop", target_dir_desktop, url_prefix, version_suffix);

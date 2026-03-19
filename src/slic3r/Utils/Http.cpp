@@ -11,6 +11,7 @@
 #include <boost/filesystem.hpp>
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/algorithm/string.hpp>
 
 #include <curl/curl.h>
 
@@ -164,6 +165,17 @@ static int log_trace(CURL* handle, curl_infotype type,
 	return 0;
 }
 
+// Domains that should bypass proxy and connect directly
+// This helps when users have Shadowsocks/Clash/V2Ray proxy enabled
+static const char* NOPROXY_DOMAINS = 
+    "snapmaker.cn,"
+    "snapmaker.com,"
+    "*.snapmaker.cn,"
+    "*.snapmaker.com,"
+    "localhost,"
+    "127.0.0.1,"
+    "::1";
+
 Http::priv::priv(const std::string &url)
 	: curl(::curl_easy_init())
 	, form(nullptr)
@@ -192,6 +204,16 @@ Http::priv::priv(const std::string &url)
 	::curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
 	::curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
 	::curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+
+	// Bypass proxy for Snapmaker domains - this fixes issues when users have
+	// Shadowsocks/Clash/V2Ray or other proxy software enabled
+	// The domains in NOPROXY_DOMAINS will connect directly without going through proxy
+	::curl_easy_setopt(curl, CURLOPT_NOPROXY, NOPROXY_DOMAINS);
+
+	// https://everything.curl.dev/http/post/expect100.html
+	// remove the Expect: header, it will add a second delay to each request,
+	// if the file is uploaded in packets, it will cause the upload time to be longer
+	headerlist = curl_slist_append(headerlist, "Expect:");
 }
 
 Http::priv::~priv()
@@ -599,6 +621,21 @@ Http& Http::ca_file(const std::string &name)
 	return *this;
 }
 
+Http& Http::form_clear() {
+	if (p) {
+        if (p->form) {
+            ::curl_formfree(p->form);
+            p->form     = nullptr;
+            p->form_end = nullptr;
+        }
+		for (auto &f : p->form_files) {
+			f.ifs.close();
+		}
+		p->form_files.clear();
+
+	}
+	return *this;
+}
 
 Http& Http::form_add(const std::string &name, const std::string &contents)
 {
@@ -646,7 +683,7 @@ Http& Http::form_add_file(const std::string &name, const fs::path &path, const s
 }
 
 #ifdef WIN32
-// Tells libcurl to ignore certificate revocation checks in case of missing or offline distribution points for those SSL backends where such behavior is present. 
+// Tells libcurl to ignore certificate revocation checks in case of missing or offline distribution points for those SSL backends where such behavior is present.
 // This option is only supported for Schannel (the native Windows SSL library).
 Http& Http::ssl_revoke_best_effort(bool set)
 {
@@ -784,6 +821,12 @@ void Http::set_extra_headers(std::map<std::string, std::string> headers)
 	extra_headers.swap(headers);
 }
 
+std::map<std::string, std::string> Http::get_extra_headers()
+{
+    std::lock_guard<std::mutex> l(g_mutex);
+    return extra_headers;
+}
+
 bool Http::ca_file_supported()
 {
 	::CURL *curl = ::curl_easy_init();
@@ -861,5 +904,39 @@ std::ostream& operator<<(std::ostream &os, const Http::Progress &progress)
 	return os;
 }
 
+std::string Http::encode_url_path(const std::string& url)
+{
+    size_t protocol_end = url.find("://");
+    if (protocol_end == std::string::npos) {
+        return url;
+    }
+
+    // 找到域名结束的位置（第一个斜杠）
+    size_t domain_end = url.find("/", protocol_end + 3);
+    if (domain_end == std::string::npos) {
+        return url;
+    }
+
+    // 分割 URL
+    std::string protocol_domain = url.substr(0, domain_end);
+    std::string path            = url.substr(domain_end);
+
+    // 只对路径部分进行编码
+    CURL*       curl = curl_easy_init();
+    std::string encoded_path;
+    if (curl) {
+        char* encoded = curl_easy_escape(curl, path.c_str(), path.length());
+        if (encoded) {
+            encoded_path = encoded;
+            curl_free(encoded);
+        }
+        curl_easy_cleanup(curl);
+    }
+
+    // 替换编码后的斜杠为实际的斜杠
+    boost::replace_all(encoded_path, "%2F", "/");
+
+    return protocol_domain + encoded_path;
+}
 
 }

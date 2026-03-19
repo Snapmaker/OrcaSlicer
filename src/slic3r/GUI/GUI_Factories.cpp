@@ -61,7 +61,7 @@ static SettingsFactory::Bundle FREQ_SETTINGS_BUNDLE_FFF =
     { L("Shell"), { "wall_loops", "top_shell_layers", "bottom_shell_layers"} },
     { L("Infill")               , { "sparse_infill_density", "sparse_infill_pattern" } },
     // BBS
-    { L("Support")     , { "enable_support", "support_type", "support_threshold_angle",
+    { L("Support")     , { "enable_support", "support_type", "support_threshold_angle", "support_threshold_overlap",
                                     "support_base_pattern", "support_on_build_plate_only","support_critical_regions_only",
                                     "support_remove_small_overhang",
                                     "support_base_pattern_spacing", "support_expansion"}},
@@ -88,12 +88,13 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
 
                     }},
     { L("Support"), {{"brim_type", "",1},{"brim_width", "",2},{"brim_object_gap", "",3},
-                    {"enable_support", "",4},{"support_type", "",5},{"support_threshold_angle", "",6},{"support_on_build_plate_only", "",7},
+                    {"enable_support", "",4},{"support_type", "",5},{"support_threshold_angle", "",6}, {"support_threshold_overlap", "",6}, {"support_on_build_plate_only", "",7},
                     {"support_filament", "",8},{"support_interface_filament", "",9},{"support_expansion", "",24},{"support_style", "",25},
-                    {"tree_support_brim_width", "",26}, {"tree_support_branch_angle", "",10},{"tree_support_branch_angle_organic","",10}, {"tree_support_wall_count", "",11},//tree support
-                            {"support_top_z_distance", "",13},{"support_bottom_z_distance", "",12},{"support_base_pattern", "",14},{"support_base_pattern_spacing", "",15},
-                            {"support_interface_top_layers", "",16},{"support_interface_bottom_layers", "",17},{"support_interface_spacing", "",18},{"support_bottom_interface_spacing", "",19},
-                            {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27}
+                    {"tree_support_brim_width", "",26}, {"tree_support_branch_angle", "",10},{"tree_support_branch_angle_organic","",10}, {"tree_support_wall_count", "",11},{"tree_support_branch_diameter_angle", "",11},//tree support
+                    {"support_top_z_distance", "",13},{"support_bottom_z_distance", "",12},{"support_base_pattern", "",14},{"support_base_pattern_spacing", "",15},
+                    {"support_interface_top_layers", "",16},{"support_interface_bottom_layers", "",17},{"support_interface_spacing", "",18},{"support_bottom_interface_spacing", "",19},
+                    {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
+                    {"support_object_first_layer_gap","",28}
                             }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}
@@ -101,15 +102,17 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
 
 std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::PART_CATEGORY_SETTINGS=
 {
-    { L("Quality"), {{"ironing_type", "",8},{"ironing_flow", "",9},{"ironing_spacing", "",10},{"bridge_flow", "",11},{"make_overhang_printable", "",11},{"bridge_density", "", 1}
+    { L("Quality"), {{"ironing_type", "",8},{"ironing_flow", "",9},{"ironing_spacing", "",10},{"ironing_inset", "", 11},{"bridge_flow", "",11},{"make_overhang_printable", "",11},{"bridge_density", "", 1}
                     }},
-    { L("Strength"), {{"wall_loops", "",1},{"top_shell_layers", L("Top Solid Layers"),1},{"top_shell_thickness", L("Top Minimum Shell Thickness"),1},
-                    {"bottom_shell_layers", L("Bottom Solid Layers"),1}, {"bottom_shell_thickness", L("Bottom Minimum Shell Thickness"),1},
-                    {"sparse_infill_density", "",1},{"sparse_infill_pattern", "",1},{"infill_anchor", "",1},{"infill_anchor_max", "",1},{"top_surface_pattern", "",1},{"bottom_surface_pattern", "",1}, {"internal_solid_infill_pattern", "",1},
-                    {"infill_combination", "",1}, {"infill_combination_max_layer_height", "",1}, {"infill_wall_overlap", "",1},{"top_bottom_infill_wall_overlap", "",1}, {"solid_infill_direction", "",1}, {"rotate_solid_infill_direction", "",1}, {"infill_direction", "",1}, {"bridge_angle", "",1}, {"minimum_sparse_infill_area", "",1}
+    { L("Strength"), {{"wall_loops", "",1},{"top_shell_layers", L("Top Solid Layers"),1},{"top_shell_thickness", L("Top Minimum Shell Thickness"),1},{"top_surface_density", L("Top Surface Density"),1},
+                    {"bottom_shell_layers", L("Bottom Solid Layers"),1}, {"bottom_shell_thickness", L("Bottom Minimum Shell Thickness"),1},{"bottom_surface_density", L("Bottom Surface Density"),1},
+                    {"sparse_infill_density", "",1},{"sparse_infill_pattern", "",1},{"lateral_lattice_angle_1", "",1},{"lateral_lattice_angle_2", "",1},{"infill_overhang_angle", "",1},{"infill_anchor", "",1},{"infill_anchor_max", "",1},{"top_surface_pattern", "",1},{"bottom_surface_pattern", "",1}, {"internal_solid_infill_pattern", "",1},
+                    {"align_infill_direction_to_model", "", 1},
+                    {"extra_solid_infills", "", 1},
+        {"infill_combination", "",1}, {"infill_combination_max_layer_height", "",1}, {"infill_wall_overlap", "",1},{"top_bottom_infill_wall_overlap", "",1}, {"solid_infill_direction", "",1}, {"infill_direction", "",1}, {"bridge_angle", "",1}, {"internal_bridge_angle", "",1}, {"minimum_sparse_infill_area", "",1}
                     }},
     { L("Speed"), {{"outer_wall_speed", "",1},{"inner_wall_speed", "",2},{"sparse_infill_speed", "",3},{"top_surface_speed", "",4}, {"internal_solid_infill_speed", "",5},
-                    {"enable_overhang_speed", "",6}, {"overhang_speed_classic", "",6}, {"overhang_1_4_speed", "",7}, {"overhang_2_4_speed", "",8}, {"overhang_3_4_speed", "",9}, {"overhang_4_4_speed", "",10},
+                    {"enable_overhang_speed", "",6}, {"overhang_1_4_speed", "",7}, {"overhang_2_4_speed", "",8}, {"overhang_3_4_speed", "",9}, {"overhang_4_4_speed", "",10},
                     {"bridge_speed", "",11}, {"gap_infill_speed", "",12}, {"internal_bridge_speed", "", 13}
                     }}
 };
@@ -150,11 +153,12 @@ std::vector<SimpleSettingData> SettingsFactory::get_visible_options(const std::s
         //Quality
         "layer_height", "initial_layer_print_height", "adaptive_layer_height", "seam_position", "xy_hole_compensation", "xy_contour_compensation", "elefant_foot_compensation", "support_line_width",
         //Support
-        "enable_support", "support_type", "support_threshold_angle", "support_on_build_plate_only", "support_critical_regions_only", "enforce_support_layers",
+        "enable_support", "support_type", "support_threshold_angle", "support_threshold_overlap", "support_on_build_plate_only", "support_critical_regions_only", "enforce_support_layers",
         //tree support
         "tree_support_wall_count",
         //support
         "support_top_z_distance", "support_base_pattern", "support_base_pattern_spacing", "support_interface_top_layers", "support_interface_bottom_layers", "support_interface_spacing", "support_bottom_interface_spacing", "support_object_xy_distance",
+        "support_object_first_layer_gap",
         //adhesion
         "brim_type", "brim_width", "brim_object_gap", "raft_layers"
         };*/
@@ -485,7 +489,7 @@ void MenuFactory::append_menu_item_delete(wxMenu* menu)
         [](wxCommandEvent&) { plater()->remove_selected(); }, "menu_delete", nullptr,
         []() { return plater()->can_delete(); }, m_parent);
 #else
-    append_menu_item(menu, wxID_ANY, _L("Delete") + "\tBackSpace", _L("Delete the selected object"),
+    append_menu_item(menu, wxID_ANY, _L("Delete") + "\t" + _L("Backspace"), _L("Delete the selected object"),
         [](wxCommandEvent&) { plater()->remove_selected(); }, "", nullptr,
         []() { return plater()->can_delete(); }, m_parent);
 #endif
@@ -521,7 +525,7 @@ wxMenu* MenuFactory::append_submenu_add_generic(wxMenu* menu, ModelVolumeType ty
 
     append_menu_item_add_text(sub_menu, type);
     append_menu_item_add_svg(sub_menu, type);
-    
+
     return sub_menu;
 }
 
@@ -529,7 +533,7 @@ wxMenu* MenuFactory::append_submenu_add_generic(wxMenu* menu, ModelVolumeType ty
 wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeType type) {
     auto sub_menu = new wxMenu;
 
-    for (auto &item : {L("Orca Cube"), L("3DBenchy"), L("Autodesk FDM Test"),
+    for (auto &item : {L("Orca Cube"), L("Orca Tolerance Test"), L("3DBenchy"), L("Autodesk FDM Test"),
                        L("Voron Cube"), L("Stanford Bunny"), L("Orca String Hell") }) {
         append_menu_item(
             sub_menu, wxID_ANY, _(item), "",
@@ -539,6 +543,8 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
                 std::string                          file_name     = item;
                 if (file_name == L("Orca Cube"))
                     file_name = "OrcaCube_v2.3mf";
+                else if (file_name == L("Orca Tolerance Test"))
+                    file_name = "OrcaToleranceTest.stl";
                 else if (file_name == L("3DBenchy"))
                     file_name = "3DBenchy.3mf";
                 else if (file_name == L("Autodesk FDM Test"))
@@ -565,7 +571,7 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
                         auto min_width_top_surface = m_config->option<ConfigOptionFloatOrPercent>("min_width_top_surface")->value;
                         if (is_only_one_wall_top && min_width_top_surface > 0) {
                             wxString msg_text = _L("This model features text embossment on the top surface. For optimal results, it is "
-                                                   "advisable to set the 'One Wall Threshold(min_width_top_surface)' "
+                                                   "advisable to set the 'One Wall Threshold (min_width_top_surface)' "
                                                    "to 0 for the 'Only One Wall on Top Surfaces' to work best.\n"
                                                    "Yes - Change these settings automatically\n"
                                                    "No  - Do not change these settings for me");
@@ -617,7 +623,7 @@ static void append_menu_itemm_add_(const wxString& name, GLGizmosManager::EType 
             } else {
                 svg->create_volume(volume_type);
             }
-        }        
+        }
     };
 
     if (type == ModelVolumeType::MODEL_PART || type == ModelVolumeType::NEGATIVE_VOLUME || type == ModelVolumeType::PARAMETER_MODIFIER ||
@@ -891,7 +897,7 @@ void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
     if (sels.Count() == 1) {
         const ModelConfig& config = obj_list()->get_item_config(sels[0]);
         // BBS: set default extruder to 1
-        initial_extruder = config.has("extruder") ? config.extruder() : 1;
+        initial_extruder = config.has("extruder") ? config.extruder() : 0;
     }
 
     for (int i = 0; i <= filaments_cnt; i++)
@@ -1062,10 +1068,10 @@ void MenuFactory::append_menu_items_convert_unit(wxMenu* menu)
     };
 
     std::vector<std::pair<ConversionType, wxString>> items = {
-        {ConversionType::CONV_FROM_INCH , _L("Convert from inch") },
-        {ConversionType::CONV_TO_INCH   , _L("Restore to inch") },
-        {ConversionType::CONV_FROM_METER, _L("Convert from meter") },
-        {ConversionType::CONV_TO_METER  , _L("Restore to meter") } };
+        {ConversionType::CONV_FROM_INCH , _L("Convert from inches") },
+        {ConversionType::CONV_TO_INCH   , _L("Restore to inches") },
+        {ConversionType::CONV_FROM_METER, _L("Convert from meters") },
+        {ConversionType::CONV_TO_METER  , _L("Restore to meters") } };
 
     for (auto item : items) {
         int menu_id = menu->FindItem(item.second);
@@ -1129,7 +1135,7 @@ void MenuFactory::append_menu_item_edit_text(wxMenu *menu)
 
     auto can_edit_text = []() {
         if (plater() == nullptr)
-            return false;        
+            return false;
         const Selection& selection = plater()->get_selection();
         if (selection.volumes_count() != 1)
             return false;
@@ -1139,7 +1145,7 @@ void MenuFactory::append_menu_item_edit_text(wxMenu *menu)
         const ModelVolume *volume = get_model_volume(*gl_volume, selection.get_model()->objects);
         if (volume == nullptr)
             return false;
-        return volume->is_text();        
+        return volume->is_text();
     };
 
     if (menu != &m_text_part_menu) {
@@ -1166,7 +1172,7 @@ void MenuFactory::append_menu_item_edit_svg(wxMenu *menu)
     wxString name = _L("Edit SVG");
     auto can_edit_svg = []() {
         if (plater() == nullptr)
-            return false;        
+            return false;
         const Selection& selection = plater()->get_selection();
         if (selection.volumes_count() != 1)
             return false;
@@ -1176,7 +1182,7 @@ void MenuFactory::append_menu_item_edit_svg(wxMenu *menu)
         const ModelVolume *volume = get_model_volume(*gl_volume, selection.get_model()->objects);
         if (volume == nullptr)
             return false;
-        return volume->is_svg();        
+        return volume->is_svg();
     };
 
     if (menu != &m_svg_part_menu) {
@@ -1296,7 +1302,7 @@ void MenuFactory::create_object_menu()
 
 void MenuFactory::create_extra_object_menu()
 {
-    append_menu_item_fill_bed(&m_object_menu);
+    //append_menu_item_fill_bed(&m_object_menu);
     // Object Clone
     append_menu_item_clone(&m_object_menu);
     // Object Repair
@@ -1462,6 +1468,44 @@ void MenuFactory::create_bbl_assemble_part_menu()
     menu->AppendSeparator();
 }
 
+void MenuFactory::create_filament_action_menu(bool init, int active_filament_menu_id)
+{
+    wxMenu* menu = &m_filament_action_menu;
+
+    if (init) {
+        append_menu_item(
+            menu, wxID_ANY, _L("Edit"), "", [](wxCommandEvent&) { plater()->sidebar().edit_filament(); }, "", nullptr,
+            []() { return true; }, m_parent);
+    }
+
+    if (init) {
+        append_menu_item(
+            menu, wxID_ANY, _L("Delete"), _L("Delete this filament"), [](wxCommandEvent&) { plater()->sidebar().delete_filament(-2); }, "",
+            nullptr, []() { return plater()->sidebar().combos_filament().size() > 1; }, m_parent);
+    }
+
+    const int item_id = menu->FindItem(_L("Merge with"));
+    if (item_id != wxNOT_FOUND)
+        menu->Destroy(item_id);
+
+    wxMenu*                sub_menu      = new wxMenu();
+    std::vector<wxBitmap*> icons         = get_extruder_color_icons(true);
+    int                    filaments_cnt = icons.size();
+    for (int i = 0; i < filaments_cnt; i++) {
+        if (i == active_filament_menu_id)
+            continue;
+
+        auto     preset    = wxGetApp().preset_bundle->filaments.find_preset(wxGetApp().preset_bundle->filament_presets[i]);
+        wxString item_name = preset ? from_u8(preset->label(false)) : wxString::Format(_L("Filament %d"), i + 1);
+
+        append_menu_item(
+            sub_menu, wxID_ANY, item_name, "", [i](wxCommandEvent&) { plater()->sidebar().change_filament(-2, i); }, *icons[i], menu,
+            []() { return true; }, m_parent);
+    }
+    append_submenu(
+        menu, sub_menu, wxID_ANY, _L("Merge with"), "", "", [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
+}
+
 //BBS: add part plate related logic
 void MenuFactory::create_plate_menu()
 {
@@ -1580,6 +1624,8 @@ void MenuFactory::init(wxWindow* parent)
 
     //BBS: add part plate related logic
     create_plate_menu();
+
+    create_filament_action_menu(true, -1);
 
     // create "Instance to Object" menu item
     append_menu_item_instance_to_object(&m_instance_menu);
@@ -1747,6 +1793,11 @@ wxMenu* MenuFactory::plate_menu()
     return &m_plate_menu;
 }
 
+wxMenu* MenuFactory::filament_action_menu(int active_filament_menu_id) {
+    create_filament_action_menu(false, active_filament_menu_id);
+    return &m_filament_action_menu;
+}
+
 wxMenu* MenuFactory::assemble_object_menu()
 {
     wxMenu* menu = new MenuWithSeparators();
@@ -1786,6 +1837,7 @@ void MenuFactory::append_menu_item_clone(wxMenu* menu)
 #ifdef __APPLE__
     static const wxString ctrl = ("Ctrl+");
 #else
+    // FIXME: maybe should be using GUI::shortkey_ctrl_prefix() or equivalent?
     static const wxString ctrl = _L("Ctrl+");
 #endif
     append_menu_item(menu, wxID_ANY, _L("Clone") + "\t" + ctrl + "K", "",
@@ -1920,7 +1972,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
         if (sel_vol && sel_vol->type() == ModelVolumeType::PARAMETER_MODIFIER)
             initial_extruder = config.has("extruder") ? config.extruder() : 0;
         else
-            initial_extruder = config.has("extruder") ? config.extruder() : 1;
+            initial_extruder = config.has("extruder") ? config.extruder() : 0;
     }
 
     // BBS
@@ -1932,7 +1984,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
         }
     }
 
-    for (int i = has_modifier ? 0 : 1; i <= filaments_cnt; i++)
+    for (/*int i = has_modifier ? 0 : 1*/int i  = 0; i <= filaments_cnt; i++)
     {
         // BBS
         //bool is_active_extruder = i == initial_extruder;

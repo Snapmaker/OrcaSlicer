@@ -82,8 +82,8 @@ BonjourDialog::BonjourDialog(wxWindow *parent, Slic3r::PrinterTechnology tech)
 	vsizer->Add(list, 1, wxEXPAND | wxALL, em);
 
 	wxBoxSizer *button_sizer = new wxBoxSizer(wxHORIZONTAL);
-	button_sizer->Add(new wxButton(this, wxID_OK, "OK"), 0, wxALL, em);
-	button_sizer->Add(new wxButton(this, wxID_CANCEL, "Cancel"), 0, wxALL, em);
+	button_sizer->Add(new wxButton(this, wxID_OK, _L("OK")), 0, wxALL, em);
+	button_sizer->Add(new wxButton(this, wxID_CANCEL, _L("Cancel")), 0, wxALL, em);
 	// ^ Note: The Ok/Cancel labels are translated by wxWidgets
 
 	vsizer->Add(button_sizer, 0, wxALIGN_CENTER);
@@ -121,9 +121,9 @@ bool BonjourDialog::show_and_lookup()
 	auto dguard = std::make_shared<LifetimeGuard>(this);
 
 	// Note: More can be done here when we support discovery of hosts other than Octoprint and SL1
-	Bonjour::TxtKeys txt_keys { "version", "model" };
+	Bonjour::TxtKeys txt_keys { "version", "sn" };
 
-    bonjour = Bonjour("octoprint")
+    bonjour = Bonjour("snapmaker")
 		.set_txt_keys(std::move(txt_keys))
 		.set_retries(3)
 		.set_timeout(4)
@@ -260,8 +260,8 @@ IPListDialog::IPListDialog(wxWindow* parent, const wxString& hostname, const std
 	vsizer->Add(m_list, 1, wxEXPAND | wxALL, em);
 
 	wxBoxSizer* button_sizer = new wxBoxSizer(wxHORIZONTAL);
-	button_sizer->Add(new wxButton(this, wxID_OK, "OK"), 0, wxALL, em);
-	button_sizer->Add(new wxButton(this, wxID_CANCEL, "Cancel"), 0, wxALL, em);
+	button_sizer->Add(new wxButton(this, wxID_OK, _L("OK")), 0, wxALL, em);
+	button_sizer->Add(new wxButton(this, wxID_CANCEL, _L("Cancel")), 0, wxALL, em);
 
 	vsizer->Add(button_sizer, 0, wxALIGN_CENTER);
 	SetSizerAndFit(vsizer);

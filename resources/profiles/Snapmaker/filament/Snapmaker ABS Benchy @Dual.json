@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker ABS Benchy@Dual",
+  "name": "Snapmaker ABS Benchy @Dual",
   "setting_id": "3540754477",
   "inherits": "Snapmaker ABS @Dual base",
   "compatible_printers": [
@@ -55,8 +55,5 @@
   ],
   "slow_down_layer_time": [
     "0"
-  ],
-  "default_filament_colour": [
-    "#335BBB"
   ]
 }

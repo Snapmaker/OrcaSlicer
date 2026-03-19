@@ -3,6 +3,7 @@
 
 #include <boost/log/trivial.hpp>
 #include <cfloat>
+#include <sstream>
 
 namespace Slic3r {
 
@@ -77,6 +78,8 @@ static inline void model_volume_list_copy_configs(ModelObject &model_object_dst,
         mv_dst.seam_facets.assign(mv_src.seam_facets);
         assert(mv_dst.mmu_segmentation_facets.id() == mv_src.mmu_segmentation_facets.id());
         mv_dst.mmu_segmentation_facets.assign(mv_src.mmu_segmentation_facets);
+        assert(mv_dst.fuzzy_skin_facets.id() == mv_src.fuzzy_skin_facets.id());
+        mv_dst.fuzzy_skin_facets.assign(mv_src.fuzzy_skin_facets);
         //FIXME what to do with the materials?
         // mv_dst.m_material_id = mv_src.m_material_id;
         ++ i_src;
@@ -214,13 +217,133 @@ static bool custom_per_printz_gcodes_tool_changes_differ(const std::vector<Custo
 	return false;
 }
 
+// For each filament slot, if no override is provided, inherit from the mapped physical extruder
+// IMPORTANT: This function creates a NEW target array with filament_count elements
+static ConfigOption* apply_physical_extruder_defaults(
+    const ConfigOption* filament_overrides,
+    const ConfigOption* extruder_defaults,
+    size_t filament_count,
+    const std::unordered_map<int, int>& filament_extruder_map)
+{
+    if (!extruder_defaults->is_vector())
+        return nullptr;
+
+    auto* extruder_vec = dynamic_cast<const ConfigOptionVectorBase*>(extruder_defaults);
+    const ConfigOptionVectorBase* override_vec = filament_overrides ?
+        dynamic_cast<const ConfigOptionVectorBase*>(filament_overrides) : nullptr;
+
+    if (!extruder_vec)
+        return nullptr;
+
+    // Clone the extruder defaults to create the target
+    auto* target = extruder_defaults->clone();
+    auto* target_vec = dynamic_cast<ConfigOptionVectorBase*>(target);
+    if (!target_vec) {
+        delete target;
+        return nullptr;
+    }
+
+    // Resize target to filament_count
+    target_vec->resize(filament_count);
+
+    for (size_t filament_idx = 0; filament_idx < filament_count; ++filament_idx) {
+        bool has_override = false;
+        if (override_vec && filament_idx < override_vec->size()) {
+            if (override_vec->nullable()) {
+                // Nullable type: use override only if not nil (checkbox is checked)
+                has_override = !override_vec->is_nil(filament_idx);
+            } else {
+                // Non-nullable type: check if the value differs from the default (printer config)
+                // Only if it's different do we consider it a user override
+                // Get the default value from the mapped physical extruder
+                auto map_it = filament_extruder_map.find(filament_idx);
+                int physical_extruder_idx;
+                if (map_it != filament_extruder_map.end()) {
+                    physical_extruder_idx = map_it->second;
+                } else {
+                    // Fallback: use modulo to map filament to physical extruder
+                    // This handles edge cases where the map is incomplete or filament_idx is out of range
+                    size_t physical_extruder_count = extruder_vec->size();
+                    if (physical_extruder_count == 0) {
+                        // Should not happen, but safety check
+                        physical_extruder_idx = 0;
+                    } else {
+                        physical_extruder_idx = (int)filament_idx % (int)physical_extruder_count;
+                    }
+                }
+
+                if (physical_extruder_idx < extruder_vec->size()) {
+                    // Try different types: double, int, bool
+                    auto* override_dbl = dynamic_cast<const ConfigOptionVector<double>*>(override_vec);
+                    auto* extruder_dbl = dynamic_cast<const ConfigOptionVector<double>*>(extruder_vec);
+                    if (override_dbl && extruder_dbl) {
+                        // Compare with the value from the mapped physical extruder
+                        double override_value = override_dbl->get_at(filament_idx);
+                        double default_value = extruder_dbl->get_at(physical_extruder_idx);
+                        // Use override only if value differs from default
+                        has_override = (override_value != default_value);
+
+                    } else {
+                        // Try int type
+                        auto* override_int = dynamic_cast<const ConfigOptionVector<int>*>(override_vec);
+                        auto* extruder_int = dynamic_cast<const ConfigOptionVector<int>*>(extruder_vec);
+                        if (override_int && extruder_int) {
+                            int override_value = override_int->get_at(filament_idx);
+                            int default_value = extruder_int->get_at(physical_extruder_idx);
+                            has_override = (override_value != default_value);
+                        } else {
+                            // Try bool type
+                            auto* override_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(override_vec);
+                            auto* extruder_bool = dynamic_cast<const ConfigOptionVector<unsigned char>*>(extruder_vec);
+                            if (override_bool && extruder_bool) {
+                                unsigned char override_value = override_bool->get_at(filament_idx);
+                                unsigned char default_value = extruder_bool->get_at(physical_extruder_idx);
+                                has_override = (override_value != default_value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!has_override) {
+            // No override: inherit from the mapped physical extruder
+            auto map_it = filament_extruder_map.find(filament_idx);
+            int physical_extruder_idx;
+            if (map_it != filament_extruder_map.end()) {
+                physical_extruder_idx = map_it->second;
+            } else {
+                // Fallback: use modulo to map filament to physical extruder
+                // This handles edge cases where the map is incomplete or filament_idx is out of range
+                size_t physical_extruder_count = extruder_vec->size();
+                if (physical_extruder_count == 0) {
+                    // Should not happen, but safety check
+                    physical_extruder_idx = 0;
+                } else {
+                    physical_extruder_idx = (int)filament_idx % (int)physical_extruder_count;
+                }
+            }
+
+            if (physical_extruder_idx < extruder_vec->size() && filament_idx < target_vec->size()) {
+                target_vec->set_at(extruder_vec, filament_idx, physical_extruder_idx);
+            }
+        } else if (override_vec && filament_idx < override_vec->size()) {
+            // Has override: use the value from filament config
+            target_vec->set_at(override_vec, filament_idx, filament_idx);
+        }
+    }
+
+    return target;
+}
+
 // Collect changes to print config, account for overrides of extruder retract values by filament presets.
 //BBS: add plate index
 static t_config_option_keys print_config_diffs(
     const PrintConfig        &current_config,
     const DynamicPrintConfig &new_full_config,
     DynamicPrintConfig       &filament_overrides,
-    int plate_index)
+    int plate_index,
+    const std::unordered_map<int, int> &filament_extruder_map)
 {
     const std::vector<std::string> &extruder_retract_keys = print_config_def.extruder_retract_keys();
     const std::string               filament_prefix       = "filament_";
@@ -233,26 +356,87 @@ static t_config_option_keys print_config_diffs(
         if (opt_new == nullptr)
             //FIXME This may happen when executing some test cases.
             continue;
-        const ConfigOption *opt_new_filament = std::binary_search(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key) ? new_full_config.option(filament_prefix + opt_key) : nullptr;
-        if (opt_new_filament != nullptr && ! opt_new_filament->is_nil()) {
+
+        auto                iter             = std::find(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key);
+
+        // const ConfigOption *opt_new_filament = std::binary_search(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key) ? new_full_config.option(filament_prefix + opt_key) : nullptr;
+        const ConfigOption* opt_new_filament = (iter == extruder_retract_keys.end()) ? nullptr :
+                                                                                       new_full_config.option(filament_prefix + opt_key);
+
+        bool is_extruder_retract_param = (iter != extruder_retract_keys.end());
+
+        // 1. This is an extruder retract parameter AND
+        // 2. Filament overrides exist AND
+        // 3. Filament-extruder map is not empty (meaning objects are loaded and mapping is initialized)
+        // When user edits printer config directly (without objects loaded or without filament overrides),
+        // we should treat it as a regular config change to ensure UI updates work correctly.
+        bool has_filament_overrides = (opt_new_filament != nullptr && !opt_new_filament->is_nil());
+        bool needs_physical_mapping = is_extruder_retract_param && has_filament_overrides && !filament_extruder_map.empty();
+
+        if (needs_physical_mapping) {
+
+            // This is safe because both opt_old and opt_new should have the same number of physical extruders
+            bool printer_config_changed = (*opt_old != *opt_new);
+
+            auto* override_vec = dynamic_cast<const ConfigOptionVectorBase*>(opt_new_filament);
+            if (override_vec) {
+                BOOST_LOG_TRIVIAL(info) << "print_config_diffs: " << opt_key
+                    << " - filament_override size=" << override_vec->size()
+                    << ", nullable=" << override_vec->nullable();
+            }
+
+            // since we know has_filament_overrides is true at this point
+            if ((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
+                && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)
+                continue;
+
+            // - Check if printer config or filament override changed the effective value
+            // - Only add to print_diff (not filament_overrides) to avoid array size mismatch
+            // The actual filament->extruder mapping is applied later during config usage
+            //
+            // 关键修复：只要打印机配置变化了，就应该添加到 print_diff
+            // 这确保了用户在UI中修改打印机配置时，修改能被正确保存
+            auto opt_copy = opt_new->clone();
+            opt_copy->apply_override(opt_new_filament);
+            if (printer_config_changed || *opt_old != *opt_copy) {
+                print_diff.emplace_back(opt_key);
+                BOOST_LOG_TRIVIAL(info) << "print_config_diffs: " << opt_key
+                    << " - adding to print_diff (printer_changed=" << (printer_config_changed ? "Y" : "N")
+                    << ", effective_changed=" << (*opt_old != *opt_copy ? "Y" : "N") << ")";
+            }
+            delete opt_copy;
+        } else if (opt_new_filament != nullptr && ! opt_new_filament->is_nil()) {
             // An extruder retract override is available at some of the filament presets.
             bool overriden = opt_new->overriden_by(opt_new_filament);
-            if (overriden || *opt_old != *opt_new) {
+
+            bool printer_config_changed = (*opt_old != *opt_new);
+
+            if (overriden || printer_config_changed) {
                 auto opt_copy = opt_new->clone();
                 if (!((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
                     && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)) // ugly code, remove it later if firmware supports
                     opt_copy->apply_override(opt_new_filament);
+
                 bool changed = *opt_old != *opt_copy;
                 if (changed)
                     print_diff.emplace_back(opt_key);
-                if (changed || overriden) {
+
+                // If user directly edited printer config, don't override it with filament values
+                if ((changed || overriden) && !printer_config_changed) {
                     if ((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
                         && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)
                         continue;
                     // filament_overrides will be applied to the placeholder parser, which layers these parameters over full_print_config.
                     filament_overrides.set_key_value(opt_key, opt_copy);
-                } else
+                } else if (changed && printer_config_changed) {
+                    // Only add to print_diff, not to filament_overrides
+                    // This preserves user's printer config edit
+                    BOOST_LOG_TRIVIAL(info) << "print_config_diffs: " << opt_key
+                        << " - printer config changed, not adding to filament_overrides to preserve user edit";
                     delete opt_copy;
+                } else {
+                    delete opt_copy;
+                }
             }
         } else if (*opt_new != *opt_old) {
             //BBS: add plate_index logic for wipe_tower_x/wipe_tower_y
@@ -705,7 +889,6 @@ bool verify_update_print_object_regions(
     ModelVolumePtrs                     model_volumes,
     const PrintRegionConfig            &default_region_config,
     size_t                              num_extruders,
-    const std::vector<unsigned int>    &painting_extruders,
     PrintObjectRegions                 &print_object_regions,
     const std::function<void(const PrintRegionConfig&, const PrintRegionConfig&, const t_config_option_keys&)> &callback_invalidate)
 {
@@ -802,6 +985,29 @@ bool verify_update_print_object_regions(
             }
             print_region_ref_inc(*region.region);
         }
+
+    // Verify and / or update PrintRegions produced by fuzzy skin painting.
+    for (const PrintObjectRegions::LayerRangeRegions &layer_range : print_object_regions.layer_ranges) {
+        for (const PrintObjectRegions::FuzzySkinPaintedRegion &region : layer_range.fuzzy_skin_painted_regions) {
+            const PrintRegion &parent_print_region = *region.parent_print_object_region(layer_range);
+            PrintRegionConfig  cfg                 = parent_print_region.config();
+            cfg.fuzzy_skin.value                   = FuzzySkinType::All;
+            if (cfg != region.region->config()) {
+                // Region configuration changed.
+                if (print_region_ref_cnt(*region.region) == 0) {
+                    // Region is referenced for the first time. Just change its parameters.
+                    // Stop the background process before assigning new configuration to the regions.
+                    t_config_option_keys diff = region.region->config().diff(cfg);
+                    callback_invalidate(region.region->config(), cfg, diff);
+                    region.region->config_apply_only(cfg, diff, false);
+                } else {
+                    // Region is referenced multiple times, thus the region is being split. We need to reslice.
+                    return false;
+                }
+            }
+            print_region_ref_inc(*region.region);
+        }
+    }
 
     // Lastly verify, whether some regions were not merged.
     {
@@ -906,7 +1112,8 @@ static PrintObjectRegions* generate_print_object_regions(
     const Transform3d                           &trafo,
     size_t                                       num_extruders,
     const float                                  xy_contour_compensation,
-    const std::vector<unsigned int>             & painting_extruders)
+    const std::vector<unsigned int>             &painting_extruders,
+    const bool                                   has_painted_fuzzy_skin)
 {
     // Reuse the old object or generate a new one.
     auto out = print_object_regions_old ? std::unique_ptr<PrintObjectRegions>(print_object_regions_old) : std::make_unique<PrintObjectRegions>();
@@ -928,6 +1135,7 @@ static PrintObjectRegions* generate_print_object_regions(
             r.config = range.config;
             r.volume_regions.clear();
             r.painted_regions.clear();
+            r.fuzzy_skin_painted_regions.clear();
         }
     } else {
         out->trafo_bboxes = trafo;
@@ -1009,11 +1217,40 @@ static PrintObjectRegions* generate_print_object_regions(
                     cfg.sparse_infill_filament.value       = painted_extruder_id;
                     layer_range.painted_regions.push_back({ painted_extruder_id, parent_region_id, get_create_region(std::move(cfg))});
                 }
-        // Sort the regions by parent region::print_object_region_id() and extruder_id to help the slicing algorithm when applying MMU segmentation.
+        // Sort the regions by parent region::print_object_region_id() and extruder_id to help the slicing algorithm when applying MM segmentation.
         std::sort(layer_range.painted_regions.begin(), layer_range.painted_regions.end(), [&layer_range](auto &l, auto &r) {
             int lid = layer_range.volume_regions[l.parent].region->print_object_region_id();
             int rid = layer_range.volume_regions[r.parent].region->print_object_region_id();
             return lid < rid || (lid == rid && l.extruder_id < r.extruder_id); });
+    }
+
+    if (has_painted_fuzzy_skin) {
+        using FuzzySkinParentType = PrintObjectRegions::FuzzySkinPaintedRegion::ParentType;
+
+        for (PrintObjectRegions::LayerRangeRegions &layer_range : layer_ranges_regions) {
+            // FuzzySkinPaintedRegion can override different parts of the Layer than PaintedRegions,
+            // so FuzzySkinPaintedRegion has to point to both VolumeRegion and PaintedRegion.
+            for (int parent_volume_region_id = 0; parent_volume_region_id < int(layer_range.volume_regions.size()); ++parent_volume_region_id) {
+                if (const PrintObjectRegions::VolumeRegion &parent_volume_region = layer_range.volume_regions[parent_volume_region_id]; parent_volume_region.model_volume->is_model_part() || parent_volume_region.model_volume->is_modifier()) {
+                    PrintRegionConfig cfg = parent_volume_region.region->config();
+                    cfg.fuzzy_skin.value  = FuzzySkinType::All;
+                    layer_range.fuzzy_skin_painted_regions.push_back({FuzzySkinParentType::VolumeRegion, parent_volume_region_id, get_create_region(std::move(cfg))});
+                }
+            }
+
+            for (int parent_painted_regions_id = 0; parent_painted_regions_id < int(layer_range.painted_regions.size()); ++parent_painted_regions_id) {
+                const PrintObjectRegions::PaintedRegion &parent_painted_region = layer_range.painted_regions[parent_painted_regions_id];
+
+                PrintRegionConfig cfg = parent_painted_region.region->config();
+                cfg.fuzzy_skin.value  = FuzzySkinType::All;
+                layer_range.fuzzy_skin_painted_regions.push_back({FuzzySkinParentType::PaintedRegion, parent_painted_regions_id, get_create_region(std::move(cfg))});
+            }
+
+            // Sort the regions by parent region::print_object_region_id() to help the slicing algorithm when applying fuzzy skin segmentation.
+            std::sort(layer_range.fuzzy_skin_painted_regions.begin(), layer_range.fuzzy_skin_painted_regions.end(), [&layer_range](auto &l, auto &r) {
+                return l.parent_print_object_region_id(layer_range) < r.parent_print_object_region_id(layer_range);
+            });
+        }
     }
 
     return out.release();
@@ -1033,6 +1270,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 	new_full_config.option("printer_settings_id",          true);
     // BBS
     int used_filaments = this->extruders(true).size();
+
+    // 此时 m_objects 和 m_config 是稳定的，可以安全地计算映射
+    // 这确保了 print_config_diffs 中的参数继承机制能正常工作
+    this->initialize_filament_extruder_map();
 
     //new_full_config.normalize_fdm(used_filaments);
     new_full_config.normalize_fdm_1();
@@ -1071,11 +1312,35 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // Find modified keys of the various configs. Resolve overrides extruder retract values by filament profiles.
     DynamicPrintConfig   filament_overrides;
     //BBS: add plate index
-    t_config_option_keys print_diff       = print_config_diffs(m_config, new_full_config, filament_overrides, this->m_plate_index);
+    t_config_option_keys print_diff       = print_config_diffs(m_config, new_full_config, filament_overrides, this->m_plate_index, m_filament_extruder_map);
     t_config_option_keys full_config_diff = full_print_config_diffs(m_full_print_config, new_full_config, this->m_plate_index);
     // Collect changes to object and region configs.
     t_config_option_keys object_diff      = m_default_object_config.diff(new_full_config);
     t_config_option_keys region_diff      = m_default_region_config.diff(new_full_config);
+
+    //
+    // 问题根源：
+    // 1. 回抽参数（如retraction_length）既存在于打印机配置，也可能被耗材覆盖
+    // 2. 当耗材-挤出机映射激活时（m_filament_extruder_map不为空），
+    //    filament_overrides中的回抽值会覆盖用户对打印机配置的直接修改
+    //
+    // 修复策略：
+    // - 当存在耗材-挤出机映射时（说明已加载项目），移除filament_overrides中的所有回抽参数
+    // - 这样用户的打印机配置修改就不会被耗材覆盖值覆盖
+    // - 保留filament_overrides中其他参数的功能不受影响
+    //
+    // 注意：此修复确保用户对打印机挤出机回抽参数的直接编辑拥有最高优先级
+    const std::vector<std::string> &extruder_retract_keys = print_config_def.extruder_retract_keys();
+    bool has_mapping = !m_filament_extruder_map.empty();
+    if (has_mapping) {
+        // 当有映射时，移除所有回抽参数的耗材覆盖，让打印机配置生效
+        for (const std::string &key : extruder_retract_keys) {
+            if (filament_overrides.erase(key)) {
+                BOOST_LOG_TRIVIAL(info) << "Print::apply - Clearing filament override for '" << key
+                    << "' to allow printer config to take effect (filament-extruder mapping active)";
+            }
+        }
+    }
 
     // Do not use the ApplyStatus as we will use the max function when updating apply_status.
     unsigned int apply_status = APPLY_STATUS_UNCHANGED;
@@ -1251,11 +1516,13 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         // Only volume IDs, volume types, transformation matrices and their order are checked, configuration and other parameters are NOT checked.
         bool solid_or_modifier_differ   = model_volume_list_changed(model_object, model_object_new, solid_or_modifier_types) ||
                                           model_mmu_segmentation_data_changed(model_object, model_object_new) ||
-                                          (model_object_new.is_mm_painted() && num_extruders_changed );
+                                          (model_object_new.is_mm_painted() && num_extruders_changed) ||
+                                          model_fuzzy_skin_data_changed(model_object, model_object_new);
         bool supports_differ            = model_volume_list_changed(model_object, model_object_new, ModelVolumeType::SUPPORT_BLOCKER) ||
                                           model_volume_list_changed(model_object, model_object_new, ModelVolumeType::SUPPORT_ENFORCER);
         bool layer_height_ranges_differ = ! layer_height_ranges_equal(model_object.layer_config_ranges, model_object_new.layer_config_ranges, model_object_new.layer_height_profile.empty());
         bool model_origin_translation_differ = model_object.origin_translation != model_object_new.origin_translation;
+        bool brim_points_differ = model_brim_points_data_changed(model_object, model_object_new);
         auto print_objects_range        = print_object_status_db.get_range(model_object);
         // The list actually can be empty if all instances are out of the print bed.
         //assert(print_objects_range.begin() != print_objects_range.end());
@@ -1301,6 +1568,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 }
             } else if (model_custom_seam_data_changed(model_object, model_object_new)) {
                 update_apply_status(this->invalidate_step(psGCodeExport));
+            }
+            if (brim_points_differ) {
+                model_object.brim_points = model_object_new.brim_points;
+                update_apply_status(this->invalidate_all_steps());
             }
         }
         if (! solid_or_modifier_differ) {
@@ -1484,6 +1755,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         m_full_print_config = std::move(new_full_config);
     }
 
+    // 在对象同步后，m_objects 可能已经被重建，需要重新计算映射以反映最新状态
+    // 这确保了后续使用映射表时（如 export_gcode）能获得正确的映射关系
+    this->initialize_filament_extruder_map();
+
     // All regions now have distinct settings.
     // Check whether applying the new region config defaults we would get different regions,
     // update regions or create regions from scratch.
@@ -1536,8 +1811,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 verify_update_print_object_regions(
                     print_object.model_object()->volumes,
                     m_default_region_config,
-                    num_extruders ,
-                    painting_extruders,
+                    num_extruders,
                     *print_object_regions,
                     [it_print_object, it_print_object_end, &update_apply_status](const PrintRegionConfig &old_config, const PrintRegionConfig &new_config, const t_config_option_keys &diff_keys) {
                         for (auto it = it_print_object; it != it_print_object_end; ++it)
@@ -1564,7 +1838,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 model_object_status.print_instances.front().trafo,
                 num_extruders ,
                 print_object.is_mm_painted() ? 0.f : float(print_object.config().xy_contour_compensation.value),
-                painting_extruders);
+                painting_extruders,
+                print_object.is_fuzzy_skin_painted());
         }
         for (auto it = it_print_object; it != it_print_object_end; ++it)
             if ((*it)->m_shared_regions) {

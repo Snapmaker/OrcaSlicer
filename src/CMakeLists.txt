@@ -1,34 +1,25 @@
 cmake_minimum_required(VERSION 3.13)
 project(Snapmaker_Orca-native)
 
-add_subdirectory(build-utils)
-add_subdirectory(admesh)
-# add_subdirectory(avrdude)
-# boost/nowide
-add_subdirectory(boost)
-add_subdirectory(clipper)
-add_subdirectory(clipper2)
-add_subdirectory(miniz)
-add_subdirectory(minilzo)
-add_subdirectory(glu-libtess)
-add_subdirectory(qhull)
-add_subdirectory(Shiny)
-add_subdirectory(semver)
-add_subdirectory(libigl)
-add_subdirectory(hints)
-add_subdirectory(mcut)
-add_subdirectory(qoi)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Adding libnest2d project for bin packing...
-add_subdirectory(libnest2d)
+# Include dev-utils for encoding check and other utilities
+add_subdirectory(dev-utils)
+# add_subdirectory(avrdude)
+# Note: semver and hints are now included from deps_src/CMakeLists.txt
+
+# Add MQTT library
+add_subdirectory(mqtt)
+
+# Set MQTT paths for use in slic3r GUI
+set(PAHO_MQTT_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt" CACHE PATH "Paho MQTT C++ path")
+set(PAHO_MQTT_C_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt/externals/paho-mqtt-c" CACHE PATH "Paho MQTT C path")
 
 add_subdirectory(libslic3r)
 
 if (SLIC3R_GUI)
-    add_subdirectory(imgui)
-    add_subdirectory(imguizmo)
-    add_subdirectory(hidapi)
-    include_directories(hidapi/include)
+    # imgui, imguizmo, and hidapi are now included from deps_src
 
     if(WIN32)
         message(STATUS "WXWIN environment set to: $ENV{WXWIN}")
@@ -59,18 +50,11 @@ if (SLIC3R_GUI)
     include(${wxWidgets_USE_FILE})
 
     find_package(JPEG QUIET)
-    find_package(TIFF QUIET)
 
     string(REGEX MATCH "wxpng" WX_PNG_BUILTIN ${wxWidgets_LIBRARIES})
     if (PNG_FOUND AND NOT WX_PNG_BUILTIN)
         list(FILTER wxWidgets_LIBRARIES EXCLUDE REGEX png)
         list(APPEND wxWidgets_LIBRARIES ${PNG_LIBRARIES})
-    endif ()
-
-    string(REGEX MATCH "wxtiff" WX_TIFF_BUILTIN ${wxWidgets_LIBRARIES})
-    if (TIFF_FOUND AND NOT WX_TIFF_BUILTIN)
-        list(FILTER wxWidgets_LIBRARIES EXCLUDE REGEX tiff)
-        list(APPEND wxWidgets_LIBRARIES ${TIFF_LIBRARIES})
     endif ()
 
     string(REGEX MATCH "wxjpeg" WX_JPEG_BUILTIN ${wxWidgets_LIBRARIES})
@@ -104,7 +88,20 @@ endif()
 
 if(ORCA_TOOLS)
     # Snapmaker_Orca_profile_validator
-    add_executable(Snapmaker_Orca_profile_validator Snapmaker_Orca_profile_validator.cpp)
+    if(APPLE)
+        add_executable(Snapmaker_Orca_profile_validator MACOSX_BUNDLE dev-utils/Snapmaker_Orca_profile_validator.cpp)
+        set_target_properties(Snapmaker_Orca_profile_validator PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker_Orca Profile Validator"
+            MACOSX_BUNDLE_BUNDLE_VERSION "${SLIC3R_VERSION}"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${SLIC3R_VERSION}"
+            MACOSX_BUNDLE_IDENTIFIER "com.Snapmaker.Snapmaker_Orca.profile-validator"
+            MACOSX_BUNDLE_COPYRIGHT "Copyright © 2024-2026 Snapmaker. All rights reserved."
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.Snapmaker.Snapmaker_Orca.profile-validator"
+        )
+    else()
+        add_executable(Snapmaker_Orca_profile_validator dev-utils/Snapmaker_Orca_profile_validator.cpp)
+    endif()
     target_link_libraries(Snapmaker_Orca_profile_validator libslic3r boost_headeronly libcurl OpenSSL::SSL OpenSSL::Crypto)
     target_compile_definitions(Snapmaker_Orca_profile_validator PRIVATE -DBOOST_ALL_NO_LIB -DBOOST_USE_WINAPI_VERSION=0x602 -DBOOST_SYSTEM_USE_UTF8)
     if(WIN32)
@@ -114,17 +111,14 @@ endif()
 
 # Create a slic3r executable
 # Process mainfests for various platforms.
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/msw/Snapmaker_Orca.rc.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc @ONLY)
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/msw/Snapmaker_Orca.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.manifest @ONLY)
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.rc.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.manifest @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
 if (WIN32)
-    add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp BaseException.cpp BaseException.h StackWalker.cpp StackWalker.h)
+    add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp bury_cfg/bury_point.hpp bury_cfg/bury_point.cpp common_func/common_func.hpp common_func/common_func.cpp)
+    target_compile_definitions(Snapmaker_Orca PRIVATE BURY_EXPORTS)
 else ()
-    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
-    if (APPLE)
-        set_target_properties(Snapmaker_Orca PROPERTIES BUNDLE_NAME "Snapmaker Orca" OUTPUT_NAME "Snapmaker Orca")
-        
-    endif()
+    add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp bury_cfg/bury_point.hpp bury_cfg/bury_point.cpp common_func/common_func.hpp common_func/common_func.cpp)
 endif ()
 
 if (MINGW)
@@ -136,15 +130,17 @@ if (NOT WIN32 AND NOT APPLE)
     # Binary name on unix like systems (Linux, Unix)
     set_target_properties(Snapmaker_Orca PROPERTIES OUTPUT_NAME "snapmaker-orca")
     set(SLIC3R_APP_CMD "snapmaker-orca")
-    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/platform/unix/BuildLinuxImage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/BuildLinuxImage.sh @ONLY)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/unix/build_linux_image.sh.in ${CMAKE_CURRENT_BINARY_DIR}/build_linux_image.sh USE_SOURCE_PERMISSIONS @ONLY)
 endif ()
 
 target_link_libraries(Snapmaker_Orca libslic3r cereal::cereal)
+# target_include_directories(OrcaSlicer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/slic3r)
 if (APPLE)
 #    add_compile_options(-stdlib=libc++)
 #    add_definitions(-DBOOST_THREAD_DONT_USE_CHRONO -DBOOST_NO_CXX11_RVALUE_REFERENCES -DBOOST_THREAD_USES_MOVE)
     # -liconv: boost links to libiconv by default
     target_link_libraries(Snapmaker_Orca "-liconv -framework IOKit" "-framework CoreFoundation" "-framework AVFoundation" "-framework AVKit" "-framework CoreMedia" "-framework VideoToolbox" -lc++)
+
 elseif (MSVC)
     # Manifest is provided through Snapmaker_Orca.rc, don't generate your own.
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
@@ -174,6 +170,12 @@ target_link_libraries(Snapmaker_Orca libslic3r_gui)
     #endif ()
 endif ()
 
+# Sentry crash reporting integration
+if (SLIC3R_SENTRY)
+    target_compile_definitions(Snapmaker_Orca PUBLIC SLIC3R_SENTRY)
+    target_link_libraries(Snapmaker_Orca sentry::sentry)
+endif()
+
 # On Windows, a shim application is required to produce a console / non console version of the Slic3r application.
 # Also the shim may load the Mesa software OpenGL renderer if the default renderer does not support OpenGL 2.0 and higher.
 if (WIN32)
@@ -181,7 +183,8 @@ if (WIN32)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -municode")
     endif()
 
-    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
+    
+    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp common_func/common_func.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
     # Generate debug symbols even in release mode.
     if(MSVC)
         target_link_options(Snapmaker_Orca_app_gui PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")
@@ -189,7 +192,15 @@ if (WIN32)
     target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
-    target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly)
+    
+    if (SLIC3R_SENTRY)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry nlohmann_json Snapmaker_Orca)
+    else()
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly nlohmann_json Snapmaker_Orca)
+    endif()
+    if (SLIC3R_SENTRY)
+        target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE SLIC3R_SENTRY)
+    endif()
 endif ()
 
 # Link the resources dir to where Slic3r GUI expects it
@@ -215,20 +226,33 @@ if (WIN32)
             )
         endforeach ()
 
-        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
-        elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_Release)
-        else()
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
-        endif()
+        # For multi-config generators (Visual Studio), copy DLLs for all configurations
+        foreach (CONF ${CMAKE_CONFIGURATION_TYPES})
+            if ("${CONF}" STREQUAL "Debug")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "d" output_dlls_Debug)
+            elseif ("${CONF}" STREQUAL "Release")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_Release)
+            elseif ("${CONF}" STREQUAL "RelWithDebInfo")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_RelWithDebInfo)
+            else()
+                # MinSizeRel or other configs
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" _unused_dlls)
+            endif()
+        endforeach ()
     else ()
+        # Single-config generators (Ninja, Makefiles)
         file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/resources" WIN_RESOURCES_SYMLINK)
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             COMMAND if not exist "${WIN_RESOURCES_SYMLINK}" "(" mklink /J "${WIN_RESOURCES_SYMLINK}" "${SLIC3R_RESOURCES_DIR_WIN}" ")"
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM
         )
+        # Copy DLLs for single-config generators
+        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+        else()
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "${CMAKE_BUILD_TYPE}" "" output_dlls_Release)
+        endif()
     endif ()
 
 
@@ -239,6 +263,20 @@ else ()
             COMMAND ln -sf Snapmaker_Orca snapmaker-orca
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
             VERBATIM)
+        # Copy Sentry crashpad_handler to executable directory for non-bundle builds (e.g., Xcode debugging)
+        if (SLIC3R_SENTRY)
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/bin/crashpad_handler" "$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' 2>/dev/null || true"
+                COMMENT "Copying crashpad_handler for Sentry crash reporting"
+                VERBATIM)
+            # Copy libsentry.dylib to executable directory for non-bundle builds
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/lib/libsentry.dylib" "$<TARGET_FILE_DIR:Snapmaker_Orca>/libsentry.dylib"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/libsentry.dylib' 2>/dev/null || true"
+                COMMENT "Copying libsentry.dylib for Sentry crash reporting"
+                VERBATIM)
+        endif()
     else ()
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
@@ -252,20 +290,46 @@ else ()
         set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/../resources")
     endif ()
     if (CMAKE_MACOSX_BUNDLE)
-        if (CMAKE_CONFIGURATION_TYPES)
-            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/Snapmaker Orca.app/Contents/Resources")
-        else()
-            set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/Snapmaker Orca.app/Contents/Resources")
-        endif()
         set(MACOSX_BUNDLE_ICON_FILE Icon.icns)
-        set(MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca")
-        set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION})
-        set(MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
+        set_target_properties(Snapmaker_Orca PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION}
+            MACOSX_BUNDLE_COPYRIGHT "Copyright © 2024-2026 Snapmaker. All rights reserved.")
+        # Get the bundle directory by going up from the executable to the .app bundle
+        if (CMAKE_CONFIGURATION_TYPES)
+            set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
+        else()
+            set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
+        endif()
+        # Create symlink for macOS bundle Resources directory
+        # Remove existing Resources if it exists (could be from previous build), then create symlink
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND sh -c "rm -rf \"$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources\" || true"
+            COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources"
+            COMMENT "Symlinking the resources directory into the build tree"
+            VERBATIM)
+        # Copy Sentry crashpad_handler to MacOS directory (same directory as executable)
+        if (SLIC3R_SENTRY)
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/bin/crashpad_handler" "$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/crashpad_handler' 2>/dev/null || true"
+                COMMENT "Copying and signing crashpad_handler for Sentry crash reporting"
+                VERBATIM)
+            # Copy libsentry.dylib to Frameworks directory
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_PREFIX_PATH}/lib/libsentry.dylib" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/libsentry.dylib"
+                COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/libsentry.dylib' 2>/dev/null || true"
+                COMMENT "Copying and signing libsentry.dylib for Sentry crash reporting"
+                VERBATIM)
+            # Update the rpath for libsentry.dylib
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true            
+                COMMENT "Updating rpath for libsentry.dylib"
+                VERBATIM)
+        endif()
     endif()
-    add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-        COMMAND ln -sfn "${SLIC3R_RESOURCES_DIR}" "${BIN_RESOURCES_DIR}"
-        COMMENT "Symlinking the resources directory into the build tree"
-        VERBATIM)
 endif ()
 
 # Slic3r binary install target. Default build type is release in case no CMAKE_BUILD_TYPE is provided.

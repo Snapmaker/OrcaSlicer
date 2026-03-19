@@ -10,6 +10,7 @@
 #include <algorithm>
 
 #include "libslic3r/Point.hpp"
+#include "libslic3r/Polygon.hpp"
 #include "WipeTower.hpp"
 namespace Slic3r
 {
@@ -24,7 +25,7 @@ public:
 	static std::pair<double, double> get_wipe_tower_cone_base(double width, double height, double depth, double angle_deg);
 	static std::vector<std::vector<float>> extract_wipe_volumes(const PrintConfig& config);
 
-    
+
     // Construct ToolChangeResult from current state of WipeTower2 and WipeTowerWriter2.
     // WipeTowerWriter2 is moved from !
     WipeTower::ToolChangeResult construct_tcr(WipeTowerWriter2& writer,
@@ -44,7 +45,9 @@ public:
 
 
 	// Set the extruder properties.
-    void set_extruder(size_t idx, const PrintConfig& config);
+    // SM Orca: 添加 physical_extruder 参数，用于支持耗材-挤出机映射
+    // idx: 耗材索引, physical_extruder: 物理挤出机索引
+    void set_extruder(size_t idx, int physical_extruder, const PrintConfig& config);
 
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
@@ -57,7 +60,6 @@ public:
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
-
 
 
 
@@ -80,18 +82,19 @@ public:
 		m_depth_traversed  = 0.f;
         m_current_layer_finished = false;
 
-		
+
         // Advance m_layer_info iterator, making sure we got it right
 		while (!m_plan.empty() && m_layer_info->z < print_z - WT_EPSILON && m_layer_info+1 != m_plan.end())
 			++m_layer_info;
 
-		m_current_shape = (! this->is_first_layer() && m_current_shape == SHAPE_NORMAL) ? SHAPE_REVERSED : SHAPE_NORMAL;
+		//m_current_shape = (! this->is_first_layer() && m_current_shape == SHAPE_NORMAL) ? SHAPE_REVERSED : SHAPE_NORMAL;
+        m_current_shape = SHAPE_NORMAL;
 		if (this->is_first_layer()) {
             m_num_layer_changes = 0;
             m_num_tool_changes 	= 0;
         } else
             ++ m_num_layer_changes;
-		
+
 		// Calculate extrusion flow from desired line width, nozzle diameter, filament diameter and layer_height:
 		m_extrusion_flow = extrusion_flow(layer_height);
 	}
@@ -106,7 +109,7 @@ public:
 	// Returns gcode to prime the nozzles at the front edge of the print bed.
 	std::vector<WipeTower::ToolChangeResult> prime(
 		// print_z of the first layer.
-		float 						first_layer_height, 
+		float 						first_layer_height,
 		// Extruder indices, in the order to be primed. The last extruder will later print the wipe tower brim, print brim and the object.
 		const std::vector<unsigned int> &tools,
 		// If true, the last priming are will be the same as the other priming areas, and the rest of the wipe will be performed inside the wipe tower.
@@ -156,6 +159,10 @@ public:
 		bool			    multitool_ramming;
 		float               multitool_ramming_time = 0.f;
 		float               filament_minimal_purge_on_wipe_tower = 0.f;
+        float               retract_length;
+        float               retract_speed;
+        // SM Orca: Store per-filament perimeter width for correct brim generation
+        float               perimeter_width = 0.f;
     };
 
 private:
@@ -171,10 +178,13 @@ private:
         return m_filpar[0].filament_area; // all extruders are assumed to have the same filament diameter at this point
     }
 
-
+	bool   m_change_pressure         = true;
+    float  m_change_pressure_value   = 0.0;
+    float  m_ramming_width_ratio     = 2.0;
 	bool   m_semm               = true; // Are we using a single extruder multimaterial printer?
 	bool   m_enable_filament_ramming = true;
 	bool   m_is_mk4mmu3         = false;
+	std::string m_printer_model;    // Printer model name (e.g., "Snapmaker U1")
     Vec2f  m_wipe_tower_pos; 			// Left front corner of the wipe tower in mm.
 	float  m_wipe_tower_width; 			// Width of the wipe tower.
 	float  m_wipe_tower_depth 	= 0.f; 	// Depth of the wipe tower
@@ -182,6 +192,8 @@ private:
 	float  m_wipe_tower_cone_angle = 0.f;
     float  m_wipe_tower_brim_width      = 0.f; 	// Width of brim (mm) from config
     float  m_wipe_tower_brim_width_real = 0.f; 	// Width of brim (mm) after generation
+    bool   m_prime_tower_brim_chamfer          = true;   // Enable/disable brim chamfer
+    float  m_prime_tower_brim_chamfer_max_width = 4.f;   // Max chamfer width (mm)
 	float  m_wipe_tower_rotation_angle = 0.f; // Wipe tower rotation angle in degrees (with respect to x axis)
     float  m_internal_rotation  = 0.f;
 	float  m_y_shift			= 0.f;  // y shift passed to writer
@@ -195,6 +207,14 @@ private:
 	float  m_perimeter_speed    = 0.f;
     float  m_first_layer_speed  = 0.f;
     size_t m_first_layer_idx    = size_t(-1);
+
+	int m_wall_type;
+    bool   m_used_fillet                  = true;
+    float  m_rib_width                    = 10;
+    float  m_extra_rib_length             = 0;
+    float  m_rib_length                   = 0;
+
+    bool   m_enable_arc_fitting           = false;
 
 	// G-code generator parameters.
     float           m_cooling_tube_retraction   = 0.f;
@@ -298,7 +318,7 @@ private:
 
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
-		const WipeTower::box_coordinates  &cleaning_box, 
+		const WipeTower::box_coordinates  &cleaning_box,
 		const std::string&	 	current_material,
 		const int 				old_temperature,
 		const int 				new_temperature);
@@ -307,15 +327,33 @@ private:
 		WipeTowerWriter2 &writer,
         const size_t		new_tool,
 		const std::string& 		new_material);
-	
+
 	void toolchange_Load(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box);
-	
+
 	void toolchange_Wipe(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
 		float wipe_volume);
+
+
+    Polygon generate_support_rib_wall(WipeTowerWriter2&                 writer,
+                                      const WipeTower::box_coordinates& wt_box,
+                                      double                 feedrate,
+                                      bool                   first_layer,
+                                      bool                   rib_wall,
+                                      bool                   extrude_perimeter,
+                                      bool                   skip_points);
+
+    Polygon generate_support_cone_wall(
+        WipeTowerWriter2& writer,
+		const WipeTower::box_coordinates& wt_box,
+		double feedrate,
+		bool infill_cone,
+		float spacing);
+
+    Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
 };
 
 
@@ -323,4 +361,4 @@ private:
 
 } // namespace Slic3r
 
-#endif // slic3r_GCode_WipeTower_hpp_ 
+#endif // slic3r_GCode_WipeTower_hpp_

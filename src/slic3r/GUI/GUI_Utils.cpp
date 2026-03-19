@@ -18,6 +18,7 @@
 #include <wx/dcclient.h>
 #include <wx/font.h>
 #include <wx/fontutil.h>
+#include <wx/display.h>
 
 #include "libslic3r/Config.hpp"
 
@@ -329,11 +330,25 @@ bool CheckboxFileDialog::get_checkbox_value() const
 }
 
 
+// GTK requires width >= -1 and height > 0 for gtk_window_resize/set_size_request.
+// Use minimum 100 to avoid 0 or negative dimensions from bad config or Intersect().
+static const int WINDOW_MIN_WIDTH  = 100;
+static const int WINDOW_MIN_HEIGHT = 100;
+
+static void clamp_rect_to_minimum_size(wxRect &rect)
+{
+    if (rect.width < WINDOW_MIN_WIDTH)
+        rect.width = WINDOW_MIN_WIDTH;
+    if (rect.height < WINDOW_MIN_HEIGHT)
+        rect.height = WINDOW_MIN_HEIGHT;
+}
+
 WindowMetrics WindowMetrics::from_window(wxTopLevelWindow *window)
 {
     WindowMetrics res;
     res.rect = window->GetScreenRect();
     res.maximized = window->IsMaximized();
+    clamp_rect_to_minimum_size(res.rect);
     return res;
 }
 
@@ -361,6 +376,7 @@ boost::optional<WindowMetrics> WindowMetrics::deserialize(const std::string &str
 
     WindowMetrics res;
     res.rect = wxRect(metrics[0], metrics[1], metrics[2], metrics[3]);
+    clamp_rect_to_minimum_size(res.rect);
     res.maximized = metrics[4] != 0;
 
     return res;
@@ -369,6 +385,11 @@ boost::optional<WindowMetrics> WindowMetrics::deserialize(const std::string &str
 void WindowMetrics::sanitize_for_display(const wxRect &screen_rect)
 {
     rect = rect.Intersect(screen_rect);
+    // Intersect can yield 0 or negative width/height; GTK asserts on that.
+    clamp_rect_to_minimum_size(rect);
+    // Keep within display (e.g. after monitor change)
+    rect.x = std::max(screen_rect.x, std::min(rect.x, screen_rect.x + screen_rect.width - rect.width));
+    rect.y = std::max(screen_rect.y, std::min(rect.y, screen_rect.y + screen_rect.height - rect.height));
 
     // Prevent the window from going too far towards the right and/or bottom edge
     // It's hardcoded here that the threshold is 80% of the screen size
@@ -480,6 +501,40 @@ bool generate_image(const std::string &filename, wxImage &image, wxSize img_size
 }
 
 std::deque<wxDialog*> dialogStack;
+
+void fit_in_display(wxTopLevelWindow& window, wxSize desired_size)
+{
+    const auto display_size = wxDisplay(window.GetParent()).GetClientArea();
+    if (desired_size.GetWidth() > display_size.GetWidth()) {
+        desired_size.SetWidth(display_size.GetWidth() * 4 / 5);
+    }
+    if (desired_size.GetHeight() > display_size.GetHeight()) {
+        desired_size.SetHeight(display_size.GetHeight() * 4 / 5);
+    }
+
+    window.SetSize(desired_size);
+}
+
+#ifdef __linux__
+// Detect if the application is running inside a debugger.
+// https://stackoverflow.com/a/69842462/3289421
+bool is_debugger_present() {
+    std::ifstream sf("/proc/self/status");
+    std::string s;
+    while (sf >> s)
+    {
+        if (s == "TracerPid:")
+        {
+            int pid;
+            sf >> pid;
+            return pid != 0;
+        }
+        std::getline(sf, s);
+    }
+
+    return false;
+}
+#endif
 
 }
 }

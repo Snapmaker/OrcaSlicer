@@ -2591,15 +2591,52 @@ std::vector<int> normalize_color_match_weights(const std::vector<int> &weights, 
 std::vector<unsigned int> build_color_match_sequence(const std::vector<unsigned int> &ids, const std::vector<int> &weights);
 wxColour blend_sequence_filament_mixer(const std::vector<wxColour> &palette, const std::vector<unsigned int> &sequence);
 
+bool color_match_weights_within_range(const std::vector<int> &weights, int min_component_percent)
+{
+    if (min_component_percent <= 0)
+        return true;
+
+    const int min_allowed = std::clamp(min_component_percent, 0, 50);
+    int active_components = 0;
+    for (const int weight : weights) {
+        if (weight <= 0)
+            continue;
+        ++active_components;
+        if (weight < min_allowed)
+            return false;
+    }
+    return active_components >= 2;
+}
+
+bool color_match_raw_weights_within_range(const std::vector<double> &weights, int min_component_percent)
+{
+    if (min_component_percent <= 0)
+        return true;
+
+    const double min_allowed = double(std::clamp(min_component_percent, 0, 50));
+    int active_components = 0;
+    for (const double weight : weights) {
+        if (weight <= 1e-4)
+            continue;
+        ++active_components;
+        if (weight * 100.0 + 1e-6 < min_allowed)
+            return false;
+    }
+    return active_components >= 2;
+}
+
 MixedColorMatchRecipeResult build_pair_color_match_candidate(const std::vector<wxColour> &palette,
                                                              unsigned int                  component_a,
                                                              unsigned int                  component_b,
-                                                             int                           mix_b_percent)
+                                                             int                           mix_b_percent,
+                                                             int                           min_component_percent = 0)
 {
     MixedColorMatchRecipeResult candidate;
     if (component_a == 0 || component_b == 0 || component_a == component_b)
         return candidate;
     if (component_a > palette.size() || component_b > palette.size())
+        return candidate;
+    if (!color_match_weights_within_range({ 100 - std::clamp(mix_b_percent, 0, 100), std::clamp(mix_b_percent, 0, 100) }, min_component_percent))
         return candidate;
 
     candidate.valid         = true;
@@ -2613,10 +2650,13 @@ MixedColorMatchRecipeResult build_pair_color_match_candidate(const std::vector<w
 
 MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<wxColour>      &palette,
                                                               const std::vector<unsigned int> &ids,
-                                                              const std::vector<int>          &weights)
+                                                              const std::vector<int>          &weights,
+                                                              int                              min_component_percent = 0)
 {
     MixedColorMatchRecipeResult candidate;
     if (ids.size() < 3 || ids.size() != weights.size())
+        return candidate;
+    if (!color_match_weights_within_range(weights, min_component_percent))
         return candidate;
 
     std::vector<std::pair<int, unsigned int>> weighted_ids;
@@ -2745,7 +2785,8 @@ wxBitmap make_color_match_swatch_bitmap(const wxColour &color, const wxSize &siz
     return bmp;
 }
 
-std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::vector<std::string> &physical_colors)
+std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::vector<std::string> &physical_colors,
+                                                                   int                             min_component_percent = 0)
 {
     std::vector<MixedColorMatchRecipeResult> presets;
     if (physical_colors.size() < 2)
@@ -2771,7 +2812,8 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
     for (size_t left_idx = 0; left_idx < palette.size() && presets.size() < k_max_presets; ++left_idx) {
         for (size_t right_idx = left_idx + 1; right_idx < palette.size() && presets.size() < k_max_presets; ++right_idx) {
             for (const int mix_b_percent : pair_ratios) {
-                add_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent));
+                add_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1),
+                                                               mix_b_percent, min_component_percent));
                 if (presets.size() >= k_max_presets)
                     break;
             }
@@ -2788,11 +2830,11 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
                     unsigned(second_idx + 1),
                     unsigned(third_idx + 1)
                 };
-                add_candidate(build_multi_color_match_candidate(palette, ids, equal_triple_weights));
+                add_candidate(build_multi_color_match_candidate(palette, ids, equal_triple_weights, min_component_percent));
                 for (size_t dominant_idx = 0; dominant_idx < ids.size() && presets.size() < k_max_presets; ++dominant_idx) {
                     std::vector<int> dominant_weights(ids.size(), 25);
                     dominant_weights[dominant_idx] = 50;
-                    add_candidate(build_multi_color_match_candidate(palette, ids, dominant_weights));
+                    add_candidate(build_multi_color_match_candidate(palette, ids, dominant_weights, min_component_percent));
                 }
             }
         }
@@ -2806,7 +2848,8 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
                     add_candidate(build_multi_color_match_candidate(
                         palette,
                         { unsigned(first_idx + 1), unsigned(second_idx + 1), unsigned(third_idx + 1), unsigned(fourth_idx + 1) },
-                        { 25, 25, 25, 25 }));
+                        { 25, 25, 25, 25 },
+                        min_component_percent));
                 }
             }
         }
@@ -2905,7 +2948,9 @@ wxColour blend_sequence_filament_mixer(const std::vector<wxColour> &palette, con
     return blend_multi_filament_mixer(colors, weights);
 }
 
-MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string> &physical_colors, const wxColour &target_color)
+MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string> &physical_colors,
+                                                          const wxColour                 &target_color,
+                                                          int                             min_component_percent = 0)
 {
     MixedColorMatchRecipeResult best;
     if (!target_color.IsOk() || physical_colors.size() < 2)
@@ -2924,10 +2969,14 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
             best = std::move(candidate);
     };
 
+    const int loop_min_weight = std::max(1, std::clamp(min_component_percent, 0, 50));
+    const int loop_max_pair_weight = 100 - loop_min_weight;
+
     for (size_t left_idx = 0; left_idx < palette.size(); ++left_idx) {
         for (size_t right_idx = left_idx + 1; right_idx < palette.size(); ++right_idx) {
-            for (int mix_b_percent = 1; mix_b_percent < 100; ++mix_b_percent)
-                consider_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent));
+            for (int mix_b_percent = loop_min_weight; mix_b_percent <= loop_max_pair_weight; ++mix_b_percent)
+                consider_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1),
+                                                                    mix_b_percent, min_component_percent));
         }
     }
 
@@ -2980,10 +3029,11 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                 if (std::any_of(ids.begin(), ids.end(), [](unsigned int filament_id) { return filament_id == 0 || filament_id > 9; }))
                     continue;
 
-                for (int weight_a = 1; weight_a <= 98; ++weight_a) {
-                    for (int weight_b = 1; weight_a + weight_b <= 99; ++weight_b) {
+                for (int weight_a = loop_min_weight; weight_a <= 100 - 2 * loop_min_weight; ++weight_a) {
+                    for (int weight_b = loop_min_weight; weight_a + weight_b <= 100 - loop_min_weight; ++weight_b) {
                         const int weight_c = 100 - weight_a - weight_b;
-                        consider_candidate(build_multi_color_match_candidate(palette, ids, { weight_a, weight_b, weight_c }));
+                        consider_candidate(build_multi_color_match_candidate(palette, ids, { weight_a, weight_b, weight_c },
+                                                                            min_component_percent));
                     }
                 }
             }
@@ -3007,11 +3057,12 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                         quad_pool[fourth_idx]
                     };
 
-                    for (int weight_a = 1; weight_a <= 97; ++weight_a) {
-                        for (int weight_b = 1; weight_a + weight_b <= 98; ++weight_b) {
-                            for (int weight_c = 1; weight_a + weight_b + weight_c <= 99; ++weight_c) {
+                    for (int weight_a = loop_min_weight; weight_a <= 100 - 3 * loop_min_weight; ++weight_a) {
+                        for (int weight_b = loop_min_weight; weight_a + weight_b <= 100 - 2 * loop_min_weight; ++weight_b) {
+                            for (int weight_c = loop_min_weight; weight_a + weight_b + weight_c <= 100 - loop_min_weight; ++weight_c) {
                                 const int weight_d = 100 - weight_a - weight_b - weight_c;
-                                consider_candidate(build_multi_color_match_candidate(palette, ids, { weight_a, weight_b, weight_c, weight_d }));
+                                consider_candidate(build_multi_color_match_candidate(
+                                    palette, ids, { weight_a, weight_b, weight_c, weight_d }, min_component_percent));
                             }
                         }
                     }
@@ -3086,6 +3137,16 @@ public:
         Refresh();
         if (notify)
             emit_changed();
+    }
+
+    void set_min_component_percent(int min_component_percent)
+    {
+        const int clamped = std::clamp(min_component_percent, 0, 50);
+        if (m_min_component_percent == clamped)
+            return;
+        m_min_component_percent = clamped;
+        invalidate_cached_bitmap();
+        Refresh();
     }
 
 private:
@@ -3516,6 +3577,13 @@ private:
             m_render_timer.StartOnce(80);
     }
 
+    void invalidate_cached_bitmap()
+    {
+        m_cached_bitmap = wxBitmap();
+        m_cached_bitmap_size = wxSize();
+        m_cached_background = wxColour();
+    }
+
     void render_cached_bitmap(const wxSize &size, const wxColour &background)
     {
         const int width = size.GetWidth();
@@ -3535,9 +3603,17 @@ private:
                     if (geometry_mode() == GeometryMode::Triangle || geometry_mode() == GeometryMode::TriangleWithCenter)
                         paint_pixel = point_in_triangle(make_vec(normalized_x, normalized_y), simplex_vertices());
 
-                    const wxColour color = paint_pixel ?
-                        blend_multi_filament_mixer(m_colors, raw_weights_from_pos(normalized_x, normalized_y)) :
-                        background;
+                    const std::vector<double> raw_weights = raw_weights_from_pos(normalized_x, normalized_y);
+                    wxColour color = paint_pixel ? blend_multi_filament_mixer(m_colors, raw_weights) : background;
+                    if (paint_pixel && m_min_component_percent > 0 &&
+                        !color_match_raw_weights_within_range(raw_weights, m_min_component_percent)) {
+                        const bool stripe = (((x + y) / 8) % 2) == 0;
+                        const double factor = stripe ? 0.12 : 0.38;
+                        color = wxColour(
+                            unsigned char(std::clamp(int(std::lround(double(color.Red()) * factor)), 0, 255)),
+                            unsigned char(std::clamp(int(std::lround(double(color.Green()) * factor)), 0, 255)),
+                            unsigned char(std::clamp(int(std::lround(double(color.Blue()) * factor)), 0, 255)));
+                    }
                     data[data_idx + 0] = color.Red();
                     data[data_idx + 1] = color.Green();
                     data[data_idx + 2] = color.Blue();
@@ -3686,6 +3762,7 @@ private:
     wxSize                    m_cached_bitmap_size;
     wxColour                  m_cached_background;
     wxTimer                   m_render_timer;
+    int                       m_min_component_percent { 0 };
     double                    m_cursor_x { 0.5 };
     double                    m_cursor_y { 0.5 };
     bool                      m_dragging { false };
@@ -3752,6 +3829,16 @@ public:
         hex_row->Add(m_classic_picker, 0, wxALIGN_CENTER_VERTICAL);
         root->Add(hex_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
 
+        auto *range_row = new wxBoxSizer(wxHORIZONTAL);
+        range_row->Add(new wxStaticText(this, wxID_ANY, _L("Range")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        m_range_slider = new wxSlider(this, wxID_ANY, m_min_component_percent, 0, 50);
+        m_range_slider->SetToolTip(_L("Minimum percent for each participating color. Higher values block highly skewed mixes."));
+        range_row->Add(m_range_slider, 1, wxALIGN_CENTER_VERTICAL);
+        range_row->AddSpacer(FromDIP(8));
+        m_range_value = new wxStaticText(this, wxID_ANY, wxEmptyString);
+        range_row->Add(m_range_value, 0, wxALIGN_CENTER_VERTICAL);
+        root->Add(range_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
+
         auto *summary_grid = new wxFlexGridSizer(2, FromDIP(8), FromDIP(8));
         summary_grid->AddGrowableCol(1, 1);
 
@@ -3777,29 +3864,14 @@ public:
         m_delta_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
         root->Add(m_delta_label, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
 
-        m_presets = build_color_match_presets(m_physical_colors);
-        if (!m_presets.empty()) {
-            auto *presets_label = new wxStaticText(this, wxID_ANY, _L("Exact preset mixes"));
-            root->Add(presets_label, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
-
-            auto *presets_host = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(96)),
-                                                      wxVSCROLL | wxBORDER_SIMPLE);
-            presets_host->SetScrollRate(FromDIP(6), FromDIP(6));
-            auto *presets_sizer = new wxWrapSizer(wxHORIZONTAL, wxWRAPSIZER_DEFAULT_FLAGS);
-            for (const MixedColorMatchRecipeResult &preset : m_presets) {
-                auto *button = new wxBitmapButton(presets_host, wxID_ANY,
-                                                  make_color_match_swatch_bitmap(preset.preview_color, wxSize(FromDIP(30), FromDIP(20))),
-                                                  wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-                const wxString tooltip = from_u8(summarize_color_match_recipe(preset)) + "\n" +
-                    normalize_color_match_hex(preset.preview_color.GetAsString(wxC2S_HTML_SYNTAX));
-                button->SetToolTip(tooltip);
-                button->Bind(wxEVT_BUTTON, [this, preset](wxCommandEvent &) { apply_preset(preset); });
-                presets_sizer->Add(button, 0, wxALL, FromDIP(2));
-            }
-            presets_host->SetSizer(presets_sizer);
-            presets_host->FitInside();
-            root->Add(presets_host, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
-        }
+        m_presets_label = new wxStaticText(this, wxID_ANY, _L("Exact preset mixes"));
+        root->Add(m_presets_label, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
+        m_presets_host = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(96)),
+                                              wxVSCROLL | wxBORDER_SIMPLE);
+        m_presets_host->SetScrollRate(FromDIP(6), FromDIP(6));
+        m_presets_sizer = new wxWrapSizer(wxHORIZONTAL, wxWRAPSIZER_DEFAULT_FLAGS);
+        m_presets_host->SetSizer(m_presets_sizer);
+        root->Add(m_presets_host, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
 
         m_error_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
         m_error_label->SetForegroundColour(wxColour(196, 67, 63));
@@ -3825,6 +3897,10 @@ public:
 
         m_selected_target = safe_initial;
         m_requested_target = safe_initial;
+        if (m_color_map)
+            m_color_map->set_min_component_percent(m_min_component_percent);
+        update_range_label();
+        rebuild_presets_ui();
         sync_inputs_to_requested();
         update_dialog_state();
 
@@ -3850,6 +3926,16 @@ public:
                 if (m_syncing_inputs)
                     return;
                 apply_requested_target(evt.GetColour());
+            });
+        }
+        if (m_range_slider) {
+            m_range_slider->Bind(wxEVT_SLIDER, [this](wxCommandEvent &) {
+                m_min_component_percent = m_range_slider ? std::clamp(m_range_slider->GetValue(), 0, 50) : m_min_component_percent;
+                update_range_label();
+                if (m_color_map)
+                    m_color_map->set_min_component_percent(m_min_component_percent);
+                rebuild_presets_ui();
+                request_recipe_match(m_requested_target, true, _L("Matching closest supported mix..."));
             });
         }
 
@@ -3896,6 +3982,46 @@ public:
     }
 
 private:
+    void update_range_label()
+    {
+        if (m_range_value)
+            m_range_value->SetLabel(wxString::Format(_L("%d%% min"), m_min_component_percent));
+    }
+
+    void rebuild_presets_ui()
+    {
+        if (!m_presets_host || !m_presets_sizer || !m_presets_label)
+            return;
+
+        m_presets = build_color_match_presets(m_physical_colors, m_min_component_percent);
+
+        m_presets_host->Freeze();
+        while (m_presets_sizer->GetItemCount() > 0) {
+            wxSizerItem *item = m_presets_sizer->GetItem(size_t(0));
+            wxWindow *window = item ? item->GetWindow() : nullptr;
+            m_presets_sizer->Remove(0);
+            if (window)
+                window->Destroy();
+        }
+
+        for (const MixedColorMatchRecipeResult &preset : m_presets) {
+            auto *button = new wxBitmapButton(m_presets_host, wxID_ANY,
+                                              make_color_match_swatch_bitmap(preset.preview_color, wxSize(FromDIP(30), FromDIP(20))),
+                                              wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+            const wxString tooltip = from_u8(summarize_color_match_recipe(preset)) + "\n" +
+                normalize_color_match_hex(preset.preview_color.GetAsString(wxC2S_HTML_SYNTAX));
+            button->SetToolTip(tooltip);
+            button->Bind(wxEVT_BUTTON, [this, preset](wxCommandEvent &) { apply_preset(preset); });
+            m_presets_sizer->Add(button, 0, wxALL, FromDIP(2));
+        }
+
+        m_presets_host->FitInside();
+        const bool show_presets = !m_presets.empty();
+        m_presets_label->Show(show_presets);
+        m_presets_host->Show(show_presets);
+        m_presets_host->Thaw();
+    }
+
     void set_recipe_loading(bool loading, const wxString &message)
     {
         m_recipe_loading = loading;
@@ -3981,9 +4107,10 @@ private:
     void launch_recipe_match(size_t request_token, const wxColour &requested_target)
     {
         const std::vector<std::string> physical_colors = m_physical_colors;
+        const int min_component_percent = m_min_component_percent;
         wxWeakRef<wxWindow> weak_self(this);
-        std::thread([weak_self, physical_colors, requested_target, request_token]() {
-            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target);
+        std::thread([weak_self, physical_colors, requested_target, request_token, min_component_percent]() {
+            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target, min_component_percent);
             wxGetApp().CallAfter([weak_self, requested_target, recipe = std::move(recipe), request_token]() mutable {
                 if (!weak_self)
                     return;
@@ -4081,7 +4208,7 @@ private:
             if (m_recipe_loading)
                 m_error_label->SetLabel(wxEmptyString);
             else if (!valid && m_has_recipe_result)
-                m_error_label->SetLabel(_L("Unable to create a color mix from the current physical filament colors."));
+                m_error_label->SetLabel(_L("Unable to create a color mix from the current physical filament colors within the selected range."));
             else if (m_hex_input && !m_syncing_inputs) {
                 wxColour parsed;
                 if (!try_parse_color_match_hex(m_hex_input->GetValue(), parsed))
@@ -4105,6 +4232,11 @@ private:
     MixedFilamentColorMapPanel             *m_color_map        = nullptr;
     wxTextCtrl                             *m_hex_input        = nullptr;
     wxColourPickerCtrl                     *m_classic_picker   = nullptr;
+    wxSlider                               *m_range_slider     = nullptr;
+    wxStaticText                           *m_range_value      = nullptr;
+    wxStaticText                           *m_presets_label    = nullptr;
+    wxScrolledWindow                       *m_presets_host     = nullptr;
+    wxWrapSizer                            *m_presets_sizer    = nullptr;
     wxPanel                                *m_loading_panel    = nullptr;
     wxStaticText                           *m_loading_label    = nullptr;
     wxGauge                                *m_loading_gauge    = nullptr;
@@ -4121,6 +4253,7 @@ private:
     wxTimer                                 m_loading_timer;
     wxString                                m_loading_message;
     size_t                                  m_recipe_request_token { 0 };
+    int                                     m_min_component_percent { 15 };
     bool                                    m_has_recipe_result { false };
     bool                                    m_recipe_loading { false };
     bool                                    m_recipe_refresh_pending { false };

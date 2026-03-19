@@ -25,7 +25,7 @@ public:
 	static std::pair<double, double> get_wipe_tower_cone_base(double width, double height, double depth, double angle_deg);
 	static std::vector<std::vector<float>> extract_wipe_volumes(const PrintConfig& config);
 
-    
+
     // Construct ToolChangeResult from current state of WipeTower2 and WipeTowerWriter2.
     // WipeTowerWriter2 is moved from !
     WipeTower::ToolChangeResult construct_tcr(WipeTowerWriter2& writer,
@@ -64,7 +64,6 @@ public:
 
 
 
-
 	// Switch to a next layer.
 	void set_layer(
 		// Print height of this layer.
@@ -83,7 +82,7 @@ public:
 		m_depth_traversed  = 0.f;
         m_current_layer_finished = false;
 
-		
+
         // Advance m_layer_info iterator, making sure we got it right
 		while (!m_plan.empty() && m_layer_info->z < print_z - WT_EPSILON && m_layer_info+1 != m_plan.end())
 			++m_layer_info;
@@ -95,7 +94,7 @@ public:
             m_num_tool_changes 	= 0;
         } else
             ++ m_num_layer_changes;
-		
+
 		// Calculate extrusion flow from desired line width, nozzle diameter, filament diameter and layer_height:
 		m_extrusion_flow = extrusion_flow(layer_height);
 	}
@@ -110,7 +109,7 @@ public:
 	// Returns gcode to prime the nozzles at the front edge of the print bed.
 	std::vector<WipeTower::ToolChangeResult> prime(
 		// print_z of the first layer.
-		float 						first_layer_height, 
+		float 						first_layer_height,
 		// Extruder indices, in the order to be primed. The last extruder will later print the wipe tower brim, print brim and the object.
 		const std::vector<unsigned int> &tools,
 		// If true, the last priming are will be the same as the other priming areas, and the rest of the wipe will be performed inside the wipe tower.
@@ -235,6 +234,7 @@ private:
         CustomBed
     } m_bed_shape;
     float m_bed_width; // width of the bed bounding box
+    float m_bed_height; // height (depth) of the bed bounding box
     Vec2f m_bed_bottom_left; // bottom-left corner coordinates (for rectangular beds)
 
 	float m_perimeter_width = 0.4f * Width_To_Nozzle_Ratio; // Width of an extrusion line, also a perimeter spacing for 100% infill.
@@ -318,7 +318,7 @@ private:
 
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
-		const WipeTower::box_coordinates  &cleaning_box, 
+		const WipeTower::box_coordinates  &cleaning_box,
 		const std::string&	 	current_material,
 		const int 				old_temperature,
 		const int 				new_temperature);
@@ -327,11 +327,11 @@ private:
 		WipeTowerWriter2 &writer,
         const size_t		new_tool,
 		const std::string& 		new_material);
-	
+
 	void toolchange_Load(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box);
-	
+
 	void toolchange_Wipe(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
@@ -347,10 +347,10 @@ private:
                                       bool                   skip_points);
 
     Polygon generate_support_cone_wall(
-        WipeTowerWriter2& writer, 
-		const WipeTower::box_coordinates& wt_box, 
-		double feedrate, 
-		bool infill_cone, 
+        WipeTowerWriter2& writer,
+		const WipeTower::box_coordinates& wt_box,
+		double feedrate,
+		bool infill_cone,
 		float spacing);
 
     Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
@@ -361,4 +361,4 @@ private:
 
 } // namespace Slic3r
 
-#endif // slic3r_GCode_WipeTower_hpp_ 
+#endif // slic3r_GCode_WipeTower_hpp_

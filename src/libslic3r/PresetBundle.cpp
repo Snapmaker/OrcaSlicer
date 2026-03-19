@@ -1646,7 +1646,8 @@ void PresetBundle::update_selections(AppConfig &config)
 
     std::string first_visible_filament_name;
     for (auto & fp : filament_presets) {
-        if (auto it = filaments.find_preset_internal(fp); it == filaments.end() || !it->is_visible || !it->is_compatible) {
+        if (auto it = filaments.find_preset_internal(fp); it == filaments.end()) {
+            // BBS: only replace presets that no longer exist; invisible/incompatible ones should remain (issue #115)
             if (first_visible_filament_name.empty())
                 first_visible_filament_name = filaments.first_compatible().name;
             fp = first_visible_filament_name;
@@ -1772,7 +1773,8 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
 
     std::string first_visible_filament_name;
     for (auto & fp : filament_presets) {
-        if (auto it = filaments.find_preset_internal(fp); it == filaments.end() || !it->is_visible || !it->is_compatible) {
+        if (auto it = filaments.find_preset_internal(fp); it == filaments.end()) {
+            // BBS: only replace presets that no longer exist; invisible/incompatible ones should remain (issue #115)
             if (first_visible_filament_name.empty())
                 first_visible_filament_name = filaments.first_compatible().name;
             fp = first_visible_filament_name;

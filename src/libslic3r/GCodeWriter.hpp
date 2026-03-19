@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include "Extruder.hpp"
 #include "Point.hpp"
+#include "BoundingBox.hpp"
 #include "PrintConfig.hpp"
 #include "GCode/CoolingBuffer.hpp"
 
@@ -182,6 +183,8 @@ public:
     //BBS: x, y offset for gcode generated
     double          m_x_offset{ 0 };
     double          m_y_offset{ 0 };
+    //BBS: bed bounding box for spiral lift boundary check
+    BoundingBoxf    m_bed_bbox;
     
     std::string m_gcode_label_objects_start;
     std::string m_gcode_label_objects_end;

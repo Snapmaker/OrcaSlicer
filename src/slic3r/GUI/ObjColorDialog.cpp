@@ -546,7 +546,7 @@ ComboBox *ObjColorPanel::CreateEditorCtrl(wxWindow *parent, int id) // wxRect la
     return c_editor;
 }
 
-void ObjColorPanel::deal_approximate_match_btn()
+void ObjColorPanel::deal_approximate_match_btn(float threshold)
 {
     auto calc_color_distance = [](wxColour c1, wxColour c2) {
         float lab[2][3];
@@ -557,24 +557,28 @@ void ObjColorPanel::deal_approximate_match_btn()
     };
     m_warning_text->SetLabelText("");
     if (m_result_icon_list.size() == 0) { return; }
-    auto map_count = m_result_icon_list[0]->bitmap_combox->GetCount() -1;
+    auto map_count = m_result_icon_list[0]->bitmap_combox->GetCount() - 1;
     if (map_count < 1) { return; }
     for (size_t i = 0; i < m_cluster_colours.size(); i++) {
         auto    c = m_cluster_colours[i];
         std::vector<ColorDistValue> color_dists;
         color_dists.resize(map_count);
         for (size_t j = 0; j < map_count; j++) {
-            auto tip_color       = m_result_icon_list[0]->bitmap_combox->GetItemTooltip(j+1);
+            auto tip_color       = m_result_icon_list[0]->bitmap_combox->GetItemTooltip(j + 1);
             wxColour candidate_c(tip_color);
             color_dists[j].distance = calc_color_distance(c, candidate_c);
             color_dists[j].id = j + 1;
         }
-        std::sort(color_dists.begin(), color_dists.end(), [](ColorDistValue &a, ColorDistValue& b) {
+        std::sort(color_dists.begin(), color_dists.end(), [](ColorDistValue &a, ColorDistValue &b) {
             return a.distance < b.distance;
-            });
-        auto new_index= color_dists[0].id;
-        m_result_icon_list[i]->bitmap_combox->SetSelection(new_index);
-        m_cluster_map_filaments[i] = new_index;
+        });
+        // Only assign if no threshold is set (manual button click) OR the closest match is within the threshold
+        if (threshold < 0.0f || color_dists[0].distance <= threshold) {
+            auto new_index = color_dists[0].id;
+            m_result_icon_list[i]->bitmap_combox->SetSelection(new_index);
+            m_cluster_map_filaments[i] = new_index;
+        }
+        // else: leave at selection 0 (unassigned; new slot added later by deal_add_unmatched_filaments)
     }
 }
 
@@ -720,9 +724,74 @@ void ObjColorPanel::deal_algo(char cluster_number, bool redraw_ui)
 
 void ObjColorPanel::deal_default_strategy()
 {
-    deal_add_btn();
-    deal_approximate_match_btn();
-    m_warning_text->SetLabelText(_L("Note: The color has been selected, you can choose OK \nto continue or manually adjust it."));
+    // BBS: smart color matching - first try to map model colors to existing filaments
+    // using a perceptual color threshold (DeltaE76 <= 10). Colors within the threshold
+    // reuse an existing filament slot; only colors too different from all existing
+    // filaments get a new slot added. This prevents the filament sidebar from filling
+    // up with near-identical colors on every model import.
+    static const float COLOR_MATCH_THRESHOLD = 10.0f;  // DeltaE76 units
+    deal_reset_btn();
+    // Ensure all map entries start at 0 (unassigned) before matching
+    std::fill(m_cluster_map_filaments.begin(), m_cluster_map_filaments.end(), 0);
+    // Step 1: try to match each model color to an existing filament within the threshold
+    deal_approximate_match_btn(COLOR_MATCH_THRESHOLD);
+    // Step 2: add new filament slots only for colors that exceeded the threshold
+    deal_add_unmatched_filaments();
+    m_warning_text->SetLabelText(_L("Note:The color has been selected, you can choose OK \n to continue or manually adjust it."));
+}
+
+void ObjColorPanel::deal_add_unmatched_filaments()
+{
+    if (m_colours.size() > g_max_color) { return; }
+    std::vector<wxBitmap *> new_icons;
+    std::vector<size_t>     unmatched_indices;
+    m_new_add_colors.clear();
+    int  new_index = m_colours.size() + 1;
+    bool is_exceed = false;
+
+    for (size_t i = 0; i < m_cluster_colors_from_algo.size(); i++) {
+        if (m_cluster_map_filaments[i] != 0) { continue; }  // already matched to existing filament
+        if (m_colours.size() + new_icons.size() >= g_max_color) {
+            is_exceed = true;
+            break;
+        }
+        wxColour cur_color = convert_to_wxColour(m_cluster_colors_from_algo[i]);
+        m_new_add_colors.emplace_back(cur_color);
+        new_icons.emplace_back(get_extruder_color_icon(
+            cur_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString(),
+            std::to_string(new_index), m_combox_icon_width, m_combox_icon_height));
+        unmatched_indices.emplace_back(i);
+        new_index++;
+    }
+
+    if (new_icons.empty()) {
+        m_is_add_filament = false;
+        return;
+    }
+
+    // Append new color icons to every row's combo box
+    for (size_t i = 0; i < m_result_icon_list.size(); i++) {
+        auto item = m_result_icon_list[i];
+        for (size_t k = 0; k < new_icons.size(); k++) {
+            item->bitmap_combox->Append(wxString::Format("%d", item->bitmap_combox->GetCount()), *new_icons[k]);
+            item->bitmap_combox->SetItemTooltip(item->bitmap_combox->GetCount() - 1,
+                m_new_add_colors[k].GetAsString(wxC2S_HTML_SYNTAX));
+        }
+    }
+
+    // Assign each unmatched cluster to its newly created filament slot
+    int slot = m_colours.size() + 1;
+    for (size_t k = 0; k < unmatched_indices.size(); k++) {
+        size_t i = unmatched_indices[k];
+        m_result_icon_list[i]->bitmap_combox->SetSelection(slot);
+        m_cluster_map_filaments[i] = slot;
+        slot++;
+    }
+
+    if (is_exceed) {
+        m_warning_text->SetLabelText(_L("Warning: The count of newly added and current extruders exceeds 16."));
+    }
+    m_is_add_filament = true;
 }
 
 void ObjColorPanel::deal_add_btn()

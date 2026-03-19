@@ -47,11 +47,12 @@ private:
     void draw_table();
     void show_sizer(wxSizer *sizer, bool show);
     void redraw_part_table();
-    void deal_approximate_match_btn();
+    void deal_approximate_match_btn(float threshold = -1.0f);
     void deal_add_btn();
     void deal_reset_btn();
     void deal_algo(char cluster_number,bool redraw_ui =false);
     void deal_default_strategy();
+    void deal_add_unmatched_filaments();
 private:
     //view ui
     wxScrolledWindow *        m_scrolledWindow = nullptr;

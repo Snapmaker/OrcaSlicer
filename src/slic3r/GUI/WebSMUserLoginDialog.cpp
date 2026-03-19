@@ -191,6 +191,14 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
             token = tmpUrl.substr(start).ToStdString();
         }
 
+        auto info = wxGetApp().sm_get_userinfo();
+        info->set_user_login(true);
+        info->set_user_token(token);
+
+        // BBS: persist login token so it survives app restart (issue #116)
+        if (wxGetApp().app_config)
+            wxGetApp().app_config->set("sm_user_token", token);
+
         this->EndModal(wxID_OK);
 
         wxGetApp().CallAfter([token, this]() {

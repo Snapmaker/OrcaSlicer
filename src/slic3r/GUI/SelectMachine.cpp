@@ -3213,30 +3213,23 @@ void SelectMachineDialog::reset_and_sync_ams_list()
     std::vector<std::string> m_filaments_id;
     auto                     preset_bundle = wxGetApp().preset_bundle;
 
-    for (auto filament_name : preset_bundle->filament_presets) {
-        for (int f_index = 0; f_index < preset_bundle->filaments.size(); f_index++) {
-            PresetCollection *filament_presets = &wxGetApp().preset_bundle->filaments;
-            Preset *          preset           = &filament_presets->preset(f_index);
-
-            if (preset && filament_name.compare(preset->name) == 0) {
-                std::string display_filament_type;
-                std::string filament_type = preset->config.get_filament_type(display_filament_type);
-                std::string m_filament_id = preset->filament_id;
-                display_materials.push_back(display_filament_type);
-                materials.push_back(filament_type);
-                m_filaments_id.push_back(m_filament_id);
-
-                std::string m_vendor_name = "";
-                auto        vendor        = dynamic_cast<ConfigOptionStrings *>(preset->config.option("filament_vendor"));
-                if (vendor && (vendor->values.size() > 0)) {
-                    std::string vendor_name = vendor->values[0];
-                    m_vendor_name           = vendor_name;
-                }
-                brands.push_back(m_vendor_name);
-            }
-        }
+    // BBS: use find_preset() instead of linear scan so invisible/incompatible filaments are found (issue #115)
+    PresetCollection *filament_collection = &preset_bundle->filaments;
+    for (const auto &filament_name : preset_bundle->filament_presets) {
+        Preset *preset = filament_collection->find_preset(filament_name, false);
+        if (!preset) continue;
+        std::string display_filament_type;
+        std::string filament_type = preset->config.get_filament_type(display_filament_type);
+        std::string m_filament_id = preset->filament_id;
+        display_materials.push_back(display_filament_type);
+        materials.push_back(filament_type);
+        m_filaments_id.push_back(m_filament_id);
+        std::string m_vendor_name;
+        auto vendor = dynamic_cast<ConfigOptionStrings *>(preset->config.option("filament_vendor"));
+        if (vendor && !vendor->values.empty())
+            m_vendor_name = vendor->values[0];
+        brands.push_back(m_vendor_name);
     }
-
     auto           extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_used_extruders();
     BitmapCache    bmcache;
     MaterialHash::iterator iter = m_materialList.begin();

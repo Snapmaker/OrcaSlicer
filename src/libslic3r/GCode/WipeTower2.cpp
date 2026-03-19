@@ -1314,7 +1314,8 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     // Calculate where the priming lines should be - very naive test not detecting parallelograms etc.
     const std::vector<Vec2d>& bed_points = config.printable_area.values;
     BoundingBoxf bb(bed_points);
-    m_bed_width = float(bb.size().x());
+    m_bed_width  = float(bb.size().x());
+    m_bed_height = float(bb.size().y());
     m_bed_shape = (bed_points.size() == 4 ? RectangularBed : CircularBed);
 
     if (m_bed_shape == CircularBed) {
@@ -2077,6 +2078,138 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
     }
 
     const float spacing = m_perimeter_width - m_layer_height*float(1.-M_PI_4);
+
+    // This block creates the stabilization cone.
+    // First define a lambda to draw the rectangle with stabilization.
+    auto supported_rectangle = [this, &writer, spacing](const WipeTower::box_coordinates& wt_box, double feedrate, bool infill_cone) -> Polygon {
+        const auto [R, support_scale] = get_wipe_tower_cone_base(m_wipe_tower_width, m_wipe_tower_height, m_wipe_tower_depth, m_wipe_tower_cone_angle);
+
+        double z = m_no_sparse_layers ? (m_current_height + m_layer_info->height) : m_layer_info->z; // the former should actually work in both cases, but let's stay on the safe side (the 2.6.0 is close)
+
+        double r = std::tan(Geometry::deg2rad(m_wipe_tower_cone_angle/2.f)) * (m_wipe_tower_height - z);
+        Vec2f center = (wt_box.lu + wt_box.rd) / 2.;
+        double w = wt_box.lu.y() - wt_box.ld.y();
+
+        // BBS: clamp cone radius to bed boundary to prevent out-of-range toolhead movements
+        // (issue #121: stabilization cone exceeds bed bounds for small beds like Snapmaker A250).
+        // Coordinates inside supported_rectangle are tower-local (origin = tower lower-left corner);
+        // the absolute position of the arc center on the bed is m_wipe_tower_pos + center.
+        // Extended to all bed shapes: rectangular uses exact margins, circular checks distance from
+        // bed center, custom/unknown falls back to bounding-box (conservative).
+        if (r > 0.0) {
+            Vec2f abs_center = m_wipe_tower_pos + center;
+            float max_r_bed = 0.f;
+            if (m_bed_shape == CircularBed) {
+                // Circular bed: arc must not protrude beyond the bed circle.
+                // bed circle: center=(m_bed_bottom_left.x+m_bed_width/2, ..+m_bed_height/2), radius=m_bed_width/2
+                Vec2f bed_center = m_bed_bottom_left + Vec2f(m_bed_width / 2.f, m_bed_height / 2.f);
+                float dist_to_bed_edge = m_bed_width / 2.f - (abs_center - bed_center).norm();
+                max_r_bed = std::max(0.f, dist_to_bed_edge);
+            } else {
+                // Rectangular bed or custom/unknown: use bounding-box margins (conservative for non-rectangular).
+                float max_r_x = std::min(
+                    abs_center.x() - m_bed_bottom_left.x(),
+                    m_bed_bottom_left.x() + m_bed_width - abs_center.x()) * float(support_scale);
+                float max_r_y = std::min(
+                    abs_center.y() - m_bed_bottom_left.y(),
+                    m_bed_bottom_left.y() + m_bed_height - abs_center.y());
+                max_r_bed = std::min(max_r_x, max_r_y);
+            }
+            if (max_r_bed > 0.f && r > double(max_r_bed))
+                r = double(max_r_bed);
+        }
+        enum Type {
+            Arc,
+            Corner,
+            ArcStart,
+            ArcEnd
+        };
+
+        // First generate vector of annotated point which form the boundary.
+        std::vector<std::pair<Vec2f, Type>> pts = {{wt_box.ru, Corner}};        
+        if (double alpha_start = std::asin((0.5*w)/r); ! std::isnan(alpha_start) && r > 0.5*w+0.01) {
+            for (double alpha = alpha_start; alpha < M_PI-alpha_start+0.001; alpha+=(M_PI-2*alpha_start) / 40.)
+                pts.emplace_back(Vec2f(center.x() + r*std::cos(alpha)/support_scale, center.y() + r*std::sin(alpha)), alpha == alpha_start ? ArcStart : Arc);
+            pts.back().second = ArcEnd;
+        }        
+        pts.emplace_back(wt_box.lu, Corner);
+        pts.emplace_back(wt_box.ld, Corner);
+        for (int i=int(pts.size())-3; i>0; --i)
+            pts.emplace_back(Vec2f(pts[i].first.x(), 2*center.y()-pts[i].first.y()), i == int(pts.size())-3 ? ArcStart : i == 1 ? ArcEnd : Arc);
+        pts.emplace_back(wt_box.rd, Corner);
+
+        // Create a Polygon from the points.
+        Polygon poly;
+        for (const auto& [pt, tag] : pts)
+            poly.points.push_back(Point::new_scale(pt));
+
+        // Prepare polygons to be filled by infill.
+        Polylines polylines;
+        if (infill_cone && m_wipe_tower_width > 2*spacing && m_wipe_tower_depth > 2*spacing) {
+            ExPolygons infill_areas;
+            ExPolygon wt_contour(poly);
+            Polygon wt_rectangle(Points{Point::new_scale(wt_box.ld), Point::new_scale(wt_box.rd), Point::new_scale(wt_box.ru), Point::new_scale(wt_box.lu)});
+            wt_rectangle = offset(wt_rectangle, scale_(-spacing/2.)).front();
+            wt_contour = offset_ex(wt_contour, scale_(-spacing/2.)).front();
+            infill_areas = diff_ex(wt_contour, wt_rectangle);
+            if (infill_areas.size() == 2) {
+                ExPolygon& bottom_expoly = infill_areas.front().contour.points.front().y() < infill_areas.back().contour.points.front().y() ? infill_areas[0] : infill_areas[1];
+                std::unique_ptr<Fill> filler(Fill::new_from_type(ipMonotonicLine));
+                filler->angle = Geometry::deg2rad(45.f);
+                filler->spacing = spacing;
+                FillParams params;
+                params.density = 1.f;
+                Surface surface(stBottom, bottom_expoly);
+                filler->bounding_box = get_extents(bottom_expoly);
+                polylines = filler->fill_surface(&surface, params);
+                if (! polylines.empty()) {
+                    if (polylines.front().points.front().x() > polylines.back().points.back().x()) {
+                        std::reverse(polylines.begin(), polylines.end());
+                        for (Polyline& p : polylines)
+                            p.reverse();
+                    }
+                }
+            }
+        }
+
+        // Find the closest corner and travel to it.
+        int start_i = 0;
+        double min_dist = std::numeric_limits<double>::max();
+        for (int i=0; i<int(pts.size()); ++i) {
+            if (pts[i].second == Corner) {
+                double dist = (pts[i].first - Vec2f(writer.x(), writer.y())).squaredNorm();
+                if (dist < min_dist) {
+                    min_dist = dist;
+                    start_i = i;
+                }
+            }
+        }
+        writer.travel(pts[start_i].first);
+
+        // Now actually extrude the boundary (and possibly infill):
+        int i = start_i+1 == int(pts.size()) ? 0 : start_i + 1;
+        while (i != start_i) {
+            writer.extrude(pts[i].first, feedrate);
+            if (pts[i].second == ArcEnd) {
+                // Extrude the infill.
+                if (! polylines.empty()) {
+                    // Extrude the infill and travel back to where we were.
+                    bool mirror = ((pts[i].first.y() - center.y()) * (unscale(polylines.front().points.front()).y() - center.y())) < 0.;
+                    for (const Polyline& line : polylines) {
+                        writer.travel(center - (mirror ? 1.f : -1.f) * (unscale(line.points.front()).cast<float>() - center));
+                        for (size_t i=0; i<line.points.size(); ++i)
+                            writer.extrude(center - (mirror ? 1.f : -1.f) * (unscale(line.points[i]).cast<float>() - center));
+                    }
+                    writer.travel(pts[i].first);
+                }
+            }
+            if (++i == int(pts.size()))
+                i = 0;
+        }
+        writer.extrude(pts[start_i].first, feedrate);
+        return poly;
+    };
+
     feedrate = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_perimeter_speed * 60.f);
 
     Polygon poly;

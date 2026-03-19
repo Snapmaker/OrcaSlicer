@@ -660,7 +660,7 @@ bool PresetUpdater::priv::download_file(const std::string& url,
                                         int   timeout_sec,
                                         bool* cancel_flag )
 {
-    bool res = false;
+    bool res = true;
 
     fs::path tmp_path = target_path + ".tmp";
 
@@ -676,7 +676,7 @@ bool PresetUpdater::priv::download_file(const std::string& url,
         .on_error([&url](std::string body, std::string error, unsigned http_status) {
             BOOST_LOG_TRIVIAL(error) << "Download failed: " << url << ", HTTP status: " << http_status << ", error: " << error;
         })
-        .on_complete([&](std::string body, unsigned http_status) {
+        .on_complete([&,target_path,tmp_path](std::string body, unsigned http_status) {
             if (http_status != 200) {
                 BOOST_LOG_TRIVIAL(error) << "Download failed with HTTP status: " << http_status;
                 return;
@@ -702,7 +702,6 @@ bool PresetUpdater::priv::download_file(const std::string& url,
             }
             extract_file(target_path, "../ota/profiles/");
             BOOST_LOG_TRIVIAL(info) << "Download completed: " << target_path;
-            res = true;
         })
         .timeout_max(timeout_sec)
         .perform();

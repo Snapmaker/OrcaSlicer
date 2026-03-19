@@ -2,7 +2,7 @@
   "type": "filament",
   "from": "system",
   "instantiation": "true",
-  "name": "Snapmaker ABS Benchy@J1",
+  "name": "Snapmaker ABS Benchy @J1",
   "setting_id": "356879727",
   "inherits": "Snapmaker ABS @J1 base",
   "compatible_printers": [
@@ -82,8 +82,5 @@
   ],
   "slow_down_layer_time": [
     "0"
-  ],
-  "default_filament_colour": [
-    "#335BBB"
   ]
 }

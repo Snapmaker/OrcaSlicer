@@ -92,8 +92,6 @@ bool MsgUpdateSlic3r::disable_version_check() const
 	return true;
 }
 
-// MsgUpdateConfig
-
 MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_before_wizard /* = false*/)
     : DPIDialog(wxGetApp().mainframe, wxID_ANY, _L("Configuration update"), wxDefaultPosition, wxDefaultSize, wxCAPTION)
 {
@@ -123,8 +121,7 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
     wxBoxSizer *m_sizer_right = new wxBoxSizer(wxVERTICAL);
 
-
-    auto m_text_up_info = new wxStaticText(this, wxID_ANY, _L("A new configuration package available, Do you want to install it?"), wxDefaultPosition, wxDefaultSize, 0);
+    auto m_text_up_info = new wxStaticText(this, wxID_ANY, _L("A new configuration package is available. Do you want to install it?"), wxDefaultPosition, wxDefaultSize, 0);
     m_text_up_info->SetFont(::Label::Head_14);
     m_text_up_info->SetForegroundColour(wxColour(0x26, 0x2E, 0x30));
     m_text_up_info->Wrap(-1);
@@ -157,7 +154,7 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
     m_butto_ok->SetFont(Label::Body_12);
     m_butto_ok->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_butto_ok->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
-
+    m_butto_ok->SetCursor(wxCURSOR_HAND);
 
     auto m_button_cancel = new Button(this, _L("Cancel"));
     m_button_cancel->SetBackgroundColor(*wxWHITE);
@@ -165,7 +162,7 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
     m_button_cancel->SetFont(Label::Body_12);
     m_button_cancel->SetSize(wxSize(FromDIP(58), FromDIP(24)));
     m_button_cancel->SetMinSize(wxSize(FromDIP(58), FromDIP(24)));
-
+    m_button_cancel->SetCursor(wxCURSOR_HAND);
 
     sizer_button->Add(m_butto_ok, 0, wxALL, 5);
     sizer_button->Add(m_button_cancel, 0, wxALL, 5);
@@ -179,16 +176,11 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
 	wxBoxSizer *content_sizer             = new wxBoxSizer(wxVERTICAL);
 
-   
-
-
-
 	const auto lang_code = wxGetApp().current_language_code_safe().ToStdString();
 
-    // auto *versions = new wxBoxSizer(wxVERTICAL);
+    auto *versions = new wxBoxSizer(wxVERTICAL);
     // BBS: use changelog string instead of url
-    
-
+    wxStaticText *changelog_textctrl = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(560), -1));
 
     for (const auto &update : updates) {
         auto* versions = new wxBoxSizer(wxVERTICAL);
@@ -214,12 +206,8 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
 
         versions->Add(flex);
 
-		
-
-        // BBS: use changelog string instead of url
-
-			//auto change_log = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, from_u8(update.change_log), wxDefaultPosition, wxDefaultSize); 
-			changelog_textctrl->SetLabel(changelog_textctrl->GetLabel() + wxString::Format("%s\n", from_u8(update.change_log)));
+		//auto change_log = new wxStaticText(m_scrollwindw_release_note, wxID_ANY, from_u8(update.change_log), wxDefaultPosition, wxDefaultSize); 
+		changelog_textctrl->SetLabel(changelog_textctrl->GetLabel() + wxString::Format("%s\n", from_u8(update.change_log)));
 
 		content_sizer->Add(versions);
 
@@ -227,15 +215,12 @@ MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, bool force_
         if (changelog_textctrl)
             content_sizer->Add(changelog_textctrl, 1, wxEXPAND | wxTOP, FromDIP(30));
     }
-
 	
 	m_butto_ok->Bind(wxEVT_BUTTON, [this](const wxCommandEvent &) { EndModal(wxID_OK); });
 	m_button_cancel->Bind(wxEVT_BUTTON, [this](const wxCommandEvent &) { EndModal(wxID_CLOSE); });
 
-
     m_scrollwindw_release_note->SetSizer(content_sizer);
     m_scrollwindw_release_note->Layout();
-
 
     SetSizer(m_sizer_main);
     Layout();
@@ -253,11 +238,11 @@ MsgUpdateConfig::~MsgUpdateConfig() {}
 //MsgUpdateForced
 
 MsgUpdateForced::MsgUpdateForced(const std::vector<Update>& updates) :
-    MsgDialog(nullptr, _(L("Configuration incompatible")), _(L("the configuration package is incompatible with current application.")) + " ", wxOK | wxICON_ERROR)
+    MsgDialog(nullptr, _(L("Configuration incompatible")), _(L("the configuration package is incompatible with the current application.")) + " ", wxOK | wxICON_ERROR)
 {
 	auto* text = new wxStaticText(this, wxID_ANY, wxString::Format(_(L(
-		"The configuration package is incompatible with current application.\n"
-		"%s will update the configuration package, Otherwise it won't be able to start"
+		"The configuration package is incompatible with the current application.\n"
+		"%s will update the configuration package to allow the application to start."
 	)), SLIC3R_APP_FULL_NAME));
 	
 
@@ -318,7 +303,7 @@ MsgUpdateForced::~MsgUpdateForced() {}
 // MsgDataIncompatible
 
 MsgDataIncompatible::MsgDataIncompatible(const std::unordered_map<std::string, wxString> &incompats) :
-    MsgDialog(nullptr,  _(L("Configuration incompatible")), _(L("the Configuration package is incompatible with current APP.")), wxICON_ERROR)
+    MsgDialog(nullptr,  _(L("Configuration incompatible")), _(L("the configuration package is incompatible with the current application.")), wxICON_ERROR)
 {
     //TODO
 	//auto *text = new wxStaticText(this, wxID_ANY, wxString::Format(_(L(

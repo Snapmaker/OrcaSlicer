@@ -81,13 +81,13 @@
 #include <boost/log/expressions.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/multi_array.hpp>
-#include <boost/nowide/cenv.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/fstream.hpp>
-#include <boost/nowide/integration/filesystem.hpp>
+#include <boost/nowide/filesystem.hpp>
 #include <boost/nowide/iostream.hpp>
+#include <boost/regex.hpp>
 
 // boost/property_tree/json_parser/detail/parser.hpp includes boost/bind.hpp, which is deprecated.
 // Suppress the following boost message:
@@ -125,7 +125,7 @@
 #include "SVG.hpp"
 
 #include "libslic3r.h"
-#include "libslic3r_version.h"
+#include "common_func/common_func.hpp"
 
 #include <Shiny/Shiny.h>
 

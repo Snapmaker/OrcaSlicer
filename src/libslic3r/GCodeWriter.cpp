@@ -27,6 +27,10 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 {
     this->config.apply(print_config, true);
     m_single_extruder_multi_material = print_config.single_extruder_multi_material.value;
+    m_physical_extruder_count = print_config.nozzle_diameter.values.size();
+    if (m_physical_extruder_count == 0) {
+        m_physical_extruder_count = 1;  // 防止除零，默认为1
+    }
     bool use_mach_limits = print_config.gcode_flavor.value == gcfMarlinLegacy || print_config.gcode_flavor.value == gcfMarlinFirmware ||
                            print_config.gcode_flavor.value == gcfKlipper || print_config.gcode_flavor.value == gcfRepRapFirmware;
     m_max_acceleration = std::lrint(use_mach_limits ? print_config.machine_max_acceleration_extruding.values.front() : 0);
@@ -37,6 +41,7 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
     if (use_mach_limits) {
         m_max_jerk_x  = std::lrint(print_config.machine_max_jerk_x.values.front());
         m_max_jerk_y  = std::lrint(print_config.machine_max_jerk_y.values.front());
+        m_max_junction_deviation  = (print_config.machine_max_junction_deviation.values.front());
     };
     m_max_jerk_z = print_config.machine_max_jerk_z.values.front();
     m_max_jerk_e = print_config.machine_max_jerk_e.values.front();
@@ -44,16 +49,18 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 
 void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
 {
+
     std::sort(extruder_ids.begin(), extruder_ids.end());
+    m_extruder = nullptr; // this points to object inside `m_extruders`, so should be cleared too
     m_extruders.clear();
     m_extruders.reserve(extruder_ids.size());
-    for (unsigned int extruder_id : extruder_ids)
-        m_extruders.emplace_back(Extruder(extruder_id, &this->config, config.single_extruder_multi_material.value));
-    
-    /*  we enable support for multiple extruder if any extruder greater than 0 is used
-        (even if prints only uses that one) since we need to output Tx commands
-        first extruder has index 0 */
-    this->multiple_extruders = (*std::max_element(extruder_ids.begin(), extruder_ids.end())) > 0;
+    for (unsigned int extruder_id : extruder_ids) {
+        int physical_extruder_id = get_physical_extruder(extruder_id);
+
+        m_extruders.emplace_back(Extruder(extruder_id, physical_extruder_id, &this->config, config.single_extruder_multi_material.value));
+    }
+
+    this->multiple_extruders = (*std::max_element(extruder_ids.begin(), extruder_ids.end())) > 0;   
 }
 
 std::string GCodeWriter::preamble()
@@ -312,6 +319,24 @@ std::string GCodeWriter::set_accel_and_jerk(unsigned int acceleration, double je
 
 }
 
+std::string GCodeWriter::set_junction_deviation(double junction_deviation){
+    std::ostringstream gcode;
+    if (FLAVOR_IS(gcfMarlinFirmware) && junction_deviation > 0 && m_max_junction_deviation > 0) {
+        // Clamp the junction deviation to the allowed maximum.
+        gcode << "M205 J";
+        if (junction_deviation <= m_max_junction_deviation) {
+            gcode << std::fixed << std::setprecision(3) << junction_deviation;
+        } else {
+            gcode << std::fixed << std::setprecision(3) << m_max_junction_deviation;
+        }
+        if (GCodeWriter::full_gcode_comment) {
+            gcode << " ; Junction Deviation";
+        }
+        gcode << "\n";
+    }
+    return gcode.str();
+}
+
 std::string GCodeWriter::set_pressure_advance(double pa) const
 {
     std::ostringstream gcode;
@@ -332,7 +357,52 @@ std::string GCodeWriter::set_pressure_advance(double pa) const
     return gcode.str();
 }
 
-
+std::string GCodeWriter::set_input_shaping(char axis, float damp, float freq) const
+{
+    if (freq < 0.0f || damp < 0.f || damp > 1.0f || (axis != 'X' && axis != 'Y' && axis != 'Z' && axis != 'A'))// A = all axis
+    {
+    throw std::runtime_error("Invalid input shaping parameters: freq=" + std::to_string(freq) + ", damp=" + std::to_string(damp));
+    }
+    std::ostringstream gcode;
+    if (FLAVOR_IS(gcfKlipper)) {
+        gcode << "SET_INPUT_SHAPER";
+        if (axis != 'A')
+        {
+            if (freq > 0.0f) {
+                gcode << " SHAPER_FREQ_" << axis << "=" << std::fixed << std::setprecision(2) << freq;
+            }
+            if (damp > 0.0f){
+                gcode  << " DAMPING_RATIO_" << axis << "=" << damp;
+            } 
+        } else {
+            if (freq > 0.0f) {
+                gcode << " SHAPER_FREQ_X=" << std::fixed << std::setprecision(2) << freq << " SHAPER_FREQ_Y=" << std::fixed << std::setprecision(2) << freq;
+            }
+            if (damp > 0.0f) {
+                gcode << " DAMPING_RATIO_X=" << std::fixed << std::setprecision(3) << damp << " DAMPING_RATIO_Y=" << std::fixed << std::setprecision(3) << damp;
+            }
+        }
+    } else {
+        gcode << "M593";
+        if (axis != 'A')
+        {
+            gcode << " " << axis;
+        }
+        if (freq > 0.0f)
+        {
+            gcode << " F" << std::fixed << std::setprecision(2) << freq;
+        }
+        if (damp > 0.0f)
+        {
+            gcode << " D" << std::fixed << std::setprecision(3) << damp;
+        }
+    }
+    if (GCodeWriter::full_gcode_comment){
+        gcode << " ; Override input shaping";
+    }
+    gcode << "\n";
+    return gcode.str();
+}
 
 std::string GCodeWriter::reset_e(bool force)
 {
@@ -388,6 +458,9 @@ std::string GCodeWriter::toolchange_prefix() const
 
 std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
+
+    int physical_extruder = get_physical_extruder(extruder_id);
+
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
     assert(it_extruder != m_extruders.end() && it_extruder->id() == extruder_id);
@@ -403,6 +476,7 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
             gcode << " ; change extruder";
         gcode << "\n";
         gcode << this->reset_e(true);
+    } else {
     }
     return gcode.str();
 }
@@ -429,7 +503,7 @@ std::string GCodeWriter::travel_to_xy(const Vec2d &point, const std::string &com
     this->set_current_position_clear(true);
     //BBS: take plate offset into consider
     Vec2d point_on_plate = { point(0) - m_x_offset, point(1) - m_y_offset };
-    
+
     GCodeG1Formatter w;
     w.emit_xy(point_on_plate);
     auto speed = m_is_first_layer
@@ -446,12 +520,6 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
     // Calculation of feedrate was not updated accordingly. If you want to use
     // this function, fix it first.
     //std::terminate();
-
-    // Orca: If moving down during below the current layer nominal Z, force XY->Z moves to avoid collisions with previous extrusions
-    double nominal_z = m_pos(2) - m_lifted;
-    if (point(2) < nominal_z - EPSILON) { // EPSILON to avoid false matches due to rounding errors
-        this->set_current_position_clear(false); // This forces XYZ moves to be split into XY->Z
-    }
 
     /*  If target Z is lower than current Z but higher than nominal Z we
         don't perform the Z move but we only move in the XY plane and
@@ -573,12 +641,12 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
     return out_string;
 }
 
-std::string GCodeWriter::travel_to_z(double z, const std::string &comment)
+std::string GCodeWriter::travel_to_z(double z, const std::string &comment, bool force)
 {
     /*  If target Z is lower than current Z but higher than nominal Z
         we don't perform the move but we only adjust the nominal Z by
         reducing the lift amount that will be used for unlift. */
-    if (!this->will_move_z(z)) {
+    if (!force && !this->will_move_z(z)) {
         double nominal_z = m_pos(2) - m_lifted;
         m_lifted -= (z - nominal_z);
         if (std::abs(m_lifted) < EPSILON)
@@ -653,7 +721,7 @@ std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std:
     m_pos(1) = point(1);
     if(std::abs(dE) <= std::numeric_limits<double>::epsilon())
         force_no_extrusion = true;
-    
+
     if (!force_no_extrusion)
         m_extruder->extrude(dE);
 

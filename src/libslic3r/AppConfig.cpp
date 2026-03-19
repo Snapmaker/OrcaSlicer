@@ -15,7 +15,6 @@
 
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
-#include <boost/nowide/cenv.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
@@ -40,8 +39,23 @@ namespace Slic3r {
 
 static const std::string VERSION_CHECK_URL_STABLE = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases/latest";
 static const std::string VERSION_CHECK_URL = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases";
-static const std::string PROFILE_UPDATE_URL = "https://api.github.com/repos/Snapmaker/Orca_Presets/releases/latest";
+static const std::string PROFILE_UPDATE_URL = "/upgrade/profile/";
+static const std::string FLUTTER_UPDATE_URL = "/upgrade/flutter/";
 static const std::string MODELS_STR = "models";
+
+#define APP_UPDATE_URL_BASE_CN "https://meta-cfg.snapmaker.cn"
+#define APP_UPDATE_URL_BASE_EN "https://meta-cfg.snapmaker.com"
+
+#if defined(_WIN32)
+static const std::string APP_UPDATE_URL = std::string("/upgrade/orca/win/");
+#elif defined(__APPLE__)
+static const std::string APP_UPDATE_URL = std::string("/upgrade/orca/mac/");
+#elif defined(__linux__)
+static const std::string APP_UPDATE_URL = std::string("/upgrade/orca/linux/");
+#else
+static const std::string APP_UPDATE_URL = "";
+#endif
+
 
 const std::string AppConfig::SECTION_FILAMENTS = "filaments";
 const std::string AppConfig::SECTION_MATERIALS = "sla_materials";
@@ -89,6 +103,7 @@ bool AppConfig::get_stealth_mode()
     if (!get_bool("firstguide","finish")) {
         return true;
     }
+
     return get_bool("stealth_mode");
 }
 
@@ -112,11 +127,6 @@ void AppConfig::set_defaults()
         // Disable background processing by default as it is not stable.
         if (get("background_processing").empty())
             set_bool("background_processing", false);
-#endif
-
-#ifdef SUPPORT_SHOW_DROP_PROJECT
-        if (get("show_drop_project_dialog").empty())
-            set_bool("show_drop_project_dialog", true);
 #endif
 
         if (get("drop_project_action").empty())
@@ -175,14 +185,23 @@ void AppConfig::set_defaults()
     if (get("use_perspective_camera").empty())
         set_bool("use_perspective_camera", true);
 
+    if (get("auto_perspective").empty())
+        set_bool("auto_perspective", false);
+
     if (get("use_free_camera").empty())
         set_bool("use_free_camera", false);
 
     if (get("camera_navigation_style").empty())
         set("camera_navigation_style", "0");
 
+    if (get("swap_mouse_buttons").empty())
+        set_bool("swap_mouse_buttons", false);
+
     if (get("reverse_mouse_wheel_zoom").empty())
         set_bool("reverse_mouse_wheel_zoom", false);
+
+    if (get("camera_orbit_mult").empty())
+        set("camera_orbit_mult", "1.0");
 
     if (get("zoom_to_mouse").empty())
         set_bool("zoom_to_mouse", false);
@@ -254,7 +273,9 @@ void AppConfig::set_defaults()
     if (get("stealth_mode").empty()) {
         set_bool("stealth_mode", false);
     }
-
+    if (get("legacy_networking").empty()) {
+        set_bool("legacy_networking", true);
+    }
 
     if(get("check_stable_update_only").empty()) {
         set_bool("check_stable_update_only", false);
@@ -267,7 +288,6 @@ void AppConfig::set_defaults()
     if(get("show_splash_screen").empty()) {
         set_bool("show_splash_screen", true);
     }
-    
 
     if(get("auto_arrange").empty()) {
         set_bool("auto_arrange", true);
@@ -352,9 +372,17 @@ void AppConfig::set_defaults()
     if (get("mouse_wheel").empty()) {
         set("mouse_wheel", "0");
     }
-    
+
+    if (get(SETTING_PROJECT_LOAD_BEHAVIOUR).empty()) {
+        set(SETTING_PROJECT_LOAD_BEHAVIOUR, OPTION_PROJECT_LOAD_BEHAVIOUR_ASK_WHEN_RELEVANT);
+    }
+
     if (get("max_recent_count").empty()) {
         set("max_recent_count", "18");
+    }
+
+    if (get("recent_models").empty()) {
+        set("recent_models", "0");
     }
 
     // if (get("staff_pick_switch").empty()) {
@@ -410,6 +438,17 @@ void AppConfig::set_defaults()
     }
     if (get("print", "timelapse").empty()) {
         set_str("print", "timelapse", "1");
+    }
+
+    if (get("enable_step_mesh_setting").empty()) {
+        set_bool("enable_step_mesh_setting", true);
+    }
+    if (get("linear_defletion", "angle_defletion").empty()) {
+        set("linear_defletion", "0.003");
+        set("angle_defletion", "0.5");
+    }
+    if (get("is_split_compound").empty()) {
+        set_bool("is_split_compound", false);
     }
 
     // Remove legacy window positions/sizes
@@ -503,6 +542,7 @@ std::string AppConfig::load()
 #else
         ifs >> j;
 #endif
+        // SM orca
         update_filament_names(j);
     }
     catch(nlohmann::detail::parse_error &err) {
@@ -613,6 +653,19 @@ std::string AppConfig::load()
                 for (auto& j_model : it.value()) {
                     m_printer_settings[j_model["machine"].get<std::string>()] = j_model;
                 }
+            } else if (it.key() == "local_machines") {
+                for (auto m = it.value().begin(); m != it.value().end(); ++m) {
+                    const auto&    p = m.value();
+                    BBLocalMachine local_machine;
+                    local_machine.dev_id = m.key();
+                    if (p.contains("dev_name"))
+                        local_machine.dev_name = p["dev_name"].get<std::string>();
+                    if (p.contains("dev_ip"))
+                        local_machine.dev_ip = p["dev_ip"].get<std::string>();
+                    if (p.contains("printer_type"))
+                        local_machine.printer_type = p["printer_type"].get<std::string>();
+                    m_local_machines[local_machine.dev_id] = local_machine;
+                }
             } else {
                 if (it.value().is_object()) {
                     for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
@@ -638,10 +691,25 @@ std::string AppConfig::load()
                 }
             }
         }
+
+        // SM Orca
+        if (j.contains("devices")) {
+            m_device_list = j["devices"].get<std::vector<DeviceInfo>>();
+        }
     } catch(std::exception err) {
         BOOST_LOG_TRIVIAL(info) << format("parse app config \"%1%\", error: %2%", AppConfig::loading_path(), err.what());
 
         return err.what();
+    }
+
+    // Convert "China" to "Chinese Mainland" for region parameter
+    auto it_app = m_storage.find("app");
+    if (it_app != m_storage.end()) {
+        auto it_region = it_app->second.find("region");
+        if (it_region != it_app->second.end() && (it_region->second == "China" || it_region->second == "")) {
+            it_region->second = "Chinese Mainland";
+            m_dirty = true;
+        }
     }
 
     // Figure out if datadir has legacy presets
@@ -754,6 +822,11 @@ void AppConfig::save()
             continue;
         }
         for (const auto& kvp : category.second) {
+            // SM Orca
+            if (kvp.first == "use_new_connect") {
+                j[category.first][kvp.first] = false;
+                continue;
+            }
             if (kvp.second == "true") {
                 j[category.first][kvp.first] = true;
                 continue;
@@ -789,6 +862,28 @@ void AppConfig::save()
     for (const auto& preset : m_printer_settings) {
         j["orca_presets"].push_back(preset.second);
     }
+
+    j["devices"] = json::array();
+    for (size_t i = 0; i < m_device_list.size(); ++i) {
+        if (m_device_list[i].link_mode != "wan") {
+            j["devices"].push_back(m_device_list[i]);
+        }
+    }
+
+    // j["devices"] = m_device_list;
+
+
+    for (size_t i = 0; i < j["devices"].size(); ++i) {
+        j["devices"][i]["connected"] = false;
+    }
+    for (const auto& local_machine : m_local_machines) {
+        json m_json;
+        m_json["dev_name"]         = local_machine.second.dev_name;
+        m_json["dev_ip"]           = local_machine.second.dev_ip;
+        m_json["printer_type"]     = local_machine.second.printer_type;
+
+        j["local_machines"][local_machine.first] = m_json;
+    }
     boost::nowide::ofstream c;
     c.open(path_pid, std::ios::out | std::ios::trunc);
     c << std::setw(4) << j << std::endl;
@@ -797,10 +892,14 @@ void AppConfig::save()
     // WIN32 specific: The final "rename_file()" call is not safe in case of an application crash, there is no atomic "rename file" API
     // provided by Windows (sic!). Therefore we save a MD5 checksum to be able to verify file corruption. In addition,
     // we save the config file into a backup first before moving it to the final destination.
-    c << appconfig_md5_hash_line({j.dump(4)});
+    c << appconfig_md5_hash_line(j.dump(4));
 #endif
 
     c.close();
+    if (c.fail()) {
+      BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path_pid << "; aborting attempt to overwrite original configuration";
+      return;
+    }
 
 #ifdef WIN32
     // Make a backup of the configuration file before copying it to the final destination.
@@ -1006,6 +1105,10 @@ void AppConfig::save()
     c << appconfig_md5_hash_line(config_str);
 #endif
     c.close();
+    if (c.fail()) {
+      BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path_pid << "; aborting attempt to overwrite original configuration";
+      return;
+    }
 
 #ifdef WIN32
     // Make a backup of the configuration file before copying it to the final destination.
@@ -1247,7 +1350,7 @@ std::string AppConfig::get_country_code()
 // #if !BBL_RELEASE_TO_PUBLIC
 //     if (is_engineering_region()) { return region; }
 // #endif
-    if (region == "CHN" || region == "China")
+    if (region == "CHN" || region == "Chinese Mainland" || region == "China")
         return "CN";
     else if (region == "USA")
         return "US";
@@ -1335,20 +1438,115 @@ std::string AppConfig::config_path()
     return path;
 }
 
+std::string AppConfig::get_preset_upgrade_url() 
+{
+    std::string localLanguage = get("language");
+    if (localLanguage != "zh_CN")
+        localLanguage = "en";
+    std::string url = APP_UPDATE_URL_BASE_EN + PROFILE_UPDATE_URL + localLanguage + std::string("/version.json");
+    auto countryArea = get_country_code();
+    if (countryArea == std::string("CN"))
+        url = APP_UPDATE_URL_BASE_CN + PROFILE_UPDATE_URL + localLanguage + std::string("/version.json");
+
+    return url;
+}
+
+std::string AppConfig::get_web_resource_upgrade_url()
+{
+    std::string localLanguage = get("language");
+    if (localLanguage != "zh_CN")
+        localLanguage = "en";
+    std::string url  = APP_UPDATE_URL_BASE_EN + FLUTTER_UPDATE_URL + localLanguage + std::string("/version.json");
+    auto countryArea = get_country_code();
+    if (countryArea == std::string("CN"))
+        url = APP_UPDATE_URL_BASE_CN + FLUTTER_UPDATE_URL + localLanguage + std::string("/version.json");
+
+    return url;
+}
+
+std::string AppConfig::get_version_upgrade_url(bool stable_only /* = false*/) 
+{ 
+    //get local area and get the resource from diff server
+    std::string localLanguage = get("language");
+    if (localLanguage != "zh_CN")
+        localLanguage = "en";
+    std::string url = APP_UPDATE_URL_BASE_EN + APP_UPDATE_URL + localLanguage + std::string("/version.json");
+    auto countryArea = get_country_code();
+    if (countryArea == std::string("CN"))
+        url = APP_UPDATE_URL_BASE_CN + APP_UPDATE_URL + localLanguage + std::string("/version.json");
+
+    return url; 
+}
+
 std::string AppConfig::version_check_url(bool stable_only/* = false*/) const
 {
     auto from_settings = get("version_check_url");
     return from_settings.empty() ? stable_only ? VERSION_CHECK_URL_STABLE : VERSION_CHECK_URL : from_settings;
 }
 
-std::string AppConfig::profile_update_url() const
-{
-    return PROFILE_UPDATE_URL;
-}
-
 bool AppConfig::exists()
 {
     return boost::filesystem::exists(config_path());
+}
+
+void AppConfig::save_device_info(const DeviceInfo& device)
+{
+    // 检查是否已存在该设备
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&device](const DeviceInfo& d) { return d.dev_id == device.dev_id; });
+    
+    if (it != m_device_list.end()) {
+        // 更新已存在的设备信息
+        *it = device;
+    } else {
+        // 添加新设备
+        m_device_list.push_back(device);
+    }
+    m_dirty = true;
+}
+
+void AppConfig::clear_device_info()
+{
+    m_device_list.clear();
+    m_dirty = true;
+}
+
+void AppConfig::remove_device_info(const std::string& dev_id)
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
+    
+    if (it != m_device_list.end()) {
+        m_device_list.erase(it);
+        m_dirty = true;
+    }
+}
+
+std::vector<DeviceInfo> AppConfig::get_devices() const
+{
+    return m_device_list;
+}
+
+bool AppConfig::get_device_info(const std::string& dev_id, DeviceInfo& info) const
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
+    
+    if (it != m_device_list.end()) {
+        info = *it;
+        return true;
+    }
+    return false;
+}
+
+void AppConfig::clear_filament_extruder_map()
+{
+    filament_extruder_map.clear();
+}
+
+std::unordered_map<int, int>& AppConfig::get_filament_extruder_map_ref() 
+{
+    return filament_extruder_map;
 }
 
 const std::map<std::string, std::string> AppConfig::filament_name_map = {
@@ -1360,7 +1558,7 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker J1 ABS @0.2 nozzle", "Snapmaker ABS @J1 0.2 nozzle"},
     {"Snapmaker J1 ABS @0.8 nozzle", "Snapmaker ABS @J1 0.8 nozzle"},
     {"Snapmaker J1 ABS", "Snapmaker ABS @J1"},
-    {"Snapmaker J1 ABS Benchy", "Snapmaker ABS Benchy@J1"},
+    {"Snapmaker J1 ABS Benchy", "Snapmaker ABS Benchy @J1"},
     {"Snapmaker J1 ASA @0.2 nozzle", "Snapmaker ASA @J1 0.2 nozzle"},
     {"Snapmaker J1 ASA", "Snapmaker ASA @J1"},
     {"Snapmaker J1 Breakaway Support", "Snapmaker Breakaway Support @J1"},
@@ -1386,7 +1584,7 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker J1 PVA", "Snapmaker PVA @J1"},
     {"Snapmaker J1 TPE", "Snapmaker TPE @J1"},
     {"Snapmaker J1 TPU", "Snapmaker TPU @J1"},
-    {"Snapmaker J1 TPU High-Flow", "Snapmaker TPU High-Flow@J1"},
+    {"Snapmaker J1 TPU High-Flow", "Snapmaker TPU High-Flow @J1"},
 
     // Dual相关映射
     {"PolyLite Dual PLA @0.2 nozzle", "PolyLite PLA @Dual 0.2 nozzle"},
@@ -1396,7 +1594,7 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker Dual ABS @0.2 nozzle", "Snapmaker ABS @Dual 0.2 nozzle"},
     {"Snapmaker Dual ABS @0.8 nozzle", "Snapmaker ABS @Dual 0.8 nozzle"},
     {"Snapmaker Dual ABS", "Snapmaker ABS @Dual"},
-    {"Snapmaker Dual ABS Benchy", "Snapmaker ABS Benchy@Dual"},
+    {"Snapmaker Dual ABS Benchy", "Snapmaker ABS Benchy @Dual"},
     {"Snapmaker Dual ASA @0.2 nozzle", "Snapmaker ASA @Dual 0.2 nozzle"},
     {"Snapmaker Dual ASA", "Snapmaker ASA @Dual"},
     {"Snapmaker Dual PA-CF", "Snapmaker PA-CF @Dual"},
@@ -1416,14 +1614,14 @@ const std::map<std::string, std::string> AppConfig::filament_name_map = {
     {"Snapmaker Dual PLA Metal @0.2 nozzle", "Snapmaker PLA Metal @Dual 0.2 nozzle"},
     {"Snapmaker Dual PLA Metal", "Snapmaker PLA Metal @Dual"},
     {"Snapmaker Dual PLA Silk @0.2 nozzle", "Snapmaker PLA Silk @Dual 0.2 nozzle"},
-    {"Snapmaker Dual PLA Silk", "Snapmaker PLA Silk@Dual"},
+    {"Snapmaker Dual PLA Silk", "Snapmaker PLA Silk @Dual"},
     {"Snapmaker Dual PLA-CF @0.8 nozzle", "Snapmaker PLA-CF @Dual 0.8 nozzle"},
     {"Snapmaker Dual PLA-CF", "Snapmaker PLA-CF @Dual"},
     {"Snapmaker Dual PVA @0.2 nozzle", "Snapmaker PVA @Dual 0.2 nozzle"},
     {"Snapmaker Dual PVA", "Snapmaker PVA @Dual"},
     {"Snapmaker Dual TPE", "Snapmaker TPE @Dual"},
     {"Snapmaker Dual TPU", "Snapmaker TPU @Dual"},
-    {"Snapmaker Dual TPU High-Flow", "Snapmaker TPU High-Flow@Dual"}};
+    {"Snapmaker Dual TPU High-Flow", "Snapmaker TPU High-Flow @Dual"}};
 
 void AppConfig::update_filament_names(json& j)
 {

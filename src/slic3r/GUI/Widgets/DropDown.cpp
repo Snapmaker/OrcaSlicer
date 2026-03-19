@@ -368,7 +368,12 @@ void DropDown::messureSize()
     wxWindow::SetSize(szContent);
 #ifdef __WXGTK__
     // Gtk has a wrapper window for popup widget
-    gtk_window_resize (GTK_WINDOW (m_widget), szContent.x, szContent.y);
+    // Fix for GNOME Platform 48 X11 backend: ensure size is valid before calling gtk_window_resize
+    int gtk_width = szContent.x;
+    int gtk_height = szContent.y;
+    if (gtk_width <= 0) gtk_width = 100;
+    if (gtk_height <= 0) gtk_height = 100;
+    gtk_window_resize(GTK_WINDOW(m_widget), gtk_width, gtk_height);
 #endif
     need_sync = false;
 }
@@ -384,6 +389,10 @@ void DropDown::autoPosition()
         size = rowSize;
         size.y *= std::min((size_t)15, texts.size());
         size.y += texts.size() > 15 ? rowSize.y / 2 : 0;
+#ifdef __WXGTK__
+        if (size.x < 1) size.x = 1;
+        if (size.y < 1) size.y = 1;
+#endif
         if (size != GetSize()) {
             wxWindow::SetSize(size);
             offset = wxPoint();
@@ -396,6 +405,10 @@ void DropDown::autoPosition()
         if (GetPosition().y + size.y + 10 > drect.GetBottom()) {
             if (use_content_width && texts.size() <= 15) size.x += 6;
             size.y = drect.GetBottom() - GetPosition().y - 10;
+#ifdef __WXGTK__
+            if (size.y < 1) size.y = 1;
+            if (size.x < 1) size.x = 1;
+#endif
             wxWindow::SetSize(size);
             if (selection >= 0) {
                 if (offset.y + rowSize.y * (selection + 1) > size.y)

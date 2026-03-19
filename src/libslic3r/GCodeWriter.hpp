@@ -4,6 +4,7 @@
 #include "libslic3r.h"
 #include <string>
 #include <charconv>
+#include <unordered_map>
 #include "Extruder.hpp"
 #include "Point.hpp"
 #include "PrintConfig.hpp"
@@ -53,7 +54,9 @@ public:
     std::string set_jerk_xy(double jerk);
     // Orca: set acceleration and jerk in one command for Klipper
     std::string set_accel_and_jerk(unsigned int acceleration, double jerk);
+    std::string set_junction_deviation(double junction_deviation); 
     std::string set_pressure_advance(double pa) const;
+    std::string set_input_shaping(char axis, float damp, float freq) const;
     std::string reset_e(bool force = false);
     std::string update_progress(unsigned int num, unsigned int tot, bool allow_100 = false) const;
     // return false if this extruder was already selected
@@ -70,7 +73,7 @@ public:
     double      get_current_speed() const { return m_current_speed;}
     std::string travel_to_xy(const Vec2d &point, const std::string &comment = std::string());
     std::string travel_to_xyz(const Vec3d &point, const std::string &comment = std::string(), bool force_z = false);
-    std::string travel_to_z(double z, const std::string &comment = std::string());
+    std::string travel_to_z(double z, const std::string &comment = std::string(), bool force = false);
     bool        will_move_z(double z) const;
     std::string extrude_to_xy(const Vec2d &point, double dE, const std::string &comment = std::string(), bool force_no_extrusion = false);
     //BBS: generate G2 or G3 extrude which moves by arc
@@ -117,6 +120,26 @@ public:
     void set_is_first_layer(bool bval) { m_is_first_layer = bval; }
     GCodeFlavor get_gcode_flavor() const { return config.gcode_flavor; }
 
+    // SM Orca: 设置耗材-挤出机映射
+    void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
+    const std::unordered_map<int, int>& get_filament_extruder_map() const { return m_filament_extruder_map; }
+    // SM Orca: 获取物理挤出机ID
+    // 关键修复：当映射表为空时，使用模运算而不是直接返回耗材ID，避免越界
+    // 例如：4个物理挤出机时，耗材0-7分别映射到0,1,2,3,0,1,2,3
+    int get_physical_extruder(int filament_idx) const {
+        auto it = m_filament_extruder_map.find(filament_idx);
+        int physical_extruder_id;
+        if (it != m_filament_extruder_map.end()) {
+            // 从映射表获取
+            physical_extruder_id = it->second;
+        } else {
+            // 映射表为空或没有该耗材的映射，使用默认模运算映射
+            physical_extruder_id = filament_idx % m_physical_extruder_count;
+        }
+
+        return physical_extruder_id;
+    }
+
     // Returns whether this flavor supports separate print and travel acceleration.
     static bool supports_separate_travel_acceleration(GCodeFlavor flavor);
   private:
@@ -136,6 +159,7 @@ public:
     double          m_last_jerk;
     double          m_max_jerk_z;
     double          m_max_jerk_e;
+    double          m_max_junction_deviation;
 
     unsigned int  m_travel_acceleration;
     unsigned int  m_travel_jerk;
@@ -166,6 +190,11 @@ public:
     bool            m_is_bbl_printers = false;
     double          m_current_speed;
     bool            m_is_first_layer = true;
+
+    // SM Orca: 耗材到物理挤出机的映射表（filament_idx -> physical_extruder_id）
+    std::unordered_map<int, int> m_filament_extruder_map;
+    // SM Orca: 物理挤出机数量（用于默认模运算映射）
+    size_t m_physical_extruder_count = 1;  // 默认为1，防止除零
 
     enum class Acceleration {
         Travel,

@@ -16,24 +16,24 @@
 </head>
 <body onLoad="OnInit()">
 <div id="Title">
-	<div class="trans" tid="t6">We kindly request your help to improve<br/> everyone's printing</div>
+	<div class="trans" tid="t6">We kindly request your help to improve everyone's printing.<br/>Come and Join our Customer Experience Improvement Program</div>
 </div>
 <div id="Content">
 	<div id="PolicyTxt" class="TextS2 TextArea1 ZScrol">
-<a class="trans" tid="t54">In the 3D Printing community, we learn from each other’s successes and failures to adjust our own slicing parameters and settings. Snapmaker Orca follows the same principle and uses machine learning to improve its performance from the successes and failures of the vast number of prints by our users. We are training Snapmaker Orca to be smarter by feeding them the real-world data. If you are willing, this service will access information from your error logs and usage logs, which may include information described in </a><a class="HyperLink trans" tid="t55" href="https://bambulab.com/policies/privacy" target="_blank">Privacy Policy</a><a class="trans" tid="t56">
-. We will not collect any Personal Data by which an individual can be identified directly or indirectly, including without limitation names, addresses, payment information, or phone numbers. By enabling this service, you agree to these terms and the statement about Privacy Policy.
-</a>
+<a class="trans" tid="t54"></a><a class="HyperLink trans" tid="t55" onClick="OpenPrivacyPolicy()"></a><a class="trans" tid="t56"></a><a class="HyperLink trans" tid="t_566" onClick="OpenCrossBorderNotice()"></a><a class="trans" tid="t_567"></a>
 	</div>
-<br/>	
-
-	<div>
-	<input id="ChoosePrivacy" type="checkbox" onClick="SendPrivacySelect()"  onChange="SendPrivacySelect()" />
-	<span class="trans TextS1" tid="t7">Allow sending anonymous data</span>
-</div>
+	<div id="AgreeArea" style="margin-top:10px;display:flex;flex-direction:column;">
+		<label style="display:flex;align-items:flex-start;cursor:pointer;">
+			<input type="checkbox" id="agreeCheckbox" style="width:13px;min-width:13px;margin-top:3px;margin-right:6px;" onchange="OnCheckboxChange()">
+			<span><a class="trans" tid="t57" style="margin-left:7px;"></a><a class="HyperLink trans" tid="t58" onClick="OpenCrossBorderNotice()"></a></span>
+		</label>
+		<p id="errorTip" class="trans" tid="t115" style="color:red;display:none;margin-top:5px;margin-left:0px;"></p>
+	</div>
 </div>		
 <div id="AcceptArea">
-	<div class="GrayBtn trans" tid="t8" id="PreBtn"  onclick="window.open('../11/index.html','_self')">Back</div>
-	<div class="NormalBtn trans" tid="t9" id="AcceptBtn"  onclick="GotoNextPage()">Next</div>
+	<div class="GrayBtn trans" tid="t8" id="PreBtn"  onclick="GotoBackPage()">Back</div>
+	<div class="GrayBtn trans" tid="t52" id="SkipBtn"  onclick="GotoSkipPage()">Skip</div>	
+	<div class="NormalBtn trans" tid="t112" id="AcceptBtn"  onclick="GotoNextPage()">Join the Program</div>
 </div>
 </body>
 </html>

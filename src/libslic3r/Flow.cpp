@@ -59,7 +59,7 @@ static inline FlowRole opt_key_to_flow_role(const std::string &opt_key)
 
 static inline void throw_on_missing_variable(const std::string &opt_key, const char *dependent_opt_key) 
 {
-	throw FlowErrorMissingVariable((boost::format(L("Failed to calculate line width of %1%. Can not get value of \"%2%\" ")) % opt_key % dependent_opt_key).str());
+	throw FlowErrorMissingVariable((boost::format(L("Failed to calculate line width of %1%. Cannot get value of \"%2%\" ")) % opt_key % dependent_opt_key).str());
 }
 
 // Used to provide hints to the user on default extrusion width values, and to provide reasonable values to the PlaceholderParser.
@@ -213,42 +213,73 @@ double Flow::mm3_per_mm() const
 
 Flow support_material_flow(const PrintObject *object, float layer_height)
 {
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = object->config().support_filament - 1;
+    int physical_extruder = object->print()->get_physical_extruder(filament_idx);
+
+    // SM Orca: 日志 - 配置数组访问边界检查
+    const auto& nozzle_diameter_config = object->print()->config().nozzle_diameter;
+    size_t array_size = nozzle_diameter_config.values.size();
+
     return Flow::new_from_config_width(
         frSupportMaterial,
         // The width parameter accepted by new_from_config_width is of type ConfigOptionFloatOrPercent, the Flow class takes care of the percent to value substitution.
         (object->config().support_line_width.value > 0) ? object->config().support_line_width : object->config().line_width,
         // if object->config().support_filament == 0 (which means to not trigger tool change, but use the current extruder instead), get_at will return the 0th component.
-        float(object->print()->config().nozzle_diameter.get_at(object->config().support_filament-1)),
+        float(object->print()->config().nozzle_diameter.get_at(physical_extruder)),
         (layer_height > 0.f) ? layer_height : float(object->config().layer_height.value));
 }
 //BBS
 Flow support_transition_flow(const PrintObject* object)
 {
     //BBS: support transition of tree support is bridge flow
-    float dmr = float(object->print()->config().nozzle_diameter.get_at(object->config().support_filament - 1));
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = object->config().support_filament - 1;
+    int physical_extruder = object->print()->get_physical_extruder(filament_idx);
+
+    // SM Orca: 日志 - 配置数组访问边界检查
+    const auto& nozzle_diameter_config = object->print()->config().nozzle_diameter;
+    size_t array_size = nozzle_diameter_config.values.size();
+
+    float dmr = float(object->print()->config().nozzle_diameter.get_at(physical_extruder));
     return Flow::bridging_flow(dmr, dmr);
 }
 
 Flow support_material_1st_layer_flow(const PrintObject *object, float layer_height)
 {
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = object->config().support_filament - 1;
+    int physical_extruder = object->print()->get_physical_extruder(filament_idx);
     const PrintConfig &print_config = object->print()->config();
+
+    // SM Orca: 日志 - 配置数组访问边界检查
+    size_t array_size = print_config.nozzle_diameter.values.size();
+
     const auto &width = (print_config.initial_layer_line_width.value > 0) ? print_config.initial_layer_line_width : object->config().support_line_width;
     return Flow::new_from_config_width(
         frSupportMaterial,
         // The width parameter accepted by new_from_config_width is of type ConfigOptionFloatOrPercent, the Flow class takes care of the percent to value substitution.
         (width.value > 0) ? width : object->config().line_width,
-        float(print_config.nozzle_diameter.get_at(object->config().support_filament-1)),
+        float(print_config.nozzle_diameter.get_at(physical_extruder)),
         (layer_height > 0.f) ? layer_height : float(print_config.initial_layer_print_height.value));
 }
 
 Flow support_material_interface_flow(const PrintObject *object, float layer_height)
 {
+    // SM Orca: 使用物理挤出机的喷嘴直径
+    int filament_idx = object->config().support_interface_filament - 1;
+    int physical_extruder = object->print()->get_physical_extruder(filament_idx);
+
+    // SM Orca: 日志 - 配置数组访问边界检查
+    const auto& nozzle_diameter_config = object->print()->config().nozzle_diameter;
+    size_t array_size = nozzle_diameter_config.values.size();
+
     return Flow::new_from_config_width(
         frSupportMaterialInterface,
         // The width parameter accepted by new_from_config_width is of type ConfigOptionFloatOrPercent, the Flow class takes care of the percent to value substitution.
         (object->config().support_line_width > 0) ? object->config().support_line_width : object->config().line_width,
         // if object->config().support_interface_filament == 0 (which means to not trigger tool change, but use the current extruder instead), get_at will return the 0th component.
-        float(object->print()->config().nozzle_diameter.get_at(object->config().support_interface_filament-1)),
+        float(object->print()->config().nozzle_diameter.get_at(physical_extruder)),
         (layer_height > 0.f) ? layer_height : float(object->config().layer_height.value));
 }
 

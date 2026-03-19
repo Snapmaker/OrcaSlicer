@@ -157,6 +157,8 @@ public:
 		, const boost::asio::ip::address& multicast_address
 		, std::shared_ptr< boost::asio::io_service > io_service);
 
+	~UdpSocket();
+
 	void send();
 	void async_receive();
 	void cancel() { socket.cancel(); }

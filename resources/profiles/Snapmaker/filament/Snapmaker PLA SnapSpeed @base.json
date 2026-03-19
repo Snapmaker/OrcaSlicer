@@ -40,9 +40,6 @@
     "cool_plate_temp_initial_layer": [
         "35"
     ],
-    "default_filament_colour": [
-        "#FF0000"
-    ],
     "dont_slow_down_outer_wall": [
         "0"
     ],

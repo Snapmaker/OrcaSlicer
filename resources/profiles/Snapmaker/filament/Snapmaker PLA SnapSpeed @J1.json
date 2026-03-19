@@ -6,10 +6,10 @@
     "setting_id": "28360872781",
     "inherits": "Snapmaker PLA SnapSpeed @base",
     "compatible_printers": [
-        "Snapmaker J1 (0.2 nozzle)",
-        "Snapmaker J1 (0.4 nozzle)",
-        "Snapmaker J1 (0.6 nozzle)",
-        "Snapmaker J1 (0.8 nozzle)"
+      "Snapmaker J1 (0.2 nozzle)",
+      "Snapmaker J1 (0.4 nozzle)",
+      "Snapmaker J1 (0.6 nozzle)",
+      "Snapmaker J1 (0.8 nozzle)"
     ],
     "activate_air_filtration": [
         "0"

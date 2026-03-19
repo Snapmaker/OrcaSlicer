@@ -1,13 +1,6 @@
 #ifndef slic3r_GUI_App_hpp_
 #define slic3r_GUI_App_hpp_
 
-#include <wx/app.h>
-#include <wx/colour.h>
-#include <wx/font.h>
-#include <wx/string.h>
-#include <wx/snglinst.h>
-#include <wx/msgdlg.h>
-
 #include <memory>
 #include <string>
 #include "ImGuiWrapper.hpp"
@@ -21,11 +14,22 @@
 #include "slic3r/GUI/WebViewDialog.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
 #include "slic3r/GUI/WebSMUserLoginDialog.hpp"
+#include "slic3r/GUI/WebDeviceDialog.hpp"
+#include "slic3r/GUI/WebPreprintDialog.hpp"
 #include "slic3r/GUI/BindDialog.hpp"
 #include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "slic3r/GUI/SSWCP.hpp"
+#include "slic3r/Utils/Bonjour.hpp"
+#include "slic3r/GUI/PrinterWebView.hpp"
+#include <wx/app.h>
+#include <wx/colour.h>
+#include <wx/font.h>
+#include <wx/string.h>
+#include <wx/snglinst.h>
+#include <wx/msgdlg.h>
 
 #include <mutex>
 #include <stack>
@@ -42,6 +46,8 @@
     #define _MSW_DARK_MODE            1
 #endif // _MSW_DARK_MODE
 
+#define PRIVACY_POLICY_FLAGS "privacy_policy_isagree"
+
 class wxMenuItem;
 class wxMenuBar;
 class wxTopLevelWindow;
@@ -51,7 +57,13 @@ class wxBookCtrlBase;
 class Notebook;
 struct wxLanguageInfo;
 
+namespace Slic3r {
+namespace GUI {
+    class UpdateVersionDialog;
+};
+};
 
+// namespace Slice3rnamespace GUI::Slice3rnamespace GUI
 namespace Slic3r {
 
 class AppConfig;
@@ -77,11 +89,13 @@ class Plater;
 class ParamsPanel;
 class NotificationManager;
 class Downloader;
+class DownloadManager;
 struct GUI_InitParams;
 class ParamsDialog;
 class HMSQuery;
 class ModelMallDialog;
 class PingCodeBindDialog;
+class NetworkErrorDialog;
 
 
 enum FileType
@@ -91,6 +105,7 @@ enum FileType
     FT_OBJ,
     FT_AMF,
     FT_3MF,
+    FT_GCODE_3MF,
     FT_GCODE,
     FT_MODEL,
     FT_ZIP,
@@ -228,6 +243,8 @@ public:
         GCodeViewer
     };
 
+    static std::atomic<bool> m_app_alive; // 标记应用是否存活
+
 private:
     bool            m_initialized { false };
     bool            m_post_initialized { false };
@@ -236,6 +253,9 @@ private:
     bool            m_is_recreating_gui{ false };
 #ifdef __linux__
     bool            m_opengl_initialized{ false };
+#endif
+#if defined(__WINDOWS__)
+    bool            m_is_arm64{false};
 #endif
 
    
@@ -275,9 +295,10 @@ private:
 	std::unique_ptr <OtherInstanceMessageHandler> m_other_instance_message_handler;
     std::unique_ptr <wxSingleInstanceChecker> m_single_instance_checker;
     std::string m_instance_hash_string;
-	    size_t m_instance_hash_int;
+	size_t m_instance_hash_int;
 
     std::unique_ptr<Downloader> m_downloader;
+    DownloadManager* m_download_manager;
 
     //BBS
     bool m_is_closing {false};
@@ -296,6 +317,13 @@ private:
     ZUserLogin*     login_dlg { nullptr };
     SMUserLogin*    sm_login_dlg{ nullptr };
 
+
+public:
+    // device dialog
+    WebDeviceDialog* web_device_dialog{ nullptr };
+    WebPreprintDialog* web_preprint_dialog{ nullptr };
+
+private:
     VersionInfo version_info;
     VersionInfo privacy_version_info;
     static std::string version_display;
@@ -308,10 +336,51 @@ private:
     bool             m_side_popup_status{false};
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;
+    //HttpServer       m_http_server;
+
+public:
+    HttpServer       m_page_http_server;
+    
+private:
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
+
+    std::shared_ptr<PrintHost> m_connected_host = nullptr;
+    std::mutex                 m_cnt_hst_mtx;
+    DynamicPrintConfig              m_host_config;
+    std::mutex                 m_host_cfg_mtx;
+
+    wxTimer* m_machine_find_timer = nullptr;
+    std::shared_ptr<Bonjour> m_machine_find_engine = nullptr;
+    const int                m_machine_find_id     = 10086;
+
   public:
+    DynamicPrintConfig*             get_host_config() {
+        DynamicPrintConfig* res = nullptr;
+        m_host_cfg_mtx.lock();
+        res = &m_host_config;
+        m_host_cfg_mtx.unlock();
+
+        return res;
+    }
+
+    void import_presets();
+
+    void import_flutter_web();
+
+    void reset_machine_find_engine() { m_machine_find_engine = nullptr; }
+
+    void                       set_host_config(const DynamicPrintConfig& config)
+    {
+        m_host_cfg_mtx.lock();
+        m_host_config = config;
+        m_host_cfg_mtx.unlock();
+    }
+    void      get_connect_host(std::shared_ptr<PrintHost>& output);
+    void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
+    wxDialog* get_web_device_dialog() { return web_device_dialog; }
+    void                       set_web_preprint_dialog(WebPreprintDialog* obj) { web_preprint_dialog = obj; }
+    wxDialog*                  get_web_preprint_dialog() { return web_preprint_dialog; }
       //try again when subscription fails
     void            on_start_subscribe_again(std::string dev_id);
     void            check_filaments_in_blacklist(std::string tag_supplier, std::string tag_material, bool& in_blacklist, std::string& action, std::string& info);
@@ -328,6 +397,7 @@ private:
     //explicit GUI_App(EAppMode mode = EAppMode::Editor);
     ~GUI_App() override;
 
+    void                   machine_find();
     void show_message_box(std::string msg) { wxMessageBox(msg); }
     EAppMode get_app_mode() const { return m_app_mode; }
     Slic3r::DeviceManager* getDeviceManager() { return m_device_manager; }
@@ -356,7 +426,7 @@ private:
     // Process command line parameters cached in this->init_params,
     // load configs, STLs etc.
     void            post_init();
-    void            shutdown();
+    void            shutdown(bool isRecreate = false);
     // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
     // Otherwise HTML formatted for the system info dialog.
     static std::string get_gl_info(bool for_github);
@@ -395,9 +465,9 @@ private:
     bool            get_side_menu_popup_status();
     void            set_side_menu_popup_status(bool status);
     void            link_to_network_check();
-        
+    void            link_to_lan_only_wiki();
 
-    const wxColour& get_label_clr_modified(){ return m_color_label_modified; }
+    const wxColour& get_label_clr_modified() { return m_color_label_modified; }
     const wxColour& get_label_clr_sys()     { return m_color_label_sys; }
     const wxColour& get_label_clr_default() { return m_color_label_default; }
     const wxColour& get_window_default_clr(){ return m_color_window_default; }
@@ -445,12 +515,18 @@ private:
     void            get_login_info();
     bool            is_user_login();
 
+    wxString get_international_url(const wxString& origin_url);
+
     // SM
     struct SMUserInfo
     {
     public:
         bool is_user_login() { return m_login; }
-        void set_user_login(bool login) { m_login = login; }
+        void set_user_login(bool login)
+        {
+            m_login = login;
+            notify();
+        }
 
         std::string get_user_name() { return m_login_user_name; }
         void     set_user_name(const std::string& name) { m_login_user_name = name; }
@@ -461,42 +537,49 @@ private:
         std::string get_user_icon_url() { return m_login_user_icon_url; }
         void     set_user_icon_url(const std::string& url) { m_login_user_icon_url = url; }
 
+        std::string get_user_id() { return m_login_user_id; }
+        void        set_user_id(const std::string& id) { m_login_user_id = id; }
+
+        std::string get_user_account() { return m_login_user_account; }
+        void        set_user_account(const std::string& account) { m_login_user_account = account; }
+
         void clear() {
             m_login_user_name = "";
             m_login_user_token = "";
             m_login_user_icon_url = "";
+            m_login_user_id       = "";
+            m_login_user_account  = "";
             m_login               = false;
         }
+
+        void notify();
     private:
         std::string m_login_user_name = "";
         std::string m_login_user_token = "";
         std::string m_login_user_icon_url = "";
+        std::string m_login_user_id       = "";
+        std::string m_login_user_account  = "";
         bool     m_login = false;
     };
+
     SMUserInfo*     sm_get_userinfo() { return &m_login_userinfo; }
     void            sm_get_login_info();
     void            sm_request_login(bool show_user_info = false);
     void            sm_ShowUserLogin(bool show  =  true);
     void            sm_request_user_logout();
-
-    void            request_user_login(int online_login = 0);
-    void            request_user_handle(int online_login = 0);
+  
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
     std::string     handle_web_request(std::string cmd);
-    void            handle_script_message(std::string msg);
     void            request_model_download(wxString url);
     void            download_project(std::string project_id);
     void            request_project_download(std::string project_id);
     void            request_open_project(std::string project_id);
     void            request_remove_project(std::string project_id);
+    void            sm_request_remove_project(std::string project_id);
 
     void            handle_http_error(unsigned int status, std::string body);
     void            on_http_error(wxCommandEvent &evt);
-    void            on_set_selected_machine(wxCommandEvent& evt);
-    void            on_update_machine_list(wxCommandEvent& evt);
-    void            on_user_login(wxCommandEvent &evt);
-    void            on_user_login_handle(wxCommandEvent& evt);
     void            enable_user_preset_folder(bool enable);
 
     // BBS
@@ -505,10 +588,10 @@ private:
     bool            m_studio_active = true;
     std::chrono::system_clock::time_point  last_active_point;
 
-    void            check_update(bool show_tips, int by_user);
-    void            check_new_version(bool show_tips = false, int by_user = 0);
-    void            check_new_version_sf(bool show_tips = false, int by_user = 0);
-    void            request_new_version(int by_user);
+    void            check_web_version();
+    void            check_preset_version();
+    void            check_new_version_sf(bool show_tips = false, bool by_user = false);
+    void            process_network_msg(std::string dev_id, std::string msg);
     void            enter_force_upgrade();
     void            set_skip_version(bool skip = true);
     void            no_new_version();
@@ -521,15 +604,15 @@ private:
     void            sync_preset(Preset* preset);
     void            start_sync_user_preset(bool with_progress_dlg = false);
     void            stop_sync_user_preset();
-    void            start_http_server();
-    void            stop_http_server();
-    void            switch_staff_pick(bool on);
+    //void            start_http_server();
+    //void            stop_http_server();
 
-    void            on_show_check_privacy_dlg(int online_login = 0);
-    void            show_check_privacy_dlg(wxCommandEvent& evt);
-    void            on_check_privacy_update(wxCommandEvent &evt);
+    // page loading http server
+    void            start_page_http_server();
+    void            stop_page_http_server();
+    void            switch_staff_pick(bool on);
     bool            check_privacy_update();
-    void            check_privacy_version(int online_login = 0);
+    
     void            check_track_enable();
 
     static bool     catch_error(std::function<void()> cb, const std::string& err);
@@ -592,7 +675,7 @@ private:
 #endif /* __APPLE */
 
     Sidebar&             sidebar();
-    GizmoObjectManipulation*  obj_manipul();
+    GizmoObjectManipulation *obj_manipul();
     ObjectSettings*      obj_settings();
     ObjectList*          obj_list();
     ObjectLayers*        obj_layers();
@@ -603,6 +686,7 @@ private:
     Model&      		 model();
     NotificationManager * notification_manager();
     Downloader*          downloader();
+    DownloadManager*  download_manager();
 
 
     std::string         m_mall_model_download_url;
@@ -610,10 +694,16 @@ private:
     ModelMallDialog*    m_mall_publish_dialog{ nullptr };
     PingCodeBindDialog* m_ping_code_binding_dialog{ nullptr };
 
+    NetworkErrorDialog* m_server_error_dialog { nullptr };
+
     void            set_download_model_url(std::string url) {m_mall_model_download_url = url;}
     void            set_download_model_name(std::string name) {m_mall_model_download_name = name;}
     std::string     get_download_model_url() {return m_mall_model_download_url;}
     std::string     get_download_model_name() {return m_mall_model_download_name;}
+
+#if defined(__WINDOWS__)
+    bool            is_running_on_arm64() { return m_is_arm64; }
+#endif
 
     void            load_url(wxString url);
     void            open_mall_page_dialog();
@@ -638,6 +728,7 @@ private:
     PresetUpdater*  preset_updater{ nullptr };
     MainFrame*      mainframe{ nullptr };
     Plater*         plater_{ nullptr };
+    UpdateVersionDialog* m_updateDialog{nullptr};
 
 	PresetUpdater*  get_preset_updater() { return preset_updater; }
 
@@ -703,7 +794,7 @@ private:
     bool            check_networking_version();
     void            cancel_networking_install();
     void            restart_networking();
-    void            check_config_updates_from_updater() { check_updates(false); }
+    void            check_config_updates_from_updater(bool updateByuser = false) { check_updates(updateByuser); }
 
 private:
     int             updating_bambu_networking();
@@ -719,6 +810,7 @@ private:
     void            update_http_extra_header();
     bool            check_older_app_config(Semver current_version, bool backup);
     void            copy_older_config();
+    void                               copy_web_resources();
     void            window_pos_save(wxTopLevelWindow* window, const std::string &name);
     bool            window_pos_restore(wxTopLevelWindow* window, const std::string &name, bool default_maximized = false);
     void            window_pos_sanitize(wxTopLevelWindow* window);
@@ -736,6 +828,107 @@ private:
     std::string             m_open_method;
 
     SMUserInfo m_login_userinfo;
+
+public:
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_page_state_subscribers;
+    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_update_privacy_subscribers;
+    struct CachePairCompare
+    {
+        bool operator()(const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& lhs,
+                        const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& rhs) const
+        {
+            return lhs.first <= rhs.first;
+        }
+    };
+    std::map<std::pair<void*, std::weak_ptr<SSWCP_Instance>>, std::string, CachePairCompare>                     m_cache_subscribers;
+
+    void recent_file_notify(const json& res);
+    void user_login_notify(const json& res);
+    void device_card_notify(const json& res);
+    void page_state_notify_webview(wxWebView* webview, const std::string& state);
+    void cache_notify(const std::string& key, const json& res);
+    void user_update_privacy_notify(const bool& res);
+
+public:
+    bool sm_disconnect_current_machine(bool need_reload_printerview = true);
+
+
+public:
+    class Fltviews
+    {
+    private:
+        std::unordered_map<wxWebView*, wxString> webviews;
+        std::unordered_map<WebViewPanel*, wxString> webview_panels;
+        std::unordered_map<PrinterWebView*, std::pair<wxString, wxString>> printerviews;
+        GUI_App*                                                           app;
+
+    public:
+        Fltviews(GUI_App* app = nullptr) : app(app) {}
+
+        void set_app(GUI_App* app) { this->app = app; }
+
+        void remove_view(wxWebView* view) {
+            if (webviews.count(view)) {
+                webviews.erase(view);
+            }
+        }
+
+        void add_view(wxWebView* view, const wxString& url) {
+            webviews[view] = url;
+        }
+
+        void remove_panel(WebViewPanel* panel)
+        {
+            if (webview_panels.count(panel)) {
+                webview_panels.erase(panel);
+            }
+        }
+
+        void add_webview_panel(WebViewPanel* panel, const wxString& url) {
+            webview_panels[panel] = url;
+        }
+
+        void add_printer_view(PrinterWebView* prview, const wxString& url, const wxString& key)
+        {
+            printerviews[prview] = std::make_pair(url, key);
+        }
+
+        void remove_printer_view(PrinterWebView* prview)
+        {
+            if (printerviews.count(prview)) {
+                printerviews.erase(prview);
+            }
+        }
+
+        void reload_all() {
+            for (const auto& view : webviews) {
+                auto ptr = view.first;
+                wxString new_url = app->get_international_url(view.second);
+                ptr->LoadURL(new_url);
+            }
+
+            for (const auto& panel : webview_panels) {
+                auto ptr = panel.first;
+                wxString new_url = app->get_international_url(panel.second);
+                ptr->load_url(new_url);
+            }
+
+            for (const auto& prview : printerviews) {
+                auto ptr = prview.first;
+                wxString new_url = app->get_international_url(prview.second.first);
+                ptr->load_url(new_url, prview.second.second);
+            }
+        }
+    };
+
+public:
+    Fltviews&       fltviews() { return m_fltviews; }
+
+private:
+    Fltviews m_fltviews;
 };
 
 DECLARE_APP(GUI_App)

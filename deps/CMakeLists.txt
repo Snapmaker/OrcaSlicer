@@ -22,13 +22,18 @@
 
 cmake_minimum_required(VERSION 3.2)
 if (APPLE)
-    # if CMAKE_OSX_DEPLOYMENT_TARGET is not set, set it to 11.3
+    # Require macOS 12.0+ (Monterey) as minimum version
+    # All deps must use the same deployment target for consistent behavior
     if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.3" CACHE STRING "Minimum OS X deployment version" FORCE)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum OS X deployment version" FORCE)
     endif ()
     message(STATUS "CMAKE_OSX_DEPLOYMENT_TARGET: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 
 endif ()
+
+if(POLICY CMP0135) # DOWNLOAD_EXTRACT_TIMESTAMP
+    cmake_policy(SET CMP0135 NEW)
+endif()
 
 project(Snapmaker_Orca-deps)
 
@@ -41,7 +46,7 @@ if (NPROC EQUAL 0)
 endif ()
 
 set(DESTDIR "${CMAKE_CURRENT_BINARY_DIR}/destdir" CACHE PATH "Destination directory")
-set(DEP_DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/../DL_CACHE CACHE PATH "Path for downloaded source packages.")
+set(DEP_DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/DL_CACHE CACHE PATH "Path for downloaded source packages.")
 set(FLATPAK FALSE CACHE BOOL "Toggles various build settings for flatpak, like /usr/local in DESTDIR or not building wxwidgets")
 if (NOT FLATPAK)
     set(DESTDIR "${DESTDIR}/usr/local/")
@@ -56,11 +61,15 @@ endif ()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     option(DEP_WX_GTK3 "Build wxWidgets against GTK3" OFF)
-else() 
-    if(POLICY CMP0135) # DOWNLOAD_EXTRACT_TIMESTAMP
-        cmake_policy(SET CMP0135 NEW)
-    endif()
 endif()
+
+# Sentry crash reporting - enabled only on Windows by default
+if (WIN32 OR APPLE)
+    set(SLIC3R_SENTRY_DEFAULT ON)
+else()
+    set(SLIC3R_SENTRY_DEFAULT OFF)
+endif()
+option(SLIC3R_SENTRY "Enable Sentry crash reporting SDK" ${SLIC3R_SENTRY_DEFAULT})
 
 set(IS_CROSS_COMPILE FALSE)
 
@@ -148,7 +157,7 @@ elseif(FLATPAK)
     # the only reason this is here is because of the HACK at the bottom for ci
     #
     # note for future devs: shared libs may actually create a size reduction
-    # but OrcaSlicer_deps tends to get really funny regarding linking after that (notably boost)
+    # but Snapmaker_Orca_deps tends to get really funny regarding linking after that (notably boost)
     # so, as much as I would like to use that, it's not happening
     ExternalProject_Add(
         dep_${projectname}
@@ -203,13 +212,13 @@ endfunction(Snapmaker_Orca_add_cmake_project)
 
 
 if (MSVC)
-    if ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "8")
-        message(STATUS "\nDetected 64-bit compiler => building 64-bit deps bundle\n")
-        set(DEPS_BITS 64)
+    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64")
+        message(STATUS "\nDetected X64 compiler => building X64 deps bundle\n")
+        set(DEPS_ARCH "x64")
         include("deps-windows.cmake")
-    elseif ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4")
-        message(STATUS "\nDetected 32-bit compiler => building 32-bit deps bundle\n")
-        set(DEPS_BITS 32)
+    elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86")
+        message(STATUS "\nDetected X86 compiler => building X86 deps bundle\n")
+        set(DEPS_ARCH "x86")
         include("deps-windows.cmake")
     else ()
         message(FATAL_ERROR "Unable to detect architecture")
@@ -248,7 +257,6 @@ if(FLATPAK)
     find_package(EXPAT)
     find_package(CURL)
     find_package(JPEG)
-    find_package(TIFF)
     find_package(Freetype)
     find_package(OpenSSL 1.1...<3.2)
     find_package(CURL)
@@ -293,6 +301,7 @@ include(MPFR/MPFR.cmake)
 include(CGAL/CGAL.cmake)
 
 include(NLopt/NLopt.cmake)
+include(libnoise/libnoise.cmake)
 
 
 # I *think* 1.1 is used for *just* md5 hashing?
@@ -314,16 +323,16 @@ if (NOT OPENSSL_FOUND OR NOT CURL_FOUND)
     set(CURL_PKG dep_CURL)
 endif ()
 
+set(SENTRY_PKG "")
+if (SLIC3R_SENTRY AND NOT SENTRY_FOUND)
+    include(Sentry/Sentry.cmake)
+    set(SENTRY_PKG dep_Sentry)
+endif()
+
 set(JPEG_PKG "")
 if (NOT JPEG_FOUND)
     include(JPEG/JPEG.cmake)
     set(JPEG_PKG dep_JPEG)
-endif()
-
-set(TIFF_PKG "")
-if (NOT TIFF_FOUND)
-    include(TIFF/TIFF.cmake)
-    set(TIFF_PKG "dep_TIFF")
 endif()
 
 # flatpak builds wxwidgets separately 
@@ -339,6 +348,20 @@ if(NOT FREETYPE_FOUND)
     set(FREETYPE_PKG "dep_FREETYPE") 
 endif()
 
+execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --is-inside-work-tree
+    RESULT_VARIABLE REV_PARSE_RESULT
+    OUTPUT_VARIABLE REV_PARSE_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+# Will output "true" and have a 0 return code if within a git repo
+if((REV_PARSE_RESULT EQUAL 0) AND (REV_PARSE_OUTPUT STREQUAL "true"))
+    set(IN_GIT_REPO TRUE)
+    # Find relative path from root to source used for adjusting patch command
+    file(RELATIVE_PATH BINARY_DIR_REL  ${CMAKE_SOURCE_DIR}/.. ${CMAKE_BINARY_DIR})
+endif ()
+
 include(OCCT/OCCT.cmake)
 include(OpenCV/OpenCV.cmake)
 
@@ -347,6 +370,7 @@ set(_dep_list
     dep_TBB
     ${OPENSSL_PKG}
     ${CURL_PKG}
+    ${SENTRY_PKG}
     ${WXWIDGETS_PKG}
     dep_Cereal
     dep_NLopt
@@ -360,6 +384,7 @@ set(_dep_list
     ${PNG_PKG}
     ${ZLIB_PKG}
     ${EXPAT_PKG}
+    dep_libnoise
     )
 
 if (MSVC)

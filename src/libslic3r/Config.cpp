@@ -19,7 +19,7 @@
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/nowide/cenv.hpp>
+#include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/iostream.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/ini_parser.hpp>
@@ -839,8 +839,9 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
             }
             else if (!load_inherits_to_config && boost::iequals(it.key(), BBL_JSON_KEY_INHERITS)) {
                 key_values.emplace(BBL_JSON_KEY_INHERITS, it.value());
-            }
-            else {
+            } else if (boost::iequals(it.key(), ORCA_JSON_KEY_RENAMED_FROM)) {
+                key_values.emplace(ORCA_JSON_KEY_RENAMED_FROM, it.value());
+            } else {
                 t_config_option_key opt_key = it.key();
                 std::string value_str;
 
@@ -1323,11 +1324,66 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
         bool begin_found = false;
         bool end_found   = false;
         std::string line;
-        while (std::getline(ifs, line))
-            if (line.rfind("; CONFIG_BLOCK_START",0)==0) {
+
+        int thumbnail_id = 0;
+        while (std::getline(ifs, line)) {
+            // 找到缩略图开始标记
+            if (line.find("; THUMBNAIL_BLOCK_START") != std::string::npos) {
+                std::string thumb_content = "";
+                int         width         = 0;
+                int         height        = 0;
+                int         data_size     = 0;
+
+                // 跳过空行
+                std::getline(ifs, line);
+                std::getline(ifs, line);
+
+                // 读取缩略图信息行
+                std::getline(ifs, line);
+                if (line.find("; thumbnail begin") != std::string::npos) {
+                    // 解析宽度、高度和数据大小
+                    // 格式: "; thumbnail begin 48x48 1144"
+                    sscanf(line.c_str(), "; thumbnail begin %dx%d %d", &width, &height, &data_size);
+
+                    // 读取Base64编码的数据
+                    std::string base64_data;
+                    while (std::getline(ifs, line)) {
+                        if (line.find("; thumbnail end") != std::string::npos) {
+                            break;
+                        }
+                        // 移除行首的 "; "
+                        if (line.substr(0, 2) == "; ") {
+                            base64_data += line.substr(2);
+                        }
+                    }
+                    thumb_content = base64_data;
+
+                    this->set_deserialize("thumb" + std::to_string(thumbnail_id++), thumb_content, substitutions_ctxt);
+                    
+                }
+
+                // 读取到块结束标记
+                while (std::getline(ifs, line)) {
+                    if (line.find("; THUMBNAIL_BLOCK_END") != std::string::npos) {
+                        break;
+                    }
+                }
+
+                /*if (thumbnail_id == 2)
+                    break;*/
+            }
+        }
+
+        ifs.clear(); // 清除可能的 EOF 标志
+        ifs.seekg(0);
+
+        while (std::getline(ifs, line)) {
+            if (line.rfind("; CONFIG_BLOCK_START", 0) == 0) {
                 begin_found = true;
                 break;
             }
+        }
+            
         if (!begin_found) {
             //BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << format("Configuration block closing tag \"; CONFIG_BLOCK_START\" not found when reading %1%", file);
             throw Slic3r::RuntimeError(format("Config tag \"; CONFIG_BLOCK_START\" not found"));

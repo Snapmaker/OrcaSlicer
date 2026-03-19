@@ -83,7 +83,7 @@ const std::string& shortkey_ctrl_prefix()
 {
 	static const std::string str =
 #ifdef __APPLE__
-		"⌘+"
+		u8"\u2318+"  // "⌘+" (Mac Command+)
 #else
 		_u8L("Ctrl+")
 #endif
@@ -95,9 +95,9 @@ const std::string& shortkey_alt_prefix()
 {
 	static const std::string str =
 #ifdef __APPLE__
-		"⌥+"
+		u8"\u2325+"  // "⌥+" (Mac Option+)
 #else
-		"Alt+"
+		_u8L("Alt+")
 #endif
 		;
 	return str;
@@ -136,12 +136,12 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 		}
 		case coPercents:{
 			ConfigOptionPercents* vec_new = new ConfigOptionPercents{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new, opt_index, opt_index);
+			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new, opt_index, 0);  // SM Orca: Fix - use src_idx=0 for single-element vectors
 			break;
 		}
 		case coFloats:{
 			ConfigOptionFloats* vec_new = new ConfigOptionFloats{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new, opt_index, opt_index);
+			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new, opt_index, 0);  // SM Orca: Fix - use src_idx=0 for single-element vectors
  			break;
 		}
 		case coString:
@@ -291,6 +291,10 @@ static void add_config_substitutions(const ConfigSubstitutions& conf_substitutio
 			bool is_infill = def->opt_key == "top_surface_pattern"	   ||
 							 def->opt_key == "bottom_surface_pattern" ||
 							 def->opt_key == "internal_solid_infill_pattern" ||
+							 def->opt_key == "support_base_pattern" ||
+							 def->opt_key == "support_interface_pattern" ||
+							 def->opt_key == "ironing_pattern" ||
+							 def->opt_key == "support_ironing_pattern" ||
 							 def->opt_key == "sparse_infill_pattern";
 
 			// Each infill doesn't use all list of infill declared in PrintConfig.hpp.
@@ -493,10 +497,6 @@ void about()
 
 void login()
 {
-	//LoginDialog dlg;
-	//dlg.ShowModal();
-
-	// ZUserLogin dlg;
 	SMUserLogin dlg;
     dlg.run();
 }
@@ -549,6 +549,20 @@ void desktop_open_datadir_folder()
 #endif
 }
 
+void desktop_open_any_folderEx(const std::string& path)
+{
+#ifdef _WIN32
+    // Convert path to Windows format (backslashes) and ensure it's properly quoted
+    boost::filesystem::path file_path(path);
+    file_path.make_preferred(); // Convert forward slashes to backslashes
+    wxString widepath = from_path(file_path);
+    // Quote the path to handle spaces and special characters
+    wxString cmd = L"explorer /select,\"" + widepath + L"\"";
+    ::wxExecute(cmd, wxEXEC_ASYNC, nullptr);
+#else
+    desktop_open_any_folder(path);
+#endif
+}
 void desktop_open_any_folder( const std::string& path )
 {
     // Execute command to open a file explorer, platform dependent.

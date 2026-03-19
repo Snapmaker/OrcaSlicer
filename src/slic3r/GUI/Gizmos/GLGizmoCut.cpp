@@ -262,7 +262,7 @@ std::string GLGizmoCut3D::get_tooltip() const
 
     if (tooltip.empty() && (m_hover_id == X || m_hover_id == Y || m_hover_id == CutPlaneZRotation)) {
         std::string axis = m_hover_id == X ? "X" : m_hover_id == Y ? "Y" : "Z";
-        return axis + ": " + format(float(rad2deg(m_angle)), 1) + _u8L("°");
+        return axis + ": " + format(float(rad2deg(m_angle)), 1) + "°";
     }
 
     return tooltip;
@@ -516,40 +516,6 @@ bool GLGizmoCut3D::render_cut_mode_combo()
         switch_to_mode(size_t(selection_idx));
         check_and_update_connectors_state();
     }
-
-    return is_changed;
-}
-
-bool GLGizmoCut3D::render_combo(const std::string& label, const std::vector<std::string>& lines, int& selection_idx)
-{
-    ImGuiWrapper::push_combo_style(m_parent.get_scale());
-    ImGui::AlignTextToFramePadding();
-    m_imgui->text(label);
-    ImGui::SameLine(m_label_width);
-    ImGui::PushItemWidth(m_editing_window_width);
-
-    size_t selection_out = selection_idx;
-
-    const char* selected_str = (selection_idx >= 0 && selection_idx < int(lines.size())) ? lines[selection_idx].c_str() : "";
-    if (ImGui::BBLBeginCombo(("##" + label).c_str(), selected_str, 0)) {
-        for (size_t line_idx = 0; line_idx < lines.size(); ++line_idx) {
-            ImGui::PushID(int(line_idx));
-            if (ImGui::Selectable("", line_idx == selection_idx))
-                selection_out = line_idx;
-
-            ImGui::SameLine();
-            ImGui::Text("%s", lines[line_idx].c_str());
-            ImGui::PopID();
-        }
-
-        ImGui::EndCombo();
-    }
-
-    bool is_changed = selection_idx != selection_out;
-    selection_idx   = selection_out;
-
-    //if (is_changed) update_connector_shape();
-    ImGuiWrapper::pop_combo_style();
 
     return is_changed;
 }
@@ -1080,8 +1046,8 @@ void GLGizmoCut3D::render_cut_plane_grabbers()
 
         // render sphere grabber
         size = m_dragging ? get_dragging_half_size(mean_size) : get_half_size(mean_size);
-        color = m_hover_id == Y ? complementary(ColorRGBA::GREEN()) :                
-                m_hover_id == X ? complementary(ColorRGBA::RED())   :
+        color = m_hover_id == Y ? ColorRGBA::Y() : // ORCA match axis colors
+                m_hover_id == X ? ColorRGBA::X() : // ORCA match axis colors
                 m_hover_id == Z ? GRABBER_COLOR                     :   ColorRGBA::GRAY();
         render_model(m_sphere.model, color, view_matrix * translation_transform(m_grabber_connection_len * Vec3d::UnitZ()) * scale_transform(size));
     }
@@ -1094,7 +1060,8 @@ void GLGizmoCut3D::render_cut_plane_grabbers()
     {
         size = m_dragging && m_hover_id == X ? get_dragging_half_size(mean_size) : get_half_size(mean_size);
         const Vec3d cone_scale = Vec3d(0.75 * size, 0.75 * size, 1.8 * size);
-        color = m_hover_id == X ? complementary(ColorRGBA::RED()) : ColorRGBA::RED();
+        //color = m_hover_id == X ? complementary(ColorRGBA::X()) : ColorRGBA::X();
+        color = ColorRGBA::X(); // ORCA match axis colors
 
         if (m_hover_id == X) {
             render_grabber_connection(color, view_matrix);
@@ -1113,7 +1080,8 @@ void GLGizmoCut3D::render_cut_plane_grabbers()
     {
         size = m_dragging && m_hover_id == Y ? get_dragging_half_size(mean_size) : get_half_size(mean_size);
         const Vec3d cone_scale = Vec3d(0.75 * size, 0.75 * size, 1.8 * size);
-        color = m_hover_id == Y ? complementary(ColorRGBA::GREEN()) : ColorRGBA::GREEN();
+        //color = m_hover_id == Y ? complementary(ColorRGBA::Y()) : ColorRGBA::Y();
+        color = ColorRGBA::Y(); // ORCA match axis colors
 
         if (m_hover_id == Y) {
             render_grabber_connection(color, view_matrix);
@@ -1133,7 +1101,7 @@ void GLGizmoCut3D::render_cut_plane_grabbers()
         if (no_xy_grabber_hovered || m_hover_id == CutPlaneZRotation)
         {
             size = 0.75 * (m_dragging ? get_dragging_half_size(mean_size) : get_half_size(mean_size));
-            color = ColorRGBA::BLUE();
+            color = ColorRGBA::Z(); // ORCA match axis colors
             const ColorRGBA cp_color = m_hover_id == CutPlaneZRotation ? color : m_plane.model.get_color();
 
             const double grabber_shift = -1.75 * m_grabber_connection_len;
@@ -1160,7 +1128,7 @@ void GLGizmoCut3D::render_cut_plane_grabbers()
         if (no_xy_grabber_hovered || m_hover_id == CutPlaneXMove)
         {
             size = (m_dragging ? get_dragging_half_size(mean_size) : get_half_size(mean_size));
-            color = m_hover_id == CutPlaneXMove ? ColorRGBA::RED() : m_plane.model.get_color();
+            color = m_hover_id == CutPlaneXMove ? ColorRGBA::X() : m_plane.model.get_color(); // ORCA match axis colors
 
             render_grabber_connection(GRABBER_COLOR, view_matrix * rotation_transform(0.5 * PI * Vec3d::UnitY()), 0.75);
 
@@ -1178,7 +1146,7 @@ void GLGizmoCut3D::render_cut_plane_grabbers()
         if (m_groove.angle > 0.0f && (no_xy_grabber_hovered || m_hover_id == CutPlaneYMove))
         {
             size = (m_dragging ? get_dragging_half_size(mean_size) : get_half_size(mean_size));
-            color = m_hover_id == CutPlaneYMove ? ColorRGBA::GREEN() : m_plane.model.get_color();
+            color = m_hover_id == CutPlaneYMove ? ColorRGBA::Y() : m_plane.model.get_color(); // ORCA match axis colors
 
             render_grabber_connection(GRABBER_COLOR, view_matrix * rotation_transform(-0.5 * PI * Vec3d::UnitX()), 0.75);
 
@@ -1215,7 +1183,7 @@ bool GLGizmoCut3D::on_init()
     // initiate info shortcuts
     const wxString ctrl  = GUI::shortkey_ctrl_prefix();
     const wxString alt   = GUI::shortkey_alt_prefix();
-    const wxString shift = "Shift+";
+    const wxString shift = _L("Shift+");
 
     m_shortcuts_cut.push_back(std::make_pair(shift + _L("Drag"), _L("Draw cut line")));
 
@@ -2299,7 +2267,7 @@ void GLGizmoCut3D::render_connectors_input_window(CutConnectors &connectors, flo
             m_connector_style = int(CutConnectorStyle::Prism);
             apply_selected_connectors([this, &connectors](size_t idx) { connectors[idx].attribs.style = CutConnectorStyle(m_connector_style); });
         }
-        if (render_combo(m_labels_map["Style"], m_connector_styles, m_connector_style))
+        if (render_combo(m_labels_map["Style"], m_connector_styles, m_connector_style, m_label_width, m_editing_window_width))
             apply_selected_connectors([this, &connectors](size_t idx) { connectors[idx].attribs.style = CutConnectorStyle(m_connector_style); });
     m_imgui->disabled_end();
 
@@ -2308,7 +2276,7 @@ void GLGizmoCut3D::render_connectors_input_window(CutConnectors &connectors, flo
             m_connector_shape_id = int(CutConnectorShape::Circle);
             apply_selected_connectors([this, &connectors](size_t idx) { connectors[idx].attribs.shape = CutConnectorShape(m_connector_shape_id); });
         }
-        if (render_combo(m_labels_map["Shape"], m_connector_shapes, m_connector_shape_id))
+        if (render_combo(m_labels_map["Shape"], m_connector_shapes, m_connector_shape_id, m_label_width, m_editing_window_width))
             apply_selected_connectors([this, &connectors](size_t idx) { connectors[idx].attribs.shape = CutConnectorShape(m_connector_shape_id); });
     m_imgui->disabled_end();
 
@@ -2573,7 +2541,7 @@ bool GLGizmoCut3D::render_angle_input(const std::string& label, float& in_val, c
     float val = rad2deg(in_val);
     const float old_val = val;
 
-    const std::string format = "%.0f " + _u8L("°");
+    const std::string format = "%.0f°";
     m_imgui->bbl_slider_float_style("##angle_" + label, &val, min_val, max_val, format.c_str(), 1.f, true, from_u8(label));
 
     ImGui::SameLine(left_width);

@@ -1,0 +1,379 @@
+{
+  "filament": [
+    {
+      "vendor": "Snapmaker",
+      "description": "Snapmaker",
+      "materials": [
+        {
+          "material": "PLA",
+          "description": "",
+          "series": [
+            {
+              "serie": "Matte",
+              "description": ""
+            },
+            {
+              "serie": "SnapSpeed",
+              "description": ""
+            },
+            {
+              "serie": "Basic",
+              "description": ""
+            },
+            {
+              "serie": "Support",
+              "description": "Support for"
+            }
+          ]
+        },
+        {
+          "material": "ABS",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PVA",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PETG",
+          "description": "",
+          "series": [
+            {
+              "serie": "",
+              "description": ""
+            },
+            {
+              "serie": "HF",
+              "description": ""
+            }
+          ]
+        },
+        {
+          "material": "TPU",
+          "description": "",
+          "series": [
+            {
+              "serie": "95A",
+              "description": ""
+            },
+            {
+              "serie": "95A HF",
+              "description": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "vendor": "Polymaker",
+      "description": "",
+      "materials": [
+        {
+          "material": "PLA",
+          "description": "",
+          "series": [
+            {
+              "serie": "PolyLite",
+              "description": ""
+            },
+            {
+              "serie": "PolyTerra",
+              "description": ""
+            },
+            {
+              "serie": "PolySonic",
+              "description": ""
+            }
+          ]
+        },
+        {
+          "material": "PETG",
+          "description": "",
+          "series": [
+            {
+              "serie": "PolyLite",
+              "description": ""
+            }
+          ]
+        },
+        {
+          "material": "ABS",
+          "description": "",
+          "series": [
+            {
+              "serie": "PolyLite",
+              "description": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "vendor": "Generic",
+      "description": "",
+      "materials": [
+        {
+          "material": "PLA",
+          "description": "",
+          "series": [
+            {
+              "serie": "",
+              "description": ""
+            },
+            {
+              "serie": "Support",
+              "description": "Support for"
+            },
+            {
+              "serie": "Silk",
+              "description": ""
+            }
+          ]
+        },
+        {
+          "material": "PETG",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "ABS",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "TPU",
+          "description": "",
+          "series": [
+            {
+              "serie": "95A",
+              "description": ""
+            },
+            {
+              "serie": "95A HF",
+              "description": ""
+            },
+            {
+              "serie": "90A",
+              "description": ""
+            }
+          ]
+        },
+        {
+          "material": "ASA",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "BVOH",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "EVA",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "HIPS",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PA",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PA-CF",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PC",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PCTG",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PE",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PE-CF",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PETG",
+          "description": "",
+          "series": [
+            {
+              "serie": "",
+              "description": ""
+            },
+            {
+              "serie": "HF",
+              "description": ""
+            }
+          ]
+        },
+        {
+          "material": "PETG-CF",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PHA",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PLA-CF",
+          "description": "",
+          "series": []
+        },
+        {
+          "material": "PVA",
+          "description": "",
+          "series": []
+        }
+      ]
+    }
+  ],
+  "filament_special_series": [
+    "85A",
+    "90A",
+    "95A",
+    "95A HF",
+    "HF"
+  ],
+  "filament_color": [
+    {
+      "rgba": "#FFFFFFFF",
+      "name": "White",
+      "name_zh": "白色"
+    },
+    {
+      "rgba": "#E0E0E0FF",
+      "name": "Light Gray",
+      "name_zh": "浅灰色"
+    },
+    {
+      "rgba": "#8C9099FF",
+      "name": "Grey",
+      "name_zh": "灰色"
+    },
+    {
+      "rgba": "#000000FF",
+      "name": "Black",
+      "name_zh": "黑色"
+    },
+    {
+      "rgba": "#6F4C2FFF",
+      "name": "Brown",
+      "name_zh": "棕色"
+    },
+    {
+      "rgba": "#FEE5A5FF",
+      "name": "Butter Cream",
+      "name_zh": "奶油黄"
+    },
+    {
+      "rgba": "#F4C032FF",
+      "name": "Yellow",
+      "name_zh": "黄色"
+    },
+    {
+      "rgba": "#F8F81CFF",
+      "name": "Fluorescent Yellow",
+      "name_zh": "荧光黄色"
+    },
+    {
+      "rgba": "#BEC9A5FF",
+      "name": "Gray Green",
+      "name_zh": "灰绿色"
+    },
+    {
+      "rgba": "#2D9E59FF",
+      "name": "Green",
+      "name_zh": "绿色"
+    },
+    {
+      "rgba": "#39FF14FF",
+      "name": "Fluorescent Green",
+      "name_zh": "荧光绿色"
+    },
+    {
+      "rgba": "#1B5E20FF",
+      "name": "Dark Green",
+      "name_zh": "深绿色"
+    },
+    {
+      "rgba": "#8BD5EEFF",
+      "name": "Light Blue",
+      "name_zh": "浅蓝色"
+    },
+    {
+      "rgba": "#4DB6ACFF",
+      "name": "Teal",
+      "name_zh": "青绿色"
+    },
+    {
+      "rgba": "#1E88E5FF",
+      "name": "Blue",
+      "name_zh": "蓝色"
+    },
+    {
+      "rgba": "#003776FF",
+      "name": "Dark Blue",
+      "name_zh": "深蓝色"
+    },
+    {
+      "rgba": "#6C5BB1FF",
+      "name": "Blue Violet",
+      "name_zh": "蓝紫色"
+    },
+    {
+      "rgba": "#8E24AAFF",
+      "name": "Purple",
+      "name_zh": "紫色"
+    },
+    {
+      "rgba": "#D81B60FF",
+      "name": "Magenta",
+      "name_zh": "品红色"
+    },
+    {
+      "rgba": "#F55A7CFF",
+      "name": "Pink",
+      "name_zh": "粉红色"
+    },
+    {
+      "rgba": "#E72F1DFF",
+      "name": "Red",
+      "name_zh": "红色"
+    },
+    {
+      "rgba": "#F3D6E5FF",
+      "name": "Light Pink",
+      "name_zh": "浅粉色"
+    },
+    {
+      "rgba": "#F78E0EFF",
+      "name": "Orange",
+      "name_zh": "橙色"
+    },
+    {
+      "rgba": "#E65100FF",
+      "name": "Deep Orange",
+      "name_zh": "深橙色"
+    }
+  ]
+}

@@ -864,7 +864,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values_u1.emplace_back("High Temp Plate");
     def->enum_values_u1.emplace_back("Graphic Effect Plate");
     def->enum_labels_u1.emplace_back(L("Textured PEI Plate"));
-    def->enum_labels_u1.emplace_back(L("Smooth High Temp Plate"));
+    def->enum_labels_u1.emplace_back(L("Smooth PEI Plate"));
     def->enum_labels_u1.emplace_back(L("Graphic Effect Plate"));
     // U1 use 7 when open support_multi_bed_types
     def->enum_values_ex.emplace_back("Cool Plate");
@@ -876,7 +876,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values_ex.emplace_back("Graphic Effect Plate");
     def->enum_labels_ex.emplace_back(L("Smooth Cool Plate"));
     def->enum_labels_ex.emplace_back(L("Engineering Plate"));
-    def->enum_labels_ex.emplace_back(L("Smooth High Temp Plate"));
+    def->enum_labels_ex.emplace_back(L("Smooth PEI Plate"));
     def->enum_labels_ex.emplace_back(L("Textured PEI Plate"));
     def->enum_labels_ex.emplace_back(L("Textured Cool Plate"));
     def->enum_labels_ex.emplace_back(L("Cool Plate (SuperTack)"));

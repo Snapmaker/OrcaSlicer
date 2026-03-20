@@ -2596,6 +2596,62 @@ void TabPrint::toggle_options()
         }
         cb->SetValue(n);
     }
+
+    // Keep plate bed-type list in sync with currently selected printer.
+    if (m_type == Preset::TYPE_PLATE && m_active_page->title() == L("Plate Settings")) {
+        Field* bed_type_field = m_active_page->get_field("curr_bed_type");
+        if (auto bed_type_choice = dynamic_cast<Choice*>(bed_type_field)) {
+            auto bed_type_cb = dynamic_cast<ComboBox*>(bed_type_choice->window);
+            auto bed_type_def = print_config_def.get("curr_bed_type");
+            if (bed_type_cb && bed_type_def) {
+                const Preset& printer_preset = m_preset_bundle->printers.get_selected_preset();
+                auto printer_cfg = m_preset_bundle->printers.get_edited_preset().config;
+                bool is_snapmaker_u1 = boost::icontains(printer_preset.name, "Snapmaker U1");
+                if (auto printer_model_opt = printer_cfg.option<ConfigOptionString>("printer_model")) {
+                    const std::string printer_model = printer_model_opt->value;
+                    is_snapmaker_u1 = is_snapmaker_u1 || (boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1"));
+                }
+                bool support_multi_bed_types = false;
+                if (auto support_multi_bed_types_opt = printer_cfg.option<ConfigOptionBool>("support_multi_bed_types")) {
+                    support_multi_bed_types = support_multi_bed_types_opt->value;
+                }
+
+                auto& opt = const_cast<ConfigOptionDef&>(bed_type_field->m_opt);
+                opt.enum_values.clear();
+                opt.enum_labels.clear();
+
+                const std::vector<std::string>* target_values = &bed_type_def->enum_values;
+                const std::vector<std::string>* target_labels = &bed_type_def->enum_labels;
+                if (is_snapmaker_u1) {
+                    if (support_multi_bed_types) {
+                        target_values = &bed_type_def->enum_values_ex;
+                        target_labels = &bed_type_def->enum_labels_ex;
+                    } else {
+                        target_values = &bed_type_def->enum_values_u1;
+                        target_labels = &bed_type_def->enum_labels_u1;
+                    }
+                }
+
+                bed_type_cb->Clear();
+                for (size_t i = 0; i < target_values->size() && i < target_labels->size(); ++i) {
+                    opt.enum_values.push_back((*target_values)[i]);
+                    opt.enum_labels.push_back((*target_labels)[i]);
+                    bed_type_cb->Append(_((*target_labels)[i]));
+                }
+
+                int curr_bed_type = m_config->opt_enum<BedType>("curr_bed_type");
+                std::string curr_key;
+                for (const auto& kv : *bed_type_def->enum_keys_map) {
+                    if (kv.second == curr_bed_type) {
+                        curr_key = kv.first;
+                        break;
+                    }
+                }
+                auto it = std::find(opt.enum_values.begin(), opt.enum_values.end(), curr_key);
+                bed_type_cb->SetSelection(it == opt.enum_values.end() ? 0 : int(it - opt.enum_values.begin()));
+            }
+        }
+    }
 }
 
 void TabPrint::update()
@@ -2940,7 +2996,32 @@ void TabPrintPlate::build()
 
     auto page = add_options_page(L("Plate Settings"), "empty");
     auto optgroup = page->new_optgroup("");
-    optgroup->append_single_option_line("curr_bed_type");
+    {
+        Option bed_type_option = optgroup->get_option("curr_bed_type");
+        bool is_snapmaker_u1 = false;
+        bool support_multi_bed_types = false;
+        const Preset& printer_preset = m_preset_bundle->printers.get_edited_preset();
+        auto printer_cfg = printer_preset.config;
+        is_snapmaker_u1 = boost::icontains(printer_preset.name, "Snapmaker U1");
+        if (auto printer_model_opt = printer_cfg.option<ConfigOptionString>("printer_model")) {
+            const std::string printer_model = printer_model_opt->value;
+            is_snapmaker_u1 = is_snapmaker_u1 || (boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1"));
+        }
+        if (auto support_multi_bed_types_opt = printer_cfg.option<ConfigOptionBool>("support_multi_bed_types")) {
+            support_multi_bed_types = support_multi_bed_types_opt->value;
+        }
+
+        if (is_snapmaker_u1) {
+            if (support_multi_bed_types) {
+                bed_type_option.opt.enum_values = bed_type_option.opt.enum_values_ex;
+                bed_type_option.opt.enum_labels = bed_type_option.opt.enum_labels_ex;
+            } else {
+                bed_type_option.opt.enum_values = bed_type_option.opt.enum_values_u1;
+                bed_type_option.opt.enum_labels = bed_type_option.opt.enum_labels_u1;
+            }
+        }
+        optgroup->append_single_option_line(bed_type_option);
+    }
     optgroup->append_single_option_line("skirt_start_angle");
     optgroup->append_single_option_line("print_sequence");
     optgroup->append_single_option_line("spiral_mode");
@@ -3814,9 +3895,16 @@ void TabFilament::toggle_options()
         // BBS: 控制床温选项的显示
         auto support_multi_bed_types = is_BBL_printer || cfg.opt_bool("support_multi_bed_types");
         bool is_snapmaker_u1 = false;
+        const Preset& printer_preset = m_preset_bundle->printers.get_edited_preset();
+        is_snapmaker_u1 = boost::icontains(printer_preset.name, "Snapmaker U1");
         if (auto printer_model_opt = cfg.option<ConfigOptionString>("printer_model")) {
             std::string printer_model = printer_model_opt->value;
-            is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+            is_snapmaker_u1 = is_snapmaker_u1 || (boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1"));
+        }
+        if (Line* hot_plate_line = get_line("hot_plate_temp_initial_layer")) {
+            hot_plate_line->label = is_snapmaker_u1
+                ? _L("Smooth PEI Plate")
+                : _L("Smooth PEI Plate / High Temp Plate");
         }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
             // U1 default show 3 plates

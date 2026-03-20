@@ -750,7 +750,7 @@ void PrintConfigDef::init_fff_params()
     def->full_label = L("Bed temperature");
     def->min = 0;
     def->max = 300;
-    def->set_default_value(new ConfigOptionInts{ 45 });
+    def->set_default_value(new ConfigOptionInts{ 120 });
 
     def = this->add("textured_plate_temp", coInts);
     def->label = L("Other layers");
@@ -819,7 +819,7 @@ void PrintConfigDef::init_fff_params()
                      "A value of 0 means the filament does not support printing on the High Temp Plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->max = 300;
-    def->set_default_value(new ConfigOptionInts{ 45 });
+    def->set_default_value(new ConfigOptionInts{ 120 });
 
     def = this->add("textured_plate_temp_initial_layer", coInts);
     def->label = L("Initial layer");

@@ -60,8 +60,7 @@ static void registerBridgeCommands()
     });
 
     // ---- openFileDialog: 打开原生文件选择对话框 ----
-    // Windows: orca:// 子资源不可用，复制到 web_root/user_assets/，返回 https://orca.local/user_assets/xxx
-    // 非 Windows: 复制到 temp/orca_user_assets/，返回 orca://app/user_assets/xxx
+    // 所有平台统一：复制到 temp/orca_user_assets/，返回 orca://app/user_assets/xxx
     OrcaBridge::bind("openFileDialog", [](const json& data, auto reply, auto fail) {
         wxGetApp().CallAfter([reply, fail]() {
             wxFileDialog dlg(nullptr,
@@ -81,27 +80,12 @@ static void registerBridgeCommands()
 
             wxString userAssetsDir;
             std::string orcaUrl;
-#ifdef __WIN32__
-            // Windows: 复制到虚拟主机映射目录，用 https://orca.local/user_assets/ 加载
-            const boost::filesystem::path userWebPath("D:\\snapmaker\\web");
-            const boost::filesystem::path resWebPath = boost::filesystem::path(Slic3r::resources_dir()) / "web" / "flutter_web";
-            boost::filesystem::path webRoot;
-            if (boost::filesystem::exists(userWebPath / "index.html"))
-                webRoot = userWebPath;
-            else
-                webRoot = Slic3r::resources_dir();
-            boost::filesystem::path userAssetsPath = webRoot / "user_assets";
-            if (!boost::filesystem::exists(userAssetsPath))
-                boost::filesystem::create_directories(userAssetsPath);
-            userAssetsDir = wxString::FromUTF8(userAssetsPath.string());
-            orcaUrl = "https://orca.local/user_assets/";
-#else
+
             wxString tempBase = wxStandardPaths::Get().GetTempDir();
             userAssetsDir = tempBase + wxFileName::GetPathSeparator() + "orca_user_assets";
             if (!wxFileName::DirExists(userAssetsDir))
                 wxFileName::Mkdir(userAssetsDir, 0755, wxPATH_MKDIR_FULL);
             orcaUrl = "orca://app/user_assets/";
-#endif
 
             // 用 path+mtime+size 生成唯一 id，相同文件得到相同 id，实现去重
             wxStructStat st;
@@ -165,15 +149,15 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
     wxString ENTRY_URL;  // 入口 URL 路径（不含 query）
     if (boost::filesystem::exists(userWebPath / "index.html")) {
         RELEASE_LOCAL_ROOT = wxString::FromUTF8(userWebPath.string());
-        ENTRY_URL = "https://orca.local/index.html";  // base href="/"
+        ENTRY_URL = "orca://app/index.html";  // base href="/"
         BOOST_LOG_TRIVIAL(info) << "WebTextPanel: using D:\\snapmaker\\web";
     } else if (boost::filesystem::exists(resWebPath / "index.html")) {
         RELEASE_LOCAL_ROOT = wxString::FromUTF8(Slic3r::resources_dir());
-        ENTRY_URL = "https://orca.local/web/flutter_web/index.html";  // base href="/web/flutter_web/"
+        ENTRY_URL = "orca://app/web/flutter_web/index.html";  // base href="/web/flutter_web/"
         BOOST_LOG_TRIVIAL(info) << "WebTextPanel: using resources_dir()/web/flutter_web";
     } else {
         RELEASE_LOCAL_ROOT = wxString::FromUTF8(userWebPath.string());
-        ENTRY_URL = "https://orca.local/index.html";
+        ENTRY_URL = "orca://app/index.html";
         BOOST_LOG_TRIVIAL(warning) << "WebTextPanel: neither path found, trying D:\\snapmaker\\web";
     }
 
@@ -217,8 +201,8 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
         SetSizer(topsizer);
 
 #ifdef __WIN32__
-        // Windows：SetVirtualHostNameToFolderMapping 方案，统一使用 https://orca.local/
-        // 在首次 EVT_SIZE 时 LoadURL，确保虚拟主机映射已生效
+        // Windows：orca:// 自定义 scheme，通过 WebResourceRequested 事件从本地目录读取文件
+        // 在首次 EVT_SIZE 时 LoadURL，确保 scheme handler 已安装
         wxString fullUrl = ENTRY_URL + "?";
         if (!ROUTE_PARAMS.empty())
             fullUrl += ROUTE_PARAMS + "&";

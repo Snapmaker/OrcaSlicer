@@ -56,8 +56,28 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
 
     BOOST_LOG_TRIVIAL(trace) << "OrcaLocalHandler::GetFile uri=" << uri.ToUTF8() << " fullPath=" << fullPath.ToUTF8();
 
-    if (!wxFileExists(fullPath))
-        return nullptr;
+    if (!wxFileExists(fullPath)) {
+        // SPA fallback：如果路径没有文件扩展名（说明是客户端路由如 /bridge），
+        // 回退到同级目录或上级目录的 index.html，让 Flutter 路由器处理
+        if (!pathForMime.Contains(".")) {
+            wxFileName fn(fullPath);
+            wxString dir = fn.GetPath();
+            wxString fallbackPath = dir + wxFileName::GetPathSeparator() + "index.html";
+            if (!wxFileExists(fallbackPath)) {
+                // 再尝试 rootPath/index.html
+                fallbackPath = m_root + "index.html";
+            }
+            if (wxFileExists(fallbackPath)) {
+                BOOST_LOG_TRIVIAL(info) << "OrcaLocalHandler: SPA fallback -> " << fallbackPath.ToUTF8();
+                fullPath = fallbackPath;
+                pathForMime = "index.html";
+            } else {
+                return nullptr;
+            }
+        } else {
+            return nullptr;
+        }
+    }
 
     wxFileInputStream* stream = new wxFileInputStream(fullPath);
     if (!stream->IsOk()) {

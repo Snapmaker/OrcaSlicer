@@ -2729,6 +2729,14 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
 
+            auto* pNotice = p->plater->get_notification_manager();
+            if (pNotice)
+            {
+                pNotice->close_notification_of_type(NotificationType::CustomNotification);
+                pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+                pNotice->set_slicing_progress_hidden();            
+            }
+
             auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
             auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
             if (printer_model_opt) {
@@ -7582,6 +7590,14 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
 // BBS
 void Plater::priv::on_combobox_select(wxCommandEvent &evt)
 {
+    auto* pNotice = q->get_notification_manager();
+    if(pNotice)
+    {
+        pNotice->close_notification_of_type(NotificationType::PlaterWarning);    
+        pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+        pNotice->set_slicing_progress_hidden();
+    }
+
     PlaterPresetComboBox* preset_combo_box = dynamic_cast<PlaterPresetComboBox*>(evt.GetEventObject());
     if (preset_combo_box) {
         this->on_select_preset(evt);

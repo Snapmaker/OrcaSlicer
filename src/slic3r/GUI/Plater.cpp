@@ -2792,28 +2792,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         // 删除Flow相关控件
 
-        // Add edit button
-        ScalableButton* edit_btn = new ScalableButton(nozzle_panel, wxID_ANY, "edit");
-        if (is_dark) {
-            edit_btn->SetBackgroundColour(wxColour(45, 45, 49));
-        }
-        else {
-            edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
-        }
-
-        
-        edit_btn->SetToolTip(_L("Click to edit nozzle settings"));
-
-        edit_btn->Bind(wxEVT_BUTTON, [this, i, new_nozzle_count](wxCommandEvent&) {
-            p->editing_filament = -1;
-            wxGetApp().params_dialog()->Show();
-            wxGetApp().get_tab(Preset::TYPE_PRINTER)->activate_option("", "Extruder " + std::to_string(i + 1));
-        });
-
-        p->m_nozzle_edit_btns.push_back(edit_btn);
-
         tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
-        tab_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10)); // 添加右边距
 
         nozzle_panel->SetSizer(tab_sizer);
 

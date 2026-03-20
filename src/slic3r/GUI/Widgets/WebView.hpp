@@ -13,8 +13,9 @@ public:
 #if wxUSE_WEBVIEW_EDGE
     static bool CheckWebViewRuntime();
     static bool DownloadAndInstallWebViewRuntime();
-    /// SetVirtualHostNameToFolderMapping：https://orca.local/* → localFolderPath/*
-    static bool SetupOrcaScheme(wxWebView* webView, wxString const& localFolderPath);
+    /// 注册 orca:// 自定义 scheme 处理器（与 macOS 行为一致）
+    static bool SetupOrcaScheme(wxWebView* webView, wxString const& localFolderPath,
+                                wxString const& userAssetsRoot = wxEmptyString);
 #endif
     static void LoadUrl(wxWebView * webView, wxString const &url);
 

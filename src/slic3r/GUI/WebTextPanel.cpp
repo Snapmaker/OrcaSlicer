@@ -1,7 +1,5 @@
 #include "WebTextPanel.hpp"
-
-#include "libslic3r/Utils.hpp"
-#include <boost/filesystem.hpp>
+#include "OrcaWebViewLoader.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/OrcaBridge.hpp"
@@ -9,14 +7,7 @@
 
 #include <wx/sizer.h>
 #include <wx/event.h>
-#include <wx/file.h>
 #include <wx/filename.h>
-#include <wx/dir.h>
-#include <wx/stdpaths.h>
-#include <wx/filefn.h>
-
-#include <functional>
-#include <string>
 
 namespace Slic3r {
 namespace GUI {
@@ -136,105 +127,42 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    // ============================================================
-    // Debug/Release 双模式配置
-    // ============================================================
-    const bool USE_DEBUG_SERVER = false;
+    OrcaWebLoadConfig config = OrcaWebViewLoader::ResolveConfig("D:\\snapmaker\\web");
+    config.use_debug_server   = false;
+    config.debug_server_url   = "http://localhost:7357";
 
-    const wxString DEBUG_SERVER_URL = "http://localhost:7357";
-    // 优先使用 D:\snapmaker\web（用户放置的 bridge 项目），否则用 resources_dir()
-    const boost::filesystem::path userWebPath("D:\\snapmaker\\web");
-    const boost::filesystem::path resWebPath = boost::filesystem::path(Slic3r::resources_dir()) / "web" / "flutter_web";
-    wxString RELEASE_LOCAL_ROOT;
-    wxString ENTRY_URL;  // 入口 URL 路径（不含 query）
-    if (boost::filesystem::exists(userWebPath / "index.html")) {
-        RELEASE_LOCAL_ROOT = wxString::FromUTF8(userWebPath.string());
-        ENTRY_URL = "orca://app/index.html";  // base href="/"
-        BOOST_LOG_TRIVIAL(info) << "WebTextPanel: using D:\\snapmaker\\web";
-    } else if (boost::filesystem::exists(resWebPath / "index.html")) {
-        RELEASE_LOCAL_ROOT = wxString::FromUTF8(Slic3r::resources_dir());
-        ENTRY_URL = "orca://app/web/flutter_web/index.html";  // base href="/web/flutter_web/"
-        BOOST_LOG_TRIVIAL(info) << "WebTextPanel: using resources_dir()/web/flutter_web";
-    } else {
-        RELEASE_LOCAL_ROOT = wxString::FromUTF8(userWebPath.string());
-        ENTRY_URL = "orca://app/index.html";
-        BOOST_LOG_TRIVIAL(warning) << "WebTextPanel: neither path found, trying D:\\snapmaker\\web";
-    }
-
-    const wxString ROUTE_PATH = "/bridge";
-    const wxString ROUTE_PARAMS = "locale=zh-cn&dark_mode=1";
-    // ============================================================
-
-    if (USE_DEBUG_SERVER) {
-        BOOST_LOG_TRIVIAL(info) << "WebTextPanel: Debug mode - connecting to " << DEBUG_SERVER_URL.ToUTF8();
-
+    if (config.use_debug_server) {
         m_browser = WebView::CreateWebView(this, "");
-        if (m_browser == nullptr) {
+        if (!m_browser) {
             wxLogError("WebTextPanel: Could not init m_browser");
             return;
         }
-
         topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
         SetSizer(topsizer);
 
-        wxString fullUrl = DEBUG_SERVER_URL + "/?path=" + ROUTE_PATH;
-        if (!ROUTE_PARAMS.empty()) {
-            fullUrl += "&" + ROUTE_PARAMS;
-        }
-        m_browser->LoadURL(fullUrl);
-
+        wxString full_url = config.debug_server_url + "/?path=" + config.route_path;
+        if (!config.route_params.empty())
+            full_url += "&" + config.route_params;
+        m_browser->LoadURL(full_url);
     } else {
-        BOOST_LOG_TRIVIAL(info) << "WebTextPanel: Release mode - loading from " << RELEASE_LOCAL_ROOT.ToUTF8();
-
-        // 创建 user_assets 目录，用于 openFileDialog 选中的图片复制到 temp 后通过 orca:// 加载
-        wxString userAssetsDir = wxStandardPaths::Get().GetTempDir() + wxFileName::GetPathSeparator() + "orca_user_assets";
-        if (!wxFileName::DirExists(userAssetsDir))
-            wxFileName::Mkdir(userAssetsDir, 0755, wxPATH_MKDIR_FULL);
-
-        m_browser = WebView::CreateWebViewWithLocalRoot(this, "", RELEASE_LOCAL_ROOT, userAssetsDir);
-        if (m_browser == nullptr) {
+        m_browser = WebView::CreateWebViewWithLocalRoot(this, "", config.root_path, config.user_assets_dir);
+        if (!m_browser) {
             wxLogError("WebTextPanel: Could not init m_browser");
             return;
         }
-
         topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
         SetSizer(topsizer);
 
-#ifdef __WIN32__
-        // Windows：orca:// 自定义 scheme，通过 WebResourceRequested 事件从本地目录读取文件
-        // 在首次 EVT_SIZE 时 LoadURL，确保 scheme handler 已安装
-        wxString fullUrl = ENTRY_URL + "?";
-        if (!ROUTE_PARAMS.empty())
-            fullUrl += ROUTE_PARAMS + "&";
-        fullUrl += "path=" + ROUTE_PATH;
-        BOOST_LOG_TRIVIAL(info) << "WebTextPanel: LoadURL (on first EVT_SIZE)=" << fullUrl.ToUTF8();
-        m_browser->Bind(wxEVT_SIZE, [this, fullUrl](wxSizeEvent& evt) {
-            if (m_browser && !m_orca_url_loaded) {
-                m_orca_url_loaded = true;
-                m_browser->LoadURL(fullUrl);
-            }
-            evt.Skip();
-        });
-#else
-        // 非 Windows：orca:// handler 可用，继续使用 SetPage + baseUrl=orca://app/
-        wxString htmlPath;
-        if (boost::filesystem::exists(userWebPath / "index.html"))
-            htmlPath = wxString::FromUTF8((userWebPath / "index.html").string());
-        else
-            htmlPath = wxString::FromUTF8((resWebPath / "index.html").string());
-        wxString html;
-        wxFile f(htmlPath, wxFile::read);
-        if (f.IsOpened())
-            f.ReadAll(&html);
-        if (html.empty())
-            html = "<html><body><p>index.html not found</p></body></html>";
-        wxString baseUrl = "orca://app/?";
-        if (!ROUTE_PARAMS.empty())
-            baseUrl += ROUTE_PARAMS + "&";
-        baseUrl += "path=" + ROUTE_PATH;
-        BOOST_LOG_TRIVIAL(info) << "WebTextPanel: baseUrl=" << baseUrl.ToUTF8();
-        m_browser->SetPage(html, baseUrl);
-#endif
+        wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
+        if (!url_to_load.empty()) {
+            m_browser->Bind(wxEVT_SIZE, [this, url_to_load](wxSizeEvent& evt) {
+                if (m_browser && !m_orca_url_loaded) {
+                    m_orca_url_loaded = true;
+                    m_browser->LoadURL(url_to_load);
+                }
+                evt.Skip();
+            });
+        }
     }
 
     Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WebTextPanel::OnScriptMessage, this);

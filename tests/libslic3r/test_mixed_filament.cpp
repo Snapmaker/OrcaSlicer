@@ -46,6 +46,22 @@ static unsigned int virtual_id_for_stable_id(const std::vector<MixedFilament> &m
     return 0;
 }
 
+struct MixedAutoGenerateGuard
+{
+    explicit MixedAutoGenerateGuard(bool enabled)
+        : previous(MixedFilamentManager::auto_generate_enabled())
+    {
+        MixedFilamentManager::set_auto_generate_enabled(enabled);
+    }
+
+    ~MixedAutoGenerateGuard()
+    {
+        MixedFilamentManager::set_auto_generate_enabled(previous);
+    }
+
+    bool previous = true;
+};
+
 } // namespace
 
 TEST_CASE("Mixed filament remap follows stable row ids when same-pair rows reorder", "[MixedFilament]")
@@ -144,6 +160,32 @@ TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[M
     REQUIRE(loaded.mixed_filaments().size() == 1);
     CHECK(loaded.mixed_filaments().front().manual_pattern == "11111112,11121111");
     CHECK(loaded.mixed_filaments().front().mix_b_percent == 13);
+}
+
+TEST_CASE("Mixed filament auto generation can be disabled without dropping custom rows", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
+
+    MixedFilamentManager enabled_mgr;
+    enabled_mgr.auto_generate(colors);
+    REQUIRE(enabled_mgr.mixed_filaments().size() == 3);
+    const std::string serialized_auto_rows = enabled_mgr.serialize_custom_entries();
+
+    MixedAutoGenerateGuard guard(false);
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    mgr.auto_generate(colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+    CHECK(mgr.mixed_filaments().front().custom);
+    CHECK(mgr.mixed_filaments().front().component_a == 1);
+    CHECK(mgr.mixed_filaments().front().component_b == 2);
+
+    MixedFilamentManager loaded;
+    loaded.load_custom_entries(serialized_auto_rows, colors);
+    CHECK(loaded.mixed_filaments().empty());
 }
 
 TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by inset", "[MixedFilament]")

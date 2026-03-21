@@ -1352,6 +1352,7 @@ Sidebar::Sidebar(Plater *parent)
             return;
 
         int filament_count = p->combos_filament.size() + 1;
+        wxGetApp().plater()->confirm_auto_generated_gradients(filament_count);
         wxColour new_col = Plater::get_next_color_for_filament();
         std::string new_color = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
         wxGetApp().preset_bundle->set_num_filaments(filament_count, new_color);
@@ -6878,7 +6879,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (p->m_btn_add_color)
         p->m_btn_add_color->Enable(num_physical >= 2);
 
-    if (mixed.empty()) {
+    if (num_physical < 2) {
         p->m_panel_mixed_filaments_title->Hide();
         p->m_panel_mixed_filaments_content->Hide();
         Layout();
@@ -6899,6 +6900,27 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     rows_scroller->SetBackgroundColour(mixed_rows_bg);
     auto *rows_sizer = new wxBoxSizer(wxVERTICAL);
     rows_scroller->SetSizer(rows_sizer);
+
+    if (mixed.empty()) {
+        auto *empty_label = new wxStaticText(rows_scroller, wxID_ANY,
+                                             _L("No mixed filaments yet. Use Add Gradient, Add Pattern, or Add Color to create one."));
+        empty_label->SetForegroundColour(mixed_summary_fg);
+        empty_label->SetFont(::Label::Body_13);
+        empty_label->Wrap(FromDIP(360));
+        rows_sizer->Add(empty_label, 0, wxALL | wxEXPAND, FromDIP(12));
+        rows_scroller->Layout();
+        rows_scroller->FitInside();
+        const int empty_content_h = empty_label->GetBestSize().GetHeight() + FromDIP(28);
+        const int empty_rows_h = std::max(FromDIP(86), empty_content_h);
+        rows_scroller->SetMinSize(wxSize(-1, empty_rows_h));
+        rows_scroller->SetMaxSize(wxSize(-1, empty_rows_h));
+        if (content_sizer)
+            content_sizer->Add(rows_scroller, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(SidebarProps::ContentMargin()));
+        p->m_panel_mixed_filaments_content->Layout();
+        Layout();
+        refresh_model_canvas_colors();
+        return;
+    }
 
     auto adjust_rows_scroller_height = [this, rows_scroller]() {
         if (!rows_scroller)
@@ -7581,6 +7603,7 @@ void Sidebar::add_custom_filament(wxColour new_col) {
     if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER) return;
 
     int         filament_count = p->combos_filament.size() + 1;
+    wxGetApp().plater()->confirm_auto_generated_gradients(filament_count);
     std::string new_color      = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
     wxGetApp().preset_bundle->set_num_filaments(filament_count, new_color);
     wxGetApp().plater()->on_filaments_change(filament_count);
@@ -8409,9 +8432,13 @@ struct Plater::priv
     static const std::regex pattern_prusa;
 
     bool m_is_dark = false;
+    size_t m_last_auto_gradient_prompt_physical_count = 0;
+    bool   m_last_auto_gradient_prompt_accepted = false;
 
     priv(Plater *q, MainFrame *main_frame);
     ~priv();
+    bool confirm_auto_generated_gradients(wxWindow *parent, size_t num_physical);
+    void set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients);
 
 
     bool need_update() const { return m_need_update; }
@@ -9933,9 +9960,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "mixed_filament_surface_indentation"
                                 };
                                 preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);
-                                if (current_num_filaments != desired_physical_filaments)
+                                if (current_num_filaments != desired_physical_filaments) {
+                                    q->confirm_auto_generated_gradients(desired_physical_filaments);
                                     preset_bundle->set_num_filaments(unsigned(desired_physical_filaments));
-                                else
+                                } else
                                     preset_bundle->update_multi_material_filament_presets();
                                 BOOST_LOG_TRIVIAL(info) << "3MF geometry import applied imported project config"
                                                         << " current_num_filaments=" << current_num_filaments
@@ -9948,6 +9976,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     new_colors.assign(imported_filament_colors.begin() + current_num_filaments,
                                                       imported_filament_colors.begin() + desired_physical_filaments);
                                 }
+                                q->confirm_auto_generated_gradients(desired_physical_filaments);
                                 preset_bundle->set_num_filaments(unsigned(desired_physical_filaments), new_colors);
                                 wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
                             }
@@ -9956,6 +9985,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         int filament_size = sidebar->combos_filament().size();
                         while (filament_size < MAXIMUM_EXTRUDER_NUMBER && filament_size < size) {
                             int         filament_count = filament_size + 1;
+                            wxGetApp().plater()->confirm_auto_generated_gradients(filament_count);
                             wxColour    new_col        = Plater::get_next_color_for_filament();
                             std::string new_color      = new_col.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
                             wxGetApp().preset_bundle->set_num_filaments(filament_count, new_color);
@@ -13746,6 +13776,76 @@ void Plater::priv::on_repair_model(wxCommandEvent &event)
     wxGetApp().obj_list()->fix_through_netfabb();
 }
 
+bool Plater::priv::confirm_auto_generated_gradients(wxWindow *parent, size_t num_physical)
+{
+    auto *app_config = wxGetApp().app_config;
+    if (app_config == nullptr)
+        return MixedFilamentManager::auto_generate_enabled();
+
+    const bool pref_enabled = app_config->get_bool("auto_generate_gradients");
+    if (!pref_enabled) {
+        m_last_auto_gradient_prompt_physical_count = 0;
+        m_last_auto_gradient_prompt_accepted = false;
+        MixedFilamentManager::set_auto_generate_enabled(false);
+        return false;
+    }
+
+    if (num_physical <= 4) {
+        m_last_auto_gradient_prompt_physical_count = 0;
+        m_last_auto_gradient_prompt_accepted = false;
+        MixedFilamentManager::set_auto_generate_enabled(true);
+        return true;
+    }
+
+    if (parent == nullptr || !parent->IsShownOnScreen()) {
+        m_last_auto_gradient_prompt_physical_count = 0;
+        m_last_auto_gradient_prompt_accepted = false;
+        MixedFilamentManager::set_auto_generate_enabled(true);
+        return true;
+    }
+
+    if (m_last_auto_gradient_prompt_physical_count == num_physical) {
+        MixedFilamentManager::set_auto_generate_enabled(m_last_auto_gradient_prompt_accepted);
+        return m_last_auto_gradient_prompt_accepted;
+    }
+
+    const size_t auto_gradient_count = num_physical * (num_physical - 1) / 2;
+    const wxString message = wxString::Format(
+        _L("Using %d physical filaments will create %d auto-generated gradients.\nDo you want to create them now?"),
+        int(num_physical),
+        int(auto_gradient_count));
+    const int result = MessageDialog(parent,
+                                     message,
+                                     wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Auto gradients"),
+                                     wxYES_NO | wxYES_DEFAULT | wxCENTRE | wxICON_QUESTION)
+                           .ShowModal();
+    const bool accepted = result == wxID_YES;
+    m_last_auto_gradient_prompt_physical_count = num_physical;
+    m_last_auto_gradient_prompt_accepted = accepted;
+    MixedFilamentManager::set_auto_generate_enabled(accepted);
+    return accepted;
+}
+
+void Plater::priv::set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients)
+{
+    m_last_auto_gradient_prompt_physical_count = num_physical;
+    m_last_auto_gradient_prompt_accepted = create_auto_gradients;
+    MixedFilamentManager::set_auto_generate_enabled(create_auto_gradients);
+}
+
+bool Plater::confirm_auto_generated_gradients(size_t num_physical)
+{
+    return p != nullptr ? p->confirm_auto_generated_gradients(this, num_physical) : MixedFilamentManager::auto_generate_enabled();
+}
+
+void Plater::set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients)
+{
+    if (p != nullptr)
+        p->set_auto_generated_gradient_decision(num_physical, create_auto_gradients);
+    else
+        MixedFilamentManager::set_auto_generate_enabled(create_auto_gradients);
+}
+
 void Plater::priv::on_filament_color_changed(wxCommandEvent &event)
 {
     //q->update_all_plate_thumbnails(true);
@@ -13760,7 +13860,9 @@ void Plater::priv::on_filament_color_changed(wxCommandEvent &event)
         sidebar->auto_calc_flushing_volumes(modify_id);
     }
 
-    // Regenerate mixed filaments and update the sidebar panel.
+    // Regenerate mixed filaments and refresh the mixed panel only. Color
+    // changes do not alter filament IDs, so the full on_filaments_change()
+    // path is unnecessary and can re-enter UI rebuilds mid-update.
     wxGetApp().preset_bundle->update_multi_material_filament_presets();
     sidebar->update_mixed_filament_panel();
 }
@@ -19647,6 +19749,8 @@ void Plater::on_filaments_change(size_t num_filaments)
     update_filament_colors_in_full_config();
 
     const size_t old_num_filaments = sidebar().combos_filament().size();
+    const bool auto_generate_before = MixedFilamentManager::auto_generate_enabled();
+    const bool allow_auto_gradients = p->confirm_auto_generated_gradients(this, num_filaments);
     auto summarize_uint_vector = [](const std::vector<unsigned int> &values, size_t max_items = 24) {
         std::string out = "[";
         const size_t n = std::min(values.size(), max_items);
@@ -19681,6 +19785,8 @@ void Plater::on_filaments_change(size_t num_filaments)
         return out;
     };
     PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    if (preset_bundle != nullptr && auto_generate_before && !allow_auto_gradients)
+        preset_bundle->update_multi_material_filament_presets(size_t(-1), old_num_filaments);
     // Consume remap before sidebar refresh, which may trigger config sync
     // paths that regenerate mixed filaments and clear this remap buffer.
     std::vector<unsigned int> id_remap;

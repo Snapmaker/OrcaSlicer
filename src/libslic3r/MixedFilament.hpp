@@ -116,6 +116,9 @@ class MixedFilamentManager
 public:
     MixedFilamentManager() = default;
 
+    static void set_auto_generate_enabled(bool enabled);
+    static bool auto_generate_enabled();
+
     // ---- Auto-generation ------------------------------------------------
 
     // Rebuild the mixed-filament list from the current set of physical

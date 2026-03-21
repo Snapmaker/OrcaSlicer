@@ -2,6 +2,7 @@
 #include "filament_mixer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <boost/log/trivial.hpp>
 #include <cctype>
 #include <cmath>
@@ -14,6 +15,12 @@
 #include <unordered_set>
 
 namespace Slic3r {
+
+namespace {
+
+std::atomic_bool s_mixed_filament_auto_generate_enabled { true };
+
+} // namespace
 
 static uint64_t canonical_pair_key(unsigned int a, unsigned int b)
 {
@@ -810,6 +817,16 @@ uint64_t MixedFilamentManager::normalize_stable_id(uint64_t stable_id)
     return stable_id;
 }
 
+void MixedFilamentManager::set_auto_generate_enabled(bool enabled)
+{
+    s_mixed_filament_auto_generate_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool MixedFilamentManager::auto_generate_enabled()
+{
+    return s_mixed_filament_auto_generate_enabled.load(std::memory_order_relaxed);
+}
+
 void MixedFilamentManager::auto_generate(const std::vector<std::string> &filament_colours)
 {
     // Keep a copy of the old list so we can preserve user-modified ratios and
@@ -818,8 +835,6 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
     m_mixed.clear();
 
     const size_t n = filament_colours.size();
-    if (n < 2)
-        return;
 
     std::vector<MixedFilament> custom_rows;
     custom_rows.reserve(old.size());
@@ -835,6 +850,13 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string> &filamen
         MixedFilament custom = prev;
         custom.stable_id = normalize_stable_id(custom.stable_id);
         custom_rows.push_back(std::move(custom));
+    }
+
+    if (n < 2 || !auto_generate_enabled()) {
+        for (MixedFilament &mf : custom_rows)
+            m_mixed.push_back(std::move(mf));
+        refresh_display_colors(filament_colours);
+        return;
     }
 
     // Generate all C(N,2) pairwise combinations.

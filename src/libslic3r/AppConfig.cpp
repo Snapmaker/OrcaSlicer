@@ -321,6 +321,10 @@ void AppConfig::set_defaults()
         set_bool("auto_calculate_when_filament_change", true);
     }
 
+    if (get("auto_generate_gradients").empty()) {
+        set_bool("auto_generate_gradients", true);
+    }
+
     if (get("show_home_page").empty()) {
         set_bool("show_home_page", true);
     }

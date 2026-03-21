@@ -3469,7 +3469,7 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     // Build old->new filament ID remap for painted facet data normalization.
     // This is needed for both deletion and addition of physical filaments so
     // painted mixed states keep pointing at the same virtual mixed entries.
-    if (old_num_filaments != num_filaments || deleting_filament)
+    if (old_num_filaments != num_filaments || deleting_filament || old_mixed != this->mixed_filaments.mixed_filaments())
         build_filament_id_remap(old_mixed, old_num_filaments, num_filaments, deleting_filament,
                                 deleting_filament ? unsigned(to_delete_filament_id + 1) : 0u);
 }

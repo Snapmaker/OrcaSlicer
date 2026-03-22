@@ -3921,8 +3921,15 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
 {
     // std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
     // std::string           filename     = "test_for_download.3mf";
+    wxString fileNameEx = fileName;
+    std::string releaFileName = "";
 
-    GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, fileName, completeFilePath);
+    if (fileNameEx.EndsWith(".3mf"),true)
+        releaFileName = fileName;
+    else
+        releaFileName = fileName + ".3mf";
+
+    GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, releaFileName, completeFilePath);
     auto res = dlg.ShowModal();
 
     if (res != wxID_OK)
@@ -3930,7 +3937,7 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
 
     if (completeFilePath.empty()) {
         auto downloadPath = wxGetApp().app_config->get("download_path");
-        completeFilePath  = downloadPath + "/" + fileName;
+        completeFilePath  = downloadPath + "/" + releaFileName;
     }
     if (!boost::filesystem::exists(completeFilePath)) 
     {
@@ -3951,7 +3958,7 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
     else
     {
         // Not a valid 3mf file, show error message
-        wxString msg = wxString::Format(_L("The downloaded file '%s' is not a valid 3MF project file."), fileName);
+        wxString msg = wxString::Format(_L("The downloaded file '%s' is not a valid 3MF project file."), releaFileName);
         MessageDialog(this, msg, _L("Invalid File"), wxOK | wxICON_WARNING).ShowModal();
     }
 

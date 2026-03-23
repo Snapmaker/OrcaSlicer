@@ -14,7 +14,6 @@
 #include <string>
 #include <string_view>
 #include <optional>
-#include <unordered_map>
 
 namespace Slic3r {
 
@@ -678,8 +677,6 @@ class Print;
         EPositioningType m_global_positioning_type;
         EPositioningType m_e_local_positioning_type;
         std::vector<Vec3f> m_extruder_offsets;
-        // SM Orca: 耗材到物理挤出机的映射
-        std::unordered_map<int, int> m_filament_extruder_map;
         GCodeFlavor m_flavor;
         float       m_nozzle_volume;
         AxisCoords m_start_position; // mm
@@ -779,16 +776,6 @@ class Print;
 
         void apply_config(const PrintConfig& config);
         void set_print(Print* print) { m_print = print; }
-        // SM Orca: 设置耗材到物理挤出机的映射
-        void set_filament_extruder_map(const std::unordered_map<int, int>& map) {
-            m_filament_extruder_map = map;
-        }
-        // SM Orca: 获取物理挤出机ID（根据耗材索引）
-        int get_physical_extruder(int filament_idx) const {
-            auto it = m_filament_extruder_map.find(filament_idx);
-            int physical_extruder_id = (it != m_filament_extruder_map.end()) ? it->second : filament_idx;
-            return physical_extruder_id;
-        }
         void enable_stealth_time_estimator(bool enabled);
         bool is_stealth_time_estimator_enabled() const {
             return m_time_processor.machines[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].enabled;

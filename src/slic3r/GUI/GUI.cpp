@@ -136,12 +136,12 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 		}
 		case coPercents:{
 			ConfigOptionPercents* vec_new = new ConfigOptionPercents{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new, opt_index, 0);  // SM Orca: Fix - use src_idx=0 for single-element vectors
+			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new, opt_index, opt_index);
 			break;
 		}
 		case coFloats:{
 			ConfigOptionFloats* vec_new = new ConfigOptionFloats{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new, opt_index, 0);  // SM Orca: Fix - use src_idx=0 for single-element vectors
+			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new, opt_index, opt_index);
  			break;
 		}
 		case coString:

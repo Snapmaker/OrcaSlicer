@@ -3921,10 +3921,12 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
 {
     // std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
     // std::string           filename     = "test_for_download.3mf";
-    wxString fileNameEx = fileName;
+    wxString fileNameEx = wxString::FromUTF8(fileName.c_str()).Lower();
     std::string releaFileName = "";
 
-    if (fileNameEx.EndsWith(".3mf"),true)
+    bool strRes = fileNameEx.EndsWith(".3mf");
+
+    if (strRes)
         releaFileName = fileName;
     else
         releaFileName = fileName + ".3mf";

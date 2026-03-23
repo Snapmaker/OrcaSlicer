@@ -5365,19 +5365,9 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 			%i %m_plate_list[i]->m_gcode_result->filename % with_slice_info %m_plate_list[i]->is_slice_result_valid()%plate_data_item->objects_and_instances.size();
 
 		if (with_slice_info) {
-			GCodeProcessorResult* slice_res = m_plate_list[i]->get_slice_result();
-			// Normal path: UI slice-valid flag is set.
-			bool include_slice_data = slice_res && m_plate_list[i]->is_slice_result_valid();
-			// Export all plates (gcode.3mf): earlier plates often lose m_slice_result_valid=false after
-			// wipe-tower / scene updates (notify_instance_update uses obj_id 1000+plate_idx), while the
-			// temp G-code file is still on disk. Bambu-style profiles without wipe tower are unaffected.
-			if (!include_slice_data && plate_idx == PLATE_ALL_IDX && slice_res && !slice_res->filename.empty()
-				&& boost::filesystem::exists(slice_res->filename))
-				include_slice_data = true;
-
-			if (include_slice_data) {
+			if (m_plate_list[i]->get_slice_result() && m_plate_list[i]->is_slice_result_valid()) {
 				// BBS only include current palte_idx
-				if ((plate_idx >= 0 && plate_idx == i) || plate_idx == PLATE_CURRENT_IDX || plate_idx == PLATE_ALL_IDX) {
+				if (plate_idx == i || plate_idx == PLATE_CURRENT_IDX || plate_idx == PLATE_ALL_IDX) {
 					//load calibration thumbnail
 					//if (m_plate_list[i]->cali_thumbnail_data.is_valid())
 					//	plate_data_item->pattern_file = "valid_pattern";
@@ -5447,15 +5437,6 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list)
 			m_plate_list[index]->obj_to_instance_set.insert(std::pair(it->first, it->second));*/
 		if (!plate_data_list[i]->gcode_file.empty()) {
 			m_plate_list[index]->m_gcode_path_from_3mf = plate_data_list[i]->gcode_file;
-			// BBS: Only set the slice result valid state if the gcode file actually exists
-			// This prevents exporting gcode.3mf with references to non-existent gcode files
-			if (plate_data_list[i]->is_sliced_valid && boost::filesystem::exists(plate_data_list[i]->gcode_file)) {
-				m_plate_list[index]->update_slice_result_valid_state(true);
-			} else {
-				// BBS: If the gcode file doesn't exist or the 3MF wasn't marked as sliced valid,
-				// ensure the slice result state is invalid
-				m_plate_list[index]->update_slice_result_valid_state(false);
-			}
 		}
 		GCodeResult* gcode_result = nullptr;
 		PrintBase* fff_print = nullptr;

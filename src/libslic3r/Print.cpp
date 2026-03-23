@@ -2316,12 +2316,6 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     // finalize_output_path() might not be called automatically
     std::string final_path = this->print_statistics().finalize_output_path(path);
 
-    // Fix: Always set result->filename to final_path, regardless of whether renaming happens
-    // This ensures multi-plate slicing exports all gcode files correctly
-    if (result) {
-        result->filename = final_path;
-    }
-
     // Rename the file from the placeholder path to the finalized path
     if (final_path != path) {
         std::error_code ret = rename_file(path, final_path);
@@ -2333,6 +2327,10 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
         } else {
             BOOST_LOG_TRIVIAL(info) << "Renamed G-code file from '" << path
                 << "' to '" << final_path << "'";
+            // Update result filename to reflect the new path
+            if (result) {
+                result->filename = final_path;
+            }
         }
     }
 

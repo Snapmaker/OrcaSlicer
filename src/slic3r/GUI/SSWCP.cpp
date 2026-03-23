@@ -4386,26 +4386,40 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
 
         if (fileUrl.empty() || fileName.empty()) {
-            handle_general_fail(-1, "file_url and file_name are required");
+            handle_general_fail(-1, wxString::FromUTF8("file_url and file_name are required"));
             return;
         }
 
         // Use Download Manager
         DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
-            handle_general_fail(-1, "Download Manager not available");
+            handle_general_fail(-1, wxString::FromUTF8("Download Manager not available"));
             return;
         }
 
-        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+        // WebView script message runs inside the webview event handler; calling ShowModal() synchronously
+        // (via GenericDownloadDialog in downloadOpenProject) causes re-entrancy / crashes on Windows.
+        // Defer to the next event-loop iteration — same pattern as sw_UserLogin().
+        std::shared_ptr<SSWCP_UserLogin_Instance> self =
+            std::static_pointer_cast<SSWCP_UserLogin_Instance>(shared_from_this());
+        wxGetApp().CallAfter([self, fileUrl, fileName]() {
+            if (!wxGetApp().mainframe) {
+                self->handle_general_fail(-1, wxString::FromUTF8("Main window not available"));
+                return;
+            }
+            try {
+                wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+                self->m_status = 0;
+                self->m_msg    = "success";
+                self->send_to_js();
+                self->finish_job();
+            } catch (const std::exception& e) {
+                self->handle_general_fail(-1, wxString::FromUTF8(e.what()));
+            }
+        });
 
-        m_status = 0;
-        m_msg    = "success";
-        send_to_js();
-        finish_job();
-
-    } catch (std::exception& e) {
-        handle_general_fail(-1, e.what());
+    } catch (const std::exception& e) {
+        handle_general_fail(-1, wxString::FromUTF8(e.what()));
     }
 }
 

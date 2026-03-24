@@ -205,6 +205,9 @@ void PresetComboBox::update_selection()
 
 // A workaround for a set of issues related to text fitting into gtk widgets:
 #if defined(__WXGTK20__) || defined(__WXGTK3__)
+    // Guard: m_widget may not be a GtkCellLayout (e.g. not yet realized, or GtkComboBoxText in Flatpak/GTK3)
+    if (!m_widget || !GTK_IS_CELL_LAYOUT(m_widget))
+        return;
     GList* cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(m_widget));
 
     // 'cells' contains the GtkCellRendererPixBuf for the icon,

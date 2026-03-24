@@ -31,6 +31,7 @@ using tcp = asio::ip::tcp;
 #define DELETE_CAMERA_TIMELAPSE "sw_DeleteCameraTimelapse"
 #define GET_DEVICEDATA_STORAGESPACE "sw_GetDeviceDataStorageSpace"
 #define DOWNLOAD_FILE "sw_DownloadFile"
+#define DOWNLOAD_FILE_AND_OPEN "sw_DownLoadFileAndOpen"
 #define CANCEL_DOWNLOAD "sw_CancelDownload"
 #define FILE_VIEW "sw_FileView"
 
@@ -541,6 +542,11 @@ private:
     void sw_SubUserUpdatePrivacy();
 
     void sw_DownloadFile();
+
+    void sw_DownloadFileAndOpen();
+
+    void sw_DownloadFileEx();
+
     void sw_CancelDownload();
 
     void sw_FileView();

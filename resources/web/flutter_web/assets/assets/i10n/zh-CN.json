@@ -174,6 +174,7 @@
     "expand_all": "展开全部",
     "print_preparation": "打印配置"
   },
+  "The print task was sent successfully": "打印任务发送成功",
   "title": "发现设备",
   "description": "发现设备",
   "add device": "添加设备",
@@ -388,16 +389,16 @@
   "Camera": "摄像机",
 
   "File information": "文件信息",
-  "Model information": "模型信息",
+  "Model Information": "模型信息",
 
-  "Select printer": "选择打印机",
-  "Edit filament": "编辑耗材",
+  "Select Printer": "选择打印机",
+  "Edit Filament": "编辑耗材",
   "Select Tool Head": "选择打印头",
   "Please enter the correct number": "请输入正确的数字",
 
-  "Preference setting": "偏好设置",
-  "Auto leveling": "自动调平",
-  "Time-lapse camera": "延时摄影",
+  "Print Preferences": "偏好设置",
+  "Auto Leveling": "自动调平",
+  "Time-lapse Camera": "延时摄影",
   "Bed leveling": "热床调平",
   "Flow calibrate": "流量校准",
   "Extrusion Flow Calibration": "挤出流量校准",
@@ -635,7 +636,7 @@
   "Image display": "图片展示",
   "No models found": "未找到模型",
   "Try a different search term": "请尝试其他搜索关键词",
-  "Print preprocessing": "打印预处理",
+  "Print Preprocessing": "打印预处理",
   "File uploaded successfully": "文件上传成功",
   "file_uploaded_success_format": "已上传完成，将自动跳转到设备控制页面 {} 秒",
   "The device failed to upload the model file. Please check the device network and upload it again.": "设备上传模型文件失败，请检查设备网络并重新上传",
@@ -685,8 +686,8 @@
   "got_it": "知道了",
   "monitoring_module_hibernated": "提示：监控模块已休眠，点击播放按钮即可唤醒",
   "Plates": "盘",
-  "Split Plate": "分盘",
-
+  "Print Plates": "打印盘",
+  "Plate": "盘",
   "Check": "查看",
   "default_exception_title": "异常",
   "Error Code": "错误码",
@@ -1509,8 +1510,7 @@
   "Not Implemented Yet": "还未实现，请稍后再试",
   "Nozzle": "喷嘴",
   "Model Library":"模型库",
-  "Print Plates": "打印盘",
-  "Recommendation for You": "官方推荐",
+  "Recommended for You": "官方推荐",
   "units": "个",
   "Total": "总量",
   "Filament List": "多色耗材清单",
@@ -1519,5 +1519,6 @@
   "There are no available process profiles": "没有可用的打印配置",
   "No split data available": "没有可用的分盘数据",
   "Untitled Config": "未命名配置",
-  "Display Area": "展示区域"
+  "Display Area": "展示区域",
+  "Next": "下一步"
 }

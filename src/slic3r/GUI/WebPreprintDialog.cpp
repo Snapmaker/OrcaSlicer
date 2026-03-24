@@ -2,6 +2,7 @@
 #include "I18N.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
+#include "OrcaWebViewLoader.hpp"
 #include "SSWCP.hpp"
 #include <wx/sizer.h>
 #include <slic3r/GUI/Widgets/WebView.hpp>
@@ -17,24 +18,22 @@ END_EVENT_TABLE()
 WebPreprintDialog::WebPreprintDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Print preset"))
 {
-    m_prePrint_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
-                     "/web/flutter_web/index.html?path=4");
-
-    m_preSend_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
-                     "/web/flutter_web/index.html?path=5");
     SetBackgroundColour(*wxWHITE);
 
-    // Create the webview
-
-    // 语言判断
-    wxString target_url = wxGetApp().get_international_url(m_prePrint_url);
-
-    m_browser = WebView::CreateWebView(this, target_url);
+    OrcaWebLoadConfig root_cfg = OrcaWebViewLoader::CreateConfigForPage(5);
+    m_browser                  = WebView::CreateWebViewWithLocalRoot(this, "", root_cfg.root_path, root_cfg.user_assets_dir);
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
     }
     m_browser->Hide();
+
+#ifdef __WIN32__
+    Bind(wxEVT_SIZE, [this](wxSizeEvent& evt) {
+        try_load_pending_orca_url();
+        evt.Skip();
+    });
+#endif
 
     // Connect the webview events
     Bind(wxEVT_WEBVIEW_NAVIGATING, &WebPreprintDialog::OnNavigationRequest, this, m_browser->GetId());
@@ -63,6 +62,44 @@ WebPreprintDialog::WebPreprintDialog()
     }
 
     wxGetApp().set_web_preprint_dialog(this);
+}
+
+#ifdef __WIN32__
+void WebPreprintDialog::try_load_pending_orca_url()
+{
+    if (!m_browser || m_pending_orca_url.empty())
+        return;
+    wxSize sz = m_browser->GetClientSize();
+    if (sz.GetWidth() <= 0 || sz.GetHeight() <= 0)
+        return;
+    wxString u = m_pending_orca_url;
+    m_pending_orca_url.clear();
+    m_browser->LoadURL(u);
+}
+#endif
+
+void WebPreprintDialog::load_orca_preprint_page()
+{
+    if (!m_browser)
+        return;
+
+    // Flutter GoRouter：/preUploadAndPrint（OrcaWebLoadConfig.route_path=5）
+    const int path_id = 5;
+
+    wxGetApp().fltviews().add_view(m_browser, wxString::Format("orca:%d", path_id));
+
+    OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(path_id);
+    config.route_params      = OrcaWebViewLoader::BuildRouteParamsFromApp();
+    wxString url_to_load     = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
+#ifdef __WIN32__
+    if (!url_to_load.empty()) {
+        m_pending_orca_url = url_to_load;
+        try_load_pending_orca_url();
+        wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+    }
+#endif
+    m_browser->Show();
+    Layout();
 }
 
 WebPreprintDialog::~WebPreprintDialog()
@@ -114,16 +151,13 @@ void WebPreprintDialog::SafeEndModal(int returnCode)
 
 void WebPreprintDialog::reload()
 {
-    load_url(m_prePrint_url);
+    load_orca_preprint_page();
 }
 
 void WebPreprintDialog::load_url(wxString &url)
 {
-    wxGetApp().fltviews().add_view(m_browser, url);
-
-    m_browser->LoadURL(url);
-    m_browser->Show();
-    Layout();
+    (void)url;
+    load_orca_preprint_page();
 }
 
 bool WebPreprintDialog::run()
@@ -131,14 +165,13 @@ bool WebPreprintDialog::run()
     SSWCP::update_active_filename(m_gcode_file_name);
     SSWCP::update_display_filename(m_display_file_name);
 
-    auto real_url = m_send_page ? wxGetApp().get_international_url(m_preSend_url) : wxGetApp().get_international_url(m_prePrint_url);
-    if(m_send_page){
+    if (m_send_page) {
         this->SetTitle(_L("Pretreat the uploaded content"));
-    }else{
+    } else {
         this->SetTitle(_L("Print Preprocessing"));
     }
 
-    this->load_url(real_url);
+    load_orca_preprint_page();
     
     // BBS: Reset flags before showing modal
     m_finish = false;

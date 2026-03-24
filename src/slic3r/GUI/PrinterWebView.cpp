@@ -12,6 +12,7 @@
 #include <wx/string.h>
 #include <wx/toolbar.h>
 #include <wx/textdlg.h>
+#include <wx/event.h>
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include <wx/webview.h>
@@ -43,6 +44,13 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
+#ifdef __WIN32__
+    Bind(wxEVT_SIZE, [this](wxSizeEvent& evt) {
+        try_load_pending_orca_url();
+        evt.Skip();
+    });
+#endif
+
     update_mode();
 
     // Log backend information
@@ -62,6 +70,20 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     Bind(wxEVT_CLOSE_WINDOW, &PrinterWebView::OnClose, this);
 
  }
+
+void PrinterWebView::try_load_pending_orca_url()
+{
+#ifdef __WIN32__
+    if (!m_browser || m_pending_orca_url.empty())
+        return;
+    wxSize sz = m_browser->GetClientSize();
+    if (sz.GetWidth() <= 0 || sz.GetHeight() <= 0)
+        return;
+    wxString u = m_pending_orca_url;
+    m_pending_orca_url.clear();
+    m_browser->LoadURL(u);
+#endif
+}
 
 PrinterWebView::~PrinterWebView()
 {
@@ -83,15 +105,21 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     m_apikey_sent = false;
 
     std::string url_str = url.ToUTF8().data();
-    bool is_orca = (url_str.find("path=2") != std::string::npos) || (url_str.find("orca://") != std::string::npos);
+    bool is_orca = (url_str.find("path=2") != std::string::npos) ||
+                   (url_str.find("path=/deviceControl") != std::string::npos) ||
+                   (url_str.find("path=%2FdeviceControl") != std::string::npos) ||
+                   (url_str.find("orca://") != std::string::npos);
 
     if (is_orca) {
         wxGetApp().fltviews().add_printer_view(this, "orca:2", apikey);
         OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(2);
         wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
 #ifdef __WIN32__
-        if (!url_to_load.empty())
-            m_browser->LoadURL(url_to_load);
+        if (!url_to_load.empty()) {
+            m_pending_orca_url = url_to_load;
+            try_load_pending_orca_url();
+            wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+        }
 #endif
         m_browser->Show();
     } else {
@@ -116,8 +144,11 @@ void PrinterWebView::load_url(const OrcaWebLoadConfig& config, wxString apikey)
     cfg.route_params = OrcaWebViewLoader::BuildRouteParamsFromApp();
     wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, cfg);
 #ifdef __WIN32__
-    if (!url_to_load.empty())
-        m_browser->LoadURL(url_to_load);
+    if (!url_to_load.empty()) {
+        m_pending_orca_url = url_to_load;
+        try_load_pending_orca_url();
+        wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+    }
 #endif
 
     m_browser->Show();

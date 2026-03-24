@@ -4,6 +4,7 @@
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
+#include "slic3r/GUI/OrcaWebViewLoader.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include "../Utils/Http.hpp"
 #include "SSWCP.hpp"
@@ -36,15 +37,7 @@ namespace GUI {
 
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
- {
-  wxString url = wxString::FromUTF8("http://localhost:7357/?locale=zh-cn-US&path=1&dark_mode=1&path=1");
-    // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
-    // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
-    url = wxGetApp().get_international_url(url);
-
-    // test
-    // url = "http://localhost:13619/web/flutter_web/1.html";
-
+{
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
 #if !BBL_RELEASE_TO_PUBLIC
@@ -86,14 +79,43 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     // Create the info panel
     m_info = new wxInfoBar(this);
     topsizer->Add(m_info, wxSizerFlags().Expand());
-    // Create the webview
-    m_browser = WebView::CreateWebView(this, url);
 
-    wxGetApp().fltviews().add_webview_panel(this, url);
+    // 使用 orca://app 加载，path=1 为首页
+    OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(1);
+    bool use_debug = false;
+    if (wxGetApp().app_config && wxGetApp().app_config->get("use_web_debug_server") == "true") {
+        use_debug = true;
+        config.use_debug_server   = true;
+        config.debug_server_url   = "http://localhost:7357";
+    }
+
+    if (use_debug) {
+        wxString url = config.debug_server_url + "/?path=1&" + config.route_params;
+        m_browser = WebView::CreateWebView(this, url);
+    } else {
+        m_browser = WebView::CreateWebViewWithLocalRoot(this, "", config.root_path, config.user_assets_dir);
+    }
+
+    wxGetApp().fltviews().add_webview_panel(this, "orca:1");
 
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
+    }
+
+    if (!use_debug) {
+        wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
+#ifdef __WIN32__
+        if (!url_to_load.empty()) {
+            m_browser->Bind(wxEVT_SIZE, [this, url_to_load](wxSizeEvent& evt) {
+                if (m_browser && !m_orca_url_loaded) {
+                    m_orca_url_loaded = true;
+                    m_browser->LoadURL(url_to_load);
+                }
+                evt.Skip();
+            });
+        }
+#endif
     }
     m_browser->Hide();
     SetSizer(topsizer);
@@ -255,14 +277,23 @@ void WebViewPanel::load_url(wxString& url)
 {
     this->Show();
     this->Raise();
-    /*m_url->SetLabelText(url);
-
-    if (wxGetApp().get_mode() == comDevelop)
-        wxLogMessage(m_url->GetValue());*/
     m_browser->LoadURL(url);
-
     wxGetApp().fltviews().add_webview_panel(this, url);
+    m_browser->SetFocus();
+    UpdateState();
+}
 
+void WebViewPanel::load_url(const OrcaWebLoadConfig& config)
+{
+    this->Show();
+    this->Raise();
+    OrcaWebLoadConfig cfg = config;
+    cfg.route_params = OrcaWebViewLoader::BuildRouteParamsFromApp();
+    wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, cfg);
+#ifdef __WIN32__
+    if (!url_to_load.empty())
+        m_browser->LoadURL(url_to_load);
+#endif
     m_browser->SetFocus();
     UpdateState();
 }

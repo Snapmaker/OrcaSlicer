@@ -1,5 +1,6 @@
 #include "OrcaWebViewLoader.hpp"
 #include "libslic3r/Utils.hpp"
+#include "GUI_App.hpp"
 #include <boost/filesystem.hpp>
 #include <wx/file.h>
 #include <wx/filename.h>
@@ -11,16 +12,46 @@ namespace GUI {
 
 namespace fs = boost::filesystem;
 
+wxString OrcaWebViewLoader::BuildRouteParamsFromApp()
+{
+    Slic3r::GUI::GUI_App& app = wxGetApp();
+    if (!app.app_config)
+        return "locale=zh-cn-US&dark_mode=1";
+    wxString lang   = wxString::FromUTF8(app.app_config->get_language_code());
+    wxString region = wxString::FromUTF8(app.app_config->get_country_code());
+    if (region == "Others")
+        region = "US";
+    std::string dark_mode = app.app_config->get("dark_color_mode");
+    return "locale=" + lang + "-" + region + "&dark_mode=" + dark_mode;
+}
+
+OrcaWebLoadConfig OrcaWebViewLoader::CreateConfigForPage(int path)
+{
+    wxString user_path;
+    // 可从 app_config 读取开发路径覆盖，这里优先 resources
+    if (wxGetApp().app_config) {
+        std::string dev_path = wxGetApp().app_config->get("web_dev_path");
+        if (!dev_path.empty())
+            user_path = wxString::FromUTF8(dev_path);
+    }
+    OrcaWebLoadConfig config = ResolveConfig(user_path);
+    config.route_path   = wxString::Format("%d", path);
+    config.route_params = BuildRouteParamsFromApp();
+    return config;
+}
+
 OrcaWebLoadConfig OrcaWebViewLoader::ResolveConfig(const wxString& user_web_path)
 {
     OrcaWebLoadConfig config;
-    config.route_path   = "/bridge";
+    config.route_path   = "1";
     config.route_params = "locale=zh-cn&dark_mode=1";
 
-    const fs::path user_path(user_web_path.ToUTF8().data());
     const fs::path res_path = fs::path(Slic3r::resources_dir()) / "web" / "flutter_web";
+    fs::path user_path;
+    if (!user_web_path.empty())
+        user_path = fs::path(user_web_path.ToUTF8().data());
 
-    if (fs::exists(user_path / "index.html")) {
+    if (!user_web_path.empty() && fs::exists(user_path / "index.html")) {
         config.root_path = wxString::FromUTF8(user_path.string());
         config.entry_url = "orca://app/index.html";
         BOOST_LOG_TRIVIAL(info) << "OrcaWebViewLoader: using " << user_path.string();
@@ -28,10 +59,14 @@ OrcaWebLoadConfig OrcaWebViewLoader::ResolveConfig(const wxString& user_web_path
         config.root_path = wxString::FromUTF8(Slic3r::resources_dir());
         config.entry_url = "orca://app/web/flutter_web/index.html";
         BOOST_LOG_TRIVIAL(info) << "OrcaWebViewLoader: using resources_dir()/web/flutter_web";
-    } else {
+    } else if (!user_web_path.empty()) {
         config.root_path = wxString::FromUTF8(user_path.string());
         config.entry_url = "orca://app/index.html";
         BOOST_LOG_TRIVIAL(warning) << "OrcaWebViewLoader: neither path found, trying " << user_path.string();
+    } else {
+        config.root_path = wxString::FromUTF8(Slic3r::resources_dir());
+        config.entry_url = "orca://app/web/flutter_web/index.html";
+        BOOST_LOG_TRIVIAL(warning) << "OrcaWebViewLoader: resources flutter_web not found";
     }
 
     config.user_assets_dir = EnsureUserAssetsDir();
@@ -57,11 +92,10 @@ wxString OrcaWebViewLoader::BuildFullEntryUrl(const OrcaWebLoadConfig& config)
 
 wxString OrcaWebViewLoader::BuildBaseUrl(const OrcaWebLoadConfig& config)
 {
-    wxString base = "orca://app/?";
-    if (!config.route_params.empty())
-        base += config.route_params + "&";
-    base += "path=" + config.route_path;
-    return base;
+    // Flutter 要求 base href 必须以 "/" 结尾，否则报错：
+    // "The base href has to end with a '/' to work correctly"
+    // base 仅用于解析相对路径（如 main.dart.js），path/locale 等参数通过 LoadURL 的完整 URL 传递
+    return "orca://app/";
 }
 
 wxString OrcaWebViewLoader::ReadIndexHtml(const OrcaWebLoadConfig& config)

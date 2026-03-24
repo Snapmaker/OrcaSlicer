@@ -907,8 +907,27 @@ public:
         void relead_all() {
             for (const auto& view : webviews) {
                 auto ptr = view.first;
-                wxString new_url = app->get_international_url(view.second);
-                ptr->LoadURL(new_url);
+                wxString key = view.second;
+                if (key.StartsWith(wxS("orca:"))) {
+                    int path = wxAtoi(key.AfterFirst(':'));
+                    OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(path);
+                    config.route_params = OrcaWebViewLoader::BuildRouteParamsFromApp();
+                    wxString u = OrcaWebViewLoader::LoadLocalHtml(ptr, config);
+#ifdef __WIN32__
+                    if (!u.empty()) {
+                        ptr->LoadURL(u);
+                        app->CallAfter([ptr, u]() {
+                            if (ptr)
+                                ptr->LoadURL(u);
+                        });
+                    }
+#else
+                    (void)u;
+#endif
+                } else {
+                    wxString new_url = app->get_international_url(key);
+                    ptr->LoadURL(new_url);
+                }
             }
 
             for (const auto& panel : webview_panels) {

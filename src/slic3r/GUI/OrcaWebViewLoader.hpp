@@ -11,7 +11,7 @@ namespace GUI {
  */
 struct OrcaWebLoadConfig {
     wxString root_path;        ///< 本地 Web 根目录
-    wxString entry_url;        ///< 入口 URL（如 orca://app/index.html）
+    wxString entry_url;        ///< 入口 URL：须为目录形式 orca://app/web/flutter_web/（勿用 index.html，见 LoadLocalHtml 注释）
     wxString user_assets_dir;   ///< 用户资源目录（temp/orca_user_assets）
     wxString route_path;       ///< 路由路径（如 /bridge）
     wxString route_params;     ///< 路由参数（如 locale=zh-cn&dark_mode=1）
@@ -40,9 +40,16 @@ public:
     static wxString BuildRouteParamsFromApp();
 
     /**
-     * 按 path 创建预置配置：path=1 首页，path=2 设备页
+     * 按 path 创建预置配置（查询参数 path 为无前导斜杠片段，见 FlutterPathQueryValue）：
+     * 1→home，2→deviceControl，4→preUpload，5→preUploadAndPrint（预打印）
      */
     static OrcaWebLoadConfig CreateConfigForPage(int path);
+
+    /**
+     * Flutter orcaRouter 从 URL 查询参数 path 读取路由片段（无前导 '/'，如 home、deviceControl）；
+     * 嵌入 URL 时避免 path=/foo 中的裸斜杠破坏查询解析。对应 GoRoute 仍为 /home、/deviceControl 等。
+     */
+    static wxString FlutterPathQueryValue(const wxString& page_id);
 
     /**
      * 创建并返回 user_assets 目录路径

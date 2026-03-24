@@ -90,7 +90,7 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     }
 
     if (use_debug) {
-        wxString url = config.debug_server_url + "/?path=1&" + config.route_params;
+        wxString url = config.debug_server_url + "/?path=/home&" + config.route_params;
         m_browser = WebView::CreateWebView(this, url);
     } else {
         m_browser = WebView::CreateWebViewWithLocalRoot(this, "", config.root_path, config.user_assets_dir);

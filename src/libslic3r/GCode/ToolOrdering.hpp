@@ -123,6 +123,8 @@ public:
     unsigned int 				extruder_override = 0;
     // Sequential layer index (0-based), used by mixed-filament resolution.
     int                         layer_index = 0;
+    // Total number of object layers for the current print object.
+    int                         object_layer_count = 0;
     // Actual layer height for this print_z where available.
     coordf_t                    layer_height = 0.;
     // Should a skirt be printed at this layer?

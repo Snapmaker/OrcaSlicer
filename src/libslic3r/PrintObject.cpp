@@ -1086,6 +1086,9 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "bottom_shell_thickness"
             || opt_key == "top_shell_thickness"
             || opt_key == "minimum_sparse_infill_area"
+            || opt_key == "enable_infill_filament_override"
+            || opt_key == "infill_filament_use_base_first_layers"
+            || opt_key == "infill_filament_use_base_last_layers"
             || opt_key == "sparse_infill_filament"
             || opt_key == "solid_infill_filament"
             || opt_key == "sparse_infill_line_width"
@@ -3198,6 +3201,7 @@ PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObject
 }
 
 const std::string                                                    key_extruder { "extruder" };
+const std::string                                                    key_enable_infill_filament_override { "enable_infill_filament_override" };
 static constexpr const std::initializer_list<const std::string_view> keys_extruders { "sparse_infill_filament"sv, "solid_infill_filament"sv, "wall_filament"sv };
 
 static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in)
@@ -3211,10 +3215,23 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
             out.solid_infill_filament.value  = extruder;
             out.wall_filament.value          = extruder;
         }
+    const auto *opt_enable_infill_filament_override = in.opt<ConfigOptionBool>(key_enable_infill_filament_override);
+    const auto *opt_sparse_infill_filament = in.opt<ConfigOptionInt>("sparse_infill_filament");
+    const bool  allow_local_infill_filament_override = opt_enable_infill_filament_override != nullptr ?
+        opt_enable_infill_filament_override->value :
+        (opt_sparse_infill_filament != nullptr &&
+         opt_sparse_infill_filament->value > 0 &&
+         opt_sparse_infill_filament->value != out.wall_filament.value);
+    if (opt_enable_infill_filament_override != nullptr)
+        out.enable_infill_filament_override.value = opt_enable_infill_filament_override->value;
+    else if (opt_sparse_infill_filament != nullptr)
+        out.enable_infill_filament_override.value = allow_local_infill_filament_override;
     // 2) Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)
-        if (it->first != key_extruder)
+        if (it->first != key_extruder && it->first != key_enable_infill_filament_override)
             if (ConfigOption* my_opt = out.option(it->first, false); my_opt != nullptr) {
+                if (it->first == "sparse_infill_filament" && !allow_local_infill_filament_override)
+                    continue;
                 if (one_of(it->first, keys_extruders)) {
                     // Ignore "default" extruders.
                     int extruder = static_cast<const ConfigOptionInt*>(it->second.get())->value;
@@ -3296,6 +3313,8 @@ SlicingParameters PrintObject::slicing_parameters(const DynamicPrintConfig &full
 	print_config.apply(full_config, true);
 	object_config.apply(full_config, true);
 	default_region_config.apply(full_config, true);
+    default_region_config.enable_infill_filament_override.value = false;
+    default_region_config.sparse_infill_filament.value          = default_region_config.wall_filament.value;
     // BBS
 	size_t              filament_extruders = print_config.filament_diameter.size();
 	object_config = object_config_from_model_object(object_config, model_object, filament_extruders);
@@ -3310,6 +3329,9 @@ SlicingParameters PrintObject::slicing_parameters(const DynamicPrintConfig &full
 				object_extruders);
 			for (const std::pair<const t_layer_height_range, ModelConfig> &range_and_config : model_object.layer_config_ranges)
 				if (range_and_config.second.has("wall_filament") ||
+                    range_and_config.second.has("enable_infill_filament_override") ||
+                    range_and_config.second.has("infill_filament_use_base_first_layers") ||
+                    range_and_config.second.has("infill_filament_use_base_last_layers") ||
 					range_and_config.second.has("sparse_infill_filament") ||
 					range_and_config.second.has("solid_infill_filament"))
 					PrintRegion::collect_object_printing_extruders(
@@ -4278,9 +4300,10 @@ void PrintObject::combine_infill()
 
         // Limit the number of combined layers to the maximum height allowed by this regions' nozzle.
         //FIXME limit the layer height to max_layer_height
-        double nozzle_diameter = std::min(
-            this->print()->config().nozzle_diameter.get_at(region.config().sparse_infill_filament.value - 1),
-            this->print()->config().nozzle_diameter.get_at(region.config().solid_infill_filament.value - 1));
+        double nozzle_diameter = this->print()->config().nozzle_diameter.get_at(region.config().wall_filament.value - 1);
+        if (region.config().enable_infill_filament_override.value)
+            nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().sparse_infill_filament.value - 1));
+        nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().solid_infill_filament.value - 1));
         
         //Orca: Limit combination of infill to up to infill_combination_max_layer_height
         const double infill_combination_max_layer_height = region.config().infill_combination_max_layer_height.get_abs_value(nozzle_diameter);

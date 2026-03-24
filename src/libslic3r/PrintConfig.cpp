@@ -3321,6 +3321,31 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(100., true));
 
+    def = this->add("enable_infill_filament_override", coBool);
+    def->label = L("Override infill filament");
+    def->category = L("Extruders");
+    def->tooltip = L("Allow this print, object, or part to use a dedicated filament for sparse infill instead of inheriting its regular filament.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("infill_filament_use_base_first_layers", coInt);
+    def->label = L("Base infill on first layers");
+    def->category = L("Extruders");
+    def->tooltip = L("Keep using the regular object filament for this many bottom infill layers before switching to the infill override filament.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("infill_filament_use_base_last_layers", coInt);
+    def->label = L("Base infill on last layers");
+    def->category = L("Extruders");
+    def->tooltip = L("Keep using the regular object filament for this many top infill layers after switching back from the infill override filament.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("sparse_infill_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Infill");
@@ -7279,6 +7304,13 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
         }
     }
 
+    if (!this->has("enable_infill_filament_override") && this->has("sparse_infill_filament")) {
+        const int wall_filament = this->has("wall_filament") ? this->option("wall_filament")->getInt() : 1;
+        const int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
+        if (sparse_infill_filament > 0 && sparse_infill_filament != wall_filament)
+            this->opt<ConfigOptionBool>("enable_infill_filament_override", true)->value = true;
+    }
+
     if (this->has("wipe_tower_filament")) {
         // If invalid, replace with 0.
         int extruder      = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
@@ -7358,6 +7390,13 @@ void DynamicPrintConfig::normalize_fdm_1()
             // if (!this->has("support_interface_filament"))
             //     this->option("support_interface_filament", true)->setInt(extruder);
         }
+    }
+
+    if (!this->has("enable_infill_filament_override") && this->has("sparse_infill_filament")) {
+        const int wall_filament = this->has("wall_filament") ? this->option("wall_filament")->getInt() : 1;
+        const int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
+        if (sparse_infill_filament > 0 && sparse_infill_filament != wall_filament)
+            this->opt<ConfigOptionBool>("enable_infill_filament_override", true)->value = true;
     }
 
     if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))

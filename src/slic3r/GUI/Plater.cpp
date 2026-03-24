@@ -4638,7 +4638,7 @@ private:
     static std::vector<int> decode_gradient_weights(const std::string &s, size_t n);
     static std::vector<int> normalize_gradient_weights(const std::vector<int> &w, size_t n);
     static std::string encode_gradient_weights(const std::vector<int> &w);
-    static std::vector<unsigned int> build_weighted_pair_sequence(unsigned int a, unsigned int b, int percent_b);
+    static std::vector<unsigned int> build_weighted_pair_sequence(unsigned int a, unsigned int b, int percent_b, bool limit_cycle = false);
     static std::vector<unsigned int> build_weighted_multi_sequence(const std::vector<unsigned int> &ids,
                                                                    const std::vector<int> &weights,
                                                                    size_t max_cycle_limit = 0);
@@ -4891,31 +4891,90 @@ std::string MixedFilamentConfigPanel::encode_gradient_weights(const std::vector<
     return out.str();
 }
 
-std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_pair_sequence(unsigned int a, unsigned int b, int percent_b)
+namespace {
+
+std::pair<int, int> effective_pair_preview_ratios(int percent_b)
 {
-    std::vector<unsigned int> seq;
-    const int b_percent = std::clamp(percent_b, 0, 100);
-    int ratio_a = std::max(1, 100 - b_percent);
-    int ratio_b = std::max(1, b_percent);
-    const int g = std::gcd(ratio_a, ratio_b);
-    if (g > 1) {
-        ratio_a /= g;
-        ratio_b /= g;
+    const int mix_b = std::clamp(percent_b, 0, 100);
+    int       ratio_a = 1;
+    int       ratio_b = 0;
+
+    if (mix_b >= 100) {
+        ratio_a = 0;
+        ratio_b = 1;
+    } else if (mix_b > 0) {
+        const int pct_b      = mix_b;
+        const int pct_a      = 100 - pct_b;
+        const bool b_is_major = pct_b >= pct_a;
+        const int major_pct  = b_is_major ? pct_b : pct_a;
+        const int minor_pct  = b_is_major ? pct_a : pct_b;
+        const int major_layers =
+            std::max(1, int(std::lround(double(major_pct) / double(std::max(1, minor_pct)))));
+        ratio_a = b_is_major ? 1 : major_layers;
+        ratio_b = b_is_major ? major_layers : 1;
     }
+
+    if (ratio_a > 0 && ratio_b > 0) {
+        const int g = std::gcd(ratio_a, ratio_b);
+        if (g > 1) {
+            ratio_a /= g;
+            ratio_b /= g;
+        }
+    }
+
+    return { std::max(0, ratio_a), std::max(0, ratio_b) };
+}
+
+std::vector<unsigned int> build_effective_pair_preview_sequence(unsigned int component_a,
+                                                                unsigned int component_b,
+                                                                int          percent_b,
+                                                                bool         limit_cycle)
+{
+    std::vector<unsigned int> sequence;
+    if (component_a == 0 || component_b == 0 || component_a == component_b)
+        return sequence;
+
+    auto [ratio_a, ratio_b] = effective_pair_preview_ratios(percent_b);
     constexpr int k_max_cycle = 24;
-    if (ratio_a + ratio_b > k_max_cycle) {
+    if (limit_cycle && ratio_a > 0 && ratio_b > 0 && ratio_a + ratio_b > k_max_cycle) {
         const double scale = double(k_max_cycle) / double(ratio_a + ratio_b);
         ratio_a = std::max(1, int(std::round(double(ratio_a) * scale)));
         ratio_b = std::max(1, int(std::round(double(ratio_b) * scale)));
     }
+    if (ratio_a == 0 && ratio_b == 0)
+        ratio_a = 1;
+
     const int cycle = std::max(1, ratio_a + ratio_b);
-    seq.reserve(size_t(cycle));
+    sequence.reserve(size_t(cycle));
     for (int pos = 0; pos < cycle; ++pos) {
         const int b_before = (pos * ratio_b) / cycle;
         const int b_after  = ((pos + 1) * ratio_b) / cycle;
-        seq.emplace_back((b_after > b_before) ? b : a);
+        sequence.emplace_back((b_after > b_before) ? component_b : component_a);
     }
-    return seq;
+    return sequence;
+}
+
+std::string format_preview_sequence_percent(int count, int total)
+{
+    if (count <= 0 || total <= 0)
+        return "";
+
+    const double percent         = 100.0 * double(count) / double(total);
+    const double rounded_tenths  = std::round(percent * 10.0) / 10.0;
+    const double nearest_integer = std::round(rounded_tenths);
+    if (std::abs(rounded_tenths - nearest_integer) < 1e-6)
+        return wxString::Format("%d%%", int(nearest_integer)).ToStdString();
+    return wxString::Format("%.1f%%", rounded_tenths).ToStdString();
+}
+
+} // namespace
+
+std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_pair_sequence(unsigned int a,
+                                                                                 unsigned int b,
+                                                                                 int          percent_b,
+                                                                                 bool         limit_cycle)
+{
+    return build_effective_pair_preview_sequence(a, b, percent_b, limit_cycle);
 }
 
 static void reduce_weight_counts_to_cycle_limit(std::vector<int> &counts, size_t cycle_limit)
@@ -5412,7 +5471,7 @@ std::string MixedFilamentConfigPanel::summarize_sequence(const std::vector<unsig
     std::string out;
     for (auto &p : sorted) {
         if (!out.empty()) out += "/";
-        out += wxString::Format("%d%%", int(100 * p.first / int(seq.size()))).ToStdString();
+        out += format_preview_sequence_percent(p.first, int(seq.size()));
     }
     return out;
 }
@@ -5945,14 +6004,14 @@ void MixedFilamentConfigPanel::build_ui()
                 m_mf.gradient_component_ids.clear();
                 m_mf.gradient_component_weights.clear();
                 preview_mix_b_percent = effective_local_z_preview_mix_b_percent(m_mf, m_preview_settings);
-                preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, preview_mix_b_percent);
+                preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, preview_mix_b_percent, same_layer_mode);
             }
         }
         m_mf.custom = true;
 
         const std::vector<unsigned int> selected_gradient_ids = decode_gradient_ids(m_mf.gradient_component_ids);
         if (preview_sequence.empty())
-            preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, preview_mix_b_percent);
+            preview_sequence = build_weighted_pair_sequence(m_mf.component_a, m_mf.component_b, preview_mix_b_percent, same_layer_mode);
 
         if (m_blend_selector && selected_gradient_ids.size() >= 3) {
             std::vector<wxColour> corner_colors;
@@ -6203,7 +6262,8 @@ void MixedFilamentConfigPanel::update_preview()
         else
             initial_sequence = build_weighted_pair_sequence(m_mf.component_a,
                                                             m_mf.component_b,
-                                                            effective_local_z_preview_mix_b_percent(m_mf, m_preview_settings));
+                                                            effective_local_z_preview_mix_b_percent(m_mf, m_preview_settings),
+                                                            same_layer_mode);
 
         if (m_blend_selector && initial_gradient_ids.size() >= 3) {
             std::vector<wxColour> corner_colors;
@@ -6666,31 +6726,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return sequence;
     };
-    auto build_weighted_pair_sequence = [](unsigned int component_a, unsigned int component_b, int mix_b_percent) {
-        std::vector<unsigned int> sequence;
-        const int b_percent = std::clamp(mix_b_percent, 0, 100);
-        int ratio_a = std::max(1, 100 - b_percent);
-        int ratio_b = std::max(1, b_percent);
-        const int g = std::gcd(ratio_a, ratio_b);
-        if (g > 1) {
-            ratio_a /= g;
-            ratio_b /= g;
-        }
-        constexpr int k_max_cycle = 24;
-        if (ratio_a + ratio_b > k_max_cycle) {
-            const double scale = double(k_max_cycle) / double(ratio_a + ratio_b);
-            ratio_a = std::max(1, int(std::round(double(ratio_a) * scale)));
-            ratio_b = std::max(1, int(std::round(double(ratio_b) * scale)));
-        }
-        const int cycle = std::max(1, ratio_a + ratio_b);
-        sequence.reserve(size_t(cycle));
-        for (int pos = 0; pos < cycle; ++pos) {
-            const int b_before = (pos * ratio_b) / cycle;
-            const int b_after  = ((pos + 1) * ratio_b) / cycle;
-            sequence.emplace_back((b_after > b_before) ? component_b : component_a);
-        }
-        return sequence;
-    };
     const bool height_weighted_mode = get_mixed_mode(false);
     int   gradient_mode = height_weighted_mode ? 1 : 0;
     float lower_bound   = std::max(0.01f, get_mixed_float("mixed_filament_height_lower_bound", 0.04f));
@@ -6776,8 +6811,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         return blended;
     };
     auto build_entry_preview_sequence = [decode_manual_pattern_ids, decode_gradient_ids, decode_gradient_weights,
-                                         build_weighted_multi_sequence,
-                                         build_weighted_pair_sequence, preview_settings](const MixedFilament &entry) {
+                                         build_weighted_multi_sequence, preview_settings](const MixedFilament &entry) {
         const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
         if (!normalized_pattern.empty())
             return decode_manual_pattern_ids(normalized_pattern, entry.component_a, entry.component_b);
@@ -6793,7 +6827,8 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
 
         const int effective_mix_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(entry, preview_settings);
-        return build_weighted_pair_sequence(entry.component_a, entry.component_b, effective_mix_b);
+        const bool same_layer_mode = entry.distribution_mode == int(MixedFilament::SameLayerPointillisme);
+        return build_effective_pair_preview_sequence(entry.component_a, entry.component_b, effective_mix_b, same_layer_mode);
     };
     auto compute_entry_display_color = [num_physical, &physical_colors, blend_from_sequence, build_entry_preview_sequence](const MixedFilament &entry) {
         const std::vector<unsigned int> sequence = build_entry_preview_sequence(entry);
@@ -8908,7 +8943,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         "extruder_colour", "filament_colour", "material_colour", "printable_height", "printer_model", "printer_technology",
         // These values are necessary to construct SlicingParameters by the Canvas3D variable layer height editor.
         "layer_height", "initial_layer_print_height", "min_layer_height", "max_layer_height",
-        "brim_width", "wall_loops", "wall_filament", "sparse_infill_density", "sparse_infill_filament", "top_shell_layers",
+        "brim_width", "wall_loops", "wall_filament", "sparse_infill_density", "enable_infill_filament_override", "infill_filament_use_base_first_layers", "infill_filament_use_base_last_layers", "sparse_infill_filament", "top_shell_layers",
         "enable_support", "support_filament", "support_interface_filament",
         "support_top_z_distance", "support_bottom_z_distance", "raft_layers",
         "wipe_tower_rotation_angle", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "local_z_wipe_tower_purge_lines", "wipe_tower_max_purge_speed",
@@ -19708,8 +19743,9 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // update UI
     sidebar().on_filaments_delete(filament_id);
 
-    // update global support filament
-    static const char* keys[] = {"support_filament", "support_interface_filament"};
+    // update global feature filament selections
+    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+                                 "support_filament", "support_interface_filament"};
     for (auto key : keys)
         if (p->config->has(key)) {
             if (p->config->opt_int(key) == filament_id + 1)
@@ -19986,6 +20022,9 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         }
         // Orca: update when *_filament changed
         else if (opt_key == "support_interface_filament" || opt_key == "support_filament" || opt_key == "wall_filament" ||
+                 opt_key == "enable_infill_filament_override" ||
+                 opt_key == "infill_filament_use_base_first_layers" ||
+                 opt_key == "infill_filament_use_base_last_layers" ||
                  opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
             update_scheduled = true;
         }

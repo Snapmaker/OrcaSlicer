@@ -1082,7 +1082,7 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 	        	}
 	        if (internal_solid_fill == nullptr) {
 	        	// Produce another solid fill.
-		        params.extruder 	 = layerm.region().extruder(frSolidInfill);
+		        params.extruder 	 = layerm.extruder(frSolidInfill);
                 const auto top_pattern = layerm.region().config().top_surface_pattern;
                 if(top_pattern == ipMonotonic || top_pattern == ipMonotonicLine)
                     params.pattern = top_pattern;

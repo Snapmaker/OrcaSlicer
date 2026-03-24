@@ -1,7 +1,23 @@
 #include "Exception.hpp"
 #include "Print.hpp"
 
+#include <cmath>
+
 namespace Slic3r {
+
+namespace {
+
+unsigned int effective_sparse_infill_filament(const PrintRegionConfig &config)
+{
+    return config.enable_infill_filament_override.value ? config.sparse_infill_filament.value : config.wall_filament.value;
+}
+
+bool internal_solid_infill_uses_sparse_filament(const PrintRegionConfig &config, FlowRole role)
+{
+    return role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON;
+}
+
+} // namespace
 
 // 1-based extruder identifier for this region and role.
 unsigned int PrintRegion::extruder(FlowRole role) const
@@ -10,8 +26,10 @@ unsigned int PrintRegion::extruder(FlowRole role) const
     if (role == frPerimeter || role == frExternalPerimeter)
         extruder = m_config.wall_filament;
     else if (role == frInfill)
-        extruder = m_config.sparse_infill_filament;
-    else if (role == frSolidInfill || role == frTopSolidInfill)
+        extruder = effective_sparse_infill_filament(m_config);
+    else if (role == frSolidInfill)
+        extruder = internal_solid_infill_uses_sparse_filament(m_config, role) ? effective_sparse_infill_filament(m_config) : m_config.solid_infill_filament;
+    else if (role == frTopSolidInfill)
         extruder = m_config.solid_infill_filament;
     else
         throw Slic3r::InvalidArgument("Unknown role");
@@ -52,7 +70,7 @@ Flow PrintRegion::flow(const PrintObject &object, FlowRole role, double layer_he
 coordf_t PrintRegion::nozzle_dmr_avg(const PrintConfig &print_config) const
 {
     return (print_config.nozzle_diameter.get_at(m_config.wall_filament.value    - 1) + 
-            print_config.nozzle_diameter.get_at(m_config.sparse_infill_filament.value       - 1) + 
+            print_config.nozzle_diameter.get_at(effective_sparse_infill_filament(m_config) - 1) +
             print_config.nozzle_diameter.get_at(m_config.solid_infill_filament.value - 1)) / 3.;
 }
 
@@ -70,10 +88,16 @@ void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_con
     	int i = std::max(0, extruder_id - 1);
         object_extruders.emplace_back((i >= num_extruders) ? 0 : i);
     };
+    const bool use_base_infill_boundary_layers =
+        region_config.enable_infill_filament_override.value &&
+        region_config.sparse_infill_density.value > 0 &&
+        (region_config.infill_filament_use_base_first_layers.value > 0 || region_config.infill_filament_use_base_last_layers.value > 0);
     if (region_config.wall_loops.value > 0 || has_brim)
     	emplace_extruder(region_config.wall_filament);
+    if (use_base_infill_boundary_layers)
+        emplace_extruder(region_config.wall_filament);
     if (region_config.sparse_infill_density.value > 0)
-    	emplace_extruder(region_config.sparse_infill_filament);
+    	emplace_extruder(int(effective_sparse_infill_filament(region_config)));
     if (region_config.top_shell_layers.value > 0 || region_config.bottom_shell_layers.value > 0)
     	emplace_extruder(region_config.solid_infill_filament);
 }

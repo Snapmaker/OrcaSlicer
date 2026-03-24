@@ -1,6 +1,7 @@
 #include "Layer.hpp"
 #include "BridgeDetector.hpp"
 #include "ClipperUtils.hpp"
+#include "Exception.hpp"
 #include "Geometry.hpp"
 #include "PerimeterGenerator.hpp"
 #include "Print.hpp"
@@ -9,6 +10,8 @@
 #include "SVG.hpp"
 #include "Algorithm/RegionExpansion.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <map>
 
@@ -17,6 +20,32 @@
 
 namespace Slic3r {
 
+namespace {
+
+bool use_base_infill_filament(const PrintRegionConfig &config, int layer_index, int layer_count)
+{
+    if (!config.enable_infill_filament_override.value)
+        return true;
+    if (layer_count <= 0)
+        return false;
+
+    const int first_layers = std::max(0, config.infill_filament_use_base_first_layers.value);
+    const int last_layers  = std::max(0, config.infill_filament_use_base_last_layers.value);
+    return layer_index < first_layers || layer_index >= layer_count - last_layers;
+}
+
+} // namespace
+
+unsigned int LayerRegion::extruder(FlowRole role) const
+{
+    const PrintRegionConfig &config = this->region().config();
+    if (role == frInfill)
+        return use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
+    if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
+        return use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
+    return this->region().extruder(role);
+}
+
 Flow LayerRegion::flow(FlowRole role) const
 {
     return this->flow(role, m_layer->height);
@@ -24,7 +53,29 @@ Flow LayerRegion::flow(FlowRole role) const
 
 Flow LayerRegion::flow(FlowRole role, double layer_height) const
 {
-    return m_region->flow(*m_layer->object(), role, layer_height, m_layer->id() == 0);
+    const PrintConfig          &print_config = m_layer->object()->print()->config();
+    ConfigOptionFloatOrPercent config_width;
+    if (m_layer->id() == 0 && print_config.initial_layer_line_width.value > 0) {
+        config_width = print_config.initial_layer_line_width;
+    } else if (role == frExternalPerimeter) {
+        config_width = m_region->config().outer_wall_line_width;
+    } else if (role == frPerimeter) {
+        config_width = m_region->config().inner_wall_line_width;
+    } else if (role == frInfill) {
+        config_width = m_region->config().sparse_infill_line_width;
+    } else if (role == frSolidInfill) {
+        config_width = m_region->config().internal_solid_infill_line_width;
+    } else if (role == frTopSolidInfill) {
+        config_width = m_region->config().top_surface_line_width;
+    } else {
+        throw Slic3r::InvalidArgument("Unknown role");
+    }
+
+    if (config_width.value == 0)
+        config_width = m_layer->object()->config().line_width;
+
+    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at(this->extruder(role) - 1));
+    return Flow::new_from_config_width(role, config_width, nozzle_diameter, float(layer_height));
 }
 
 Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
@@ -33,7 +84,7 @@ Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
     const PrintRegionConfig &region_config  = region.config();
     const PrintObject       &print_object   = *this->layer()->object();
     Flow bridge_flow;
-    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at(region.extruder(role) - 1));
+    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at(this->extruder(role) - 1));
     if (thick_bridge) {
         // The old Slic3r way (different from all other slicers): Use rounded extrusions.
         // Get the configured nozzle_diameter for the extruder associated to the flow role requested.

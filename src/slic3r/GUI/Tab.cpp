@@ -2267,6 +2267,10 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "strength_settings_infill#sparse-infill-pattern");
+        optgroup->append_single_option_line("enable_infill_filament_override");
+        optgroup->append_single_option_line("infill_filament_use_base_first_layers");
+        optgroup->append_single_option_line("infill_filament_use_base_last_layers");
+        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("skin_infill_density", "strength_settings_patterns#locked-zag");
@@ -2457,7 +2461,6 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
-        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
@@ -2710,6 +2713,31 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
     return t;
 }
 
+static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
+{
+    DynamicPrintConfig resolved(config);
+    const auto*        infill_override_opt = config.option<ConfigOptionBool>("enable_infill_filament_override");
+    const bool         infill_override_enabled = infill_override_opt != nullptr && infill_override_opt->value;
+
+    if (!infill_override_enabled && resolved.has("sparse_infill_filament"))
+        resolved.erase("sparse_infill_filament");
+
+    if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
+        const int extruder = extruder_opt->value;
+        if (!resolved.has("wall_filament"))
+            resolved.set_key_value("wall_filament", new ConfigOptionInt(extruder));
+        if (!resolved.has("sparse_infill_filament"))
+            resolved.set_key_value("sparse_infill_filament", new ConfigOptionInt(extruder));
+        if (!resolved.has("solid_infill_filament"))
+            resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(extruder));
+    }
+
+    if (!resolved.has("solid_infill_filament") && resolved.has("sparse_infill_filament"))
+        resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament")));
+
+    return resolved;
+}
+
 TabPrintModel::TabPrintModel(ParamsPanel* parent, std::vector<std::string> const & keys)
     : TabPrint(parent, Preset::TYPE_MODEL)
     , m_keys(intersect(Preset::print_options(), keys))
@@ -2778,19 +2806,19 @@ void TabPrintModel::update_model_config()
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
         DynamicPrintConfig const & global_config= *m_config;
-        DynamicPrintConfig const & local_config = m_object_configs.begin()->second->get();
+        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get());
         DynamicPrintConfig diff_config;
         std::vector<std::string> all_keys = local_config.keys(); // at least one has these keys
         std::vector<std::string> local_keys = intersect(m_keys, all_keys); // all equal on these keys
         if (m_object_configs.size() > 1) {
             std::vector<std::string> global_keys = m_keys; // all equal with global on these keys
             for (auto & config : m_object_configs) {
-                auto equals = global_config.equal(config.second->get());
+                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get());
+                auto equals = global_config.equal(resolved_config);
                 global_keys = intersect(global_keys, equals);
-                diff_config.apply_only(config.second->get(), substruct(config.second->keys(), equals));
-                if (&config.second->get() == &local_config) continue;
-                all_keys = concat(all_keys, config.second->keys());
-                local_keys = intersect(local_keys, local_config.equal(config.second->get()));
+                diff_config.apply_only(resolved_config, substruct(resolved_config.keys(), equals));
+                all_keys = concat(all_keys, resolved_config.keys());
+                local_keys = intersect(local_keys, local_config.equal(resolved_config));
             }
             all_keys = intersect(all_keys, m_keys);
             m_null_keys = substruct(substruct(all_keys, global_keys), local_keys);

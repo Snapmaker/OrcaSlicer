@@ -79,6 +79,36 @@ void append_unique_preserve_order(std::vector<unsigned int> &dst, unsigned int v
         dst.emplace_back(value);
 }
 
+bool internal_solid_infill_uses_sparse_filament(const PrintRegion &region, ExtrusionRole role)
+{
+    return role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON;
+}
+
+bool use_base_infill_filament(const LayerTools &layer_tools, const PrintRegion &region)
+{
+    const PrintRegionConfig &config = region.config();
+    if (!config.enable_infill_filament_override.value)
+        return true;
+    if (layer_tools.object_layer_count <= 0)
+        return false;
+
+    const int first_layers = std::max(0, config.infill_filament_use_base_first_layers.value);
+    const int last_layers  = std::max(0, config.infill_filament_use_base_last_layers.value);
+    return layer_tools.layer_index < first_layers || layer_tools.layer_index >= layer_tools.object_layer_count - last_layers;
+}
+
+unsigned int sparse_infill_filament_id_1based(const LayerTools &layer_tools, const PrintRegion &region)
+{
+    return use_base_infill_filament(layer_tools, region) ? region.config().wall_filament.value : region.config().sparse_infill_filament.value;
+}
+
+unsigned int infill_filament_id_1based(const LayerTools &layer_tools, const PrintRegion &region, ExtrusionRole role)
+{
+    if (internal_solid_infill_uses_sparse_filament(region, role))
+        return sparse_infill_filament_id_1based(layer_tools, region);
+    return is_solid_infill(role) ? region.config().solid_infill_filament.value : sparse_infill_filament_id_1based(layer_tools, region);
+}
+
 unsigned int grouped_manual_pattern_mixed_filament_id_for_layer(const LayerTools& layer_tools,
                                                                 unsigned int      configured_filament_id_1based)
 {
@@ -247,8 +277,8 @@ unsigned int LayerTools::wall_filament(const PrintRegion &region) const
 
 unsigned int LayerTools::sparse_infill_filament(const PrintRegion &region) const
 {
-	assert(region.config().sparse_infill_filament.value > 0);
-	unsigned int id = (this->extruder_override == 0) ? region.config().sparse_infill_filament.value : this->extruder_override;
+	assert(region.config().wall_filament.value > 0);
+	unsigned int id = (this->extruder_override == 0) ? sparse_infill_filament_id_1based(*this, region) : this->extruder_override;
 	return resolve_mixed_1based(id) - 1;
 }
 
@@ -269,10 +299,8 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
     unsigned int extruder = 1;
     if (this->extruder_override == 0) {
         if (extrusions.has_infill()) {
-            if (extrusions.has_solid_infill())
-                extruder = region.config().solid_infill_filament;
-            else
-                extruder = region.config().sparse_infill_filament;
+            const ExtrusionRole role = extrusions.entities.empty() ? erNone : extrusions.entities.front()->role();
+            extruder = infill_filament_id_1based(*this, region, role);
         } else
             extruder = region.config().wall_filament.value;
     } else
@@ -653,8 +681,9 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
     for (auto layer : object.layers()) {
         LayerTools &layer_tools = this->tools_for_layer(layer->print_z);
         // Store the sequential layer index and mixed-filament context for resolution.
-        layer_tools.layer_index  = layerCount;
-        layer_tools.layer_height = layer->height;
+        layer_tools.layer_index       = layerCount;
+        layer_tools.object_layer_count = int(object.layers().size());
+        layer_tools.layer_height      = layer->height;
 
         // Override extruder with the next 
     	for (; it_per_layer_extruder_override != per_layer_extruder_switches.end() && it_per_layer_extruder_override->first < layer->print_z + EPSILON; ++ it_per_layer_extruder_override)
@@ -712,17 +741,19 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 layer_tools.has_object = true;
             }
 
-            bool has_infill       = false;
-            bool has_solid_infill = false;
+            bool has_sparse_infill = false;
+            bool has_solid_infill  = false;
             bool something_nonoverriddable = false;
             for (const ExtrusionEntity *ee : layerm->fills.entities) {
                 // fill represents infill extrusions of a single island.
                 const auto *fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
                 ExtrusionRole role = fill->entities.empty() ? erNone : fill->entities.front()->role();
-                if (is_solid_infill(role))
+                if (internal_solid_infill_uses_sparse_filament(region, role))
+                    has_sparse_infill = true;
+                else if (is_solid_infill(role))
                     has_solid_infill = true;
                 else if (role != erNone)
-                    has_infill = true;
+                    has_sparse_infill = true;
 
                 if (m_print_config_ptr) {
                     if (! layer_tools.wiping_extrusions().is_overriddable_and_mark(*fill, *m_print_config_ptr, object, region))
@@ -737,18 +768,15 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                                                                          layerCount,
                                                                          float(layer->print_z),
                                                                          float(layer->height)));
-	                if (has_infill)
-	                    layer_tools.extruders.emplace_back(resolve_mixed(region.config().sparse_infill_filament,
-                                                                         layerCount,
-                                                                         float(layer->print_z),
-                                                                         float(layer->height)));
-            	} else if (has_solid_infill || has_infill)
+	                if (has_sparse_infill)
+	                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament(region) + 1);
+            	} else if (has_solid_infill || has_sparse_infill)
             		layer_tools.extruders.emplace_back(resolve_mixed(extruder_override,
                                                                       layerCount,
                                                                       float(layer->print_z),
                                                                       float(layer->height)));
             }
-            if (has_solid_infill || has_infill)
+            if (has_solid_infill || has_sparse_infill)
                 layer_tools.has_object = true;
         }
         layerCount++;

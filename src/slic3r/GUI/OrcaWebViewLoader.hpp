@@ -29,10 +29,20 @@ class OrcaWebViewLoader {
 public:
     /**
      * 解析 Web 根路径：优先用户路径，否则使用 resources
-     * @param user_web_path 用户自定义路径（如 D:\\snapmaker\\web）
+     * @param user_web_path 用户自定义路径；空时仅用 resources_dir()/web/flutter_web
      * @return 完整配置
      */
     static OrcaWebLoadConfig ResolveConfig(const wxString& user_web_path = "D:\\snapmaker\\web");
+
+    /**
+     * 从 app_config 动态生成 route_params（locale、dark_mode）
+     */
+    static wxString BuildRouteParamsFromApp();
+
+    /**
+     * 按 path 创建预置配置：path=1 首页，path=2 设备页
+     */
+    static OrcaWebLoadConfig CreateConfigForPage(int path);
 
     /**
      * 创建并返回 user_assets 目录路径

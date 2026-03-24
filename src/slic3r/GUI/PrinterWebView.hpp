@@ -26,6 +26,7 @@
 #include "wx/textctrl.h"
 #include <wx/timer.h>
 
+#include "OrcaWebViewLoader.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -37,6 +38,7 @@ public:
     virtual ~PrinterWebView();
 
     void load_url(wxString& url, wxString apikey = "");
+    void load_url(const OrcaWebLoadConfig& config, wxString apikey = "");
     void UpdateState();
     void OnClose(wxCloseEvent& evt);
     void OnError(wxWebViewEvent& evt);

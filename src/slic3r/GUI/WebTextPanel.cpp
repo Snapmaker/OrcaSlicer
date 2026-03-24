@@ -127,7 +127,11 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    OrcaWebLoadConfig config = OrcaWebViewLoader::ResolveConfig("D:\\snapmaker\\web");
+//    OrcaWebLoadConfig config = OrcaWebViewLoader::ResolveConfig("/Users/jgfan/code/lava_app/orca/build/flutter_web");
+//
+    OrcaWebLoadConfig config = OrcaWebViewLoader::ResolveConfig("/Users/jgfan/code/flutter_web_app/build/web");
+
+    // OrcaWebLoadConfig config = OrcaWebViewLoader::ResolveConfig("D:\\snapmaker\\web");
     config.use_debug_server   = false;
     config.debug_server_url   = "http://localhost:7357";
 
@@ -153,6 +157,8 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
         topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
         SetSizer(topsizer);
 
+#ifdef __WIN32__
+        // Windows: orca:// 需在首次 EVT_SIZE 时 LoadURL，确保 scheme handler 已就绪
         wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
         if (!url_to_load.empty()) {
             m_browser->Bind(wxEVT_SIZE, [this, url_to_load](wxSizeEvent& evt) {
@@ -163,6 +169,10 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
                 evt.Skip();
             });
         }
+#else
+        // macOS/Linux: 直接 SetPage(html, baseUrl)，orca:// handler 立即可用
+        OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
+#endif
     }
 
     Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WebTextPanel::OnScriptMessage, this);

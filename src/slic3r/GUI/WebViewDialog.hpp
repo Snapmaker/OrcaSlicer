@@ -25,6 +25,7 @@
 #include "wx/textctrl.h"
 #include <wx/timer.h>
 
+#include "OrcaWebViewLoader.hpp"
 
 namespace Slic3r {
 
@@ -40,6 +41,7 @@ public:
     virtual ~WebViewPanel();
 
     void load_url(wxString& url);
+    void load_url(const OrcaWebLoadConfig& config);
     void reload();
     void UpdateState();
     void OnIdle(wxIdleEvent& evt);
@@ -156,6 +158,8 @@ private:
     // Last executed JavaScript snippet, for convenience.
     wxString m_javascript;
     wxString m_response_js;
+
+    bool m_orca_url_loaded{ false };  // Windows: 首次 EVT_SIZE 后加载 orca://app/
 
     DECLARE_EVENT_TABLE()
 };

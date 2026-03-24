@@ -410,7 +410,7 @@
   "No models found": "No models found",
   "Try a different search term": "Try a different search term",
   "Retry": "Retry",
-  "Print preprocessing": "Print preprocessing",
+  "Print Preprocessing": "Print Preprocessing",
   "delete_selected_files_confirm_title": "Confirm Delete Selected Files",
   "delete_selected_files_confirm_message": "Are you sure you want to delete the selected files? This action cannot be undone.",
   "clear_all_files_confirm_title": "Confirm Clear All Files",
@@ -440,7 +440,8 @@
   "got_it": "Got it",
   "monitoring_module_hibernated": "Note : Monitoring Module hibernated. Click Play to wake it up.",
   "Plates": "Plates",
-  "Split Plate": "Split Plate",
+  "Print Plates": "Print Plates",
+  "Plate": "Plate",
   "Check": "Check",
   "default_exception_title": "Exception",
   "Error Code": "Error Code",
@@ -1263,8 +1264,7 @@
   "Not Implemented Yet": "Not implemented yet, please try again later",
   "Nozzle": "Nozzle",
   "Model Library": "Model Library",
-  "Print Plates": "Print Plates",
-  "Recommendation for You": "Recommendation for You",
+  "Recommended for You": "Recommended for You",
   "units": "units",
   "Total": "Total",
   "Filament List": "Filament List",
@@ -1272,5 +1272,6 @@
   "Expand": "Expand",
   "Untitled Config": "Untitled Config",
   "Display Area": "Display Area",
-  "Print Now is only available in Cloud Mode": "Print Now is only available in Cloud Mode"
+  "Print Now is only available in Cloud Mode": "Print Now is only available in Cloud Mode",
+  "Next": "Next"
 }

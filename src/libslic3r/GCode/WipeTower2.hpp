@@ -31,7 +31,7 @@ public:
     WipeTower::ToolChangeResult construct_tcr(WipeTowerWriter2& writer,
                                    bool priming,
                                    size_t old_tool,
-								   bool is_finish) const;
+							   bool is_finish) const;
 
 	// x			-- x coordinates of wipe tower in mm ( left bottom corner )
 	// y			-- y coordinates of wipe tower in mm ( left bottom corner )
@@ -45,9 +45,7 @@ public:
 
 
 	// Set the extruder properties.
-    // SM Orca: 添加 physical_extruder 参数，用于支持耗材-挤出机映射
-    // idx: 耗材索引, physical_extruder: 物理挤出机索引
-    void set_extruder(size_t idx, int physical_extruder, const PrintConfig& config);
+    void set_extruder(size_t idx, const PrintConfig& config);
 
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
@@ -233,7 +231,7 @@ private:
         CircularBed,
         CustomBed
     } m_bed_shape;
-    float m_bed_width; // width of the bed bounding box
+    float m_bed_width;  // width of the bed bounding box
     float m_bed_height; // height (depth) of the bed bounding box
     Vec2f m_bed_bottom_left; // bottom-left corner coordinates (for rectangular beds)
 

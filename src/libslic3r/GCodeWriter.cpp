@@ -27,10 +27,6 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 {
     this->config.apply(print_config, true);
     m_single_extruder_multi_material = print_config.single_extruder_multi_material.value;
-    m_physical_extruder_count = print_config.nozzle_diameter.values.size();
-    if (m_physical_extruder_count == 0) {
-        m_physical_extruder_count = 1;  // 防止除零，默认为1
-    }
     bool use_mach_limits = print_config.gcode_flavor.value == gcfMarlinLegacy || print_config.gcode_flavor.value == gcfMarlinFirmware ||
                            print_config.gcode_flavor.value == gcfKlipper || print_config.gcode_flavor.value == gcfRepRapFirmware;
     m_max_acceleration = std::lrint(use_mach_limits ? print_config.machine_max_acceleration_extruding.values.front() : 0);
@@ -52,18 +48,17 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
 
 void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
 {
-
     std::sort(extruder_ids.begin(), extruder_ids.end());
     m_extruder = nullptr; // this points to object inside `m_extruders`, so should be cleared too
     m_extruders.clear();
     m_extruders.reserve(extruder_ids.size());
-    for (unsigned int extruder_id : extruder_ids) {
-        int physical_extruder_id = get_physical_extruder(extruder_id);
-
-        m_extruders.emplace_back(Extruder(extruder_id, physical_extruder_id, &this->config, config.single_extruder_multi_material.value));
-    }
-
-    this->multiple_extruders = (*std::max_element(extruder_ids.begin(), extruder_ids.end())) > 0;   
+    for (unsigned int extruder_id : extruder_ids)
+        m_extruders.emplace_back(Extruder(extruder_id, &this->config, config.single_extruder_multi_material.value));
+    
+    /*  we enable support for multiple extruder if any extruder greater than 0 is used
+        (even if prints only uses that one) since we need to output Tx commands
+        first extruder has index 0 */
+    this->multiple_extruders = (*std::max_element(extruder_ids.begin(), extruder_ids.end())) > 0;
 }
 
 std::string GCodeWriter::preamble()
@@ -407,6 +402,7 @@ std::string GCodeWriter::set_input_shaping(char axis, float damp, float freq) co
     return gcode.str();
 }
 
+
 std::string GCodeWriter::reset_e(bool force)
 {
     if (FLAVOR_IS(gcfMach3)
@@ -461,9 +457,6 @@ std::string GCodeWriter::toolchange_prefix() const
 
 std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
-
-    int physical_extruder = get_physical_extruder(extruder_id);
-
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
     assert(it_extruder != m_extruders.end() && it_extruder->id() == extruder_id);
@@ -479,7 +472,6 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
             gcode << " ; change extruder";
         gcode << "\n";
         gcode << this->reset_e(true);
-    } else {
     }
     return gcode.str();
 }
@@ -506,7 +498,7 @@ std::string GCodeWriter::travel_to_xy(const Vec2d &point, const std::string &com
     this->set_current_position_clear(true);
     //BBS: take plate offset into consider
     Vec2d point_on_plate = { point(0) - m_x_offset, point(1) - m_y_offset };
-
+    
     GCodeG1Formatter w;
     w.emit_xy(point_on_plate);
     auto speed = m_is_first_layer
@@ -743,7 +735,7 @@ std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std:
     m_pos(1) = point(1);
     if(std::abs(dE) <= std::numeric_limits<double>::epsilon())
         force_no_extrusion = true;
-
+    
     if (!force_no_extrusion)
         m_extruder->extrude(dE);
 

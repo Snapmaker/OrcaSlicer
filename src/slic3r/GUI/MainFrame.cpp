@@ -1188,9 +1188,10 @@ void MainFrame::init_tabpanel() {
     m_calibration->SetBackgroundColour(*wxWHITE);
     m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
 
-    m_web_text = new WebTextPanel(m_tabpanel);
-    m_web_text->SetBackgroundColour(*wxWHITE);
-    m_tabpanel->AddPage(m_web_text, _L("test"), std::string("tab_auxiliary_active"), std::string("tab_auxiliary_active"), false);
+    // ORCA: removed test tab
+    // m_web_text = new WebTextPanel(m_tabpanel);
+    // m_web_text->SetBackgroundColour(*wxWHITE);
+    // m_tabpanel->AddPage(m_web_text, _L("test"), std::string("tab_auxiliary_active"), std::string("tab_auxiliary_active"), false);
 
     if (m_plater) {
         // load initial config

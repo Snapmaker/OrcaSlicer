@@ -287,8 +287,8 @@ public:
         std::shared_ptr<MqttClient> ptr = nullptr;
         if (m_mqtt_engine_map.count(m_webview)) {
             ptr = m_mqtt_engine_map[m_webview].second;
-        } 
-        
+        }
+
         m_engine_map_mtx.unlock();
 
         return ptr;
@@ -297,7 +297,7 @@ public:
         bool flag = true;
         m_engine_map_mtx.lock();
         m_mqtt_engine_map[m_webview] = target;
-        
+
         m_engine_map_mtx.unlock();
         return flag;
     }
@@ -427,7 +427,7 @@ private:
     void sw_DeleteCameraTimelapse();
     void sw_GetCameraTimelapseInstance();
 
-    void sw_DefectDetactionConfig();    
+    void sw_DefectDetactionConfig();
 
     void sw_GetDeviceDataStorageSpace();
 
@@ -482,7 +482,7 @@ public:
 
 private:
     void sw_GetLocalDevices();
-    
+
     void sw_AddDevice();
 
     void sw_SubscribeLocalDevices();
@@ -574,7 +574,7 @@ private:
 
     void sw_OpenProject();
 
-    void sw_GetRecentProjects(); 
+    void sw_GetRecentProjects();
 
     void sw_OpenRecentFile();
 
@@ -622,8 +622,8 @@ public:
 
     static std::mutex m_file_size_mutex;
     static long long m_active_file_size;
-    
-    
+
+
     static std::unordered_map<std::string, int> m_tab_map; // for switching tab
 
 private:
@@ -641,7 +641,7 @@ private:
 
     static std::string m_active_gcode_filename; // name of the file which is pretend to be upload and print
     static std::string m_display_gcode_filename; // name for display
-}; 
+};
 
 class MachineIPType
 {

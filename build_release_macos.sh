@@ -426,6 +426,32 @@ function build_universal() {
     ls -la "${DSYM_DIR}" 2>/dev/null || echo "No dSYM files generated"
 }
 
+# ============================================
+# 卸载 zstd 以避免动态链接依赖 (同步 GitHub Actions)
+# ============================================
+ZSTD_REINSTALL=false
+CLEAN_DEPS=false
+if which brew >/dev/null 2>&1 && brew list zstd >/dev/null 2>&1; then
+    echo "=========================================="
+    echo "卸载系统 zstd (模仿 GitHub Actions 构建)"
+    echo "=========================================="
+    brew uninstall --ignore-dependencies zstd
+    ZSTD_REINSTALL=true
+    CLEAN_DEPS=true
+    echo "✓ zstd 已卸载"
+    echo "⚠️  将清理依赖构建目录以使用内部 zstd"
+    echo ""
+fi
+
+# 如果卸载了 zstd，清理依赖构建缓存
+if [ "$CLEAN_DEPS" = true ]; then
+    echo "清理依赖构建目录..."
+    rm -rf "$DEPS_DIR/build/arm64"
+    rm -rf "$DEPS_DIR/build/x86_64"
+    echo "✓ 依赖构建目录已清理"
+    echo ""
+fi
+
 case "${BUILD_TARGET}" in
     all)
         build_deps
@@ -449,4 +475,16 @@ fi
 
 if [ "1." == "$PACK_DEPS". ]; then
     pack_deps
+fi
+
+# ============================================
+# 重新安装 zstd (如果之前卸载过)
+# ============================================
+if [ "$ZSTD_REINSTALL" = true ]; then
+    echo ""
+    echo "=========================================="
+    echo "重新安装 zstd"
+    echo "=========================================="
+    brew install zstd
+    echo "✓ zstd 已重新安装"
 fi

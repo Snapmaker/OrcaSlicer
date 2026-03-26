@@ -12,6 +12,7 @@
 #include "slic3r/GUI/UserNotification.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/GUI/WebViewDialog.hpp"
+#include "slic3r/GUI/OrcaWebViewLoader.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
 #include "slic3r/GUI/WebSMUserLoginDialog.hpp"
 #include "slic3r/GUI/WebDeviceDialog.hpp"
@@ -906,20 +907,53 @@ public:
         void reload_all() {
             for (const auto& view : webviews) {
                 auto ptr = view.first;
-                wxString new_url = app->get_international_url(view.second);
-                ptr->LoadURL(new_url);
+                wxString key = view.second;
+                if (key.StartsWith(wxS("orca:"))) {
+                    int path = wxAtoi(key.AfterFirst(':'));
+                    OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(path);
+                    config.route_params = OrcaWebViewLoader::BuildRouteParamsFromApp();
+                    wxString u = OrcaWebViewLoader::LoadLocalHtml(ptr, config);
+#ifdef __WIN32__
+                    if (!u.empty()) {
+                        ptr->LoadURL(u);
+                        app->CallAfter([ptr, u]() {
+                            if (ptr)
+                                ptr->LoadURL(u);
+                        });
+                    }
+#else
+                    (void)u;
+#endif
+                } else {
+                    wxString new_url = app->get_international_url(key);
+                    ptr->LoadURL(new_url);
+                }
             }
 
             for (const auto& panel : webview_panels) {
                 auto ptr = panel.first;
-                wxString new_url = app->get_international_url(panel.second);
-                ptr->load_url(new_url);
+                wxString key = panel.second;
+                if (key.StartsWith("orca:")) {
+                    int path = wxAtoi(key.AfterFirst(':'));
+                    auto config = OrcaWebViewLoader::CreateConfigForPage(path);
+                    ptr->load_url(config);
+                } else {
+                    wxString new_url = app->get_international_url(key);
+                    ptr->load_url(new_url);
+                }
             }
 
             for (const auto& prview : printerviews) {
                 auto ptr = prview.first;
-                wxString new_url = app->get_international_url(prview.second.first);
-                ptr->load_url(new_url, prview.second.second);
+                wxString key = prview.second.first;
+                if (key.StartsWith("orca:")) {
+                    int path = wxAtoi(key.AfterFirst(':'));
+                    auto config = OrcaWebViewLoader::CreateConfigForPage(path);
+                    ptr->load_url(config, prview.second.second);
+                } else {
+                    wxString new_url = app->get_international_url(key);
+                    ptr->load_url(new_url, prview.second.second);
+                }
             }
         }
     };

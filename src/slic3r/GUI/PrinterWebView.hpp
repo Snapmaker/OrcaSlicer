@@ -26,6 +26,7 @@
 #include "wx/textctrl.h"
 #include <wx/timer.h>
 
+#include "OrcaWebViewLoader.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -37,6 +38,7 @@ public:
     virtual ~PrinterWebView();
 
     void load_url(wxString& url, wxString apikey = "");
+    void load_url(const OrcaWebLoadConfig& config, wxString apikey = "");
     void UpdateState();
     void OnClose(wxCloseEvent& evt);
     void OnError(wxWebViewEvent& evt);
@@ -50,8 +52,11 @@ public:
 
 private:
     void SendAPIKey();
+    /// Windows：若待加载 orca URL 已设置且 WebView 已有有效尺寸则立即 LoadURL（避免仅依赖 EVT_SIZE 时序导致永不清除 pending）
+    void try_load_pending_orca_url();
 
     wxWebView* m_browser;
+    wxString m_pending_orca_url;  // Windows: 待加载的 orca:// URL，首次 EVT_SIZE 时加载
     long m_zoomFactor;
     wxString m_apikey;
     bool m_apikey_sent;

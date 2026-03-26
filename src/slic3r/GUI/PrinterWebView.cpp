@@ -5,12 +5,14 @@
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
+#include "slic3r/GUI/OrcaWebViewLoader.hpp"
 #include "common_func/common_func.hpp"
 
 #include <wx/sizer.h>
 #include <wx/string.h>
 #include <wx/toolbar.h>
 #include <wx/textdlg.h>
+#include <wx/event.h>
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include <wx/webview.h>
@@ -24,14 +26,11 @@ namespace GUI {
 
 PrinterWebView::PrinterWebView(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
- {
-
+{
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
-    auto     real_url = wxGetApp().get_international_url(url);
-      // Create the webview
-    m_browser = WebView::CreateWebView(this, real_url);
+    OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(2);
+    m_browser = WebView::CreateWebViewWithLocalRoot(this, "", config.root_path, config.user_assets_dir);
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -45,6 +44,13 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
+#ifdef __WIN32__
+    Bind(wxEVT_SIZE, [this](wxSizeEvent& evt) {
+        try_load_pending_orca_url();
+        evt.Skip();
+    });
+#endif
+
     update_mode();
 
     //Zoom
@@ -54,6 +60,20 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     Bind(wxEVT_CLOSE_WINDOW, &PrinterWebView::OnClose, this);
 
  }
+
+void PrinterWebView::try_load_pending_orca_url()
+{
+#ifdef __WIN32__
+    if (!m_browser || m_pending_orca_url.empty())
+        return;
+    wxSize sz = m_browser->GetClientSize();
+    if (sz.GetWidth() <= 0 || sz.GetHeight() <= 0)
+        return;
+    wxString u = m_pending_orca_url;
+    m_pending_orca_url.clear();
+    m_browser->LoadURL(u);
+#endif
+}
 
 PrinterWebView::~PrinterWebView()
 {
@@ -73,16 +93,55 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
         return;
     m_apikey = apikey;
     m_apikey_sent = false;
-    
-    if (url.find("path=2") != std::string::npos) {
-        wxGetApp().fltviews().add_printer_view(this, url, apikey);
+
+    std::string url_str = url.ToUTF8().data();
+    bool is_orca = (url_str.find("path=2") != std::string::npos) ||
+                   (url_str.find("path=/deviceControl") != std::string::npos) ||
+                   (url_str.find("path=%2FdeviceControl") != std::string::npos) ||
+                   (url_str.find("orca://") != std::string::npos);
+
+    if (is_orca) {
+        wxGetApp().fltviews().add_printer_view(this, "orca:2", apikey);
+        OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(2);
+        wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
+#ifdef __WIN32__
+        if (!url_to_load.empty()) {
+            m_pending_orca_url = url_to_load;
+            try_load_pending_orca_url();
+            wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+        }
+#endif
+        m_browser->Show();
     } else {
         wxGetApp().fltviews().remove_printer_view(this);
+        m_browser->LoadURL(url);
+        m_browser->Show();
     }
 
-    m_browser->Show();
-    m_browser->LoadURL(url);
+    UpdateState();
+}
 
+void PrinterWebView::load_url(const OrcaWebLoadConfig& config, wxString apikey)
+{
+    if (m_browser == nullptr)
+        return;
+    m_apikey = apikey;
+    m_apikey_sent = false;
+
+    wxGetApp().fltviews().add_printer_view(this, "orca:2", apikey);
+
+    OrcaWebLoadConfig cfg = config;
+    cfg.route_params = OrcaWebViewLoader::BuildRouteParamsFromApp();
+    wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, cfg);
+#ifdef __WIN32__
+    if (!url_to_load.empty()) {
+        m_pending_orca_url = url_to_load;
+        try_load_pending_orca_url();
+        wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+    }
+#endif
+
+    m_browser->Show();
     UpdateState();
 }
 
@@ -93,8 +152,8 @@ void PrinterWebView::reload()
 
 bool PrinterWebView::isSnapmakerPage()
 {
-    auto url = m_browser->GetCurrentURL();
-    return (url.find("flutter_web") != std::string::npos);
+    wxString url = m_browser->GetCurrentURL();
+    return url.Contains("flutter_web") || url.Contains("orca://");
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {

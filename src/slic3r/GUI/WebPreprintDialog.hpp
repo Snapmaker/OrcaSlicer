@@ -46,10 +46,16 @@ private:
     void OnError(wxWebViewEvent &evt);
     void OnScriptMessage(wxWebViewEvent &evt);
 
+    void load_orca_preprint_page();
+#ifdef __WIN32__
+    void try_load_pending_orca_url();
+#endif
+
     wxWebView *m_browser;
     wxString m_javascript;
-    wxString    m_prePrint_url;
-    wxString    m_preSend_url;
+#ifdef __WIN32__
+    wxString m_pending_orca_url;
+#endif
     std::string m_gcode_file_name = "";
     std::string m_display_file_name = "";
     bool        m_send_page         = false;

@@ -2267,10 +2267,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "strength_settings_infill#sparse-infill-pattern");
-        optgroup->append_single_option_line("enable_infill_filament_override");
-        optgroup->append_single_option_line("infill_filament_use_base_first_layers");
-        optgroup->append_single_option_line("infill_filament_use_base_last_layers");
-        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
+        if (m_type >= Preset::TYPE_COUNT) {
+            optgroup->append_single_option_line("enable_infill_filament_override");
+            optgroup->append_single_option_line("infill_filament_use_base_first_layers");
+            optgroup->append_single_option_line("infill_filament_use_base_last_layers");
+            optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
+        }
         optgroup->append_single_option_line("infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("skin_infill_density", "strength_settings_patterns#locked-zag");

@@ -31,6 +31,7 @@
 // BBS
 #include "BBLTopbar.hpp"
 #include "PrinterWebView.hpp"
+#include "WebTextPanel.hpp"
 #include "calib_dlg.hpp"
 #include "MultiMachinePage.hpp"
 
@@ -217,6 +218,7 @@ public:
         tpCalibration   = 6,
         tpAuxiliary     = 7,
         toDebugTool     = 8,
+        tpWebText       = 9,
     };
 
     //BBS: add slice&&print status update logic
@@ -380,6 +382,7 @@ public:
     CalibrationPanel*     m_calibration{ nullptr };
     WebViewPanel*         m_webview { nullptr };
     PrinterWebView*       m_printer_view{nullptr};
+    WebTextPanel*         m_web_text{ nullptr };
     wxLogWindow*          m_log_window { nullptr };
     // BBS
     //wxBookCtrlBase*       m_tabpanel { nullptr };

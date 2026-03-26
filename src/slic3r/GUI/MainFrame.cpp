@@ -182,7 +182,7 @@ static const wxString ctrl_t = ctrl;
 static const wxString shift = _L("Shift+");
 
 MainFrame::MainFrame() :
-DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_STYLE, "mainframe")
+DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxSize(1065, 760), BORDERLESS_FRAME_STYLE, "mainframe")
     , m_printhost_queue_dlg(new PrintHostQueueDialog(this))
     // BBS
     , m_recent_projects(18)
@@ -424,10 +424,10 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     // BBS
     Fit();
 
-    const wxSize min_size = wxGetApp().get_min_size(); //wxSize(76*wxGetApp().em_unit(), 49*wxGetApp().em_unit());
+    const wxSize min_size = wxSize(1065, 760); //wxSize(76*wxGetApp().em_unit(), 49*wxGetApp().em_unit());
 
     SetMinSize(min_size/*wxSize(760, 490)*/);
-    SetSize(wxSize(FromDIP(1200), FromDIP(800)));
+    SetSize(min_size);
 
     Layout();
 
@@ -1081,6 +1081,12 @@ void MainFrame::init_tabpanel() {
                 wxWebView* printer_webview = m_printer_view->get_browser();
                 wxGetApp().page_state_notify_webview(printer_webview, "inactive");
             }
+        } else if (prev_monitored_tab == tpWebText && sel != tpWebText) {
+            // Leaving WebTextPanel (test tab)
+            if (m_web_text) {
+                wxWebView* wv = m_web_text->get_browser();
+                if (wv) wv->Refresh();
+            }
         }
 
         // Send "active" to current tab if entering a monitored tab
@@ -1098,6 +1104,13 @@ void MainFrame::init_tabpanel() {
                 wxGetApp().page_state_notify_webview(printer_webview, "active");
             }
             prev_monitored_tab = tpMonitor;
+        } else if (panel == m_web_text) {
+            // Entering WebTextPanel (test tab): force WebView refresh to reduce WebView2 buffer ghosting
+            if (m_web_text) {
+                wxWebView* wv = m_web_text->get_browser();
+                if (wv) wv->Refresh();
+            }
+            prev_monitored_tab = tpWebText;
         } else {
             // Update prev_monitored_tab only when leaving a monitored tab
             if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor) {
@@ -1136,7 +1149,7 @@ void MainFrame::init_tabpanel() {
         });
         m_tabpanel->AddPage(m_webview, "", "tab_home_active", "tab_home_active", false);
         m_param_panel = new ParamsPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBK_LEFT | wxTAB_TRAVERSAL);
-      
+
     }
     m_plater = new Plater(this, this);
     m_plater->SetBackgroundColour(*wxWHITE);
@@ -1174,6 +1187,11 @@ void MainFrame::init_tabpanel() {
     m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
     m_calibration->SetBackgroundColour(*wxWHITE);
     m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
+
+    // ORCA: removed test tab
+    // m_web_text = new WebTextPanel(m_tabpanel);
+    // m_web_text->SetBackgroundColour(*wxWHITE);
+    // m_tabpanel->AddPage(m_web_text, _L("test"), std::string("tab_auxiliary_active"), std::string("tab_auxiliary_active"), false);
 
     if (m_plater) {
         // load initial config
@@ -1549,7 +1567,7 @@ bool MainFrame::can_send_gcode() const
             if (const auto* print_host_opt = cfg.option<ConfigOptionString>("print_host"); print_host_opt)
                 return !print_host_opt->value.empty();
         }
-        
+
     }
     return true;
 }
@@ -2269,7 +2287,7 @@ static wxMenu* generate_help_menu()
 
     append_menu_item(
         helpMenu, wxID_ANY, _L("Check for Process Preset Updates"), _L("Check for Process Preset Updates"),
-        [](wxCommandEvent&) { 
+        [](wxCommandEvent&) {
             wxGetApp().check_preset_version();
 
         },
@@ -2277,7 +2295,7 @@ static wxMenu* generate_help_menu()
 
     append_menu_item(
         helpMenu, wxID_ANY, _L("Check for Web Resource Updates"), _L("Check for Web Resource Updates"),
-        [](wxCommandEvent&) { 
+        [](wxCommandEvent&) {
             wxGetApp().check_web_version();
         },
         "", nullptr, []() { return true; });
@@ -3147,7 +3165,7 @@ void MainFrame::set_max_recent_count(int max)
         json data;
         wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
         wxGetApp().recent_file_notify(data);
-        
+
     }
 }
 
@@ -3660,7 +3678,7 @@ void MainFrame::add_to_recent_projects(const wxString& filename)
     }
 }
 
-std::string MainFrame::FileHistory::GetThumbnailUrl_str(int index) const 
+std::string MainFrame::FileHistory::GetThumbnailUrl_str(int index) const
 {
     if (m_thumbnails[index].empty())
         return "";
@@ -3728,7 +3746,7 @@ void MainFrame::get_recent_projects(nlohmann::json& data, int images) {
     for (size_t i = 0; i < m_recent_projects.GetCount(); ++i) {
         json item;
         std::string proj    = m_recent_projects.GetHistoryFile(i).ToStdString(wxConvUTF8);
-        
+
         item["project_name"] = proj.substr(proj.find_last_of("/\\") + 1);
         item["path"]  = proj;
         boost::system::error_code ec;
@@ -3738,8 +3756,8 @@ void MainFrame::get_recent_projects(nlohmann::json& data, int images) {
         }
         catch (std::exception& e) {
             std::string e_msg = e.what();
-            BOOST_LOG_TRIVIAL(error) << e.what(); 
-        }        
+            BOOST_LOG_TRIVIAL(error) << e.what();
+        }
         if (!ec) {
             std::string time = wxDateTime(t).FormatISOCombined(' ').ToStdString();
             item["time"]      = time;
@@ -3835,7 +3853,7 @@ void MainFrame::sm_remove_recent_project(wxString const& filename) {
     json data;
     wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
     wxGetApp().recent_file_notify(data);
-    
+
 
 }
 
@@ -3941,7 +3959,7 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
         auto downloadPath = wxGetApp().app_config->get("download_path");
         completeFilePath  = downloadPath + "/" + releaFileName;
     }
-    if (!boost::filesystem::exists(completeFilePath)) 
+    if (!boost::filesystem::exists(completeFilePath))
     {
         BOOST_LOG_TRIVIAL(warning) << boost::format("the file '%1%' not exists") % completeFilePath;
         return;
@@ -3964,7 +3982,7 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
         MessageDialog(this, msg, _L("Invalid File"), wxOK | wxICON_WARNING).ShowModal();
     }
 
-    
+
 }
 
 void MainFrame::technology_changed()

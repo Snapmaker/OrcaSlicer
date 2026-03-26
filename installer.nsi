@@ -92,22 +92,22 @@ OutFile "${OUTPUT_FILE}"
 
 Section "Main program" SecMain
     SectionIn RO
-    
+
     SetOutPath "$INSTDIR"
-    
+
     DetailPrint "Installing ${PRODUCT_NAME}..."
     DetailPrint "Target dir: $INSTDIR"
-    
+
     DetailPrint "Copying files..."
-    
+
     ; PACK_SOURCE_DIR = compile time only. At runtime this File extracts from embedded payload to $INSTDIR. Exclude include and lib dirs.
     File /r /x "*.pdb" /x "*.ilk" /x "*.exp" /x "*.lib" /x "*.obj" /x "*.idb" /x "*.tlog" /x "*.h" /x "*.hpp" /x "*.c" /x "*.cpp" /x "*.cxx" /x "*.cc" /x "*.vcxproj" /x "*.vcxproj.filters" /x "*.sln" /x "*.cmake" /x "*.py" /x "*.md" /x "*.vcxproj.user" /x "CMakeFiles" /x "RelWithDebInfo" /x "Debug" /x "MinSizeRel" /x ".vs" /x "vcpkg_installed" /x "*.dir" /x "include\*" /x "lib\*" "${PACK_SOURCE_DIR}\*.*"
-    
+
     IfFileExists "$INSTDIR\snapmaker-orca.exe" 0 extract_error
-    
+
     DetailPrint "Creating uninstaller..."
     WriteUninstaller "$INSTDIR\Uninstall.exe"
-    
+
     DetailPrint "Writing registry..."
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\Uninstall.exe"
@@ -122,14 +122,14 @@ Section "Main program" SecMain
 
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "Version" "${VERSION}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "InstallPath" "$INSTDIR"
-    
+
     DetailPrint "Installation complete!"
     Goto end_section
-    
+
     extract_error:
         MessageBox MB_OK|MB_ICONSTOP "Installation failed: snapmaker-orca.exe was not found in the package. The installer may be corrupted."
         Abort
-    
+
     end_section:
 SectionEnd
 
@@ -154,28 +154,28 @@ SectionEnd
 Section "Uninstall"
 
     DetailPrint "Uninstalling ${PRODUCT_NAME}..."
-    
+
     DetailPrint "Checking for running processes..."
     nsExec::ExecToLog 'taskkill /F /IM snapmaker-orca.exe /T'
     Sleep 500
-    
+
     DetailPrint "Removing desktop shortcut..."
     Delete "$DESKTOP\Snapmaker Orca.lnk"
     Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
-    
+
     DetailPrint "Removing start menu shortcut..."
     RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
-    
+
     DetailPrint "Removing install directory..."
     RMDir /r /REBOOTOK "$INSTDIR"
-    
+
     RMDir "$INSTDIR"
-    
+
     DetailPrint "Removing registry entries..."
     DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
     DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}"
     DeleteRegKey HKCU "${PRODUCT_INSTALL_KEY}"
-    
+
     DetailPrint "Uninstall complete!"
 SectionEnd
 
@@ -192,13 +192,13 @@ Function .onInit
     "${PRODUCT_NAME} is already installed.$\n$\nClick OK to uninstall the old version, or Cancel to abort." \
     IDOK uninst
     Abort
-    
+
     uninst:
         ClearErrors
         ExecWait '$R0 _?=$INSTDIR'
-        
+
         IfErrors no_remove_uninstaller done
         no_remove_uninstaller:
-    
+
     done:
 FunctionEnd

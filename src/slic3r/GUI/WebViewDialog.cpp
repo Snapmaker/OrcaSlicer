@@ -103,24 +103,31 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
         return;
     }
 
-    if (!use_debug) {
-        wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
-#ifdef __WIN32__
-        if (!url_to_load.empty()) {
-            m_browser->Bind(wxEVT_SIZE, [this, url_to_load](wxSizeEvent& evt) {
-                if (m_browser && !m_orca_url_loaded) {
-                    m_orca_url_loaded = true;
-                    m_browser->LoadURL(url_to_load);
-                }
-                evt.Skip();
-            });
-        }
-#endif
-    }
-    m_browser->Hide();
+    wxString win_orca_url;
+    if (!use_debug)
+        win_orca_url = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
+
     SetSizer(topsizer);
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
+
+    // Windows：与 PrinterWebView 一致——加入 sizer 后再绑定 SIZE，且待客户区非零再 LoadURL，并 CallAfter 重试；本地 orca 直接 Show，避免长期 Hide 导致白屏
+#ifdef __WIN32__
+    const bool win_deferred_orca = !use_debug && !win_orca_url.empty();
+    if (win_deferred_orca) {
+        m_pending_orca_url = win_orca_url;
+        Bind(wxEVT_SIZE, [this](wxSizeEvent& evt) {
+            try_load_pending_orca_url();
+            evt.Skip();
+        });
+        try_load_pending_orca_url();
+        wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+        m_browser->Show();
+    } else
+#endif
+    {
+        m_browser->Hide();
+    }
 
     // Log backend information
     /* m_browser->GetUserAgent() may lead crash
@@ -269,12 +276,29 @@ WebViewPanel::~WebViewPanel()
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << " End";
 }
 
+void WebViewPanel::try_load_pending_orca_url()
+{
+#ifdef __WIN32__
+    if (!m_browser || m_pending_orca_url.empty())
+        return;
+    wxSize sz = m_browser->GetClientSize();
+    if (sz.GetWidth() <= 0 || sz.GetHeight() <= 0)
+        return;
+    wxString u = m_pending_orca_url;
+    m_pending_orca_url.clear();
+    m_browser->LoadURL(u);
+#endif
+}
+
 void WebViewPanel::reload() {
     m_browser->Reload();
 }
 
 void WebViewPanel::load_url(wxString& url)
 {
+#ifdef __WIN32__
+    m_pending_orca_url.clear();
+#endif
     this->Show();
     this->Raise();
     m_browser->LoadURL(url);
@@ -291,8 +315,12 @@ void WebViewPanel::load_url(const OrcaWebLoadConfig& config)
     cfg.route_params = OrcaWebViewLoader::BuildRouteParamsFromApp();
     wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, cfg);
 #ifdef __WIN32__
-    if (!url_to_load.empty())
-        m_browser->LoadURL(url_to_load);
+    if (!url_to_load.empty()) {
+        m_pending_orca_url = url_to_load;
+        try_load_pending_orca_url();
+        wxGetApp().CallAfter([this]() { try_load_pending_orca_url(); });
+        m_browser->Show();
+    }
 #endif
     m_browser->SetFocus();
     UpdateState();

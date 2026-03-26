@@ -1681,8 +1681,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         bool        is_test          = (test_preset_name == local_name);
 
 
-        static bool is_sm_page = false;
-
         if (!use_new_connection && !is_test && reload_printer_view) {
 
             p->combo_printer->set_show_connection_button(true);
@@ -1709,7 +1707,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             }
             
             p_mainframe->load_printer_url(url, apikey);
-            is_sm_page = false;
 
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
@@ -1734,17 +1731,16 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                     p->combo_printer->set_show_machine_connecting_button(true);
                 }
             }
-            else {
-                // 未连接机器
-                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
-                                                  "/web/flutter_web/index.html?path=2");
-                auto real_url = wxGetApp().get_international_url(url);
-                
-                if (!is_sm_page && reload_printer_view) {
-                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
-                    is_sm_page = true;
+
+            // 新连接 / U1 测试路径：原逻辑在「设备列表里已有 connected 记录」时从不 load_printer_url，PrinterWebView 会一直保持 about:blank。
+            // 静态 is_sm_page 还会在首次失败后不再重试。此处统一为：尚未加载 Flutter/orca 设备页则补载。
+            if ((use_new_connection || is_test) && reload_printer_view) {
+                PrinterWebView* pv = p_mainframe->m_printer_view;
+                if (pv && !pv->isSnapmakerPage()) {
+                    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                                      "/web/flutter_web/index.html?path=/deviceControl");
+                    p_mainframe->load_printer_url(wxGetApp().get_international_url(url));
                 }
-                    
             }
 
             if (!p->combo_printer->get_show_machine_connecting_button() && !is_test) {

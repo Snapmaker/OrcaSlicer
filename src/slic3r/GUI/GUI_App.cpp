@@ -3600,7 +3600,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     // wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(true);
 
-    // auto url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+    // auto url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=/deviceControl");
     // wxGetApp().mainframe->load_printer_url(url);
 
     bool use_new_connection = wxGetApp().app_config->get("use_new_connect") == "true";
@@ -3629,7 +3629,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_test) {
-            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=/deviceControl");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
         } else {

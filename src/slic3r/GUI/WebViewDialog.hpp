@@ -25,6 +25,7 @@
 #include "wx/textctrl.h"
 #include <wx/timer.h>
 
+#include "OrcaWebViewLoader.hpp"
 
 namespace Slic3r {
 
@@ -40,6 +41,7 @@ public:
     virtual ~WebViewPanel();
 
     void load_url(wxString& url);
+    void load_url(const OrcaWebLoadConfig& config);
     void reload();
     void UpdateState();
     void OnIdle(wxIdleEvent& evt);
@@ -108,6 +110,8 @@ public:
     wxWebView* getWebView() { return m_browser; }
 
 private:
+    /// Windows：与 PrinterWebView 一致，待 orca URL 在 WebView 有效尺寸后再 LoadURL，并 CallAfter 重试
+    void try_load_pending_orca_url();
 
     wxWebView* m_browser;
     wxBoxSizer *bSizer_toolbar;
@@ -156,6 +160,8 @@ private:
     // Last executed JavaScript snippet, for convenience.
     wxString m_javascript;
     wxString m_response_js;
+
+    wxString m_pending_orca_url;  // Windows: 待加载的 orca:// URL（与 PrinterWebView 对齐）
 
     DECLARE_EVENT_TABLE()
 };

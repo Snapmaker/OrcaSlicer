@@ -110,6 +110,8 @@ public:
     wxWebView* getWebView() { return m_browser; }
 
 private:
+    /// Windows：与 PrinterWebView 一致，待 orca URL 在 WebView 有效尺寸后再 LoadURL，并 CallAfter 重试
+    void try_load_pending_orca_url();
 
     wxWebView* m_browser;
     wxBoxSizer *bSizer_toolbar;
@@ -159,7 +161,7 @@ private:
     wxString m_javascript;
     wxString m_response_js;
 
-    bool m_orca_url_loaded{ false };  // Windows: 首次 EVT_SIZE 后加载 orca://app/
+    wxString m_pending_orca_url;  // Windows: 待加载的 orca:// URL（与 PrinterWebView 对齐）
 
     DECLARE_EVENT_TABLE()
 };

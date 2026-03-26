@@ -77,14 +77,22 @@ static HRESULT __stdcall CreateEnvWithOrcaScheme(
     // 解决方案：用项目自己的新版头文件创建新的 options 对象，它实现了 Options4~Options8。
     auto newOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
 
-    // 从旧 options 对象复制 AdditionalBrowserArguments（wxWidgets 用它设置 user-agent）
+    // 从旧 options 对象复制 AdditionalBrowserArguments（wxWidgets 用它设置 user-agent），并合并本机所需参数
+    wxString browser_args;
     if (environmentOptions) {
         LPWSTR args = nullptr;
         if (SUCCEEDED(environmentOptions->get_AdditionalBrowserArguments(&args)) && args) {
-            newOptions->put_AdditionalBrowserArguments(args);
+            browser_args = args;
             CoTaskMemFree(args);
         }
     }
+    // WebView2 中文档源为 orca://app 时，对 https 的 XMLHttpRequest/fetch 会执行严格 CORS；api.snapmaker.cn 等若未返回
+    // Access-Control-Allow-Origin（无法列举自定义 scheme 源）则请求被拦截，首页数据失败白屏。macOS WKWebView 对自定义 scheme 往往更宽松。
+    // 以下 Chromium 开关用于嵌入式仅加载本地 Flutter + 固定 API 的场景（勿用于加载任意不可信网页）。
+    if (!browser_args.empty())
+        browser_args += L' ';
+    browser_args += L"--disable-web-security --disable-site-isolation-trials";
+    newOptions->put_AdditionalBrowserArguments(browser_args.wc_str());
 
     // 在新 options 上注册 orca:// 自定义 scheme
     ICoreWebView2EnvironmentOptions4* options4 = nullptr;

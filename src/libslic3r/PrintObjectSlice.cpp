@@ -2947,9 +2947,21 @@ template<typename ThrowOnCancel>
 static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<std::vector<ExPolygons>> segmentation, ThrowOnCancel throw_on_cancel)
 {
     assert(segmentation.size() == print_object.layer_count());
+    const PrintConfig        &print_cfg = print_object.print()->config();
+    const DynamicPrintConfig &full_cfg  = print_object.print()->full_print_config();
+    const size_t              num_physical = print_cfg.filament_diameter.size();
+    const coordf_t            preferred_a = float_from_full_config(full_cfg, "mixed_color_layer_height_a",
+                                                                   coordf_t(print_cfg.mixed_color_layer_height_a.value));
+    const coordf_t            preferred_b = float_from_full_config(full_cfg, "mixed_color_layer_height_b",
+                                                                   coordf_t(print_cfg.mixed_color_layer_height_b.value));
+    const coordf_t            base_height = std::max<coordf_t>(0.01f, coordf_t(print_object.config().layer_height.value));
+    const bool                collapse_mixed_regions =
+        bool_from_full_config(full_cfg, "mixed_filament_region_collapse", print_cfg.mixed_filament_region_collapse.value);
+    const MixedFilamentManager &mixed_mgr = print_object.print()->mixed_filament_manager();
+
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, segmentation.size(), std::max(segmentation.size() / 128, size_t(1))),
-        [&print_object, &segmentation, throw_on_cancel](const tbb::blocked_range<size_t> &range) {
+        [&print_object, &segmentation, &mixed_mgr, num_physical, preferred_a, preferred_b, base_height, collapse_mixed_regions, throw_on_cancel](const tbb::blocked_range<size_t> &range) {
             const auto  &layer_ranges   = print_object.shared_regions()->layer_ranges;
             double       z              = print_object.get_layer(int(range.begin()))->slice_z;
             auto         it_layer_range = layer_range_first(layer_ranges, z);
@@ -2982,7 +2994,20 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                 size_t missing_target_regions = 0;
                 std::vector<int> missing_target_extruders;
                 for (size_t extruder_id = 0; extruder_id < num_extruders; ++ extruder_id) {
-                    ByExtruder &region = by_extruder[extruder_id];
+                    const unsigned int channel_id = unsigned(extruder_id + 1);
+                    const unsigned int effective_filament_id = collapse_mixed_regions ?
+                        mixed_mgr.effective_painted_region_filament_id(channel_id,
+                                                                       num_physical,
+                                                                       int(layer_id),
+                                                                       float(layer.print_z),
+                                                                       float(layer.height),
+                                                                       float(preferred_a),
+                                                                       float(preferred_b),
+                                                                       float(base_height)) :
+                        channel_id;
+                    const size_t effective_idx =
+                        effective_filament_id >= 1 && effective_filament_id <= num_extruders ? size_t(effective_filament_id - 1) : extruder_id;
+                    ByExtruder &region = by_extruder[effective_idx];
                     append(region.expolygons, std::move(segmentation[layer_id][extruder_id]));
                     if (! region.expolygons.empty()) {
                         region.bbox = get_extents(region.expolygons);

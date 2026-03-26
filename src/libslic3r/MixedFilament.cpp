@@ -1321,6 +1321,43 @@ unsigned int MixedFilamentManager::resolve_perimeter(unsigned int filament_id,
     return resolve(filament_id, num_physical, layer_index, layer_print_z, layer_height, force_height_weighted);
 }
 
+unsigned int MixedFilamentManager::effective_painted_region_filament_id(unsigned int filament_id,
+                                                                        size_t       num_physical,
+                                                                        int          layer_index,
+                                                                        float        layer_print_z,
+                                                                        float        layer_height,
+                                                                        float        layer_height_a,
+                                                                        float        layer_height_b,
+                                                                        float        base_layer_height) const
+{
+    const int mixed_idx = mixed_index_from_filament_id(filament_id, num_physical);
+    if (mixed_idx < 0)
+        return filament_id;
+
+    const MixedFilament &mf = m_mixed[size_t(mixed_idx)];
+    if (mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return filament_id;
+
+    const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
+    if (normalized_pattern.find(',') != std::string::npos)
+        return filament_id;
+
+    const bool is_custom_mixed = mf.custom;
+    if (!is_custom_mixed && (layer_height_a > 0.f || layer_height_b > 0.f)) {
+        const float safe_base = std::max<float>(0.01f, base_layer_height);
+        const int ratio_a = std::max(1, int(std::lround((layer_height_a > 0.f ? layer_height_a : safe_base) / safe_base)));
+        const int ratio_b = std::max(1, int(std::lround((layer_height_b > 0.f ? layer_height_b : safe_base) / safe_base)));
+        const int cycle   = ratio_a + ratio_b;
+
+        if (cycle > 0) {
+            const int pos = ((layer_index % cycle) + cycle) % cycle;
+            return pos < ratio_a ? mf.component_a : mf.component_b;
+        }
+    }
+
+    return resolve(filament_id, num_physical, layer_index, layer_print_z, layer_height);
+}
+
 std::vector<unsigned int> MixedFilamentManager::ordered_perimeter_extruders(unsigned int filament_id,
                                                                             size_t       num_physical,
                                                                             int          layer_index,

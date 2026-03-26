@@ -1112,18 +1112,22 @@ static inline void append_unique_painted_extruder(std::vector<unsigned int> &pai
         painting_extruders.emplace_back(extruder_id);
 }
 
-static void append_same_layer_component_extruders(const MixedFilamentManager &mixed_mgr,
-                                                  unsigned int                state_id,
-                                                  size_t                      num_physical_extruders,
-                                                  std::vector<unsigned int>  &painting_extruders)
+static void append_mixed_component_extruders(const MixedFilamentManager &mixed_mgr,
+                                             unsigned int                state_id,
+                                             size_t                      num_physical_extruders,
+                                             std::vector<unsigned int>  &painting_extruders)
 {
     if (state_id <= num_physical_extruders)
         return;
 
     const MixedFilament *mixed_row = mixed_mgr.mixed_filament_from_id(state_id, num_physical_extruders);
-    if (mixed_row == nullptr || !mixed_row->enabled || mixed_row->distribution_mode != int(MixedFilament::SameLayerPointillisme))
+    if (mixed_row == nullptr || !mixed_row->enabled)
         return;
 
+    // Pre-create painted target regions for every physical filament a mixed row
+    // may resolve to. apply_mm_segmentation can then collapse ordinary mixed
+    // channels onto the active physical tool for a layer without losing the
+    // destination region.
     append_unique_painted_extruder(painting_extruders, mixed_row->component_a, num_physical_extruders);
     append_unique_painted_extruder(painting_extruders, mixed_row->component_b, num_physical_extruders);
 
@@ -1177,6 +1181,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     new_full_config.option("mixed_filament_pointillism_pixel_size", true);
     new_full_config.option("mixed_filament_pointillism_line_gap", true);
     new_full_config.option("mixed_filament_surface_indentation", true);
+    new_full_config.option("mixed_filament_region_collapse", true);
     new_full_config.option("mixed_filament_definitions", true);
     m_config.option("dithering_z_step_size", true);
     m_config.option("dithering_local_z_mode", true);
@@ -1188,6 +1193,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_config.option("mixed_filament_pointillism_pixel_size", true);
     m_config.option("mixed_filament_pointillism_line_gap", true);
     m_config.option("mixed_filament_surface_indentation", true);
+    m_config.option("mixed_filament_region_collapse", true);
     m_config.option("mixed_filament_definitions", true);
     m_default_object_config.option("dithering_z_step_size", true);
     m_default_object_config.option("dithering_local_z_mode", true);
@@ -1199,6 +1205,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_default_object_config.option("mixed_filament_pointillism_pixel_size", true);
     m_default_object_config.option("mixed_filament_pointillism_line_gap", true);
     m_default_object_config.option("mixed_filament_surface_indentation", true);
+    m_default_object_config.option("mixed_filament_region_collapse", true);
     m_default_object_config.option("mixed_filament_definitions", true);
     // BBS
     int used_filaments = this->extruders(true).size();
@@ -1772,10 +1779,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                     continue;
                 if (state_idx <= num_total_filaments) {
                     painting_extruders.emplace_back(static_cast<unsigned int>(state_idx));
-                    append_same_layer_component_extruders(m_mixed_filament_mgr,
-                                                          static_cast<unsigned int>(state_idx),
-                                                          num_extruders,
-                                                          painting_extruders);
+                    append_mixed_component_extruders(m_mixed_filament_mgr,
+                                                     static_cast<unsigned int>(state_idx),
+                                                     num_extruders,
+                                                     painting_extruders);
                 } else
                     ++dropped_painted_states;
             }

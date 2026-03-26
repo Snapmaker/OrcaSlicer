@@ -221,6 +221,41 @@ TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by ins
     CHECK(ordered_layer1[1] == 1);
 }
 
+TEST_CASE("Mixed filament painted-region resolver collapses ordinary mixed rows to the active physical extruder", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.ratio_a = 1;
+    row.ratio_b = 1;
+    row.manual_pattern.clear();
+    row.distribution_mode = int(MixedFilament::Simple);
+
+    CHECK(mgr.effective_painted_region_filament_id(3, 2, 0) == 1);
+    CHECK(mgr.effective_painted_region_filament_id(3, 2, 1) == 2);
+}
+
+TEST_CASE("Mixed filament painted-region resolver preserves virtual channels for grouped and same-layer modes", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#00FFFF", "#FF00FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("12,21");
+    CHECK(mgr.effective_painted_region_filament_id(3, 2, 0) == 3);
+
+    row.manual_pattern.clear();
+    row.distribution_mode = int(MixedFilament::SameLayerPointillisme);
+    CHECK(mgr.effective_painted_region_filament_id(3, 2, 0) == 3);
+}
+
 TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
 {
     ExtrusionPath src(erPerimeter);

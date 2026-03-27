@@ -13,7 +13,6 @@ namespace Slic3r {
 namespace GUI {
 
 // ============================================================
-// 在这里注册所有 Bridge 命令
 // ============================================================
 static void registerBridgeCommands()
 {
@@ -37,8 +36,6 @@ static void registerBridgeCommands()
         reply(res);
     });
 
-    // ---- listImages: 列出 Flutter 构建目录下的图片 ----
-    // Flutter web 构建输出为 assets/assets/images/（嵌套），非 assets/images/
     OrcaBridge::bind("listImages", [](const json& data, auto reply, auto fail) {
         json res;
         json images = json::array();
@@ -50,8 +47,6 @@ static void registerBridgeCommands()
         reply(res);
     });
 
-    // ---- openFileDialog: 打开原生文件选择对话框 ----
-    // 所有平台统一：复制到 temp/orca_user_assets/，返回 orca://app/user_assets/xxx
     OrcaBridge::bind("openFileDialog", [](const json& data, auto reply, auto fail) {
         wxGetApp().CallAfter([reply, fail]() {
             wxFileDialog dlg(nullptr,
@@ -78,7 +73,6 @@ static void registerBridgeCommands()
                 wxFileName::Mkdir(userAssetsDir, 0755, wxPATH_MKDIR_FULL);
             orcaUrl = "orca://app/user_assets/";
 
-            // 用 path+mtime+size 生成唯一 id，相同文件得到相同 id，实现去重
             wxStructStat st;
             if (wxStat(srcPath, &st) != 0) {
                 fail("stat failed");
@@ -106,11 +100,9 @@ static void registerBridgeCommands()
         });
     });
 
-    // ---- uiReady (通知, 无需回复) ----
     OrcaBridge::bind("uiReady", [](const json& data, auto reply, auto fail) {
         std::string page = data.value("page", "unknown");
         BOOST_LOG_TRIVIAL(info) << "OrcaBridge: UI ready, page=" << page;
-        // 不调用 reply/fail，因为这是 emit (无 id)
     });
 
     BOOST_LOG_TRIVIAL(info) << "OrcaBridge: commands registered";
@@ -158,7 +150,6 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
         SetSizer(topsizer);
 
 #ifdef __WIN32__
-        // Windows: orca:// 需在首次 EVT_SIZE 时 LoadURL，确保 scheme handler 已就绪
         wxString url_to_load = OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
         if (!url_to_load.empty()) {
             m_browser->Bind(wxEVT_SIZE, [this, url_to_load](wxSizeEvent& evt) {
@@ -170,7 +161,6 @@ WebTextPanel::WebTextPanel(wxWindow *parent)
             });
         }
 #else
-        // macOS/Linux: 直接 SetPage(html, baseUrl)，orca:// handler 立即可用
         OrcaWebViewLoader::LoadLocalHtml(m_browser, config);
 #endif
     }
@@ -198,7 +188,6 @@ void WebTextPanel::reload()
 
 void WebTextPanel::OnScriptMessage(wxWebViewEvent& evt)
 {
-    // 所有消息都交给 OrcaBridge 分发
     OrcaBridge::dispatch(evt.GetString().ToUTF8().data(), m_browser);
 }
 

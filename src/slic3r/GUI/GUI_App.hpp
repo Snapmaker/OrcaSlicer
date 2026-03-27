@@ -244,7 +244,7 @@ public:
         GCodeViewer
     };
 
-    static std::atomic<bool> m_app_alive; // 标记应用是否存活
+    static std::atomic<bool> m_app_alive;
 
 private:
     bool            m_initialized { false };

@@ -11,7 +11,7 @@ namespace GUI {
  * Custom scheme handler: orca://app/path
  * Serves files from a local directory on-demand (no memory buffering).
  * - orca://app/xxx         -> rootPath/xxx (Flutter build)
- * - orca://app/user_assets/xxx -> userAssetsRoot/xxx (用户选择的文件，复制到 temp)
+ * - orca:
  */
 class OrcaLocalHandler : public wxWebViewHandler {
 public:

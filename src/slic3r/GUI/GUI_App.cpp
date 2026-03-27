@@ -2837,7 +2837,6 @@ void GUI_App::machine_find()
                                                     wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                                     GUI::wxGetApp().run_script(strJS);
 
-                                                    // wcp订阅
                                                     json data = this->app_config->get_devices();
                                                     wxGetApp().device_card_notify(data);
                                                     
@@ -3585,7 +3584,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     m_is_recreating_gui = false;
 
-    //// 重新加载首页和设备页
     sm_disconnect_current_machine(true);
     auto devices = wxGetApp().app_config->get_devices();
     for (auto iter = devices.begin(); iter != devices.end();) {
@@ -3643,7 +3641,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
 
 
-    // wcp订阅
     wxGetApp().device_card_notify(devices);
     
 
@@ -7261,7 +7258,6 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
                 }
             }
 
-            //// 同步卡片
             //json param;
             //param["command"]       = "local_devices_arrived";
             //param["sequece_id"]    = "10001";
@@ -7270,7 +7266,6 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
             //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
             //GUI::wxGetApp().run_script(strJS);
 
-            // wcp订阅
             json data = this->app_config->get_devices();
             wxGetApp().device_card_notify(data);
 

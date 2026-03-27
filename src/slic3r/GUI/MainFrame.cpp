@@ -3161,7 +3161,6 @@ void MainFrame::set_max_recent_count(int max)
         wxGetApp().app_config->save();
         m_webview->SendRecentList(-1);
 
-        // wcp 订阅
         json data;
         wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
         wxGetApp().recent_file_notify(data);
@@ -3671,7 +3670,6 @@ void MainFrame::add_to_recent_projects(const wxString& filename)
         wxGetApp().app_config->set_recent_projects(recent_projects);
         m_webview->SendRecentList(0);
 
-        // wcp 订阅
         json data;
         wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
         wxGetApp().recent_file_notify(data);
@@ -3823,7 +3821,6 @@ void MainFrame::open_recent_project(size_t file_id, wxString const & filename)
             wxGetApp().app_config->set_recent_projects(recent_projects);
             m_webview->SendRecentList(-1);
 
-            // wcp 订阅
             json data;
             wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
             wxGetApp().recent_file_notify(data);
@@ -3849,7 +3846,6 @@ void MainFrame::sm_remove_recent_project(wxString const& filename) {
     }
     wxGetApp().app_config->set_recent_projects(recent_projects);
 
-    // wcp 订阅
     json data;
     wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
     wxGetApp().recent_file_notify(data);
@@ -3877,7 +3873,6 @@ void MainFrame::remove_recent_project(size_t file_id, wxString const &filename)
     wxGetApp().app_config->set_recent_projects(recent_projects);
     m_webview->SendRecentList(-1);
 
-    // wcp 订阅
     json data;
     wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
     wxGetApp().recent_file_notify(data);

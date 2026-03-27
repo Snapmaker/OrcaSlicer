@@ -27,9 +27,6 @@ wxString OrcaWebViewLoader::BuildRouteParamsFromApp()
 
 wxString OrcaWebViewLoader::FlutterPathQueryValue(const wxString& page_id)
 {
-    // 值必须不含未编码的 '/'。形如 path=/preUploadAndPrint 时，部分 WebKit/wxURI 会把
-    // '/preUpload...' 误当作层次路径，查询串被截断，Flutter GoRouter 读到 path=null → Not Found。
-    // GoRouter redirect 会在缺省时补上前导 '/'（见 main.dart.js orcaRouter_closure7）。
     wxString segment;
     if (page_id == wxS("2"))
         segment = wxS("deviceControl");
@@ -47,7 +44,6 @@ wxString OrcaWebViewLoader::FlutterPathQueryValue(const wxString& page_id)
 OrcaWebLoadConfig OrcaWebViewLoader::CreateConfigForPage(int path)
 {
     wxString user_path;
-    // 可从 app_config 读取开发路径覆盖，这里优先 resources
     if (wxGetApp().app_config) {
         std::string dev_path = wxGetApp().app_config->get("web_dev_path");
         if (!dev_path.empty())
@@ -71,9 +67,6 @@ OrcaWebLoadConfig OrcaWebViewLoader::ResolveConfig(const wxString& user_web_path
     if (!user_web_path.empty())
         user_path = fs::path(user_web_path.ToUTF8().data());
 
-    // entry_url 必须用「目录 + /」而不是 .../index.html：Flutter Web 的 PathUrlStrategy
-    // 用 pathname 去掉 <base> 路径前缀后交给 GoRouter；若 URL 含 index.html，会得到
-    // /index.html?query，无法匹配 /，redirect(path 查询) 也不触发 → Not Found Page。
     if (fs::exists(res_test_web / "index.html")) {
         config.root_path = wxString::FromUTF8(res_test_web.string());
         config.entry_url = "orca://app/";
@@ -111,7 +104,6 @@ wxString OrcaWebViewLoader::EnsureUserAssetsDir()
 
 wxString OrcaWebViewLoader::BuildFullEntryUrl(const OrcaWebLoadConfig& config)
 {
-    // entry_url 已带尾部 '/'，直接接 '?'；避免出现 .../web/flutter_web?（无斜杠）导致 pathname 异常
     wxString url = config.entry_url;
     if (!url.empty() && url.Last() != '/')
         url += "/";
@@ -124,7 +116,6 @@ wxString OrcaWebViewLoader::BuildFullEntryUrl(const OrcaWebLoadConfig& config)
 
 wxString OrcaWebViewLoader::BuildBaseUrl(const OrcaWebLoadConfig& config)
 {
-    // Flutter 需从 document URL 读取 path 参数以切换页面，baseUrl 需包含 route 参数
     wxString base = "orca://app/?";
     if (!config.route_params.empty())
         base += config.route_params + "&";
@@ -134,10 +125,9 @@ wxString OrcaWebViewLoader::BuildBaseUrl(const OrcaWebLoadConfig& config)
 
 wxString OrcaWebViewLoader::ReadIndexHtml(const OrcaWebLoadConfig& config)
 {
-    // entry_url: "orca://app/" 或 "orca://app/web/flutter_web/"（目录 URL，与 PathUrlStrategy 一致）
     wxString rel = config.entry_url;
     if (rel.StartsWith("orca://app"))
-        rel = rel.Mid(10); // 去掉 "orca://app"（含其后第一个字符，一般为 '/'）
+        rel = rel.Mid(10);
     while (!rel.empty() && (rel[0] == '/' || rel[0] == wxFileName::GetPathSeparator()))
         rel = rel.Mid(1);
     rel.Replace("/", wxString(wxFileName::GetPathSeparator()));
@@ -167,14 +157,10 @@ wxString OrcaWebViewLoader::LoadLocalHtml(wxWebView* webview, const OrcaWebLoadC
         return wxEmptyString;
 
 #ifdef __WIN32__
-    // Windows: orca:// 通过 WebResourceRequested 处理，需在首次 EVT_SIZE 时 LoadURL
     wxString full_url = BuildFullEntryUrl(config);
     BOOST_LOG_TRIVIAL(info) << "OrcaWebViewLoader: Windows - deferred LoadURL on first EVT_SIZE: " << full_url.ToUTF8();
     return full_url;
 #else
-    // 非 Windows: SetPage 的 base_url 会成为 document URL；Reload 时 WebKit 会重新请求该 URL。
-    // 入口须为目录 URL（.../web/flutter_web/?query），避免 pathname 含 index.html 导致 PathUrlStrategy
-    // 交给 GoRouter 的路径变成 /index.html?... 而无法匹配 /。与 Windows 一致使用 BuildFullEntryUrl。
     wxString html     = ReadIndexHtml(config);
     wxString base_url = BuildFullEntryUrl(config);
     BOOST_LOG_TRIVIAL(info) << "OrcaWebViewLoader: SetPage with baseUrl=" << base_url.ToUTF8();

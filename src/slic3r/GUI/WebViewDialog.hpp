@@ -110,7 +110,6 @@ public:
     wxWebView* getWebView() { return m_browser; }
 
 private:
-    /// Windows：与 PrinterWebView 一致，待 orca URL 在 WebView 有效尺寸后再 LoadURL，并 CallAfter 重试
     void try_load_pending_orca_url();
 
     wxWebView* m_browser;
@@ -161,7 +160,7 @@ private:
     wxString m_javascript;
     wxString m_response_js;
 
-    wxString m_pending_orca_url;  // Windows: 待加载的 orca:// URL（与 PrinterWebView 对齐）
+    wxString m_pending_orca_url;
 
     DECLARE_EVENT_TABLE()
 };

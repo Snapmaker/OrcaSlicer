@@ -55,14 +55,11 @@ bool WCP_Logger::run()
         return true; // Already initialized
     }
 
-    // 创建IO上下文和TCP套接字
     socket = new tcp::socket(io_ctx);
 
-    // 解析服务器地址（本地回环）
     resolver       = new tcp::resolver(io_ctx);
-    auto endpoints = resolver->resolve("127.0.0.1", "50000"); // 端口与Python服务端一致
+    auto endpoints = resolver->resolve("127.0.0.1", "50000");
 
-    // 连接服务器（同步连接，阻塞直到成功或失败）
 
     try {
         asio::connect(*socket, endpoints);
@@ -104,17 +101,13 @@ void WCP_Logger::add_log(const wxString& content, bool is_web = false, wxString 
     }
 
     if (time == "") {
-        // 获取当前时间
         wxDateTime now = wxDateTime::Now();
 
-        // 格式化日期时间部分（年-月-日 时:分:秒）
         wxString dateTimePart = now.Format(_T("%Y-%m-%d %H:%M:%S"));
 
-        // 获取毫秒并格式化为三位字符串（补零）
         int      milliseconds = now.GetMillisecond();
         wxString msPart       = wxString::Format(_T("%03d"), milliseconds);
 
-        // 拼接完整时间字符串
         time = dateTimePart + _T(":") + msPart;
     }
 
@@ -204,31 +197,24 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
         if (thumbnail_id == image_count) {
             break;
         }
-        // 找到缩略图开始标记
         if (line.find("; THUMBNAIL_BLOCK_START") != std::string::npos) {
             std::string thumb_content = "";
             int         width         = 0;
             int         height        = 0;
             int         data_size     = 0;
 
-            // 跳过空行
             std::getline(ifs, line);
             std::getline(ifs, line);
 
-            // 读取缩略图信息行
             std::getline(ifs, line);
             if (line.find("; thumbnail begin") != std::string::npos) {
-                // 解析宽度、高度和数据大小
-                // 格式: "; thumbnail begin 48x48 1144"
                 sscanf(line.c_str(), "; thumbnail begin %dx%d %d", &width, &height, &data_size);
 
-                // 读取Base64编码的数据
                 std::string base64_data;
                 while (std::getline(ifs, line)) {
                     if (line.find("; thumbnail end") != std::string::npos) {
                         break;
                     }
-                    // 移除行首的 "; "
                     if (line.substr(0, 2) == "; ") {
                         base64_data += line.substr(2);
                     }
@@ -239,7 +225,6 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
                 ++thumbnail_id;
             }
 
-            // 读取到块结束标记
             while (std::getline(ifs, line)) {
                 if (line.find("; THUMBNAIL_BLOCK_END") != std::string::npos) {
                     break;
@@ -248,7 +233,7 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
         }
     }
 
-    ifs.clear(); // 清除可能的 EOF 标志
+    ifs.clear();
     ifs.seekg(0);
 
     return std::move(res);
@@ -256,11 +241,10 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
 }
 
 // Util
-std::vector<char> create_zip_with_miniz(const std::string& name1, // 原文件路径（如 "c:/xxx/1.gcode"）
-                                        const std::string& name2  // ZIP 内文件名（如 "target.gcode"）
+std::vector<char> create_zip_with_miniz(const std::string& name1,
+                                        const std::string& name2
 )
 {
-    // 1. 读取原文件内容
     std::ifstream file(name1, std::ios::binary);
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open source file: " + name1);
@@ -271,27 +255,23 @@ std::vector<char> create_zip_with_miniz(const std::string& name1, // 原文件�
     SSWCP::m_active_file_size = file_content.size();
     SSWCP::m_file_size_mutex.unlock();
 
-    // 2. 初始化 ZIP 写入器（内存模式）
     mz_zip_archive zip_archive;
     memset(&zip_archive, 0, sizeof(zip_archive));
 
-    // 初始化 ZIP 写入到堆内存
     if (!mz_zip_writer_init_heap(&zip_archive, 0, 0)) {
         throw std::runtime_error("Failed to initialize ZIP writer");
     }
 
-    // 3. 将文件内容添加到 ZIP（使用 name2 作为内部文件名）
     if (!mz_zip_writer_add_mem(&zip_archive,
-                               name2.c_str(),         // ZIP 内文件名
-                               file_content.data(),   // 文件内容指针
-                               file_content.size(),   // 文件内容大小
-                               MZ_DEFAULT_COMPRESSION // 压缩级别
+                               name2.c_str(),
+                               file_content.data(),
+                               file_content.size(),
+                               MZ_DEFAULT_COMPRESSION
                                )) {
         mz_zip_writer_end(&zip_archive);
         throw std::runtime_error("Failed to add file to ZIP");
     }
 
-    // 4. 完成 ZIP 写入并获取内存数据
     void*  zip_data = nullptr;
     size_t zip_size = 0;
     if (!mz_zip_writer_finalize_heap_archive(&zip_archive, &zip_data, &zip_size)) {
@@ -299,10 +279,8 @@ std::vector<char> create_zip_with_miniz(const std::string& name1, // 原文件�
         throw std::runtime_error("Failed to finalize ZIP archive");
     }
 
-    // 将 ZIP 数据复制到 vector（方便后续操作）
     std::vector<char> zip_stream(static_cast<char*>(zip_data), static_cast<char*>(zip_data) + zip_size);
 
-    // 5. 清理资源
     mz_zip_writer_end(&zip_archive);
     mz_free(zip_data);
 
@@ -347,22 +325,17 @@ std::string base64_encode(const char* data, size_t len)
 
 std::string generate_zip_path(const std::string& oriname, const std::string& targetname)
 {
-    // 解析 name1 的路径
     fs::path path1 = oriname;
 
-    // 获取父目录（例如 "c:/xxx/xxx/xxx"）
     fs::path parent_dir = path1.parent_path();
 
-    // 将 name2 作为基础文件名，追加 ".zip"（例如 "target.gcode" -> "target.gcode.zip"）
     fs::path new_filename = fs::path(targetname);
-    new_filename += ".zip"; // 直接追加扩展名
+    new_filename += ".zip";
 
-    // 组合完整路径
     fs::path zip_path = parent_dir / new_filename;
     return zip_path.string();
 }
 
-// 检查文件是否存在并读取内容
 bool read_existing_zip(const std::string& zip_path, std::vector<char>& out_data)
 {
     if (!fs::exists(zip_path)) {
@@ -376,23 +349,19 @@ bool read_existing_zip(const std::string& zip_path, std::vector<char>& out_data)
     return true;
 }
 
-// 主逻辑函数
-json get_or_create_zip_json(const std::string& name1,   // 原文件路径（如 "1.gcode"）
-                            const std::string& name2,   // 目标 ZIP 文件名（如 "target.gcode"）
-                            const std::string& zip_path // 要检查的 ZIP 文件路径（如 "output.zip"）
+json get_or_create_zip_json(const std::string& name1,
+                            const std::string& name2,
+                            const std::string& zip_path
 )
 {
     std::vector<char> zip_stream;
 
-    // 1. 检查同名 ZIP 是否存在
     if (read_existing_zip(zip_path, zip_stream)) {
         std::cout << "Reusing existing ZIP file: " << zip_path << std::endl;
     } else {
-        // 2. 若不存在，创建新 ZIP 并写入文件
         std::cout << "Creating new ZIP file: " << zip_path << std::endl;
         zip_stream = create_zip_with_miniz(name1, name2);
 
-        // 将新生成的 ZIP 写入文件（可选持久化）
         std::ofstream out_file(zip_path, std::ios::binary);
         out_file.write(zip_stream.data(), zip_stream.size());
         if (!out_file.good()) {
@@ -400,7 +369,6 @@ json get_or_create_zip_json(const std::string& name1,   // 原文件路径（如
         }
     }
 
-    //// 3. 编码为 Base64 并存入 JSON
     //std::string base64_str = base64_encode(zip_stream.data(), zip_stream.size());
 
     json j;
@@ -741,7 +709,6 @@ void SSWCP_Instance::sw_Log()
         auto& logger = WCP_Logger::getInstance();
 
         if (!logger.m_log_level_map.count(level)) {
-            // todo log:级别不对,转成debug,打原生log
             level = "debug";
         }
 
@@ -796,13 +763,11 @@ void SSWCP_Instance::sw_GetFileStream() {
             m_work_thread = std::thread([file_path, weak_self]() {
                 auto self = weak_self.lock();
                 if (self) {
-                    // 1. 读取原文件内容
                     std::ifstream file(file_path, std::ios::binary);
                     if (!file.is_open()) {
                         self->handle_general_fail();
                         return;
                     }
-                    // 获取文件大小
                     file.seekg(0, std::ios::end);
                     std::streamsize file_size = file.tellg();
                     file.seekg(0, std::ios::beg);
@@ -814,7 +779,6 @@ void SSWCP_Instance::sw_GetFileStream() {
                     std::string content;
                     if (file_size > 0) {
                         content.resize(static_cast<size_t>(file_size));
-                        // 空文件时 size==0，禁止 &content[0]（libc++ 调试下 string::operator[] 会断言越界）
                         if (!file.read(content.data(), file_size)) {
                             std::cerr << "读取文件失败" << std::endl;
                             self->handle_general_fail();
@@ -1080,7 +1044,6 @@ void SSWCP_Instance::sw_SubscribeCacheKey()
 
         for (auto iter = cache_map.begin(); iter != cache_map.end();) {
             if (iter->first.first == m_webview && iter->second == key) {
-                // 删除之前的订阅
                 iter = cache_map.erase(iter);
             } else {
                 ++iter;
@@ -1504,7 +1467,6 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 return;
             }
 
-            // 存储耗材，并触发更新
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
             static auto tmp_filaments = filaments;
 
@@ -1525,7 +1487,6 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
                     std::string name = "";
 
-                    // 名称特殊处理
                     if (type == "TPU") {
                         if (sub_type == "95A HF") {
                             name = vendor + " " + type + ((sub_type != "NONE" && sub_type != "") ? " " + sub_type : "");
@@ -1549,7 +1510,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                             int                color = j_value["filament_color"][i].get<int>();
                             std::ostringstream oss;
                             oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex
-                                << (color & 0x00FFFFFF); // 仅取低24位
+                                << (color & 0x00FFFFFF);
 
                             std::string str_color = oss.str();
                             filaments.insert({int(i), {name, str_color}});
@@ -1635,7 +1596,6 @@ void SSWCP_MachineFind_Instance::set_stop(bool stop)
 // Get machine discovery support info
 void SSWCP_MachineFind_Instance::sw_GetMachineFindSupportInfo()
 {
-    // 2.0.0 只支持 mdns - snapmaker
     json protocols = json::array();
     protocols.push_back("mdns");
 
@@ -1654,8 +1614,6 @@ void SSWCP_MachineFind_Instance::sw_GetMachineFindSupportInfo()
 void SSWCP_MachineFind_Instance::sw_WakeupFind()
 {
     try {
-        // 1) 广域服务浏览：触发 _services._dns-sd._udp.local.，维持约8秒
-        //    此查询促使 AP/交换机为本机建立 224.0.0.251:5353 的组播转发表，并促使设备进行通告
         try {
             Bonjour::TxtKeys warmup_txt_keys = {};
             auto warmup = Bonjour("services._dns-sd")
@@ -1668,10 +1626,8 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
                               .lookup();
             (void)warmup;
         } catch (...) {
-            // 预热失败不影响后续短查
         }
 
-        // 2) 目标服务短查：对 snapmaker 做一次短查询（2 秒），帮助休眠设备快速回应
         try {
             auto kick = Bonjour("snapmaker")
                             .set_retries(1)
@@ -1683,7 +1639,6 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
         } catch (...) {
         }
 
-        // 立刻返回成功，查询在线程中进行
         m_status = 200;
         m_msg    = "OK";
         m_res_data["result"] = "wakeup_started";
@@ -1708,7 +1663,6 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
         }
         last_time = -1;
 
-        // 目前只支持通过mdns协议搜索snapmaker,prusalink，之后可以再扩充
         protocols.push_back("mdns");
 
         for (size_t i = 0; i < protocols.size(); ++i) {
@@ -1725,7 +1679,6 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                     m_engines.push_back(nullptr);
                 }
 
-                //// 预热扫描：发送一轮短超时查询以激活休眠后的mDNS响应
                 //for (const auto& svc : mdns_service_names) {
                 //    Bonjour(svc)
                 //        .set_retries(1)
@@ -1803,7 +1756,6 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              machine_data["device_name"] = reply.txt_data["device_name"];
                                          }
 
-                                         // 模拟一下
                                         /* machine_data["cover"] = LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                                  "/profiles/Snapmaker/Snapmaker A350 Dual BKit_cover.png";*/
 
@@ -1891,7 +1843,6 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                 }
 
             } else {
-                // 支持其他机器发现协议
             }
         }
 
@@ -1956,7 +1907,6 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
                         wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                         GUI::wxGetApp().run_script(strJS);
 
-                        // wcp订阅
                         json data = devices;
                         wxGetApp().device_card_notify(data);
                     });
@@ -2454,7 +2404,6 @@ void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
             }
 
             if (!host) {
-                // 错误处理
                 handle_general_fail();
             } else {
                 auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
@@ -2843,21 +2792,18 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
         wxString wildcard = "All files (*.*)|*.*";
 
         wxGetApp().CallAfter([wildcard, this, upload_url]() {
-            // 创建选择文件对话框
             wxFileDialog picFileDialog(nullptr,
-                                        L("select file"),                     // 标题
-                                        "",                                 // 默认路径
-                                        "",                                  // 默认文件名
-                                        wildcard,                           // 文件类型过滤器
-                                        wxFD_OPEN | wxFD_OVERWRITE_PROMPT); // 样式
+                                        L("select file"),
+                                        "",
+                                        "",
+                                        wildcard,
+                                        wxFD_OPEN | wxFD_OVERWRITE_PROMPT);
 
             if (picFileDialog.ShowModal() == wxID_CANCEL) {
-                // 用户取消上传
                 handle_general_fail();
                 return;
             }
 
-            // 获取选择的保存路径
             wxString filepath     = picFileDialog.GetPath();
             wxString filename = picFileDialog.GetFilename();
             std::string tmp_url  = upload_url;
@@ -2914,7 +2860,6 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
 
         wxString download_url = wxString::FromUTF8(m_param_data["url"].get<std::string>());
 
-        // 从 URL 获取默认文件名（如果没有提供）
         wxString filename   = "";
         if (!m_param_data.count("filename")) {
             size_t last_slash = download_url.find_last_of("/");
@@ -2926,38 +2871,32 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
         }
 
 
-        // 获取文件扩展名
         wxString extension;
         size_t      dot_pos = filename.find_last_of(".");
         if (dot_pos != std::string::npos) {
             extension = filename.substr(dot_pos + 1);
         }
 
-        // 构建文件类型过滤器
         wxString wildcard;
         if (!extension.empty()) {
-            // 例如: "PNG files (*.png)|*.png|All files (*.*)|*.*"
             wildcard = wxString::Format("%s files (*.%s)|*.%s|All files (*.*)|*.*", extension, extension, extension);
         } else {
             wildcard = "All files (*.*)|*.*";
         }
 
         wxGetApp().CallAfter([filename, extension, wildcard, this, download_url]() {
-            // 创建保存文件对话框
             wxFileDialog saveFileDialog(nullptr,
-                                        L("Save file"),                     // 标题
-                                        "",                                 // 默认路径
-                                        filename,                           // 默认文件名
-                                        wildcard,                           // 文件类型过滤器
-                                        wxFD_SAVE | wxFD_OVERWRITE_PROMPT); // 样式
+                                        L("Save file"),
+                                        "",
+                                        filename,
+                                        wildcard,
+                                        wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
 
             if (saveFileDialog.ShowModal() == wxID_CANCEL) {
-                // 用户取消下载
                 handle_general_fail();
                 return;
             }
 
-            // 获取选择的保存路径
             wxString path = saveFileDialog.GetPath();
 
             auto final_url = Http::encode_url_path(download_url.ToStdString(wxConvUTF8));
@@ -3037,7 +2976,6 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
         json response = json::object();
 
-        // 检查文件是否存在且可读
         if (!boost::filesystem::exists(filename) || !boost::filesystem::is_regular_file(filename)) {
             handle_general_fail();
             return;
@@ -3219,7 +3157,6 @@ void SSWCP_MachineOption_Instance::sw_SetFilamentMappingComplete()
             if (status == "success") {
                 flag = wxID_OK;
             }
-            //// 耗材绑定成功
             //if (status == "success") {
             //    MessageDialog msg_window(nullptr, " " + _L("setting successfully, continue to print?") + "\n", _L("Print Job Setting"),
             //                             wxICON_QUESTION | wxOK | wxCANCEL);
@@ -3928,7 +3865,6 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                             }
                         });
 
-                        // 构建请求消息
                         json req_body;
                         req_body["jsonrpc"] = "2.0",
                         req_body["method"]  = "server.client_manager.request_pin_code";
@@ -3938,7 +3874,6 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                         Moonraker_Mqtt::SequenceGenerator generator;
                         req_body["id"]                 = generator.generate_seq_id();
 
-                        // 发送请求
                         std::string pub_msg = "success";
                         if (mqtt_client->Publish("cloud/config/request", req_body.dump(), 1, pub_msg)) {
                             return;
@@ -4016,7 +3951,6 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
 
 
             PrintHostType type = PrintHostType::htMoonRaker;
-            // todo : 增加输入与type的映射
 
             p_config->option<ConfigOptionEnum<PrintHostType>>("host_type")->value = type;
 
@@ -4025,7 +3959,6 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
             std::shared_ptr<PrintHost> host(PrintHost::get_print_host(&wxGetApp().preset_bundle->printers.get_edited_preset().config));
 
             if (!host) {
-                // 错误处理
                 finish_job();
             } else {
                 if (m_work_thread.joinable())
@@ -4036,7 +3969,6 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
                     if (res) {
                         send_to_js();
                     } else {
-                        // 错误处理
                         m_status = 1;
                         m_msg    = msg.c_str();
                         send_to_js();
@@ -4046,7 +3978,6 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
                 });
             }
         } else {
-            // 错误处理
             finish_job();
         }
     } catch (const std::exception&) {
@@ -4181,7 +4112,6 @@ void SSWCP_SliceProject_Instance::sw_NewProject()
                     }
 
                 } catch (std::exception& e) {
-                    // 异常处理
                 }
             });
         }
@@ -4735,7 +4665,6 @@ void SSWCP_MachineManage_Instance::sw_RenameDevice()
 
             wxGetApp().CallAfter([] {
 
-                // wcp订阅
                 json data = wxGetApp().app_config->get_devices();
                 wxGetApp().device_card_notify(data);
             });
@@ -4789,7 +4718,6 @@ void SSWCP_MachineManage_Instance::sw_DeleteDevices()
             }
 
             wxGetApp().CallAfter([] {
-                // wcp订阅
                 json data = wxGetApp().app_config->get_devices();
                 wxGetApp().device_card_notify(data);
             });
@@ -4854,7 +4782,6 @@ void SSWCP_MqttAgent_Instance::process()
     }
 }
 
-// 校验mqtt引擎id
 bool SSWCP_MqttAgent_Instance::validate_id(const std::string& id)
 {
     bool flag = true;
@@ -4871,7 +4798,6 @@ bool SSWCP_MqttAgent_Instance::validate_id(const std::string& id)
     return flag;
 }
 
-// webview析构回调
 void SSWCP_MqttAgent_Instance::set_Instance_illegal()
 {
     SSWCP_Instance::set_Instance_illegal();
@@ -4879,10 +4805,8 @@ void SSWCP_MqttAgent_Instance::set_Instance_illegal()
     clean_current_engine();
 }
 
-// 清空当前mqtt实例
 void SSWCP_MqttAgent_Instance::clean_current_engine()
 {
-    //清除该实例的所有订阅
     for (auto iter = m_subscribe_map.begin(); iter != m_subscribe_map.end();) {
         if (iter->first.second == m_webview) {
             iter = m_subscribe_map.erase(iter);
@@ -4904,7 +4828,6 @@ void SSWCP_MqttAgent_Instance::clean_current_engine()
     m_engine_map_mtx.unlock();
 }
 
-// mqtt静态消息回调
 void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
@@ -4949,11 +4872,9 @@ void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::
     }
 }
 
-// 创建mqtt实例
 void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 {
     try {
-        // 解析参数
         std::string server_address = "";
         std::string clientId       = "";
         std::string ca             = "";
@@ -4996,7 +4917,6 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         password = m_param_data.count("password") ? m_param_data["password"].get<std::string>() : "";
 
 
-        // 确认mqtt连接类型，并创建实例
         std::shared_ptr<MqttClient> client = nullptr;
         std::string type = "mqtt";
         if (ca != "" && cert != "" && key != "") {
@@ -5007,26 +4927,22 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         }
 
         if (client == nullptr) {
-            // 创建失败
             handle_general_fail(-1, "create instance failed");
             return;
         }
 
-        // 清空当前m_clinet的订阅列表
         auto ptr = get_current_engine();
         if (!ptr) {
             ptr.reset();
         }
         clean_current_engine();
 
-        // 替换新引擎
         bool flag = set_current_engine({std::to_string(int64_t(client.get())), client});
         if (!flag) {
             handle_general_fail(-1, "create failed");
             return;
         }
 
-        // 绑定静态回调
         client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
 
         m_res_data["type"] = type;
@@ -5040,7 +4956,6 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
     }
 }
 
-// mqtt引擎建立连接
 void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
 {
     try {
@@ -5099,7 +5014,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
     }
 }
 
-// mqtt引擎断开连接
 void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
 {
     try {
@@ -5149,7 +5063,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
     }
 }
 
-// 订阅topic
 void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
 {
     try {
@@ -5212,7 +5125,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        // 回复后， 设置event_id, 长期保留对象
                         if (self->m_event_id != "") {
                             self->m_msg = msg;
                             self->send_to_js();
@@ -5236,7 +5148,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
     }
 }
 
-// 取消订阅
 void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
     try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
@@ -5257,7 +5168,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
         }
         std::string topic = m_param_data["topic"].get<std::string>();
 
-        // 维护订阅topic表和eventid实例表
         for (auto iter = m_subscribe_map.begin();
             iter != m_subscribe_map.end(); ) {
             if (iter->second == topic) {
@@ -5340,7 +5250,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
         auto config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
 
         PrintHostType type = PrintHostType::htMoonRaker_mqtt;
-        // todo : 增加输入与type的映射
 
         config.option<ConfigOptionEnum<PrintHostType>>("host_type")->value = type;
 
@@ -5405,7 +5314,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                         return;
                     }
 
-                    // 序列化参数
                     if (m_param_data.count("code")){
                         connect_params["code"] = m_param_data["code"];
                     }
@@ -5462,7 +5370,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                         return;
                     } else {
                         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-                        // 设置断联回调
 
                         if (m_work_thread.joinable())
                             m_work_thread.join();
@@ -5502,7 +5409,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                         }
                                     }
 
-                                    // 更新卡片
                                     json param;
                                     param["command"]       = "local_devices_arrived";
                                     param["sequece_id"]    = "10001";
@@ -5511,7 +5417,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                     GUI::wxGetApp().run_script(strJS);
 
-                                    // wcp订阅
                                     json data = devices;
                                     wxGetApp().device_card_notify(data);
 
@@ -5534,7 +5439,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     ip = ip_port.substr(0, pos);
                                 }
 
-                                // 更新其他设备连接状态为断开
                                 auto devices = wxGetApp().app_config->get_devices();
                                 for (size_t i = 0; i < devices.size(); ++i) {
                                     if (devices[i].connected) {
@@ -5544,7 +5448,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     }
                                 }
 
-                                // 查询机器的机型和喷嘴信息
                                 std::string              machine_type = "";
                                 std::vector<std::string> nozzle_diameters;
                                 std::string              device_name = "";
@@ -5552,12 +5455,10 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                 std::shared_ptr<PrintHost> host = nullptr;
                                 wxGetApp().get_connect_host(host);
 
-                                // 设置sn
 
                                 if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type != "") {
                                     wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params, nozzle_diameters, device_name,
                                                           id, userid, reload_device_view]() {
-                                        // 查询成功
                                         DeviceInfo info;
                                         info.ip        = ip;
                                         info.dev_id    = host->get_sn() != "" ? host->get_sn() : ip;
@@ -5631,14 +5532,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                                             m_dialog->m_device_id = ip;
 
-                                            // 检查是否该预设已经选入系统
                                             {
                                                 std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
                                                 int  nModel = m_ProfileJson["model"].size();
                                                 bool isFind = false;
                                                 for (int m = 0; m < nModel; m++) {
                                                     if (m_ProfileJson["model"][m]["model"].get<std::string>() == info.model_name) {
-                                                        // 绑定的预设已被选入系统
                                                         isFind                      = true;
                                                         std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"]
                                                                                               .get<std::string>();
@@ -5672,7 +5571,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     });
                                 } else {
                                     wxGetApp().CallAfter([connect_params, ip, host, link_mode, id, userid]() {
-                                        // 是否为连接过的设备
                                         DeviceInfo  query_info;
                                         std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
                                         if (wxGetApp().app_config->get_device_info(dev_id, query_info)) {
@@ -5683,7 +5581,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             if (machine_ip_type) {
                                                 std::string machine_type = "";
                                                 if (machine_ip_type->get_machine_type(ip, machine_type)) {
-                                                    // 已经发现过的机型信息
                                                     // test
 
                                                 if (machine_type == "lava" || machine_type == "Snapmaker test") {
@@ -5729,7 +5626,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                                     }
 
                                                     wxGetApp().app_config->save_device_info(info);
-                                                    // todo 绑定喷嘴
 
                                                     MessageDialog msg_window(nullptr,
                                                                              ip + " " + _L("The target machine model has been detected as") +
@@ -5790,7 +5686,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                 }
 
                                 wxGetApp().CallAfter([weak_self, reload_device_view]() {
-                                    // 更新首页设备卡片
                                     auto devices = wxGetApp().app_config->get_devices();
 
                                     json param;
@@ -5801,7 +5696,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
                                     GUI::wxGetApp().run_script(strJS);
 
-                                    // wcp订阅
                                     json data = devices;
                                     wxGetApp().device_card_notify(data);
 
@@ -5817,20 +5711,19 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(reload_device_view);
                                     wxGetApp().mainframe->m_print_enable = true;
                                     wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
-                                    // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
 
                                     if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
                                         wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                                                "/web/flutter_web/index.html?path=/deviceControl");
                                         auto     real_url = wxGetApp().get_international_url(url);
-                                        wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                                        wxGetApp().mainframe->load_printer_url(real_url);
                                     } else {
                                         if (reload_device_view) {
                                             wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                                                    "/web/flutter_web/index.html?path=/deviceControl");
                                             auto     real_url = wxGetApp().get_international_url(url);
 
-                                            wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                                            wxGetApp().mainframe->load_printer_url(real_url);
                                         }
 
                                     }
@@ -5840,10 +5733,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                         return;
                                     }
 
-                                    // 清除耗材喷嘴映射信息
                                     wxGetApp().app_config->clear_filament_extruder_map();
 
-                                    // 尝试获取新的耗材喷嘴映射信息
                                     if (self->m_wcp_cache.count("deviceFilamentInfo")) {
                                         std::string value_str = m_wcp_cache["deviceFilamentInfo"].get<std::string>();
                                         json value                 = json::parse(value_str);
@@ -5871,8 +5762,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                         }
                                     }
 
-                                    // 整理订阅列表，取消权限，但是保留真正的底层订阅
-                                    // 维护订阅topic表和eventid实例表
                                     auto mqtt_self = dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(self);
                                     mqtt_self->clean_current_engine();
                                     self->send_to_js();
@@ -6155,7 +6044,6 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
             instance->process();
         }
         //if (!m_func_map.count(cmd)) {
-        //    // todo:返回不支持处理
         //}
 
         //m_func_map[cmd](sequenceId, data, callback_name, webview);
@@ -6325,7 +6213,6 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
 {
     if (!host) return false;
 
-    // 创建同步等待的条件变量和互斥锁
     std::condition_variable cv;
     std::shared_ptr<std::mutex> mutex(new std::mutex);
     std::weak_ptr<std::mutex>   cb_mutex = mutex;
@@ -6333,7 +6220,6 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
     bool timeout = false;
     json system_info;
 
-    // 发送查询请求
     host->async_get_system_info(
         [&, cb_mutex](const json& response) {
             if (cb_mutex.expired()) {
@@ -6348,7 +6234,6 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
         }
     );
 
-    // 等待响应
     {
         std::unique_lock<std::mutex> lock(*mutex);
         auto predicate = [&received]() { return received; };
@@ -6356,7 +6241,6 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
     }
 
     if (!timeout && !system_info.is_null()) {
-        // 成功获取到信息
         if (system_info.count("data")) {
             system_info = system_info["data"];
         }
@@ -6366,17 +6250,14 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
             if(system_data.contains("product_info")){
                 auto& product_info = system_data["product_info"];
 
-                // 获取机型
                 if(product_info.contains("machine_type")){
                     out_model = product_info["machine_type"].get<std::string>();
                 }
 
-                // 获取喷嘴信息
                 if(product_info.contains("nozzle_diameter")){
                     try {
                         if (product_info["nozzle_diameter"].is_array()) {
                             for (const auto& nozzle : product_info["nozzle_diameter"]) {
-                                // todo 不一定是string
                                 if (nozzle.is_number()) {
                                     double temp = nozzle.get<double>();
                                     if (fabs(temp - 0.2) < 1e-6) {
@@ -6398,7 +6279,6 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
 
                             }
                         } else {
-                            // 如果是单个值
                             if (product_info["nozzle_diameter"].is_number()) {
                                 double temp = product_info["nozzle_diameter"].get<double>();
                                 if (fabs(temp - 0.2) < 1e-6) {

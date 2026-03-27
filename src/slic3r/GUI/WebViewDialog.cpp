@@ -80,7 +80,6 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     m_info = new wxInfoBar(this);
     topsizer->Add(m_info, wxSizerFlags().Expand());
 
-    // 使用 orca://app 加载，path=1 为首页
     OrcaWebLoadConfig config = OrcaWebViewLoader::CreateConfigForPage(1);
     bool use_debug = false;
     if (wxGetApp().app_config && wxGetApp().app_config->get("use_web_debug_server") == "true") {
@@ -111,7 +110,6 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
-    // Windows：与 PrinterWebView 一致——加入 sizer 后再绑定 SIZE，且待客户区非零再 LoadURL，并 CallAfter 重试；本地 orca 直接 Show，避免长期 Hide 导致白屏
 #ifdef __WIN32__
     const bool win_deferred_orca = !use_debug && !win_orca_url.empty();
     if (win_deferred_orca) {

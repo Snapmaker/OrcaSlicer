@@ -414,19 +414,16 @@ protected:
 
         wxPaintDC dc(this);
 
-        // 1. 绘制背景
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(m_bgColor));
         dc.DrawRectangle(GetClientRect());
 
-        // 2. 绘制标签背景区域
         dc.SetPen(wxPen(m_dividerColor, 1));
         dc.SetBrush(wxBrush(m_dividerColor));
         wxRect labelRect(0, 0, GetSize().x, m_tabHeight);
         dc.DrawRoundedRectangle(labelRect, m_roundRadius);
         dc.DrawRectangle(0, m_tabHeight - 2, GetSize().x, 4);
 
-        // 3. 绘制所有标签
         wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
         font.SetPointSize(m_textSize);
         dc.SetFont(font);
@@ -463,7 +460,6 @@ protected:
             xPos += tabWidth;
         }
 
-        // 4. 绘制外边框
         dc.SetPen(wxPen(m_borderColor, 1));
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
         dc.DrawRoundedRectangle(GetClientRect(), m_roundRadius);
@@ -1061,7 +1057,6 @@ Sidebar::Sidebar(Plater *parent)
         
         p->combo_printer = combo_printer;
 
-        // 绑定 combo 内部按钮的事件处理（按钮现在在 combo 内部）
         combo_printer->bind_edit_button_handler([this, combo_printer]() {
                 p->editing_filament = -1;
                 if (combo_printer->switch_to_tab())
@@ -1075,18 +1070,13 @@ Sidebar::Sidebar(Plater *parent)
             });
 
         combo_printer->bind_machine_connecting_button_handler([this]() {
-            // machine_connecting_btn 的处理逻辑（如果有的话）
         });
         
-        // 显示编辑按钮（鼠标悬停时原来会显示，现在直接显示）
         combo_printer->set_show_edit_button(true);
         
-        // 设置按钮tooltip
         combo_printer->set_connection_tooltip(_L("Connect to printer"));
         combo_printer->set_machine_connecting_tooltip(_L("The machine has been connected and is currently in working mode"));
 
-        // 外部按钮已集成到 combo 内部，不再需要创建
-        // 保留变量引用以避免编译错误，但设为 nullptr
         connection_btn = nullptr;
         machine_connecting_btn = nullptr;
 
@@ -1096,7 +1086,6 @@ Sidebar::Sidebar(Plater *parent)
         wxBoxSizer* vsizer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer = new wxBoxSizer(wxHORIZONTAL);
 
-        // 简化后的布局：打印机图片 + combo_printer（内含所有按钮）
         combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_LEFT);
 
         hsizer->Add(p->image_printer, 0, wxLEFT | wxALIGN_CENTER, FromDIP(4));
@@ -1121,7 +1110,6 @@ Sidebar::Sidebar(Plater *parent)
         vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);*/
 
         // Bed type selection
-        // 创建一个像打印机选择那样的容器
         p->panel_printer_preset = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                                 wxTAB_TRAVERSAL | wxBORDER_NONE);
         p->panel_printer_preset->SetCornerRadius(8);
@@ -1131,7 +1119,6 @@ Sidebar::Sidebar(Plater *parent)
         // p->panel_printer_preset->SetBorderColor(panel_bd_col1);
         // p->panel_printer_preset->SetMinSize(PRINTER_PANEL_SIZE_SMALL);
 
-        // 创建Bed type选择控件
         wxBoxSizer* bed_type_sizer = new wxBoxSizer(wxHORIZONTAL);
         wxStaticText* bed_type_title = new wxStaticText(p->panel_printer_preset, wxID_ANY, _L("Bed type"));
         bed_type_title->Wrap(-1);
@@ -1144,7 +1131,6 @@ Sidebar::Sidebar(Plater *parent)
             }
         }
 
-        // 添加链接事件等
         bed_type_title->Bind(wxEVT_ENTER_WINDOW, [bed_type_title, this](wxMouseEvent &e) {
             e.Skip();
             auto font = bed_type_title->GetFont();
@@ -1175,12 +1161,10 @@ Sidebar::Sidebar(Plater *parent)
         int bed_type_idx = bed_type_value - 1;
         m_bed_type_list->Select(bed_type_idx);
 
-        // 布局Bed type控件
         bed_type_sizer->Add(bed_type_title, 0, wxLEFT | wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
         bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(0));
         p->panel_printer_preset->SetSizer(bed_type_sizer);
 
-        // 添加到垂直布局
         vsizer_printer->Add(p->panel_printer_preset, 0, wxEXPAND | wxALL, FromDIP(4));
         vsizer_printer->AddSpacer(FromDIP(8));
 
@@ -1192,22 +1176,18 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_content->Layout();
         scrolled_sizer->Add(p->m_panel_printer_content, 0, wxEXPAND, 0);
 
-        // 创建Nozzle notebook的容器
         StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                                     wxTAB_TRAVERSAL | wxBORDER_NONE);
         nozzle_container->SetCornerRadius(8);
         // nozzle_container->SetBorderColor(panel_bd_col);
 
-        // 创建notebook
         p->m_nozzle_notebook = new CustomNotebook(nozzle_container, wxID_ANY);
 
-        // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
         nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
         nozzle_container->SetSizer(nozzle_sizer);
         nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
 
-        // 添加到主布局
         vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
 
         // Initialize nozzle settings
@@ -1645,19 +1625,16 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     bool use_new_connection = appconfig->get("use_new_connect") == "true";
 
-    // 隐藏所有按钮（使用 combo 内部的按钮）
     p->combo_printer->set_show_machine_connecting_button(false);
     p->combo_printer->set_show_connection_button(false);
 
     if (preset_bundle.use_bbl_network()) {
         //only show connection button for not-BBL printer
-        // connection_btn->Hide(); // 已在上面隐藏
         //only show sync-ams button for BBL printer
         ams_btn->Show();
         //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
-        // connection_btn->Hide(); // 已在上面隐藏
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
 
@@ -1701,7 +1678,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    // 加载二代机页面
                     url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=3");
                 }
             }
@@ -1732,8 +1708,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 }
             }
 
-            // 新连接 / U1 测试路径：原逻辑在「设备列表里已有 connected 记录」时从不 load_printer_url，PrinterWebView 会一直保持 about:blank。
-            // 静态 is_sm_page 还会在首次失败后不再重试。此处统一为：尚未加载 Flutter/orca 设备页则补载。
             if ((use_new_connection || is_test) && reload_printer_view) {
                 PrinterWebView* pv = p_mainframe->m_printer_view;
                 if (pv && !pv->isSnapmakerPage()) {
@@ -1795,10 +1769,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             m_bed_type_list->SetSelection((int)bed_type_to_use - 1);
         }
     } else {
-        // Orca: 不支持多床型时，从配置读取默认床型
         BedType default_bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
         
-        // Orca: 即使不支持多床型，也需要保存床型到 project_config，确保数据一致性
         wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(default_bed_type));
         
         // Orca: combobox don't have the btDefault option, so we need to -1
@@ -2542,7 +2514,6 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             preset->is_visible = true; // force visible
             
             for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                // 当前原则上不支持两个头使用不同的喷嘴型号
                 p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
             }
 
@@ -2560,7 +2531,6 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         diameter_sizer->AddSpacer(10);
         diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
-        // 删除Flow相关控件
 
         // Add edit button
         ScalableButton* edit_btn = new ScalableButton(nozzle_panel, wxID_ANY, "edit");
@@ -2583,7 +2553,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         p->m_nozzle_edit_btns.push_back(edit_btn);
 
         tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
-        tab_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10)); // 添加右边距
+        tab_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
         nozzle_panel->SetSizer(tab_sizer);
 
@@ -13711,7 +13681,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
     // if physical_printer is selected, send gcode for this printer
     // DynamicPrintConfig* physical_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
 
-    // 校验机型
     auto devices = wxGetApp().app_config->get_devices();
     std::string connect_preset = "";
     for (const auto device : devices) {
@@ -13758,8 +13727,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
     local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
 
     if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
-        // 先不创建job，直接创建上传 / 上传下载对话框
-        // 获取默认文件名
         // Obtain default output path
         fs::path default_output_file;
         try {
@@ -13782,12 +13749,10 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             default_output_file.replace_extension("3mf");
         }
 
-        // 获取文件路径
         auto file_path = get_partplate_list().get_curr_plate()->get_tmp_gcode_path();
         upload_job.upload_data.source_path = file_path;
         upload_job.upload_data.upload_path = default_output_file;
 
-        // 选择上传 or 打印
         // Repetier specific: Query the server for the list of file groups.
         wxArrayString groups;
 
@@ -13800,7 +13765,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
                                 config->get_bool("open_device_tab_post_upload"));
         dlg.init();
         if (dlg.ShowModal() == wxID_CANCEL) {
-            // 如果用户取消操作，直接返回
             return;
         }
         config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());

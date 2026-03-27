@@ -57,11 +57,8 @@ webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
 #ifdef __WIN32__
 
 // ============================================================
-// Hook wxCreateCoreWebView2EnvironmentWithOptions 以注册 orca:// 自定义 scheme
-// 不需要修改 wxWidgets 源码，在 Environment 创建时自动注入 scheme 注册
 // ============================================================
 
-// webview_edge.cpp 中的全局函数指针（链接时可见）
 typedef HRESULT (__stdcall *CreateCoreWebView2EnvironmentWithOptions_t)(
     PCWSTR browserExecutableFolder,
     PCWSTR userDataFolder,
@@ -77,12 +74,8 @@ static HRESULT __stdcall CreateEnvWithOrcaScheme(
     ICoreWebView2EnvironmentOptions* environmentOptions,
     ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler* handler)
 {
-    // wxWidgets 的 CoreWebView2EnvironmentOptions 对象是用旧版 SDK (1.0.1418.22) 编译的，
-    // 不实现 ICoreWebView2EnvironmentOptions4，因此 QueryInterface 会失败。
-    // 解决方案：用项目自己的新版头文件创建新的 options 对象，它实现了 Options4~Options8。
     auto newOptions = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
 
-    // 从旧 options 对象复制 AdditionalBrowserArguments（wxWidgets 用它设置 user-agent），并合并本机所需参数
     wxString browser_args;
     if (environmentOptions) {
         LPWSTR args = nullptr;
@@ -91,15 +84,11 @@ static HRESULT __stdcall CreateEnvWithOrcaScheme(
             CoTaskMemFree(args);
         }
     }
-    // WebView2 中文档源为 orca://app 时，对 https 的 XMLHttpRequest/fetch 会执行严格 CORS；api.snapmaker.cn 等若未返回
-    // Access-Control-Allow-Origin（无法列举自定义 scheme 源）则请求被拦截，首页数据失败白屏。macOS WKWebView 对自定义 scheme 往往更宽松。
-    // 以下 Chromium 开关用于嵌入式仅加载本地 Flutter + 固定 API 的场景（勿用于加载任意不可信网页）。
     if (!browser_args.empty())
         browser_args += L' ';
     browser_args += L"--disable-web-security --disable-site-isolation-trials";
     newOptions->put_AdditionalBrowserArguments(browser_args.wc_str());
 
-    // 在新 options 上注册 orca:// 自定义 scheme
     ICoreWebView2EnvironmentOptions4* options4 = nullptr;
     if (SUCCEEDED(newOptions.Get()->QueryInterface(IID_PPV_ARGS(&options4)))) {
         auto scheme = Microsoft::WRL::Make<CoreWebView2CustomSchemeRegistration>(L"orca");
@@ -115,7 +104,6 @@ static HRESULT __stdcall CreateEnvWithOrcaScheme(
         BOOST_LOG_TRIVIAL(error) << "HookWebView2: QueryInterface for ICoreWebView2EnvironmentOptions4 failed even on new options";
     }
 
-    // 传递新的 options 对象（替代 wxWidgets 的旧对象）
     return g_originalCreateEnv(browserExecutableFolder, userDataFolder, newOptions.Get(), handler);
 }
 
@@ -125,8 +113,6 @@ static void HookWebView2EnvironmentCreation()
     if (hooked) return;
     hooked = true;
 
-    // 触发 WebView2Loader.dll 加载（如果尚未加载）
-    // MSWSetBrowserExecutableDir 应已由调用方设置
     wxWebViewFactoryEdge factory;
     factory.IsAvailable();
 
@@ -198,8 +184,6 @@ DWORD DownloadAndInstallWV2RT() {
 class WebViewEdge : public wxWebViewEdge
 {
 public:
-    /// 注册 orca:// 自定义 scheme 拦截器，通过 WebResourceRequested 事件从本地目录读取文件
-    /// 与 macOS 的 OrcaLocalHandler 行为一致
     bool SetupOrcaScheme(const wxString& localFolderPath, const wxString& userAssetsRoot = wxEmptyString)
     {
         m_orcaRootPath = localFolderPath;
@@ -292,14 +276,12 @@ public:
 private:
     bool InstallOrcaSchemeHandler(ICoreWebView2* webView2)
     {
-        // 添加 orca:// 请求过滤器
         HRESULT hr = webView2->AddWebResourceRequestedFilter(L"orca://*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
         if (FAILED(hr)) {
             BOOST_LOG_TRIVIAL(error) << "WebViewEdge: AddWebResourceRequestedFilter failed: 0x" << std::hex << hr;
             return false;
         }
 
-        // 获取 Environment 用于创建响应
         ICoreWebView2_2* webView2_2 = nullptr;
         hr = webView2->QueryInterface(IID_PPV_ARGS(&webView2_2));
         if (FAILED(hr) || !webView2_2) {
@@ -334,7 +316,6 @@ private:
             BOOST_LOG_TRIVIAL(error) << "WebViewEdge: add_WebResourceRequested failed: 0x" << std::hex << hr;
             env->Release();
         }
-        // env 的生命周期由 lambda 捕获管理，不在这里 Release
         return SUCCEEDED(hr);
     }
 
@@ -357,15 +338,12 @@ private:
         wxString uriStr(uri);
         CoTaskMemFree(uri);
 
-        // 解析 orca://app/path
         wxURI u(uriStr);
         wxString path = u.GetPath();
 
-        // 去掉开头的斜杠
         while (!path.empty() && (path[0] == '/' || path[0] == '\\'))
             path = path.Mid(1);
 
-        // 安全检查：防止路径遍历
         if (path.Contains(".."))
             return CreateErrorResponse(env, args, 403, L"Forbidden");
 
@@ -388,15 +366,11 @@ private:
 
         BOOST_LOG_TRIVIAL(trace) << "WebViewEdge::HandleOrcaRequest uri=" << uriStr.ToUTF8() << " fullPath=" << fullPath.ToUTF8();
 
-        // 打开文件流
         IStream* stream = nullptr;
         HRESULT hr = SHCreateStreamOnFileEx(fullPath.wc_str(), STGM_READ | STGM_SHARE_DENY_NONE, 0, FALSE, nullptr, &stream);
         if (FAILED(hr) || !stream) {
-            // SPA fallback：如果路径没有文件扩展名（说明是客户端路由如 /bridge），
-            // 回退到同级目录或上级目录的 index.html，让 Flutter 路由器处理
             if (!pathForMime.Contains(".")) {
                 wxString fallbackPath;
-                // 尝试 dirname(path)/index.html，例如 web/flutter_web/bridge → web/flutter_web/index.html
                 wxFileName fn(fullPath);
                 wxString dir = fn.GetPath();
                 fallbackPath = dir + wxFileName::GetPathSeparator() + "index.html";
@@ -404,7 +378,6 @@ private:
                 IStream* fallbackStream = nullptr;
                 hr = SHCreateStreamOnFileEx(fallbackPath.wc_str(), STGM_READ | STGM_SHARE_DENY_NONE, 0, FALSE, nullptr, &fallbackStream);
                 if (FAILED(hr) || !fallbackStream) {
-                    // 再尝试 rootPath/index.html
                     fallbackPath = rootPath + "index.html";
                     hr = SHCreateStreamOnFileEx(fallbackPath.wc_str(), STGM_READ | STGM_SHARE_DENY_NONE, 0, FALSE, nullptr, &fallbackStream);
                 }
@@ -423,11 +396,9 @@ private:
             }
         }
 
-        // 确定 MIME 类型
         wxString mime = GetMimeType(pathForMime);
         wxString headers = wxString::Format("Content-Type: %s\r\nAccess-Control-Allow-Origin: *", mime);
 
-        // 创建响应
         ICoreWebView2WebResourceResponse* response = nullptr;
         hr = env->CreateWebResourceResponse(stream, 200, L"OK", headers.wc_str(), &response);
         stream->Release();
@@ -669,7 +640,6 @@ wxWebView* WebView::CreateWebViewWithLocalRoot(wxWindow *parent, wxString const 
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52", SLIC3R_VERSION,
         Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
     webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-    // 注册 orca:// 自定义 scheme 处理器，拦截请求并从 localRootPath 读取文件
     WebView::SetupOrcaScheme(webView, localRootPath, userAssetsRoot);
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
     webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));

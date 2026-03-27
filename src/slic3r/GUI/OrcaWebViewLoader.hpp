@@ -10,13 +10,13 @@ namespace GUI {
  * 统一配置：本地 Web 加载参数
  */
 struct OrcaWebLoadConfig {
-    wxString root_path;        ///< 本地 Web 根目录
-    wxString entry_url;        ///< 入口 URL：须为目录形式 orca://app/web/flutter_web/（勿用 index.html，见 LoadLocalHtml 注释）
-    wxString user_assets_dir;   ///< 用户资源目录（temp/orca_user_assets）
-    wxString route_path;       ///< 路由路径（如 /bridge）
-    wxString route_params;     ///< 路由参数（如 locale=zh-cn&dark_mode=1）
+    wxString root_path;
+    wxString entry_url;
+    wxString user_assets_dir;
+    wxString route_path;
+    wxString route_params;
     bool     use_debug_server = false;
-    wxString debug_server_url; ///< Debug 模式下的远程服务器 URL
+    wxString debug_server_url;
 };
 
 /**
@@ -87,7 +87,7 @@ public:
      * 直接加载 HTML 内容到 WebView（适用于已有 HTML 字符串的场景）
      * @param webview 目标 WebView
      * @param html    HTML 内容
-     * @param base_url 基准 URL（如 orca://app/），用于解析相对路径
+     * @param base_url 基准 URL（如 orca:
      */
     static void LoadHtml(wxWebView* webview, const wxString& html, const wxString& base_url);
 };

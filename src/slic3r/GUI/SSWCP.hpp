@@ -193,7 +193,6 @@ private:
 
 
 public:
-    // 抽象工具类函数
     void update_filament_info(const json& objects, bool send_message = false);
 
 protected:
@@ -442,25 +441,18 @@ private:
     // get is legal to send & print
     void sw_GetPrintLegal();
 
-    // get 打印任务zip流
     void sw_GetPrintZip();
 
-    // 结束预打印流程
     void sw_FinishPreprint();
 
-    // 设置已绑定用户信息
     void sw_ServerClientManagerSetUserinfo();
 
-    // 请求设备下载文件并打印
     void sw_PullCloudFile();
 
-    // 请求设备取消下载文件
     void sw_CancelPullCloudFile();
 
-    // 请求设备下载文件并打印
     void sw_StartCloudPrint();
 
-    // 设备耗材同步
     void sw_UpdateMachineFilamentInfo();
 
 

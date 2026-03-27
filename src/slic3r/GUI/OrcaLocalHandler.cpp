@@ -56,12 +56,9 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
 
     BOOST_LOG_TRIVIAL(trace) << "OrcaLocalHandler::GetFile uri=" << uri.ToUTF8() << " fullPath=" << fullPath.ToUTF8();
 
-    // 入口 URL 为 .../web/flutter_web/?query 时，路径指向目录，需映射到 index.html
-    // 使用 wxFileName::DirExists() 实例方法：部分工具链下静态 wxFileName::DirExists(path) 不可用或声明不一致
     if (!wxFileExists(fullPath)) {
         wxFileName asDir(fullPath);
         if (asDir.DirExists()) {
-            // GetPathSeparator() 为 wxUniChar，不可与 "index.html" 直接 +，否则重载歧义
             fullPath.Append(wxFileName::GetPathSeparator());
             fullPath += "index.html";
             pathForMime = "index.html";
@@ -69,8 +66,6 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
     }
 
     if (!wxFileExists(fullPath)) {
-        // SPA fallback：如果路径没有文件扩展名（说明是客户端路由如 /bridge），
-        // 回退到同级目录或上级目录的 index.html，让 Flutter 路由器处理
         if (!pathForMime.Contains(".")) {
             wxFileName fn(fullPath);
             wxString dir = fn.GetPath();
@@ -78,7 +73,6 @@ wxFSFile* OrcaLocalHandler::GetFile(const wxString& uri)
             fallbackPath.Append(wxFileName::GetPathSeparator());
             fallbackPath += "index.html";
             if (!wxFileExists(fallbackPath)) {
-                // 再尝试 rootPath/index.html
                 fallbackPath = m_root + "index.html";
             }
             if (wxFileExists(fallbackPath)) {

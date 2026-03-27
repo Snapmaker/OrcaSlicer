@@ -307,10 +307,20 @@ private:
     std::vector<float> m_used_filament_length;
 	std::vector<std::pair<float, std::vector<float>>> m_used_filament_length_until_layer;
 
+    // -1 = no previous wall extruder (first layer). Updated per layer in generate().
+    int m_last_wall_extruder = -1;
+
     // Return index of first toolchange that switches to non-soluble extruder
     // ot -1 if there is no such toolchange.
     int first_toolchange_to_nonsoluble(
             const std::vector<WipeTowerInfo::ToolChange>& tool_changes) const;
+
+    // Select which toolchange index should get the wall (finish_layer) extrusion.
+    // Returns idx >= 0 to draw wall after tool_changes[idx], or -1 to draw wall before all toolchanges (using old_tool).
+    // Priorities: 1) same material as previous layer wall, 2) material appearing in next layer, 3) fallback first non-soluble.
+    int select_wall_extruder_idx(
+            const std::vector<WipeTowerInfo::ToolChange>& tool_changes,
+            const WipeTowerInfo* next_layer_info) const;
 
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,

@@ -88,6 +88,14 @@
 	text-align:left;
 }
 
+.PNameRow
+{
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 8px;
+}
+
 .pNozzel
 {
 	display: flex;
@@ -95,12 +103,15 @@
 	justify-content:flex-start;
 	color: #5A5A5A;	
 	padding-left: 0px; /* ORCA Align checkboxes with with model text */
+	min-width: 20px;
 }
 
 .pNozzel input
 {
 	vertical-align: middle;
-	margin-right: 5px;
+	margin-right: 0;
+	width: 16px;
+	height: 16px;
 }
 
 

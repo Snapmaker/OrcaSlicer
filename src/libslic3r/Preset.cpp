@@ -2649,6 +2649,19 @@ std::vector<std::string> PresetCollection::diameters_of_selected_printer()
     return std::vector<std::string>{diameters.begin(), diameters.end()};
 }
 
+std::vector<std::string> PresetCollection::diameters_for_same_printer_model()
+{
+    std::set<std::string> diameters;
+    const std::string     printer_model = m_edited_preset.config.opt_string("printer_model");
+    for (auto &preset : m_presets) {
+        if (!preset.is_system)
+            continue;
+        if (preset.config.opt_string("printer_model") == printer_model)
+            diameters.insert(preset.config.opt_string("printer_variant"));
+    }
+    return std::vector<std::string>{diameters.begin(), diameters.end()};
+}
+
 void PresetCollection::set_default_suppressed(bool default_suppressed)
 {
     if (m_default_suppressed != default_suppressed) {

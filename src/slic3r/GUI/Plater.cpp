@@ -1055,7 +1055,7 @@ Sidebar::Sidebar(Plater *parent)
         p->m_text_printer_settings = new Label(p->m_panel_printer_title, _L("Printer"), LB_PROPAGATE_MOUSE_EVENT);
 
         // Use ams_fila_sync icon (sync_nozzle_info.svg does not exist in resources)
-        p->m_printerinfo_syncbtn = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "printer");
+        p->m_printerinfo_syncbtn = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "nozzle_sync");
         p->m_printerinfo_syncbtn->SetToolTip(_L("sync nozzle info"));
         p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
             bool hasConnectDevice = false;
@@ -2711,22 +2711,21 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                                                 nullptr, wxCB_READONLY);
         
 
-        if (!wxGetApp().preset_bundle->printers.get_edited_preset().is_system) {
-            auto diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
-            diameter_combo->AppendString(diameter);
-            diameter_combo->Enable(false);
-        } else {
-            auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
-            if (diameters.size() < 2) {
-                diameter_combo->Enable(false);
-            }
-            for (auto& diameter : diameters) {
-                wxString str = diameter + "mm";
-                diameter_combo->AppendString(str);
-            }
+        // Use all system presets for this printer_model so the combo stays usable when only one
+        // variant is marked visible (e.g. after setup wizard / preset visibility filters).
+        auto diameters = wxGetApp().preset_bundle->printers.diameters_for_same_printer_model();
+        for (auto& diameter : diameters) {
+            diameter_combo->AppendString(wxString(diameter) + "mm");
         }
-        
-        
+        if (diameter_combo->GetCount() == 0) {
+            const auto *pv = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant");
+            if (pv)
+                diameter_combo->AppendString(wxString(pv->value) + "mm");
+        }
+        if (diameters.size() < 2) {
+            diameter_combo->Enable(false);
+        }
+
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
 
             auto* pNotice = p->plater->get_notification_manager();

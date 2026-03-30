@@ -51,25 +51,22 @@
 	display: flex;
 	align-items: center;
 	justify-content: flex-start;
-	gap: 8px;
+	gap: 5px;
 }
 
 .pNozzel
 {
-	display: flex;
-	align-items: center;
-	justify-content:flex-start;
-	color: #5A5A5A;	
-	padding-left: 0;
-	min-width: 20px;
+	display: contents;
+	color: #5A5A5A;
 }
 
-.pNozzel input[type="checkbox"] {
-    vertical-align: middle;
-    margin-right: 0;
-    cursor: pointer;
-    width: 16px;
-    height: 16px;
+.PNameRow input[type="checkbox"] {
+	flex: 0 0 auto;
+	margin: 0;
+	cursor: pointer;
+	width: 16px;
+	height: 16px;
+	vertical-align: middle;
 }
 
 /*-----Notice-----*/

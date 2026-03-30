@@ -193,12 +193,13 @@
         "0",
         "0"
     ],
-    "ramming_pressure_advance_value": "0.02",
     "default_print_profile": "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
+    "ramming_pressure_advance_value": "0.02",
     "tool_change_temprature_wait": "0",
     "printer_notes": "",
     "machine_pause_gcode": "M600",
     "default_bed_type": "Textured PEI Plate",
     "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]\nSET_PRINT_STATS_INFO TOTAL_LAYER={total_layer_count} CURRENT_LAYER={layer_num+1}",
-    "nozzle_volume": "143"
+    "nozzle_volume": "143",
+    "support_multi_bed_types": "1"
 }

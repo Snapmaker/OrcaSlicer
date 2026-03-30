@@ -393,9 +393,24 @@ static const t_config_enum_values s_keys_map_BedType = {
     { "High Temp Plate",    btPEI  },
     { "Textured PEI Plate", btPTE },
     { "Textured Cool Plate", btPCT },
-    { "Graphic Effect Steel Plate", btGESP }
+    // Canonical name for btGESP (UI: "Graphic Effect Plate"). Keep legacy string so old projects/3MF still deserialize.
+    { "Graphic Effect Plate", btGESP },
+    { "Graphic Effect Steel Plate", btGESP },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(BedType)
+
+namespace {
+// Two keys map to btGESP; enum_names_from_keys_map assigns the lexicographically last key to names[btGESP].
+// Force the canonical string used by serialize() / 3MF export.
+struct BedTypeGespCanonicalSerializeName
+{
+    BedTypeGespCanonicalSerializeName()
+    {
+        if (s_keys_names_BedType.size() > size_t(btGESP))
+            s_keys_names_BedType[size_t(btGESP)] = "Graphic Effect Plate";
+    }
+} s_bed_type_gesp_canonical_serialize_name;
+} // namespace
 
 // BBS
 static const t_config_enum_values s_keys_map_LayerSeq = {
@@ -760,7 +775,7 @@ void PrintConfigDef::init_fff_params()
     def->full_label = L("Bed temperature");
     def->min = 0;
     def->max = 300;
-    def->set_default_value(new ConfigOptionInts{45});//todo by alves will be update the mini temp
+    def->set_default_value(new ConfigOptionInts{45});
 
     def             = this->add("graphic_effect_plate_temp", coInts);
     def->label      = L("Other layers");
@@ -6972,6 +6987,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         }
     } else if (opt_key == "overhang_fan_threshold" && value == "5%") {
         value = "10%";
+    } else if (opt_key == "curr_bed_type" && value == "Graphic Effect Steel Plate") {
+        value = "Graphic Effect Plate";
     } else if( opt_key == "wall_infill_order" ) {
         if (value == "inner wall/outer wall/infill" || value == "infill/inner wall/outer wall") {
             opt_key = "wall_sequence";

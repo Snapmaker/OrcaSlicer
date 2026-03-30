@@ -23,6 +23,8 @@
 #include <wx/imaglist.h>
 #include <wx/settings.h>
 #include <wx/filedlg.h>
+#include <iomanip>
+#include <sstream>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
@@ -63,6 +65,66 @@ namespace GUI {
 #define DISABLE_UNDO_SYS
 
 static const std::vector<std::string> plate_keys = { "curr_bed_type", "skirt_start_angle", "first_layer_print_sequence", "first_layer_sequence_choice", "other_layers_print_sequence", "other_layers_sequence_choice", "print_sequence", "spiral_mode"};
+
+static std::string bed_type_to_rule_key(BedType bed_type)
+{
+    switch (bed_type) {
+    case btPEI:  return "btPEI";
+    case btGESP: return "btGESP";
+    default:     return "";
+    }
+}
+
+static std::string nozzle_diameter_to_rule_key(double nozzle_diameter)
+{
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(2) << nozzle_diameter;
+    std::string out = ss.str();
+    while (!out.empty() && out.back() == '0')
+        out.pop_back();
+    if (!out.empty() && out.back() == '.')
+        out.pop_back();
+    return out + "mm";
+}
+
+static void validate_filament_hot_bed_nozzle_relation(wxWindow* parent)
+{
+    (void)parent;
+    auto& app = wxGetApp();
+    if (!app.has_filament_hot_bed_nozzle_rules() || app.preset_bundle == nullptr)
+        return;
+
+    const Preset& filament_preset = app.preset_bundle->filaments.get_edited_preset();
+    std::string filament_type;
+    if (auto filament_type_opt = filament_preset.config.option<ConfigOptionStrings>("filament_type");
+        filament_type_opt != nullptr && !filament_type_opt->values.empty())
+    {
+        filament_type = filament_type_opt->values.front();
+    }
+    if (filament_type.empty())
+        return;
+
+    auto&       printer_preset = app.preset_bundle->printers.get_edited_preset();
+    const auto& printer_config = printer_preset.config;
+    BedType     bed_type = printer_preset.get_default_bed_type(app.preset_bundle);
+    if (app.preset_bundle->project_config.has("curr_bed_type"))
+        bed_type = app.preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+    const std::string bed_key = bed_type_to_rule_key(bed_type);
+
+    if (!bed_key.empty()) {        
+        const bool is_supported = app.is_bed_filament_supported(bed_key, filament_type);
+        const bool is_warning   = app.is_bed_filament_warning(bed_key, filament_type);
+        (void)is_supported;
+        (void)is_warning;
+    }
+
+    const auto* nozzle_opt = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (nozzle_opt != nullptr && !nozzle_opt->values.empty()) {
+        const std::string nozzle_key = nozzle_diameter_to_rule_key(nozzle_opt->values.front());
+        const bool is_forbidden = app.is_nozzle_filament_forbidden(nozzle_key, filament_preset.name);
+        (void)is_forbidden;
+    }
+}
 
 void Tab::Highlighter::set_timer_owner(wxEvtHandler* owner, int timerid/* = wxID_ANY*/)
 {
@@ -2986,7 +3048,6 @@ void TabPrintPlate::build()
     m_config->option("curr_bed_type", true);
     if (m_preset_bundle->project_config.has("curr_bed_type")) {
         BedType global_bed_type = m_preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-        global_bed_type = BedType(global_bed_type - 1);
         m_config->set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(global_bed_type));
     }
     m_config->option("first_layer_sequence_choice", true);
@@ -3163,6 +3224,8 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
     }
 
     wxGetApp().params_panel()->notify_object_config_changed();
+    if (k == "curr_bed_type")
+        validate_filament_hot_bed_nozzle_relation(parent());
     update();
 }
 
@@ -4695,6 +4758,8 @@ if (is_marlin_flavor)
 
                     update_dirty();
                     update();
+                    if (opt_key.find("nozzle_diameter") != std::string::npos)
+                        validate_filament_hot_bed_nozzle_relation(parent());
                 };
 
                 optgroup = page->new_optgroup(L("Layer height limits"), L"param_layer_height");
@@ -5560,6 +5625,8 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
 
     if (technology_changed)
         wxGetApp().mainframe->technology_changed();
+    if (!canceled && m_presets->type() == Preset::TYPE_FILAMENT)
+        validate_filament_hot_bed_nozzle_relation(parent());
     BOOST_LOG_TRIVIAL(info) << boost::format("select preset, exit");
 
     return !canceled;

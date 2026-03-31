@@ -917,6 +917,12 @@ public:
     // SM Orca: Initialize filament-to-physical-extruder mapping table
     void                initialize_filament_extruder_map();
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
+    // On-demand evaluation vs filament_hot_bed_nozzles.json (calls extruders(true) once internally).
+    void                filament_rule_mismatch_flags(std::string& out_nozzle, 
+                                                     bool& out_gesp,
+                                                     bool& out_pei_not_pla,
+                                                     bool& out_pei_tpu) const;
+    
     double              max_allowed_layer_height() const;
     bool                has_support_material() const;
     // Make sure the background processing has no access to this model_object during this call!

@@ -34,8 +34,6 @@
 #include <mutex>
 #include <stack>
 #include <unordered_map>
-#include <unordered_set>
-
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
 #define LOG_FILES_MAX_NUM           30
@@ -425,7 +423,7 @@ private:
 
     std::vector<std::string> split_str(std::string src, std::string separator);
     void            load_filament_hot_bed_nozzle_relations();
-    bool            has_filament_hot_bed_nozzle_rules() const { return m_filament_hot_bed_nozzle_rules_loaded; }
+    bool            has_filament_hot_bed_nozzle_rules() const;
     bool            is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const;
     bool            is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const;
     bool            is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const;
@@ -833,11 +831,6 @@ private:
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
     std::string             m_open_method;
-    bool                    m_filament_hot_bed_nozzle_rules_loaded { false };
-    std::unordered_map<std::string, std::unordered_set<std::string>> m_bed_support_filament_types;
-    std::unordered_map<std::string, std::unordered_set<std::string>> m_bed_warning_filament_types;
-    std::unordered_map<std::string, std::unordered_set<std::string>> m_nozzle_forbidden_filament_presets;
-
     SMUserInfo m_login_userinfo;
 
 public:

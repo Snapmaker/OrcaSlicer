@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -179,66 +180,27 @@ namespace GUI {
 
 void GUI_App::load_filament_hot_bed_nozzle_relations()
 {
-    m_bed_support_filament_types.clear();
-    m_bed_warning_filament_types.clear();
-    m_nozzle_forbidden_filament_presets.clear();
-    m_filament_hot_bed_nozzle_rules_loaded = false;
-
-    const auto file_path = (boost::filesystem::path(Slic3r::resources_dir()) / "profiles" / "Snapmaker" / "filament" / "filament_hot_bed_nozzles.json").string();
-    if (!boost::filesystem::exists(file_path)) {
-        BOOST_LOG_TRIVIAL(warning) << "filament_hot_bed_nozzles.json not found: " << file_path;
-        return;
-    }
-
-    try {
-        boost::property_tree::ptree root;
-        boost::property_tree::read_json(file_path, root);
-
-        for (const auto& kv : root) {
-            const std::string& rule_key = kv.first;
-            const auto&        rule_obj = kv.second;
-            auto& support_set = m_bed_support_filament_types[rule_key];
-            auto& warning_set = m_bed_warning_filament_types[rule_key];
-            auto& forbid_set  = m_nozzle_forbidden_filament_presets[rule_key];
-
-            for (const auto& child : rule_obj) {
-                if (child.first == "support") {
-                    for (const auto& item : child.second)
-                        support_set.insert(item.second.get_value<std::string>());
-                } else if (child.first == "warning") {
-                    for (const auto& item : child.second)
-                        warning_set.insert(item.second.get_value<std::string>());
-                } else if (child.first == "forbidden") {
-                    for (const auto& item : child.second)
-                        forbid_set.insert(item.second.get_value<std::string>());
-                }
-            }
-        }
-        m_filament_hot_bed_nozzle_rules_loaded = true;
-        BOOST_LOG_TRIVIAL(info) << "Loaded filament/hotbed/nozzle rules from " << file_path;
-    } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << "Failed to parse filament_hot_bed_nozzles.json: " << e.what();
-    }
+    FilamentHotBedNozzleRules::singleton().load();
 }
 
 bool GUI_App::is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const
 {
-    auto it = m_bed_support_filament_types.find(bed_key);
-    if (it == m_bed_support_filament_types.end())
-        return true;
-    return it->second.empty() || it->second.find(filament_type) != it->second.end();
+    return FilamentHotBedNozzleRules::singleton().is_bed_filament_supported(bed_key, filament_type);
 }
 
 bool GUI_App::is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const
 {
-    auto it = m_bed_warning_filament_types.find(bed_key);
-    return it != m_bed_warning_filament_types.end() && it->second.find(filament_type) != it->second.end();
+    return FilamentHotBedNozzleRules::singleton().is_bed_filament_warning(bed_key, filament_type);
 }
 
 bool GUI_App::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const
 {
-    auto it = m_nozzle_forbidden_filament_presets.find(nozzle_key);
-    return it != m_nozzle_forbidden_filament_presets.end() && it->second.find(filament_preset_name) != it->second.end();
+    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_forbidden(nozzle_key, filament_preset_name);
+}
+
+bool GUI_App::has_filament_hot_bed_nozzle_rules() const
+{
+    return FilamentHotBedNozzleRules::singleton().is_loaded();
 }
 
 class MainFrame;

@@ -2347,8 +2347,23 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         int curr_bed_type = m_config.curr_bed_type.getInt();
 
         std::string first_layer_bed_temp_str;
-        const ConfigOptionInts* first_bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key((BedType)curr_bed_type));
-        const ConfigOptionInts* bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_key((BedType)curr_bed_type));
+        const BedType curr_bed = static_cast<BedType>(curr_bed_type);
+        // Some bed types (for example newly added btGESP) may not have dedicated temp options in old presets.
+        // Fallback to PEI temps to avoid null-dereference during slicing placeholder setup.
+        const std::string first_bed_temp_key = get_bed_temp_1st_layer_key(curr_bed).empty() ? get_bed_temp_1st_layer_key(btPEI) : get_bed_temp_1st_layer_key(curr_bed);
+        const std::string bed_temp_key       = get_bed_temp_key(curr_bed).empty() ? get_bed_temp_key(btPEI) : get_bed_temp_key(curr_bed);
+        const ConfigOptionInts* first_bed_temp_opt = m_config.option<ConfigOptionInts>(first_bed_temp_key);
+        const ConfigOptionInts* bed_temp_opt       = m_config.option<ConfigOptionInts>(bed_temp_key);
+        ConfigOptionInts        safe_zero_bed_temp({ 0 });
+        if (first_bed_temp_opt == nullptr || bed_temp_opt == nullptr) {
+            first_bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(btPEI));
+            bed_temp_opt       = m_config.option<ConfigOptionInts>(get_bed_temp_key(btPEI));
+        }
+        if (first_bed_temp_opt == nullptr || bed_temp_opt == nullptr) {
+            BOOST_LOG_TRIVIAL(error) << "Missing bed temperature options for current bed type, using safe zero placeholders.";
+            first_bed_temp_opt = &safe_zero_bed_temp;
+            bed_temp_opt       = &safe_zero_bed_temp;
+        }
         this->placeholder_parser().set("bbl_bed_temperature_gcode", new ConfigOptionBool(false));
         this->placeholder_parser().set("bed_temperature_initial_layer", new ConfigOptionInts(*first_bed_temp_opt));
         this->placeholder_parser().set("bed_temperature", new ConfigOptionInts(*bed_temp_opt));

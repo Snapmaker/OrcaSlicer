@@ -2728,13 +2728,13 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
 
-            auto* pNotice = p->plater->get_notification_manager();
-            if (pNotice)
-            {
-                pNotice->close_notification_of_type(NotificationType::CustomNotification);
-                pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
-                pNotice->set_slicing_progress_hidden();            
-            }
+            //auto* pNotice = p->plater->get_notification_manager();
+            //if (pNotice)
+            //{
+            //    pNotice->close_notification_of_type(NotificationType::CustomNotification);
+            //    pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+            //    pNotice->set_slicing_progress_hidden();            
+            //}
 
             auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
             auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
@@ -3305,6 +3305,11 @@ struct Plater::priv
     std::chrono::steady_clock::time_point m_slice_start_time;
     bool                                  m_slice_timing_active = false;
 
+    // Last filament rule mismatch flags (for CustomNotification debouncing).
+    bool m_prev_filament_nozzle_rule_mismatch{ false };
+    bool m_prev_filament_gesp_bed_rule_mismatch{ false };
+    bool m_prev_filament_pei_bed_rule_mismatch{ false };
+
     static const std::regex pattern_bundle;
     static const std::regex pattern_3mf;
     static const std::regex pattern_zip_amf;
@@ -3493,6 +3498,7 @@ struct Plater::priv
     }
 
     void process_validation_warning(StringObjectException const &warning) const;
+    void notify_filament_compatibility_after_apply();
 
     bool background_processing_enabled() const {
 #ifdef SUPPORT_BACKGROUND_PROCESSING
@@ -6304,6 +6310,48 @@ void Plater::priv::process_validation_warning(StringObjectException const &warni
     }
 }
 
+void Plater::priv::notify_filament_compatibility_after_apply()
+{
+    if (printer_technology != ptFFF)
+        return;
+    if (q->only_gcode_mode())
+        return;
+
+    Slic3r::Print *print = background_process.fff_print();
+    if (print == nullptr)
+        return;
+
+    std::string filamentNozzleMsg("");
+    bool        isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
+
+    print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu);
+
+    wxString filamentMismatchNozzleMsg     = wxString(_L("The combination of hot end and consumables is not recommended. The message reads: Printing TPU 95A HF with 0.2mm hardened steel hot end is not recommended. We suggest using 0.4mm or larger."));
+    wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("The current PEI glossy filament may have insufficient adhesion on the first layer of the heated bed. It is recommended to apply glue before printing to enhance adhesion."));
+    wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Warning: There is a risk of excessive adhesion between the current filament and the smooth PEI heated bed. It is recommended to apply liquid or solid adhesive before printing to protect the heated bed surface and facilitate part removal."));
+    wxString filamentMismatchGraphicBedMsg = wxString(_L("The current filament has low adhesion to the special effects texture heated bed, resulting in a higher risk of printing failure. It is recommended to use other filaments for printing."));
+   
+    if (isGraphicMatch || isPeiBedMatchNotPla)
+    {
+        notification_manager->close_notification_of_type(NotificationType::CustomNotification);
+
+        if (isGraphicMatch)
+            notification_manager->push_notification(filamentMismatchGraphicBedMsg.ToStdString(), 0);
+        if (isPeiBedMatchNotPla)
+            notification_manager->push_notification(filamentMismatchPeiBedMsgNotPla.ToStdString(), 0);
+        if (!filamentNozzleMsg.empty())
+            notification_manager->push_notification(filamentMismatchNozzleMsg.ToStdString(), 0);
+
+        notification_manager->set_slicing_progress_hidden();
+    }
+
+    if (isPeiBedMatchTpu)
+    {            
+            notification_manager->push_notification(filamentMismatchPeiBedMsgTpu.ToStdString(), 0);
+    }
+
+}
+
 
 // Update background processing thread from the current config and Model.
 // Returns a bitmask of UpdateBackgroundProcessReturnState.
@@ -6328,6 +6376,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         this->preview->update_gcode_result(partplate_list.get_current_slice_result());
     }
     Print::ApplyStatus invalidated = background_process.apply(this->model, wxGetApp().preset_bundle->full_config());
+    notify_filament_compatibility_after_apply();
 
     if ((invalidated == Print::APPLY_STATUS_CHANGED) || (invalidated == Print::APPLY_STATUS_INVALIDATED))
         // BBS: add only gcode mode
@@ -7568,13 +7617,13 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
 // BBS
 void Plater::priv::on_combobox_select(wxCommandEvent &evt)
 {
-    auto* pNotice = q->get_notification_manager();
-    if(pNotice)
-    {
-        pNotice->close_notification_of_type(NotificationType::PlaterWarning);    
-        pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
-        pNotice->set_slicing_progress_hidden();
-    }
+    //auto* pNotice = q->get_notification_manager();
+    //if(pNotice)
+    //{
+    //    pNotice->close_notification_of_type(NotificationType::PlaterWarning);    
+    //    pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+    //    pNotice->set_slicing_progress_hidden();
+    //}
 
     PlaterPresetComboBox* preset_combo_box = dynamic_cast<PlaterPresetComboBox*>(evt.GetEventObject());
     if (preset_combo_box) {
@@ -15108,6 +15157,7 @@ void Plater::apply_background_progress()
     bool result_valid = part_plate->is_slice_result_valid();
     //always apply the current plate's print
     Print::ApplyStatus invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+    p->notify_filament_compatibility_after_apply();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, after apply, invalidated= %3%, previous result_valid %4% ") % __LINE__ % plate_index % invalidated % result_valid;
     if (invalidated & PrintBase::APPLY_STATUS_INVALIDATED)
@@ -15147,6 +15197,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
 
         //always apply the current plate's print
         invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+        p->notify_filament_compatibility_after_apply();
         bool model_fits, validate_err;
 
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, after apply, invalidated= %3%, previous result_valid %4% ")%__LINE__ %plate_index  %invalidated %result_valid;
@@ -15453,6 +15504,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
             part_plate->get_print(&print, &gcode_result, NULL);
             //always apply the current plate's print
             invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+            p->notify_filament_compatibility_after_apply();
             bool model_fits, validate_err;
             validate_current_plate(model_fits, validate_err);
 

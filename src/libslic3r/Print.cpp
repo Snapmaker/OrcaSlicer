@@ -16,6 +16,7 @@
 #include "GCode/WipeTower2.hpp"
 #include "Utils.hpp"
 #include "PrintConfig.hpp"
+#include "FilamentHotBedNozzleRules.hpp"
 #include "Model.hpp"
 #include "format.hpp"
 #include <float.h>
@@ -492,8 +493,23 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     }
 
     sort_remove_duplicates(extruders);
+
     return extruders;
 }
+
+void Print::filament_rule_mismatch_flags(std::string& out_nozzle, bool& out_gesp, bool& out_pei_not_pla, bool& out_pei_tpu) const
+{
+    FilamentHotBedNozzleRules::singleton().ensure_loaded();
+    const std::vector<unsigned int> used = extruders(true);
+    FilamentHotBedNozzleRules&      rules = FilamentHotBedNozzleRules::singleton();
+    out_nozzle = rules.evaluate_nozzle_filament_mismatch(m_config, used);
+
+    out_gesp   = rules.evaluate_graphic_effect_bed_filament_mismatch(m_config, used);
+
+    out_pei_tpu     = rules.evaluate_pei_bed_filament_mismatch_tpu(m_config, used);
+    out_pei_not_pla = rules.evaluate_pei_bed_filament_mismatch_not_pla(m_config, used);
+}
+
 
 // This must be called before the mapping is used (e.g., before export_gcode)
 void Print::initialize_filament_extruder_map()

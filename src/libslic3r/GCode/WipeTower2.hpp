@@ -58,6 +58,7 @@ public:
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
+    Vec2f get_rib_offset() const { return m_rib_offset; }
 
 
 
@@ -210,6 +211,7 @@ private:
     float  m_rib_width                    = 10;
     float  m_extra_rib_length             = 0;
     float  m_rib_length                   = 0;
+    Vec2f  m_rib_offset                   = Vec2f::Zero();
 
     bool   m_enable_arc_fitting           = false;
 
@@ -282,8 +284,12 @@ private:
             float first_wipe_line;
             float wipe_volume;
 			float wipe_volume_total;
-            ToolChange(size_t old, size_t newtool, float depth=0.f, float ramming_depth=0.f, float fwl=0.f, float wv=0.f)
-            : old_tool{old}, new_tool{newtool}, required_depth{depth}, ramming_depth{ramming_depth}, first_wipe_line{fwl}, wipe_volume{wv}, wipe_volume_total{wv} {}
+			float purge_volume;
+			float wipe_length;
+			float nozzle_change_depth;
+			float nozzle_change_length;
+            ToolChange(size_t old, size_t newtool, float depth=0.f, float ramming_depth=0.f, float fwl=0.f, float wv=0.f, float wl=0.f, float pv=0.f)
+            : old_tool{old}, new_tool{newtool}, required_depth{depth}, ramming_depth{ramming_depth}, first_wipe_line{fwl}, wipe_volume{wv}, wipe_volume_total{wv}, purge_volume{pv}, wipe_length{wl}, nozzle_change_depth{0.f}, nozzle_change_length{0.f} {}
 		};
 		float z;		// z position of the layer
 		float height;	// layer height
@@ -350,6 +356,50 @@ private:
 		float spacing);
 
     Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
+
+    // Helper function for square algorithm: calculate toolchange depth based on current width
+    WipeTowerInfo::ToolChange set_toolchange(int old_tool, int new_tool,
+                                              float layer_height, float wipe_volume,
+                                              float purge_volume);
+
+    // Block architecture (from BambuStudio)
+    struct WipeTowerBlock {
+        int block_id{0};
+        int filament_adhesiveness_category{0};
+        std::vector<float> layer_depths;
+        std::vector<bool> solid_infill;
+        std::vector<float> finish_depth{0};
+        float depth{0};
+        float start_depth{0};
+        float cur_depth{0};
+        int last_filament_change_id{-1};
+        int last_nozzle_change_id{-1};
+    };
+
+    struct BlockDepthInfo {
+        int category{-1};
+        float depth{0};
+        float nozzle_change_depth{0};
+    };
+
+    // Block architecture member variables
+    std::vector<std::vector<BlockDepthInfo>> m_all_layers_depth;
+    std::vector<WipeTowerBlock> m_wipe_tower_blocks;
+    int m_last_block_id{0};
+    WipeTowerBlock* m_cur_block{nullptr};
+
+    // Filament category system
+    std::vector<int> m_filament_categories;
+    bool m_use_rib_wall{false};
+    int m_cur_layer_id{0};
+
+    // Helper functions for block architecture
+    WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create = false);
+    void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);
+    int get_filament_category(int filament_id);
+    void reset_block_status();
+    void update_all_layer_depth(float wipe_tower_depth);
+    void generate_wipe_tower_blocks();
 };
 
 

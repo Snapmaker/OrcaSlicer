@@ -8,6 +8,7 @@
 #include <memory>
 #include <sstream>
 #include <iomanip>
+#include <unordered_map>
 
 #include "ClipperUtils.hpp"
 #include "GCodeProcessor.hpp"
@@ -1345,7 +1346,21 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
             }
     }
 
-    m_bed_bottom_left = m_bed_shape == RectangularBed ? Vec2f(bed_points.front().x(), bed_points.front().y()) : Vec2f::Zero();
+    m_bed_bottom_left = m_bed_shape == RectangularBed
+                  ? Vec2f(bed_points.front().x(), bed_points.front().y())
+                  : Vec2f::Zero();
+
+    // Initialize block architecture
+    m_last_block_id = 0;
+    m_cur_block = nullptr;
+    m_cur_layer_id = 0;
+
+    // Initialize filament categories (simplified: all filaments in category 0)
+    // In future, this could be read from config
+    m_filament_categories.resize(m_filpar.size(), 0);
+
+    // Initialize rib wall flag based on wall type
+    m_use_rib_wall = (m_wall_type == (int)wtwRib);
 }
 
 void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
@@ -2235,12 +2250,71 @@ void WipeTower2::plan_toolchange(float z_par, float layer_height_par, unsigned i
     float first_wipe_line = -(width * ((length_to_extrude / width) - int(length_to_extrude / width)) - width);
 
     float first_wipe_volume = length_to_volume(first_wipe_line, m_perimeter_width * m_extra_flow, layer_height_par);
-    float wiping_depth      = get_wipe_depth(wipe_volume - first_wipe_volume, layer_height_par, m_perimeter_width, m_extra_flow,
-                                             m_extra_spacing_wipe, width);
+    float wiping_depth = get_wipe_depth(wipe_volume - first_wipe_volume, layer_height_par, m_perimeter_width, m_extra_flow, m_extra_spacing_wipe, width);
 
-    m_plan.back().tool_changes.push_back(
-        WipeTowerInfo::ToolChange(old_tool, new_tool, ramming_depth + wiping_depth, ramming_depth, first_wipe_line, wipe_volume));
+	m_plan.back().tool_changes.push_back(WipeTowerInfo::ToolChange(old_tool, new_tool, ramming_depth + wiping_depth, ramming_depth, first_wipe_line, wipe_volume));
 }
+
+// Helper function for square algorithm: calculate toolchange depth based on current width
+// This is ported from BambuStudio and is needed for the square algorithm
+WipeTower2::WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, int new_tool,
+                                                      float layer_height, float wipe_volume,
+                                                      float purge_volume)
+{
+    float depth = 0.f;
+    float width = m_wipe_tower_width - 2 * m_perimeter_width;
+
+    // Calculate length to extrude based on wipe volume
+    float length_to_extrude = volume_to_length(wipe_volume, m_perimeter_width, layer_height);
+
+    // Calculate toolchange gap width
+    float toolchange_gap_width = m_perimeter_width * m_extra_spacing_wipe;
+
+    // Calculate depth based on width (KEY: width affects depth!)
+    depth += std::ceil(length_to_extrude / width) * toolchange_gap_width;
+
+    // Handle ramming depth if needed
+    float nozzle_change_depth = 0;
+    float nozzle_change_length = 0;
+
+    // Simplified ramming check (OrcaSlicer doesn't have multi-nozzle system)
+    bool needs_ramming = (old_tool != new_tool);
+
+    if (needs_ramming && m_enable_filament_ramming) {
+        // Calculate ramming depth
+        float ramming_volume = 0.25f * std::accumulate(
+            m_filpar[old_tool].ramming_speed.begin(),
+            m_filpar[old_tool].ramming_speed.end(),
+            0.f
+        );
+
+        float nozzle_change_width = m_wipe_tower_width - (m_perimeter_width + m_perimeter_width);
+        float ramming_length = volume_to_length(ramming_volume,
+                                                m_perimeter_width * m_filpar[old_tool].ramming_line_width_multiplicator,
+                                                layer_height);
+
+        int nozzle_change_line_count = std::ceil(ramming_length / nozzle_change_width);
+        nozzle_change_depth = nozzle_change_line_count * m_perimeter_width *
+                             m_filpar[old_tool].ramming_step_multiplicator *
+                             m_extra_spacing_ramming;
+
+        depth += nozzle_change_depth;
+        nozzle_change_length = ramming_length;
+    }
+
+    // Create and return toolchange
+    WipeTowerInfo::ToolChange tool_change = WipeTowerInfo::ToolChange(
+        old_tool, new_tool, depth, 0.f, 0.f, wipe_volume, length_to_extrude, purge_volume
+    );
+
+    tool_change.nozzle_change_depth = nozzle_change_depth;
+    tool_change.nozzle_change_length = nozzle_change_length;
+
+    return tool_change;
+}
+
+
+
 
 void WipeTower2::plan_tower()
 {
@@ -2258,11 +2332,61 @@ void WipeTower2::plan_tower()
         if (this_layer_depth > m_wipe_tower_depth - m_perimeter_width)
             m_wipe_tower_depth = this_layer_depth + m_perimeter_width;
 
-        for (int i = layer_index - 1; i >= 0; i--) {
-            if (m_plan[i].depth - this_layer_depth < 2 * m_perimeter_width)
-                m_plan[i].depth = this_layer_depth;
-        }
-    }
+		for (int i = layer_index - 1; i >= 0 ; i--)
+		{
+			if (m_plan[i].depth - this_layer_depth < 2*m_perimeter_width )
+				m_plan[i].depth = this_layer_depth;
+		}
+	}
+
+	// Square maintenance algorithm for rib wall (from BambuStudio)
+	if (m_use_rib_wall) {
+		// STEP 1: Generate blocks with current width
+		generate_wipe_tower_blocks();
+
+		// STEP 2: Calculate total depth across all blocks
+		float max_depth = std::accumulate(
+			m_wipe_tower_blocks.begin(),
+			m_wipe_tower_blocks.end(),
+			0.f,
+			[](float a, const WipeTowerBlock &t) { return a + t.depth; }
+		) + m_perimeter_width;
+
+		// STEP 3: Calculate square width (CRITICAL FORMULA)
+		// Area preservation: width × depth ≈ square_width²
+		float square_width = align_ceil(
+			std::sqrt(max_depth * m_wipe_tower_width * m_extra_spacing_wipe),
+			m_perimeter_width
+		);
+
+		// STEP 4: Update width (unconditional assignment)
+		m_wipe_tower_width = square_width;
+
+		BOOST_LOG_TRIVIAL(info) << "Rib tower: adjusted width from "
+								<< m_wipe_tower_width << " to " << square_width
+								<< " to maintain square footprint";
+
+		// STEP 5: Recalculate ALL toolchanges with new width (CRITICAL!)
+		// This is necessary because set_toolchange() uses m_wipe_tower_width
+		// Changing width changes depth, so we must recalculate
+		for (int idx = 0; idx < m_plan.size(); idx++) {
+			for (auto &toolchange : m_plan[idx].tool_changes) {
+				toolchange = set_toolchange(
+					toolchange.old_tool,
+					toolchange.new_tool,
+					m_plan[idx].height,
+					toolchange.wipe_volume,
+					toolchange.purge_volume
+				);
+			}
+		}
+
+		// STEP 6: Regenerate blocks with updated toolchange depths
+		generate_wipe_tower_blocks();
+
+		// STEP 7: Update all layer depths with spacing multiplier
+		update_all_layer_depth(max_depth);
+	}
 }
 
 void WipeTower2::save_on_last_wipe()
@@ -2352,9 +2476,13 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
     }
 #endif
 
-    m_rib_length = std::max({m_rib_length, sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width)});
+    // 计算对角线长度
+    float diagonal = std::sqrt(m_wipe_tower_depth * m_wipe_tower_depth +
+                               m_wipe_tower_width * m_wipe_tower_width);
+    m_rib_length = std::max({m_rib_length, diagonal});
     m_rib_length += m_extra_rib_length;
-    m_rib_length = std::max(0.f, m_rib_length);
+    // 确保rib_length不小于对角线长度（防止负值extra_rib_length导致问题）
+    m_rib_length = std::max(diagonal, m_rib_length);
     m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) /
                                              2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
 
@@ -2442,6 +2570,15 @@ Polygon WipeTower2::generate_rib_polygon(const WipeTower::box_coordinates& wt_bo
     Line    line_2(Point::new_scale(Vec2f{a, 0}), Point::new_scale(Vec2f{0, b}));
     float   diagonal_extra_length = std::max(0.f, m_rib_length - (float) unscaled(line_1.length())) / 2.f;
     diagonal_extra_length         = scaled(get_current_layer_rib_len(this->m_z_pos, this->m_wipe_tower_height, diagonal_extra_length));
+
+    // Add boundary constraint: ensure extension doesn't exceed tower boundaries
+    float max_safe_extension = std::min(
+        (m_wipe_tower_width - unscaled(line_1.length())) / 2.0f,
+        (m_wipe_tower_depth - unscaled(line_1.length())) / 2.0f
+    );
+    max_safe_extension = std::max(0.f, max_safe_extension);  // Prevent negative values
+    diagonal_extra_length = std::min<coord_t>(diagonal_extra_length, scaled(max_safe_extension));
+
     Point y_shift{0, scaled(this->m_y_shift)};
 
     line_1.extend(double(diagonal_extra_length));
@@ -2452,16 +2589,36 @@ Polygon WipeTower2::generate_rib_polygon(const WipeTower::box_coordinates& wt_bo
     Polygon poly_1 = generate_rectange(line_1, diagonal_width);
     Polygon poly_2 = generate_rectange(line_2, diagonal_width);
     Polygon poly;
-    poly.points.push_back(Point::new_scale(wt_box.ld));
-    poly.points.push_back(Point::new_scale(wt_box.rd));
-    poly.points.push_back(Point::new_scale(wt_box.ru));
-    poly.points.push_back(Point::new_scale(wt_box.lu));
+    poly.points.push_back(Point::new_scale(wt_box.ld) - y_shift);
+    poly.points.push_back(Point::new_scale(wt_box.rd) - y_shift);
+    poly.points.push_back(Point::new_scale(wt_box.ru) - y_shift);
+    poly.points.push_back(Point::new_scale(wt_box.lu) - y_shift);
 
     Polygons p_1_2 = union_({poly_1, poly_2, poly});
     // Polygon            res_poly = p_1_2.front();
     // for (auto &p : res_poly.points) res.push_back(unscale(p).cast<float>());
     /*if (p_1_2.front().points.size() != 16)
         std::cout << "error " << std::endl;*/
+
+    // 验证结果
+    BoundingBox bbox = get_extents(p_1_2.front());
+    BoundingBox expected = get_extents(poly);
+    if (!expected.contains(bbox)) {
+        BOOST_LOG_TRIVIAL(warning) << "Rib polygon exceeds tower boundaries at z=" << m_z_pos;
+    }
+
+    // 可选：验证顶点数
+    if (p_1_2.front().points.size() != 16) {
+        BOOST_LOG_TRIVIAL(debug) << "Rib polygon has " << p_1_2.front().points.size()
+                                 << " vertices (expected 16)";
+    }
+
+    // 计算rib_offset（仅在第一层）
+    if (m_z_pos < 0.01f) {  // 第一层判断
+        BoundingBox bbox = get_extents(p_1_2.front());
+        m_rib_offset = Vec2f(-unscaled<float>(bbox.min.x()), -unscaled<float>(bbox.min.y()));
+    }
+
     return p_1_2.front();
 };
 
@@ -2498,10 +2655,6 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
         insert_skip_polygon = wall_polygon;
     }
     writer.generate_path(result_wall, feedrate, retract_length, retract_speed, m_used_fillet);
-    // if (m_cur_layer_id == 0) {
-    //     BoundingBox bbox = get_extents(result_wall);
-    //     m_rib_offset     = Vec2f(-unscaled<float>(bbox.min.x()), -unscaled<float>(bbox.min.y()));
-    // }
 
     return insert_skip_polygon;
 }
@@ -2613,4 +2766,191 @@ Polygon WipeTower2::generate_support_cone_wall(
     writer.extrude(pts[start_i].first, feedrate);
     return poly;
 }
+
+// Helper function: Find or create block by category
+WipeTower2::WipeTowerBlock* WipeTower2::get_block_by_category(int filament_adhesiveness_category, bool create)
+{
+    auto iter = std::find_if(m_wipe_tower_blocks.begin(), m_wipe_tower_blocks.end(),
+                             [&filament_adhesiveness_category](const WipeTowerBlock &item) {
+        return item.filament_adhesiveness_category == filament_adhesiveness_category;
+    });
+
+    if (iter != m_wipe_tower_blocks.end()) {
+        return &(*iter);
+    }
+
+    if (create) {
+        WipeTowerBlock new_block;
+        new_block.block_id = m_wipe_tower_blocks.size();
+        new_block.filament_adhesiveness_category = filament_adhesiveness_category;
+        m_wipe_tower_blocks.emplace_back(new_block);
+        return &m_wipe_tower_blocks.back();
+    }
+
+    return nullptr;
+}
+
+// Helper function: Add depth to block
+void WipeTower2::add_depth_to_block(int filament_id, int filament_adhesiveness_category,
+                                     float depth, bool is_nozzle_change)
+{
+    std::vector<BlockDepthInfo> &layer_depth = m_all_layers_depth[m_cur_layer_id];
+    auto iter = std::find_if(layer_depth.begin(), layer_depth.end(),
+                             [&filament_adhesiveness_category](const BlockDepthInfo &item) {
+        return item.category == filament_adhesiveness_category;
+    });
+
+    if (iter != layer_depth.end()) {
+        iter->depth += depth;
+        if (is_nozzle_change)
+            iter->nozzle_change_depth += depth;
+    }
+    else {
+        BlockDepthInfo new_block;
+        new_block.category = filament_adhesiveness_category;
+        new_block.depth = depth;
+        if (is_nozzle_change)
+            new_block.nozzle_change_depth = depth;
+        layer_depth.emplace_back(std::move(new_block));
+    }
+}
+
+// Helper function: Get filament category
+int WipeTower2::get_filament_category(int filament_id)
+{
+    if (filament_id >= m_filament_categories.size())
+        return 0;
+    return m_filament_categories[filament_id];
+}
+
+// Helper function: Reset block status
+void WipeTower2::reset_block_status()
+{
+    for (auto& block : m_wipe_tower_blocks) {
+        block.cur_depth = block.start_depth;
+        block.last_filament_change_id = -1;
+        block.last_nozzle_change_id = -1;
+    }
+}
+
+// Helper function: Update all layer depth
+void WipeTower2::update_all_layer_depth(float wipe_tower_depth)
+{
+    m_wipe_tower_depth = 0.f;
+    float start_offset = m_perimeter_width;
+    float start_depth = start_offset;
+
+    for (auto& block : m_wipe_tower_blocks) {
+        block.depth *= m_extra_spacing_wipe;
+        block.start_depth = start_depth;
+        start_depth += block.depth;
+        m_wipe_tower_depth += block.depth;
+
+        for (auto& layer_depth : block.layer_depths) {
+            layer_depth *= m_extra_spacing_wipe;
+        }
+    }
+
+    if (m_wipe_tower_depth > 0)
+        m_wipe_tower_depth += start_offset;
+
+    // Update plan depths
+    for (WipeTowerInfo& plan_info : m_plan) {
+        plan_info.depth *= m_extra_spacing_wipe;
+    }
+}
+
+// Generate wipe tower blocks (square algorithm core function)
+void WipeTower2::generate_wipe_tower_blocks()
+{
+    // STEP 1: Generate all layer depth (populate m_all_layers_depth)
+    m_all_layers_depth.clear();
+    m_all_layers_depth.resize(m_plan.size());
+    m_cur_layer_id = 0;
+
+    for (auto& info : m_plan) {
+        for (const WipeTowerInfo::ToolChange &tool_change : info.tool_changes) {
+            // Simplified ramming check (OrcaSlicer doesn't have multi-nozzle system)
+            bool needs_ramming = (tool_change.old_tool != tool_change.new_tool);
+
+            if (needs_ramming) {
+                // Extruder change: all depth goes to new filament's category
+                int category = get_filament_category(tool_change.new_tool);
+                add_depth_to_block(tool_change.new_tool, category, tool_change.required_depth, false);
+            }
+            else {
+                // Nozzle change: split depth between old (ramming) and new (wiping)
+                int old_category = get_filament_category(tool_change.old_tool);
+                add_depth_to_block(tool_change.old_tool, old_category, tool_change.nozzle_change_depth, true);
+
+                int new_category = get_filament_category(tool_change.new_tool);
+                add_depth_to_block(tool_change.new_tool, new_category,
+                                   tool_change.required_depth - tool_change.nozzle_change_depth, false);
+            }
+        }
+        ++m_cur_layer_id;
+    }
+
+    // STEP 2: Convert to category-to-depth map per layer
+    std::vector<std::unordered_map<int, float>> all_layer_category_to_depth(m_plan.size());
+    for (size_t layer_id = 0; layer_id < m_all_layers_depth.size(); ++layer_id) {
+        const auto& layer_blocks = m_all_layers_depth[layer_id];
+        std::unordered_map<int, float> &category_to_depth = all_layer_category_to_depth[layer_id];
+        for (const auto& block : layer_blocks) {
+            category_to_depth[block.category] = block.depth;
+        }
+    }
+
+    // STEP 3: Generate wipe tower blocks (create WipeTowerBlock objects)
+    m_wipe_tower_blocks.clear();
+    for (int layer_id = 0; layer_id < all_layer_category_to_depth.size(); ++layer_id) {
+        const auto &layer_category_depths = all_layer_category_to_depth[layer_id];
+        for (auto iter = layer_category_depths.begin(); iter != layer_category_depths.end(); ++iter) {
+            auto* block = get_block_by_category(iter->first, true);  // Create if not exists
+            if (block->layer_depths.empty()) {
+                block->layer_depths.resize(all_layer_category_to_depth.size(), 0);
+                block->solid_infill.resize(all_layer_category_to_depth.size(), false);
+                block->finish_depth.resize(all_layer_category_to_depth.size(), 0);
+            }
+            block->depth = std::max(block->depth, iter->second);  // Max across all layers
+            block->layer_depths[layer_id] = iter->second;
+        }
+    }
+
+    // STEP 4: Add solid infill flags (for bridging gaps)
+    int solid_infill_layer = 4;
+    for (WipeTowerBlock& block : m_wipe_tower_blocks) {
+        for (int layer_id = 0; layer_id < all_layer_category_to_depth.size(); ++layer_id) {
+            std::unordered_map<int, float> &category_to_depth = all_layer_category_to_depth[layer_id];
+            if (is_approx(category_to_depth[block.filament_adhesiveness_category], 0.f)) {
+                // This layer has no toolchanges for this category
+                // Check if any of the next 4 layers need this category
+                int layer_count = solid_infill_layer;
+                while (layer_count > 0) {
+                    if (layer_id + layer_count < all_layer_category_to_depth.size()) {
+                        std::unordered_map<int, float>& up_layer_depth =
+                            all_layer_category_to_depth[layer_id + layer_count];
+                        if (!is_approx(up_layer_depth[block.filament_adhesiveness_category], 0.f)) {
+                            block.solid_infill[layer_id] = true;  // Need bridge support
+                            break;
+                        }
+                    }
+                    --layer_count;
+                }
+            }
+        }
+    }
+
+    // STEP 5: Propagate depths downward (max of current and next layer)
+    for (int layer_id = m_plan.size() - 1; layer_id >= 0; --layer_id) {
+        m_plan[layer_id].depth = 0;
+        for (auto& block : m_wipe_tower_blocks) {
+            if (layer_id < m_plan.size() - 1)
+                block.layer_depths[layer_id] = std::max(block.layer_depths[layer_id],
+                                                         block.layer_depths[layer_id + 1]);
+            m_plan[layer_id].depth += block.layer_depths[layer_id];
+        }
+    }
+}
+
 } // namespace Slic3r

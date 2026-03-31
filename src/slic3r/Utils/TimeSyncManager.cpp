@@ -25,8 +25,13 @@ void TimeSyncManager::addTimeFields(nlohmann::json& request) {
         sync_fail_count_ = 0;
     }
 
+    int64_t dev_time_value = is_synced_ ? calculateDevTime() : -1;
     request["cli_time"] = current_time;
-    request["dev_time"] = is_synced_ ? calculateDevTime() : -1;
+    request["dev_time"] = dev_time_value;
+
+    BOOST_LOG_TRIVIAL(info) << "[TimeSyncManager] 添加时间字段: cli_time=" << current_time
+                            << ", dev_time=" << dev_time_value
+                            << ", is_synced=" << is_synced_;
 
     last_cli_time_ = current_time;
 }
@@ -67,8 +72,11 @@ void TimeSyncManager::updateFromResponse(const nlohmann::json& response) {
     is_synced_ = true;
     sync_fail_count_ = 0;
 
-    BOOST_LOG_TRIVIAL(debug) << "[TimeSyncManager] Sync updated: duration=" << duration_
-                             << "ms, delta=" << delta_time_ << "ms";
+    BOOST_LOG_TRIVIAL(info) << "[TimeSyncManager] 时间同步更新: duration=" << duration_
+                            << "ms, delta=" << delta_time_ << "ms"
+                            << ", cli_time1=" << cli_time1
+                            << ", cli_time2=" << cli_time2
+                            << ", dev_time=" << dev_time;
 }
 
 void TimeSyncManager::reset() {

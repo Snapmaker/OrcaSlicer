@@ -12,6 +12,7 @@
 #include "PrintHost.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "slic3r/Utils/TimeoutMap.hpp"
+#include "TimeSyncManager.hpp"
 
 class MqttClient;
 
@@ -155,6 +156,9 @@ protected:
     std::string m_apikey;
     std::string m_cafile;
     bool        m_ssl_revoke_best_effort;
+
+    // Time synchronization manager
+    std::unique_ptr<TimeSyncManager> time_sync_manager_;
 
     // Helper methods
     virtual void set_auth(Http &http) const;

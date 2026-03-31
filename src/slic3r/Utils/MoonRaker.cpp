@@ -252,6 +252,7 @@ Moonraker::Moonraker(DynamicPrintConfig* config)
     , m_apikey(config->opt_string("printhost_apikey"))
     , m_cafile(config->opt_string("printhost_cafile"))
     , m_ssl_revoke_best_effort(config->opt_bool("printhost_ssl_ignore_revoke"))
+    , time_sync_manager_(std::make_unique<TimeSyncManager>())
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 初始化Moonraker实例，主机: " << m_host;
@@ -1140,6 +1141,12 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
         this->on_mqtt_tls_message_arrived(topic, payload);
     });
 
+    // 重置时间同步状态
+    if (time_sync_manager_) {
+        time_sync_manager_->reset();
+        BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 时间同步状态已重置";
+    }
+
     BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 引擎设置完成";
     msg = "success";
     return true;
@@ -1244,6 +1251,11 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
             return false;
     }
     body["id"] = seq_id;
+
+    // 添加时间同步字段
+    if (time_sync_manager_) {
+        time_sync_manager_->addTimeFields(body);
+    }
 
     std::string pub_msg = "";
     if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 1, pub_msg)){
@@ -1401,6 +1413,11 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     }
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS连接成功";
     wcp_loger.add_log("MQTTS连接成功", false, "", "Moonraker_Mqtt", "info");
+
+    // 重置时间同步状态
+    if (time_sync_manager_) {
+        time_sync_manager_->reset();
+    }
 
     m_sn_mtx.lock();
     std::string tmp_sn = m_sn;
@@ -2748,6 +2765,12 @@ bool Moonraker_Mqtt::send_to_request(
         std::string topic = main_layer + m_request_topic;
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 发布到主题: " << topic;
         wcp_loger.add_log("发布到主题: " + topic, false, "", "Moonraker_Mqtt", "info");
+
+        // 添加时间同步字段
+        if (time_sync_manager_) {
+            time_sync_manager_->addTimeFields(body);
+        }
+
         std::string pub_msg = "success";
         bool res = m_mqtt_client_tls->Publish(topic, body.dump(), 1, pub_msg);
         if (!res) {
@@ -2900,6 +2923,11 @@ void Moonraker_Mqtt::on_auth_arrived(const std::string& payload) {
     wcp_loger.add_log("处理认证到达消息", false, "", "Moonraker_Mqtt", "info");
     try {
         json body = json::parse(payload);
+
+        // 更新时间同步状态
+        if (time_sync_manager_) {
+            time_sync_manager_->updateFromResponse(body);
+        }
 
         if(!body.count("id")){
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 认证响应缺少ID字段";

@@ -659,7 +659,7 @@ void WebViewPanel::OnNewWindow(wxWebViewEvent& evt)
 
 void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
 {
-    BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << evt.GetString().ToUTF8().data();
+    // BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << evt.GetString().ToUTF8().data();
     // update login status
     if (m_LoginUpdateTimer == nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Create Timer";
@@ -667,8 +667,8 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
         m_LoginUpdateTimer->Start(2000);
     }
 
-    if (wxGetApp().get_mode() == comDevelop)
-        wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
+    // if (wxGetApp().get_mode() == comDevelop)
+    //     wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
 
     // test
     SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);

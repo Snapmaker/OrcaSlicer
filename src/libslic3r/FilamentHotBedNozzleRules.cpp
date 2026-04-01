@@ -1,11 +1,15 @@
 #include "FilamentHotBedNozzleRules.hpp"
 #include "Config.hpp"
+#include "Preset.hpp"
+#include "PresetBundle.hpp"
 #include "Utils.hpp"
 
+#include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 
@@ -38,6 +42,26 @@ bool match_any_rule_token_ci(const std::unordered_set<std::string>& tokens, cons
             return true;
     }
     return false;
+}
+
+// Resolve filament_settings_id entry: may store preset display name or cloud setting_id / base_id.
+static std::string resolve_filament_preset_full_name(const std::string& stored, const PresetCollection* filaments)
+{
+    if (stored.empty() || filaments == nullptr)
+        return stored;
+    if (const Preset* by_name = filaments->find_preset(stored, false))
+        return by_name->name;
+    for (const Preset& preset : filaments->get_presets()) {
+        if (preset.type != Preset::TYPE_FILAMENT)
+            continue;
+        if (!preset.setting_id.empty() && preset.setting_id == stored)
+            return preset.name;
+        if (!preset.base_id.empty() && preset.base_id == stored)
+            return preset.name;
+        if (!preset.filament_id.empty() && preset.filament_id == stored)
+            return preset.name;
+    }
+    return stored;
 }
 
 bool is_pla_type(const std::string& filament_type)
@@ -183,28 +207,58 @@ bool FilamentHotBedNozzleRules::is_nozzle_filament_forbidden(const std::string& 
     std::scoped_lock<std::recursive_mutex> lock(m_mutex);
     auto it = m_nozzle_forbidden_filament_presets.find(nozzle_key);
     bool res = false;
-    res = (it != m_nozzle_forbidden_filament_presets.end() && it->second.find(filament_preset_name) != it->second.end());
+    if (it == m_nozzle_forbidden_filament_presets.end())
+        return false;
+
+    for (auto iter = it->second.begin(); iter != it->second.end();++iter)
+    {
+        std::string filamentData = iter->c_str();
+        if (filament_preset_name.find(filamentData) != std::string::npos)
+                return true;
+    }
+    //res = (it != m_nozzle_forbidden_filament_presets.end() && it->second.find(filament_preset_name) != it->second.end());
+
     return res;
 }
 
-std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const
+std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
+                                                                          const std::vector<unsigned int>& used_filament_indices,
+                                                                          const PresetBundle* preset_bundle) const
 {
     std::scoped_lock<std::recursive_mutex> lock(m_mutex);
     if (!m_loaded || used_filament_indices.empty())
         return "";
 
-    std::string nozzle_key;
-    if (!cfg.nozzle_diameter.empty())
-        nozzle_key = nozzle_diameter_to_filament_rule_key(cfg.nozzle_diameter.get_at(0));
-    if (nozzle_key.empty())
-        return "";
-
     const ConfigOptionStrings* filament_settings_id = cfg.option<ConfigOptionStrings>("filament_settings_id");
+    const PresetCollection*    filament_collection  = preset_bundle != nullptr ? &preset_bundle->filaments : nullptr;
+
     for (unsigned int fid : used_filament_indices) {
-        std::string preset_name;
-        if (filament_settings_id != nullptr && !filament_settings_id->values.empty())
-            preset_name = filament_settings_id->get_at(fid);
-        if (is_nozzle_filament_forbidden(nozzle_key, preset_name))
+        std::string nozzle_key_fid;
+        if (!cfg.nozzle_diameter.empty()) {
+            const unsigned int nd_idx = std::min(fid, unsigned(cfg.nozzle_diameter.size() - 1));
+            nozzle_key_fid = nozzle_diameter_to_filament_rule_key(cfg.nozzle_diameter.get_at(nd_idx));
+        }
+        if (nozzle_key_fid.empty())
+            continue;
+
+        std::string stored;
+        if (preset_bundle != nullptr && fid < preset_bundle->filament_presets.size()) {
+            stored = preset_bundle->filament_presets[fid];
+            boost::algorithm::trim(stored);
+        }
+        if (stored.empty() && filament_settings_id != nullptr && fid < filament_settings_id->values.size())
+            stored = filament_settings_id->get_at(fid);
+        boost::algorithm::trim(stored);
+        
+        std::string normalized = stored;
+        if (preset_bundle != nullptr && !normalized.empty()) {
+            const std::string            trimmed = Preset::remove_suffix_modified(normalized);
+            const std::string&           by_alias = preset_bundle->get_preset_name_by_alias(Preset::TYPE_FILAMENT, trimmed);
+            normalized.assign(by_alias);
+        }
+
+        const std::string preset_name = resolve_filament_preset_full_name(normalized, filament_collection);
+        if (is_nozzle_filament_forbidden(nozzle_key_fid, preset_name))
             return preset_name.empty() ? "forbidden filament preset for current nozzle" : preset_name;
     }
 

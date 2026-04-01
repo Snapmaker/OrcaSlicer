@@ -1526,7 +1526,6 @@ bool MainFrame::can_send_gcode() const
     if (m_plater && !m_plater->model().objects.empty())
     {
         auto        devices     = wxGetApp().app_config->get_devices();
-        std::string preset_name = "Snapmaker U1 0.4 nozzle";
         const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
 
         auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;

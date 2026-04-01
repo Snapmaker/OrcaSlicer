@@ -6323,8 +6323,9 @@ void Plater::priv::notify_filament_compatibility_after_apply()
 
     std::string filamentNozzleMsg("");
     bool        isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
-
-    print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu);
+    
+    print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
+                                        wxGetApp().preset_bundle);
 
     wxString filamentMismatchNozzleMsg     = wxString(_L("The combination of hot end and consumables is not recommended. The message reads: Printing TPU 95A HF with 0.2mm hardened steel hot end is not recommended. We suggest using 0.4mm or larger."));
     wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("The current PEI glossy filament may have insufficient adhesion on the first layer of the heated bed. It is recommended to apply glue before printing to enhance adhesion."));
@@ -6339,11 +6340,11 @@ void Plater::priv::notify_filament_compatibility_after_apply()
             notification_manager->push_notification(filamentMismatchGraphicBedMsg.ToStdString(), 0);
         if (isPeiBedMatchNotPla)
             notification_manager->push_notification(filamentMismatchPeiBedMsgNotPla.ToStdString(), 0);
-        if (!filamentNozzleMsg.empty())
-            notification_manager->push_notification(filamentMismatchNozzleMsg.ToStdString(), 0);
-
         notification_manager->set_slicing_progress_hidden();
     }
+
+    if (!filamentNozzleMsg.empty())
+        notification_manager->push_notification(filamentMismatchNozzleMsg.ToStdString(), 0);
 
     if (isPeiBedMatchTpu)
     {            

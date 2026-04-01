@@ -10,7 +10,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <sstream>
 #include <vector>
 #include "libslic3r.h"
 #include "clonable_ptr.hpp"
@@ -40,12 +39,6 @@ namespace Slic3r {
     inline bool operator==(const FloatOrPercent& l, const FloatOrPercent& r) throw() { return l.value == r.value && l.percent == r.percent; }
     inline bool operator!=(const FloatOrPercent& l, const FloatOrPercent& r) throw() { return !(l == r); }
     inline bool operator< (const FloatOrPercent& l, const FloatOrPercent& r) throw() { return l.value < r.value || (l.value == r.value && int(l.percent) < int(r.percent)); }
-    inline std::ostream& operator<<(std::ostream& os, const FloatOrPercent& v) {
-        os << v.value;
-        if (v.percent)
-            os << "%";
-        return os;
-    }
 }
 
 namespace std {
@@ -351,9 +344,6 @@ public:
     // Set a single vector item from either a scalar option or the first value of a vector option.vector of ConfigOptions.
     // This function is useful to split values from multiple extrder / filament settings into separate configurations.
     virtual void set_at(const ConfigOption *rhs, size_t i, size_t j) = 0;
-    // SM Orca: Copy a single element from source vector at src_idx to this vector at dst_idx
-    // This function is useful for applying physical extruder mapping to filament parameters
-    virtual void set_at(const ConfigOptionVectorBase* source, size_t dst_idx, size_t src_idx) = 0;
     // Resize the vector of values, copy the newly added values from opt_default if provided.
     virtual void resize(size_t n, const ConfigOption *opt_default = nullptr) = 0;
     // Clear the values vector.
@@ -429,67 +419,16 @@ public:
             T v = this->values.front();
             this->values.resize(i + 1, v);
         }
-
         if (rhs->type() == this->type()) {
             // Assign the first value of the rhs vector.
             auto other = static_cast<const ConfigOptionVector<T>*>(rhs);
             if (other->values.empty())
                 throw ConfigurationError("ConfigOptionVector::set_at(): Assigning from an empty vector");
-
-            // Log before assignment
-            std::stringstream before_ss;
-            before_ss << "[";
-            for (size_t k = 0; k < this->values.size(); ++k) {
-                if (k > 0) before_ss << ", ";
-                before_ss << this->values[k];
-            }
-            before_ss << "]";
-         
-            // Log other vector
-            std::stringstream other_ss;
-            other_ss << "[";
-            for (size_t k = 0; k < other->values.size(); ++k) {
-                if (k > 0) other_ss << ", ";
-                other_ss << other->values[k];
-            }
-            other_ss << "]";
-
             this->values[i] = other->get_at(j);
-
-            // Log after assignment
-            std::stringstream after_ss;
-            after_ss << "[";
-            for (size_t k = 0; k < this->values.size(); ++k) {
-                if (k > 0) after_ss << ", ";
-                after_ss << this->values[k];
-            }
-            after_ss << "]";
-
-
-        } else if (rhs->type() == this->scalar_type()) {
+        } else if (rhs->type() == this->scalar_type())
             this->values[i] = static_cast<const ConfigOptionSingle<T>*>(rhs)->value;
-        } else
+        else
             throw ConfigurationError("ConfigOptionVector::set_at(): Assigning an incompatible type");
-    }
-
-    // SM Orca: Copy a single element from source vector at src_idx to this vector at dst_idx
-    // Used for applying physical extruder mapping to filament parameters
-    void set_at(const ConfigOptionVectorBase* source, size_t dst_idx, size_t src_idx) override
-    {
-        auto* src_typed = dynamic_cast<const ConfigOptionVector<T>*>(source);
-        if (!src_typed || src_idx >= src_typed->size() || dst_idx >= this->size())
-            return;
-
-        // Handle nullable vectors - only copy if source value is not nil
-        if (this->nullable() && src_typed->nullable()) {
-            if (!src_typed->is_nil(src_idx)) {
-                this->values[dst_idx] = src_typed->values[src_idx];
-            }
-        } else if (!src_typed->nullable()) {
-            // Source is not nullable, always copy
-            this->values[dst_idx] = src_typed->values[src_idx];
-        }
-        // If source is nullable and value is nil, don't copy (keep existing value)
     }
 
     const T& get_at(size_t i) const

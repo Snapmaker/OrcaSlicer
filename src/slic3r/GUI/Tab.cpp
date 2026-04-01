@@ -3430,24 +3430,7 @@ void TabFilament::add_filament_overrides_page()
                         else {
                             const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
                             const auto printer_config = m_preset_bundle->printers.get_edited_preset().config;
-                            // SM Orca: Map filament slot to physical extruder index for inheritance
-                            auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
-                            // SM Orca: First calculate num_extruders to use modulo for default mapping
-                            const ConfigOptionFloats* nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
-                            int num_extruders = nozzle_diameter ? (int)nozzle_diameter->values.size() : 1;
-                            // SM Orca: Use modulo arithmetic for default mapping when no explicit mapping exists
-                            int physical_extruder_idx = opt_index % num_extruders;  // default: filament N maps to extruder N % num_extruders
-                            auto map_it = filament_extruder_map.find(opt_index);
-                            if (map_it != filament_extruder_map.end()) {
-                                physical_extruder_idx = map_it->second;
-                            }
-                            // SM Orca: Bounds check to prevent crash from misconfigured map
-                            if (physical_extruder_idx < 0 || physical_extruder_idx >= num_extruders) {
-                                BOOST_LOG_TRIVIAL(warning) << "Invalid physical_extruder_idx " << physical_extruder_idx
-                                    << " for filament slot " << opt_index << ", using default";
-                                physical_extruder_idx = std::clamp(physical_extruder_idx, 0, num_extruders - 1);
-                            }
-                            const boost::any printer_config_value = optgroup_sh->get_config_value(printer_config, printer_opt_key, physical_extruder_idx);
+                            const boost::any printer_config_value = optgroup_sh->get_config_value(printer_config, printer_opt_key, opt_index);
                             field->update_na_value(printer_config_value);
                             field->set_na_value();
                         }
@@ -3462,7 +3445,7 @@ void TabFilament::add_filament_overrides_page()
         optgroup->append_line(line);
     };
 
-    const int extruder_idx = (m_presets_choice && m_presets_choice->get_filament_idx() >= 0) ? m_presets_choice->get_filament_idx() : 0;  // SM Orca: Get actual filament slot index
+    const int extruder_idx = 0; // #ys_FIXME
 
     for (const std::string opt_key : {  "filament_retraction_length",
                                         "filament_z_hop",
@@ -3528,7 +3511,7 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                                             // "filament_seam_gap"
                                         };
 
-    const int extruder_idx = (m_presets_choice && m_presets_choice->get_filament_idx() >= 0) ? m_presets_choice->get_filament_idx() : 0;  // SM Orca: Get actual filament slot index
+    const int extruder_idx = 0; // #ys_FIXME
 
     const bool have_retract_length = m_config->option("filament_retraction_length")->is_nil() ||
                                      m_config->opt_float("filament_retraction_length", extruder_idx) > 0;
@@ -3560,26 +3543,7 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
         } else {
             if (!is_checked) {
                 const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
-                // SM Orca: Map filament slot to physical extruder index for inheritance
-                auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
-                // SM Orca: Determine extruder count first for proper modulo calculation
-                const ConfigOptionFloats* nozzle_diameter = printers_config->option<ConfigOptionFloats>("nozzle_diameter");
-                int num_extruders = nozzle_diameter ? (int)nozzle_diameter->values.size() : 1;
-                int physical_extruder_idx = extruder_idx;  // default: filament N uses extruder N
-                auto map_it = filament_extruder_map.find(extruder_idx);
-                if (map_it != filament_extruder_map.end()) {
-                    physical_extruder_idx = map_it->second;
-                } else {
-                    // SM Orca: Use modulo arithmetic when map entry doesn't exist
-                    physical_extruder_idx = extruder_idx % num_extruders;
-                }
-                // SM Orca: Bounds check to prevent crash from misconfigured map
-                if (physical_extruder_idx < 0 || physical_extruder_idx >= num_extruders) {
-                    BOOST_LOG_TRIVIAL(warning) << "Invalid physical_extruder_idx " << physical_extruder_idx
-                        << " for filament slot " << extruder_idx << ", using default";
-                    physical_extruder_idx = std::clamp(physical_extruder_idx, 0, num_extruders - 1);
-                }
-                boost::any printer_config_value = optgroup->get_config_value(*printers_config, printer_opt_key, physical_extruder_idx);
+                boost::any printer_config_value = optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
                 field->update_na_value(printer_config_value);
                 field->set_value(printer_config_value, false);
             }

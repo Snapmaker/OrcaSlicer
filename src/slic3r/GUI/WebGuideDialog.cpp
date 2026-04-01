@@ -379,11 +379,11 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
 {
     try {
         wxString strInput = evt.GetString();
-        BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;OnRecv:" << strInput.c_str();
+        // BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;OnRecv:" << strInput.c_str();
         json     j        = json::parse(strInput);
 
         wxString strCmd = j["command"];
-        BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;Command:" << strCmd;
+        // BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;Command:" << strCmd;
 
         if (strCmd == "close_page") {
             this->EndModal(wxID_CANCEL);
@@ -418,7 +418,7 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
             //wxString strJS = wxString::Format("HandleStudio(%s)", m_Res.dump(-1, ' ', false, json::error_handler_t::ignore));
             wxString strJS = wxString::Format("HandleStudio(%s)", m_Res.dump(-1, ' ', true));
 
-            BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;request_userguide_profile:" << strJS.c_str();
+            // BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;request_userguide_profile:" << strJS.c_str();
             wxGetApp().CallAfter([this,strJS] { RunScript(strJS); });
         }
         else if (strCmd == "request_custom_filaments") {
@@ -548,7 +548,7 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
         }
     } catch (std::exception &e) {
         // wxMessageBox(e.what(), "json Exception", MB_OK);
-        BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;Error:" << e.what();
+        // BOOST_LOG_TRIVIAL(trace) << "GuideFrame::OnScriptMessage;Error:" << e.what();
     }
 
     //wxString strAll = m_ProfileJson.dump(-1,' ',false, json::error_handler_t::ignore);

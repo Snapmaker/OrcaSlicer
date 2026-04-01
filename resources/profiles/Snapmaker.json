@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.45.02",
+  "version": "02.02.44.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -163,8 +163,8 @@
       "sub_path": "process/0.16 Optimal @Snapmaker U1 (0.4 nozzle).json"
     },
     {
-      "name": "0.20 strength @Snapmaker U1 (0.4 nozzle)",
-      "sub_path": "process/0.20 strength @Snapmaker U1 (0.4 nozzle).json"
+      "name": "0.20 Strength @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.20 Strength @Snapmaker U1 (0.4 nozzle).json"
     },
     {
       "name": "0.24 Draft @Snapmaker U1 (0.4 nozzle)",
@@ -449,168 +449,7 @@
     {
       "name": "0.48 Draft @Snapmaker Artisan (0.8 nozzle)",
       "sub_path": "process/0.48 Draft @Snapmaker Artisan (0.8 nozzle).json"
-    },
-
-
-
-
-
-
-
-
-
-
-
-
-
-    {
-      "name": "fdm_process_U1_0.06_nozzle_0.2",
-      "sub_path": "process/fdm_process_U1_0.06_nozzle_0.2.json"
-    },
-    {
-      "name": "fdm_process_U1_0.08_nozzle_0.2",
-      "sub_path": "process/fdm_process_U1_0.08_nozzle_0.2.json"
-    },
-    {
-      "name": "fdm_process_U1_0.10_nozzle_0.2",
-      "sub_path": "process/fdm_process_U1_0.10_nozzle_0.2.json"
-    },
-    {
-      "name": "fdm_process_U1_0.12_nozzle_0.2",
-      "sub_path": "process/fdm_process_U1_0.12_nozzle_0.2.json"
-    },
-    {
-      "name": "fdm_process_U1_0.14_nozzle_0.2",
-      "sub_path": "process/fdm_process_U1_0.14_nozzle_0.2.json"
-    },
-    {
-      "name": "fdm_process_U1_0.18_nozzle_0.6",
-      "sub_path": "process/fdm_process_U1_0.18_nozzle_0.6.json"
-    },
-    {
-      "name": "fdm_process_U1_0.24_nozzle_0.6",
-      "sub_path": "process/fdm_process_U1_0.24_nozzle_0.6.json"
-    },
-    {
-      "name": "fdm_process_U1_0.30_nozzle_0.6",
-      "sub_path": "process/fdm_process_U1_0.30_nozzle_0.6.json"
-    },
-    {
-      "name": "fdm_process_U1_0.36_nozzle_0.6",
-      "sub_path": "process/fdm_process_U1_0.36_nozzle_0.6.json"
-    },
-    {
-      "name": "fdm_process_U1_0.42_nozzle_0.6",
-      "sub_path": "process/fdm_process_U1_0.42_nozzle_0.6.json"
-    },
-    {
-      "name": "fdm_process_U1_0.32_nozzle_0.8",
-      "sub_path": "process/fdm_process_U1_0.32_nozzle_0.8.json"
-    },
-    {
-      "name": "fdm_process_U1_0.40_nozzle_0.8",
-      "sub_path": "process/fdm_process_U1_0.40_nozzle_0.8.json"
-    },
-    {
-      "name": "fdm_process_U1_0.48_nozzle_0.8",
-      "sub_path": "process/fdm_process_U1_0.48_nozzle_0.8.json"
-    },
-    {
-      "name": "fdm_process_U1_0.24_nozzle_0.8",
-      "sub_path": "process/fdm_process_U1_0.24_nozzle_0.8.json"
-    },
-    {
-      "name": "fdm_process_U1_0.56_nozzle_0.8",
-      "sub_path": "process/fdm_process_U1_0.56_nozzle_0.8.json"
-    },
-
-    {
-      "name": "0.06 High Quality @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.06 High Quality @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.06 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.06 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.08 High Quality @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.08 High Quality @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.08 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.08 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.10 High Quality @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.10 High Quality @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.10 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.10 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.12 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.12 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.14 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.14 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-
-    {
-      "name": "0.18 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.18 Standard @Snapmaker U1 (0.6 nozzle).json"
-    },
-    {
-      "name": "0.24 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.24 Standard @Snapmaker U1 (0.6 nozzle).json"
-    },
-    {
-      "name": "0.30 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.30 Standard @Snapmaker U1 (0.6 nozzle).json"
-    },
-    {
-      "name": "0.30 Strength @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.30 Strength @Snapmaker U1 (0.6 nozzle).json"
-    },
-    {
-      "name": "0.36 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.36 Standard @Snapmaker U1 (0.6 nozzle).json"
-    },
-    {
-      "name": "0.42 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.42 Standard @Snapmaker U1 (0.6 nozzle).json"
-    },
-
-
-    {
-      "name": "0.40 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.40 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-    {
-      "name": "0.48 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.48 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-
-    {
-      "name": "0.32 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.32 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-
-    {
-      "name": "0.24 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.24 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-    
-    
-    
-    {
-      "name": "0.56 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.56 Standard @Snapmaker U1 (0.8 nozzle).json"
     }
-    
-
-
   ],
   "filament_list": [
     {
@@ -622,14 +461,6 @@
       "sub_path": "filament/fdm_filament_pla_generic.json"
     },
     {
-      "name": "fdm_filament_abs_generic",
-      "sub_path": "filament/fdm_filament_abs_generic.json"
-    },
-    {
-      "name": "fdm_filament_asa_generic",
-      "sub_path": "filament/fdm_filament_asa_generic.json"
-    },
-    {
       "name": "fdm_filament_pctg_generic",
       "sub_path": "filament/fdm_filament_pctg_generic.json"
     },
@@ -638,331 +469,203 @@
       "sub_path":"filament/fdm_filament_bvoh_generic.json"
     },
     {
-      "name": "fdm_filament_pc_generic",
-      "sub_path": "filament/fdm_filament_pc_generic.json"
+      "name": "fdm_filament_abs_generic",
+      "sub_path": "filament/fdm_filament_abs_generic.json"
+    },
+    {
+      "name": "fdm_filament_asa_generic",
+      "sub_path": "filament/fdm_filament_asa_generic.json"
     },
     {
       "name": "fdm_filament_pa_generic",
       "sub_path": "filament/fdm_filament_pa_generic.json"
     },
     {
-      "name": "fdm_filament_pet_generic",
-      "sub_path": "filament/fdm_filament_pet_generic.json"
-    },
-    {
-      "name": "fdm_filament_pva_generic",
-      "sub_path": "filament/fdm_filament_pva_generic.json"
-    },
-    {
-      "name": "fdm_filament_tpu_generic",
-      "sub_path": "filament/fdm_filament_tpu_generic.json"
-    },
-    {
-      "name": "Generic Support For PLA @base",
-      "sub_path": "filament/Generic Support For PLA @base.json"
-    },
-    {
-      "name": "Generic Support For PLA test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic Support For PLA @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic Support For PLA @U1 0.4 nozzle",
-      "sub_path": "filament/Generic Support For PLA @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic Support For PLA test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic Support For PLA @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic Support For PLA test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic Support For PLA @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PVA @base",
-      "sub_path": "filament/Generic PVA @base.json"
-    },
-    {
-      "name": "Generic PVA test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PVA @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PVA @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PVA @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PVA test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PVA @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PVA test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PVA @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG @base",
-      "sub_path": "filament/Generic PETG @base.json"
-    },
-    {
-      "name": "Generic PETG test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PETG @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PETG @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic TPU test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic TPU @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic TPU @U1 0.4 nozzle",
-      "sub_path": "filament/Generic TPU @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic TPU test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic TPU @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic TPU test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic TPU @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG @base",
-      "sub_path": "filament/Generic PCTG @base.json"
-    },
-    {
-      "name": "Generic PCTG test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PCTG @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PCTG @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PCTG @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PCTG @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF @base",
-      "sub_path": "filament/Generic PETG HF @base.json"
-    },
-    {
-      "name": "Generic PETG HF test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PETG HF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG HF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG HF @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG HF @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF @base",
-      "sub_path": "filament/Generic PETG-CF @base.json"
-    },
-    {
-      "name": "Generic PETG-CF test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PETG-CF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG-CF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG-CF @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG-CF @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-GF @base",
-      "sub_path": "filament/Generic PETG-GF @base.json"
-    },
-    {
-      "name": "Generic PETG-GF test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PETG-GF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-GF @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG-GF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-GF test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG-GF @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-GF test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG-GF @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed @base",
-      "sub_path": "filament/Generic PLA High Speed @base.json"
-    },
-    {
-      "name": "Generic PLA Silk @base",
-      "sub_path": "filament/Generic PLA Silk @base.json"
-    },
-    {
-      "name": "Generic PLA @base",
-      "sub_path": "filament/Generic PLA @base.json"
-    },
-    {
-      "name": "Generic PLA-CF @base",
-      "sub_path": "filament/Generic PLA-CF @base.json"
-    },
-    {
-      "name": "Generic BVOH @base",
-      "sub_path": "filament/Generic BVOH @base.json"
-    },
-    {
-      "name": "Generic BVOH test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic BVOH @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic BVOH @U1 0.4 nozzle",
-      "sub_path": "filament/Generic BVOH @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic BVOH test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic BVOH @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic BVOH test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic BVOH @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic TPU 95A HF @base",
-      "sub_path": "filament/Generic TPU 95A HF @base.json"
-    },
-    {
-      "name": "Generic TPU 95A HF test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic TPU 95A HF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic TPU 95A HF @U1 0.4 nozzle",
-      "sub_path": "filament/Generic TPU 95A HF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic TPU 95A HF test @U1 0.6 nozzle",
-      "sub_path": "filament/Generic TPU 95A HF @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic TPU 95A HF test @U1 0.8 nozzle",
-      "sub_path": "filament/Generic TPU 95A HF @U1 0.8 nozzle.json"
+      "name": "fdm_filament_pc_generic",
+      "sub_path": "filament/fdm_filament_pc_generic.json"
     },
     {
       "name": "Generic ABS @base",
       "sub_path": "filament/Generic ABS @base.json"
     },
     {
-      "name": "Generic ABS @U1 0.2 nozzle",
-      "sub_path": "filament/Generic ABS @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic ABS @U1 0.4 nozzle",
-      "sub_path": "filament/Generic ABS @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic ABS @U1 0.6 nozzle",
-      "sub_path": "filament/Generic ABS @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic ABS @U1 0.8 nozzle",
-      "sub_path": "filament/Generic ABS @U1 0.8 nozzle.json"
+      "name": "Generic ABS",
+      "sub_path": "filament/Generic ABS.json"
     },
     {
       "name": "Generic ASA @base",
       "sub_path": "filament/Generic ASA @base.json"
     },
     {
-      "name": "Generic ASA @U1 0.2 nozzle",
-      "sub_path": "filament/Generic ASA @U1 0.2 nozzle.json"
+      "name": "Generic ASA",
+      "sub_path": "filament/Generic ASA.json"
     },
     {
-      "name": "Generic ASA @U1 0.4 nozzle",
-      "sub_path": "filament/Generic ASA @U1 0.4 nozzle.json"
+      "name": "Generic PA",
+      "sub_path": "filament/Generic PA.json"
     },
     {
-      "name": "Generic ASA @U1 0.6 nozzle",
-      "sub_path": "filament/Generic ASA @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic ASA @U1 0.8 nozzle",
-      "sub_path": "filament/Generic ASA @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PA @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PA @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PA @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PA @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PA @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PA @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PA @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PA @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PA-CF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PA-CF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PA-CF @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PA-CF @U1 0.8 nozzle.json"
+      "name": "Generic PA-CF",
+      "sub_path": "filament/Generic PA-CF.json"
     },
     {
       "name": "Generic PC @base",
       "sub_path": "filament/Generic PC @base.json"
     },
     {
-      "name": "Generic PC @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PC @U1 0.4 nozzle.json"
+      "name": "Generic PC",
+      "sub_path": "filament/Generic PC.json"
     },
     {
-      "name": "Generic PC @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PC @U1 0.6 nozzle.json"
+      "name": "Generic Support For PLA @base",
+      "sub_path": "filament/Generic Support For PLA @base.json"
     },
     {
-      "name": "Generic PC @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PC @U1 0.8 nozzle.json"
+      "name": "Generic Support For PLA",
+      "sub_path": "filament/Generic Support For PLA.json"
     },
-    
+    {
+      "name": "fdm_filament_pva_generic",
+      "sub_path": "filament/fdm_filament_pva_generic.json"
+    },
+    {
+      "name": "Generic PVA @base",
+      "sub_path": "filament/Generic PVA @base.json"
+    },
+    {
+      "name": "Generic PVA",
+      "sub_path": "filament/Generic PVA.json"
+    },
+    {
+      "name": "fdm_filament_pet_generic",
+      "sub_path": "filament/fdm_filament_pet_generic.json"
+    },
+    {
+      "name": "Generic PETG @base",
+      "sub_path": "filament/Generic PETG @base.json"
+    },
+    {
+      "name": "Generic PETG",
+      "sub_path": "filament/Generic PETG.json"
+    },
+    {
+      "name": "fdm_filament_tpu_generic",
+      "sub_path": "filament/fdm_filament_tpu_generic.json"
+    },
+    {
+      "name": "Generic TPU",
+      "sub_path": "filament/Generic TPU.json"
+    },
+    {
+      "name": "Generic PCTG @base",
+      "sub_path": "filament/Generic PCTG @base.json"
+    },
+    {
+      "name": "Generic PCTG",
+      "sub_path": "filament/Generic PCTG.json"
+    },
+    {
+      "name": "Generic PETG HF @base",
+      "sub_path": "filament/Generic PETG HF @base.json"
+    },
+    {
+      "name": "Generic PETG HF",
+      "sub_path": "filament/Generic PETG HF.json"
+    },
+    {
+      "name": "Generic PETG-CF @base",
+      "sub_path": "filament/Generic PETG-CF @base.json"
+    },
+    {
+      "name": "Generic PETG-CF",
+      "sub_path": "filament/Generic PETG-CF.json"
+    },
+    {
+      "name": "Generic PETG-GF @base",
+      "sub_path": "filament/Generic PETG-GF @base.json"
+    },
+    {
+      "name": "Generic PETG-GF",
+      "sub_path": "filament/Generic PETG-GF.json"
+    },
+    {
+      "name": "Generic PLA High Speed @base",
+      "sub_path": "filament/Generic PLA High Speed @base.json"
+    },
+    {
+      "name": "Generic PLA High Speed",
+      "sub_path": "filament/Generic PLA High Speed.json"
+    },
+    {
+      "name": "Generic PLA Silk @base",
+      "sub_path": "filament/Generic PLA Silk @base.json"
+    },
+    {
+      "name": "Generic PLA Silk",
+      "sub_path": "filament/Generic PLA Silk.json"
+    },
+    {
+      "name": "Generic PLA @base",
+      "sub_path": "filament/Generic PLA @base.json"
+    },
+    {
+      "name": "Generic PLA",
+      "sub_path": "filament/Generic PLA.json"
+    },
+    {
+      "name": "Generic PLA-CF @base",
+      "sub_path": "filament/Generic PLA-CF @base.json"
+    },
+    {
+      "name": "Generic PLA-CF",
+      "sub_path": "filament/Generic PLA-CF.json"
+    },
+    {
+      "name": "Generic BVOH @base",
+      "sub_path": "filament/Generic BVOH @base.json"
+    },
+    {
+      "name": "Generic BVOH",
+      "sub_path": "filament/Generic BVOH.json"
+    },
+    {
+      "name": "Generic TPU 95A HF @base",
+      "sub_path": "filament/Generic TPU 95A HF @base.json"
+    },
+    {
+      "name": "Generic TPU 95A HF",
+      "sub_path": "filament/Generic TPU 95A HF.json"
+    },
+    {
+      "name": "Snapmaker PETG HF @base",
+      "sub_path": "filament/Snapmaker PETG HF @base.json"
+    },
+    {
+      "name": "Snapmaker PETG HF",
+      "sub_path": "filament/Snapmaker PETG HF.json"
+    },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     
-
-    
-
 
 
 
@@ -1553,40 +1256,16 @@
       "sub_path": "filament/Snapmaker PLA Matte @U1 base.json"
     },
     {
-      "name": "Snapmaker PLA Matte test @U1 0.2 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Matte @U1 0.4 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Matte test @U1 0.6 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Matte test @U1 0.8 nozzle",
-      "sub_path": "filament/Snapmaker PLA Matte @U1 0.8 nozzle.json"
+      "name": "Snapmaker PLA Matte @U1",
+      "sub_path": "filament/Snapmaker PLA Matte @U1.json"
     },
     {
       "name": "Snapmaker PLA Basic @U1 base",
       "sub_path": "filament/Snapmaker PLA Basic @U1 base.json"
     },
     {
-      "name": "Snapmaker PLA Basic test @U1 0.2 nozzle",
-      "sub_path": "filament/Snapmaker PLA Basic @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Basic @U1 0.4 nozzle",
-      "sub_path": "filament/Snapmaker PLA Basic @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Basic test @U1 0.6 nozzle",
-      "sub_path": "filament/Snapmaker PLA Basic @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA Basic test @U1 0.8 nozzle",
-      "sub_path": "filament/Snapmaker PLA Basic @U1 0.8 nozzle.json"
+      "name": "Snapmaker PLA Basic @U1",
+      "sub_path": "filament/Snapmaker PLA Basic @U1.json"
     },
     {
       "name": "Snapmaker PLA SnapSpeed @base",
@@ -1613,20 +1292,8 @@
       "sub_path": "filament/Snapmaker PLA SnapSpeed @U1 base.json"
     },
     {
-      "name": "Snapmaker PLA SnapSpeed @U1 0.2 nozzle",
-      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA SnapSpeed @U1 0.4 nozzle",
-      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA SnapSpeed @U1 0.6 nozzle",
-      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PLA SnapSpeed @U1 0.8 nozzle",
-      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1 0.8 nozzle.json"
+      "name": "Snapmaker PLA SnapSpeed @U1",
+      "sub_path": "filament/Snapmaker PLA SnapSpeed @U1.json"
     },
     {
       "name": "Snapmaker PLA Metal @U1 base",
@@ -1635,6 +1302,10 @@
     {
       "name": "Snapmaker PLA Silk @U1 base",
       "sub_path": "filament/Snapmaker PLA Silk @U1 base.json"
+    },
+	{
+      "name": "Snapmaker TPU 95A HF @U1",
+      "sub_path": "filament/Snapmaker TPU 95A HF @U1.json"
     },
     {
       "name": "Snapmaker PLA-CF @U1 base",
@@ -1652,673 +1323,14 @@
       "name": "Snapmaker TPU 95A @U1 base",
       "sub_path":"filament/Snapmaker TPU 95A @U1 base.json"
     },
-    {
-      "name": "Snapmaker PETG HF @base",
-      "sub_path": "filament/Snapmaker PETG HF @base.json"
-    },
-    {
-      "name": "Snapmaker PETG HF @U1 0.2 nozzle",
-      "sub_path": "filament/Snapmaker PETG HF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PETG HF @U1 0.4 nozzle",
-      "sub_path": "filament/Snapmaker PETG HF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PETG HF @U1 0.6 nozzle",
-      "sub_path": "filament/Snapmaker PETG HF @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Snapmaker PETG HF @U1 0.8 nozzle",
-      "sub_path": "filament/Snapmaker PETG HF @U1 0.8 nozzle.json"
-    },
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     {
-      "name": "fdm_filament_common_bambu",
-      "sub_path": "filament/fdm_filament_common_bambu.json"
+      "name": "fdm_filament_common_poly",
+      "sub_path": "filament/fdm_filament_common_poly.json"
     },
-
-
-
-
     {
-      "name": "fdm_filament_abs_bambu",
-      "sub_path": "filament/fdm_filament_abs_bambu.json"  
-    },
-    {
-      "name": "fdm_filament_asa_bambu",
-      "sub_path": "filament/fdm_filament_asa_bambu.json"
-    },
-    {
-      "name": "fdm_filament_bvoh_bambu",
-      "sub_path": "filament/fdm_filament_bvoh_bambu.json"
-    },
-    {
-      "name": "fdm_filament_eva_bambu",
-      "sub_path": "filament/fdm_filament_eva_bambu.json"
-    },
-    {
-      "name": "fdm_filament_hips_bambu",
-      "sub_path": "filament/fdm_filament_hips_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pa_bambu",
-      "sub_path": "filament/fdm_filament_pa_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pc_bambu",
-      "sub_path": "filament/fdm_filament_pc_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pctg_bambu",
-      "sub_path": "filament/fdm_filament_pctg_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pe_bambu",
-      "sub_path": "filament/fdm_filament_pe_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pet_bambu",
-      "sub_path": "filament/fdm_filament_pet_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pha_bambu",
-      "sub_path": "filament/fdm_filament_pha_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pla_bambu",
-      "sub_path": "filament/fdm_filament_pla_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pp_bambu",
-      "sub_path": "filament/fdm_filament_pp_bambu.json"
-    },
-    {
-      "name": "fdm_filament_ppa_bambu",
-      "sub_path": "filament/fdm_filament_ppa_bambu.json"
-    },
-    {
-      "name": "fdm_filament_pva_bambu",
-      "sub_path": "filament/fdm_filament_pva_bambu.json"
-    },
-    {
-      "name": "fdm_filament_tpu_bambu",
-      "sub_path": "filament/fdm_filament_tpu_bambu.json"
-    },
-
-
-
-
-
-    
-
-
-    {
-      "name": "Generic ABS bambu @base",
-      "sub_path": "filament/Generic ABS bambu @base.json"
-    },
-    {
-      "name": "Generic ABS bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic ABS bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic ABS bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic ABS bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic ABS bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic ABS bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic ABS bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic ABS bambu @U1 0.8 nozzle.json"
-    },
-
-    {
-      "name": "Generic ASA bambu @base",
-      "sub_path": "filament/Generic ASA bambu @base.json"
-    },
-    {
-      "name": "Generic ASA bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic ASA bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic ASA bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic ASA bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic ASA bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic ASA bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic ASA bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic ASA bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic BVOH bambu @base",
-      "sub_path": "filament/Generic BVOH bambu @base.json"
-    },
-    {
-      "name": "Generic BVOH bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic BVOH bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic BVOH bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic BVOH bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic BVOH bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic BVOH bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic EVA bambu @base",
-      "sub_path": "filament/Generic EVA bambu @base.json"
-    },
-    {
-      "name": "Generic EVA bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic EVA bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic EVA bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic EVA bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic EVA bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic EVA bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic HIPS bambu @base",
-      "sub_path": "filament/Generic HIPS bambu @base.json"
-    },
-    {
-      "name": "Generic HIPS bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic HIPS bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic HIPS bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic HIPS bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic HIPS bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic HIPS bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic HIPS bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic HIPS bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PA bambu @base",
-      "sub_path": "filament/Generic PA bambu @base.json"
-    },
-    {
-      "name": "Generic PA bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PA bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PA bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PA bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PA bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PA bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF bambu @base",
-      "sub_path": "filament/Generic PA-CF bambu @base.json"
-    },
-    {
-      "name": "Generic PA-CF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PA-CF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PA-CF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PA-CF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PA-CF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PC bambu @base",
-      "sub_path": "filament/Generic PC bambu @base.json"
-    },
-    
-    {
-      "name": "Generic PC bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PC bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PC bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PC bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PC bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PC bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PC bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PC bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG bambu @base",
-      "sub_path": "filament/Generic PCTG bambu @base.json"
-    },
-    {
-      "name": "Generic PCTG bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PCTG bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PCTG bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PCTG bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PCTG bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PE bambu @base",
-      "sub_path": "filament/Generic PE bambu @base.json"
-    },
-    {
-      "name": "Generic PE bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PE bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PE bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PE bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PE bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PE bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PE-CF bambu @base",
-      "sub_path": "filament/Generic PE-CF bambu @base.json"
-    },
-    {
-      "name": "Generic PE-CF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PE-CF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PE-CF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PE-CF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PE-CF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PE-CF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG bambu @base",
-      "sub_path": "filament/Generic PETG bambu @base.json"
-    },
-    {
-      "name": "Generic PETG bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PETG bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PETG bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF bambu @base",
-      "sub_path": "filament/Generic PETG HF bambu @base.json"
-    },
-    {
-      "name": "Generic PETG HF bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PETG HF bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG HF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG HF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG HF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG HF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF bambu @base",
-      "sub_path": "filament/Generic PETG-CF bambu @base.json"
-    },
-    {
-      "name": "Generic PETG-CF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PETG-CF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PETG-CF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PETG-CF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PETG-CF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PHA bambu @base",
-      "sub_path": "filament/Generic PHA bambu @base.json"
-    },
-    {
-      "name": "Generic PHA bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PHA bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PHA bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PHA bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PHA bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PHA bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PLA bambu @base",
-      "sub_path": "filament/Generic PLA bambu @base.json"
-    },
-    {
-      "name": "Generic PLA bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PLA bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PLA bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PLA bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed bambu @base",
-      "sub_path": "filament/Generic PLA High Speed bambu @base.json"
-    },
-    {
-      "name": "Generic PLA High Speed bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PLA High Speed bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA High Speed bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA High Speed bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA High Speed bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PLA Silk bambu @base",
-      "sub_path": "filament/Generic PLA Silk bambu @base.json"
-    },
-    {
-      "name": "Generic PLA Silk bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA Silk bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA Silk bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA Silk bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PLA Silk bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA Silk bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PLA-CF bambu @base",
-      "sub_path": "filament/Generic PLA-CF bambu @base.json"
-    },
-    {
-      "name": "Generic PLA-CF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA-CF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA-CF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA-CF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PLA-CF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA-CF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PP bambu @base",
-      "sub_path": "filament/Generic PP bambu @base.json"
-    },
-    {
-      "name": "Generic PP bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PP bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PP bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PP bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PP bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PP bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PP-CF bambu @base",
-      "sub_path": "filament/Generic PP-CF bambu @base.json"
-    },
-    {
-      "name": "Generic PP-CF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PP-CF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PP-CF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PP-CF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PP-CF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PP-CF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PP-GF bambu @base",
-      "sub_path": "filament/Generic PP-GF bambu @base.json"
-    },
-    {
-      "name": "Generic PP-GF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PP-GF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PP-GF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PP-GF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PP-GF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PP-GF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PPA-CF bambu @base",
-      "sub_path": "filament/Generic PPA-CF bambu @base.json"
-    },
-    {
-      "name": "Generic PPA-CF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PPA-CF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PPA-CF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PPA-CF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PPA-CF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PPA-CF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PPA-GF bambu @base",
-      "sub_path": "filament/Generic PPA-GF bambu @base.json"
-    },
-    {
-      "name": "Generic PPA-GF bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PPA-GF bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PPA-GF bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PPA-GF bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PPA-GF bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PPA-GF bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic PVA bambu @base",
-      "sub_path": "filament/Generic PVA bambu @base.json"
-    },
-    {
-      "name": "Generic PVA bambu @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PVA bambu @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PVA bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PVA bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PVA bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PVA bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PVA bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PVA bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic TPU bambu @base",
-      "sub_path": "filament/Generic TPU bambu @base.json"
-    },
-    {
-      "name": "Generic TPU bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic TPU bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic TPU bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic TPU bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic TPU bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic TPU bambu @U1 0.8 nozzle.json"
-    },
-    {
-      "name": "Generic TPU for AMS bambu @base",
-      "sub_path": "filament/Generic TPU for AMS bambu @base.json"
-    },
-    {
-      "name": "Generic TPU for AMS bambu @U1 0.4 nozzle",
-      "sub_path": "filament/Generic TPU for AMS bambu @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic TPU for AMS bambu @U1 0.6 nozzle",
-      "sub_path": "filament/Generic TPU for AMS bambu @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic TPU for AMS bambu @U1 0.8 nozzle",
-      "sub_path": "filament/Generic TPU for AMS bambu @U1 0.8 nozzle.json"
-    },
-
-
-
-
-
-    {
-      "name": "Generic PLA @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PLA @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PLA @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA @U1 0.6 nozzle.json"
-    },
-	{
-      "name": "Generic PLA @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA @U1 0.8 nozzle.json"
-    },
-    
-    
-    {
-      "name": "Generic PLA High Speed test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PLA High Speed @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA High Speed @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA High Speed @U1 0.6 nozzle.json"
-    },
-    {
-      "name": "Generic PLA High Speed @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA High Speed @U1 0.8 nozzle.json"
-    },
-    
-    {
-      "name": "Generic PLA-CF test @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PLA-CF @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PLA-CF @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA-CF @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA-CF @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA-CF @U1 0.6 nozzle.json"
-    },
-	{
-      "name": "Generic PLA-CF @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA-CF @U1 0.8 nozzle.json"
-    },
-
-    {
-      "name": "Generic PLA Silk @U1 0.2 nozzle",
-      "sub_path": "filament/Generic PLA Silk @U1 0.2 nozzle.json"
-    },
-    {
-      "name": "Generic PLA Silk @U1 0.4 nozzle",
-      "sub_path": "filament/Generic PLA Silk @U1 0.4 nozzle.json"
-    },
-    {
-      "name": "Generic PLA Silk @U1 0.6 nozzle",
-      "sub_path": "filament/Generic PLA Silk @U1 0.6 nozzle.json"
-    },
-	{
-      "name": "Generic PLA Silk @U1 0.8 nozzle",
-      "sub_path": "filament/Generic PLA Silk @U1 0.8 nozzle.json"
-    },
-	
-	
-	
-    {
-      "name": "fdm_filament_common_poly_test",
-      "sub_path": "filament/fdm_filament_common_poly_test.json"
-    },
-    {
-      "name": "fdm_filament_pla_poly_test",
-      "sub_path": "filament/fdm_filament_pla_poly_test.json"
+      "name": "fdm_filament_pla_poly",
+      "sub_path": "filament/fdm_filament_pla_poly.json"
     },
     {
       "name": "Polymaker PLA @U1 base",
@@ -2336,12 +1348,6 @@
       "name": "Polymaker Tough PLA Family @U1",
       "sub_path": "filament/Polymaker Tough PLA Family @U1.json"
     }
-    
-
-
-
-
-
   ],
   "machine_list": [
     {
@@ -2713,20 +1719,8 @@
       "sub_path": "machine/Snapmaker A350 Dual QS+B Kit (0.8 nozzle).json"
     },
     {
-      "name": "Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "machine/Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
       "name": "Snapmaker U1 (0.4 nozzle)",
       "sub_path": "machine/Snapmaker U1 (0.4 nozzle).json"
-    },
-    {
-      "name": "Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "machine/Snapmaker U1 (0.6 nozzle).json"
-    },
-    {
-      "name": "Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "machine/Snapmaker U1 (0.8 nozzle).json"
     },
     {
       "name": "Snapmaker Artisan (0.2 nozzle)",

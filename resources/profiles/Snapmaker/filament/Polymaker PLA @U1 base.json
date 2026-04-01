@@ -1,7 +1,7 @@
 {
     "type": "filament",
     "name": "Polymaker PLA @U1 base",
-    "inherits": "fdm_filament_pla_poly_test",
+    "inherits": "fdm_filament_pla_poly",
     "from": "system",
     "setting_id": "OGFSA04",
     "instantiation": "false",

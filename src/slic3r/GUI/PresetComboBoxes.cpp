@@ -846,14 +846,14 @@ static void run_wizard(ConfigWizard::StartPage sp)
 
 void PlaterPresetComboBox::OnSelect(wxCommandEvent &evt)
 {
-    if (wxGetApp().plater()) {
-        auto* pNotice = wxGetApp().plater()->get_notification_manager();
-        if (pNotice) {
-            pNotice->close_notification_of_type(NotificationType::CustomNotification);
-			pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
-            pNotice->set_slicing_progress_hidden();
-        }
-    }
+   // if (wxGetApp().plater()) {
+   //     auto* pNotice = wxGetApp().plater()->get_notification_manager();
+   //     if (pNotice) {
+   //         pNotice->close_notification_of_type(NotificationType::CustomNotification);
+			//pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+   //         pNotice->set_slicing_progress_hidden();
+   //     }
+   // }
 
     auto selected_item = evt.GetSelection();
 

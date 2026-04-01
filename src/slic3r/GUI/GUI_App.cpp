@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -176,6 +177,31 @@ namespace pt = boost::property_tree;
 
 namespace Slic3r {
 namespace GUI {
+
+void GUI_App::load_filament_hot_bed_nozzle_relations()
+{
+    FilamentHotBedNozzleRules::singleton().load();
+}
+
+bool GUI_App::is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_bed_filament_supported(bed_key, filament_type);
+}
+
+bool GUI_App::is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_bed_filament_warning(bed_key, filament_type);
+}
+
+bool GUI_App::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_forbidden(nozzle_key, filament_preset_name);
+}
+
+bool GUI_App::has_filament_hot_bed_nozzle_rules() const
+{
+    return FilamentHotBedNozzleRules::singleton().is_loaded();
+}
 
 class MainFrame;
 
@@ -2328,6 +2354,7 @@ bool GUI_App::on_init_inner()
     const wxString resources_dir = from_u8(Slic3r::resources_dir());
     wxCHECK_MSG(wxDirExists(resources_dir), false,
         wxString::Format(_L("Resources path does not exist or is not a directory: %s"), resources_dir));
+    load_filament_hot_bed_nozzle_relations();
 
 #ifdef __linux__
     if (! check_old_linux_datadir(GetAppName())) {

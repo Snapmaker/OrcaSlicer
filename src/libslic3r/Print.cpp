@@ -512,57 +512,6 @@ void Print::filament_rule_mismatch_flags(std::string& out_nozzle, bool& out_gesp
     out_pei_not_pla = rules.evaluate_pei_bed_filament_mismatch_not_pla(m_config, used);
 }
 
-
-// This must be called before the mapping is used (e.g., before export_gcode)
-void Print::initialize_filament_extruder_map()
-{
-    m_filament_extruder_map.clear();
-
-    // Get the number of physical extruders (number of nozzle_diameter entries)
-    size_t physical_extruder_count = m_config.nozzle_diameter.values.size();
-
-    if (physical_extruder_count == 0) {
-        BOOST_LOG_TRIVIAL(error) << "Print::initialize_filament_extruder_map: ERROR - No physical extruders configured!";
-        return;
-    }
-
-    // Get all filament indices that will be used
-    std::vector<unsigned int> filament_extruders = this->extruders();
-
-    // IMPORTANT: Always create mappings for ALL configured filaments, not just those used by objects.
-    // This is critical because filament override parameters need to access the mapping for all filaments.
-    // For example, if a user has 8 filaments configured but only uses 4 in their model,
-    // the mapping table must still contain entries for all 8 filaments to correctly
-    // inherit parameters from the corresponding physical extruders.
-    // extruders() returns empty. In this case, use filament_diameter.size() to determine filament count.
-    // This ensures the mapping is created for all configured filaments, not just those used by objects.
-    if (filament_extruders.empty()) {
-        size_t filament_count = m_config.filament_diameter.size();
-        for (size_t i = 0; i < filament_count; ++i) {
-            filament_extruders.push_back((unsigned int)i);
-        }
-    } else {
-        // Even if extruders() returns some values, we need to ensure ALL configured filaments are in the map.
-        // Add any missing filament indices that are configured but not used by objects.
-        size_t configured_filament_count = m_config.filament_diameter.size();
-        for (size_t i = 0; i < configured_filament_count; ++i) {
-            if (std::find(filament_extruders.begin(), filament_extruders.end(), (unsigned int)i) == filament_extruders.end()) {
-                filament_extruders.push_back((unsigned int)i);
-            }
-        }
-    }
-
-    // Create mapping: filament_id -> physical_extruder_id
-    // Mapping formula: physical_extruder = filament_id % physical_extruder_count
-    // This allows using 8 filaments with 4 physical extruders:
-    //   filament 0,1,2,3 -> extruder 0,1,2,3
-    //   filament 4,5,6,7 -> extruder 0,1,2,3
-    for (unsigned int filament_idx : filament_extruders) {
-        int physical_extruder = filament_idx % physical_extruder_count;
-        m_filament_extruder_map[filament_idx] = physical_extruder;
-    }
-}
-
 unsigned int Print::num_object_instances() const
 {
 	unsigned int instances = 0;

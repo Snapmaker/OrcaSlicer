@@ -121,8 +121,13 @@ static void validate_filament_hot_bed_nozzle_relation(wxWindow* parent)
     const auto* nozzle_opt = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
     if (nozzle_opt != nullptr && !nozzle_opt->values.empty()) {
         const std::string nozzle_key = nozzle_diameter_to_rule_key(nozzle_opt->values.front());
-        const bool is_forbidden = app.is_nozzle_filament_forbidden(nozzle_key, filament_preset.name);
+        NozzleType        nozzle_mat = NozzleType::ntUndefine;
+        if (const auto* nto = printer_config.option<ConfigOptionEnum<NozzleType>>("nozzle_type"))
+            nozzle_mat = nto->value;
+        const bool is_forbidden = app.is_nozzle_filament_forbidden(nozzle_key, filament_preset.name, nozzle_mat);
+        const bool is_noz_warn  = app.is_nozzle_filament_warning(nozzle_key, filament_preset.name, nozzle_mat);
         (void)is_forbidden;
+        (void)is_noz_warn;
     }
 }
 

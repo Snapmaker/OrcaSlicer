@@ -193,9 +193,16 @@ bool GUI_App::is_bed_filament_warning(const std::string& bed_key, const std::str
     return FilamentHotBedNozzleRules::singleton().is_bed_filament_warning(bed_key, filament_type);
 }
 
-bool GUI_App::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const
+bool GUI_App::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                           NozzleType nozzle_type) const
 {
-    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_forbidden(nozzle_key, filament_preset_name);
+    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_forbidden(nozzle_key, filament_preset_name, nozzle_type);
+}
+
+bool GUI_App::is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                         NozzleType nozzle_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_warning(nozzle_key, filament_preset_name, nozzle_type);
 }
 
 bool GUI_App::has_filament_hot_bed_nozzle_rules() const

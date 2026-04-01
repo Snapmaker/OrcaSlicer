@@ -5,11 +5,13 @@
 #include "Utils.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <iomanip>
 
@@ -73,6 +75,214 @@ bool is_tpu_type(const std::string& filament_type)
 {
     return contains_token_ci(filament_type, "TPU");
 }
+
+static bool ptree_key_is_array_index(const std::string& key)
+{
+    return !key.empty() && std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isdigit(c); });
+}
+
+// JSON array elements are usually keyed "0","1",…; some ptree representations use an empty key per element.
+static bool ptree_key_is_array_element(const std::string& key)
+{
+    return key.empty() || ptree_key_is_array_index(key);
+}
+
+// type: "all" | "undefine" | "hardened_steel" | "stainless_steel" | "brass" | ["brass","hardened_steel",...]
+// Note: boost::ptree JSON leaves have no children, so node.empty() is true even when data() holds the string.
+static void parse_nozzle_rule_type_field(const pt::ptree& rule_obj, FilamentHotBedNozzleRules::NozzleForbiddenBand& band)
+{
+    auto it = rule_obj.find("type");
+    if (it == rule_obj.not_found()) {
+        band.applies_to_all_nozzle_types = true;
+        return;
+    }
+    const pt::ptree& tn = it->second;
+    std::string      scalar = boost::trim_copy(tn.data());
+    if (!scalar.empty()) {
+        boost::algorithm::to_lower(scalar);
+        if (scalar == "all") {
+            band.applies_to_all_nozzle_types = true;
+            return;
+        }
+        band.applies_to_all_nozzle_types = false;
+        band.nozzle_types.insert(std::move(scalar));
+        return;
+    }
+    // JSON array: children keyed "0", "1", …; values live in leaf .data() (same empty() quirk per element).
+    band.applies_to_all_nozzle_types = false;
+    for (const auto& ch : tn) {
+        if (!ptree_key_is_array_element(ch.first))
+            continue;
+        std::string v = boost::trim_copy(ch.second.data());
+        boost::algorithm::to_lower(v);
+        if (!v.empty())
+            band.nozzle_types.insert(std::move(v));
+    }
+    if (band.nozzle_types.empty())
+        band.applies_to_all_nozzle_types = true;
+}
+
+static void parse_forbidden_from_array_tree(const pt::ptree& arr, FilamentHotBedNozzleRules::NozzleForbiddenBand& band)
+{
+    for (const auto& item : arr) {
+        if (!ptree_key_is_array_element(item.first))
+            continue;
+        std::string v = boost::trim_copy(item.second.data());
+        if (v.empty()) {
+            try {
+                v = item.second.get_value<std::string>();
+            } catch (const pt::ptree_error&) {
+                continue;
+            }
+        }
+        boost::algorithm::trim(v);
+        std::string lower = boost::algorithm::to_lower_copy(v);
+        if (lower == "*" || lower == "all") {
+            band.forbid_all_filaments = true;
+            continue;
+        }
+        if (!v.empty())
+            band.forbidden_substrings.insert(std::move(v));
+    }
+}
+
+static void parse_nozzle_rule_forbidden(const pt::ptree& rule_obj, FilamentHotBedNozzleRules::NozzleForbiddenBand& band)
+{
+    auto it = rule_obj.find("forbidden");
+    if (it == rule_obj.not_found())
+        return;
+    parse_forbidden_from_array_tree(it->second, band);
+}
+
+static void parse_warning_from_array_tree(const pt::ptree& arr, FilamentHotBedNozzleRules::NozzleForbiddenBand& band)
+{
+    for (const auto& item : arr) {
+        if (!ptree_key_is_array_element(item.first))
+            continue;
+        std::string v = boost::trim_copy(item.second.data());
+        if (v.empty()) {
+            try {
+                v = item.second.get_value<std::string>();
+            } catch (const pt::ptree_error&) {
+                continue;
+            }
+        }
+        boost::algorithm::trim(v);
+        if (!v.empty())
+            band.warning_substrings.insert(std::move(v));
+    }
+}
+
+static void parse_nozzle_rule_warning(const pt::ptree& rule_obj, FilamentHotBedNozzleRules::NozzleForbiddenBand& band)
+{
+    auto it = rule_obj.find("warning");
+    if (it == rule_obj.not_found())
+        return;
+    parse_warning_from_array_tree(it->second, band);
+}
+
+static bool is_typed_nozzle_map_key(std::string k_lower)
+{
+    boost::algorithm::to_lower(k_lower);
+    if (k_lower == "all")
+        return true;
+    return NozzleTypeStrToEumn.find(k_lower) != NozzleTypeStrToEumn.end();
+}
+
+static bool rule_obj_has_typed_nozzle_map(const pt::ptree& rule_obj)
+{
+    for (const auto& ch : rule_obj) {
+        if (ptree_key_is_array_index(ch.first))
+            continue;
+        std::string k = boost::trim_copy(ch.first);
+        boost::algorithm::to_lower(k);
+        if (is_typed_nozzle_map_key(k))
+            return true;
+    }
+    return false;
+}
+
+// type 为 all（或省略）且无 forbidden / warning 子串时，视为禁用全部耗材（仅有 warning 时不触发全禁）。
+static void finalize_nozzle_band_for_all_default(FilamentHotBedNozzleRules::NozzleForbiddenBand& band)
+{
+    if (band.applies_to_all_nozzle_types && band.forbidden_substrings.empty() && band.warning_substrings.empty())
+        band.forbid_all_filaments = true;
+}
+
+// Per-nozzle-diameter object: { "brass": [...], "undefine": { "forbidden": [...] }, "all": [...] }
+static void append_bands_from_typed_nozzle_map(const std::string& rule_key, const pt::ptree& rule_obj,
+    std::unordered_map<std::string, std::vector<FilamentHotBedNozzleRules::NozzleForbiddenBand>>& out_map)
+{
+    for (const auto& ch : rule_obj) {
+        if (ptree_key_is_array_index(ch.first))
+            continue;
+        std::string k = boost::trim_copy(ch.first);
+        boost::algorithm::to_lower(k);
+        if (!is_typed_nozzle_map_key(k))
+            continue;
+
+        FilamentHotBedNozzleRules::NozzleForbiddenBand band;
+        if (k == "all") {
+            band.applies_to_all_nozzle_types = true;
+        } else {
+            band.applies_to_all_nozzle_types = false;
+            band.nozzle_types.insert(k);
+        }
+
+        const pt::ptree& vnode         = ch.second;
+        const bool       has_forbidden = vnode.find("forbidden") != vnode.not_found();
+        const bool       has_warning   = vnode.find("warning") != vnode.not_found();
+        if (has_forbidden)
+            parse_nozzle_rule_forbidden(vnode, band);
+        if (has_warning)
+            parse_nozzle_rule_warning(vnode, band);
+        if (!has_forbidden && !has_warning)
+            parse_forbidden_from_array_tree(vnode, band);
+
+        finalize_nozzle_band_for_all_default(band);
+        if (!band.forbidden_substrings.empty() || band.forbid_all_filaments || !band.warning_substrings.empty())
+            out_map[rule_key].push_back(std::move(band));
+    }
+}
+
+static void append_nozzle_bands_from_json(const std::string& rule_key, const pt::ptree& rule_obj,
+    std::unordered_map<std::string, std::vector<FilamentHotBedNozzleRules::NozzleForbiddenBand>>& out_map)
+{
+    const bool has_top_forbidden = rule_obj.find("forbidden") != rule_obj.not_found();
+    const bool has_top_type      = rule_obj.find("type") != rule_obj.not_found();
+    const bool has_top_warning   = rule_obj.find("warning") != rule_obj.not_found();
+
+    // 顶层 type/forbidden/warning（旧格式）可与分键（brass / undefine / …）并存，不要提前 return，否则分键不会被加载。
+    if (has_top_forbidden || has_top_type || has_top_warning) {
+        FilamentHotBedNozzleRules::NozzleForbiddenBand band;
+        parse_nozzle_rule_type_field(rule_obj, band);
+        parse_nozzle_rule_forbidden(rule_obj, band);
+        parse_nozzle_rule_warning(rule_obj, band);
+        finalize_nozzle_band_for_all_default(band);
+        if (!band.forbidden_substrings.empty() || band.forbid_all_filaments || !band.warning_substrings.empty())
+            out_map[rule_key].push_back(std::move(band));
+    }
+
+    if (rule_obj_has_typed_nozzle_map(rule_obj)) {
+        append_bands_from_typed_nozzle_map(rule_key, rule_obj, out_map);
+        return;
+    }
+
+    for (const auto& ch : rule_obj) {
+        if (!ptree_key_is_array_index(ch.first))
+            continue;
+        const pt::ptree& el = ch.second;
+        if (el.find("forbidden") == el.not_found() && el.find("type") == el.not_found() && el.find("warning") == el.not_found())
+            continue;
+        FilamentHotBedNozzleRules::NozzleForbiddenBand band;
+        parse_nozzle_rule_type_field(el, band);
+        parse_nozzle_rule_forbidden(el, band);
+        parse_nozzle_rule_warning(el, band);
+        finalize_nozzle_band_for_all_default(band);
+        if (!band.forbidden_substrings.empty() || band.forbid_all_filaments || !band.warning_substrings.empty())
+            out_map[rule_key].push_back(std::move(band));
+    }
+}
 } // namespace
 
 FilamentHotBedNozzleRules& FilamentHotBedNozzleRules::singleton()
@@ -117,7 +327,7 @@ void FilamentHotBedNozzleRules::load()
 
     m_bed_support_filament_types.clear();
     m_bed_warning_filament_types.clear();
-    m_nozzle_forbidden_filament_presets.clear();
+    m_nozzle_forbidden_bands.clear();
     m_loaded = false;
 
     const auto file_path =
@@ -132,11 +342,16 @@ void FilamentHotBedNozzleRules::load()
         pt::read_json(file_path, root);
 
         for (const auto& kv : root) {
-            const std::string& rule_key = kv.first;
-            const auto&        rule_obj = kv.second;
+            const std::string rule_key = boost::trim_copy(kv.first);
+            const auto&       rule_obj = kv.second;
+
+            if (boost::algorithm::ends_with(rule_key, "mm")) {
+                append_nozzle_bands_from_json(rule_key, rule_obj, m_nozzle_forbidden_bands);
+                continue;
+            }
+
             auto& support_set = m_bed_support_filament_types[rule_key];
             auto& warning_set = m_bed_warning_filament_types[rule_key];
-            auto& forbid_set  = m_nozzle_forbidden_filament_presets[rule_key];
 
             for (const auto& child : rule_obj) {
                 if (child.first == "support") {
@@ -145,9 +360,6 @@ void FilamentHotBedNozzleRules::load()
                 } else if (child.first == "warning") {
                     for (const auto& item : child.second)
                         warning_set.insert(item.second.get_value<std::string>());
-                } else if (child.first == "forbidden") {
-                    for (const auto& item : child.second)
-                        forbid_set.insert(item.second.get_value<std::string>());
                 }
             }
         }
@@ -202,23 +414,65 @@ bool FilamentHotBedNozzleRules::is_bed_filament_warning(const std::string& bed_k
     return res;
 }
 
-bool FilamentHotBedNozzleRules::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const
+bool FilamentHotBedNozzleRules::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                                             NozzleType nozzle_type) const
 {
     std::scoped_lock<std::recursive_mutex> lock(m_mutex);
-    auto it = m_nozzle_forbidden_filament_presets.find(nozzle_key);
-    bool res = false;
-    if (it == m_nozzle_forbidden_filament_presets.end())
+    auto it = m_nozzle_forbidden_bands.find(nozzle_key);
+    if (it == m_nozzle_forbidden_bands.end())
         return false;
 
-    for (auto iter = it->second.begin(); iter != it->second.end();++iter)
-    {
-        std::string filamentData = iter->c_str();
-        if (filament_preset_name.find(filamentData) != std::string::npos)
-                return true;
-    }
-    //res = (it != m_nozzle_forbidden_filament_presets.end() && it->second.find(filament_preset_name) != it->second.end());
+    std::string cur_type = "undefine";
+    auto        nit      = NozzleTypeEumnToStr.find(nozzle_type);
+    if (nit != NozzleTypeEumnToStr.end())
+        cur_type = nit->second;
 
-    return res;
+    for (const NozzleForbiddenBand& band : it->second) {
+        if (!band.applies_to_all_nozzle_types) {
+            if (band.nozzle_types.find(cur_type) == band.nozzle_types.end())
+                continue;
+        }
+        if (band.forbid_all_filaments) {
+            if (!filament_preset_name.empty())
+                return true;
+            continue;
+        }
+        for (const std::string& token : band.forbidden_substrings) {
+            if (filament_preset_name.find(token) != std::string::npos)
+                return true;
+        }
+        for (const std::string& token : band.warning_substrings) {
+            if (filament_preset_name.find(token) != std::string::npos)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool FilamentHotBedNozzleRules::is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                                           NozzleType nozzle_type) const
+{
+    std::scoped_lock<std::recursive_mutex> lock(m_mutex);
+    auto it = m_nozzle_forbidden_bands.find(nozzle_key);
+    if (it == m_nozzle_forbidden_bands.end())
+        return false;
+
+    std::string cur_type = "undefine";
+    auto        nit      = NozzleTypeEumnToStr.find(nozzle_type);
+    if (nit != NozzleTypeEumnToStr.end())
+        cur_type = nit->second;
+
+    for (const NozzleForbiddenBand& band : it->second) {
+        if (!band.applies_to_all_nozzle_types) {
+            if (band.nozzle_types.find(cur_type) == band.nozzle_types.end())
+                continue;
+        }
+        for (const std::string& token : band.warning_substrings) {
+            if (!token.empty() && filament_preset_name.find(token) != std::string::npos)
+                return true;
+        }
+    }
+    return false;
 }
 
 std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
@@ -258,7 +512,7 @@ std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const P
         }
 
         const std::string preset_name = resolve_filament_preset_full_name(normalized, filament_collection);
-        if (is_nozzle_filament_forbidden(nozzle_key_fid, preset_name))
+        if (is_nozzle_filament_forbidden(nozzle_key_fid, preset_name, cfg.nozzle_type.value))
             return preset_name.empty() ? "forbidden filament preset for current nozzle" : preset_name;
     }
 

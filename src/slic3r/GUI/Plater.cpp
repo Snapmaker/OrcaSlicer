@@ -2711,9 +2711,9 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                                                 nullptr, wxCB_READONLY);
         
 
-        // Use all system presets for this printer_model so the combo stays usable when only one
-        // variant is marked visible (e.g. after setup wizard / preset visibility filters).
-        auto diameters = wxGetApp().preset_bundle->printers.diameters_for_same_printer_model();
+        // Visible presets for this printer_model (system + user). Imported multi-nozzle variants are
+        // usually non-system; diameters_for_same_printer_model() only counted system and kept the combo disabled.
+        auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
         for (auto& diameter : diameters) {
             diameter_combo->AppendString(wxString(diameter) + "mm");
         }
@@ -15395,7 +15395,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
     int plate_index = evt.GetInt();
     PlateSettingsDialog dlg(this, _L("Plate Settings"), evt.GetString() == "only_layer_sequence");
     PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-    dlg.sync_bed_type(curr_plate->get_bed_type());
+    dlg.sync_bed_type(curr_plate->get_bed_type(true));
 
     auto curr_print_seq = curr_plate->get_print_seq();
     if (curr_print_seq != PrintSequence::ByDefault) {
@@ -15421,7 +15421,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
 
     dlg.Bind(EVT_SET_BED_TYPE_CONFIRM, [this, plate_index, &dlg](wxCommandEvent& e) {
         PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-        BedType old_bed_type = curr_plate->get_bed_type();
+        BedType old_bed_type = curr_plate->get_bed_type(true);
         auto bt_sel = BedType(dlg.get_bed_type_choice());
         if (old_bed_type != bt_sel) {
             curr_plate->set_bed_type(bt_sel);

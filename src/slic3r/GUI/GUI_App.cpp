@@ -6286,6 +6286,10 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
 		if (tab->supports_printer_technology(printer_technology)) {
             tab->rebuild_page_tree();
         }
+
+    // Sidebar nozzle diameter combos depend on visible printer variants; rebuild after import / preset reload.
+    if (plater() != nullptr)
+        plater()->sidebar().update_nozzle_settings();
 }
 
 static std::mutex mutex_delete_cache_presets;

@@ -1566,7 +1566,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 if (tmp_filaments.count(iter->first)) {
                     auto pair     = iter->second;
                     auto tmp_pair = tmp_filaments[iter->first];
-                    if (pair.first == tmp_pair.first && pair.second == pair.second) {
+                    if (pair.first == tmp_pair.first && pair.second == tmp_pair.second) {
                         continue;
                     } else {
                         need_load_preset = true;

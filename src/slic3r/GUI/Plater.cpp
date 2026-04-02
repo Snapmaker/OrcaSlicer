@@ -257,7 +257,7 @@ public:
         if (first >= (int)item_enabled.size()) first = 0;
         m_radio->SetSelection(first, false);
         sizer->Add(m_radio, 0, wxALL, FromDIP(10));
-        auto* btns = new DialogButtons(this, {"OK", "Cancel"});
+        auto* btns = new DialogButtons(this, {_L("Confirm"), _L("Cancel")});
         btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
         btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
         sizer->Add(btns, 0, wxEXPAND);
@@ -1056,7 +1056,8 @@ Sidebar::Sidebar(Plater *parent)
 
         // Use ams_fila_sync icon (sync_nozzle_info.svg does not exist in resources)
         p->m_printerinfo_syncbtn = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "nozzle_sync");
-        p->m_printerinfo_syncbtn->SetToolTip(_L("sync nozzle info"));
+        p->m_printerinfo_syncbtn->SetCursor(wxCURSOR_HAND);
+        p->m_printerinfo_syncbtn->SetToolTip(_L("Synchronize nozzle information"));
         p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
             bool hasConnectDevice = false;
             auto devices = wxGetApp().app_config->get_devices();
@@ -1070,8 +1071,8 @@ Sidebar::Sidebar(Plater *parent)
                 // showdialog tips no connect device
                 wxTheApp->CallAfter([this]() {
                     MessageDialog dlg(wxGetApp().mainframe,
-                                      _L("No device connected. Please connect a printer in Home or Device page."),
-                                      _L("Unbound device"), wxOK);
+                                      _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
+                                      _L("Note"), wxOK);
                     dlg.ShowModal();
                     });                
                 return;        
@@ -1088,8 +1089,8 @@ Sidebar::Sidebar(Plater *parent)
                 {
                     wxTheApp->CallAfter([this]() {
                         MessageDialog dlgEx(wxGetApp().mainframe,
-                                            _L("No printer nozzle information detected. Please go to printer configuration nozzles."),
-                                            _L("Printer has no nozzle information"), wxOK);
+                                            _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
+                                            _L("Note"), wxOK);
                         dlgEx.ShowModal();
                     });    
 
@@ -1114,9 +1115,8 @@ Sidebar::Sidebar(Plater *parent)
                     wxTheApp->CallAfter([this, diameters_raw]() {
                         NozzleDiameterSelectDialog dlg(
                             wxGetApp().mainframe,
-                            _L("Tip: The current version does not support multi-nozzle mixed diameter printing. "
-                               "Inconsistent printer nozzle diameters detected; please select the nozzle to be used for this print."),
-                            _L("Set nozzle diameter"),
+                            _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
+                            _L("Set Nozzle Diameter"),
                             diameters_raw);
                         if (dlg.ShowModal() == wxID_OK) {
                             std::string sel = dlg.GetSelectedDiameter();
@@ -1148,7 +1148,7 @@ Sidebar::Sidebar(Plater *parent)
                 }
 
                 wxTheApp->CallAfter([this]() {
-                    MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle information synchronization successful"),
+                    MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
                                          _L("Nozzle information synchronization results"), wxOK);
                     dlg_Ex.ShowModal();
                 });
@@ -2749,10 +2749,10 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                     if (notShow != "true")
                     {
                         RichMessageDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe),
-                                              _L("Note: After modification, the dimensions of the other three nozzles will also be adjusted to the same size."),
-                                              _L("Set nozzle diameter"), 
-                                               wxYES);
-                        dlg.ShowCheckBox(_L("not note again"), false);
+                                              _L("Note: Changing this will sync all other nozzles to the same diameter."),
+                                              _L("Set Nozzle Diameter"), 
+                                               wxOK);
+                        dlg.ShowCheckBox(_L("Don't show this again"), false);
                         auto res = dlg.ShowModal();
                         bool isCheckBox = dlg.IsCheckBoxChecked();
 
@@ -6327,10 +6327,13 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
                                         wxGetApp().preset_bundle);
 
-    wxString filamentMismatchNozzleMsg     = wxString(_L("The combination of hot end and consumables is not recommended. The message reads: Printing TPU 95A HF with 0.2mm hardened steel hot end is not recommended. We suggest using 0.4mm or larger."));
-    wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("The current PEI glossy filament may have insufficient adhesion on the first layer of the heated bed. It is recommended to apply glue before printing to enhance adhesion."));
-    wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Warning: There is a risk of excessive adhesion between the current filament and the smooth PEI heated bed. It is recommended to apply liquid or solid adhesive before printing to protect the heated bed surface and facilitate part removal."));
-    wxString filamentMismatchGraphicBedMsg = wxString(_L("The current filament has low adhesion to the special effects texture heated bed, resulting in a higher risk of printing failure. It is recommended to use other filaments for printing."));
+    wxString filamentMismatchNozzleTips = wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended. A %s mm or larger nozzle is advised."),
+                         from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str());
+    wxString filamentMismatchNozzleWarning = wxString::Format(_L("Warning: Do not use a %s  mm %s  nozzle for %s . Please switch to a %s  mm or larger nozzle to prevent nozzle clogging or damage."),
+                         from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str());
+    wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."));
+    wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
+    wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));
    
     if (isGraphicMatch || isPeiBedMatchNotPla)
     {
@@ -6344,11 +6347,11 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     }
 
     if (!filamentNozzleMsg.empty())
-        notification_manager->push_notification(filamentMismatchNozzleMsg.ToStdString(), 0);
+        notification_manager->push_notification(filamentMismatchNozzleWarning.ToStdString(), 0);
 
     if (isPeiBedMatchTpu)
     {            
-            notification_manager->push_notification(filamentMismatchPeiBedMsgTpu.ToStdString(), 0);
+        notification_manager->push_notification(filamentMismatchPeiBedMsgTpu.ToStdString(), 0);
     }
 
 }

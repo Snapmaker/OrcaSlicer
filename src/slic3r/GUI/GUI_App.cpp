@@ -2361,7 +2361,7 @@ bool GUI_App::on_init_inner()
     const wxString resources_dir = from_u8(Slic3r::resources_dir());
     wxCHECK_MSG(wxDirExists(resources_dir), false,
         wxString::Format(_L("Resources path does not exist or is not a directory: %s"), resources_dir));
-    load_filament_hot_bed_nozzle_relations();
+    // filament_hot_bed_nozzles.json: editor copies via PresetUpdater below; rules reload in load_current_presets() after presets. G-code viewer loads in the non-editor branch.
 
 #ifdef __linux__
     if (! check_old_linux_datadir(GetAppName())) {
@@ -2544,6 +2544,7 @@ bool GUI_App::on_init_inner()
 #endif // __WXMSW__
 
         preset_updater = new PresetUpdater();
+        // filament_hot_bed_nozzles.json is copied here; FilamentHotBedNozzleRules reloads in load_current_presets() (startup, recreate_GUI, preset UI sync).
         Bind(EVT_SLIC3R_VERSION_ONLINE, [this](const wxCommandEvent& evt) {
             if (this->plater_ != nullptr) {
 
@@ -2642,6 +2643,8 @@ bool GUI_App::on_init_inner()
         if (app_config->get("associate_gcode") == "true")
             associate_files(L"gcode");
 #endif // __WXMSW__
+        // G-code viewer: no PresetUpdater; rules load from bundled resources path only.
+        load_filament_hot_bed_nozzle_relations();
     }
 
     // Suppress the '- default -' presets.
@@ -6290,6 +6293,8 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
     // Sidebar nozzle diameter combos depend on visible printer variants; rebuild after import / preset reload.
     if (plater() != nullptr)
         plater()->sidebar().update_nozzle_settings();
+
+    //load_filament_hot_bed_nozzle_relations();
 }
 
 static std::mutex mutex_delete_cache_presets;

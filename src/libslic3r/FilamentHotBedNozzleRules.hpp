@@ -13,7 +13,7 @@ namespace Slic3r {
 
 class PresetBundle;
 
-// JSON: resources/profiles/Snapmaker/filament/filament_hot_bed_nozzles.json
+// JSON: %AppData%/.../system/Snapmaker/filament/filament_hot_bed_nozzles.json (preferred), else bundled resources path.
 // Keys: bed ids (btPEI, btGESP), nozzle ids ("0.2mm" …) with support/warning.
 // 喷嘴规则（键名以 "mm" 结尾），任选其一：
 // 1) 单对象 { "type":"all"|材质, "forbidden":[...] }

@@ -19,6 +19,21 @@ namespace Slic3r {
 
 namespace pt = boost::property_tree;
 namespace {
+
+// Prefer user data dir (installed system profile) so rules can be patched without reinstalling the app.
+static std::string filament_hot_bed_nozzles_json_path()
+{
+    namespace fs = boost::filesystem;
+    const fs::path user_path = (fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR / PresetBundle::SM_BUNDLE / "filament" /
+                                "filament_hot_bed_nozzles.json")
+                                 .make_preferred();
+    if (fs::exists(user_path))
+        return user_path.string();
+    return (fs::path(Slic3r::resources_dir()) / "profiles" / PresetBundle::SM_BUNDLE / "filament" / "filament_hot_bed_nozzles.json")
+        .make_preferred()
+        .string();
+}
+
 std::string to_upper_ascii(std::string s)
 {
     for (char& c : s) {
@@ -315,8 +330,7 @@ void FilamentHotBedNozzleRules::load()
     m_nozzle_forbidden_bands.clear();
     m_loaded = false;
 
-    const auto file_path =
-        (boost::filesystem::path(Slic3r::resources_dir()) / "profiles" / "Snapmaker" / "filament" / "filament_hot_bed_nozzles.json").string();
+    const std::string file_path = filament_hot_bed_nozzles_json_path();
     if (!boost::filesystem::exists(file_path)) {
         BOOST_LOG_TRIVIAL(warning) << "filament_hot_bed_nozzles.json not found: " << file_path;
         return;
@@ -479,7 +493,7 @@ std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const P
         if (stored.empty() && filament_settings_id != nullptr && fid < filament_settings_id->values.size())
             stored = filament_settings_id->get_at(fid);
         boost::algorithm::trim(stored);
-        
+
         std::string normalized = stored;
         if (preset_bundle != nullptr && !normalized.empty()) {
             const std::string            trimmed = Preset::remove_suffix_modified(normalized);

@@ -142,6 +142,7 @@ void session::read_next_line()
         ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"; // 允许的请求头
         ssOut << "Content-Length: 0\r\n";    
         ssOut << "Connection: close\r\n";                                     // 无响应体
+        ssOut << "Cache-Control: no-cache\r\n";
         ssOut << "\r\n";                                                          // 头和主体之间的空行（必须）
 
         // 异步发送响应
@@ -786,6 +787,7 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
     ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
     ssOut << "Connection: close\r\n"; 
+    ssOut << "Cache-Control: no-cache\r\n";
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -800,6 +802,7 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
     ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
     ssOut << "Connection: close\r\n"; 
+    ssOut << "Cache-Control: no-cache\r\n";
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -857,6 +860,7 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
     ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
     ssOut << "Connection: close\r\n"; 
+    ssOut << "Cache-Control: no-cache\r\n";
     ssOut << "\r\n";      // 头和主体之间的空行（必须）
     ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
 }

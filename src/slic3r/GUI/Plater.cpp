@@ -6326,11 +6326,15 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     
     print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
                                         wxGetApp().preset_bundle);
-
+    wxString    currentNozzle = "0.2";
+    wxString    nozzleType    = _L("Stainless Steel");
+    wxString    tipsNozzle    = "0.4";
+    wxString    filament      = "PLA";
+    
     wxString filamentMismatchNozzleTips = wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended. A %s mm or larger nozzle is advised."),
-                         from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str());
+                         from_u8(currentNozzle.ToStdString()), from_u8(nozzleType.ToStdString()), from_u8(tipsNozzle.ToStdString()),from_u8(filament.ToStdString()));
     wxString filamentMismatchNozzleWarning = wxString::Format(_L("Warning: Do not use a %s  mm %s  nozzle for %s . Please switch to a %s  mm or larger nozzle to prevent nozzle clogging or damage."),
-                         from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str(), from_u8("0.2").c_str());
+                         from_u8(currentNozzle.ToStdString()), from_u8(nozzleType.ToStdString()),from_u8(tipsNozzle.ToStdString()), from_u8(filament.ToStdString()));
     wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."));
     wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
     wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));

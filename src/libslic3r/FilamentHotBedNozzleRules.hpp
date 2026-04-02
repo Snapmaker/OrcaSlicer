@@ -21,7 +21,6 @@ class PresetBundle;
 // 3) 按材质分键对象：键为 all / undefine / hardened_steel / stainless_steel / brass（可只写其中任意几种），
 //    值为 forbidden 数组、{ "forbidden": [...] }、warning 数组、{ "warning": [...] }，或同时含 forbidden / warning 的对象；
 //    "all" 表示任意喷嘴材质共用该条规则。warning 为提示级（不拦截切片），与热床 warning 语义类似。
-// type 为 all（或省略 type）时，若 forbidden 为空或仅含 "*" / "all"，则对该喷嘴直径禁用全部耗材预设（非空名称即判为禁止）。
 class FilamentHotBedNozzleRules
 {
 public:
@@ -62,8 +61,6 @@ public:
         std::unordered_set<std::string> nozzle_types;
         std::unordered_set<std::string> forbidden_substrings;
         std::unordered_set<std::string> warning_substrings;
-        /// When true, any non-empty filament preset name is forbidden (after nozzle-type filter).
-        bool                            forbid_all_filaments{ false };
     };
 
 private:

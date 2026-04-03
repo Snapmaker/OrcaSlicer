@@ -22,6 +22,7 @@
 #endif
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Color.hpp"
@@ -846,15 +847,6 @@ static void run_wizard(ConfigWizard::StartPage sp)
 
 void PlaterPresetComboBox::OnSelect(wxCommandEvent &evt)
 {
-   // if (wxGetApp().plater()) {
-   //     auto* pNotice = wxGetApp().plater()->get_notification_manager();
-   //     if (pNotice) {
-   //         pNotice->close_notification_of_type(NotificationType::CustomNotification);
-			//pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
-   //         pNotice->set_slicing_progress_hidden();
-   //     }
-   // }
-
     auto selected_item = evt.GetSelection();
 
     auto marker = reinterpret_cast<Marker>(this->GetClientData(selected_item));
@@ -1146,47 +1138,74 @@ void PlaterPresetComboBox::update()
                 tooltip = get_tooltip(preset);
             }
         }
-        //BBS: move system to the end
-        //if (i + 1 == m_collection->num_default_presets())
-        //    set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
     }
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
         add_ams_filaments(into_u8(selected_user_preset), true);
 
     if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
-        auto&       filaments         = m_collection->get_presets();
+        auto& filaments         = m_collection->get_presets();
         auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
-        m_first_ams_filament          = GetCount();
+        auto  machine_nozzles_list = wxGetApp().preset_bundle->m_connect_machine_info_list;
+        m_first_ams_filament    = GetCount();
 
-        size_t count = 0;
+        std::string currentNozzleInfo;
+        if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+            nd_opt && !nd_opt->values.empty()) {
+            currentNozzleInfo = float_to_string_decimal_point(nd_opt->values.front(), 2);
+            while (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '0')
+                currentNozzleInfo.pop_back();
+            if (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '.')
+                currentNozzleInfo.pop_back();
+        }
+        
+        for (int i = 0; i < machine_nozzles_list.size(); i++) {
+            std::string filament_name   = machine_nozzles_list[i].filament_info;
+            std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
 
-        for (auto iter = machine_filaments.begin(); iter != machine_filaments.end();) {
-            std::string filament_name = iter->second.first;
-
-            // First match: exact name + compatibility check
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),
-                                     [&filament_name, this](auto& f) { return f.name == filament_name && f.is_compatible; });
-
-            // Second match: if first fails, try with @U1 suffix + compatibility check
-            if (item_iter == filaments.end()) {
-                item_iter = std::find_if(filaments.begin(), filaments.end(),
-                                    [&filament_name, this](auto& f) { return f.name == filament_name + " @U1" && f.is_compatible; });
+            if (currentNozzleInfo != machine_nozzles) {
+                for (auto iter = machine_filaments.begin(); iter != machine_filaments.end(); iter++) {
+                    if (iter->second.first == filament_name) {
+                        machine_filaments.erase(iter);
+                        break;
+                    }
+                }
+                continue;
             }
+
+            auto item_iter = std::find_if(filaments.begin(), filaments.end(),
+            [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
+                if (f.name == filament_name + " @U1 " + machine_nozzles)
+                    if (f.is_compatible)
+                        return true;
+
+                if (f.name == filament_name + " @U1")
+                    if (f.is_compatible)
+                        return true;
+
+                if (f.name == filament_name)
+                    if (f.is_compatible)
+                        return true;
+
+                return false;
+            });
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
-                auto     color                        = iter->second.second;
-                auto     name                         = std::to_string(iter->first + 1);
+                auto     color                             = machine_nozzles_list[i].color_info;
+                auto     name                              = std::to_string(i + 1);
                 wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
-                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + count);
-                ++count;
-                ++iter;
+                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+
             } else {
-                iter = machine_filaments.erase(iter);
+                for (auto iter = machine_filaments.begin(); iter != machine_filaments.end(); iter++) {
+                    if (iter->second.first == filament_name) {
+                        machine_filaments.erase(iter);
+                        break;
+                    }
+                }
             }
         }
-
         m_last_ams_filament = GetCount();
     }
 
@@ -1219,30 +1238,6 @@ void PlaterPresetComboBox::update()
             validate_selection(it->first == selected_system_preset);
         }
     }
-
-    //BBS: remove unused pysical printer logic
-    /*if (m_type == Preset::TYPE_PRINTER)
-    {
-        // add Physical printers, if any exists
-        if (!m_preset_bundle->physical_printers.empty()) {
-            set_label_marker(Append(separator(L("Physical printers")), wxNullBitmap));
-            const PhysicalPrinterCollection& ph_printers = m_preset_bundle->physical_printers;
-
-            for (PhysicalPrinterCollection::ConstIterator it = ph_printers.begin(); it != ph_printers.end(); ++it) {
-                for (const std::string& preset_name : it->get_preset_names()) {
-                    Preset* preset = m_collection->find_preset(preset_name);
-                    if (!preset || !preset->is_visible)
-                        continue;
-                    std::string main_icon_name, bitmap_key = main_icon_name = preset->printer_technology() == ptSLA ? "sla_printer" : m_main_bitmap_name;
-                    wxBitmap* bmp = get_bmp(main_icon_name, wide_icons, main_icon_name);
-                    assert(bmp);
-
-                    set_label_marker(Append(from_u8(it->get_full_name(preset_name) + suffix(preset)), *bmp), LABEL_ITEM_PHYSICAL_PRINTER);
-                    validate_selection(ph_printers.is_selected(it, preset_name));
-                }
-            }
-        }
-    }*/
 
     if (m_type == Preset::TYPE_PRINTER || m_type == Preset::TYPE_FILAMENT || m_type == Preset::TYPE_SLA_MATERIAL) {
         wxBitmap* bmp = get_bmp("edit_preset_list", wide_icons, "edit_uni");
@@ -1719,9 +1714,6 @@ void TabPresetComboBox::update()
             if (i == idx_selected)
                 selected = name;
         }
-        //BBS: move system to the end
-        //if (i + 1 == m_collection->num_default_presets())
-        //    set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
     }
 
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
@@ -1731,24 +1723,41 @@ void TabPresetComboBox::update()
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
         auto& filaments         = m_collection->get_presets();
         auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
-        auto& machine_nozzles   = wxGetApp().preset_bundle->m_connect_machine_info_list;
+        auto machine_nozzles_list   = wxGetApp().preset_bundle->m_connect_machine_info_list;
         m_first_ams_filament    = GetCount();
 
-        size_t count = 0;
+        std::string currentNozzleInfo;
+        if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+            nd_opt && !nd_opt->values.empty()) {
+            currentNozzleInfo = float_to_string_decimal_point(nd_opt->values.front(), 2);
+            while (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '0')
+                currentNozzleInfo.pop_back();
+            if (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '.')
+                currentNozzleInfo.pop_back();
+        }
 
-        for (auto iter = machine_filaments.begin(); iter != machine_filaments.end();) {
-            std::string filament_name = iter->second.first;
+        for (int i=0; i < machine_nozzles_list.size();i++) {
 
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(), [&filament_name, &machine_nozzles,this](auto& f) {
+            std::string filament_name   = machine_nozzles_list[i].filament_info;
+            std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
+
+            if (currentNozzleInfo != machine_nozzles)
+                {
+                    for (auto iter = machine_filaments.begin(); iter != machine_filaments.end(); iter++) {
+                        if (iter->second.first == filament_name) {
+                            machine_filaments.erase(iter);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
+            auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {               
+
+                if (f.name == filament_name + " @U1 " + machine_nozzles)
+                    if (f.is_compatible)
+                        return true;
                 
-                //for (const std::string& nz : machine_nozzles) {
-                //    if (nz.empty())
-                //        continue;
-                //    if (f.name == filament_name + " @U1 " + nz)
-                //        if (f.is_compatible)
-                //            return true;
-                //}
-
                 if (f.name == filament_name + " @U1")
                     if (f.is_compatible)
                         return true;
@@ -1762,33 +1771,27 @@ void TabPresetComboBox::update()
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
-                auto     color                             = iter->second.second;
-                auto     name                              = std::to_string(iter->first + 1);
+                auto     color                             = machine_nozzles_list[i].color_info;
+                auto     name                              = std::to_string(i + 1);
                 wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
-                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + count);
-                ++count;
-                ++iter;
-            } else {
-                iter = machine_filaments.erase(iter);
+                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+
+            } 
+            else
+            {
+                for (auto iter = machine_filaments.begin(); iter!=machine_filaments.end();iter++)
+                {
+                    if (iter->second.first == filament_name)
+                        {                            
+                            machine_filaments.erase(iter);
+                            break;
+                        }
+                }
             }
         }
 
         m_last_ams_filament = GetCount();
     }
-
-    /*machine_filament_presets[presets[1].name] = {get_bmp(presets[15]), true};
-    machine_filament_presets[presets[2].name] = {get_bmp(presets[16]), true};
-    if (!machine_filament_presets.empty()) {
-        set_label_marker(Append(separator(L("Machine presets")), wxNullBitmap));
-        for (auto it = machine_filament_presets.begin(); it != machine_filament_presets.end(); ++it) {
-            int item_id = Append(it->first, *it->second.first);
-            SetItemTooltip(item_id, preset_descriptions[it->first]);
-            bool is_enabled = it->second.second;
-            if (!is_enabled)
-                set_label_marker(item_id, LABEL_ITEM_DISABLED);
-            validate_selection(it->first == selected);
-        }
-    }*/
 
     //BBS: add project embedded preset logic
     if (!project_embedded_presets.empty())
@@ -1828,46 +1831,6 @@ void TabPresetComboBox::update()
             validate_selection(it->first == selected);
         }
     }
-
-    if (m_type == Preset::TYPE_PRINTER)
-    {
-        //BBS: remove unused pysical printer logic
-        /*// add Physical printers, if any exists
-        if (!m_preset_bundle->physical_printers.empty()) {
-            set_label_marker(Append(separator(L("Physical printers")), wxNullBitmap));
-            const PhysicalPrinterCollection& ph_printers = m_preset_bundle->physical_printers;
-
-            for (PhysicalPrinterCollection::ConstIterator it = ph_printers.begin(); it != ph_printers.end(); ++it) {
-                for (const std::string& preset_name : it->get_preset_names()) {
-                    Preset* preset = m_collection->find_preset(preset_name);
-                    if (!preset || !preset->is_visible)
-                        continue;
-                    std::string main_icon_name = preset->printer_technology() == ptSLA ? "sla_printer" : m_main_bitmap_name;
-
-                    wxBitmap* bmp = get_bmp(main_icon_name, main_icon_name, "", true, true, false);
-                    assert(bmp);
-
-                    set_label_marker(Append(from_u8(it->get_full_name(preset_name) + suffix(preset)), *bmp), LABEL_ITEM_PHYSICAL_PRINTER);
-                    validate_selection(ph_printers.is_selected(it, preset_name));
-                }
-            }
-        }*/
-
-        // add "Add/Remove printers" item
-        //std::string icon_name = "edit_uni";
-        //wxBitmap* bmp = get_bmp("edit_preset_list, tab,", icon_name, "");
-        //assert(bmp);
-
-        //set_label_marker(Append(separator(L("Add/Remove printers")), *bmp), LABEL_ITEM_WIZARD_PRINTERS);
-    }
-
-    // BBS Add/Remove filaments select
-    //wxBitmap* bmp = get_bmp("edit_preset_list", false, "edit_uni");
-    //assert(bmp);
-    //if (m_type == Preset::TYPE_FILAMENT)
-    //    set_label_marker(Append(separator(L("Add/Remove filaments")), *bmp), LABEL_ITEM_WIZARD_FILAMENTS);
-    //else if (m_type == Preset::TYPE_SLA_MATERIAL)
-    //    set_label_marker(Append(separator(L("Add/Remove materials")), *bmp), LABEL_ITEM_WIZARD_MATERIALS);
 
     update_selection();
     Thaw();

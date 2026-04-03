@@ -1110,14 +1110,6 @@ Sidebar::Sidebar(Plater *parent)
 
                     return;
                 }
-                wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
-                for (int i = 0; i < nozzle_diameters.size(); i++) {
-                    ConnectMachineInfo data;
-                    data.filament_info = "data";
-                    data.nozzle_info   = nozzle_diameters[i];
-                    data.index         = i;
-                    wxGetApp().preset_bundle->m_connect_machine_info_list.push_back(data);
-                }
 
                 bool res = false;
                 std::string headNozzleSize = nozzle_diameters[0];

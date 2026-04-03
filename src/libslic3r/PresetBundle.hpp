@@ -31,6 +31,7 @@ struct ConnectMachineInfo
 {
     std::string filament_info {""};
     std::string nozzle_info {""};
+    std::string color_info{""};
     int index {0};
 };
 

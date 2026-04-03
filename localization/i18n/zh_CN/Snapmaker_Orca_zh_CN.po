@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: Slic3rPE\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2025-09-28 18:44+0800\n"
-"PO-Revision-Date: 2026-04-03 11:30+0800\n"
+"PO-Revision-Date: 2026-04-03 17:31+0800\n"
 "Last-Translator: Handle <mail@bysb.net>\n"
 "Language-Team: \n"
 "Language: zh_CN\n"
@@ -15087,6 +15087,9 @@ msgstr "提示：当前耗材与特效纹理热床的粘附力较低，打印失
 
 msgid "Note: Using a %s mm %s nozzle for %s is not recommended."
 msgstr "提示：不推荐使用 %s mm %s热端打印 %s。"
+
+msgid "Bed temperature when the Graphic Effect Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Plate."
+msgstr "安装特效纹理热床时的热床温度。0值表示这个耗材丝不支持特效纹理热床"
 
 #~ msgid "Improve shell precision by adjusting outer wall spacing. This also improves layer consistency."
 #~ msgstr "优化外墙刀路以提高外墙精度。这个优化同时减少层纹"

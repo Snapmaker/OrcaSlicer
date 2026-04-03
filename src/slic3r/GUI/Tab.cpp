@@ -3668,8 +3668,8 @@ void TabFilament::build()
         line.append_option(optgroup->get_option("textured_plate_temp"));
         optgroup->append_line(line);
 
-        line = {L("Graphic Effect Steel Plate"), 
-                L("Bed temperature when the Graphic Effect Steel Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Steel Plate.")};
+        line = {L("Graphic Effect Plate"), 
+                L("Bed temperature when the Graphic Effect Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Plate.")};
         line.append_option(optgroup->get_option("graphic_effect_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("graphic_effect_plate_temp"));
         optgroup->append_line(line);

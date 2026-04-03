@@ -257,7 +257,7 @@ public:
         if (first >= (int)item_enabled.size()) first = 0;
         m_radio->SetSelection(first, false);
         sizer->Add(m_radio, 0, wxALL, FromDIP(10));
-        auto* btns = new DialogButtons(this, {_L("Confirm"), _L("Cancel")});
+        auto* btns = new DialogButtons(this, {"OK", "Cancel"});
         btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
         btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
         sizer->Add(btns, 0, wxEXPAND);
@@ -1096,7 +1096,8 @@ Sidebar::Sidebar(Plater *parent)
 
                     return;
                 }
-
+                wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
+                //wxGetApp().preset_bundle->m_machine_nozzles = nozzle_diameters;
                 bool res = false;
                 std::string headNozzleSize = nozzle_diameters[0];
                 for (int i = 1; i < nozzle_diameters.size(); i++)
@@ -1146,12 +1147,36 @@ Sidebar::Sidebar(Plater *parent)
                     });
                     return;
                 }
+                else {
+                    // All tool heads report the same diameter: apply it without opening the picker.
+                    std::string diameter = headNozzleSize;
+                    boost::algorithm::trim(diameter);
+                    if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
+                        diameter.resize(diameter.size() - 2);
+                        boost::algorithm::trim(diameter);
+                    }
+                    wxTheApp->CallAfter([this, diameter]() {
+                        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+                        if (preset == nullptr) {
+                            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
+                            return;
+                        }
+                        preset->is_visible = true;
 
-                wxTheApp->CallAfter([this]() {
-                    MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
-                                         _L("Nozzle information synchronization results"), wxOK);
-                    dlg_Ex.ShowModal();
-                });
+                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
+                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+
+                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+
+                        wxTheApp->CallAfter([this]() {
+                            MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
+                                                 _L("Nozzle information synchronization results"), wxOK);
+                            dlg_Ex.ShowModal();
+                        });
+                    });
+                }
             }
             
             });
@@ -6329,12 +6354,9 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     wxString    currentNozzle = "0.2";
     wxString    nozzleType    = _L("Stainless Steel");
     wxString    tipsNozzle    = "0.4";
-    wxString    filament      = "PLA";
-    
-    wxString filamentMismatchNozzleTips = wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended. A %s mm or larger nozzle is advised."),
-                         from_u8(currentNozzle.ToStdString()), from_u8(nozzleType.ToStdString()), from_u8(tipsNozzle.ToStdString()),from_u8(filament.ToStdString()));
-    wxString filamentMismatchNozzleWarning = wxString::Format(_L("Warning: Do not use a %s  mm %s  nozzle for %s . Please switch to a %s  mm or larger nozzle to prevent nozzle clogging or damage."),
-                         from_u8(currentNozzle.ToStdString()), from_u8(nozzleType.ToStdString()),from_u8(tipsNozzle.ToStdString()), from_u8(filament.ToStdString()));
+        
+    wxString filamentMismatchNozzleWarning = wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended."),
+                         from_u8(currentNozzle.ToStdString()), from_u8(nozzleType.ToStdString()),from_u8(tipsNozzle.ToStdString()));
     wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."));
     wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
     wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));

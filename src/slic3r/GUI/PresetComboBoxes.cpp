@@ -1731,6 +1731,7 @@ void TabPresetComboBox::update()
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
         auto& filaments         = m_collection->get_presets();
         auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
+        auto& machine_nozzles   = wxGetApp().preset_bundle->m_connect_machine_info_list;
         m_first_ams_filament    = GetCount();
 
         size_t count = 0;
@@ -1738,15 +1739,26 @@ void TabPresetComboBox::update()
         for (auto iter = machine_filaments.begin(); iter != machine_filaments.end();) {
             std::string filament_name = iter->second.first;
 
-            // First match: exact name + compatibility check
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),
-                                             [&filament_name, this](auto& f) { return f.name == filament_name && f.is_compatible; });
+            auto item_iter = std::find_if(filaments.begin(), filaments.end(), [&filament_name, &machine_nozzles,this](auto& f) {
+                
+                //for (const std::string& nz : machine_nozzles) {
+                //    if (nz.empty())
+                //        continue;
+                //    if (f.name == filament_name + " @U1 " + nz)
+                //        if (f.is_compatible)
+                //            return true;
+                //}
 
-            // Second match: if first fails, try with @U1 suffix + compatibility check
-            if (item_iter == filaments.end()) {
-                item_iter = std::find_if(filaments.begin(), filaments.end(),
-                                         [&filament_name, this](auto& f) { return f.name == filament_name + " @U1" && f.is_compatible; });
-            }
+                if (f.name == filament_name + " @U1")
+                    if (f.is_compatible)
+                        return true;
+
+                if (f.name == filament_name)
+                    if (f.is_compatible)
+                        return true;
+
+                return false;                
+                });
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;

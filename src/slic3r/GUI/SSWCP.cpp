@@ -5632,6 +5632,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             }
 
                                         } else {
+                                            wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
+                                            //wxGetApp().preset_bundle->m_connect_machine_info_list = nozzle_diameters;
                                             info.nozzle_sizes = nozzle_diameters;
                                             info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
                                             wxGetApp().app_config->save_device_info(info);

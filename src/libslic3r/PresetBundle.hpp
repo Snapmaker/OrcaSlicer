@@ -26,6 +26,14 @@ enum class VendorType {
     Marlin,
     Marlin_BBL
 };
+
+struct ConnectMachineInfo
+{
+    std::string filament_info {""};
+    std::string nozzle_info {""};
+    int index {0};
+};
+
 namespace Slic3r {
 
 // Bundle of Print + Filament + Printer presets.
@@ -155,6 +163,7 @@ public:
 
     // Snapmaker
     std::map<int, std::pair<std::string, std::string>> machine_filaments;
+    std::vector<ConnectMachineInfo>                    m_connect_machine_info_list;
 
     // Calibrate
     Preset const * calibrate_printer = nullptr;

@@ -121,8 +121,13 @@ static void validate_filament_hot_bed_nozzle_relation(wxWindow* parent)
     const auto* nozzle_opt = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
     if (nozzle_opt != nullptr && !nozzle_opt->values.empty()) {
         const std::string nozzle_key = nozzle_diameter_to_rule_key(nozzle_opt->values.front());
-        const bool is_forbidden = app.is_nozzle_filament_forbidden(nozzle_key, filament_preset.name);
+        NozzleType        nozzle_mat = NozzleType::ntUndefine;
+        if (const auto* nto = printer_config.option<ConfigOptionEnum<NozzleType>>("nozzle_type"))
+            nozzle_mat = nto->value;
+        const bool is_forbidden = app.is_nozzle_filament_forbidden(nozzle_key, filament_preset.name, nozzle_mat);
+        const bool is_noz_warn  = app.is_nozzle_filament_warning(nozzle_key, filament_preset.name, nozzle_mat);
         (void)is_forbidden;
+        (void)is_noz_warn;
     }
 }
 
@@ -3663,8 +3668,8 @@ void TabFilament::build()
         line.append_option(optgroup->get_option("textured_plate_temp"));
         optgroup->append_line(line);
 
-        line = {L("Graphic Effect Steel Plate"), 
-                L("Bed temperature when the Graphic Effect Steel Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Steel Plate.")};
+        line = {L("Graphic Effect Plate"), 
+                L("Bed temperature when the Graphic Effect Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Plate.")};
         line.append_option(optgroup->get_option("graphic_effect_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("graphic_effect_plate_temp"));
         optgroup->append_line(line);

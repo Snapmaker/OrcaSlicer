@@ -426,7 +426,10 @@ private:
     bool            has_filament_hot_bed_nozzle_rules() const;
     bool            is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const;
     bool            is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const;
-    bool            is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const;
+    bool            is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                               Slic3r::NozzleType nozzle_type = Slic3r::NozzleType::ntUndefine) const;
+    bool            is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                               Slic3r::NozzleType nozzle_type = Slic3r::NozzleType::ntUndefine) const;
     // To be called after the GUI is fully built up.
     // Process command line parameters cached in this->init_params,
     // load configs, STLs etc.

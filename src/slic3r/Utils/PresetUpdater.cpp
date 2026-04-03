@@ -1299,6 +1299,16 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
         return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
                boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
         }, false, true, true);
+
+        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+        if (bundle == PresetBundle::SM_BUNDLE) {
+            fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
+            fs::path rules_dst = vendor_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
+            if (fs::exists(rules_src)) {
+                fs::create_directories(rules_dst.parent_path());
+                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+            }
+        }
 	}
 
 	return perform_updates(std::move(updates), snapshot);

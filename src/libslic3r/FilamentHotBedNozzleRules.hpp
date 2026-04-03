@@ -11,8 +11,24 @@
 
 namespace Slic3r {
 
-// JSON: resources/profiles/Snapmaker/filament/filament_hot_bed_nozzles.json
-// Keys: bed ids (btPEI, btGESP), nozzle ids ("0.2mm"), each with support/warning/forbidden arrays.
+class PresetBundle;
+
+/// Filled when filament_hot_bed_nozzles.json marks the current nozzle + type as forbidden for a filament preset.
+struct NozzleFilamentRuleMismatch {
+    bool        has_mismatch{ false };
+    std::string nozzle_diameter_mm;   // display digits, e.g. "0.2" (no "mm" suffix)
+    std::string nozzle_type_key;      // NozzleTypeEumnToStr: undefine, hardened_steel, stainless_steel, brass
+    std::string filament_preset_name; // resolved preset display name (may be empty)
+};
+
+// JSON: %AppData%/.../system/Snapmaker/filament/filament_hot_bed_nozzles.json (preferred), else bundled resources path.
+// Keys: bed ids (btPEI, btGESP), nozzle ids ("0.2mm" …) with support/warning.
+// 喷嘴规则（键名以 "mm" 结尾），任选其一：
+// 1) 单对象 { "type":"all"|材质, "forbidden":[...] }
+// 2) 数组 [ { "type", "forbidden" }, ... ]
+// 3) 按材质分键对象：键为 all / undefine / hardened_steel / stainless_steel / brass（可只写其中任意几种），
+//    值为 forbidden 数组、{ "forbidden": [...] }、warning 数组、{ "warning": [...] }，或同时含 forbidden / warning 的对象；
+//    "all" 表示任意喷嘴材质共用该条规则。warning 为提示级（不拦截切片），与热床 warning 语义类似。
 class FilamentHotBedNozzleRules
 {
 public:
@@ -30,19 +46,34 @@ public:
     bool is_bed_filament_tips(const std::string& bed_key, const std::string& filament_type) const;
     bool is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const;
     bool is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const;
-    bool is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name) const;
+    bool is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                      NozzleType nozzle_type = NozzleType::ntUndefine) const;
+    /// Substring match on preset name; does not block slicing (see evaluate_nozzle_filament_mismatch).
+    bool is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                    NozzleType nozzle_type = NozzleType::ntUndefine) const;
+    
+    std::string evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
+                                                  const std::vector<unsigned int>& used_filament_indices,
+                                                  const PresetBundle* preset_bundle = nullptr) const;
 
-    // ① 喷嘴规格 vs 耗材：仅 JSON 中喷嘴直径键（如 "0.2mm"）的 "forbidden" 预设名；与当前热床类型无关。
-    std::string evaluate_nozzle_filament_mismatch(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const;
+    /// @return true if a forbidden nozzle+filament combination was found (fills @p out).
+    bool evaluate_nozzle_filament_mismatch_detail(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices,
+                                                    const PresetBundle* preset_bundle, NozzleFilamentRuleMismatch& out) const;
 
-    // ② 特效热床（Graphic Effect / btGESP）：仅当 curr_bed_type==btGESP 时校验；使用 JSON 键 "btGESP" 的 support/warning。
+    
     bool evaluate_graphic_effect_bed_filament_mismatch(const PrintConfig& cfg,
                                                        const std::vector<unsigned int>& used_filament_indices) const;
 
-    // ③ 光面 PEI 热床（btPEI）：仅当 curr_bed_type==btPEI 时校验；使用 JSON 键 "btPEI"。
-    //    非 PLA 材料由 support 列表约束；TPU 等由 warning 列表单独提示（warning 仍算“可用但需提示”）。
     bool evaluate_pei_bed_filament_mismatch_not_pla(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const;
     bool evaluate_pei_bed_filament_mismatch_tpu(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const;
+
+    // JSON 喷嘴 forbidden 条带（供解析逻辑使用）
+    struct NozzleForbiddenBand {
+        bool                            applies_to_all_nozzle_types{ true };
+        std::unordered_set<std::string> nozzle_types;
+        std::unordered_set<std::string> forbidden_substrings;
+        std::unordered_set<std::string> warning_substrings;
+    };
 
 private:
     FilamentHotBedNozzleRules() = default;
@@ -51,7 +82,7 @@ private:
     bool m_loaded{ false };
     std::unordered_map<std::string, std::unordered_set<std::string>> m_bed_support_filament_types;
     std::unordered_map<std::string, std::unordered_set<std::string>> m_bed_warning_filament_types;
-    std::unordered_map<std::string, std::unordered_set<std::string>> m_nozzle_forbidden_filament_presets;
+    std::unordered_map<std::string, std::vector<NozzleForbiddenBand>> m_nozzle_forbidden_bands;
 };
 
 std::string bed_type_to_filament_rule_key(BedType bed_type);

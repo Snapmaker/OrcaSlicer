@@ -499,12 +499,17 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     return extruders;
 }
 
-void Print::filament_rule_mismatch_flags(std::string& out_nozzle, bool& out_gesp, bool& out_pei_not_pla, bool& out_pei_tpu) const
+void Print::filament_rule_mismatch_flags(NozzleFilamentRuleMismatch& out_nozzle_mismatch,
+                                         bool& out_gesp,
+                                         bool& out_pei_not_pla,
+                                         bool& out_pei_tpu,
+                                         const PresetBundle* preset_bundle) const
 {
     FilamentHotBedNozzleRules::singleton().ensure_loaded();
     const std::vector<unsigned int> used = extruders(true);
     FilamentHotBedNozzleRules&      rules = FilamentHotBedNozzleRules::singleton();
-    out_nozzle = rules.evaluate_nozzle_filament_mismatch(m_config, used);
+    out_nozzle_mismatch = NozzleFilamentRuleMismatch{};
+    rules.evaluate_nozzle_filament_mismatch_detail(m_config, used, preset_bundle, out_nozzle_mismatch);
 
     out_gesp   = rules.evaluate_graphic_effect_bed_filament_mismatch(m_config, used);
 

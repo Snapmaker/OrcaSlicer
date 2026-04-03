@@ -64,6 +64,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/FilamentHotBedNozzleRules.hpp"
 
 // For stl export
 #include "libslic3r/CSGMesh/ModelToCSGMesh.hpp"
@@ -999,6 +1000,19 @@ struct DynamicFilamentList1Based : DynamicFilamentList
 static DynamicFilamentList dynamic_filament_list;
 static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
+static wxString nozzle_type_key_to_label(const std::string& key)
+{
+    if (key == "hardened_steel")
+        return _L("Hardened Steel");
+    if (key == "stainless_steel")
+        return _L("Stainless Steel");
+    if (key == "brass")
+        return _L("Brass");
+    if (key == "undefine")
+        return _L("Unknown");
+    return wxString::FromUTF8(key);
+}
+
 Sidebar::Sidebar(Plater *parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
 {
@@ -1056,7 +1070,8 @@ Sidebar::Sidebar(Plater *parent)
 
         // Use ams_fila_sync icon (sync_nozzle_info.svg does not exist in resources)
         p->m_printerinfo_syncbtn = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "nozzle_sync");
-        p->m_printerinfo_syncbtn->SetToolTip(_L("sync nozzle info"));
+        p->m_printerinfo_syncbtn->SetCursor(wxCURSOR_HAND);
+        p->m_printerinfo_syncbtn->SetToolTip(_L("Synchronize nozzle information"));
         p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
             bool hasConnectDevice = false;
             auto devices = wxGetApp().app_config->get_devices();
@@ -1070,8 +1085,8 @@ Sidebar::Sidebar(Plater *parent)
                 // showdialog tips no connect device
                 wxTheApp->CallAfter([this]() {
                     MessageDialog dlg(wxGetApp().mainframe,
-                                      _L("No device connected. Please connect a printer in Home or Device page."),
-                                      _L("Unbound device"), wxOK);
+                                      _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
+                                      _L("Note"), wxOK);
                     dlg.ShowModal();
                     });                
                 return;        
@@ -1088,8 +1103,8 @@ Sidebar::Sidebar(Plater *parent)
                 {
                     wxTheApp->CallAfter([this]() {
                         MessageDialog dlgEx(wxGetApp().mainframe,
-                                            _L("No printer nozzle information detected. Please go to printer configuration nozzles."),
-                                            _L("Printer has no nozzle information"), wxOK);
+                                            _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
+                                            _L("Note"), wxOK);
                         dlgEx.ShowModal();
                     });    
 
@@ -1114,9 +1129,8 @@ Sidebar::Sidebar(Plater *parent)
                     wxTheApp->CallAfter([this, diameters_raw]() {
                         NozzleDiameterSelectDialog dlg(
                             wxGetApp().mainframe,
-                            _L("Tip: The current version does not support multi-nozzle mixed diameter printing. "
-                               "Inconsistent printer nozzle diameters detected; please select the nozzle to be used for this print."),
-                            _L("Set nozzle diameter"),
+                            _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
+                            _L("Set Nozzle Diameter"),
                             diameters_raw);
                         if (dlg.ShowModal() == wxID_OK) {
                             std::string sel = dlg.GetSelectedDiameter();
@@ -1146,12 +1160,36 @@ Sidebar::Sidebar(Plater *parent)
                     });
                     return;
                 }
+                else {
+                    // All tool heads report the same diameter: apply it without opening the picker.
+                    std::string diameter = headNozzleSize;
+                    boost::algorithm::trim(diameter);
+                    if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
+                        diameter.resize(diameter.size() - 2);
+                        boost::algorithm::trim(diameter);
+                    }
+                    wxTheApp->CallAfter([this, diameter]() {
+                        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+                        if (preset == nullptr) {
+                            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
+                            return;
+                        }
+                        preset->is_visible = true;
 
-                wxTheApp->CallAfter([this]() {
-                    MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle information synchronization successful"),
-                                         _L("Nozzle information synchronization results"), wxOK);
-                    dlg_Ex.ShowModal();
-                });
+                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
+                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+
+                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+
+                        wxTheApp->CallAfter([this]() {
+                            MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
+                                                 _L("Note"), wxOK);
+                            dlg_Ex.ShowModal();
+                        });
+                    });
+                }
             }
             
             });
@@ -2711,9 +2749,9 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                                                 nullptr, wxCB_READONLY);
         
 
-        // Use all system presets for this printer_model so the combo stays usable when only one
-        // variant is marked visible (e.g. after setup wizard / preset visibility filters).
-        auto diameters = wxGetApp().preset_bundle->printers.diameters_for_same_printer_model();
+        // Visible presets for this printer_model (system + user). Imported multi-nozzle variants are
+        // usually non-system; diameters_for_same_printer_model() only counted system and kept the combo disabled.
+        auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
         for (auto& diameter : diameters) {
             diameter_combo->AppendString(wxString(diameter) + "mm");
         }
@@ -2749,10 +2787,10 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                     if (notShow != "true")
                     {
                         RichMessageDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe),
-                                              _L("Note: After modification, the dimensions of the other three nozzles will also be adjusted to the same size."),
-                                              _L("Set nozzle diameter"), 
-                                               wxYES);
-                        dlg.ShowCheckBox(_L("not note again"), false);
+                                              _L("Note: Changing this will sync all other nozzles to the same diameter."),
+                                              _L("Set Nozzle Diameter"), 
+                                               wxOK);
+                        dlg.ShowCheckBox(_L("Don't show this again"), false);
                         auto res = dlg.ShowModal();
                         bool isCheckBox = dlg.IsCheckBoxChecked();
 
@@ -6321,15 +6359,25 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     if (print == nullptr)
         return;
 
-    std::string filamentNozzleMsg("");
-    bool        isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
+    Slic3r::NozzleFilamentRuleMismatch nozzle_mismatch;
+    bool                               isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
 
-    print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu);
+    print->filament_rule_mismatch_flags(nozzle_mismatch, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
+                                        wxGetApp().preset_bundle);
 
-    wxString filamentMismatchNozzleMsg     = wxString(_L("The combination of hot end and consumables is not recommended. The message reads: Printing TPU 95A HF with 0.2mm hardened steel hot end is not recommended. We suggest using 0.4mm or larger."));
-    wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("The current PEI glossy filament may have insufficient adhesion on the first layer of the heated bed. It is recommended to apply glue before printing to enhance adhesion."));
-    wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Warning: There is a risk of excessive adhesion between the current filament and the smooth PEI heated bed. It is recommended to apply liquid or solid adhesive before printing to protect the heated bed surface and facilitate part removal."));
-    wxString filamentMismatchGraphicBedMsg = wxString(_L("The current filament has low adhesion to the special effects texture heated bed, resulting in a higher risk of printing failure. It is recommended to use other filaments for printing."));
+    wxString filamentMismatchNozzleWarning;
+    if (nozzle_mismatch.has_mismatch) {
+        const wxString currentNozzle = wxString::FromUTF8(nozzle_mismatch.nozzle_diameter_mm);
+        const wxString nozzleType    = nozzle_type_key_to_label(nozzle_mismatch.nozzle_type_key);
+        const wxString filamentdata =
+            nozzle_mismatch.filament_preset_name.empty() ? _L("(unknown)")
+                                                         : wxString::FromUTF8(nozzle_mismatch.filament_preset_name);
+        filamentMismatchNozzleWarning =
+            wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended."), currentNozzle, nozzleType, filamentdata);
+    }
+    wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."));
+    wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
+    wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));
    
     if (isGraphicMatch || isPeiBedMatchNotPla)
     {
@@ -6339,15 +6387,15 @@ void Plater::priv::notify_filament_compatibility_after_apply()
             notification_manager->push_notification(filamentMismatchGraphicBedMsg.ToStdString(), 0);
         if (isPeiBedMatchNotPla)
             notification_manager->push_notification(filamentMismatchPeiBedMsgNotPla.ToStdString(), 0);
-        if (!filamentNozzleMsg.empty())
-            notification_manager->push_notification(filamentMismatchNozzleMsg.ToStdString(), 0);
-
         notification_manager->set_slicing_progress_hidden();
     }
 
+    if (nozzle_mismatch.has_mismatch)
+        notification_manager->push_notification(into_u8(filamentMismatchNozzleWarning), 0);
+
     if (isPeiBedMatchTpu)
     {            
-            notification_manager->push_notification(filamentMismatchPeiBedMsgTpu.ToStdString(), 0);
+        notification_manager->push_notification(filamentMismatchPeiBedMsgTpu.ToStdString(), 0);
     }
 
 }
@@ -15394,7 +15442,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
     int plate_index = evt.GetInt();
     PlateSettingsDialog dlg(this, _L("Plate Settings"), evt.GetString() == "only_layer_sequence");
     PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-    dlg.sync_bed_type(curr_plate->get_bed_type());
+    dlg.sync_bed_type(curr_plate->get_bed_type(true));
 
     auto curr_print_seq = curr_plate->get_print_seq();
     if (curr_print_seq != PrintSequence::ByDefault) {
@@ -15420,7 +15468,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
 
     dlg.Bind(EVT_SET_BED_TYPE_CONFIRM, [this, plate_index, &dlg](wxCommandEvent& e) {
         PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-        BedType old_bed_type = curr_plate->get_bed_type();
+        BedType old_bed_type = curr_plate->get_bed_type(true);
         auto bt_sel = BedType(dlg.get_bed_type_choice());
         if (old_bed_type != bt_sel) {
             curr_plate->set_bed_type(bt_sel);

@@ -784,8 +784,8 @@ void PrintConfigDef::init_fff_params()
     def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min        = 0;
-    def->max        = 300;
-    def->set_default_value(new ConfigOptionInts{100});
+    def->max        = 100;
+    def->set_default_value(new ConfigOptionInts{45});
 
     def = this->add("supertack_plate_temp_initial_layer", coInts);
     def->label = L("Initial layer");
@@ -853,8 +853,8 @@ void PrintConfigDef::init_fff_params()
                            "A value of 0 means the filament does not support printing on the Graphic Effect Plate.");
     def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
     def->min        = 0;
-    def->max        = 300;
-    def->set_default_value(new ConfigOptionInts{100});
+    def->max        = 100;
+    def->set_default_value(new ConfigOptionInts{45});
 
     def = this->add("curr_bed_type", coEnum);
     def->label = L("Bed type");

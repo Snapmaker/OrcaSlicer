@@ -100,6 +100,31 @@ void WKWebView_setTransparentBackground(void * web)
     [webView registerForDraggedTypes: @[NSFilenamesPboardType]];
 }
 
+void WKWebView_disableCache(void * web)
+{
+    WKWebView * webView = (WKWebView*)web;
+
+    // 1. Clear all website data (disk cache, memory cache, service worker registrations, etc.)
+    NSSet *allTypes = [WKWebsiteDataStore allWebsiteDataTypes];
+    WKWebsiteDataStore *dataStore = webView.configuration.websiteDataStore;
+    [dataStore removeDataOfTypes:allTypes
+                   modifiedSince:[NSDate distantPast]
+               completionHandler:^{
+        NSLog(@"[WKWebView] All website data cleared (cache, service workers, etc.)");
+    }];
+
+    // 2. Unregister all service workers via JavaScript
+    NSString *unregisterSW = @"if('serviceWorker' in navigator){"
+        "navigator.serviceWorker.getRegistrations().then(function(rs){"
+        "for(var i=0;i<rs.length;i++){rs[i].unregister()}"
+        "});"
+        "caches.keys().then(function(ns){"
+        "for(var i=0;i<ns.length;i++){caches.delete(ns[i])}"
+        "});"
+        "}";
+    [webView evaluateJavaScript:unregisterSW completionHandler:nil];
+}
+
 void openFolderForFile(wxString const & file)
 {
     NSArray *fileURLs = [NSArray arrayWithObjects:wxCFStringRef(file).AsNSString(), /* ... */ nil];

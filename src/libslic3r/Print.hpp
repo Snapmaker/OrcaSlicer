@@ -40,6 +40,7 @@ class TreeSupportData;
 class TreeSupport;
 class PresetCollection;
 class PresetBundle;
+struct NozzleFilamentRuleMismatch;
 
 #define MAX_OUTER_NOZZLE_DIAMETER   4
 // BBS: move from PrintObjectSlice.cpp
@@ -892,7 +893,7 @@ public:
     std::vector<unsigned int> support_material_extruders() const;
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
     // On-demand evaluation vs filament_hot_bed_nozzles.json (calls extruders(true) once internally).
-    void                filament_rule_mismatch_flags(std::string& out_nozzle,
+    void                filament_rule_mismatch_flags(NozzleFilamentRuleMismatch& out_nozzle_mismatch,
                                                      bool& out_gesp,
                                                      bool& out_pei_not_pla,
                                                      bool& out_pei_tpu,

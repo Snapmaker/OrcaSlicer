@@ -13,6 +13,14 @@ namespace Slic3r {
 
 class PresetBundle;
 
+/// Filled when filament_hot_bed_nozzles.json marks the current nozzle + type as forbidden for a filament preset.
+struct NozzleFilamentRuleMismatch {
+    bool        has_mismatch{ false };
+    std::string nozzle_diameter_mm;   // display digits, e.g. "0.2" (no "mm" suffix)
+    std::string nozzle_type_key;      // NozzleTypeEumnToStr: undefine, hardened_steel, stainless_steel, brass
+    std::string filament_preset_name; // resolved preset display name (may be empty)
+};
+
 // JSON: %AppData%/.../system/Snapmaker/filament/filament_hot_bed_nozzles.json (preferred), else bundled resources path.
 // Keys: bed ids (btPEI, btGESP), nozzle ids ("0.2mm" …) with support/warning.
 // 喷嘴规则（键名以 "mm" 结尾），任选其一：
@@ -47,6 +55,10 @@ public:
     std::string evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
                                                   const std::vector<unsigned int>& used_filament_indices,
                                                   const PresetBundle* preset_bundle = nullptr) const;
+
+    /// @return true if a forbidden nozzle+filament combination was found (fills @p out).
+    bool evaluate_nozzle_filament_mismatch_detail(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices,
+                                                    const PresetBundle* preset_bundle, NozzleFilamentRuleMismatch& out) const;
 
     
     bool evaluate_graphic_effect_bed_filament_mismatch(const PrintConfig& cfg,

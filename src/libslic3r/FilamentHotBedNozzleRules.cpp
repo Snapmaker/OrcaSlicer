@@ -465,22 +465,39 @@ bool FilamentHotBedNozzleRules::is_nozzle_filament_warning(const std::string& no
     return false;
 }
 
-std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
-                                                                          const std::vector<unsigned int>& used_filament_indices,
-                                                                          const PresetBundle* preset_bundle) const
+static std::string nozzle_diameter_mm_display(double nozzle_diameter_mm)
+{
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(2) << nozzle_diameter_mm;
+    std::string out = ss.str();
+    while (!out.empty() && out.back() == '0')
+        out.pop_back();
+    if (!out.empty() && out.back() == '.')
+        out.pop_back();
+    return out;
+}
+
+bool FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch_detail(const PrintConfig& cfg,
+                                                                         const std::vector<unsigned int>& used_filament_indices,
+                                                                         const PresetBundle* preset_bundle,
+                                                                         NozzleFilamentRuleMismatch&      out) const
 {
     std::scoped_lock<std::recursive_mutex> lock(m_mutex);
+    out = NozzleFilamentRuleMismatch{};
     if (!m_loaded || used_filament_indices.empty())
-        return "";
+        return false;
 
     const ConfigOptionStrings* filament_settings_id = cfg.option<ConfigOptionStrings>("filament_settings_id");
     const PresetCollection*    filament_collection  = preset_bundle != nullptr ? &preset_bundle->filaments : nullptr;
 
     for (unsigned int fid : used_filament_indices) {
-        std::string nozzle_key_fid;
+        std::string        nozzle_key_fid;
+        unsigned int       nd_idx = 0;
+        double             cur_mm = 0.;
         if (!cfg.nozzle_diameter.empty()) {
-            const unsigned int nd_idx = std::min(fid, unsigned(cfg.nozzle_diameter.size() - 1));
-            nozzle_key_fid = nozzle_diameter_to_filament_rule_key(cfg.nozzle_diameter.get_at(nd_idx));
+            nd_idx         = std::min(fid, unsigned(cfg.nozzle_diameter.size() - 1));
+            cur_mm         = cfg.nozzle_diameter.get_at(nd_idx);
+            nozzle_key_fid = nozzle_diameter_to_filament_rule_key(cur_mm);
         }
         if (nozzle_key_fid.empty())
             continue;
@@ -502,11 +519,28 @@ std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const P
         }
 
         const std::string preset_name = resolve_filament_preset_full_name(normalized, filament_collection);
-        if (is_nozzle_filament_forbidden(nozzle_key_fid, preset_name, cfg.nozzle_type.value))
-            return preset_name.empty() ? "forbidden filament preset for current nozzle" : preset_name;
+        if (!is_nozzle_filament_forbidden(nozzle_key_fid, preset_name, cfg.nozzle_type.value))
+            continue;
+
+        out.has_mismatch           = true;
+        out.nozzle_diameter_mm     = nozzle_diameter_mm_display(cur_mm);
+        auto nit                   = NozzleTypeEumnToStr.find(cfg.nozzle_type.value);
+        out.nozzle_type_key        = (nit != NozzleTypeEumnToStr.end()) ? nit->second : std::string("undefine");
+        out.filament_preset_name   = preset_name;
+        return true;
     }
 
-    return "";
+    return false;
+}
+
+std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
+                                                                          const std::vector<unsigned int>& used_filament_indices,
+                                                                          const PresetBundle* preset_bundle) const
+{
+    NozzleFilamentRuleMismatch d;
+    if (!evaluate_nozzle_filament_mismatch_detail(cfg, used_filament_indices, preset_bundle, d) || !d.has_mismatch)
+        return "";
+    return d.filament_preset_name.empty() ? "forbidden filament preset for current nozzle" : d.filament_preset_name;
 }
 
 bool FilamentHotBedNozzleRules::evaluate_graphic_effect_bed_filament_mismatch(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const

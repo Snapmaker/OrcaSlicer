@@ -64,6 +64,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/FilamentHotBedNozzleRules.hpp"
 
 // For stl export
 #include "libslic3r/CSGMesh/ModelToCSGMesh.hpp"
@@ -999,6 +1000,19 @@ struct DynamicFilamentList1Based : DynamicFilamentList
 static DynamicFilamentList dynamic_filament_list;
 static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
+static wxString nozzle_type_key_to_label(const std::string& key)
+{
+    if (key == "hardened_steel")
+        return _L("Hardened Steel");
+    if (key == "stainless_steel")
+        return _L("Stainless Steel");
+    if (key == "brass")
+        return _L("Brass");
+    if (key == "undefine")
+        return _L("Unknown");
+    return wxString::FromUTF8(key);
+}
+
 Sidebar::Sidebar(Plater *parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
 {
@@ -1097,7 +1111,14 @@ Sidebar::Sidebar(Plater *parent)
                     return;
                 }
                 wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
-                //wxGetApp().preset_bundle->m_machine_nozzles = nozzle_diameters;
+                for (int i = 0; i < nozzle_diameters.size(); i++) {
+                    ConnectMachineInfo data;
+                    data.filament_info = "data";
+                    data.nozzle_info   = nozzle_diameters[i];
+                    data.index         = i;
+                    wxGetApp().preset_bundle->m_connect_machine_info_list.push_back(data);
+                }
+
                 bool res = false;
                 std::string headNozzleSize = nozzle_diameters[0];
                 for (int i = 1; i < nozzle_diameters.size(); i++)
@@ -1172,7 +1193,7 @@ Sidebar::Sidebar(Plater *parent)
 
                         wxTheApp->CallAfter([this]() {
                             MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
-                                                 _L("Nozzle information synchronization results"), wxOK);
+                                                 _L("Note"), wxOK);
                             dlg_Ex.ShowModal();
                         });
                     });
@@ -6346,17 +6367,22 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     if (print == nullptr)
         return;
 
-    std::string filamentNozzleMsg("");
-    bool        isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
-    
-    print->filament_rule_mismatch_flags(filamentNozzleMsg, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
+    Slic3r::NozzleFilamentRuleMismatch nozzle_mismatch;
+    bool                               isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
+
+    print->filament_rule_mismatch_flags(nozzle_mismatch, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
                                         wxGetApp().preset_bundle);
-    wxString    currentNozzle = "0.2";
-    wxString    nozzleType    = _L("Stainless Steel");
-    wxString    tipsNozzle    = "0.4";
-        
-    wxString filamentMismatchNozzleWarning = wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended."),
-                         from_u8(currentNozzle.ToStdString()), from_u8(nozzleType.ToStdString()),from_u8(tipsNozzle.ToStdString()));
+
+    wxString filamentMismatchNozzleWarning;
+    if (nozzle_mismatch.has_mismatch) {
+        const wxString currentNozzle = wxString::FromUTF8(nozzle_mismatch.nozzle_diameter_mm);
+        const wxString nozzleType    = nozzle_type_key_to_label(nozzle_mismatch.nozzle_type_key);
+        const wxString filamentdata =
+            nozzle_mismatch.filament_preset_name.empty() ? _L("(unknown)")
+                                                         : wxString::FromUTF8(nozzle_mismatch.filament_preset_name);
+        filamentMismatchNozzleWarning =
+            wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended."), currentNozzle, nozzleType, filamentdata);
+    }
     wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."));
     wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
     wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));
@@ -6372,8 +6398,8 @@ void Plater::priv::notify_filament_compatibility_after_apply()
         notification_manager->set_slicing_progress_hidden();
     }
 
-    if (!filamentNozzleMsg.empty())
-        notification_manager->push_notification(filamentMismatchNozzleWarning.ToStdString(), 0);
+    if (nozzle_mismatch.has_mismatch)
+        notification_manager->push_notification(into_u8(filamentMismatchNozzleWarning), 0);
 
     if (isPeiBedMatchTpu)
     {            

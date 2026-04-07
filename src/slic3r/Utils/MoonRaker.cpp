@@ -252,7 +252,7 @@ Moonraker::Moonraker(DynamicPrintConfig* config)
     , m_apikey(config->opt_string("printhost_apikey"))
     , m_cafile(config->opt_string("printhost_cafile"))
     , m_ssl_revoke_best_effort(config->opt_bool("printhost_ssl_ignore_revoke"))
-    , time_sync_manager_(std::make_unique<TimeSyncManager>())
+    , time_sync_manager_(std::make_shared<TimeSyncManager>())
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] 初始化Moonraker实例，主机: " << m_host;
@@ -1137,7 +1137,12 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
     m_mqtt_client_tls = engine;
 
     BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] 设置消息回调函数";
-    m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
+    std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_;
+    m_mqtt_client_tls->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
+        if (weak_tsm.expired()) {
+            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 对象已销毁，忽略MQTTS消息";
+            return;
+        }
         this->on_mqtt_tls_message_arrived(topic, payload);
     });
 
@@ -1183,7 +1188,12 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     if (!response_subscribed) {
         return false;
     }
-    m_mqtt_client->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
+    std::weak_ptr<TimeSyncManager> weak_tsm_mqtt = time_sync_manager_;
+    m_mqtt_client->SetMessageCallback([this, weak_tsm_mqtt](const std::string& topic, const std::string& payload) {
+        if (weak_tsm_mqtt.expired()) {
+            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 对象已销毁，忽略MQTT消息";
+            return;
+        }
         this->on_mqtt_message_arrived(topic, payload);
     });
 
@@ -1440,7 +1450,12 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 订阅主题结果 - 通知主题: " << (notification_subscribed ? "成功" : "失败")
                            << ", 响应主题: " << (response_subscribed ? "成功" : "失败");
     wcp_loger.add_log("订阅主题结果 - 通知主题: " + std::string((notification_subscribed ? "成功" : "失败")) + ", 响应主题: " + (response_subscribed ? "成功" : "失败"), false, "", "Moonraker_Mqtt", "info");
-    m_mqtt_client_tls->SetMessageCallback([this](const std::string& topic, const std::string& payload) {
+    std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_;
+    m_mqtt_client_tls->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
+        if (weak_tsm.expired()) {
+            BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 对象已销毁，忽略MQTTS消息";
+            return;
+        }
         this->on_mqtt_tls_message_arrived(topic, payload);
     });
 
@@ -1465,6 +1480,10 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     bool flag = m_mqtt_client_tls->Disconnect(dc_msg);
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS断开连接结果: " << (flag ? "成功" : "失败");
     wcp_loger.add_log("MQTTS断开连接结果: " + std::string((flag ? "成功" : "失败")), false, "", "Moonraker_Mqtt", "info");
+
+    // 先释放 time_sync_manager_，使回调中的 weak_ptr 立即失效，
+    // 确保后续不会再有回调线程访问已销毁的对象
+    time_sync_manager_.reset();
 
     if (flag) {
         m_status_cbs.clear();

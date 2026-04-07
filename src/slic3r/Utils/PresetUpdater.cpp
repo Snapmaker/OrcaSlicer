@@ -1509,6 +1509,16 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                         //BBS: add directory support
                         updates.updates.emplace_back(cache_path / "profiles" / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "",
                                                      force_update, true, legal);
+
+                        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+                        if (vendor_name == PresetBundle::SM_BUNDLE) {
+                            fs::path rules_src = cache_path / "profiles" / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            if (fs::exists(rules_src)) {
+                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), vendor_name, "", "",
+                                                             force_update, false, legal);
+                            }
+                        }
                 }
             }
         }

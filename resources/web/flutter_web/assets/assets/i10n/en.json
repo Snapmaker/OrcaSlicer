@@ -139,7 +139,14 @@
     "34181": "Red",
     "34182": "Dark Gray",
     "34183": "Yellow",
-    "34184": "Green"
+    "34184": "Green",
+    "34202": "Sunset Ember",
+    "34203": "Aurora Gold",
+    "34204": "Solar Alloy",
+    "34205": "Mint Lemonade",
+    "34206": "Sea Glass",
+    "34207": "Ice Lake",
+    "34208": "City Billboard"
   },
   "filament_color": {
     "#FFFFFFFF": "White",
@@ -1273,5 +1280,6 @@
   "Untitled Config": "Untitled Config",
   "Display Area": "Display Area",
   "Print Now is only available in Cloud Mode": "Print Now is only available in Cloud Mode",
+  "nozzle_mismatch_tip": "The nozzle diameter does not match the preset. Please confirm the match before starting the print.", 
   "Next": "Next"
 }

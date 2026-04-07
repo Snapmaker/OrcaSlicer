@@ -4159,9 +4159,6 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
             else if (key == BED_TYPE_ATTR)
             {
-                // Legacy 3MF used "Graphic Effect Steel Plate"; canonical key is "Graphic Effect Plate" (same btGESP).
-                if (value == "Graphic Effect Steel Plate")
-                    value = "Graphic Effect Plate";
                 BedType bed_type = BedType::btPC;
                 ConfigOptionEnum<BedType>::from_string(value, bed_type);
                 m_curr_plater->config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type));

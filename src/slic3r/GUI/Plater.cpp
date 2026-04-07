@@ -1906,9 +1906,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 }
 
                 if(hasOnlineMachine)
-                    p->combo_printer->set_show_machine_connecting_button(true);                
-            }
-            else {
+                    p->combo_printer->set_show_machine_connecting_button(true);
     
                 wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
                                                   "/web/flutter_web/index.html?path=2");

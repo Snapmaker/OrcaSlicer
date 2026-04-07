@@ -1282,6 +1282,12 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
 
 	BOOST_LOG_TRIVIAL(info) << format("Installing %1% bundles from resources ...", bundles.size());
 
+    // File filter for directory copy: skip binary and large files that don't need to be in system presets
+    auto should_skip_file = [](const std::string name) {
+        return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
+               boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
+    };
+
 	for (const auto &bundle : bundles) {
 		auto path_in_rsrc = (this->rsrc_path / bundle).replace_extension(".json");
 		auto path_in_vendors = (this->vendor_path / bundle).replace_extension(".json");
@@ -1294,11 +1300,17 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
         if (fs::exists(print_folder))
             fs::remove_all(print_folder);
         fs::create_directories(print_folder);
-		updates.updates.emplace_back(std::move(print_in_rsrc), std::move(print_in_vendors), Version(), bundle, "", "",[](const std::string name){
-        // return false if name is end with .stl, case insensitive
-        return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
-               boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
-        }, false, true, true);
+		updates.updates.emplace_back(std::move(print_in_rsrc), std::move(print_in_vendors), Version(), bundle, "", "", should_skip_file, false, true, true);
+
+        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+        if (bundle == PresetBundle::SM_BUNDLE) {
+            fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
+            fs::path rules_dst = vendor_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
+            if (fs::exists(rules_src)) {
+                fs::create_directories(rules_dst.parent_path());
+                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+            }
+        }
 
         // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
         if (bundle == PresetBundle::SM_BUNDLE) {
@@ -1434,6 +1446,12 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
     if (!fs::exists(cache_profile_path))
         return updates;
 
+    // File filter for directory copy: skip binary and large files that don't need to be in system presets
+    auto should_skip_file = [](const std::string name) {
+        return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
+               boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
+    };
+
     for (auto &dir_entry : boost::filesystem::directory_iterator(cache_profile_path)) {
         const auto &path = dir_entry.path();
         std::string file_path = path.string();
@@ -1508,7 +1526,19 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 
                         //BBS: add directory support
                         updates.updates.emplace_back(cache_path / "profiles" / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "",
-                                                     force_update, true, legal);
+                                                     should_skip_file, force_update, true, legal);
+
+                        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+                        if (vendor_name == PresetBundle::SM_BUNDLE) {
+                            fs::path rules_src = cache_path / "profiles" / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            if (fs::exists(rules_src)) {
+                                // Ensure target directory exists
+                                fs::create_directories(rules_dst.parent_path());
+                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), vendor_name, "", "",
+                                                             force_update, false, legal);
+                            }
+                        }
                 }
             }
         }

@@ -1945,6 +1945,15 @@ void GUI_App::init_download_path()
 #if wxUSE_WEBVIEW_EDGE
 void GUI_App::init_webview_runtime()
 {
+    // BBS: force WebView2 to use the current user's profile directory (issue #100).
+    // Without this, WebView2 may fall back to a cached registry path that points to
+    // the account that originally installed the app (e.g. Admin), causing a write-
+    // permission failure for standard users on Windows.
+    {
+        std::string webview_data_dir = data_dir() + "/EBWebView";
+        wxSetEnv(wxS("WEBVIEW2_USER_DATA_FOLDER"), wxString::FromUTF8(webview_data_dir));
+    }
+
     // Check WebView Runtime
     if (!WebView::CheckWebViewRuntime()) {
         int nRet = wxMessageBox(_L("Snapmaker Orca requires the Microsoft WebView2 Runtime to operate certain features.\nClick Yes to install it now."),

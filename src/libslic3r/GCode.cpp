@@ -257,7 +257,13 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen)
 
     unsigned int extruder_id        = gcodegen.writer().extruder()->id();
     const auto&  filament_idle_temp = gcodegen.config().idle_temperature;
-    if (filament_idle_temp.get_at(extruder_id) == 0) {
+
+    // BBS: issue #143 — completely turn off the idle extruder heater when requested.
+    if (gcodegen.config().turn_off_idle_hotend.value) {
+        gcode += gcodegen.writer().set_temperature(0, false, extruder_id);
+        gcode.pop_back();
+        gcode += " ;turn off idle hotend\n";
+    } else if (filament_idle_temp.get_at(extruder_id) == 0) {
         // There is no idle temperature defined in filament settings.
         // Use the delta value from print config.
         if (gcodegen.config().standby_temperature_delta.value != 0) {

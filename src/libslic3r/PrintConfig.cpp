@@ -465,6 +465,13 @@ static const t_config_enum_values s_keys_map_WipeTowerWallType{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WipeTowerWallType)
 
+// BBS: issue #173
+static const t_config_enum_values s_keys_map_WipeTowerBuildMode{
+    {"layer_by_layer", wtbmLayerByLayer},
+    {"side_by_side",   wtbmSideBySide},
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WipeTowerBuildMode)
+
 static void assign_printer_technology_to_unknown(t_optiondef_map &options, PrinterTechnology printer_technology)
 {
     for (std::pair<const t_config_option_key, ConfigOptionDef> &kvp : options)
@@ -5799,6 +5806,21 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<WipeTowerWallType>(wtwRectangle));
 
+    // BBS: issue #173
+    def = this->add("wipe_tower_build_mode", coEnum);
+    def->label = L("Build mode");
+    def->tooltip = L("Controls how the prime tower is built across layers.\n"
+                     "Layer by layer: All tool changes on each layer share the same tower footprint (default).\n"
+                     "Side by side: Each filament gets its own dedicated column within the tower width. "
+                     "Useful for printers that benefit from less cross-contamination between purge columns.");
+    def->enum_keys_map = &ConfigOptionEnum<WipeTowerBuildMode>::get_enum_values();
+    def->enum_values.emplace_back("layer_by_layer");
+    def->enum_values.emplace_back("side_by_side");
+    def->enum_labels.emplace_back("Layer by layer");
+    def->enum_labels.emplace_back("Side by side");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WipeTowerBuildMode>(wtbmLayerByLayer));
+
     def           = this->add("wipe_tower_extra_rib_length", coFloat);
     def->label    = L("Extra rib length");
     def->tooltip  = L("Positive values can increase the size of the rib wall, while negative values can reduce the size. "
@@ -5899,6 +5921,15 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = max_temp;
     def->set_default_value(new ConfigOptionInts{0});
+
+    // BBS: issue #143
+    def = this->add("turn_off_idle_hotend", coBool);
+    def->label = L("Turn off idle hotend heaters");
+    def->tooltip = L("During multi-color prints, completely turn off the heaters of extruders that are "
+                     "not currently in use. This reduces power consumption and thermal stress on idle nozzles. "
+                     "Requires 'Ooze prevention' to be enabled.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");

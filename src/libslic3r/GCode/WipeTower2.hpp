@@ -79,6 +79,9 @@ public:
 		m_layer_height			= layer_height;
 		m_depth_traversed  = 0.f;
         m_current_layer_finished = false;
+        // BBS: issue #173 - reset per-tool depth tracking for side-by-side mode
+        if (m_build_mode == 1 && !m_per_tool_depth_traversed.empty())
+            std::fill(m_per_tool_depth_traversed.begin(), m_per_tool_depth_traversed.end(), 0.f);
 
 
         // Advance m_layer_info iterator, making sure we got it right
@@ -207,6 +210,8 @@ private:
     size_t m_first_layer_idx    = size_t(-1);
 
 	int m_wall_type;
+    int    m_build_mode                   = 0; // 0=layer_by_layer, 1=side_by_side (issue #173)
+    std::vector<float> m_per_tool_depth_traversed; // per-tool Y traversal for side-by-side mode
     bool   m_used_fillet                  = true;
     float  m_rib_width                    = 10;
     float  m_extra_rib_length             = 0;

@@ -1621,7 +1621,9 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         }
     }
     if (!this->has_same_shrinkage_compensations()){
-        warning->string = L("Filament shrinkage will not be used because filament shrinkage for the used filaments differs significantly.");
+        // BBS: issue #200 - we now fall back to the primary filament's shrinkage rather than
+        // disabling it entirely, so update the warning to reflect that.
+        warning->string = L("Filament shrinkage values differ across filaments. Shrinkage compensation from the primary filament will be applied to all objects.");
         warning->opt_key = "";
     }
     return {};
@@ -3076,13 +3078,22 @@ std::string PrintStatistics::finalize_output_path(const std::string &path_in) co
  // Returns scaling for each axis representing shrinkage compensations in each axis.
 Vec3d Print::shrinkage_compensation() const
 {
-    if (!this->has_same_shrinkage_compensations())
+    const std::vector<unsigned int> extruders = this->extruders();
+    if (extruders.empty())
         return Vec3d::Ones();
 
-    const unsigned int first_extruder = this->extruders().front();
+    // BBS: when filaments have different shrinkage values, fall back to the primary (first)
+    // filament's values rather than disabling compensation entirely (issue #200).
+    // This gives dimensional accuracy for the dominant material at the cost of slight
+    // inaccuracy for secondary materials — better than no compensation at all.
+    const unsigned int first_extruder = extruders.front();
 
     const double xy_shrinkage_percent = m_config.filament_shrink.get_at(first_extruder);
     const double z_shrinkage_percent  = m_config.filament_shrinkage_compensation_z.get_at(first_extruder);
+
+    // If compensation is effectively 100% (no-op), skip the division.
+    if (xy_shrinkage_percent == 100.0 && z_shrinkage_percent == 100.0)
+        return Vec3d::Ones();
 
     const double xy_compensation = 100.0 / xy_shrinkage_percent;
     const double z_compensation  = 100.0 / z_shrinkage_percent;

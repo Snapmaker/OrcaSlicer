@@ -279,6 +279,7 @@ protected:
 
 
     CameraItem *m_setting_button;
+    CameraItem *m_network_button { nullptr }; // BBS: network/IP settings button (issue #229)
 
     wxBitmap m_bitmap_camera;
     ScalableBitmap m_bitmap_sdcard_state_normal;
@@ -369,6 +370,8 @@ protected:
     Button *        m_bpButton_z_down_1;
     Button *        m_bpButton_z_down_10;
     Button *        m_button_unload;
+    Button *        m_button_load {nullptr};         // BBS: issue #65
+    Button *        m_button_sync_filament {nullptr}; // BBS: issue #98
     wxStaticText *  m_staticText_z_tip;
     wxStaticText *  m_staticText_e;
     Button *        m_bpButton_e_10;
@@ -584,6 +587,9 @@ protected:
     void on_switch_vcamera(wxMouseEvent &event);
     void on_camera_enter(wxMouseEvent &event);
     void on_camera_leave(wxMouseEvent& event);
+    void on_network_settings_enter(wxMouseEvent &event); // BBS: issue #229
+    void on_start_load(wxCommandEvent &event);          // BBS: issue #65
+    void on_sync_filament(wxCommandEvent &event);       // BBS: issue #98
     void on_auto_leveling(wxCommandEvent &event);
     void on_xyz_abs(wxCommandEvent &event);
 

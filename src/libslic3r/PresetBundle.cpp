@@ -45,7 +45,7 @@ static std::vector<std::string> s_project_options {
 
 // SM_FEATURE: add Snapmaker machine as default
 const char* PresetBundle::SM_BUNDLE = "Snapmaker";
-const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker U1(0.4 nozzle)";
+const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker U1";
 const char* PresetBundle::SM_DEFAULT_PRINTER_VARIANT = "0.4";
 const char* PresetBundle::SM_DEFAULT_FILAMENT        = "Snapmaker PLA SnapSpeed";
 const char *PresetBundle::ORCA_FILAMENT_LIBRARY = "OrcaFilamentLibrary";

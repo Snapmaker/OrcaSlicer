@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
@@ -176,6 +177,38 @@ namespace pt = boost::property_tree;
 
 namespace Slic3r {
 namespace GUI {
+
+void GUI_App::load_filament_hot_bed_nozzle_relations()
+{
+    FilamentHotBedNozzleRules::singleton().load();
+}
+
+bool GUI_App::is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_bed_filament_supported(bed_key, filament_type);
+}
+
+bool GUI_App::is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_bed_filament_warning(bed_key, filament_type);
+}
+
+bool GUI_App::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                           NozzleType nozzle_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_forbidden(nozzle_key, filament_preset_name, nozzle_type);
+}
+
+bool GUI_App::is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                         NozzleType nozzle_type) const
+{
+    return FilamentHotBedNozzleRules::singleton().is_nozzle_filament_warning(nozzle_key, filament_preset_name, nozzle_type);
+}
+
+bool GUI_App::has_filament_hot_bed_nozzle_rules() const
+{
+    return FilamentHotBedNozzleRules::singleton().is_loaded();
+}
 
 class MainFrame;
 
@@ -2328,6 +2361,7 @@ bool GUI_App::on_init_inner()
     const wxString resources_dir = from_u8(Slic3r::resources_dir());
     wxCHECK_MSG(wxDirExists(resources_dir), false,
         wxString::Format(_L("Resources path does not exist or is not a directory: %s"), resources_dir));
+    // filament_hot_bed_nozzles.json: editor copies via PresetUpdater below; rules reload in load_current_presets() after presets. G-code viewer loads in the non-editor branch.
 
 #ifdef __linux__
     if (! check_old_linux_datadir(GetAppName())) {
@@ -2510,6 +2544,7 @@ bool GUI_App::on_init_inner()
 #endif // __WXMSW__
 
         preset_updater = new PresetUpdater();
+        // filament_hot_bed_nozzles.json is copied here; FilamentHotBedNozzleRules reloads in load_current_presets() (startup, recreate_GUI, preset UI sync).
         Bind(EVT_SLIC3R_VERSION_ONLINE, [this](const wxCommandEvent& evt) {
             if (this->plater_ != nullptr) {
 
@@ -2608,6 +2643,8 @@ bool GUI_App::on_init_inner()
         if (app_config->get("associate_gcode") == "true")
             associate_files(L"gcode");
 #endif // __WXMSW__
+        // G-code viewer: no PresetUpdater; rules load from bundled resources path only.
+        load_filament_hot_bed_nozzle_relations();
     }
 
     // Suppress the '- default -' presets.
@@ -3549,8 +3586,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         mainframe->select_tab(size_t(MainFrame::tp3DEditor));
     // Propagate model objects to object list.
     sidebar().obj_list()->init();
-    //sidebar().aux_list()->init_auxiliary();
-    //mainframe->m_auxiliary->init_auxiliary();
     SetTopWindow(mainframe);
 
     dlg.Update(30, _L("Rebuild") + dots);
@@ -3560,7 +3595,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     m_printhost_job_queue.reset(new PrintHostJobQueue(mainframe->printhost_queue_dlg()));
     load_current_presets();
     mainframe->Show(true);
-    //mainframe->refresh_plugin_tips();
 
     dlg.Update(90, _L("Loading a mode view") + dots);
 
@@ -3574,18 +3608,11 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     //BBS: trigger restore project logic here, and skip confirm
     plater_->trigger_restore_project(1);
 
-    // #ys_FIXME_delete_after_testing  Do we still need this  ?
-//     CallAfter([]() {
-//         // Run the config wizard, don't offer the "reset user profile" checkbox.
-//         config_wizard_startup(true);
-//     });
-
-
     update_publish_status();
 
     m_is_recreating_gui = false;
 
-    //// 重新加载首页和设备页
+    //reload home and device page
     sm_disconnect_current_machine(true);
     auto devices = wxGetApp().app_config->get_devices();
     for (auto iter = devices.begin(); iter != devices.end();) {
@@ -3596,39 +3623,19 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         }
     }
 
-
-
-    // wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(true);
-
-    // auto url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
-    // wxGetApp().mainframe->load_printer_url(url);
-
     bool use_new_connection = wxGetApp().app_config->get("use_new_connect") == "true";
-
     const auto& edit_preset = preset_bundle->printers.get_edited_preset();
 
-    std::string local_name = "";
-    if (edit_preset.is_system) {
-        local_name = edit_preset.name;
-    } else {
-        const auto& base_preset = preset_bundle->printers.get_preset_base(edit_preset);
-        if (base_preset)
-            local_name = base_preset->name;
-        else
-            local_name = "";
+    auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+    bool is_snapmaker_u1   = false;
+    if (printer_model_opt) {
+        std::string printer_model = printer_model_opt->value;
+        is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
-    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
-
-    // Snapmaker U1
-    std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
-    bool        is_test          = (test_preset_name == local_name);
-
     
-    
-
     if (!preset_bundle->is_bbl_vendor()) {
-        if (is_test) {
+        if (is_snapmaker_u1) {
             wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
@@ -3639,14 +3646,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         }
     }
 
-
-
-
-
-    // wcp订阅
     wxGetApp().device_card_notify(devices);
     
-
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
 }
 
@@ -6288,6 +6289,12 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
 		if (tab->supports_printer_technology(printer_technology)) {
             tab->rebuild_page_tree();
         }
+
+    // Sidebar nozzle diameter combos depend on visible printer variants; rebuild after import / preset reload.
+    if (plater() != nullptr)
+        plater()->sidebar().update_nozzle_settings();
+
+    //load_filament_hot_bed_nozzle_relations();
 }
 
 static std::mutex mutex_delete_cache_presets;

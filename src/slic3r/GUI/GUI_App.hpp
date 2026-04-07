@@ -33,7 +33,7 @@
 
 #include <mutex>
 #include <stack>
-
+#include <unordered_map>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
 #define LOG_FILES_MAX_NUM           30
@@ -422,6 +422,14 @@ private:
     wxString get_inf_dialog_contect () {return m_info_dialog_content;};
 
     std::vector<std::string> split_str(std::string src, std::string separator);
+    void            load_filament_hot_bed_nozzle_relations();
+    bool            has_filament_hot_bed_nozzle_rules() const;
+    bool            is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const;
+    bool            is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const;
+    bool            is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                               Slic3r::NozzleType nozzle_type = Slic3r::NozzleType::ntUndefine) const;
+    bool            is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                               Slic3r::NozzleType nozzle_type = Slic3r::NozzleType::ntUndefine) const;
     // To be called after the GUI is fully built up.
     // Process command line parameters cached in this->init_params,
     // load configs, STLs etc.
@@ -826,7 +834,6 @@ private:
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
     std::string             m_open_method;
-
     SMUserInfo m_login_userinfo;
 
 public:

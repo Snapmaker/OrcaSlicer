@@ -93,6 +93,8 @@ void PrinterWebView::reload()
 
 bool PrinterWebView::isSnapmakerPage()
 {
+    if (m_browser == nullptr)
+        return false;
     auto url = m_browser->GetCurrentURL();
     return (url.find("flutter_web") != std::string::npos);
 }

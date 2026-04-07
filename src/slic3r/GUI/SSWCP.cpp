@@ -1488,7 +1488,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 return;
             }
 
-            if (!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() || !j_value.count("filament_type") ||
+            if (!j_value.count("nozzle_diameters") ||!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
+                !j_value.count("filament_type") ||
                 !j_value["filament_type"].is_array() || !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
                 ((!j_value.count("filament_color") || !j_value["filament_color"].is_array()) &&
                  (!j_value.count("filament_color_rgba") || !j_value["filament_color_rgba"].is_array())) ||
@@ -1502,6 +1503,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
             // 存储耗材，并触发更新
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+            auto& machine_nozzles = wxGetApp().preset_bundle->m_connect_machine_info_list;
             static auto tmp_filaments = filaments;
 
             if (m_first_connected) {
@@ -1509,11 +1511,13 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 m_first_connected = false;
             }
 
+            machine_nozzles.clear();
             filaments.clear();
 
             size_t count = 0;
             for (size_t i = 0; i < j_value["filament_official"].size(); ++i) {
                 bool is_official = j_value["filament_official"][i].get<bool>();
+                ConnectMachineInfo machineData;
                 if (/*is_official*/ true) {
                     std::string vendor   = j_value["filament_vendor"][i].get<std::string>();
                     std::string type     = j_value["filament_type"][i].get<std::string>();
@@ -1539,7 +1543,10 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
                         j_value["filament_color_rgba"].size() != 0) {
                         std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                        filaments.insert({int(i), {name, str_color}});
+                        filaments.insert({int(i), {name, str_color}});    
+                        machineData.index = i;
+                        machineData.color_info = str_color;
+                        machineData.filament_info = name;
                     } else {
                         if (j_value["filament_color"][i].is_number()) {
                             int                color = j_value["filament_color"][i].get<int>();
@@ -1549,11 +1556,20 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
                             std::string str_color = oss.str();
                             filaments.insert({int(i), {name, str_color}});
+                            machineData.index         = i;
+                            machineData.color_info    = str_color;
+                            machineData.filament_info = name;
                         } else {
                             std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
                             filaments.insert({int(i), {name, str_color}});
+                            machineData.index         = i;
+                            machineData.color_info    = str_color;
+                            machineData.filament_info = name;
                         }
                     }
+                    if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
+                        machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
+                    machine_nozzles.push_back(machineData);
                 }
             }
 
@@ -1566,7 +1582,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 if (tmp_filaments.count(iter->first)) {
                     auto pair     = iter->second;
                     auto tmp_pair = tmp_filaments[iter->first];
-                    if (pair.first == tmp_pair.first && pair.second == pair.second) {
+                    if (pair.first == tmp_pair.first && pair.second == tmp_pair.second) {
                         continue;
                     } else {
                         need_load_preset = true;
@@ -3121,6 +3137,25 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 object[std::to_string(item.first)] = std::to_string(item.second); 
             }
             response["filament_extruder_map"] = object;
+        }
+
+        //nozzle info
+        PartPlate*  cur_plate        = wxGetApp().plater()->get_partplate_list().get_curr_plate();      
+        if (cur_plate)
+        {
+            auto*  nozzle_opt = cur_plate->fff_print()->config().option<ConfigOptionFloats>("nozzle_diameter");
+            std::vector<std::string> nozzle_list;
+            if (nozzle_opt) {
+                for (float d : nozzle_opt->values) {
+                    nozzle_list.push_back(std::abs(d - 0.2f) < 1e-5f ? "0.2" :
+                                          std::abs(d - 0.4f) < 1e-5f ? "0.4" :
+                                          std::abs(d - 0.6f) < 1e-5f ? "0.6" :
+                                          std::abs(d - 0.8f) < 1e-5f ? "0.8" :
+                                                                       std::to_string(d));
+                }
+
+                response["nozzle_info"] = nozzle_list;
+            }
         }
 
         // printer model
@@ -5613,6 +5648,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             }
 
                                         } else {
+                      
                                             info.nozzle_sizes = nozzle_diameters;
                                             info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
                                             wxGetApp().app_config->save_device_info(info);

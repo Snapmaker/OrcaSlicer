@@ -800,25 +800,27 @@ int WebPresetDialog::SaveProfile()
                 json        temp_model  = it.value();
                 std::string model_name  = temp_model["model"];
                 std::string vendor_name = temp_model["vendor"];
-                std::string selected    = temp_model["nozzle_selected"];
+                std::string selected        = temp_model["nozzle_selected"];
+                std::string nozzle_diameter = temp_model["nozzle_diameter"];
                 boost::trim(selected);
-                std::string nozzle;
-                while (selected.size() > 0) {
-                    auto pos = selected.find(';');
-                    if (pos != std::string::npos) {
-                        nozzle = selected.substr(0, pos);
-                        m_appconfig_new.set_variant(vendor_name, model_name, nozzle, "true");
-                        BOOST_LOG_TRIVIAL(info)
-                            << __FUNCTION__
-                            << boost::format("vendor_name %1%, model_name %2%, nozzle %3% selected") % vendor_name % model_name % nozzle;
-                        selected = selected.substr(pos + 1);
-                        boost::trim(selected);
-                    } else {
-                        m_appconfig_new.set_variant(vendor_name, model_name, selected, "true");
-                        BOOST_LOG_TRIVIAL(info)
-                            << __FUNCTION__
-                            << boost::format("vendor_name %1%, model_name %2%, nozzle %3% selected") % vendor_name % model_name % selected;
-                        break;
+                boost::trim(nozzle_diameter);
+                if (!selected.empty()) {
+                    std::string nozzle;
+                    while (nozzle_diameter.size() > 0) {
+                        auto pos = nozzle_diameter.find(';');
+                        if (pos != std::string::npos) {
+                            nozzle = nozzle_diameter.substr(0, pos);
+                            boost::trim(nozzle);
+                            if (!nozzle.empty())
+                                m_appconfig_new.set_variant(vendor_name, model_name, nozzle, "true");
+                            nozzle_diameter = nozzle_diameter.substr(pos + 1);
+                            boost::trim(nozzle_diameter);
+                        } else {
+                            boost::trim(nozzle_diameter);
+                            if (!nozzle_diameter.empty())
+                                m_appconfig_new.set_variant(vendor_name, model_name, nozzle_diameter, "true");
+                            break;
+                        }
                     }
                 }
             }
@@ -1264,31 +1266,23 @@ int WebPresetDialog::LoadProfile()
                 std::string selected;
                 boost::trim(nozzle_diameter);
                 std::string nozzle;
-                bool        enabled = false, first = true;
+                bool        enabled = false;
+                bool        any_enabled = false;
                 while (nozzle_diameter.size() > 0) {
                     auto pos = nozzle_diameter.find(';');
                     if (pos != std::string::npos) {
                         nozzle  = nozzle_diameter.substr(0, pos);
                         enabled = m_appconfig_new.get_variant(vendor_name, model_name, nozzle);
-                        if (enabled) {
-                            if (!first)
-                                selected += ";";
-                            selected += nozzle;
-                            first = false;
-                        }
+                        any_enabled = any_enabled || enabled;
                         nozzle_diameter = nozzle_diameter.substr(pos + 1);
                         boost::trim(nozzle_diameter);
                     } else {
                         enabled = m_appconfig_new.get_variant(vendor_name, model_name, nozzle_diameter);
-                        if (enabled) {
-                            if (!first)
-                                selected += ";";
-                            selected += nozzle_diameter;
-                        }
+                        any_enabled = any_enabled || enabled;
                         break;
                     }
                 }
-                temp_model["nozzle_selected"] = selected;
+                temp_model["nozzle_selected"] = any_enabled ? temp_model["nozzle_diameter"] : "";
                 // m_ProfileJson["model"][a]["nozzle_selected"]
             }
         }

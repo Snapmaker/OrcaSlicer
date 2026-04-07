@@ -16,6 +16,7 @@
 #include "GCode/WipeTower2.hpp"
 #include "Utils.hpp"
 #include "PrintConfig.hpp"
+#include "FilamentHotBedNozzleRules.hpp"
 #include "Model.hpp"
 #include "format.hpp"
 #include <float.h>
@@ -135,6 +136,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "eng_plate_temp_initial_layer",
         "hot_plate_temp_initial_layer",
         "textured_plate_temp_initial_layer",
+        "graphic_effect_plate_temp_initial_layer",
         "gcode_add_line_number",
         "layer_change_gcode",
         "time_lapse_gcode",
@@ -281,7 +283,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "textured_cool_plate_temp"
             || opt_key == "eng_plate_temp"
             || opt_key == "hot_plate_temp"
-            || opt_key == "textured_plate_temp"
+            || opt_key == "textured_plate_temp" 
+            || opt_key == "graphic_effect_plate_temp"
             || opt_key == "enable_prime_tower"
             || opt_key == "prime_tower_width"
             || opt_key == "prime_tower_brim_width"
@@ -492,7 +495,26 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     }
 
     sort_remove_duplicates(extruders);
+
     return extruders;
+}
+
+void Print::filament_rule_mismatch_flags(NozzleFilamentRuleMismatch& out_nozzle_mismatch,
+                                         bool& out_gesp,
+                                         bool& out_pei_not_pla,
+                                         bool& out_pei_tpu,
+                                         const PresetBundle* preset_bundle) const
+{
+    FilamentHotBedNozzleRules::singleton().ensure_loaded();
+    const std::vector<unsigned int> used = extruders(true);
+    FilamentHotBedNozzleRules&      rules = FilamentHotBedNozzleRules::singleton();
+    out_nozzle_mismatch = NozzleFilamentRuleMismatch{};
+    rules.evaluate_nozzle_filament_mismatch_detail(m_config, used, preset_bundle, out_nozzle_mismatch);
+
+    out_gesp   = rules.evaluate_graphic_effect_bed_filament_mismatch(m_config, used);
+
+    out_pei_tpu     = rules.evaluate_pei_bed_filament_mismatch_tpu(m_config, used);
+    out_pei_not_pla = rules.evaluate_pei_bed_filament_mismatch_not_pla(m_config, used);
 }
 
 unsigned int Print::num_object_instances() const

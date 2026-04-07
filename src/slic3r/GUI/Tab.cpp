@@ -124,9 +124,7 @@ static void validate_filament_hot_bed_nozzle_relation(wxWindow* parent)
         NozzleType        nozzle_mat = NozzleType::ntUndefine;
         if (const auto* nto = printer_config.option<ConfigOptionEnum<NozzleType>>("nozzle_type"))
             nozzle_mat = nto->value;
-        const bool is_forbidden = app.is_nozzle_filament_forbidden(nozzle_key, filament_preset.name, nozzle_mat);
-        const bool is_noz_warn  = app.is_nozzle_filament_warning(nozzle_key, filament_preset.name, nozzle_mat);
-        (void)is_forbidden;
+        const bool is_noz_warn = app.is_nozzle_filament_warning(nozzle_key, filament_preset.name, nozzle_mat);
         (void)is_noz_warn;
     }
 }

@@ -416,26 +416,10 @@ bool FilamentHotBedNozzleRules::is_bed_filament_warning(const std::string& bed_k
 bool FilamentHotBedNozzleRules::is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
                                                              NozzleType nozzle_type) const
 {
-    std::scoped_lock<std::recursive_mutex> lock(m_mutex);
-    auto it = m_nozzle_forbidden_bands.find(nozzle_key);
-    if (it == m_nozzle_forbidden_bands.end())
-        return false;
-
-    std::string cur_type = "undefine";
-    auto        nit      = NozzleTypeEumnToStr.find(nozzle_type);
-    if (nit != NozzleTypeEumnToStr.end())
-        cur_type = nit->second;
-
-    for (const NozzleForbiddenBand& band : it->second) {
-        if (!band.applies_to_all_nozzle_types) {
-            if (band.nozzle_types.find(cur_type) == band.nozzle_types.end())
-                continue;
-        }
-        for (const std::string& token : band.forbidden_substrings) {
-            if (!token.empty() && filament_preset_name.find(token) != std::string::npos)
-                return true;
-        }
-    }
+    (void)nozzle_key;
+    (void)filament_preset_name;
+    (void)nozzle_type;
+    // JSON "forbidden" for nozzle+filament is intentionally not applied; use warning lists only.
     return false;
 }
 
@@ -519,7 +503,7 @@ bool FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch_detail(const P
         }
 
         const std::string preset_name = resolve_filament_preset_full_name(normalized, filament_collection);
-        if (!is_nozzle_filament_forbidden(nozzle_key_fid, preset_name, cfg.nozzle_type.value))
+        if (!is_nozzle_filament_warning(nozzle_key_fid, preset_name, cfg.nozzle_type.value))
             continue;
 
         out.has_mismatch           = true;
@@ -540,7 +524,7 @@ std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const P
     NozzleFilamentRuleMismatch d;
     if (!evaluate_nozzle_filament_mismatch_detail(cfg, used_filament_indices, preset_bundle, d) || !d.has_mismatch)
         return "";
-    return d.filament_preset_name.empty() ? "forbidden filament preset for current nozzle" : d.filament_preset_name;
+    return d.filament_preset_name.empty() ? "nozzle filament preset warning" : d.filament_preset_name;
 }
 
 bool FilamentHotBedNozzleRules::evaluate_graphic_effect_bed_filament_mismatch(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const

@@ -3,8 +3,8 @@
 
 namespace Slic3r {
 
-int64_t TimeSyncManager::getCurrentTimeMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
+int64_t TimeSyncManager::getCurrentTimeSec() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
 }
@@ -12,14 +12,13 @@ int64_t TimeSyncManager::getCurrentTimeMs() {
 void TimeSyncManager::addTimeFields(nlohmann::json& request) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
-    int64_t current_time = getCurrentTimeMs();
+    int64_t current_time = getCurrentTimeSec();
 
     // 检测时钟回拨
     if (last_cli_time_ > 0 && current_time < last_cli_time_) {
         BOOST_LOG_TRIVIAL(warning) << "[TimeSyncManager] Clock rollback detected, resetting sync state";
-        // 直接重置，不需要释放锁
-        delta_time_ = 0;
-        duration_ = 0;
+        clock_offset_ = 0;
+        rtt_ = 0;
         last_cli_time_ = 0;
         is_synced_ = false;
         sync_fail_count_ = 0;
@@ -29,7 +28,7 @@ void TimeSyncManager::addTimeFields(nlohmann::json& request) {
     request["cli_time"] = current_time;
     request["dev_time"] = dev_time_value;
 
-    BOOST_LOG_TRIVIAL(info) << "[TimeSyncManager] 添加时间字段: cli_time=" << current_time
+    BOOST_LOG_TRIVIAL(info) << "[TimeSyncManager] addTimeFields: cli_time=" << current_time
                             << ", dev_time=" << dev_time_value
                             << ", is_synced=" << is_synced_;
 
@@ -62,18 +61,26 @@ void TimeSyncManager::updateFromResponse(const nlohmann::json& response) {
         return;
     }
 
+    // NTP 式时间同步算法：
+    // cli_time1 = 发送请求时的客户端时间（上次 addTimeFields 记录）
+    // dev_time  = 设备处理请求时的设备时间（响应中携带，单位：秒）
+    // cli_time2 = 收到响应时的客户端时间
+    // RTT = cli_time2 - cli_time1
+    // 单程延迟估算 = RTT / 2
+    // clock_offset = dev_time - (cli_time1 + RTT / 2)
+    // 推算设备当前时间 = current_cli_time + clock_offset
+
     int64_t cli_time1 = last_cli_time_;
-    int64_t cli_time2 = getCurrentTimeMs();
+    int64_t cli_time2 = getCurrentTimeSec();
     int64_t dev_time = response["dev_time"].get<int64_t>();
 
-    // 更新同步参数
-    duration_ = cli_time2 - cli_time1;
-    delta_time_ = cli_time2 - dev_time;
+    rtt_ = cli_time2 - cli_time1;
+    clock_offset_ = dev_time - (cli_time1 + rtt_ / 2);
     is_synced_ = true;
     sync_fail_count_ = 0;
 
-    BOOST_LOG_TRIVIAL(info) << "[TimeSyncManager] 时间同步更新: duration=" << duration_
-                            << "ms, delta=" << delta_time_ << "ms"
+    BOOST_LOG_TRIVIAL(info) << "[TimeSyncManager] Sync updated: rtt=" << rtt_
+                            << "s, offset=" << clock_offset_ << "s"
                             << ", cli_time1=" << cli_time1
                             << ", cli_time2=" << cli_time2
                             << ", dev_time=" << dev_time;
@@ -81,8 +88,8 @@ void TimeSyncManager::updateFromResponse(const nlohmann::json& response) {
 
 void TimeSyncManager::reset() {
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    delta_time_ = 0;
-    duration_ = 0;
+    clock_offset_ = 0;
+    rtt_ = 0;
     last_cli_time_ = 0;
     is_synced_ = false;
     sync_fail_count_ = 0;
@@ -95,8 +102,7 @@ bool TimeSyncManager::isSynced() const {
 }
 
 int64_t TimeSyncManager::calculateDevTime() const {
-    int64_t current_time = getCurrentTimeMs();
-    return current_time - delta_time_ + duration_;
+    return getCurrentTimeSec() + clock_offset_;
 }
 
 } // namespace Slic3r

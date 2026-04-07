@@ -2967,6 +2967,11 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
     try {
         json body = json::parse(payload);
 
+        // 更新时间同步状态
+        if (time_sync_manager_) {
+            time_sync_manager_->updateFromResponse(body);
+        }
+
         if (!body.count("id")) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] 响应消息缺少ID字段";
             wcp_loger.add_log("响应消息缺少ID字段", false, "", "Moonraker_Mqtt", "warning");

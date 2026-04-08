@@ -583,6 +583,9 @@
   "No available printer": "暂无可用打印机",
 
   "Unable to obtain the current slice file information, please re-operate the slice": "无法获取当前切片文件信息，请重新操作切片",
+
+  "dialog_filament_type_not_match_tips": "此喷嘴耗材类型与模型预设耗材类型不匹配，请更换该喷嘴耗材类型或更改预设耗材类型",
+  "dialog_filament_type_none_tips": "未识别到耗材，请在设备上挂载耗材或编辑耗材信息",
   "dialog_file_download_success_tips": "文件{}已下载成功，发起上传...",
   "dialog_file_download_failed_tips": "文件{}下载失败，请重试...",
   "dialog_file_upload_failed_tips": "文件{}上传失败，请重试...",
@@ -616,8 +619,6 @@
   "File upload failed, please check network connection and try again.": "文件上传失败，请检查网络连接后重试",
   "Unable to get current slicing details, go to the Prepare page to initiate slicing": "无法获取当前切片详情，请前往准备页面发起切片",
   "The device is not connected, please click the printer to initiate device connection.": "设备未连接，请点击选择打印机发起设备连接",
-  "dialog_filament_type_not_match_tips": "此喷嘴耗材类型与模型预设耗材类型不匹配，请更换该喷嘴耗材类型或更改预设耗材类型",
-  "dialog_filament_type_none_tips": "未识别到耗材，请在设备上挂载耗材或编辑耗材信息",
   "Features are under development, please stay tuned": "功能开发中, 敬请期待",
   "File bytes is empty": "获取文件内容为空，请重新发起切片操作",
   "Model": "模型",

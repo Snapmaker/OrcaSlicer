@@ -61,6 +61,29 @@ bool match_any_rule_token_ci(const std::unordered_set<std::string>& tokens, cons
     return false;
 }
 
+// Presets use optional " @Vendor / machine" suffixes (e.g. "Generic PLA @U1 0.2 nozzle"). Rules list the
+// canonical name only; compare to the base name so "Generic PLA" does not match "Generic PLA Silk".
+static std::string filament_preset_base_name_for_nozzle_rule(std::string preset_name)
+{
+    boost::algorithm::trim(preset_name);
+    static constexpr const char* k_suffix_sep = " @";
+    const std::string::size_type pos           = preset_name.find(k_suffix_sep);
+    if (pos != std::string::npos) {
+        preset_name.resize(pos);
+        boost::algorithm::trim(preset_name);
+    }
+    return preset_name;
+}
+
+static bool nozzle_warning_rule_matches_filament_preset_ci(const std::string& token_raw, const std::string& filament_preset_name)
+{
+    std::string token = boost::algorithm::trim_copy(token_raw);
+    if (token.empty())
+        return false;
+    const std::string base = filament_preset_base_name_for_nozzle_rule(filament_preset_name);
+    return to_upper_ascii(base) == to_upper_ascii(token);
+}
+
 // Resolve filament_settings_id entry: may store preset display name or cloud setting_id / base_id.
 static std::string resolve_filament_preset_full_name(const std::string& stored, const PresetCollection* filaments)
 {
@@ -442,7 +465,7 @@ bool FilamentHotBedNozzleRules::is_nozzle_filament_warning(const std::string& no
                 continue;
         }
         for (const std::string& token : band.warning_substrings) {
-            if (!token.empty() && filament_preset_name.find(token) != std::string::npos)
+            if (nozzle_warning_rule_matches_filament_preset_ci(token, filament_preset_name))
                 return true;
         }
     }

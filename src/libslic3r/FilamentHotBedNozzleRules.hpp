@@ -48,7 +48,8 @@ public:
     bool is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const;
     bool is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
                                       NozzleType nozzle_type = NozzleType::ntUndefine) const;
-    /// Substring match on preset name; does not block slicing (see evaluate_nozzle_filament_mismatch).
+    /// Match rule entry to filament preset by exact name (case-insensitive) on the base preset name
+    /// (text before optional " @..." suffix); does not block slicing (see evaluate_nozzle_filament_mismatch).
     bool is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
                                     NozzleType nozzle_type = NozzleType::ntUndefine) const;
     

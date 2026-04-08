@@ -27,11 +27,8 @@
     "graphic_effect_plate_temp_initial_layer": [
         "35"
     ],
-
-
-
     "enable_pressure_advance": [
-        "1"
+        "0"
     ],
     "fan_cooling_layer_time": [
         "40"
@@ -83,5 +80,5 @@
     ],
     "slow_down_layer_time": [
         "10"
-    ]    
+    ]
 }

@@ -21,7 +21,7 @@
         ""
     ],
     "enable_pressure_advance": [
-        "1"
+        "0"
     ],
     "filament_multitool_ramming": [
         "1"

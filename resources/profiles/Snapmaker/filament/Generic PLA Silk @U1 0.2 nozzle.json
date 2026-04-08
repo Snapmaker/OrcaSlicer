@@ -5,9 +5,6 @@
     "from": "system",
     "setting_id": "GFSL99_0122",
     "instantiation": "true",
-    "filament_max_volumetric_speed": [
-        "7.5"
-    ],
     "filament_retraction_length": [
         "0.5"
     ],
@@ -16,9 +13,6 @@
     ],
     "filament_start_gcode": [
         ""
-    ],
-    "enable_pressure_advance": [
-        "1"
     ],
     "filament_multitool_ramming": [
         "1"
@@ -41,9 +35,6 @@
     "filament_end_gcode": [
         ""
     ],
-    "filament_multitool_ramming_flow": [
-        "11"
-    ],
     "filament_multitool_ramming_volume": [
         "1"
     ],
@@ -58,5 +49,14 @@
     ],
     "textured_plate_temp_initial_layer": [
         "65"
+    ],
+    "enable_pressure_advance": [
+        "0"
+    ],
+    "filament_max_volumetric_speed": [
+        "2"
+    ],
+    "filament_multitool_ramming_flow": [
+        "5"
     ]
 }

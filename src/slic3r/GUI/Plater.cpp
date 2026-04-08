@@ -2792,7 +2792,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                         auto res = dlg.ShowModal();
                         bool isCheckBox = dlg.IsCheckBoxChecked();
 
-                        wxGetApp().app_config->set("app", "sync_diameter_flags", isCheckBox);     
+                        if (wxID_OK == res)
+                            wxGetApp().app_config->set("app", "sync_diameter_flags", isCheckBox);     
                     }
                 }
             }

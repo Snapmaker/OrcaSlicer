@@ -1,6 +1,6 @@
 #include "TimeSyncManager.hpp"
 #include <boost/log/trivial.hpp>
-
+#include <mutex>
 namespace Slic3r {
 
 int64_t TimeSyncManager::getCurrentTimeSec() {

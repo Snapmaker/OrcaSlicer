@@ -14,7 +14,7 @@ void TimeSyncManager::addTimeFields(nlohmann::json& request) {
 
     int64_t current_time = getCurrentTimeSec();
 
-    // 检测时钟回拨
+    // Detect clock rollback
     if (last_cli_time_ > 0 && current_time < last_cli_time_) {
         BOOST_LOG_TRIVIAL(warning) << "[TimeSyncManager] Clock rollback detected, resetting sync state";
         clock_offset_ = 0;
@@ -38,7 +38,7 @@ void TimeSyncManager::addTimeFields(nlohmann::json& request) {
 void TimeSyncManager::updateFromResponse(const nlohmann::json& response) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
-    // 检查必需字段
+    // Check required fields
     if (!response.contains("cli_time") || !response.contains("dev_time")) {
         BOOST_LOG_TRIVIAL(warning) << "[TimeSyncManager] Response missing time fields";
         sync_fail_count_++;
@@ -50,7 +50,7 @@ void TimeSyncManager::updateFromResponse(const nlohmann::json& response) {
         return;
     }
 
-    // 检查字段类型
+    // Check field types
     if (!response["cli_time"].is_number() || !response["dev_time"].is_number()) {
         BOOST_LOG_TRIVIAL(error) << "[TimeSyncManager] Invalid time field types";
         sync_fail_count_++;
@@ -61,14 +61,14 @@ void TimeSyncManager::updateFromResponse(const nlohmann::json& response) {
         return;
     }
 
-    // NTP 式时间同步算法：
-    // cli_time1 = 发送请求时的客户端时间（上次 addTimeFields 记录）
-    // dev_time  = 设备处理请求时的设备时间（响应中携带，单位：秒）
-    // cli_time2 = 收到响应时的客户端时间
+    // NTP-style time synchronization algorithm:
+    // cli_time1 = client time when the request was sent (recorded by last addTimeFields call)
+    // dev_time  = device time when processing the request (carried in response, unit: seconds)
+    // cli_time2 = client time when the response was received
     // RTT = cli_time2 - cli_time1
-    // 单程延迟估算 = RTT / 2
+    // One-way delay estimate = RTT / 2
     // clock_offset = dev_time - (cli_time1 + RTT / 2)
-    // 推算设备当前时间 = current_cli_time + clock_offset
+    // Estimated current device time = current_cli_time + clock_offset
 
     int64_t cli_time1 = last_cli_time_;
     int64_t cli_time2 = getCurrentTimeSec();

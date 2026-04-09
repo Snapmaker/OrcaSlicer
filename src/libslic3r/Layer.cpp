@@ -10,6 +10,46 @@
 
 namespace Slic3r {
 
+namespace {
+
+SurfaceCollection split_fill_surfaces_by_region(const SurfaceCollection &fill_surfaces, const SurfaceCollection &region_slices)
+{
+    SurfaceCollection out;
+    if (fill_surfaces.empty() || region_slices.empty())
+        return out;
+
+    for (size_t surface_type = 0; surface_type < size_t(stCount); ++surface_type) {
+        Surfaces typed_fill_surfaces;
+        for (const Surface &surface : fill_surfaces.surfaces)
+            if (surface.surface_type == SurfaceType(surface_type))
+                typed_fill_surfaces.emplace_back(surface);
+
+        if (typed_fill_surfaces.empty())
+            continue;
+
+        ExPolygons clipped = intersection_ex(typed_fill_surfaces, region_slices.surfaces, ApplySafetyOffset::Yes);
+        if (!clipped.empty())
+            out.append(std::move(clipped), SurfaceType(surface_type));
+    }
+
+    return out;
+}
+
+using SliceMergeKey = std::tuple<int, double, unsigned short, double, unsigned short>;
+
+SliceMergeKey slice_merge_key(const Surface &surface)
+{
+    return {
+        int(surface.surface_type),
+        surface.thickness,
+        surface.thickness_layers,
+        surface.bridge_angle,
+        surface.extra_perimeters
+    };
+}
+
+} // namespace
+
 Layer::~Layer()
 {
     this->lower_layer = this->upper_layer = nullptr;
@@ -178,6 +218,7 @@ bool Layer::is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b)
 void Layer::make_perimeters()
 {
     BOOST_LOG_TRIVIAL(trace) << "Generating perimeters for layer " << this->id();
+    const bool disable_compatible_region_merge = this->object() != nullptr && this->object()->is_mm_painted();
     
     // keep track of regions whose perimeters we have already generated
     std::vector<unsigned char> done(m_regions.size(), false);
@@ -198,7 +239,7 @@ void Layer::make_perimeters()
 	        // find compatible regions
 	        LayerRegionPtrs layerms;
 	        layerms.push_back(*layerm);
-	        for (LayerRegionPtrs::const_iterator it = layerm + 1; it != m_regions.end(); ++it)
+	        for (LayerRegionPtrs::const_iterator it = layerm + 1; !disable_compatible_region_merge && it != m_regions.end(); ++it)
 	            if (! (*it)->slices.empty()) {
 		            LayerRegion* other_layerm = *it;
 		            const PrintRegion &other_region = other_layerm->region();
@@ -221,17 +262,17 @@ void Layer::make_perimeters()
 	            // Use the region with highest infill rate, as the make_perimeters() function below decides on the gap fill based on the infill existence.
 	            LayerRegion *layerm_config = layerms.front();
 	            {
-	                // group slices (surfaces) according to number of extra perimeters
-	                std::map<unsigned short, Surfaces> slices;  // extra_perimeters => [ surface, surface... ]
+	                // Keep surface typing intact when compatible regions are merged for perimeter generation.
+	                std::map<SliceMergeKey, Surfaces> slices;
 	                for (LayerRegion *layerm : layerms) {
 	                    for (const Surface &surface : layerm->slices.surfaces)
-	                        slices[surface.extra_perimeters].emplace_back(surface);
+	                        slices[slice_merge_key(surface)].emplace_back(surface);
 	                    if (layerm->region().config().sparse_infill_density > layerm_config->region().config().sparse_infill_density)
 	                    	layerm_config = layerm;
 	                }
 	                // merge the surfaces assigned to each group
-	                for (std::pair<const unsigned short,Surfaces> &surfaces_with_extra_perimeters : slices)
-	                    new_slices.append(offset_ex(surfaces_with_extra_perimeters.second, ClipperSafetyOffset), surfaces_with_extra_perimeters.second.front());
+	                for (auto &entry : slices)
+	                    new_slices.append(offset_ex(entry.second, ClipperSafetyOffset), entry.second.front());
 	            }
 	            
 	            // make perimeters
@@ -244,11 +285,11 @@ void Layer::make_perimeters()
 	            if (!fill_surfaces.surfaces.empty()) { 
 	                for (LayerRegionPtrs::iterator l = layerms.begin(); l != layerms.end(); ++l) {
 	                    // Separate the fill surfaces.
-	                    ExPolygons expp = intersection_ex(fill_surfaces.surfaces, (*l)->slices.surfaces);
-	                    (*l)->fill_expolygons = expp;
-	                    (*l)->fill_surfaces.set(std::move(expp), fill_surfaces.surfaces.front());
+                        SurfaceCollection split_fill_surfaces = split_fill_surfaces_by_region(fill_surfaces, (*l)->slices);
+	                    (*l)->fill_expolygons = to_expolygons(split_fill_surfaces.surfaces);
+	                    (*l)->fill_surfaces = std::move(split_fill_surfaces);
                         //BBS: Separate fill_no_overlap
-                        (*l)->fill_no_overlap_expolygons = intersection_ex((*l)->slices.surfaces, fill_no_overlap);
+                        (*l)->fill_no_overlap_expolygons = intersection_ex((*l)->slices.surfaces, fill_no_overlap, ApplySafetyOffset::Yes);
 	                }
 	            }
 	        }

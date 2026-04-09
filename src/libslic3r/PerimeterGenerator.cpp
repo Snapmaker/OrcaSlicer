@@ -30,6 +30,67 @@ namespace Slic3r {
     
 using namespace Slic3r::Feature::FuzzySkin;
 
+static void append_collapsed_infill_gap_fill(const ExPolygons          &areas,
+                                             const Flow                &flow,
+                                             const double               simplify_resolution,
+                                             const float                filter_out_gap_fill,
+                                             ExtrusionEntityCollection *gap_fill)
+{
+    if (gap_fill == nullptr || areas.empty())
+        return;
+
+    const double min = 0.2 * flow.scaled_spacing() * (1 - INSET_OVERLAP_TOLERANCE);
+    const double max = 2.0 * flow.scaled_spacing();
+    ExPolygons   gaps_ex = diff_ex(
+        opening_ex(areas, float(min / 2.0)),
+        offset2_ex(areas, -float(max / 2.0), float(max / 2.0 + ClipperSafetyOffset)));
+    if (gaps_ex.empty())
+        gaps_ex = union_ex(areas);
+
+    ThickPolylines polylines;
+    for (ExPolygon &ex : gaps_ex) {
+        ex.douglas_peucker(simplify_resolution);
+        try {
+            ex.medial_axis(min, max, &polylines);
+        } catch (...) {
+        }
+    }
+
+    auto filter_short_polylines = [&](ThickPolylines &src) {
+        src.erase(std::remove_if(src.begin(),
+                                 src.end(),
+                                 [&](const ThickPolyline &p) { return p.length() < scale_(filter_out_gap_fill); }),
+                  src.end());
+    };
+
+    filter_short_polylines(polylines);
+
+    if (polylines.empty()) {
+        for (const double inset_factor : {0.25, 0.125}) {
+            ExPolygons inset_loops = offset_ex(areas, -float(flow.scaled_width() * inset_factor));
+            if (inset_loops.empty())
+                continue;
+
+            ThickPolylines inset_polylines = to_thick_polylines(to_polylines(std::move(inset_loops)), flow.scaled_width());
+            filter_short_polylines(inset_polylines);
+            if (inset_polylines.empty())
+                continue;
+
+            ExtrusionEntityCollection gap_fill_entities;
+            variable_width(inset_polylines, erGapFill, flow, gap_fill_entities.entities);
+            gap_fill->append(std::move(gap_fill_entities.entities));
+            return;
+        }
+    }
+
+    if (polylines.empty())
+        return;
+
+    ExtrusionEntityCollection gap_fill_entities;
+    variable_width(polylines, erGapFill, flow, gap_fill_entities.entities);
+    gap_fill->append(std::move(gap_fill_entities.entities));
+}
+
 // Hierarchy of perimeters.
 class PerimeterGeneratorLoop {
 public:
@@ -1208,6 +1269,7 @@ void PerimeterGenerator::process_classic()
         ExPolygons gaps;
         ExPolygons top_fills;
         ExPolygons fill_clip;
+        ExPolygons collapsed_gap_fill_source;
         if (loop_number >= 0) {
             // In case no perimeters are to be generated, loop_number will equal to -1.
             std::vector<PerimeterGeneratorLoops> contours(loop_number+1);    // depth => loops
@@ -1536,6 +1598,9 @@ void PerimeterGenerator::process_classic()
                     }
                 }
             }
+            collapsed_gap_fill_source = entities.empty() ?
+                ExPolygons() :
+                diff_ex(ExPolygons { surface.expolygon }, entities.polygons_covered_by_width(10.f));
             
             // append perimeters for this slice as a collection
             if (! entities.empty())
@@ -1634,6 +1699,17 @@ void PerimeterGenerator::process_classic()
             not_filled_exp,
             float(-inset - min_perimeter_infill_spacing / 2.),
             float(min_perimeter_infill_spacing / 2.));
+        if (infill_exp.empty() && has_gap_fill) {
+            ExPolygons gap_fill_source = not_filled_exp.empty() ? collapsed_gap_fill_source : not_filled_exp;
+            if (gap_fill_source.empty())
+                gap_fill_source = ExPolygons { surface.expolygon };
+            append_collapsed_infill_gap_fill(gap_fill_source,
+                                             this->solid_infill_flow,
+                                             surface_simplify_resolution,
+                                             config->filter_out_gap_fill.value,
+                                             this->gap_fill);
+        }
+
         // append infill areas to fill_surfaces
         //if any top_fills, grow them by ext_perimeter_spacing/2 to have the real un-anchored fill
         ExPolygons top_infill_exp = intersection_ex(fill_clip, offset_ex(top_fills, double(ext_perimeter_spacing / 2)));
@@ -2450,6 +2526,7 @@ void PerimeterGenerator::process_arachne()
             steep_overhang_contour = true;
             steep_overhang_hole    = true;
         }
+        ExPolygons collapsed_gap_fill_source;
         if (ExtrusionEntityCollection extrusion_coll = traverse_extrusions(*this, ordered_extrusions, steep_overhang_contour, steep_overhang_hole); !extrusion_coll.empty()) {
             // All walls are counter-clockwise initially, so we don't need to reorient it if that's what we want
             if (wall_direction != WallDirection::CounterClockwise) {
@@ -2457,6 +2534,7 @@ void PerimeterGenerator::process_arachne()
                                     // Reverse internal only if the wall direction is auto
                                     this->config->overhang_reverse_internal_only && wall_direction == WallDirection::Auto);
             }
+            collapsed_gap_fill_source = diff_ex(ExPolygons { surface.expolygon }, extrusion_coll.polygons_covered_by_width(10.f));
             this->loops->append(extrusion_coll);
         }
 
@@ -2496,6 +2574,17 @@ void PerimeterGenerator::process_arachne()
             not_filled_exp,
             float(-min_perimeter_infill_spacing / 2.),
             float(inset + min_perimeter_infill_spacing / 2.));
+        if (infill_exp.empty() && this->config->gap_infill_speed.value > 0) {
+            ExPolygons gap_fill_source = not_filled_exp.empty() ? collapsed_gap_fill_source : not_filled_exp;
+            if (gap_fill_source.empty())
+                gap_fill_source = ExPolygons { surface.expolygon };
+            append_collapsed_infill_gap_fill(gap_fill_source,
+                                             this->solid_infill_flow,
+                                             surface_simplify_resolution,
+                                             config->filter_out_gap_fill.value,
+                                             this->gap_fill);
+        }
+
         // append infill areas to fill_surfaces
         if (!top_expolygons.empty()) {
             infill_exp = union_ex(infill_exp, offset_ex(top_expolygons, double(top_inset)));

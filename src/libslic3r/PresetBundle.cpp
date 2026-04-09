@@ -1752,6 +1752,27 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     this->load_installed_filaments(config);
     this->load_installed_sla_materials(config);
 
+    auto is_default_printer_selection = [](const std::string &name) {
+        return name.empty() || name == "Default Printer";
+    };
+    auto is_placeholder_print_selection = [](const std::string &name) {
+        return name.empty() || name == "Default Setting" || boost::algorithm::iends_with(name, "_common");
+    };
+    auto is_placeholder_filament_selection = [](const std::string &name) {
+        return name.empty() || name == "Default Filament";
+    };
+    auto unique_visible_printer = [this]() -> const Preset* {
+        const Preset *visible_printer = nullptr;
+        for (const Preset &preset : printers) {
+            if (preset.is_default || !preset.is_visible)
+                continue;
+            if (visible_printer != nullptr)
+                return nullptr;
+            visible_printer = &preset;
+        }
+        return visible_printer;
+    };
+
     // Parse the initial print / filament / printer profile names.
     // std::string initial_sla_print_profile_name    = remove_ini_suffix(config.get("presets", PRESET_SLA_PRINT_NAME));
     // std::string initial_sla_material_profile_name = remove_ini_suffix(config.get("presets", PRESET_SLA_MATERIALS_NAME));
@@ -1766,7 +1787,10 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     const Preset *initial_printer = printers.find_preset(initial_printer_profile_name);
     // If executed due to a Config Wizard update, preferred_printer contains the first newly installed printer, otherwise nullptr.
     const Preset *preferred_printer = printers.find_system_preset_by_model_and_variant(preferred_selection.printer_model_id, preferred_selection.printer_variant);
-    printers.select_preset_by_name(preferred_printer ? preferred_printer->name : initial_printer_profile_name, true);
+    const Preset *fallback_printer = preferred_printer == nullptr && is_default_printer_selection(initial_printer_profile_name) ?
+        unique_visible_printer() : nullptr;
+    const Preset *selected_printer = preferred_printer ? preferred_printer : fallback_printer ? fallback_printer : initial_printer;
+    printers.select_preset_by_name(selected_printer ? selected_printer->name : initial_printer_profile_name, true);
     CNumericLocalesSetter locales_setter;
 
     // Orca: load from orca_presets
@@ -1774,16 +1798,21 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     std::string initial_print_profile_name        = config.get_printer_setting(initial_printer_profile_name, PRESET_PRINT_NAME);
     std::string initial_filament_profile_name     = config.get_printer_setting(initial_printer_profile_name, PRESET_FILAMENT_NAME);
 
-    //BBS: set default print/filament profiles to BBL's default setting
-    if (preferred_printer)
+    // Normalize placeholder selections to the active printer defaults.
+    if (selected_printer)
     {
-        const std::string& prefered_print_profile = preferred_printer->config.opt_string("default_print_profile");
-        if ((!initial_print_profile_name.compare("Default Setting")) && (prefered_print_profile.size() > 0))
+        const std::string& prefered_print_profile = selected_printer->config.opt_string("default_print_profile");
+        if (is_placeholder_print_selection(initial_print_profile_name) && !prefered_print_profile.empty())
             initial_print_profile_name = prefered_print_profile;
 
-        const std::vector<std::string>& prefered_filament_profiles = preferred_printer->config.option<ConfigOptionStrings>("default_filament_profile")->values;
-        if ((!initial_filament_profile_name.compare("Default Filament")) && (prefered_filament_profiles.size() > 0))
+        const std::vector<std::string>& prefered_filament_profiles = selected_printer->config.option<ConfigOptionStrings>("default_filament_profile")->values;
+        if (is_placeholder_filament_selection(initial_filament_profile_name) && !prefered_filament_profiles.empty())
             initial_filament_profile_name = prefered_filament_profiles[0];
+
+        if (fallback_printer != nullptr) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": recovered active printer selection from %1% to %2%")
+                % initial_printer_profile_name % fallback_printer->name;
+        }
     }
 
     // Selects the profile, leaves it to -1 if the initial profile name is empty or if it was not found.
@@ -2851,6 +2880,46 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": invalid type for " << it.key();
         }
     };
+    auto append_json_subfiles = [](const fs::path& vendor_dir,
+                                   const fs::path& section_dir,
+                                   std::vector<std::pair<std::string, std::string>>& subfile_map,
+                                   bool recursive) {
+        if (!fs::exists(section_dir))
+            return;
+
+        std::vector<fs::path> files;
+        if (recursive) {
+            for (const auto& entry : fs::recursive_directory_iterator(section_dir)) {
+                if (fs::is_regular_file(entry.path()) && Slic3r::is_json_file(entry.path().filename().string()))
+                    files.push_back(entry.path());
+            }
+        } else {
+            for (const auto& entry : fs::directory_iterator(section_dir)) {
+                if (fs::is_regular_file(entry.path()) && Slic3r::is_json_file(entry.path().filename().string()))
+                    files.push_back(entry.path());
+            }
+        }
+
+        auto priority = [](const fs::path& file) {
+            const std::string stem = file.stem().string();
+            if (stem == "fdm_filament_common")
+                return 0;
+            if (boost::algorithm::iends_with(stem, "@base"))
+                return 1;
+            if (boost::algorithm::iends_with(stem, "_common"))
+                return 2;
+            return 3;
+        };
+        std::sort(files.begin(), files.end(), [&](const fs::path& lhs, const fs::path& rhs) {
+            const int lhs_priority = priority(lhs);
+            const int rhs_priority = priority(rhs);
+            if (lhs_priority != rhs_priority)
+                return lhs_priority < rhs_priority;
+            return lhs.generic_string() < rhs.generic_string();
+        });
+        for (const fs::path& file : files)
+            subfile_map.emplace_back(file.stem().string(), file.lexically_relative(vendor_dir).generic_string());
+    };
     try {
         boost::nowide::ifstream ifs(root_file);
         json j;
@@ -2903,6 +2972,29 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         throw ConfigurationError((boost::format("Failed loading configuration file %1%: %2%\nSuggest cleaning the directory %3% firstly")
                 %root_file %err.what() % path).str());
         //goto __error_process;
+    }
+
+    if (vendor_name == ORCA_FILAMENT_LIBRARY && filament_subfiles.empty()) {
+        const fs::path vendor_dir   = fs::path(path) / vendor_name;
+        const fs::path filament_dir = vendor_dir / "filament";
+
+        // OrcaFilamentLibrary keeps its profiles on disk but ships an empty manifest. Load the shared
+        // base presets first, then the top-level generic presets, then the vendor-specific subfolders.
+        append_json_subfiles(vendor_dir, filament_dir / "base", filament_subfiles, true);
+        append_json_subfiles(vendor_dir, filament_dir, filament_subfiles, false);
+        if (fs::exists(filament_dir)) {
+            std::vector<fs::path> vendor_dirs;
+            for (const auto& entry : fs::directory_iterator(filament_dir)) {
+                if (fs::is_directory(entry.path()) && entry.path().filename() != "base")
+                    vendor_dirs.push_back(entry.path());
+            }
+            std::sort(vendor_dirs.begin(), vendor_dirs.end());
+            for (const fs::path& dir_entry : vendor_dirs)
+                append_json_subfiles(vendor_dir, dir_entry, filament_subfiles, true);
+        }
+
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": discovered " << filament_subfiles.size()
+                                << " OrcaFilamentLibrary filament profiles from disk";
     }
 
     if (startup_profile) {
@@ -3068,6 +3160,18 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
             auto filament_it = key_values.find(BBL_JSON_KEY_FILAMENT_ID);
             if (filament_it != key_values.end())
                 filament_id = filament_it->second;
+            if (filament_id.empty() &&
+                presets_collection->type() == Preset::TYPE_FILAMENT &&
+                flags.has(LoadConfigBundleAttribute::LoadSystem) &&
+                !setting_id.empty())
+            {
+                // Some system bundles only provide setting_id for filaments. Treat it as a stable fallback
+                // instead of aborting the entire vendor import and losing all dependent presets.
+                filament_id = setting_id;
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                                           << ": missing filament_id for " << preset_name
+                                           << ", falling back to setting_id " << setting_id;
+            }
             //check whether it inherits other preset or not
             auto it1 = key_values.find(BBL_JSON_KEY_INHERITS);
             if (it1 != key_values.end()) {

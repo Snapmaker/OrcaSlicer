@@ -1165,12 +1165,6 @@ void PresetCollection::load_presets(
         if (Slic3r::is_json_file(file_name)) {
             // Remove the .ini suffix.
             std::string name = file_name.erase(file_name.size() - 5);
-            if (this->find_preset(name, false)) {
-                // This happens when there's is a preset (most likely legacy one) with the same name as a system preset
-                // that's already been loaded from a bundle.
-                BOOST_LOG_TRIVIAL(warning) << "Preset already present, not loading: " << name;
-                continue;
-            }
             try {
                 Preset preset(m_type, name, false);
                 preset.file = dir_entry.path().string();
@@ -1198,6 +1192,28 @@ void PresetCollection::load_presets(
                             fs::remove(file_path);
                         BOOST_LOG_TRIVIAL(error) << boost::format("parse config %1% failed")%preset.file;
                         ++m_errors;
+                        continue;
+                    }
+
+                    auto type_it = key_values.find(BBL_JSON_KEY_TYPE);
+                    if (type_it != key_values.end()) {
+                        Preset::Type file_type = Preset::get_type_from_string(type_it->second);
+                        if (file_type != m_type) {
+                            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(
+                                ": skip preset %1% because file type %2% does not match collection type %3%")
+                                % preset.file % type_it->second % Preset::get_type_string(m_type);
+                            continue;
+                        }
+                    }
+
+                    auto name_it = key_values.find(BBL_JSON_KEY_NAME);
+                    if (name_it != key_values.end() && !name_it->second.empty())
+                        preset.name = name_it->second;
+
+                    if (this->find_preset(preset.name, false)) {
+                        // This happens when there is a preset with the same logical name already loaded,
+                        // typically from a system bundle or from another JSON file with a different filename.
+                        BOOST_LOG_TRIVIAL(warning) << "Preset already present, not loading: " << preset.name;
                         continue;
                     }
 
@@ -1245,7 +1261,7 @@ void PresetCollection::load_presets(
                         // Find a default preset for the config. The PrintPresetCollection provides different default preset based on the "printer_technology" field.
                         preset.config = default_preset.config;
                     }
-                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " load preset: " << name << " and filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
+                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " load preset: " << preset.name << " and filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
                     preset.config.apply(std::move(config));
                     Preset::normalize(preset.config);
                     // Report configuration fields, which are misplaced into a wrong group.

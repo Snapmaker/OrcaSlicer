@@ -22,6 +22,30 @@ namespace Slic3r {
 
 namespace {
 
+unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filament_id)
+{
+    if (filament_id == 0)
+        return filament_id;
+
+    const PrintObject *object = layer.object();
+    const Print       *print  = object ? object->print() : nullptr;
+    if (print == nullptr)
+        return filament_id;
+
+    const size_t num_physical = print->config().filament_diameter.size();
+    if (num_physical == 0)
+        return filament_id;
+
+    // Ordinary mixed rows still print with one physical filament per layer even
+    // when region collapse is disabled, so geometry / flow decisions must use
+    // that effective physical filament to avoid per-layer thin-feature drift.
+    return print->mixed_filament_manager().effective_painted_region_filament_id(filament_id,
+                                                                                num_physical,
+                                                                                int(layer.id()),
+                                                                                float(layer.print_z),
+                                                                                float(layer.height));
+}
+
 bool use_base_infill_filament(const PrintRegionConfig &config, int layer_index, int layer_count)
 {
     if (!config.enable_infill_filament_override.value)
@@ -39,11 +63,15 @@ bool use_base_infill_filament(const PrintRegionConfig &config, int layer_index, 
 unsigned int LayerRegion::extruder(FlowRole role) const
 {
     const PrintRegionConfig &config = this->region().config();
+    unsigned int             filament_id = 0;
     if (role == frInfill)
-        return use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
-    if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
-        return use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
-    return this->region().extruder(role);
+        filament_id = use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
+    else if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
+        filament_id = use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
+    else
+        filament_id = this->region().extruder(role);
+
+    return effective_layer_filament_id(*m_layer, filament_id);
 }
 
 Flow LayerRegion::flow(FlowRole role) const
@@ -127,6 +155,10 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
     const PrintConfig       &print_config  = this->layer()->object()->print()->config();
     const PrintRegionConfig &region_config = this->region().config();
     const PrintObjectConfig& object_config = this->layer()->object()->config();
+    PrintRegionConfig        perimeter_config = region_config;
+    perimeter_config.wall_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.wall_filament.value))));
+    perimeter_config.sparse_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament.value))));
+    perimeter_config.solid_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.solid_infill_filament.value))));
     // This needs to be in sync with PrintObject::_slice() slicing_mode_normal_below_layer!
     bool spiral_mode = print_config.spiral_mode &&
         //FIXME account for raft layers.
@@ -140,7 +172,7 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         this->layer()->height,
         this->layer()->slice_z,
         this->flow(frPerimeter),
-        &region_config,
+        &perimeter_config,
         &this->layer()->object()->config(),
         &print_config,
         spiral_mode,

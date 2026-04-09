@@ -904,8 +904,33 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                     if (optdef && optdef->type == coStrings) {
                         use_comma = false;
                     }
+                    std::vector<std::string> array_values;
+                    array_values.reserve(it.value().size());
                     for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
                         if (iter.value().is_string()) {
+                            array_values.emplace_back(iter.value());
+                        }
+                        else {
+                            //should not happen
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" error, invalid json array for " << it.key();
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if (valid && optdef != nullptr && optdef->is_scalar() && optdef->type != coPoint && optdef->type != coPoint3) {
+                        if (array_values.size() == 1) {
+                            value_str = array_values.front();
+                        } else if (!array_values.empty() &&
+                                   std::all_of(array_values.begin() + 1, array_values.end(),
+                                               [&](const std::string &value) { return value == array_values.front(); })) {
+                            value_str = array_values.front();
+                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                                                       << ": collapsing redundant json array for scalar option " << it.key()
+                                                       << " in " << file;
+                        }
+                    }
+                    if (valid && value_str.empty()) {
+                        for (const std::string &array_value : array_values) {
                             if (!first) {
                                 if (use_comma)
                                     value_str += ",";
@@ -916,18 +941,12 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                                 first = false;
 
                             if (use_comma)
-                                value_str += iter.value();
+                                value_str += array_value;
                             else {
                                 value_str += "\"";
-                                value_str += escape_string_cstyle(iter.value());
+                                value_str += escape_string_cstyle(array_value);
                                 value_str += "\"";
                             }
-                        }
-                        else {
-                            //should not happen
-                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" error, invalid json array for " << it.key();
-                            valid = false;
-                            break;
                         }
                     }
                     if (valid)

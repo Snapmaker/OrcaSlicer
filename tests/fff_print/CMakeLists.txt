@@ -16,16 +16,19 @@ add_executable(${_TEST_NAME}_tests
 	test_support_material.cpp
 	test_trianglemesh.cpp
 	)
-target_link_libraries(${_TEST_NAME}_tests test_common libslic3r)
+target_link_libraries(${_TEST_NAME}_tests test_common libslic3r OpenSSL::Crypto)
+if (WIN32)
+    target_link_libraries(${_TEST_NAME}_tests bcrypt.lib)
+endif()
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 if (WIN32)
 	if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-		orcaslicer_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+		Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
 	elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
-		orcaslicer_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_Release)
+		Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_Release)
 	else()
-		orcaslicer_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
+		Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
 	endif()
 endif()
 

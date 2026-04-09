@@ -709,6 +709,27 @@ PrintObjectRegions::BoundingBox find_modifier_volume_extents(const PrintObjectRe
     return out;
 }
 
+static const ModelVolume *root_model_part_for_parent_region(const PrintObjectRegions::LayerRangeRegions &layer_range, int parent_region_id)
+{
+    if (parent_region_id < 0 || parent_region_id >= int(layer_range.volume_regions.size()))
+        return nullptr;
+
+    const PrintObjectRegions::VolumeRegion *region = &layer_range.volume_regions[size_t(parent_region_id)];
+    while (region != nullptr && !region->model_volume->is_model_part()) {
+        if (region->parent < 0 || region->parent >= int(layer_range.volume_regions.size()))
+            return nullptr;
+        region = &layer_range.volume_regions[size_t(region->parent)];
+    }
+
+    return (region != nullptr && region->model_volume->is_model_part()) ? region->model_volume : nullptr;
+}
+
+static bool mm_paint_applies_to_parent_region(const PrintObjectRegions::LayerRangeRegions &layer_range, int parent_region_id)
+{
+    const ModelVolume *root_model_part = root_model_part_for_parent_region(layer_range, parent_region_id);
+    return root_model_part != nullptr && root_model_part->is_mm_painted();
+}
+
 PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders);
 
 void print_region_ref_inc(PrintRegion &r) { ++ r.m_ref_cnt; }
@@ -798,6 +819,8 @@ bool verify_update_print_object_regions(
     // Verify and / or update PrintRegions produced by color painting.
     for (const PrintObjectRegions::LayerRangeRegions &layer_range : print_object_regions.layer_ranges)
         for (const PrintObjectRegions::PaintedRegion &region : layer_range.painted_regions) {
+            if (!mm_paint_applies_to_parent_region(layer_range, region.parent))
+                return false;
             const PrintObjectRegions::VolumeRegion &parent_region   = layer_range.volume_regions[region.parent];
             PrintRegionConfig                       cfg             = parent_region.region->config();
             cfg.wall_filament.value    = region.extruder_id;
@@ -993,7 +1016,11 @@ static PrintObjectRegions* generate_print_object_regions(
         region_set.emplace(it, region);
         return region;
     };
-
+    auto create_unique_region = [&all_regions](PrintRegionConfig &&config) -> PrintRegion* {
+        size_t hash = config.hash();
+        all_regions.emplace_back(std::make_unique<PrintRegion>(std::move(config), hash, int(all_regions.size())));
+        return all_regions.back().get();
+    };
     // Chain the regions in the order they are stored in the volumes list.
     for (int volume_id = 0; volume_id < int(model_volumes.size()); ++ volume_id) {
         const ModelVolume &volume = *model_volumes[volume_id];
@@ -1043,12 +1070,13 @@ static PrintObjectRegions* generate_print_object_regions(
         for (unsigned int painted_extruder_id : painting_extruders)
             for (int parent_region_id = 0; parent_region_id < int(layer_range.volume_regions.size()); ++ parent_region_id)
                 if (const PrintObjectRegions::VolumeRegion &parent_region = layer_range.volume_regions[parent_region_id];
-                    parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) {
+                    (parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) &&
+                    mm_paint_applies_to_parent_region(layer_range, parent_region_id)) {
                     PrintRegionConfig cfg = parent_region.region->config();
                     cfg.wall_filament.value    = painted_extruder_id;
                     cfg.solid_infill_filament.value = painted_extruder_id;
                     cfg.sparse_infill_filament.value       = painted_extruder_id;
-                    PrintRegion *painted_region = get_create_region(std::move(cfg));
+                    PrintRegion *painted_region = create_unique_region(std::move(cfg));
                     if (painted_region->config().wall_filament.value != painted_extruder_id ||
                         painted_region->config().solid_infill_filament.value != painted_extruder_id ||
                         painted_region->config().sparse_infill_filament.value != painted_extruder_id) {

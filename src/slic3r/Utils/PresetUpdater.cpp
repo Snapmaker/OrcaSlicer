@@ -1545,13 +1545,15 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                     version.config_version = cache_ver;
                     version.comment        = description;
 
-                        updates.updates.emplace_back(std::move(file_path), std::move(path_in_vendor.string()), std::move(version), vendor_name, changelog, "", force_update, false, legal);
+                        // Update expects fs::path (not std::string paths from file_path / .string()).
+                        updates.updates.emplace_back(fs::path(path), fs::path(path_in_vendor), std::move(version), vendor_name,
+                                                     std::move(changelog), "", force_update, false, legal);
 
                         //BBS: add directory support
                         auto vendor_dir_in_cache = cache_profile_path / vendor_name;
                         if (fs::exists(vendor_dir_in_cache) && fs::is_directory(vendor_dir_in_cache)) {
-                            updates.updates.emplace_back(vendor_dir_in_cache, vendor_path / vendor_name, Version(), vendor_name, "", "",
-                                                         force_update, true, legal);
+                            updates.updates.emplace_back(fs::path(vendor_dir_in_cache), fs::path(vendor_path / vendor_name),
+                                                         Version(), vendor_name, "", "", force_update, true, legal);
                         } else {
                             BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: skip vendor directory update, source missing: "
                                                        << vendor_dir_in_cache.string();

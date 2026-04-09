@@ -729,7 +729,7 @@ bool PresetUpdater::priv::download_file(const std::string& url,
             
         })
         .timeout_max(timeout_sec)
-        .perform_sync();
+        .perform();
 
     if (fs::exists(tmp_path)) {
         fs::remove(tmp_path);
@@ -996,7 +996,7 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server preset update data error:" << errorMsg;
             }
         })
-        .perform();
+        .perform_sync();
 }
 
 void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string language)

@@ -131,6 +131,8 @@ void Downloader::start_download(const std::string& full_url)
 {
 	assert(m_initialized);
 
+    BOOST_LOG_TRIVIAL(info) << "Downloader::start_download called with URL: " << full_url;
+
     // Orca: Move to the 3D view
     MainFrame* mainframe = wxGetApp().mainframe;
     Plater* plater = wxGetApp().plater();
@@ -144,23 +146,35 @@ void Downloader::start_download(const std::string& full_url)
 
     // Orca: Replace PS workaround for "mysterious slash" with a more dynamic approach
     // Windows seems to have fixed the issue and this provides backwards compatability for those it still affects
-	boost::regex re(R"(^(Snapmaker_Orca|prusaslicer|bambustudio|cura):\/\/open[\/]?\?file=)", boost::regbase::icase);
+	boost::regex re(R"(^(snapmaker-orca|Snapmaker_Orca|prusaslicer|bambustudio|cura):\/\/open[\/]?\?file=)", boost::regbase::icase);
 	boost::regex re2(R"(^(bambustudioopen):\/\/)", boost::regex::icase);
     boost::smatch results;
 
 	if (!boost::regex_search(full_url, results, re) && !boost::regex_search(full_url, results, re2)) {
 		BOOST_LOG_TRIVIAL(error) << "Could not start download due to wrong URL: " << full_url;
+        BOOST_LOG_TRIVIAL(error) << "URL does not match expected pattern. Expected: protocol://open?file=<url>";
         // Orca: show error
         NotificationManager* ntf_mngr = wxGetApp().notification_manager();
         ntf_mngr->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::ErrorNotificationLevel,
                                     "Could not start download due to malformed URL");
 		return;
 	}
+
+    BOOST_LOG_TRIVIAL(info) << "URL matched pattern. Matched prefix length: " << results.length();
+
     size_t id = get_next_id();
     std::string escaped_url = FileGet::escape_url(full_url.substr(results.length()));
-    if (is_bambustudio_open(full_url) || (is_orca_open(full_url) && is_makerworld_link(full_url)))
+
+    BOOST_LOG_TRIVIAL(info) << "Extracted file URL: " << escaped_url;
+    BOOST_LOG_TRIVIAL(info) << "is_bambustudio_open: " << is_bambustudio_open(full_url);
+    BOOST_LOG_TRIVIAL(info) << "is_orca_open: " << is_orca_open(full_url);
+    BOOST_LOG_TRIVIAL(info) << "is_makerworld_link: " << is_makerworld_link(escaped_url);
+
+    if (is_bambustudio_open(full_url) || (is_orca_open(full_url) && is_makerworld_link(escaped_url))) {
+        BOOST_LOG_TRIVIAL(info) << "Using request_model_download path";
         plater->request_model_download(wxString::FromUTF8(escaped_url));
-    else {
+    } else {
+        BOOST_LOG_TRIVIAL(info) << "Using direct download path";
         std::string text(escaped_url);
         m_downloads.emplace_back(std::make_unique<Download>(id, std::move(escaped_url), this, m_dest_folder));
         NotificationManager* ntf_mngr = wxGetApp().notification_manager();

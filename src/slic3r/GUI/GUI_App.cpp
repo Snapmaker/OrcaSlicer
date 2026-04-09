@@ -383,7 +383,7 @@ public:
 
         // use a memory DC to draw directly onto the bitmap
         wxMemoryDC memDc(bmp);
-        
+
         int width = bmp.GetWidth();
 		int height = bmp.GetHeight();
 
@@ -973,7 +973,7 @@ void GUI_App::post_init()
         }
     }
 
-    // Start preset sync after project opened, otherwise we could have preset change during project opening which could cause crash 
+    // Start preset sync after project opened, otherwise we could have preset change during project opening which could cause crash
     if (app_config->get("sync_user_preset") == "true") {
         // BBS loading user preset
         // Always async, not such startup step
@@ -1004,7 +1004,7 @@ void GUI_App::post_init()
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             this->preset_updater->sync_web_async(true);
             this->check_new_version_sf(false, false);
-     
+
         });
     }
 
@@ -1823,7 +1823,7 @@ void GUI_App::init_networking_callbacks()
                     else {
                         obj->parse_json(msg, true);
                     }
-                    
+
 
                     if (!this->is_enable_multi_machine()) {
                         if ((sel == obj || sel == nullptr) && obj->is_ams_need_update) {
@@ -2371,7 +2371,7 @@ bool GUI_App::on_init_inner()
 #endif
 
     BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current Snapmaker_Orca Version %1%")%Snapmaker_VERSION;
-    
+
 #if defined(__WINDOWS__)
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
     m_is_arm64 = false;
@@ -2559,7 +2559,7 @@ bool GUI_App::on_init_inner()
                         skip_this_version = false;
                     }
                 }
-                if (!skip_this_version || evt.GetInt() != 0) {                    
+                if (!skip_this_version || evt.GetInt() != 0) {
                     wxString            extmsg = wxString::FromUTF8(version_info.description);
                     if(!m_updateDialog)
                         return;
@@ -2569,8 +2569,8 @@ bool GUI_App::on_init_inner()
                     }
                     m_updateDialog->Raise();
                     m_updateDialog->Show();
-                    m_updateDialog->setUrl(version_info.url);                 
-                                                           
+                    m_updateDialog->setUrl(version_info.url);
+
                 }
             }
             });
@@ -2586,7 +2586,7 @@ bool GUI_App::on_init_inner()
                     false,
                     wxCENTER | wxICON_INFORMATION);
                 dialog.SetExtendedMessage(description_text);
-                
+
                 int result = dialog.ShowModal();
                 switch (result)
                 {
@@ -2598,7 +2598,7 @@ bool GUI_App::on_init_inner()
                      wxGetApp().mainframe->Close(true);
                      break;
                  case wxID_CANCEL:
-                     wxGetApp().mainframe->Close(true); 
+                     wxGetApp().mainframe->Close(true);
                      break;
                  default:
                      wxGetApp().mainframe->Close(true);
@@ -2877,7 +2877,7 @@ void GUI_App::machine_find()
                                                     // wcp订阅
                                                     json data = this->app_config->get_devices();
                                                     wxGetApp().device_card_notify(data);
-                                                    
+
                                                 });
                                             }
                                         }
@@ -3633,7 +3633,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         std::string printer_model = printer_model_opt->value;
         is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
-    
+
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
             wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
@@ -3647,7 +3647,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     }
 
     wxGetApp().device_card_notify(devices);
-    
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
 }
 
@@ -4079,6 +4079,28 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
 
 }
 
+wxString GUI_App::build_flutter_web_url(const wxString& path)
+{
+    bool devMode = !app_config || app_config->get("flutter_dev_mode") != "false";
+
+    wxString base;
+    if (devMode) {
+        std::string port = "7357";
+        if (app_config)
+            app_config->get("flutter_dev_port", port);
+        base = wxString::Format("http://localhost:%s/?path=%s", port, path);
+    } else {
+        base = wxString::FromUTF8(
+            LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT)
+            + "/web/flutter_web/index.html?path=" + std::string(path.ToUTF8()));
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "build_flutter_web_url: dev=" << devMode
+                            << " url=" << base.ToUTF8();
+
+    return get_international_url(base);
+}
+
 bool GUI_App::is_user_login()
 {
     if (m_agent) {
@@ -4309,17 +4331,17 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 if (path.has_value()) {
                     wxLaunchDefaultBrowser(path.value());
                 }
-            } 
+            }
             else if (command_str.compare("homepage_makerlab_get") == 0) {
                 //if (mainframe->m_webview) { mainframe->m_webview->SendMakerlabList(); }
             }
-            else if (command_str.compare("makerworld_model_open") == 0) 
+            else if (command_str.compare("makerworld_model_open") == 0)
             {
                 if (root.get_child_optional("model") != boost::none) {
                     pt::ptree                    data_node = root.get_child("model");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("url");
-                    if (path.has_value()) 
-                    { 
+                    if (path.has_value())
+                    {
                         wxString realurl = from_u8(url_decode(path.value()));
                         wxGetApp().request_model_download(realurl);
                     }
@@ -4376,7 +4398,7 @@ void GUI_App::request_open_project(std::string project_id)
         CallAfter([this, project_id] { mainframe->open_recent_project(-1, wxString::FromUTF8(project_id)); });
 }
 
-void GUI_App::sm_request_remove_project(std::string project_id) 
+void GUI_App::sm_request_remove_project(std::string project_id)
 {
     mainframe->sm_remove_recent_project(wxString::FromUTF8(project_id));
 }
@@ -4770,7 +4792,7 @@ void GUI_App::check_web_version()
 }
 
 void GUI_App::check_preset_version()
-{    
+{
     if (preset_updater != nullptr)
         preset_updater->sync_config_async();
 }
@@ -4838,11 +4860,11 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
             if (platformType == "win") {
                 fileSize   = defaultObj.value("file_size", 0);
                 fileMd5    = defaultObj.value("file_md5", "");
-                fileSha256 = defaultObj.value("file_sha256", "");            
-                version_info.url         = defaultObj.value("file_url", "");            
+                fileSha256 = defaultObj.value("file_sha256", "");
+                version_info.url         = defaultObj.value("file_url", "");
 
                 reservedData             = defaultObj.value("reserved_1", "");
-                reservedData2            = defaultObj.value("reserved_2", "");         
+                reservedData2            = defaultObj.value("reserved_2", "");
             }
             else if (platformType == "mac")
             {
@@ -4871,8 +4893,8 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
                 version_info.url = platformObj.value("file_url", "");
 
                 reservedData  = platformObj.value("reserved_1", "");
-                reservedData2 = platformObj.value("reserved_2", "");  
-                
+                reservedData2 = platformObj.value("reserved_2", "");
+
             }
             else
             {
@@ -4909,7 +4931,7 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
             GUI::wxGetApp().QueueEvent(evt);
         } catch (const std::exception& ex) {
             std::string errorMsg = ex.what();
-            BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;            
+            BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;
           }
         })
         .perform();
@@ -5342,7 +5364,7 @@ void GUI_App::stop_sync_user_preset()
 //    m_http_server.stop();
 //}
 
-void GUI_App::start_page_http_server() 
+void GUI_App::start_page_http_server()
 {
     if (!m_page_http_server.is_started())
         m_page_http_server.start();
@@ -6376,7 +6398,14 @@ void GUI_App::MacOpenURL(const wxString& url)
 {
     if (url.empty())
         return;
-    start_download(into_u8(url));
+
+    BOOST_LOG_TRIVIAL(info) << "MacOpenURL received: " << url;
+
+    std::string url_str = into_u8(url);
+
+    // Pass the full URL to start_download, which will handle the parsing
+    // Expected format: snapmaker-orca://open?file=<url>
+    start_download(url_str);
 }
 
 // wxWidgets override to get an event on open files.
@@ -6757,7 +6786,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
     }
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
 
-    user_update_privacy_notify(isAgree == "true");    
+    user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "run_wizard changed the privacy policy with: " << (isAgree);
     return res;
 }
@@ -6969,7 +6998,7 @@ void GUI_App::user_update_privacy_notify(const bool& res)
     json data;
 
     data[PRIVACY_POLICY_FLAGS] = res;
-    
+
     for (const auto& instance : m_user_update_privacy_subscribers) {
         auto ptr = instance.second.lock();
         if (ptr) {
@@ -6994,7 +7023,7 @@ void GUI_App::user_login_notify(const json& res)
 bool GUI_App::config_wizard_startup()
 {
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
-    user_update_privacy_notify(isAgree == "true");   
+    user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup changed the privacy policy with: " << (isAgree);
     if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
         BOOST_LOG_TRIVIAL(info) << "run wizard...";
@@ -7002,9 +7031,9 @@ bool GUI_App::config_wizard_startup()
         BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
         return true;
-    } 
+    }
 
-    if (isAgree.empty()) 
+    if (isAgree.empty())
     {
         run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
         return true;
@@ -7288,7 +7317,7 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
             // wxGetApp().load_current_presets();
 
         });
-        
+
     }
 
     return true;

@@ -618,6 +618,8 @@ private:
     // page loading http server
     void            start_page_http_server();
     void            stop_page_http_server();
+    /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
+    boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
     void            switch_staff_pick(bool on);
     bool            check_privacy_update();
     

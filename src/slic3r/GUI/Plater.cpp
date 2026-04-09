@@ -6383,9 +6383,9 @@ void Plater::priv::notify_filament_compatibility_after_apply()
         notification_manager->close_notification_of_type(NotificationType::CustomNotification);
 
         if (isGraphicMatch)
-            notification_manager->push_notification(filamentMismatchGraphicBedMsg.ToStdString(), 0);
+            notification_manager->push_notification(into_u8(filamentMismatchGraphicBedMsg), 0);
         if (isPeiBedMatchNotPla)
-            notification_manager->push_notification(filamentMismatchPeiBedMsgNotPla.ToStdString(), 0);
+            notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgNotPla), 0);
         notification_manager->set_slicing_progress_hidden();
     }
 
@@ -6394,7 +6394,7 @@ void Plater::priv::notify_filament_compatibility_after_apply()
 
     if (isPeiBedMatchTpu)
     {            
-        notification_manager->push_notification(filamentMismatchPeiBedMsgTpu.ToStdString(), 0);
+        notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgTpu), 0);
     }
 
 }

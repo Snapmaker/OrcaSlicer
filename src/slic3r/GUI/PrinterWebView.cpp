@@ -96,8 +96,7 @@ bool PrinterWebView::isSnapmakerPage()
     if (m_browser == nullptr)
         return false;
     auto url = m_browser->GetCurrentURL();
-    // path=3 is still flutter_web but is the non-U1 connection UI; U1 device tab uses path=2.
-    return url.Contains("flutter_web") && url.Contains("path=2");
+    return (url.find("flutter_web") != std::string::npos);
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {

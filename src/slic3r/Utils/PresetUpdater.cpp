@@ -1556,12 +1556,13 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                             BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: skip vendor directory update, source missing: "
                                                        << vendor_dir_in_cache.string();
                         }
-                        updates.updates.emplace_back(cache_path / "profiles" / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "",
+                        updates.updates.emplace_back(cache_profile_path / vendor_name, vendor_path / vendor_name, Version(), vendor_name,
+                                                     "", "",
                                                      should_skip_file, force_update, true, legal);
 
                         // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
                         if (vendor_name == PresetBundle::SM_BUNDLE) {
-                            fs::path rules_src = cache_path / "profiles" / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
                             fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
                             if (fs::exists(rules_src)) {
                                 // Ensure target directory exists

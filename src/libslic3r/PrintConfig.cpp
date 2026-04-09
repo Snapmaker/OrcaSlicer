@@ -764,7 +764,7 @@ void PrintConfigDef::init_fff_params()
     def->full_label = L("Bed temperature");
     def->min = 0;
     def->max = 300;
-    def->set_default_value(new ConfigOptionInts{ 120 });
+    def->set_default_value(new ConfigOptionInts{ 45 });
 
     def = this->add("textured_plate_temp", coInts);
     def->label = L("Other layers");

@@ -270,6 +270,13 @@ PrinterPicker::PrinterPicker(wxWindow *parent, const VendorProfile &vendor, wxSt
         auto *variants_sizer = new wxBoxSizer(wxVERTICAL);
         variants_panel->SetSizer(variants_sizer);
         const auto model_id = model.id;
+        {
+            std::vector<std::string> vnames;
+            vnames.reserve(model.variants.size());
+            for (const auto &v : model.variants)
+                vnames.push_back(v.name);
+            model_id_to_variants[model_id] = std::move(vnames);
+        }
 
         // Model-level selection: one checkbox per machine, internally maps to all variants.
         const auto label = from_u8(model.name);
@@ -430,15 +437,23 @@ void PrinterPicker::on_checkbox(const Checkbox *cbox, bool checked)
                 continue;
             if (cb->GetValue() != checked)
                 cb->SetValue(checked);
-
-            PrinterPickerEvent evt(EVT_PRINTER_PICK, GetId(), vendor_id, cb->model, cb->variant, checked);
-            AddPendingEvent(evt);
         }
     };
 
     // Treat a model selection as selecting all of its nozzle variants.
     sync_group(cboxes);
     sync_group(cboxes_alt);
+
+    const auto it = model_id_to_variants.find(cbox->model);
+    if (it != model_id_to_variants.end() && !it->second.empty()) {
+        for (const std::string &vname : it->second) {
+            PrinterPickerEvent evt(EVT_PRINTER_PICK, GetId(), vendor_id, cbox->model, vname, checked);
+            AddPendingEvent(evt);
+        }
+    } else {
+        PrinterPickerEvent evt(EVT_PRINTER_PICK, GetId(), vendor_id, cbox->model, cbox->variant, checked);
+        AddPendingEvent(evt);
+    }
 }
 
 
@@ -1854,7 +1869,7 @@ void ConfigWizard::priv::load_vendors()
             }
     }
 
-    // Initialize the is_visible flag in printer Presets
+    // Initialize the is_visible flag in printer Presets (load_installed_printers also merges new nozzle variants)
     for (auto &pair : bundles) {
         pair.second.preset_bundle->load_installed_printers(appconfig_new);
     }

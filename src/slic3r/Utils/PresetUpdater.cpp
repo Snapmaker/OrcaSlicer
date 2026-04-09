@@ -1469,6 +1469,12 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
     if (!fs::exists(cache_profile_path))
         return updates;
 
+    // File filter for directory copy: skip binary and large files that don't need to be in system presets
+    auto should_skip_file = [](const std::string name) {
+        return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
+               boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
+    };
+
     for (auto &dir_entry : boost::filesystem::directory_iterator(cache_profile_path)) {
         const auto &path = dir_entry.path();
         std::string file_path = path.string();
@@ -1549,6 +1555,20 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                         } else {
                             BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: skip vendor directory update, source missing: "
                                                        << vendor_dir_in_cache.string();
+                        }
+                        updates.updates.emplace_back(cache_path / "profiles" / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "",
+                                                     should_skip_file, force_update, true, legal);
+
+                        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+                        if (vendor_name == PresetBundle::SM_BUNDLE) {
+                            fs::path rules_src = cache_path / "profiles" / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            if (fs::exists(rules_src)) {
+                                // Ensure target directory exists
+                                fs::create_directories(rules_dst.parent_path());
+                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), vendor_name, "", "",
+                                                             force_update, false, legal);
+                            }
                         }
                 }
             }

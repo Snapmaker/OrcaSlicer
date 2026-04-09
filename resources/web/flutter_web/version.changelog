@@ -1,11 +1,11 @@
 #  Changelog
 
-## 2026-03-11
+## 2026-04-8
 
 ### Features
 - Feature: 
-  * Added a new model entry
-  * Support more official consumables
-  * Add new types of consumables color editing
+  * Multiple nozzle configurations are supported
+  * Support multi-color display of official consumables
 ### Bugfix
-  * Fixed the issue where devices would automatically disconnect when connected over Lan network
+  * Fixed failure to obtain consumables after online
+  * Fixed the exception of getting firmware version information

@@ -2,6 +2,9 @@
 #include "MsgDialog.hpp"
 #include "Widgets/DialogButtons.hpp"
 
+#include <boost/algorithm/string/predicate.hpp>
+#include "libslic3r/Config.hpp"
+
 namespace Slic3r { namespace GUI {
 static constexpr int MIN_LAYER_VALUE = 2;
 static constexpr int MAX_LAYER_VALUE = INT_MAX - 1;
@@ -593,7 +596,30 @@ wxString PlateSettingsDialog::to_bed_type_name(BedType bed_type) {
                     return _(labels[i]);
             return {};
         };
-        wxString lab = match_label(def->enum_values, def->enum_labels);
+
+        // Match Plater sidebar: U1 uses enum_labels_u1 or enum_labels_ex before generic enum_labels,
+        // so e.g. btPEI shows "Smooth PEI Plate" not "Smooth High Temp Plate".
+        bool        is_snapmaker_u1   = false;
+        bool        support_multi     = false;
+        const auto *printer_model_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_model");
+        if (printer_model_opt) {
+            const std::string &printer_model = printer_model_opt->value;
+            is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+            support_multi   = wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_bool("support_multi_bed_types");
+        }
+
+        wxString lab;
+        if (is_snapmaker_u1 && !support_multi) {
+            lab = match_label(def->enum_values_u1, def->enum_labels_u1);
+            if (!lab.empty())
+                return lab;
+        } else if (is_snapmaker_u1 && support_multi) {
+            lab = match_label(def->enum_values_ex, def->enum_labels_ex);
+            if (!lab.empty())
+                return lab;
+        }
+
+        lab = match_label(def->enum_values, def->enum_labels);
         if (!lab.empty())
             return lab;
         lab = match_label(def->enum_values_ex, def->enum_labels_ex);

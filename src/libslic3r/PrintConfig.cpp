@@ -395,7 +395,6 @@ static const t_config_enum_values s_keys_map_BedType = {
     { "Textured Cool Plate", btPCT },
     // Canonical name for btGESP (UI: "Graphic Effect Plate"). Keep legacy string so old projects/3MF still deserialize.
     { "Graphic Effect Plate", btGESP },
-    { "Graphic Effect Steel Plate", btGESP },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(BedType)
 
@@ -6987,9 +6986,7 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         }
     } else if (opt_key == "overhang_fan_threshold" && value == "5%") {
         value = "10%";
-    } else if (opt_key == "curr_bed_type" && value == "Graphic Effect Steel Plate") {
-        value = "Graphic Effect Plate";
-    } else if( opt_key == "wall_infill_order" ) {
+    }else if( opt_key == "wall_infill_order" ) {
         if (value == "inner wall/outer wall/infill" || value == "infill/inner wall/outer wall") {
             opt_key = "wall_sequence";
             value = "inner wall/outer wall";

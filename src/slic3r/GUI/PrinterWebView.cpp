@@ -28,7 +28,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+    wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/web/flutter_web/index.html?path=2");
     auto     real_url = wxGetApp().get_international_url(url);
       // Create the webview
     m_browser = WebView::CreateWebView(this, real_url);

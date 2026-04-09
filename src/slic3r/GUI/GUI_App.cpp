@@ -2538,6 +2538,7 @@ bool GUI_App::on_init_inner()
             associate_files(L"stp");
         }
         associate_url(L"Snapmaker_Orca");
+        associate_url(L"snapmaker-orca");
 
         if (app_config->get("associate_gcode") == "true")
             associate_files(L"gcode");
@@ -6015,6 +6016,7 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
                 associate_files(L"stp");
             }
             associate_url(L"Snapmaker_Orca");
+            associate_url(L"snapmaker-orca");
         }
         else {
             if (app_config->get("associate_gcode") == "true")
@@ -7190,11 +7192,15 @@ bool GUI_App::check_url_association(std::wstring url_prefix, std::wstring& reg_b
 {
     reg_bin = L"";
 #ifdef WIN32
-    wxRegKey key_full(wxRegKey::HKCU, "Software\\Classes\\" + url_prefix + "\\shell\\open\\command");
-    if (!key_full.Exists()) {
+    const wxString cmd_path = "Software\\Classes\\" + wxString(url_prefix) + "\\shell\\open\\command";
+    wxRegKey      key_cu(wxRegKey::HKCU, cmd_path);
+    wxRegKey      key_lm(wxRegKey::HKLM, cmd_path);
+    if (key_cu.Exists())
+        reg_bin = key_cu.QueryDefaultValue().ToStdWstring();
+    else if (key_lm.Exists())
+        reg_bin = key_lm.QueryDefaultValue().ToStdWstring();
+    else
         return false;
-    }
-    reg_bin = key_full.QueryDefaultValue().ToStdWstring();
 
     boost::filesystem::path binary_path(boost::filesystem::canonical(boost::dll::program_location()));
     std::wstring key_string = L"\"" + binary_path.wstring() + L"\" \"%1\"";

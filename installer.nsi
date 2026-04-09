@@ -122,6 +122,17 @@ Section "Main program" SecMain
 
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "Version" "${VERSION}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "InstallPath" "$INSTDIR"
+
+    ; URL protocols (same as macOS CFBundleURLSchemes): snapmaker-orca:// and Snapmaker_Orca://
+    DetailPrint "Registering URL protocols (snapmaker-orca, Snapmaker_Orca)..."
+    SetRegView 64
+    WriteRegStr HKLM "Software\Classes\snapmaker-orca" "" "URL:Snapmaker Orca"
+    WriteRegStr HKLM "Software\Classes\snapmaker-orca" "URL Protocol" ""
+    WriteRegStr HKLM "Software\Classes\snapmaker-orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
+    WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "" "URL:Snapmaker Orca"
+    WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "URL Protocol" ""
+    WriteRegStr HKLM "Software\Classes\Snapmaker_Orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
+    SetRegView 32
     
     DetailPrint "Installation complete!"
     Goto end_section
@@ -172,6 +183,10 @@ Section "Uninstall"
     RMDir "$INSTDIR"
     
     DetailPrint "Removing registry entries..."
+    SetRegView 64
+    DeleteRegKey HKLM "Software\Classes\snapmaker-orca"
+    DeleteRegKey HKLM "Software\Classes\Snapmaker_Orca"
+    SetRegView 32
     DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
     DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}"
     DeleteRegKey HKCU "${PRODUCT_INSTALL_KEY}"

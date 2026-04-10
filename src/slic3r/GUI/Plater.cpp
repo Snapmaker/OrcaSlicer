@@ -6378,6 +6378,9 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
     wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));
    
+    if (isPeiBedMatchTpu && isPeiBedMatchNotPla)
+        isPeiBedMatchNotPla = false;
+
     if (isGraphicMatch || isPeiBedMatchNotPla)
     {
         notification_manager->close_notification_of_type(NotificationType::CustomNotification);

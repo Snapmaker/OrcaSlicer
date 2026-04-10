@@ -1168,6 +1168,10 @@ void PlaterPresetComboBox::update()
 
             auto item_iter = std::find_if(filaments.begin(), filaments.end(),
             [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
+                if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
+                    if (f.is_compatible)
+                        return true;
+                
                 if (f.name == filament_name + " @U1 " + machine_nozzles)
                     if (f.is_compatible)
                         return true;
@@ -1729,6 +1733,10 @@ void TabPresetComboBox::update()
 
             auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {               
 
+                if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
+                    if (f.is_compatible)
+                        return true;
+                
                 if (f.name == filament_name + " @U1 " + machine_nozzles)
                     if (f.is_compatible)
                         return true;

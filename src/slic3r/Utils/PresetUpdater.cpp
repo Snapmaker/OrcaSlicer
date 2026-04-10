@@ -1731,7 +1731,7 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                             if (fs::exists(rules_src)) {
                                 // Ensure target directory exists
                                 fs::create_directories(rules_dst.parent_path());
-                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), vendor_name, "", "",
+                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
                                                              force_update, false, legal);
                             }
                         }

@@ -887,7 +887,6 @@ void PresetUpdater::priv::download_profiles_resource_async(const std::string& ur
             bool show_dialog = !isAuto_check;  // If not auto check, show dialog to user
             GUI::wxGetApp().CallAfter([show_dialog]() {
                 // Call check_config_updates_from_updater to check and apply updates
-                BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Calling check_config_updates_from_updater, show_dialog: " << show_dialog;
                 GUI::wxGetApp().check_config_updates_from_updater(show_dialog);
             });
         })

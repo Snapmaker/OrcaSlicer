@@ -1145,7 +1145,6 @@ void PlaterPresetComboBox::update()
     if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
         auto& filaments         = m_collection->get_presets();
-        auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
         auto  machine_nozzles_list = wxGetApp().preset_bundle->m_connect_machine_info_list;
         m_first_ams_filament    = GetCount();
 
@@ -1163,15 +1162,9 @@ void PlaterPresetComboBox::update()
             std::string filament_name   = machine_nozzles_list[i].filament_info;
             std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
 
-            if (currentNozzleInfo != machine_nozzles) {
-                for (auto iter = machine_filaments.begin(); iter != machine_filaments.end(); iter++) {
-                    if (iter->second.first == filament_name) {
-                        machine_filaments.erase(iter);
-                        break;
-                    }
-                }
+            // Filter by nozzle for display only; machine_filaments / m_connect_machine_info_list stay from sync (SSWCP).
+            if (currentNozzleInfo != machine_nozzles)
                 continue;
-            }
 
             auto item_iter = std::find_if(filaments.begin(), filaments.end(),
             [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
@@ -1195,15 +1188,7 @@ void PlaterPresetComboBox::update()
                 auto     color                             = machine_nozzles_list[i].color_info;
                 auto     name                              = std::to_string(i + 1);
                 wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
-                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
-
-            } else {
-                for (auto iter = machine_filaments.begin(); iter != machine_filaments.end(); iter++) {
-                    if (iter->second.first == filament_name) {
-                        machine_filaments.erase(iter);
-                        break;
-                    }
-                }
+                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
             }
         }
         m_last_ams_filament = GetCount();
@@ -1719,12 +1704,11 @@ void TabPresetComboBox::update()
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
         add_ams_filaments(into_u8(selected));
     
-    if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
+    if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->m_connect_machine_info_list.size() > 0) {
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
-        auto& filaments         = m_collection->get_presets();
-        auto& machine_filaments = wxGetApp().preset_bundle->machine_filaments;
-        auto machine_nozzles_list   = wxGetApp().preset_bundle->m_connect_machine_info_list;
-        m_first_ams_filament    = GetCount();
+        auto& filaments            = m_collection->get_presets();
+        auto  machine_nozzles_list = wxGetApp().preset_bundle->m_connect_machine_info_list;
+        m_first_ams_filament       = GetCount();
 
         std::string currentNozzleInfo;
         if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
@@ -1736,21 +1720,12 @@ void TabPresetComboBox::update()
                 currentNozzleInfo.pop_back();
         }
 
-        for (int i=0; i < machine_nozzles_list.size();i++) {
-
+        for (int i = 0; i < machine_nozzles_list.size(); i++) {
             std::string filament_name   = machine_nozzles_list[i].filament_info;
             std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
 
             if (currentNozzleInfo != machine_nozzles)
-                {
-                    for (auto iter = machine_filaments.begin(); iter != machine_filaments.end(); iter++) {
-                        if (iter->second.first == filament_name) {
-                            machine_filaments.erase(iter);
-                            break;
-                        }
-                    }
-                    continue;
-                }
+                continue;
 
             auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {               
 
@@ -1774,19 +1749,7 @@ void TabPresetComboBox::update()
                 auto     color                             = machine_nozzles_list[i].color_info;
                 auto     name                              = std::to_string(i + 1);
                 wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
-                int      item_id = Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
-
-            } 
-            else
-            {
-                for (auto iter = machine_filaments.begin(); iter!=machine_filaments.end();iter++)
-                {
-                    if (iter->second.first == filament_name)
-                        {                            
-                            machine_filaments.erase(iter);
-                            break;
-                        }
-                }
+                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
             }
         }
 

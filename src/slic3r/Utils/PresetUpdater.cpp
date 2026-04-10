@@ -817,7 +817,20 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                     return;
                 }
 
-                if (currentSoftVersion > maxSpVersion || currentSoftVersion < minSpVersion) {
+                bool maxRes = false;
+                bool minRes = false;
+
+                if (!maxSupportPcVersion.empty())
+                {
+                    maxRes = currentSoftVersion > maxSpVersion;
+                }
+
+                if (!minSupportPcVersion.empty())
+                {
+                    minRes = currentSoftVersion < minSpVersion;
+                }
+
+                if (maxRes || minRes) {
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
                         GUI::wxGetApp().QueueEvent(evt);
@@ -854,7 +867,7 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server flutter update data error:" << errorMsg;
             }
         })
-        .perform();
+        .perform_sync();
 }
     // Orca: sync config update for currect App version
 void PresetUpdater::priv::sync_config(bool isAuto_check)
@@ -936,8 +949,18 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     return;
                 }
 
-                if (currentSoftVersion > maxSpVersion || currentSoftVersion < minSpVersion) 
-                {
+                bool maxRes = false;
+                bool minRes = false;
+
+                if (!maxSupportPcVersion.empty()) {
+                    maxRes = currentSoftVersion > maxSpVersion;
+                }
+
+                if (!minSupportPcVersion.empty()) {
+                    minRes = currentSoftVersion < minSpVersion;
+                }
+
+                if (maxRes || minRes) {                
                     if (!isAuto_check) {
                         wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
                         GUI::wxGetApp().QueueEvent(evt);
@@ -973,7 +996,7 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 BOOST_LOG_TRIVIAL(fatal) << "request server preset update data error:" << errorMsg;
             }
         })
-        .perform();
+        .perform_sync();
 }
 
 void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string language)
@@ -1282,12 +1305,6 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
 
 	BOOST_LOG_TRIVIAL(info) << format("Installing %1% bundles from resources ...", bundles.size());
 
-    // File filter for directory copy: skip binary and large files that don't need to be in system presets
-    auto should_skip_file = [](const std::string name) {
-        return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
-               boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
-    };
-
 	for (const auto &bundle : bundles) {
 		auto path_in_rsrc = (this->rsrc_path / bundle).replace_extension(".json");
 		auto path_in_vendors = (this->vendor_path / bundle).replace_extension(".json");
@@ -1296,23 +1313,29 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
         //BBS: add directory support
         auto print_in_rsrc = this->rsrc_path / bundle;
 		auto print_in_vendors = this->vendor_path / bundle;
-        fs::path print_folder(print_in_vendors);
-        if (fs::exists(print_folder))
-            fs::remove_all(print_folder);
-        fs::create_directories(print_folder);
-		updates.updates.emplace_back(std::move(print_in_rsrc), std::move(print_in_vendors), Version(), bundle, "", "", should_skip_file, false, true, true);
-
-        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
-        if (bundle == PresetBundle::SM_BUNDLE) {
-            fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
-            fs::path rules_dst = vendor_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
-            if (fs::exists(rules_src)) {
-                fs::create_directories(rules_dst.parent_path());
-                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
-            }
+        bool source_dir_valid = fs::exists(print_in_rsrc) && fs::is_directory(print_in_rsrc);
+        bool source_dir_has_entries = false;
+        if (source_dir_valid) {
+            source_dir_has_entries = (boost::filesystem::directory_iterator(print_in_rsrc) != boost::filesystem::directory_iterator());
         }
 
-        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+        // Guard against empty / missing source: never clear target unless we do have source content to copy.
+        if (source_dir_valid && source_dir_has_entries) {
+            fs::path print_folder(print_in_vendors);
+            if (fs::exists(print_folder))
+                fs::remove_all(print_folder);
+            fs::create_directories(print_folder);
+		    updates.updates.emplace_back(std::move(print_in_rsrc), std::move(print_in_vendors), Version(), bundle, "", "",[](const std::string name){
+            // return false if name is end with .stl, case insensitive
+            return boost::iends_with(name, ".stl") || boost::iends_with(name, ".png") || boost::iends_with(name, ".svg") ||
+                   boost::iends_with(name, ".jpeg") || boost::iends_with(name, ".jpg") || boost::iends_with(name, ".3mf");
+            }, false, true, true);
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: skip vendor directory replace, source missing or empty: "
+                                       << print_in_rsrc.string();
+        }
+
+        // Rules file is not a slicer preset; deploy even when full vendor dir sync was skipped above.
         if (bundle == PresetBundle::SM_BUNDLE) {
             fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
             fs::path rules_dst = vendor_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
@@ -1522,15 +1545,26 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                     version.config_version = cache_ver;
                     version.comment        = description;
 
-                        updates.updates.emplace_back(std::move(file_path), std::move(path_in_vendor.string()), std::move(version), vendor_name, changelog, "", force_update, false, legal);
+                        // Update expects fs::path (not std::string paths from file_path / .string()).
+                        updates.updates.emplace_back(fs::path(path), fs::path(path_in_vendor), std::move(version), vendor_name,
+                                                     std::move(changelog), "", force_update, false, legal);
 
                         //BBS: add directory support
-                        updates.updates.emplace_back(cache_path / "profiles" / vendor_name, vendor_path / vendor_name, Version(), vendor_name, "", "",
+                        auto vendor_dir_in_cache = cache_profile_path / vendor_name;
+                        if (fs::exists(vendor_dir_in_cache) && fs::is_directory(vendor_dir_in_cache)) {
+                            updates.updates.emplace_back(fs::path(vendor_dir_in_cache), fs::path(vendor_path / vendor_name),
+                                                         Version(), vendor_name, "", "", force_update, true, legal);
+                        } else {
+                            BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: skip vendor directory update, source missing: "
+                                                       << vendor_dir_in_cache.string();
+                        }
+                        updates.updates.emplace_back(cache_profile_path / vendor_name, vendor_path / vendor_name, Version(), vendor_name,
+                                                     "", "",
                                                      should_skip_file, force_update, true, legal);
 
                         // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
                         if (vendor_name == PresetBundle::SM_BUNDLE) {
-                            fs::path rules_src = cache_path / "profiles" / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                            fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
                             fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
                             if (fs::exists(rules_src)) {
                                 // Ensure target directory exists
@@ -1861,7 +1895,10 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
 
         if (!p->extract_file(zip_file, temp_path.string())) {
             if (!serverUpdate)
-                GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+                {
+                    BOOST_LOG_TRIVIAL(error) << "extract_file Failed ";
+                    GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+                }
             return;
         }
 
@@ -1870,6 +1907,7 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
 
         auto app = dynamic_cast<GUI::GUI_App*>(wxTheApp);
         if (!app) {
+            BOOST_LOG_TRIVIAL(error) << "update source on web fail ";
             GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
         }
 
@@ -2032,6 +2070,7 @@ void PresetUpdater::import_system_profile()
 
         // 3. 解压zip文件到临时目录
         if (!p->extract_file(zip_file, temp_path.string())) {
+            BOOST_LOG_TRIVIAL(error) << "extract_file Failed ";
             GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
             return;
         }
@@ -2042,6 +2081,7 @@ void PresetUpdater::import_system_profile()
 
         auto app = dynamic_cast<GUI::GUI_App*>(wxTheApp);
         if (!app) {
+            BOOST_LOG_TRIVIAL(error) << "import profiles fail ";
             GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
         }
 

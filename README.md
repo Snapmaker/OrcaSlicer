@@ -1,5 +1,5 @@
 
-<h1> <p "font-size:200px;"> Full Spectrum</p> </h1>
+<h1> <p "font-size:200px;"> Snapmaker Orca FullSpectrum</p> </h1>
 
 ### A Snapmaker Orca Fork with Mixed-Color Filament Support
 
@@ -17,18 +17,13 @@ If you find this fun or interesting!
 
 ## ⚠️ **IMPORTANT DISCLAIMER** ⚠️
 
-**This fork is currently in active development and has NOT been tested on actual hardware! **
+**This fork is currently in active development and has been tested on actual hardware.**
 
-- **Not Production Ready**: The mixed-color filament feature is experimental and untested
-- **No U1 Access**: Development is being done without access to a Snapmaker U1 printer
-- **Help Needed**: If you have a U1 and are willing to test this fork, please reach out!
-- **Use at Your Own Risk**: This software may produce incorrect G-code or unexpected behavior
-
-**I am actively seeking testers with Snapmaker U1 printers to help validate and improve this feature.**
+- **Use at Your Own Risk**: As with any slicer fork, please review critical prints and generated G-code before production use
 
 ---
 
-**Full Spectrum** is an open source slicer for FDM printers based on Snapmaker Orca and OrcaSlicer, optimized for Snapmaker's U1 multi-color 3D printer with independent tool heads. This fork adds support for virtual mixed-color filaments, enabling you to create new colors by alternating layers between physical filaments.
+**Snapmaker Orca FullSpectrum** is an open source slicer for FDM printers based on Snapmaker Orca and OrcaSlicer, optimized for Snapmaker's U1 multi-color 3D printer with independent tool heads. This fork adds support for virtual mixed-color filaments, enabling you to create new colors by alternating layers between physical filaments.
  
 
 
@@ -36,12 +31,12 @@ If you find this fun or interesting!
 
 ### Stable Release
 📥 **[Download the Latest Stable Release](https://github.com/ratdoux/OrcaSlicer-FullSpectrum/releases)**  
-Visit our GitHub Releases page for the latest stable version of Full Spectrum, recommended for most users.
+Visit our GitHub Releases page for the latest stable version of Snapmaker Orca FullSpectrum, recommended for most users.
 
 # Features
 
 ## Mixed-Color Filaments
-Full Spectrum includes support for **virtual mixed-color filaments** designed for the Snapmaker U1 multi-color printer with independent print heads.
+Snapmaker Orca FullSpectrum includes support for **virtual mixed-color filaments** designed for the Snapmaker U1 multi-color printer with independent print heads.
 
 ### How It Works
 - **Create new colors by mixing**: Combine two physical filaments to create a new color appearance through layer alternation
@@ -67,7 +62,7 @@ Full Spectrum includes support for **virtual mixed-color filaments** designed fo
 5. During slicing, the mixed filament resolves to alternating layers of its components
 
 ### Dithering Settings
-Full Spectrum includes advanced dithering controls to fine-tune the layer alternation behavior for mixed filaments. These settings are found in **Others → Dithering** in the print settings:
+Snapmaker Orca FullSpectrum includes advanced dithering controls to fine-tune the layer alternation behavior for mixed filaments. These settings are found in **Others → Dithering** in the print settings:
 
 #### Dithering Cadence Height A & B
 - **What it does**: Controls the height (in mm) of each alternating segment for the two component filaments
@@ -92,7 +87,7 @@ These settings give you precise control over how your mixed colors appear in the
 
 # How to install
 **Windows**: 
-1.  Download the installer for your preferred version from the [releases page](https://github.com/Snapmaker/OrcaSlicer/releases).
+1.  Download the installer for your preferred version from the [releases page](https://github.com/ratdoux/OrcaSlicer-FullSpectrum/releases).
     - *For convenience there is also a portable build available.*
     - *If you have troubles to run the build, you might need to install following runtimes:*
       - [MicrosoftEdgeWebView2RuntimeInstallerX64](https://github.com/SoftFever/OrcaSlicer/releases/download/v1.0.10-sf2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe)
@@ -167,7 +162,7 @@ resolution: 0.1
 
 
 ## Some background
-**Full Spectrum** is forked from Snapmaker Orca, which is originally forked from Orca Slicer by SoftFever.
+**Snapmaker Orca FullSpectrum** is forked from Snapmaker Orca, which is originally forked from Orca Slicer by SoftFever.
 
 Orca Slicer was originally forked from Bambu Studio, it was previously known as BambuStudio-SoftFever.
 Bambu Studio is forked from [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research, which is from [Slic3r](https://github.com/Slic3r/Slic3r) by Alessandro Ranellucci and the RepRap community. 
@@ -179,7 +174,7 @@ Special thanks to [u/Aceman11100](https://www.reddit.com/user/Aceman11100/) for 
 
 
 # License
-Full Spectrum is licensed under the GNU Affero General Public License, version 3. Full Spectrum is based on Snapmaker Orca.
+Snapmaker Orca FullSpectrum is licensed under the GNU Affero General Public License, version 3. Snapmaker Orca FullSpectrum is based on Snapmaker Orca.
 
 Snapmaker Orca is licensed under the GNU Affero General Public License, version 3. Snapmaker Orca is based on Orca Slicer by SoftFever.
 
@@ -200,6 +195,6 @@ The Bambu networking plugin is based on non-free libraries from BambuLab. It is 
 Filament color blending is powered by [FilamentMixer](https://github.com/justinh-rahb/filament-mixer), an openly licensed library.
 
 # Feedback & Contribution
-We greatly value feedback and contributions from our users. Your feedback will help us to further develop Full Spectrum for our community.
+We greatly value feedback and contributions from our users. Your feedback will help us to further develop Snapmaker Orca FullSpectrum for our community.
 - To submit a bug or feature request, file an issue in GitHub Issues.
 - To contribute some code, make sure you have read and followed our guidelines for contributing.

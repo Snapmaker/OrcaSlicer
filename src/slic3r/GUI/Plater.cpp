@@ -3611,9 +3611,9 @@ private:
                         const bool stripe = (((x + y) / 8) % 2) == 0;
                         const double factor = stripe ? 0.12 : 0.38;
                         color = wxColour(
-                            unsigned char(std::clamp(int(std::lround(double(color.Red()) * factor)), 0, 255)),
-                            unsigned char(std::clamp(int(std::lround(double(color.Green()) * factor)), 0, 255)),
-                            unsigned char(std::clamp(int(std::lround(double(color.Blue()) * factor)), 0, 255)));
+                            static_cast<unsigned char>(std::clamp(int(std::lround(double(color.Red()) * factor)), 0, 255)),
+                            static_cast<unsigned char>(std::clamp(int(std::lround(double(color.Green()) * factor)), 0, 255)),
+                            static_cast<unsigned char>(std::clamp(int(std::lround(double(color.Blue()) * factor)), 0, 255)));
                     }
                     data[data_idx + 0] = color.Red();
                     data[data_idx + 1] = color.Green();

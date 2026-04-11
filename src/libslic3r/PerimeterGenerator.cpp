@@ -570,6 +570,10 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
 
         // Append paths to collection.
         if (!paths.empty()) {
+            const int inset_idx = int(extrusion->inset_idx);
+            for (ExtrusionPath &path : paths)
+                path.inset_idx = inset_idx;
+
             if (extrusion->is_closed) {
                 ExtrusionLoop extrusion_loop(std::move(paths), pg_extrusion.is_contour ? elrDefault : elrHole);
                 extrusion_loop.make_counter_clockwise();
@@ -581,6 +585,7 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
                 }
                 assert(extrusion_loop.paths.front().first_point() == extrusion_loop.paths.back().last_point());
 
+                extrusion_loop.inset_idx = inset_idx;
                 extrusion_coll.append(std::move(extrusion_loop));
             }
             else {
@@ -593,11 +598,13 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
                 }
                 ExtrusionMultiPath multi_path;
                 multi_path.paths.emplace_back(std::move(paths.front()));
+                multi_path.inset_idx = inset_idx;
 
                 for (auto it_path = std::next(paths.begin()); it_path != paths.end(); ++it_path) {
                     if (multi_path.paths.back().last_point() != it_path->first_point()) {
                         extrusion_coll.append(ExtrusionMultiPath(std::move(multi_path)));
                         multi_path = ExtrusionMultiPath();
+                        multi_path.inset_idx = inset_idx;
                     }
                     multi_path.paths.emplace_back(std::move(*it_path));
                 }

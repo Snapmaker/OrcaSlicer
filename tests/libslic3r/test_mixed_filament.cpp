@@ -2,6 +2,8 @@
 
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Print.hpp"
+#include "libslic3r/GCode/ToolOrdering.hpp"
 
 #include <sstream>
 #include <vector>
@@ -221,6 +223,119 @@ TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by ins
     CHECK(ordered_layer1[1] == 1);
 }
 
+TEST_CASE("Grouped manual perimeter patterns keep grouped resolution on collapsed single-tool layers", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#00FFFF", "#FF00FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("2,12");
+    REQUIRE(row.manual_pattern == "2,12");
+
+    const unsigned int mixed_filament_id = 3;
+
+    // The flattened row cadence resolves this layer to component A, but both
+    // perimeter groups collapse onto physical filament 2. G-code generation
+    // and tool ordering must keep using the grouped perimeter result here.
+    CHECK(mgr.resolve(mixed_filament_id, 2, 1) == 1);
+
+    const std::vector<unsigned int> ordered_layer1 = mgr.ordered_perimeter_extruders(mixed_filament_id, 2, 1);
+    REQUIRE(ordered_layer1.size() == 1);
+    CHECK(ordered_layer1.front() == 2);
+
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 0) == 2);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 1) == 2);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 2) == 2);
+}
+
+TEST_CASE("Grouped manual perimeter patterns resolve overlapping singleton inner groups", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#00FFFF", "#FF00FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("12,1");
+    REQUIRE(row.manual_pattern == "12,1");
+
+    const unsigned int mixed_filament_id = 3;
+
+    const std::vector<unsigned int> ordered_layer0 = mgr.ordered_perimeter_extruders(mixed_filament_id, 2, 0);
+    const std::vector<unsigned int> ordered_layer1 = mgr.ordered_perimeter_extruders(mixed_filament_id, 2, 1);
+
+    REQUIRE(ordered_layer0.size() == 1);
+    CHECK(ordered_layer0.front() == 1);
+    REQUIRE(ordered_layer1.size() == 2);
+    CHECK(ordered_layer1[0] == 2);
+    CHECK(ordered_layer1[1] == 1);
+
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 0, 0) == 1);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 0, 1) == 1);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 0) == 2);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 1, 1) == 1);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 2, 0) == 1);
+    CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, 2, 1) == 1);
+}
+
+TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimeter tool", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#00FFFF", "#FF00FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("12,1");
+    REQUIRE(row.manual_pattern == "12,1");
+
+    PrintRegionConfig region_config = static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults());
+    region_config.wall_filament.value                  = 3;
+    region_config.wall_loops.value                     = 2;
+    region_config.enable_infill_filament_override.value = false;
+    region_config.sparse_infill_density.value          = 15.;
+    region_config.sparse_infill_filament.value         = 2;
+    region_config.solid_infill_filament.value          = 3;
+
+    PrintRegion region(region_config);
+
+    LayerTools layer0(0.2);
+    layer0.layer_index       = 0;
+    layer0.object_layer_count = 6;
+    layer0.layer_height      = 0.2;
+    layer0.mixed_mgr         = &mgr;
+    layer0.num_physical      = 2;
+
+    LayerTools layer1(0.4);
+    layer1.layer_index       = 1;
+    layer1.object_layer_count = 6;
+    layer1.layer_height      = 0.2;
+    layer1.mixed_mgr         = &mgr;
+    layer1.num_physical      = 2;
+
+    CHECK(layer0.wall_filament(region) == 0);
+    CHECK(layer1.wall_filament(region) == 1);
+    CHECK(layer0.sparse_infill_filament(region) == 0);
+    CHECK(layer1.sparse_infill_filament(region) == 0);
+    CHECK(layer0.solid_infill_filament(region) == 0);
+    CHECK(layer1.solid_infill_filament(region) == 0);
+
+    region_config.enable_infill_filament_override.value = true;
+    region_config.sparse_infill_filament.value          = 2;
+    region_config.solid_infill_filament.value           = 2;
+    PrintRegion overridden_region(region_config);
+
+    CHECK(layer0.sparse_infill_filament(overridden_region) == 1);
+    CHECK(layer1.sparse_infill_filament(overridden_region) == 1);
+    CHECK(layer0.solid_infill_filament(overridden_region) == 1);
+    CHECK(layer1.solid_infill_filament(overridden_region) == 1);
+}
+
 TEST_CASE("Mixed filament painted-region resolver collapses ordinary mixed rows to the active physical extruder", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
@@ -268,4 +383,27 @@ TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
     assigned.inset_idx = 0;
     assigned = src;
     CHECK(assigned.inset_idx == 3);
+}
+
+TEST_CASE("Extrusion loop and multipath entities preserve inset index", "[MixedFilament]")
+{
+    ExtrusionPath src(erPerimeter);
+    src.inset_idx = 2;
+
+    ExtrusionMultiPath multi_from_path(src);
+    CHECK(multi_from_path.inset_idx == 2);
+
+    ExtrusionMultiPath multi_copy(multi_from_path);
+    CHECK(multi_copy.inset_idx == 2);
+
+    ExtrusionMultiPath multi_assigned;
+    multi_assigned.inset_idx = 0;
+    multi_assigned = multi_from_path;
+    CHECK(multi_assigned.inset_idx == 2);
+
+    ExtrusionLoop loop_from_path(src);
+    CHECK(loop_from_path.inset_idx == 2);
+
+    ExtrusionLoop loop_copy(loop_from_path);
+    CHECK(loop_copy.inset_idx == 2);
 }

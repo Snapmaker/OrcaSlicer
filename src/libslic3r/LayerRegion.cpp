@@ -46,6 +46,39 @@ unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filame
                                                                                 float(layer.height));
 }
 
+unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionConfig &config, unsigned int filament_id)
+{
+    const unsigned int effective = effective_layer_filament_id(layer, filament_id);
+    if (effective != filament_id || filament_id == 0)
+        return effective;
+
+    const PrintObject *object = layer.object();
+    const Print       *print  = object ? object->print() : nullptr;
+    if (print == nullptr)
+        return filament_id;
+
+    const size_t num_physical = print->config().filament_diameter.size();
+    if (num_physical == 0)
+        return filament_id;
+
+    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
+    const MixedFilament *mixed_row = mixed_mgr.mixed_filament_from_id(filament_id, num_physical);
+    if (mixed_row == nullptr)
+        return filament_id;
+
+    const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(mixed_row->manual_pattern);
+    if (normalized_pattern.find(',') == std::string::npos)
+        return filament_id;
+
+    const int innermost_perimeter_index = std::max(0, config.wall_loops.value - 1);
+    return mixed_mgr.resolve_perimeter(filament_id,
+                                       num_physical,
+                                       int(layer.id()),
+                                       innermost_perimeter_index,
+                                       float(layer.print_z),
+                                       float(layer.height));
+}
+
 bool use_base_infill_filament(const PrintRegionConfig &config, int layer_index, int layer_count)
 {
     if (!config.enable_infill_filament_override.value)
@@ -71,7 +104,9 @@ unsigned int LayerRegion::extruder(FlowRole role) const
     else
         filament_id = this->region().extruder(role);
 
-    return effective_layer_filament_id(*m_layer, filament_id);
+    return (role == frInfill || role == frSolidInfill) ?
+        effective_infill_filament_id(*m_layer, config, filament_id) :
+        effective_layer_filament_id(*m_layer, filament_id);
 }
 
 Flow LayerRegion::flow(FlowRole role) const

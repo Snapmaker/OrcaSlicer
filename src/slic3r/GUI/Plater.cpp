@@ -4566,6 +4566,7 @@ struct MixedFilamentPreviewSettings
     double preferred_a_height { 0.0 };
     double preferred_b_height { 0.0 };
     bool   local_z_mode { false };
+    size_t wall_loops { 1 };
 };
 
 // Inline editor panel for configuring a single mixed filament
@@ -4634,7 +4635,11 @@ private:
     // Helper functions (copied from update_mixed_filament_panel)
     static std::vector<unsigned int> decode_gradient_ids(const std::string &s);
     static std::string encode_gradient_ids(const std::vector<unsigned int> &ids);
-    static std::vector<unsigned int> decode_manual_pattern_ids(const std::string &pattern, unsigned int a, unsigned int b);
+    static std::vector<unsigned int> decode_manual_pattern_ids(const std::string &pattern,
+                                                               unsigned int       a,
+                                                               unsigned int       b,
+                                                               size_t             num_physical,
+                                                               size_t             wall_loops = 0);
     static std::vector<int> decode_gradient_weights(const std::string &s, size_t n);
     static std::vector<int> normalize_gradient_weights(const std::vector<int> &w, size_t n);
     static std::string encode_gradient_weights(const std::vector<int> &w);
@@ -4784,6 +4789,100 @@ private:
 };
 
 // Implementation of MixedFilamentConfigPanel helper functions
+static std::vector<std::string> split_manual_pattern_preview_groups(const std::string &pattern)
+{
+    std::vector<std::string> groups;
+    if (pattern.empty())
+        return groups;
+
+    std::string current;
+    for (const char c : pattern) {
+        if (c == ',') {
+            if (!current.empty()) {
+                groups.emplace_back(std::move(current));
+                current.clear();
+            }
+            continue;
+        }
+        current.push_back(c);
+    }
+    if (!current.empty())
+        groups.emplace_back(std::move(current));
+    return groups;
+}
+
+static unsigned int decode_manual_pattern_preview_token(char token, unsigned int component_a, unsigned int component_b, size_t num_physical)
+{
+    unsigned int extruder_id = 0;
+    if (token == '1')
+        extruder_id = component_a;
+    else if (token == '2')
+        extruder_id = component_b;
+    else if (token >= '3' && token <= '9')
+        extruder_id = unsigned(token - '0');
+
+    return (extruder_id >= 1 && extruder_id <= num_physical) ? extruder_id : 0;
+}
+
+static std::vector<unsigned int> build_grouped_manual_pattern_preview_sequence(const std::string &pattern,
+                                                                               unsigned int       component_a,
+                                                                               unsigned int       component_b,
+                                                                               size_t             num_physical,
+                                                                               size_t             wall_loops)
+{
+    std::vector<unsigned int> sequence;
+    if (num_physical == 0)
+        return sequence;
+
+    const std::string normalized = MixedFilamentManager::normalize_manual_pattern(pattern);
+    if (normalized.empty())
+        return sequence;
+
+    const std::vector<std::string> groups = split_manual_pattern_preview_groups(normalized);
+    if (groups.empty())
+        return sequence;
+
+    if (groups.size() == 1) {
+        sequence.reserve(normalized.size());
+        for (const char token : normalized) {
+            const unsigned int extruder_id =
+                decode_manual_pattern_preview_token(token, component_a, component_b, num_physical);
+            if (extruder_id != 0)
+                sequence.emplace_back(extruder_id);
+        }
+        return sequence;
+    }
+
+    constexpr size_t k_max_preview_cycle = 48;
+    size_t cycle = 1;
+    for (const std::string &group : groups) {
+        if (group.empty())
+            continue;
+        cycle = std::lcm(cycle, group.size());
+        if (cycle >= k_max_preview_cycle) {
+            cycle = k_max_preview_cycle;
+            break;
+        }
+    }
+
+    const size_t preview_wall_loops = std::max<size_t>(1, wall_loops == 0 ? groups.size() : wall_loops);
+    sequence.reserve(preview_wall_loops * cycle);
+    for (size_t layer_idx = 0; layer_idx < cycle; ++layer_idx) {
+        for (size_t wall_idx = 0; wall_idx < preview_wall_loops; ++wall_idx) {
+            const std::string &group = groups[std::min(wall_idx, groups.size() - 1)];
+            if (group.empty())
+                continue;
+            const char token = group[layer_idx % group.size()];
+            const unsigned int extruder_id =
+                decode_manual_pattern_preview_token(token, component_a, component_b, num_physical);
+            if (extruder_id != 0)
+                sequence.emplace_back(extruder_id);
+        }
+    }
+
+    return sequence;
+}
+
 std::vector<unsigned int> MixedFilamentConfigPanel::decode_gradient_ids(const std::string &s)
 {
     std::vector<unsigned int> ids;
@@ -4816,15 +4915,13 @@ std::string MixedFilamentConfigPanel::encode_gradient_ids(const std::vector<unsi
     return out;
 }
 
-std::vector<unsigned int> MixedFilamentConfigPanel::decode_manual_pattern_ids(const std::string &pattern, unsigned int a, unsigned int b)
+std::vector<unsigned int> MixedFilamentConfigPanel::decode_manual_pattern_ids(const std::string &pattern,
+                                                                              unsigned int       a,
+                                                                              unsigned int       b,
+                                                                              size_t             num_physical,
+                                                                              size_t             wall_loops)
 {
-    std::vector<unsigned int> seq;
-    for (char c : pattern) {
-        if (c == '1' || c == 'A' || c == 'a') seq.emplace_back(a);
-        else if (c == '2' || c == 'B' || c == 'b') seq.emplace_back(b);
-        else if (c >= '3' && c <= '9') seq.emplace_back(unsigned(c - '0'));
-    }
-    return seq;
+    return build_grouped_manual_pattern_preview_sequence(pattern, a, b, num_physical, wall_loops);
 }
 
 std::vector<int> MixedFilamentConfigPanel::decode_gradient_weights(const std::string &s, size_t n)
@@ -5947,7 +6044,11 @@ void MixedFilamentConfigPanel::build_ui()
             m_mf.pointillism_all_filaments = false;
             m_mf.gradient_component_ids.clear();
             m_mf.gradient_component_weights.clear();
-            preview_sequence = decode_manual_pattern_ids(m_mf.manual_pattern, m_mf.component_a, m_mf.component_b);
+            preview_sequence = decode_manual_pattern_ids(m_mf.manual_pattern,
+                                                         m_mf.component_a,
+                                                         m_mf.component_b,
+                                                         m_num_physical,
+                                                         m_preview_settings.wall_loops);
         } else {
             std::vector<unsigned int> selected_ids;
             selected_ids.reserve(4);
@@ -6254,7 +6355,11 @@ void MixedFilamentConfigPanel::update_preview()
 
     std::vector<unsigned int> initial_sequence;
     if (pattern_row_mode) {
-        initial_sequence = decode_manual_pattern_ids(normalized_pattern, m_mf.component_a, m_mf.component_b);
+        initial_sequence = decode_manual_pattern_ids(normalized_pattern,
+                                                     m_mf.component_a,
+                                                     m_mf.component_b,
+                                                     m_num_physical,
+                                                     m_preview_settings.wall_loops);
     } else {
         std::vector<unsigned int> initial_gradient_ids = simple_mode ? std::vector<unsigned int>() : decode_gradient_ids(m_mf.gradient_component_ids);
         if (initial_gradient_ids.size() >= 3)
@@ -6707,24 +6812,11 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             sequence = filtered_ids;
         return sequence;
     };
-    auto decode_manual_pattern_ids = [num_physical](const std::string &pattern, unsigned int component_a, unsigned int component_b) {
-        std::vector<unsigned int> sequence;
-        if (num_physical == 0)
-            return sequence;
-        const std::string normalized = MixedFilamentManager::normalize_manual_pattern(pattern);
-        sequence.reserve(normalized.size());
-        for (const char token : normalized) {
-            unsigned int extruder_id = 0;
-            if (token == '1')
-                extruder_id = component_a;
-            else if (token == '2')
-                extruder_id = component_b;
-            else if (token >= '3' && token <= '9')
-                extruder_id = unsigned(token - '0');
-            if (extruder_id >= 1 && extruder_id <= num_physical)
-                sequence.emplace_back(extruder_id);
-        }
-        return sequence;
+    auto decode_manual_pattern_ids = [num_physical](const std::string &pattern,
+                                                    unsigned int       component_a,
+                                                    unsigned int       component_b,
+                                                    size_t             wall_loops) {
+        return build_grouped_manual_pattern_preview_sequence(pattern, component_a, component_b, num_physical, wall_loops);
     };
     const bool height_weighted_mode = get_mixed_mode(false);
     int   gradient_mode = height_weighted_mode ? 1 : 0;
@@ -6736,6 +6828,9 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (print_cfg && print_cfg->has("layer_height"))
         nominal_layer_height = float(print_cfg->opt_float("layer_height"));
     nominal_layer_height = std::max(0.01f, nominal_layer_height);
+    size_t wall_loops = 1;
+    if (print_cfg && print_cfg->has("wall_loops"))
+        wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
     float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
     float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
@@ -6748,7 +6843,8 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         upper_bound,
         preferred_local_z_a,
         preferred_local_z_b,
-        local_z_mode
+        local_z_mode,
+        wall_loops
     };
     auto summarize_sequence = [num_physical](const std::vector<unsigned int> &sequence) {
         if (sequence.empty() || num_physical == 0)
@@ -6814,7 +6910,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
                                          build_weighted_multi_sequence, preview_settings](const MixedFilament &entry) {
         const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
         if (!normalized_pattern.empty())
-            return decode_manual_pattern_ids(normalized_pattern, entry.component_a, entry.component_b);
+            return decode_manual_pattern_ids(normalized_pattern,
+                                             entry.component_a,
+                                             entry.component_b,
+                                             preview_settings.wall_loops);
 
         const bool simple_mode = entry.distribution_mode == int(MixedFilament::Simple);
         if (!simple_mode) {

@@ -4770,15 +4770,32 @@ LayerResult GCode::process_layer(const Print& print,
     auto configured_filament_id_1based = [&layer_tools](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
                                                         const ExtrusionEntityCollection&                    entities,
                                                         const PrintRegion&                                  region) -> unsigned int {
+        auto raw_sparse_infill_filament_id_1based = [&layer_tools, &region]() -> unsigned int {
+            const PrintRegionConfig &config = region.config();
+            if (!config.enable_infill_filament_override.value)
+                return unsigned(config.wall_filament.value);
+            if (layer_tools.object_layer_count <= 0)
+                return unsigned(config.sparse_infill_filament.value);
+
+            const int first_layers = std::max(0, config.infill_filament_use_base_first_layers.value);
+            const int last_layers  = std::max(0, config.infill_filament_use_base_last_layers.value);
+            return (layer_tools.layer_index < first_layers ||
+                    layer_tools.layer_index >= layer_tools.object_layer_count - last_layers)
+                ? unsigned(config.wall_filament.value)
+                : unsigned(config.sparse_infill_filament.value);
+        };
+
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
+            if (layer_tools.extruder_override != 0)
+                return layer_tools.extruder_override;
             const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
             if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
-                return layer_tools.sparse_infill_filament(region) + 1;
+                return raw_sparse_infill_filament_id_1based();
             if (is_solid_infill(role))
-                return layer_tools.solid_infill_filament(region) + 1;
-            return layer_tools.sparse_infill_filament(region) + 1;
+                return unsigned(region.config().solid_infill_filament.value);
+            return raw_sparse_infill_filament_id_1based();
         }
-        return layer_tools.wall_filament(region) + 1;
+        return layer_tools.extruder_override == 0 ? unsigned(region.config().wall_filament.value) : layer_tools.extruder_override;
     };
 
     auto configured_extruder_id = [&layer_tools](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
@@ -5318,28 +5335,39 @@ LayerResult GCode::process_layer(const Print& print,
                                                                                            layer_tools.num_physical,
                                                                                            layer_tools.layer_index,
                                                                                            split_by_extruder,
-                                                                                           bucket_count) &&
-                                    bucket_count >= 2) {
-                                    for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
-                                        std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
-                                        if (!split_collection || split_collection->entities.empty())
-                                            continue;
-                                        const ExtrusionEntityCollection* split_ptr = split_collection.get();
-                                        local_z_clipped_collections.emplace_back(std::move(split_collection));
-                                        std::vector<ObjectByExtruder::Island>& islands =
-                                            object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
-                                        for (size_t i = 0; i <= n_slices; ++i) {
-                                            const bool   last       = i == n_slices;
-                                            const size_t island_idx = last ? n_slices : slices_test_order[i];
-                                            if (last || point_inside_surface(island_idx, split_ptr->first_point())) {
-                                                if (islands[island_idx].by_region.empty())
-                                                    islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
-                                                islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
+                                                                                           bucket_count)) {
+                                    if (bucket_count >= 2) {
+                                        for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                            std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                            if (!split_collection || split_collection->entities.empty())
+                                                continue;
+                                            const ExtrusionEntityCollection* split_ptr = split_collection.get();
+                                            local_z_clipped_collections.emplace_back(std::move(split_collection));
+                                            std::vector<ObjectByExtruder::Island>& islands =
+                                                object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
+                                            for (size_t i = 0; i <= n_slices; ++i) {
+                                                const bool   last       = i == n_slices;
+                                                const size_t island_idx = last ? n_slices : slices_test_order[i];
+                                                if (last || point_inside_surface(island_idx, split_ptr->first_point())) {
+                                                    if (islands[island_idx].by_region.empty())
+                                                        islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
+                                                    islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    if (bucket_count == 1) {
+                                        for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                            const std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                            if (split_collection && !split_collection->entities.empty()) {
+                                                // by_extruder keys and LayerTools runtime extruder IDs are zero-based here.
+                                                correct_extruder_id = int(extruder_idx);
                                                 break;
                                             }
                                         }
                                     }
-                                    continue;
                                 }
                             }
                         }

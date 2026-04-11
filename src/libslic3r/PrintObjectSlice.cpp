@@ -34,6 +34,13 @@ bool PrintObject::infill_only_where_needed = false;
 static bool has_surface_emboss_mixed_volume(const PrintObject &print_object);
 static std::string surface_emboss_mixed_debug_file_path(const PrintObject &print_object);
 static void reset_surface_emboss_mixed_debug_file(const PrintObject &print_object);
+static void dump_surface_emboss_mixed_layer_state(
+    const char                                  *stage,
+    const PrintObject                           &print_object,
+    size_t                                       layer_id,
+    const Layer                                 &layer,
+    const PrintObjectRegions::LayerRangeRegions &layer_range,
+    const std::vector<ExPolygons>               *segmentation_layer);
 
 LayerPtrs new_layers(
     PrintObject                 *print_object,

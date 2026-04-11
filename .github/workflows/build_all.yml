@@ -4,6 +4,8 @@ on:
   push:
     branches:
      - main
+     - 2.2.0
+     - release/*
     paths:
      - 'deps/**'
      - 'src/**'
@@ -16,6 +18,23 @@ on:
      - ".github/workflows/build_*.yml"
      - 'scripts/flatpak/**'
 
+  pull_request:
+    branches:
+     - main
+     - 2.2.0
+     - release/*
+    paths:
+     - 'deps/**'
+     - 'src/**'
+     - '**/CMakeLists.txt'
+     - 'version.inc'
+     - 'CHANGELOG*.md'
+     - 'RELEASE_NOTES*.md'
+     - ".github/workflows/build_*.yml"
+     - 'build_linux.sh'
+     - 'build_release_vs2022.bat'
+     - 'build_release_macos.sh'
+     - 'scripts/flatpak/**'
   workflow_dispatch: # allows for manual dispatch
     inputs:
       build-deps-only:
@@ -46,13 +65,13 @@ jobs:
       os: ${{ matrix.os }}
       arch: ${{ matrix.arch }}
       build-deps-only: ${{ inputs.build-deps-only || false }}
-      force-build: false
+      force-build: ${{ github.event_name == 'schedule' }}
     secrets: inherit
 
   publish_release:
     name: Publish Release
     needs: [build_all]
-    if: ${{ !cancelled() && needs.build_all.result == 'success' && github.repository != 'Snapmaker/OrcaSlicer' && inputs.build-deps-only != true }}
+    if: ${{ !cancelled() && needs.build_all.result == 'success' && github.event_name != 'pull_request' && github.repository != 'Snapmaker/OrcaSlicer' && inputs.build-deps-only != true }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -234,7 +253,7 @@ jobs:
         if-no-files-found: error
 
     - name: Deploy Flatpak to nightly release
-      if: ${{github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.2.3'}}
+      if: ${{github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final'}}
       uses: WebFreak001/deploy-nightly@v3.2.0
       with:
         upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}

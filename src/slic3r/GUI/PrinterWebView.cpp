@@ -28,8 +28,10 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
+    wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=2");
+    auto     real_url = wxGetApp().get_international_url(url);
       // Create the webview
-    m_browser = WebView::CreateWebView(this, "");
+    m_browser = WebView::CreateWebView(this, real_url);
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -44,16 +46,6 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
     update_mode();
-
-    // Log backend information
-    /* m_browser->GetUserAgent() may lead crash
-    if (wxGetApp().get_mode() == comDevelop) {
-        wxLogMessage(wxWebView::GetBackendVersionInfo().ToString());
-        wxLogMessage("Backend: %s Version: %s", m_browser->GetClassInfo()->GetClassName(),
-            wxWebView::GetBackendVersionInfo().ToString());
-        wxLogMessage("User Agent: %s", m_browser->GetUserAgent());
-    }
-    */
 
     //Zoom
     m_zoomFactor = 100;
@@ -77,8 +69,6 @@ PrinterWebView::~PrinterWebView()
 
 void PrinterWebView::load_url(wxString& url, wxString apikey)
 {
-//    this->Show();
-//    this->Raise();
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;
@@ -90,10 +80,9 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
         wxGetApp().fltviews().remove_printer_view(this);
     }
 
+    m_browser->Show();
     m_browser->LoadURL(url);
 
-    m_browser->Show();
-    //m_browser->SetFocus();
     UpdateState();
 }
 

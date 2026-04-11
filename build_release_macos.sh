@@ -93,6 +93,10 @@ echo " - CMAKE_GENERATOR: $SLICER_CMAKE_GENERATOR for Slicer, $DEPS_CMAKE_GENERA
 echo " - OSX_DEPLOYMENT_TARGET: $OSX_DEPLOYMENT_TARGET"
 echo
 
+# CMake 4.x compatibility workaround for deps/bootstrap projects that still
+# declare an old minimum version.
+export CMAKE_POLICY_VERSION_MINIMUM=3.5
+
 # if which -s brew; then
 # 	brew --prefix libiconv
 # 	brew --prefix zstd
@@ -129,11 +133,13 @@ function build_deps() {
             (
                 set -x
                 mkdir -p "$DEPS"
+                mkdir -p "$DEPS_DIR/DL_CACHE"
                 cd "$DEPS_BUILD_DIR"
                 if [ "1." != "$BUILD_ONLY". ]; then
                     cmake "${DEPS_DIR}" \
                         -G "${DEPS_CMAKE_GENERATOR}" \
                         -DDESTDIR="$DEPS" \
+                        -DDEP_DOWNLOAD_DIR="$DEPS_DIR/DL_CACHE" \
                         -DOPENSSL_ARCH="darwin64-${_ARCH}-cc" \
                         -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
                         -DCMAKE_OSX_ARCHITECTURES:STRING="${_ARCH}" \

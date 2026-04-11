@@ -13,7 +13,7 @@
 #include "slic3r/GUI/WebPresetDialog.hpp"
 
 #include "slic3r/GUI/SSWCP.hpp"
-#include "slic3r/GUI/WCPDownloadManager.hpp"
+#include "slic3r/GUI/DownloadManager.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
 #include "slic3r/Config/Version.hpp"
 #include "libslic3r/MixedFilament.hpp"
@@ -1134,7 +1134,7 @@ GUI_App::GUI_App()
     , m_imgui(new ImGuiWrapper())
 	, m_removable_drive_manager(std::make_unique<RemovableDriveManager>())
     , m_downloader(std::make_unique<Downloader>())
-    , m_wcp_download_manager(&WCPDownloadManager::getInstance())
+    , m_download_manager(&DownloadManager::getInstance())
 	, m_other_instance_message_handler(std::make_unique<OtherInstanceMessageHandler>())
 {
     StartupProfiler profiler("GUI_App::GUI_App");
@@ -1157,7 +1157,9 @@ GUI_App::GUI_App()
     m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
     m_page_http_server.start();
     profiler.mark("m_page_http_server.start");
-    
+    BOOST_LOG_TRIVIAL(info) << "[Flutter] Version:" << common::get_flutter_version();
+    BOOST_LOG_TRIVIAL(info) << "[Profile] Version:" << common::get_profile_version();
+    flush_logs();
     m_fltviews.set_app(this);
     profiler.mark("m_fltviews.set_app");
 }
@@ -2090,8 +2092,8 @@ void GUI_App::init_app_config()
     std::time_t       t        = std::time(0);
     std::tm *         now_time = std::localtime(&t);
     std::stringstream buf;
-    buf << std::put_time(now_time, "debug_%a_%b_%d_%H_%M_%S_");
-    buf << get_current_pid() << ".log";
+    buf << std::put_time(now_time, "%Y-%m-%d-%H-%M-%S");
+    buf << ".log";
     std::string log_filename = buf.str();
 #if !BBL_RELEASE_TO_PUBLIC
     set_log_path_and_level(log_filename, 5);
@@ -2615,6 +2617,8 @@ bool GUI_App::on_init_inner()
                 }
                 if (!skip_this_version || evt.GetInt() != 0) {                    
                     wxString            extmsg = wxString::FromUTF8(version_info.description);
+                    if(!m_updateDialog)
+                        return;
                     m_updateDialog->update_version_info(extmsg, version_info.version_str);
                     if (evt.GetInt() != 0) {
                         m_updateDialog->m_button_skip_version->Hide();
@@ -2762,12 +2766,15 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
-    m_updateDialog = new UpdateVersionDialog(mainframe);
-    m_updateDialog->Hide();
-    m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
-        auto downloadUlr = m_updateDialog->getUrl();
-        wxLaunchDefaultBrowser(downloadUlr);
-    });
+    if (!m_updateDialog)
+    {
+        m_updateDialog = new UpdateVersionDialog(mainframe);
+        m_updateDialog->Hide();
+        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
+            auto downloadUlr = m_updateDialog->getUrl();
+            wxLaunchDefaultBrowser(downloadUlr);
+        });
+    }
     profiler.mark("mainframe construction");
 
     // hide settings tabs after first Layout
@@ -3637,6 +3644,15 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     switch_window_pools();
     mainframe = new MainFrame();
+
+    if (!m_updateDialog) {
+        m_updateDialog = new UpdateVersionDialog(mainframe);
+        m_updateDialog->Hide();
+        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
+            auto downloadUlr = m_updateDialog->getUrl();
+            wxLaunchDefaultBrowser(downloadUlr);
+        });
+    }
     if (is_editor())
         // hide settings tabs after first Layout
         mainframe->select_tab(size_t(MainFrame::tp3DEditor));
@@ -5004,7 +5020,7 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
             BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;            
           }
         })
-        .perform_sync();
+        .perform();
 }
 void GUI_App::process_network_msg(std::string dev_id, std::string msg)
 {
@@ -5424,20 +5440,20 @@ void GUI_App::stop_sync_user_preset()
     }
 }
 
-void GUI_App::start_http_server()
-{
-    if (!m_http_server.is_started())
-        m_http_server.start();
-}
-void GUI_App::stop_http_server()
-{
-    m_http_server.stop();
-}
+//void GUI_App::start_http_server()
+//{
+//    if (!m_http_server.is_started())
+//        m_http_server.start();
+//}
+//void GUI_App::stop_http_server()
+//{
+//    m_http_server.stop();
+//}
 
 void GUI_App::start_page_http_server() 
 {
     if (!m_page_http_server.is_started())
-        m_page_http_server;
+        m_page_http_server.start();
 }
 void GUI_App::stop_page_http_server()
 {
@@ -6591,9 +6607,9 @@ Downloader* GUI_App::downloader()
     return m_downloader.get();
 }
 
-WCPDownloadManager* GUI_App::wcp_download_manager()
+DownloadManager* GUI_App::download_manager()
 {
-    return m_wcp_download_manager;
+    return m_download_manager;
 }
 
 void GUI_App::load_url(wxString url)
@@ -7088,16 +7104,7 @@ bool GUI_App::config_wizard_startup()
         BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
         return true;
-    } /*else if (get_app_config()->legacy_datadir()) {
-        // Looks like user has legacy pre-vendorbundle data directory,
-        // explain what this is and run the wizard
-
-        MsgDataLegacy dlg;
-        dlg.ShowModal();
-
-        run_wizard(ConfigWizard::RR_DATA_LEGACY);
-        return true;
-    }*/
+    }
 
     if (isAgree.empty()) 
     {

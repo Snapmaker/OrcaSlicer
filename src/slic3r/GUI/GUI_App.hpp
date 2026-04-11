@@ -89,7 +89,7 @@ class Plater;
 class ParamsPanel;
 class NotificationManager;
 class Downloader;
-class WCPDownloadManager;
+class DownloadManager;
 struct GUI_InitParams;
 class ParamsDialog;
 class HMSQuery;
@@ -298,7 +298,7 @@ private:
 	size_t m_instance_hash_int;
 
     std::unique_ptr<Downloader> m_downloader;
-    WCPDownloadManager* m_wcp_download_manager;
+    DownloadManager* m_download_manager;
 
     //BBS
     bool m_is_closing {false};
@@ -336,7 +336,7 @@ private:
     bool             m_side_popup_status{false};
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;
+    //HttpServer       m_http_server;
 
 public:
     HttpServer       m_page_http_server;
@@ -604,8 +604,8 @@ private:
     void            sync_preset(Preset* preset);
     void            start_sync_user_preset(bool with_progress_dlg = false);
     void            stop_sync_user_preset();
-    void            start_http_server();
-    void            stop_http_server();
+    //void            start_http_server();
+    //void            stop_http_server();
 
     // page loading http server
     void            start_page_http_server();
@@ -686,7 +686,7 @@ private:
     Model&      		 model();
     NotificationManager * notification_manager();
     Downloader*          downloader();
-    WCPDownloadManager*  wcp_download_manager();
+    DownloadManager*  download_manager();
 
 
     std::string         m_mall_model_download_url;

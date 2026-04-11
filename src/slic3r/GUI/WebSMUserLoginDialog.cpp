@@ -309,7 +309,7 @@ void SMUserLogin::OnScriptMessage(wxWebViewEvent &evt)
         }
         else if (strCmd == "get_localhost_url") {
             BOOST_LOG_TRIVIAL(info) << "thirdparty_login: get_localhost_url";
-            wxGetApp().start_http_server();
+            //wxGetApp().start_http_server();
             std::string sequence_id = j["sequence_id"].get<std::string>();
             CallAfter([this, sequence_id] {
                 json ack_j;

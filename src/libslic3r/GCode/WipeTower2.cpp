@@ -2156,19 +2156,19 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
                 // Invalid first layer index, don't print brim
                 loops_num = 0;
             } else {
-                // Stop print chamfer if depth changes
-                bool depth_changed = (m_layer_info->depth != m_plan[m_first_layer_idx].depth);
-                if (depth_changed) {
+            // Stop print chamfer if depth changes
+            bool depth_changed = (m_layer_info->depth != m_plan[m_first_layer_idx].depth);
+            if (depth_changed) {
+                loops_num = 0;
+            } else {
+                // Limit max chamfer width to configured value
+                int chamfer_loops_num = (int) (m_prime_tower_brim_chamfer_max_width / spacing);
+                loops_num             = std::min(loops_num, chamfer_loops_num) - dist_to_1st;
+                // Ensure loops_num doesn't go negative
+                if (loops_num < 0)
                     loops_num = 0;
-                } else {
-                    // Limit max chamfer width to configured value
-                    int chamfer_loops_num = (int) (m_prime_tower_brim_chamfer_max_width / spacing);
-                    loops_num             = std::min(loops_num, chamfer_loops_num) - dist_to_1st;
-                    // Ensure loops_num doesn't go negative
-                    if (loops_num < 0)
-                        loops_num = 0;
-                }
             }
+        }
         } else {
             // Non-first layer + chamfer disabled: don't print brim (revert to original behavior)
             loops_num = 0;

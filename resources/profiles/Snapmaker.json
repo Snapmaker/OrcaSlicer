@@ -1495,7 +1495,18 @@
       "name": "Polymaker Tough PLA Family @U1",
       "sub_path": "filament/Polymaker Tough PLA Family @U1.json"
     },
-
+    {
+      "name": "fdm_filament_petg_poly",
+      "sub_path": "filament/fdm_filament_petg_poly.json"
+    },
+    {
+      "name": "Polymaker PETG-HF @U1 base",
+      "sub_path": "filament/Polymaker PETG-HF @U1 base.json"
+    },
+    {
+      "name": "Polymaker PETG-HF @U1",
+      "sub_path": "filament/Polymaker PETG-HF Family @U1.json"
+    },
 
 
 

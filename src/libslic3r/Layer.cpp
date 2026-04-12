@@ -218,7 +218,6 @@ bool Layer::is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b)
 void Layer::make_perimeters()
 {
     BOOST_LOG_TRIVIAL(trace) << "Generating perimeters for layer " << this->id();
-    const bool disable_compatible_region_merge = this->object() != nullptr && this->object()->is_mm_painted();
     
     // keep track of regions whose perimeters we have already generated
     std::vector<unsigned char> done(m_regions.size(), false);
@@ -239,7 +238,7 @@ void Layer::make_perimeters()
 	        // find compatible regions
 	        LayerRegionPtrs layerms;
 	        layerms.push_back(*layerm);
-	        for (LayerRegionPtrs::const_iterator it = layerm + 1; !disable_compatible_region_merge && it != m_regions.end(); ++it)
+	        for (LayerRegionPtrs::const_iterator it = layerm + 1; it != m_regions.end(); ++it)
 	            if (! (*it)->slices.empty()) {
 		            LayerRegion* other_layerm = *it;
 		            const PrintRegion &other_region = other_layerm->region();

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -63,6 +64,12 @@ struct MixedFilament
     // Optional Local-Z cap for this mixed row. 0 disables the cap.
     int local_z_max_sublayers = 0;
 
+    // Additional XY surface offsets, in mm, applied when this mixed row
+    // resolves to component A or B for an entire layer. Positive values
+    // contract inward; negative values expand outward.
+    float component_a_surface_offset = 0.f;
+    float component_b_surface_offset = 0.f;
+
     // Whether this mixed filament is enabled (available for assignment).
     bool enabled = true;
 
@@ -82,6 +89,7 @@ struct MixedFilament
 
     bool operator==(const MixedFilament &rhs) const
     {
+        constexpr float k_surface_offset_epsilon = 1e-6f;
         return component_a == rhs.component_a &&
                component_b == rhs.component_b &&
                stable_id   == rhs.stable_id   &&
@@ -94,6 +102,8 @@ struct MixedFilament
                pointillism_all_filaments == rhs.pointillism_all_filaments &&
                distribution_mode == rhs.distribution_mode &&
                local_z_max_sublayers == rhs.local_z_max_sublayers &&
+               std::abs(component_a_surface_offset - rhs.component_a_surface_offset) <= k_surface_offset_epsilon &&
+               std::abs(component_b_surface_offset - rhs.component_b_surface_offset) <= k_surface_offset_epsilon &&
                enabled      == rhs.enabled &&
                deleted      == rhs.deleted &&
                custom       == rhs.custom &&
@@ -191,6 +201,12 @@ public:
                                                       float        layer_height_a = 0.f,
                                                       float        layer_height_b = 0.f,
                                                       float        base_layer_height = 0.2f) const;
+    float component_surface_offset(unsigned int filament_id,
+                                   size_t       num_physical,
+                                   int          layer_index,
+                                   float        layer_print_z = 0.f,
+                                   float        layer_height  = 0.f,
+                                   bool         force_height_weighted = false) const;
     std::vector<unsigned int> ordered_perimeter_extruders(unsigned int filament_id,
                                                           size_t       num_physical,
                                                           int          layer_index,
@@ -213,6 +229,10 @@ public:
     static std::string blend_color(const std::string &color_a,
                                    const std::string &color_b,
                                    int ratio_a, int ratio_b);
+    static int apparent_mix_b_percent(int   mix_b_percent,
+                                      float component_a_surface_offset,
+                                      float component_b_surface_offset,
+                                      float reference_width_mm = 0.4f);
 
     // ---- Accessors ------------------------------------------------------
 

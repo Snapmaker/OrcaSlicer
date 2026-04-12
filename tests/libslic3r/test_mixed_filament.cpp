@@ -164,6 +164,43 @@ TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[M
     CHECK(loaded.mixed_filaments().front().mix_b_percent == 13);
 }
 
+TEST_CASE("Mixed filament component surface offsets round-trip and follow the active layer component", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.ratio_a = 1;
+    row.ratio_b = 1;
+    row.component_a_surface_offset = 0.02f;
+    row.component_b_surface_offset = -0.01f;
+
+    const std::string serialized = mgr.serialize_custom_entries();
+    CHECK(serialized.find("xa0.02") != std::string::npos);
+    CHECK(serialized.find("xb-0.01") != std::string::npos);
+
+    MixedFilamentManager loaded;
+    loaded.load_custom_entries(serialized, colors);
+    REQUIRE(loaded.mixed_filaments().size() == 1);
+
+    const MixedFilament &loaded_row = loaded.mixed_filaments().front();
+    CHECK(loaded_row.component_a_surface_offset == Approx(0.02f));
+    CHECK(loaded_row.component_b_surface_offset == Approx(-0.01f));
+    CHECK(loaded.component_surface_offset(3, 2, 0) == Approx(0.02f));
+    CHECK(loaded.component_surface_offset(3, 2, 1) == Approx(-0.01f));
+}
+
+TEST_CASE("Mixed filament apparent mix percent shifts toward the less-contracted component", "[MixedFilament]")
+{
+    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.02f, 0.00f, 0.4f) == 55);
+    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.00f, 0.02f, 0.4f) == 45);
+    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, -0.02f, 0.00f, 0.4f) == 45);
+    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.00f, -0.02f, 0.4f) == 55);
+}
+
 TEST_CASE("Mixed filament auto generation can be disabled without dropping custom rows", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
@@ -365,10 +402,14 @@ TEST_CASE("Mixed filament painted-region resolver preserves virtual channels for
     MixedFilament &row = mgr.mixed_filaments().front();
     row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("12,21");
     CHECK(mgr.effective_painted_region_filament_id(3, 2, 0) == 3);
+    row.component_a_surface_offset = 0.02f;
+    row.component_b_surface_offset = -0.02f;
+    CHECK(mgr.component_surface_offset(3, 2, 0) == Approx(0.0f));
 
     row.manual_pattern.clear();
     row.distribution_mode = int(MixedFilament::SameLayerPointillisme);
     CHECK(mgr.effective_painted_region_filament_id(3, 2, 0) == 3);
+    CHECK(mgr.component_surface_offset(3, 2, 0) == Approx(0.0f));
 }
 
 TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")

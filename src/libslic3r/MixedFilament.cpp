@@ -211,6 +211,25 @@ static int clamp_int(int v, int lo, int hi)
     return std::max(lo, std::min(hi, v));
 }
 
+static float clamp_surface_offset(float v)
+{
+    return std::clamp(v, -2.f, 2.f);
+}
+
+static std::string format_surface_offset_token(float value)
+{
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(4) << clamp_surface_offset(value);
+    std::string out = ss.str();
+    while (!out.empty() && out.back() == '0')
+        out.pop_back();
+    if (!out.empty() && out.back() == '.')
+        out.pop_back();
+    if (out == "-0")
+        out = "0";
+    return out.empty() ? std::string("0") : out;
+}
+
 static int safe_ratio_from_height(float h, float unit)
 {
     if (unit <= 1e-6f)
@@ -341,6 +360,8 @@ static bool parse_row_definition(const std::string &row,
                                  std::string       &manual_pattern,
                                  int               &distribution_mode,
                                  int               &local_z_max_sublayers,
+                                 float             &component_a_surface_offset,
+                                 float             &component_b_surface_offset,
                                  bool              &deleted)
 {
     auto trim_copy = [](const std::string &s) {
@@ -379,6 +400,22 @@ static bool parse_row_definition(const std::string &row,
             if (consumed != t.size())
                 return false;
             out = uint64_t(v);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    auto parse_float_token = [&trim_copy](const std::string &tok, float &out) {
+        const std::string t = trim_copy(tok);
+        if (t.empty())
+            return false;
+        try {
+            size_t consumed = 0;
+            const float v = std::stof(t, &consumed);
+            if (consumed != t.size())
+                return false;
+            out = v;
             return true;
         } catch (...) {
             return false;
@@ -425,6 +462,8 @@ static bool parse_row_definition(const std::string &row,
     manual_pattern.clear();
     distribution_mode = int(MixedFilament::Simple);
     local_z_max_sublayers = 0;
+    component_a_surface_offset = 0.f;
+    component_b_surface_offset = 0.f;
     deleted = false;
 
     size_t token_idx = 5;
@@ -472,6 +511,19 @@ static bool parse_row_definition(const std::string &row,
             if (parse_int_token(tok.substr(1), parsed_max_sublayers))
                 local_z_max_sublayers = std::max(0, parsed_max_sublayers);
             continue;
+        }
+        if ((tok[0] == 'x' || tok[0] == 'X') && tok.size() >= 3) {
+            const char component = char(std::tolower(static_cast<unsigned char>(tok[1])));
+            if (component == 'a' || component == 'b') {
+                float parsed_offset = component == 'a' ? component_a_surface_offset : component_b_surface_offset;
+                if (parse_float_token(tok.substr(2), parsed_offset)) {
+                    if (component == 'a')
+                        component_a_surface_offset = clamp_surface_offset(parsed_offset);
+                    else
+                        component_b_surface_offset = clamp_surface_offset(parsed_offset);
+                }
+                continue;
+            }
         }
         if (tok[0] == 'd' || tok[0] == 'D') {
             int parsed_deleted = deleted ? 1 : 0;
@@ -942,6 +994,8 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     mf.pointillism_all_filaments = false;
     mf.distribution_mode = int(MixedFilament::Simple);
     mf.local_z_max_sublayers = 0;
+    mf.component_a_surface_offset = 0.f;
+    mf.component_b_surface_offset = 0.f;
     mf.enabled = true;
     mf.deleted = false;
     mf.custom = true;
@@ -1030,6 +1084,8 @@ std::string MixedFilamentManager::serialize_custom_entries()
            << 'w' << normalized_weights << ','
            << 'm' << clamp_int(mf.distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple)) << ','
            << 'z' << std::max(0, mf.local_z_max_sublayers) << ','
+           << "xa" << format_surface_offset_token(mf.component_a_surface_offset) << ','
+           << "xb" << format_surface_offset_token(mf.component_b_surface_offset) << ','
            << 'd' << (mf.deleted ? 1 : 0) << ','
            << 'o' << (mf.origin_auto ? 1 : 0) << ','
            << 'u' << mf.stable_id;
@@ -1101,10 +1157,12 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         std::string manual_pattern;
         int distribution_mode = int(MixedFilament::Simple);
         int local_z_max_sublayers = 0;
+        float component_a_surface_offset = 0.f;
+        float component_b_surface_offset = 0.f;
         bool deleted = false;
         if (!parse_row_definition(row, a, b, stable_id, enabled, custom, origin_auto, mix, pointillism_all_filaments,
                                   gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode,
-                                  local_z_max_sublayers, deleted)) {
+                                  local_z_max_sublayers, component_a_surface_offset, component_b_surface_offset, deleted)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
             continue;
@@ -1152,6 +1210,8 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             mf.manual_pattern = normalize_manual_pattern(manual_pattern);
             mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
             mf.local_z_max_sublayers = std::max(0, local_z_max_sublayers);
+            mf.component_a_surface_offset = clamp_surface_offset(component_a_surface_offset);
+            mf.component_b_surface_offset = clamp_surface_offset(component_b_surface_offset);
             mf.mix_b_percent = mf.manual_pattern.empty() ? mix : mix_percent_from_normalized_pattern(mf.manual_pattern);
             mf.deleted = deleted;
             if (mf.deleted)
@@ -1179,6 +1239,8 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         mf.manual_pattern = normalize_manual_pattern(manual_pattern);
         mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
         mf.local_z_max_sublayers = std::max(0, local_z_max_sublayers);
+        mf.component_a_surface_offset = clamp_surface_offset(component_a_surface_offset);
+        mf.component_b_surface_offset = clamp_surface_offset(component_b_surface_offset);
         if (!mf.manual_pattern.empty())
             mf.mix_b_percent = mix_percent_from_normalized_pattern(mf.manual_pattern);
         mf.enabled = enabled;
@@ -1358,6 +1420,37 @@ unsigned int MixedFilamentManager::effective_painted_region_filament_id(unsigned
     return resolve(filament_id, num_physical, layer_index, layer_print_z, layer_height);
 }
 
+float MixedFilamentManager::component_surface_offset(unsigned int filament_id,
+                                                     size_t       num_physical,
+                                                     int          layer_index,
+                                                     float        layer_print_z,
+                                                     float        layer_height,
+                                                     bool         force_height_weighted) const
+{
+    const MixedFilament *mixed_row = mixed_filament_from_id(filament_id, num_physical);
+    if (mixed_row == nullptr)
+        return 0.f;
+
+    if (mixed_row->distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return 0.f;
+
+    const std::string normalized_pattern = normalize_manual_pattern(mixed_row->manual_pattern);
+    if (normalized_pattern.find(',') != std::string::npos)
+        return 0.f;
+
+    const unsigned int resolved = resolve(filament_id,
+                                          num_physical,
+                                          layer_index,
+                                          layer_print_z,
+                                          layer_height,
+                                          force_height_weighted);
+    if (resolved == mixed_row->component_a)
+        return clamp_surface_offset(mixed_row->component_a_surface_offset);
+    if (resolved == mixed_row->component_b)
+        return clamp_surface_offset(mixed_row->component_b_surface_offset);
+    return 0.f;
+}
+
 std::vector<unsigned int> MixedFilamentManager::ordered_perimeter_extruders(unsigned int filament_id,
                                                                             size_t       num_physical,
                                                                             int          layer_index,
@@ -1498,6 +1591,17 @@ std::string MixedFilamentManager::blend_color(const std::string &color_a,
     return rgb_to_hex({int(out_r), int(out_g), int(out_b)});
 }
 
+int MixedFilamentManager::apparent_mix_b_percent(int   mix_b_percent,
+                                                 float component_a_surface_offset,
+                                                 float component_b_surface_offset,
+                                                 float reference_width_mm)
+{
+    const float safe_reference = std::max(0.05f, std::abs(reference_width_mm));
+    const float shift_pct = 100.f * (clamp_surface_offset(component_a_surface_offset) -
+                                     clamp_surface_offset(component_b_surface_offset)) / safe_reference;
+    return clamp_int(int(std::lround(float(clamp_int(mix_b_percent, 0, 100)) + shift_pct)), 0, 100);
+}
+
 void MixedFilamentManager::refresh_display_colors(const std::vector<std::string> &filament_colours)
 {
     for (MixedFilament &mf : m_mixed) {
@@ -1535,8 +1639,14 @@ void MixedFilamentManager::refresh_display_colors(const std::vector<std::string>
             mf.display_color = "#26A69A";
             continue;
         }
-        const int ratio_a = std::max(0, 100 - clamp_int(mf.mix_b_percent, 0, 100));
-        const int ratio_b = clamp_int(mf.mix_b_percent, 0, 100);
+        const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
+        const int ratio_b =
+            (mf.distribution_mode != int(MixedFilament::SameLayerPointillisme) &&
+             normalized_pattern.empty() &&
+             gradient_ids.size() < 3) ?
+                apparent_mix_b_percent(mf.mix_b_percent, mf.component_a_surface_offset, mf.component_b_surface_offset) :
+                clamp_int(mf.mix_b_percent, 0, 100);
+        const int ratio_a = std::max(0, 100 - ratio_b);
         mf.display_color = blend_color(
             filament_colours[mf.component_a - 1],
             filament_colours[mf.component_b - 1],

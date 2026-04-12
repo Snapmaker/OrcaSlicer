@@ -1031,6 +1031,125 @@ static bool apply_mixed_surface_indentation(PrintObject &print_object, std::vect
     return true;
 }
 
+static bool apply_mixed_component_surface_offsets(PrintObject &print_object, std::vector<std::vector<ExPolygons>> &segmentation)
+{
+    const Print *print = print_object.print();
+    if (print == nullptr || segmentation.empty())
+        return false;
+
+    const PrintConfig        &print_cfg = print->config();
+    const DynamicPrintConfig &full_cfg  = print->full_print_config();
+    if (bool_from_full_config(full_cfg, "dithering_local_z_mode", print_cfg.dithering_local_z_mode.value))
+        return false;
+
+    const size_t num_physical = print_cfg.filament_colour.size();
+    const size_t num_channels = segmentation.front().size();
+    if (num_channels <= num_physical + 1)
+        return false;
+
+    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
+    bool has_component_offsets = false;
+    for (const MixedFilament &mf : mixed_mgr.mixed_filaments()) {
+        if (!mf.enabled || mf.deleted)
+            continue;
+        if (std::abs(mf.component_a_surface_offset) > EPSILON || std::abs(mf.component_b_surface_offset) > EPSILON) {
+            has_component_offsets = true;
+            break;
+        }
+    }
+    if (!has_component_offsets)
+        return false;
+
+    size_t changed_layers = 0;
+    size_t changed_states = 0;
+    size_t emptied_states = 0;
+    size_t expanded_states = 0;
+    size_t contracted_states = 0;
+    size_t overlap_clipped_states = 0;
+
+    for (size_t layer_id = 0; layer_id < segmentation.size(); ++layer_id) {
+        if (segmentation[layer_id].size() != num_channels)
+            continue;
+
+        const Layer *layer = layer_id < size_t(print_object.layer_count()) ? print_object.get_layer(int(layer_id)) : nullptr;
+        const float layer_print_z = layer ? float(layer->print_z) : 0.f;
+        const float layer_height  = layer ? float(layer->height) : 0.f;
+        bool layer_changed = false;
+
+        for (size_t channel_idx = 1; channel_idx < num_channels; ++channel_idx) {
+            ExPolygons &state_masks = segmentation[layer_id][channel_idx];
+            if (state_masks.empty())
+                continue;
+
+            const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
+            if (!mixed_mgr.is_mixed(state_id, num_physical))
+                continue;
+
+            const coordf_t offset_mm = coordf_t(mixed_mgr.component_surface_offset(state_id,
+                                                                                    num_physical,
+                                                                                    int(layer_id),
+                                                                                    layer_print_z,
+                                                                                    layer_height));
+            if (std::abs(offset_mm) <= EPSILON)
+                continue;
+
+            const float delta_scaled = float(scale_(std::abs(double(offset_mm))));
+            if (delta_scaled <= float(EPSILON))
+                continue;
+
+            ExPolygons adjusted = offset_mm > 0 ? offset_ex(state_masks, -delta_scaled) : offset_ex(state_masks, delta_scaled);
+            if (!adjusted.empty() && adjusted.size() > 1)
+                adjusted = union_ex(adjusted);
+
+            if (offset_mm < 0 && !adjusted.empty()) {
+                ExPolygons occupied_other;
+                for (size_t other_idx = 0; other_idx < num_channels; ++other_idx) {
+                    if (other_idx == channel_idx)
+                        continue;
+                    if (!segmentation[layer_id][other_idx].empty())
+                        append(occupied_other, segmentation[layer_id][other_idx]);
+                }
+                if (occupied_other.size() > 1)
+                    occupied_other = union_ex(occupied_other);
+                if (!occupied_other.empty()) {
+                    ExPolygons clipped = diff_ex(adjusted, occupied_other, ApplySafetyOffset::Yes);
+                    if (std::abs(area(clipped)) + EPSILON < std::abs(area(adjusted)))
+                        ++overlap_clipped_states;
+                    adjusted = std::move(clipped);
+                    if (!adjusted.empty() && adjusted.size() > 1)
+                        adjusted = union_ex(adjusted);
+                }
+            }
+
+            state_masks = std::move(adjusted);
+            if (state_masks.empty())
+                ++emptied_states;
+            if (offset_mm < 0)
+                ++expanded_states;
+            else
+                ++contracted_states;
+            ++changed_states;
+            layer_changed = true;
+        }
+
+        if (layer_changed)
+            ++changed_layers;
+    }
+
+    if (changed_states == 0)
+        return false;
+
+    BOOST_LOG_TRIVIAL(warning) << "Mixed component surface offsets applied"
+                               << " object=" << (print_object.model_object() ? print_object.model_object()->name : std::string("<unknown>"))
+                               << " changed_layers=" << changed_layers
+                               << " changed_states=" << changed_states
+                               << " contracted_states=" << contracted_states
+                               << " expanded_states=" << expanded_states
+                               << " emptied_states=" << emptied_states
+                               << " overlap_clipped_states=" << overlap_clipped_states;
+    return true;
+}
+
 static bool fit_pass_heights_to_interval(std::vector<double> &passes, double base_height, double lo, double hi)
 {
     if (passes.empty() || base_height <= EPSILON)
@@ -2180,6 +2299,134 @@ static ExPolygons collect_layer_region_slices(const Layer &layer)
     if (!out.empty())
         out = union_ex(out);
     return out;
+}
+
+static bool apply_mixed_region_surface_offsets(PrintObject &print_object)
+{
+    const Print *print = print_object.print();
+    if (print == nullptr || print_object.layer_count() == 0)
+        return false;
+
+    const PrintConfig        &print_cfg = print->config();
+    const DynamicPrintConfig &full_cfg  = print->full_print_config();
+    if (bool_from_full_config(full_cfg, "dithering_local_z_mode", print_cfg.dithering_local_z_mode.value))
+        return false;
+
+    const size_t num_physical = print_cfg.filament_diameter.size();
+    if (num_physical == 0)
+        return false;
+
+    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
+    bool has_component_offsets = false;
+    for (const MixedFilament &mf : mixed_mgr.mixed_filaments()) {
+        if (!mf.enabled || mf.deleted)
+            continue;
+        if (std::abs(mf.component_a_surface_offset) > EPSILON || std::abs(mf.component_b_surface_offset) > EPSILON) {
+            has_component_offsets = true;
+            break;
+        }
+    }
+    if (!has_component_offsets)
+        return false;
+
+    size_t changed_layers    = 0;
+    size_t changed_regions   = 0;
+    size_t contracted_regions = 0;
+    size_t expanded_regions  = 0;
+    size_t stolen_regions    = 0;
+
+    struct PendingRegionOffset {
+        int        region_id { -1 };
+        coordf_t   offset_mm { 0.f };
+        ExPolygons adjusted;
+    };
+
+    for (size_t layer_id = 0; layer_id < print_object.layer_count(); ++layer_id) {
+        Layer &layer = *print_object.get_layer(int(layer_id));
+        std::vector<PendingRegionOffset> pending;
+        pending.reserve(size_t(layer.region_count()));
+
+        for (int region_id = 0; region_id < layer.region_count(); ++region_id) {
+            LayerRegion *layerm = layer.get_region(region_id);
+            if (layerm == nullptr || layerm->slices.empty())
+                continue;
+
+            const unsigned int filament_id = unsigned(std::max(0, layerm->region().config().wall_filament.value));
+            if (!mixed_mgr.is_mixed(filament_id, num_physical))
+                continue;
+
+            const coordf_t offset_mm = coordf_t(mixed_mgr.component_surface_offset(filament_id,
+                                                                                    num_physical,
+                                                                                    int(layer_id),
+                                                                                    float(layer.print_z),
+                                                                                    float(layer.height)));
+            if (std::abs(offset_mm) <= EPSILON)
+                continue;
+
+            const float delta_scaled = float(scale_(std::abs(double(offset_mm))));
+            if (delta_scaled <= float(EPSILON))
+                continue;
+
+            ExPolygons adjusted = offset_ex(to_expolygons(layerm->slices.surfaces), offset_mm > 0 ? -delta_scaled : delta_scaled);
+            if (!adjusted.empty() && adjusted.size() > 1)
+                adjusted = union_ex(adjusted);
+
+            pending.push_back({ region_id, offset_mm, std::move(adjusted) });
+        }
+
+        if (pending.empty())
+            continue;
+
+        bool layer_changed = false;
+        for (const PendingRegionOffset &entry : pending) {
+            LayerRegion *layerm = layer.get_region(entry.region_id);
+            if (layerm == nullptr)
+                continue;
+
+            if (entry.offset_mm < 0 && !entry.adjusted.empty()) {
+                for (int other_region_id = 0; other_region_id < layer.region_count(); ++other_region_id) {
+                    if (other_region_id == entry.region_id)
+                        continue;
+
+                    LayerRegion *other = layer.get_region(other_region_id);
+                    if (other == nullptr || other->slices.empty())
+                        continue;
+
+                    ExPolygons stolen = intersection_ex(other->slices.surfaces, entry.adjusted);
+                    if (stolen.empty())
+                        continue;
+
+                    Polygons remaining = diff(to_polygons(other->slices.surfaces), entry.adjusted);
+                    other->slices.set(union_ex(remaining), stInternal);
+                    ++stolen_regions;
+                    layer_changed = true;
+                }
+            }
+
+            layerm->slices.set(entry.adjusted, stInternal);
+            ++changed_regions;
+            if (entry.offset_mm > 0)
+                ++contracted_regions;
+            else
+                ++expanded_regions;
+            layer_changed = true;
+        }
+
+        if (layer_changed)
+            ++changed_layers;
+    }
+
+    if (changed_regions == 0)
+        return false;
+
+    BOOST_LOG_TRIVIAL(warning) << "Mixed region surface offsets applied"
+                               << " object=" << (print_object.model_object() ? print_object.model_object()->name : std::string("<unknown>"))
+                               << " changed_layers=" << changed_layers
+                               << " changed_regions=" << changed_regions
+                               << " contracted_regions=" << contracted_regions
+                               << " expanded_regions=" << expanded_regions
+                               << " stolen_regions=" << stolen_regions;
+    return true;
 }
 
 static void export_local_z_plan_debug(const PrintObject &print_object, coordf_t lower_bound, coordf_t upper_bound)
@@ -3935,12 +4182,15 @@ void PrintObject::slice_volumes()
         BOOST_LOG_TRIVIAL(debug) << "Slicing volumes - MMU segmentation";
         std::vector<std::vector<ExPolygons>> mm_segmentation = multi_material_segmentation_by_painting(*this, [print]() { print->throw_if_canceled(); });
         apply_mixed_surface_indentation(*this, mm_segmentation);
+        apply_mixed_component_surface_offsets(*this, mm_segmentation);
         // Same-layer pointillisme is applied in G-code path domain (segment-level assignment),
         // not by XY state mask splitting, to avoid boolean-induced voids.
         BOOST_LOG_TRIVIAL(info) << "Same-layer pointillisme uses path-domain G-code segmentation";
         build_local_z_plan(*this, mm_segmentation, [print]() { print->throw_if_canceled(); });
         apply_mm_segmentation(*this, std::move(mm_segmentation), [print]() { print->throw_if_canceled(); });
     }
+
+    apply_mixed_region_surface_offsets(*this);
 
     // Is any ModelVolume fuzzy skin painted?
     if (this->model_object()->is_fuzzy_skin_painted()) {

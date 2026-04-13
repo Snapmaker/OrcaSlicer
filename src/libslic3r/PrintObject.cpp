@@ -950,6 +950,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_step_painted_zones_only"
+            || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_region_collapse"
             || opt_key == "mmu_segmented_region_max_width"
             || opt_key == "mmu_segmented_region_interlocking_depth"
@@ -973,6 +974,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "mixed_filament_height_lower_bound"
             || opt_key == "mixed_filament_height_upper_bound"
             || opt_key == "mixed_filament_advanced_dithering"
+            || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_surface_indentation"
             || opt_key == "mixed_filament_region_collapse"
             || opt_key == "mixed_filament_definitions") {

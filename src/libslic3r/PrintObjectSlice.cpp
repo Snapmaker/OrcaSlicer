@@ -897,6 +897,52 @@ static inline unsigned int segmentation_channel_filament_id(size_t channel_idx)
     return unsigned(channel_idx);
 }
 
+static float mixed_filament_reference_nozzle_mm(const MixedFilament &mixed_row, const ConfigOptionFloats &nozzle_diameters)
+{
+    std::vector<float> samples;
+    samples.reserve(2);
+
+    auto append_if_valid = [&samples, &nozzle_diameters](unsigned int component_id) {
+        if (component_id >= 1 && component_id <= nozzle_diameters.size())
+            samples.emplace_back(std::max(0.05f, float(nozzle_diameters.get_at(component_id - 1))));
+    };
+
+    append_if_valid(mixed_row.component_a);
+    append_if_valid(mixed_row.component_b);
+
+    if (samples.empty())
+        return 0.4f;
+    return std::accumulate(samples.begin(), samples.end(), 0.0f) / float(samples.size());
+}
+
+static coordf_t clamped_mixed_component_surface_offset(const MixedFilamentManager &mixed_mgr,
+                                                       const PrintConfig          &print_cfg,
+                                                       unsigned int                filament_id,
+                                                       size_t                      num_physical,
+                                                       int                         layer_index,
+                                                       float                       layer_print_z,
+                                                       float                       layer_height,
+                                                       bool                        force_height_weighted = false)
+{
+    const MixedFilament *mixed_row = mixed_mgr.mixed_filament_from_id(filament_id, num_physical);
+    if (mixed_row == nullptr)
+        return 0.f;
+
+    const coordf_t offset_mm = coordf_t(mixed_mgr.component_surface_offset(
+        filament_id,
+        num_physical,
+        layer_index,
+        layer_print_z,
+        layer_height,
+        force_height_weighted));
+    if (std::abs(offset_mm) <= EPSILON)
+        return 0.f;
+
+    const float reference_nozzle = mixed_filament_reference_nozzle_mm(*mixed_row, print_cfg.nozzle_diameter);
+    const coordf_t limit_mm = coordf_t(MixedFilamentManager::max_component_surface_offset_mm(reference_nozzle));
+    return std::clamp(offset_mm, -limit_mm, limit_mm);
+}
+
 static bool apply_mixed_surface_indentation(PrintObject &print_object, std::vector<std::vector<ExPolygons>> &segmentation)
 {
     const Print *print = print_object.print();
@@ -1041,6 +1087,8 @@ static bool apply_mixed_component_surface_offsets(PrintObject &print_object, std
     const DynamicPrintConfig &full_cfg  = print->full_print_config();
     if (bool_from_full_config(full_cfg, "dithering_local_z_mode", print_cfg.dithering_local_z_mode.value))
         return false;
+    if (!bool_from_full_config(full_cfg, "mixed_filament_component_bias_enabled", print_cfg.mixed_filament_component_bias_enabled.value))
+        return false;
 
     const size_t num_physical = print_cfg.filament_colour.size();
     const size_t num_channels = segmentation.front().size();
@@ -1065,7 +1113,6 @@ static bool apply_mixed_component_surface_offsets(PrintObject &print_object, std
     size_t emptied_states = 0;
     size_t expanded_states = 0;
     size_t contracted_states = 0;
-    size_t overlap_clipped_states = 0;
 
     for (size_t layer_id = 0; layer_id < segmentation.size(); ++layer_id) {
         if (segmentation[layer_id].size() != num_channels)
@@ -1085,11 +1132,13 @@ static bool apply_mixed_component_surface_offsets(PrintObject &print_object, std
             if (!mixed_mgr.is_mixed(state_id, num_physical))
                 continue;
 
-            const coordf_t offset_mm = coordf_t(mixed_mgr.component_surface_offset(state_id,
-                                                                                    num_physical,
-                                                                                    int(layer_id),
-                                                                                    layer_print_z,
-                                                                                    layer_height));
+            const coordf_t offset_mm = clamped_mixed_component_surface_offset(mixed_mgr,
+                                                                              print_cfg,
+                                                                              state_id,
+                                                                              num_physical,
+                                                                              int(layer_id),
+                                                                              layer_print_z,
+                                                                              layer_height);
             if (std::abs(offset_mm) <= EPSILON)
                 continue;
 
@@ -1113,8 +1162,6 @@ static bool apply_mixed_component_surface_offsets(PrintObject &print_object, std
                     occupied_other = union_ex(occupied_other);
                 if (!occupied_other.empty()) {
                     ExPolygons clipped = diff_ex(adjusted, occupied_other, ApplySafetyOffset::Yes);
-                    if (std::abs(area(clipped)) + EPSILON < std::abs(area(adjusted)))
-                        ++overlap_clipped_states;
                     adjusted = std::move(clipped);
                     if (!adjusted.empty() && adjusted.size() > 1)
                         adjusted = union_ex(adjusted);
@@ -1145,8 +1192,7 @@ static bool apply_mixed_component_surface_offsets(PrintObject &print_object, std
                                << " changed_states=" << changed_states
                                << " contracted_states=" << contracted_states
                                << " expanded_states=" << expanded_states
-                               << " emptied_states=" << emptied_states
-                               << " overlap_clipped_states=" << overlap_clipped_states;
+                               << " emptied_states=" << emptied_states;
     return true;
 }
 
@@ -2311,6 +2357,8 @@ static bool apply_mixed_region_surface_offsets(PrintObject &print_object)
     const DynamicPrintConfig &full_cfg  = print->full_print_config();
     if (bool_from_full_config(full_cfg, "dithering_local_z_mode", print_cfg.dithering_local_z_mode.value))
         return false;
+    if (!bool_from_full_config(full_cfg, "mixed_filament_component_bias_enabled", print_cfg.mixed_filament_component_bias_enabled.value))
+        return false;
 
     const size_t num_physical = print_cfg.filament_diameter.size();
     if (num_physical == 0)
@@ -2355,11 +2403,13 @@ static bool apply_mixed_region_surface_offsets(PrintObject &print_object)
             if (!mixed_mgr.is_mixed(filament_id, num_physical))
                 continue;
 
-            const coordf_t offset_mm = coordf_t(mixed_mgr.component_surface_offset(filament_id,
-                                                                                    num_physical,
-                                                                                    int(layer_id),
-                                                                                    float(layer.print_z),
-                                                                                    float(layer.height)));
+            const coordf_t offset_mm = clamped_mixed_component_surface_offset(mixed_mgr,
+                                                                              print_cfg,
+                                                                              filament_id,
+                                                                              num_physical,
+                                                                              int(layer_id),
+                                                                              float(layer.print_z),
+                                                                              float(layer.height));
             if (std::abs(offset_mm) <= EPSILON)
                 continue;
 
@@ -2367,7 +2417,8 @@ static bool apply_mixed_region_surface_offsets(PrintObject &print_object)
             if (delta_scaled <= float(EPSILON))
                 continue;
 
-            ExPolygons adjusted = offset_ex(to_expolygons(layerm->slices.surfaces), offset_mm > 0 ? -delta_scaled : delta_scaled);
+            const ExPolygons original = to_expolygons(layerm->slices.surfaces);
+            ExPolygons adjusted = offset_ex(original, offset_mm > 0 ? -delta_scaled : delta_scaled);
             if (!adjusted.empty() && adjusted.size() > 1)
                 adjusted = union_ex(adjusted);
 
@@ -3255,11 +3306,13 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
     const coordf_t            base_height = std::max<coordf_t>(0.01f, coordf_t(print_object.config().layer_height.value));
     const bool                collapse_mixed_regions =
         bool_from_full_config(full_cfg, "mixed_filament_region_collapse", print_cfg.mixed_filament_region_collapse.value);
+    const bool                bias_mode_enabled =
+        bool_from_full_config(full_cfg, "mixed_filament_component_bias_enabled", print_cfg.mixed_filament_component_bias_enabled.value);
     const MixedFilamentManager &mixed_mgr = print_object.print()->mixed_filament_manager();
 
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, segmentation.size(), std::max(segmentation.size() / 128, size_t(1))),
-        [&print_object, &segmentation, &mixed_mgr, num_physical, preferred_a, preferred_b, base_height, collapse_mixed_regions, throw_on_cancel](const tbb::blocked_range<size_t> &range) {
+        [&print_object, &segmentation, &mixed_mgr, num_physical, preferred_a, preferred_b, base_height, collapse_mixed_regions, bias_mode_enabled, throw_on_cancel](const tbb::blocked_range<size_t> &range) {
             const auto  &layer_ranges   = print_object.shared_regions()->layer_ranges;
             double       z              = print_object.get_layer(int(range.begin()))->slice_z;
             auto         it_layer_range = layer_range_first(layer_ranges, z);
@@ -3334,6 +3387,7 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                 std::vector<int> missing_target_extruders;
                 ExPolygons  default_segmentation = num_channels > 0 ? std::move(segmentation[layer_id][0]) : ExPolygons();
                 BoundingBox default_bbox;
+                bool        layer_has_component_bias = false;
                 if (!default_segmentation.empty()) {
                     default_bbox = get_extents(default_segmentation);
                     layer_split  = true;
@@ -3358,10 +3412,36 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         region.bbox = get_extents(region.expolygons);
                         layer_split = true;
                     }
+
+                    if (!region.expolygons.empty() &&
+                        bias_mode_enabled &&
+                        mixed_mgr.is_mixed(channel_id, num_physical) &&
+                        std::abs(mixed_mgr.component_surface_offset(channel_id,
+                                                                   num_physical,
+                                                                   int(layer_id),
+                                                                   float(layer.print_z),
+                                                                   float(layer.height))) > EPSILON)
+                        layer_has_component_bias = true;
                 }
 
                 if (!layer_split)
                     continue;
+
+                ExPolygons  layer_geometry_mask;
+                BoundingBox layer_geometry_bbox;
+                if (layer_has_component_bias) {
+                    if (!default_segmentation.empty())
+                        append(layer_geometry_mask, default_segmentation);
+                    for (const ByExtruder &segmented : by_extruder) {
+                        if (!segmented.expolygons.empty())
+                            append(layer_geometry_mask, segmented.expolygons);
+                    }
+                    if (!layer_geometry_mask.empty()) {
+                        if (layer_geometry_mask.size() > 1)
+                            layer_geometry_mask = closing_ex(union_ex(std::move(layer_geometry_mask)), scaled<float>(5. * EPSILON));
+                        layer_geometry_bbox = get_extents(layer_geometry_mask);
+                    }
+                }
 
                 // Split LayerRegions by by_extruder regions.
                 // layer_range.painted_regions are sorted by extruder ID and parent PrintObject region ID.
@@ -3399,6 +3479,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     it_painted_region_begin = it_first_painted_region;
 
                     const BoundingBox parent_layer_region_bbox = get_extents(parent_layer_region.slices.surfaces);
+                    const bool        clamp_parent_to_geometry =
+                        layer_has_component_bias &&
+                        layer_geometry_bbox.defined &&
+                        parent_layer_region_bbox.overlap(layer_geometry_bbox);
+                    ExPolygons        clamped_parent_expolygons;
+                    if (clamp_parent_to_geometry)
+                        clamped_parent_expolygons = intersection_ex(parent_layer_region.slices.surfaces, layer_geometry_mask);
+
                     int               self_extruder_id         = -1; // 1-based extruder ID
                     ExPolygons        explicit_self_expolygons;
                     ExPolygons        default_self_expolygons;
@@ -3465,7 +3553,11 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     }
 
                     // Trim slices of this LayerRegion with all the MM regions.
-                    Polygons mine = to_polygons(parent_layer_region.slices.surfaces);
+                    // Mixed bias can intentionally shrink a painted layer's true silhouette.
+                    // Clamp the parent region to the post-bias segmentation union so the
+                    // vacated area stays empty instead of falling back to the parent tool.
+                    Polygons mine = clamp_parent_to_geometry ? to_polygons(clamped_parent_expolygons) :
+                                                              to_polygons(parent_layer_region.slices.surfaces);
                     for (size_t extruder_idx = 0; extruder_idx < by_extruder.size(); ++extruder_idx) {
                         const ByExtruder &segmented = by_extruder[extruder_idx];
                         if (!assigned_extruder[extruder_idx])

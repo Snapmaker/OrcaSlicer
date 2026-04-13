@@ -4232,6 +4232,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
+    def = this->add("mixed_filament_component_bias_enabled", coBool);
+    def->label = L("Enable mixed filament bias");
+    def->category = L("Others");
+    def->tooltip = L("Show and apply the per-row mixed filament Bias control.\n\n"
+                     "When enabled, the selected filament in a mixed pair is recessed slightly so the other component becomes more visible.\n\n"
+                     "Bias is ignored for grouped wall patterns, same-layer pointillisme, and Local Z dithering.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("mixed_filament_surface_indentation", coFloat);
     def->label = L("Selective Expansion contraction");
     def->category = L("Others");

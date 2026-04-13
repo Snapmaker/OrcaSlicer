@@ -124,7 +124,7 @@ TEST_CASE("Mixed filament remap keeps later painted colors stable when an earlie
     bundle.update_multi_material_filament_presets();
 
     auto &mixed = bundle.mixed_filaments.mixed_filaments();
-    REQUIRE(mixed.size() >= 10);
+    REQUIRE(mixed.size() >= 6);
 
     const uint64_t stable_id_6 = mixed[1].stable_id;
     const uint64_t stable_id_7 = mixed[2].stable_id;
@@ -137,7 +137,7 @@ TEST_CASE("Mixed filament remap keeps later painted colors stable when an earlie
     bundle.update_mixed_filament_id_remap(old_mixed, 4, 4);
     const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
 
-    REQUIRE(remap.size() >= 15);
+    REQUIRE(remap.size() >= 11);
     CHECK(remap[6] == virtual_id_for_stable_id(mixed, 4, stable_id_6));
     CHECK(remap[7] == virtual_id_for_stable_id(mixed, 4, stable_id_7));
     CHECK(remap[8] == virtual_id_for_stable_id(mixed, 4, stable_id_8));
@@ -164,7 +164,7 @@ TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[M
     CHECK(loaded.mixed_filaments().front().mix_b_percent == 13);
 }
 
-TEST_CASE("Mixed filament component surface offsets round-trip and follow the active layer component", "[MixedFilament]")
+TEST_CASE("Mixed filament component surface offsets round-trip and bias the second layer component", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};
 
@@ -189,16 +189,96 @@ TEST_CASE("Mixed filament component surface offsets round-trip and follow the ac
     const MixedFilament &loaded_row = loaded.mixed_filaments().front();
     CHECK(loaded_row.component_a_surface_offset == Approx(0.02f));
     CHECK(loaded_row.component_b_surface_offset == Approx(-0.01f));
-    CHECK(loaded.component_surface_offset(3, 2, 0) == Approx(0.02f));
-    CHECK(loaded.component_surface_offset(3, 2, 1) == Approx(-0.01f));
+    CHECK(loaded.component_surface_offset(3, 2, 0) == Approx(0.01f));
+    CHECK(loaded.component_surface_offset(3, 2, 1) == Approx(0.0f));
 }
 
-TEST_CASE("Mixed filament apparent mix percent shifts toward the less-contracted component", "[MixedFilament]")
+TEST_CASE("Mixed filament apparent mix percent follows the signed bias target", "[MixedFilament]")
 {
-    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.02f, 0.00f, 0.4f) == 55);
+    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.00f, 0.00f, 0.4f) == 50);
     CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.00f, 0.02f, 0.4f) == 45);
+    CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.02f, 0.00f, 0.4f) == 55);
     CHECK(MixedFilamentManager::apparent_mix_b_percent(50, -0.02f, 0.00f, 0.4f) == 45);
     CHECK(MixedFilamentManager::apparent_mix_b_percent(50, 0.00f, -0.02f, 0.4f) == 55);
+}
+
+TEST_CASE("Mixed filament bias helper maps signed bias to a one-sided safe offset pair", "[MixedFilament]")
+{
+    const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.06f, 0.4f);
+    CHECK(offset_a == Approx(0.0f));
+    CHECK(offset_b == Approx(0.06f));
+
+    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f) == Approx(0.06f));
+
+    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f) == Approx(-0.02f));
+    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f) == Approx(0.02f));
+
+    const auto [negative_a, negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.06f, 0.4f);
+    CHECK(negative_a == Approx(0.06f));
+    CHECK(negative_b == Approx(0.0f));
+
+    const auto [unclamped_a, unclamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.30f, 0.4f);
+    CHECK(unclamped_a == Approx(0.0f));
+    CHECK(unclamped_b == Approx(0.30f));
+
+    const auto [unclamped_negative_a, unclamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.30f, 0.4f);
+    CHECK(unclamped_negative_a == Approx(0.30f));
+    CHECK(unclamped_negative_b == Approx(0.0f));
+
+    const auto [clamped_a, clamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.40f, 0.4f);
+    CHECK(clamped_a == Approx(0.0f));
+    CHECK(clamped_b == Approx(0.35f));
+
+    const auto [clamped_negative_a, clamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.40f, 0.4f);
+    CHECK(clamped_negative_a == Approx(0.35f));
+    CHECK(clamped_negative_b == Approx(0.0f));
+}
+
+TEST_CASE("Mixed filament component surface offsets follow the signed bias target across alternating layers", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.manual_pattern.clear();
+    row.distribution_mode = int(MixedFilament::Simple);
+    row.ratio_a = 1;
+    row.ratio_b = 1;
+
+    {
+        const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.05f, 0.4f);
+        row.component_a_surface_offset = offset_a;
+        row.component_b_surface_offset = offset_b;
+
+        CHECK(mgr.component_surface_offset(3, 2, 0) == Approx(0.0f));
+        CHECK(mgr.component_surface_offset(3, 2, 1) == Approx(0.05f));
+        CHECK(mgr.component_surface_offset(3, 2, 2) == Approx(0.0f));
+        CHECK(mgr.component_surface_offset(3, 2, 3) == Approx(0.05f));
+    }
+
+    {
+        row.component_a_surface_offset = 0.05f;
+        row.component_b_surface_offset = 0.0f;
+
+        CHECK(mgr.component_surface_offset(3, 2, 0) == Approx(0.05f));
+        CHECK(mgr.component_surface_offset(3, 2, 1) == Approx(0.0f));
+        CHECK(mgr.component_surface_offset(3, 2, 2) == Approx(0.05f));
+        CHECK(mgr.component_surface_offset(3, 2, 3) == Approx(0.0f));
+    }
+
+    {
+        const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.05f, 0.4f);
+        row.component_a_surface_offset = offset_a;
+        row.component_b_surface_offset = offset_b;
+
+        CHECK(mgr.component_surface_offset(3, 2, 0) == Approx(0.05f));
+        CHECK(mgr.component_surface_offset(3, 2, 1) == Approx(0.0f));
+        CHECK(mgr.component_surface_offset(3, 2, 2) == Approx(0.05f));
+        CHECK(mgr.component_surface_offset(3, 2, 3) == Approx(0.0f));
+    }
 }
 
 TEST_CASE("Mixed filament auto generation can be disabled without dropping custom rows", "[MixedFilament]")

@@ -4583,6 +4583,7 @@ public:
                              const std::vector<double> &nozzle_diameters,
                              const std::vector<wxColour> &palette,
                              const MixedFilamentPreviewSettings &preview_settings,
+                             bool bias_mode_enabled,
                              OnChangeFn on_change = {});
 
     // Get the updated mixed filament data
@@ -4604,6 +4605,7 @@ private:
     std::vector<double>             m_nozzle_diameters;
     std::vector<wxColour>           m_palette;
     MixedFilamentPreviewSettings    m_preview_settings;
+    bool                            m_bias_mode_enabled = false;
     bool                            m_has_changes = false;
 
     wxChoice                       *m_choice_a = nullptr;
@@ -4622,8 +4624,9 @@ private:
     wxStaticText                   *m_picker_b_label = nullptr;
     wxStaticText                   *m_picker_c_label = nullptr;
     wxStaticText                   *m_picker_d_label = nullptr;
+    wxPanel                        *m_surface_offset_target_container = nullptr;
     wxPanel                        *m_surface_offset_target_swatch = nullptr;
-    wxChoice                       *m_surface_offset_target_choice = nullptr;
+    wxStaticText                   *m_surface_offset_target_label = nullptr;
     MixedGradientSelector          *m_blend_selector = nullptr;
     wxStaticText                   *m_blend_label = nullptr;
     wxTextCtrl                     *m_pattern_ctrl = nullptr;
@@ -4711,17 +4714,26 @@ private:
         return m_fallback;
     }
 
-    int vertical_inset_for_extruder(unsigned int extruder_id, int rect_height) const
+    double max_active_surface_offset_mm() const
     {
-        if (extruder_id == 0 || extruder_id >= m_surface_offsets_mm.size() || rect_height <= 2)
+        double max_offset = 0.0;
+        for (double offset_mm : m_surface_offsets_mm)
+            max_offset = std::max(max_offset, std::abs(offset_mm));
+        return std::max(0.001, max_offset);
+    }
+
+    int slot_inset_for_extruder(unsigned int extruder_id, int slot_extent) const
+    {
+        if (extruder_id == 0 || extruder_id >= m_surface_offsets_mm.size() || slot_extent <= 2)
             return 0;
 
         const double offset_mm = m_surface_offsets_mm[extruder_id];
-        if (offset_mm <= 0.0)
+        if (std::abs(offset_mm) <= EPSILON)
             return 0;
 
-        const double normalized = std::clamp(offset_mm / 2.0, 0.0, 1.0);
-        return std::clamp(int(std::round(normalized * rect_height * 0.30)), 0, std::max(0, rect_height / 3));
+        const double normalized = std::clamp(std::abs(offset_mm) / max_active_surface_offset_mm(), 0.0, 1.0);
+        const int inset = int(std::round(normalized * slot_extent * 0.45)) * (offset_mm < 0.0 ? -1 : 1);
+        return std::clamp(inset, -std::max(0, slot_extent / 2), std::max(0, slot_extent / 2));
     }
 
     void on_paint(wxPaintEvent &)
@@ -4747,8 +4759,11 @@ private:
                     dc.SetBrush(wxBrush(color_for_extruder(m_sequence[idx])));
                     const int x = rect.GetLeft() + s * stripe_w;
                     const int w = (s == stripes - 1) ? (rect.GetRight() - x + 1) : stripe_w;
-                    const int inset_y = vertical_inset_for_extruder(extruder_id, rect.GetHeight());
-                    dc.DrawRectangle(x, rect.GetTop() + inset_y, std::max(1, w), std::max(1, rect.GetHeight() - inset_y * 2));
+                    const int inset = slot_inset_for_extruder(extruder_id, w);
+                    wxRect draw_rect(x + inset / 2, rect.GetTop(), std::max(1, w - inset), rect.GetHeight());
+                    draw_rect.Intersect(rect);
+                    if (draw_rect.GetWidth() > 0)
+                        dc.DrawRectangle(draw_rect);
                 }
             } else {
                 const int bars = 24;
@@ -4763,8 +4778,11 @@ private:
                     dc.SetBrush(wxBrush(color_for_extruder(extruder_id)));
                     const int x = rect.GetLeft() + i * bar_w;
                     const int w = (i == bars - 1) ? (rect.GetRight() - x + 1) : bar_w;
-                    const int inset_y = vertical_inset_for_extruder(extruder_id, rect.GetHeight());
-                    dc.DrawRectangle(x, rect.GetTop() + inset_y, std::max(1, w), std::max(1, rect.GetHeight() - inset_y * 2));
+                    const int inset = slot_inset_for_extruder(extruder_id, w);
+                    wxRect draw_rect(x + inset / 2, rect.GetTop(), std::max(1, w - inset), rect.GetHeight());
+                    draw_rect.Intersect(rect);
+                    if (draw_rect.GetWidth() > 0)
+                        dc.DrawRectangle(draw_rect);
                 }
             }
         }
@@ -5582,8 +5600,11 @@ int MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(const Mixe
 }
 
 static bool mixed_filament_supports_bias_apparent_color(const MixedFilament &mf,
-                                                        const MixedFilamentPreviewSettings &preview_settings)
+                                                        const MixedFilamentPreviewSettings &preview_settings,
+                                                        bool                                bias_mode_enabled)
 {
+    if (!bias_mode_enabled)
+        return false;
     if (preview_settings.local_z_mode)
         return false;
     if (mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
@@ -5593,24 +5614,6 @@ static bool mixed_filament_supports_bias_apparent_color(const MixedFilament &mf,
     if (mf.gradient_component_ids.size() >= 3)
         return false;
     return mf.component_a >= 1 && mf.component_b >= 1 && mf.component_a != mf.component_b;
-}
-
-static std::pair<int, float> mixed_filament_single_surface_offset_ui_state(const MixedFilament &mf)
-{
-    const float offset_a = mf.component_a_surface_offset;
-    const float offset_b = mf.component_b_surface_offset;
-    const bool has_a = std::abs(offset_a) > 1e-6f;
-    const bool has_b = std::abs(offset_b) > 1e-6f;
-
-    if (has_b && (!has_a || std::abs(offset_b) > std::abs(offset_a)))
-        return { 1, offset_b };
-    return { 0, has_a ? offset_a : 0.f };
-}
-
-static std::pair<float, float> mixed_filament_single_surface_offset_pair(int target_index, float value)
-{
-    const float clamped = std::clamp(value, -2.f, 2.f);
-    return target_index == 1 ? std::make_pair(0.f, clamped) : std::make_pair(clamped, 0.f);
 }
 
 static double mixed_filament_reference_nozzle_mm(unsigned int               component_a,
@@ -5633,12 +5636,37 @@ static double mixed_filament_reference_nozzle_mm(unsigned int               comp
     return std::accumulate(samples.begin(), samples.end(), 0.0) / double(samples.size());
 }
 
+static double mixed_filament_bias_limit_mm(const MixedFilament &mf, const std::vector<double> &nozzle_diameters)
+{
+    const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
+    return MixedFilamentManager::max_pair_bias_mm(float(reference_nozzle_mm));
+}
+
+static float mixed_filament_single_surface_offset_value(const MixedFilament       &mf,
+                                                        const std::vector<double> &nozzle_diameters)
+{
+    const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
+    return MixedFilamentManager::bias_ui_value_from_surface_offsets(
+        mf.component_a_surface_offset,
+        mf.component_b_surface_offset,
+        float(reference_nozzle_mm));
+}
+
+static std::pair<float, float> mixed_filament_single_surface_offset_pair(const MixedFilament       &mf,
+                                                                         float                      value,
+                                                                         const std::vector<double> &nozzle_diameters)
+{
+    const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
+    return MixedFilamentManager::surface_offset_pair_from_signed_bias(value, float(reference_nozzle_mm));
+}
+
 static std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedFilament               &mf,
                                                                     const MixedFilamentPreviewSettings &preview_settings,
-                                                                    const std::vector<double>          &nozzle_diameters)
+                                                                    const std::vector<double>          &nozzle_diameters,
+                                                                    bool                                bias_mode_enabled)
 {
     const int base_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(mf, preview_settings);
-    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings))
+    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
         return { 100 - base_b, base_b };
 
     const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
@@ -5651,15 +5679,16 @@ static std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedF
 
 static std::string mixed_filament_apparent_pair_summary(const MixedFilament               &mf,
                                                         const MixedFilamentPreviewSettings &preview_settings,
-                                                        const std::vector<double>          &nozzle_diameters)
+                                                        const std::vector<double>          &nozzle_diameters,
+                                                        bool                                bias_mode_enabled)
 {
-    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings))
+    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
         return {};
 
     const int base_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(mf, preview_settings);
     const int base_a = 100 - base_b;
     const auto [apparent_a, apparent_b] =
-        mixed_filament_apparent_pair_percentages(mf, preview_settings, nozzle_diameters);
+        mixed_filament_apparent_pair_percentages(mf, preview_settings, nozzle_diameters, bias_mode_enabled);
 
     if (std::abs(mf.component_a_surface_offset - mf.component_b_surface_offset) > 1e-4f &&
         (apparent_a != base_a || apparent_b != base_b)) {
@@ -5883,6 +5912,7 @@ MixedFilamentConfigPanel::MixedFilamentConfigPanel(wxWindow *parent,
                                                    const std::vector<double> &nozzle_diameters,
                                                    const std::vector<wxColour> &palette,
                                                    const MixedFilamentPreviewSettings &preview_settings,
+                                                   bool bias_mode_enabled,
                                                    OnChangeFn on_change)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE)
     , m_mixed_id(mixed_id)
@@ -5892,6 +5922,7 @@ MixedFilamentConfigPanel::MixedFilamentConfigPanel(wxWindow *parent,
     , m_nozzle_diameters(nozzle_diameters)
     , m_palette(palette)
     , m_preview_settings(preview_settings)
+    , m_bias_mode_enabled(bias_mode_enabled)
     , m_selected_weight_state(std::make_shared<std::vector<int>>())
     , m_on_change(on_change)
 {
@@ -5905,6 +5936,7 @@ MixedFilamentConfigPanel::MixedFilamentConfigPanel(wxWindow *parent,
 void MixedFilamentConfigPanel::build_ui()
 {
     const int gap = FromDIP(6);
+    const int compact_gap = std::max(FromDIP(2), gap / 3);
     const bool is_dark = wxGetApp().dark_mode();
     const wxColour panel_bg = GetBackgroundColour().IsOk() ? GetBackgroundColour() :
         (is_dark ? wxColour(52, 52, 56) : wxColour(255, 255, 255));
@@ -5967,8 +5999,10 @@ void MixedFilamentConfigPanel::build_ui()
         auto *container_sizer = new wxBoxSizer(wxHORIZONTAL);
         swatch_out = new wxPanel(container_out, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(12), FromDIP(12)), wxBORDER_SIMPLE);
         swatch_out->SetMinSize(wxSize(FromDIP(12), FromDIP(12)));
+        swatch_out->SetToolTip(tooltip);
         label_out = new wxStaticText(container_out, wxID_ANY, wxEmptyString);
         label_out->SetForegroundColour(local_picker_text);
+        label_out->SetToolTip(tooltip);
 
         auto *content_sizer = new wxBoxSizer(wxHORIZONTAL);
         content_sizer->Add(swatch_out, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, inner_gap);
@@ -6087,59 +6121,68 @@ void MixedFilamentConfigPanel::build_ui()
     auto *preview_row = new wxBoxSizer(wxHORIZONTAL);
     m_mix_preview = new MixedMixPreview(this);
     m_mix_preview->SetBackgroundColour(panel_bg);
-    preview_row->Add(m_mix_preview, 3, wxEXPAND | wxALIGN_CENTER_VERTICAL | wxRIGHT, gap);
+    preview_row->Add(m_mix_preview, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL | wxRIGHT, compact_gap);
 
     auto *bias_controls = new wxBoxSizer(wxHORIZONTAL);
-    const auto initial_surface_offset_state = mixed_filament_single_surface_offset_ui_state(m_mf);
+    const float initial_surface_offset_value = mixed_filament_single_surface_offset_value(m_mf, m_nozzle_diameters);
+    const double initial_bias_limit = mixed_filament_bias_limit_mm(m_mf, m_nozzle_diameters);
+    const wxString bias_tooltip =
+        _L("Positive bias recesses the second filament in the pair; negative bias recesses the first filament.\n\n"
+           "The color chip shows which filament the current value affects.\n\n"
+           "Grouped wall patterns, same-layer pointillisme, and Local-Z dithering ignore it.");
 
-    auto *surface_offset_label = new wxStaticText(this, wxID_ANY, _L("XY-Bias"));
+    auto *surface_offset_label = new wxStaticText(this, wxID_ANY, _L("Bias"));
     surface_offset_label->SetForegroundColour(is_dark ? wxColour(236, 236, 236) : wxColour(20, 20, 20));
-    surface_offset_label->SetToolTip(
-        _L("Additional XY offset applied only on layers where this mixed filament resolves to component A or B.\n\n"
-           "Positive values contract inward. Negative values expand outward.\n\n"
-           "Currently this is intended for ordinary layer/height cadence rows. Grouped wall patterns, same-layer pointillisme, and Local-Z dithering ignore it."));
-    bias_controls->Add(surface_offset_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, std::max(FromDIP(4), gap / 2));
+    surface_offset_label->SetToolTip(bias_tooltip);
+    bias_controls->Add(surface_offset_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, compact_gap);
 
-    auto *target_group = new wxBoxSizer(wxHORIZONTAL);
-    m_surface_offset_target_swatch = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(10), FromDIP(10)), wxBORDER_SIMPLE);
-    m_surface_offset_target_swatch->SetMinSize(wxSize(FromDIP(10), FromDIP(10)));
-    m_surface_offset_target_swatch->SetMaxSize(wxSize(FromDIP(10), FromDIP(10)));
-    m_surface_offset_target_swatch->SetToolTip(_L("Choose which filament in this pair receives the XY bias."));
-    target_group->Add(m_surface_offset_target_swatch, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(3));
+    create_component_picker(m_surface_offset_target_container,
+                            m_surface_offset_target_swatch,
+                            m_surface_offset_target_label,
+                            bias_tooltip);
+    if (m_surface_offset_target_container)
+        m_surface_offset_target_container->SetCursor(wxCursor(wxCURSOR_ARROW));
+    if (m_surface_offset_target_swatch)
+        m_surface_offset_target_swatch->SetCursor(wxCursor(wxCURSOR_ARROW));
+    if (m_surface_offset_target_label)
+        m_surface_offset_target_label->SetCursor(wxCursor(wxCURSOR_ARROW));
+    bias_controls->Add(m_surface_offset_target_container, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, compact_gap);
 
-    wxArrayString surface_offset_targets;
-    surface_offset_targets.Add(wxString::Format("F%d", int(m_mf.component_a)));
-    surface_offset_targets.Add(wxString::Format("F%d", int(m_mf.component_b)));
-    m_surface_offset_target_choice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(62), -1), surface_offset_targets);
-    m_surface_offset_target_choice->SetSelection(std::clamp(initial_surface_offset_state.first, 0, 1));
-    m_surface_offset_target_choice->SetToolTip(_L("Choose which filament in this pair receives the XY bias."));
-    target_group->Add(m_surface_offset_target_choice, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
-    bias_controls->Add(target_group, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-
-    m_surface_offset_spin = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(64), -1),
+    m_surface_offset_spin = new wxSpinCtrlDouble(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(58), -1),
                                                  wxSP_ARROW_KEYS | wxALIGN_RIGHT | wxTE_PROCESS_ENTER,
-                                                 -2.0, 2.0, std::clamp(double(initial_surface_offset_state.second), -2.0, 2.0), 0.01);
+                                                 -initial_bias_limit, initial_bias_limit,
+                                                 std::clamp(double(initial_surface_offset_value), -initial_bias_limit, initial_bias_limit), 0.001);
     m_surface_offset_spin->SetDigits(3);
-    m_surface_offset_spin->SetToolTip(
-        _L("XY bias for the selected filament on layers where this row resolves to it. Positive values contract inward. Negative values expand outward."));
-    bias_controls->Add(m_surface_offset_spin, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+    m_surface_offset_spin->SetToolTip(bias_tooltip);
+    bias_controls->Add(m_surface_offset_spin, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, compact_gap);
 
     auto *surface_offset_units = new wxStaticText(this, wxID_ANY, _L("mm"));
     surface_offset_units->SetForegroundColour(is_dark ? wxColour(210, 210, 210) : wxColour(72, 72, 72));
+    surface_offset_units->SetToolTip(bias_tooltip);
     bias_controls->Add(surface_offset_units, 0, wxALIGN_CENTER_VERTICAL);
-    preview_row->Add(bias_controls, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
+    if (m_bias_mode_enabled)
+        preview_row->Add(bias_controls, 0, wxALIGN_CENTER_VERTICAL);
+    else {
+        surface_offset_label->Hide();
+        if (m_surface_offset_target_container)
+            m_surface_offset_target_container->Hide();
+        if (m_surface_offset_spin)
+            m_surface_offset_spin->Hide();
+        surface_offset_units->Hide();
+    }
     root->Add(preview_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
 
-    const auto initial_surface_offset_pair =
-        mixed_filament_single_surface_offset_pair(initial_surface_offset_state.first, initial_surface_offset_state.second);
-    m_mf.component_a_surface_offset = initial_surface_offset_pair.first;
-    m_mf.component_b_surface_offset = initial_surface_offset_pair.second;
+    if (m_bias_mode_enabled) {
+        const auto initial_surface_offset_pair =
+            mixed_filament_single_surface_offset_pair(m_mf, initial_surface_offset_value, m_nozzle_diameters);
+        m_mf.component_a_surface_offset = initial_surface_offset_pair.first;
+        m_mf.component_b_surface_offset = initial_surface_offset_pair.second;
+    }
 
-    const bool initial_component_surface_offsets_supported = !pattern_row_mode &&
+    const bool initial_component_surface_offsets_supported = m_bias_mode_enabled &&
+                                                             !pattern_row_mode &&
                                                              row_distribution_mode != int(MixedFilament::SameLayerPointillisme) &&
                                                              !m_preview_settings.local_z_mode;
-    if (m_surface_offset_target_choice)
-        m_surface_offset_target_choice->Enable(initial_component_surface_offsets_supported);
     if (m_surface_offset_spin)
         m_surface_offset_spin->Enable(initial_component_surface_offsets_supported);
 
@@ -6179,6 +6222,18 @@ void MixedFilamentConfigPanel::build_ui()
     auto apply_changes = [this]() {
         m_has_changes = true;
 
+        double surface_offset_value = 0.0;
+        if (m_surface_offset_spin) {
+            surface_offset_value = m_surface_offset_spin->GetValue();
+#if !defined(wxHAS_NATIVE_SPINCTRLDOUBLE)
+            if (wxTextCtrl *text = m_surface_offset_spin->GetText()) {
+                double parsed_value = 0.0;
+                if (text->GetValue().ToDouble(&parsed_value))
+                    surface_offset_value = parsed_value;
+            }
+#endif
+        }
+
         int a = std::clamp(m_choice_a->GetSelection() + 1, 1, int(m_num_physical));
         int b = std::clamp(m_choice_b->GetSelection() + 1, 1, int(m_num_physical));
         if (a == b && m_num_physical > 1) {
@@ -6194,14 +6249,16 @@ void MixedFilamentConfigPanel::build_ui()
         const bool preserve_same_layer_mode = m_mf.distribution_mode == int(MixedFilament::SameLayerPointillisme);
         m_mf.component_a = unsigned(a);
         m_mf.component_b = unsigned(b);
-        const int surface_offset_target_index =
-            m_surface_offset_target_choice ? std::clamp(m_surface_offset_target_choice->GetSelection(), 0, 1) : 0;
-        const float surface_offset_value =
-            m_surface_offset_spin ? std::clamp(float(m_surface_offset_spin->GetValue()), -2.f, 2.f) : 0.f;
-        const auto surface_offset_pair =
-            mixed_filament_single_surface_offset_pair(surface_offset_target_index, surface_offset_value);
-        m_mf.component_a_surface_offset = surface_offset_pair.first;
-        m_mf.component_b_surface_offset = surface_offset_pair.second;
+        if (m_bias_mode_enabled) {
+            const double bias_limit = mixed_filament_bias_limit_mm(m_mf, m_nozzle_diameters);
+            const float clamped_surface_offset_value = std::clamp(float(surface_offset_value), -float(bias_limit), float(bias_limit));
+            const auto surface_offset_pair =
+                mixed_filament_single_surface_offset_pair(m_mf, clamped_surface_offset_value, m_nozzle_diameters);
+            m_mf.component_a_surface_offset = surface_offset_pair.first;
+            m_mf.component_b_surface_offset = surface_offset_pair.second;
+            if (m_surface_offset_spin)
+                m_surface_offset_spin->SetValue(clamped_surface_offset_value);
+        }
         m_mf.local_z_max_sublayers =
             (m_local_z_limit_checkbox != nullptr && m_local_z_limit_checkbox->GetValue() && m_local_z_limit_spin != nullptr) ?
                 std::max(2, m_local_z_limit_spin->GetValue()) :
@@ -6290,11 +6347,10 @@ void MixedFilamentConfigPanel::build_ui()
         m_mf.custom = true;
 
         const std::vector<unsigned int> selected_gradient_ids = decode_gradient_ids(m_mf.gradient_component_ids);
-        const bool component_surface_offsets_supported = (m_pattern_ctrl == nullptr) &&
+        const bool component_surface_offsets_supported = m_bias_mode_enabled &&
+                                                         (m_pattern_ctrl == nullptr) &&
                                                          !same_layer_mode &&
                                                          !m_preview_settings.local_z_mode;
-        if (m_surface_offset_target_choice)
-            m_surface_offset_target_choice->Enable(component_surface_offsets_supported);
         if (m_surface_offset_spin)
             m_surface_offset_spin->Enable(component_surface_offsets_supported);
         if (preview_sequence.empty())
@@ -6311,11 +6367,11 @@ void MixedFilamentConfigPanel::build_ui()
                 m_blend_selector->set_multi_preview(corner_colors, *m_selected_weight_state);
         }
 
-        if (mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings) &&
+        if (mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings, m_bias_mode_enabled) &&
             m_mf.component_a >= 1 && m_mf.component_b >= 1 &&
             m_mf.component_a <= m_physical_colors.size() && m_mf.component_b <= m_physical_colors.size()) {
             const auto [apparent_pct_a, apparent_pct_b] =
-                mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters);
+                mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
             m_mf.display_color = MixedFilamentManager::blend_color(
                 m_physical_colors[size_t(m_mf.component_a - 1)],
                 m_physical_colors[size_t(m_mf.component_b - 1)],
@@ -6344,13 +6400,14 @@ void MixedFilamentConfigPanel::build_ui()
         }
 
         if (m_mix_preview) {
-            const std::string bias_summary = mixed_filament_apparent_pair_summary(m_mf, m_preview_settings, m_nozzle_diameters);
+            const std::string bias_summary =
+                mixed_filament_apparent_pair_summary(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
             const std::string summary = bias_summary.empty() ? summarize_sequence(preview_sequence) : bias_summary;
             std::vector<double> preview_surface_offsets(m_palette.size() + 1, 0.0);
-            if (m_mf.component_a >= 1 && m_mf.component_a < preview_surface_offsets.size())
-                preview_surface_offsets[m_mf.component_a] = std::max(0.0, double(m_mf.component_a_surface_offset));
-            if (m_mf.component_b >= 1 && m_mf.component_b < preview_surface_offsets.size())
-                preview_surface_offsets[m_mf.component_b] = std::max(0.0, double(m_mf.component_b_surface_offset));
+            if (m_bias_mode_enabled && m_mf.component_a >= 1 && m_mf.component_a < preview_surface_offsets.size())
+                preview_surface_offsets[m_mf.component_a] = double(m_mf.component_a_surface_offset);
+            if (m_bias_mode_enabled && m_mf.component_b >= 1 && m_mf.component_b < preview_surface_offsets.size())
+                preview_surface_offsets[m_mf.component_b] = double(m_mf.component_b_surface_offset);
             m_mix_preview->set_data(m_palette, preview_sequence, same_layer_mode, preview_surface_offsets, wxColour(m_mf.display_color),
                                     _L("Preview"), summary.empty() ? wxString() : from_u8(summary));
         }
@@ -6448,8 +6505,6 @@ void MixedFilamentConfigPanel::build_ui()
             evt.Skip();
         });
     }
-    if (m_surface_offset_target_choice)
-        m_surface_offset_target_choice->Bind(wxEVT_CHOICE, [apply_changes](wxCommandEvent &) { apply_changes(); });
     if (m_surface_offset_spin) {
         m_surface_offset_spin->Bind(wxEVT_SPINCTRLDOUBLE, [apply_changes](wxSpinDoubleEvent &) { apply_changes(); });
         m_surface_offset_spin->Bind(wxEVT_TEXT_ENTER, [apply_changes](wxCommandEvent &) { apply_changes(); });
@@ -6503,6 +6558,7 @@ void MixedFilamentConfigPanel::build_ui()
         }
     }
 
+    update_component_picker_visuals();
     SetSizer(root);
     Layout();
     SetMinSize(wxSize(-1, GetBestSize().GetHeight()));
@@ -6557,22 +6613,33 @@ void MixedFilamentConfigPanel::update_component_picker_visuals()
     update_one(m_choice_c, m_picker_c_container, m_picker_c_swatch, m_picker_c_label);
     update_one(m_choice_d, m_picker_d_container, m_picker_d_swatch, m_picker_d_label);
 
-    if (m_surface_offset_target_choice) {
+    if (m_surface_offset_target_container || m_surface_offset_target_swatch || m_surface_offset_target_label || m_surface_offset_spin) {
         const int a_filament = std::clamp(m_choice_a ? (m_choice_a->GetSelection() + 1) : int(m_mf.component_a), 1, int(std::max<size_t>(1, m_num_physical)));
         const int b_filament = std::clamp(m_choice_b ? (m_choice_b->GetSelection() + 1) : int(m_mf.component_b), 1, int(std::max<size_t>(1, m_num_physical)));
-        if (m_surface_offset_target_choice->GetCount() >= 2) {
-            m_surface_offset_target_choice->SetString(0, wxString::Format("F%d", a_filament));
-            m_surface_offset_target_choice->SetString(1, wxString::Format("F%d", b_filament));
+        MixedFilament active_pair = m_mf;
+        active_pair.component_a = unsigned(a_filament);
+        active_pair.component_b = unsigned(b_filament);
+        double signed_bias_value = mixed_filament_single_surface_offset_value(active_pair, m_nozzle_diameters);
+
+        if (m_surface_offset_spin && m_bias_mode_enabled) {
+            const double bias_limit = mixed_filament_bias_limit_mm(active_pair, m_nozzle_diameters);
+            m_surface_offset_spin->SetRange(-bias_limit, bias_limit);
+            signed_bias_value = m_surface_offset_spin->GetValue();
         }
 
-        const int selected_target = std::clamp(m_surface_offset_target_choice->GetSelection(), 0, 1);
-        const int color_idx = (selected_target == 1 ? b_filament : a_filament) - 1;
+        const int active_filament = signed_bias_value < -EPSILON ? a_filament : b_filament;
+        const int color_idx = active_filament - 1;
         const wxColour color = (color_idx >= 0 && size_t(color_idx) < m_palette.size()) ? m_palette[size_t(color_idx)] : wxColour("#26A69A");
         if (m_surface_offset_target_swatch) {
             m_surface_offset_target_swatch->SetBackgroundColour(color);
             m_surface_offset_target_swatch->Refresh();
         }
-        m_surface_offset_target_choice->Refresh();
+        if (m_surface_offset_target_label)
+            m_surface_offset_target_label->SetLabel(wxString::Format("F%d", active_filament));
+        if (m_surface_offset_target_container) {
+            m_surface_offset_target_container->Layout();
+            m_surface_offset_target_container->Refresh();
+        }
     }
 }
 
@@ -6613,11 +6680,11 @@ void MixedFilamentConfigPanel::update_preview()
     }
 
     if (m_mix_preview) {
-        if (mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings) &&
+        if (mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings, m_bias_mode_enabled) &&
             m_mf.component_a >= 1 && m_mf.component_b >= 1 &&
             m_mf.component_a <= m_physical_colors.size() && m_mf.component_b <= m_physical_colors.size()) {
             const auto [apparent_pct_a, apparent_pct_b] =
-                mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters);
+                mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
             m_mf.display_color = MixedFilamentManager::blend_color(
                 m_physical_colors[size_t(m_mf.component_a - 1)],
                 m_physical_colors[size_t(m_mf.component_b - 1)],
@@ -6625,13 +6692,14 @@ void MixedFilamentConfigPanel::update_preview()
                 apparent_pct_b);
         }
 
-        const std::string bias_summary = mixed_filament_apparent_pair_summary(m_mf, m_preview_settings, m_nozzle_diameters);
+        const std::string bias_summary =
+            mixed_filament_apparent_pair_summary(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
         const std::string summary = bias_summary.empty() ? summarize_sequence(initial_sequence) : bias_summary;
         std::vector<double> preview_surface_offsets(m_palette.size() + 1, 0.0);
-        if (m_mf.component_a >= 1 && m_mf.component_a < preview_surface_offsets.size())
-            preview_surface_offsets[m_mf.component_a] = std::max(0.0, double(m_mf.component_a_surface_offset));
-        if (m_mf.component_b >= 1 && m_mf.component_b < preview_surface_offsets.size())
-            preview_surface_offsets[m_mf.component_b] = std::max(0.0, double(m_mf.component_b_surface_offset));
+        if (m_bias_mode_enabled && m_mf.component_a >= 1 && m_mf.component_a < preview_surface_offsets.size())
+            preview_surface_offsets[m_mf.component_a] = double(m_mf.component_a_surface_offset);
+        if (m_bias_mode_enabled && m_mf.component_b >= 1 && m_mf.component_b < preview_surface_offsets.size())
+            preview_surface_offsets[m_mf.component_b] = double(m_mf.component_b_surface_offset);
         m_mix_preview->set_data(m_palette, initial_sequence, same_layer_mode, preview_surface_offsets, wxColour(m_mf.display_color),
                                 _L("Preview"), summary.empty() ? wxString() : from_u8(summary));
     }
@@ -6870,6 +6938,22 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         else
             preset_bundle->project_config.set_key_value(key, new ConfigOptionString(value));
     };
+    auto set_mixed_bool = [preset_bundle, print_cfg](const std::string &key, bool value) {
+        if (print_cfg) {
+            if (ConfigOptionBool *opt = print_cfg->option<ConfigOptionBool>(key))
+                opt->value = value;
+            else if (ConfigOptionInt *opt = print_cfg->option<ConfigOptionInt>(key))
+                opt->value = value ? 1 : 0;
+            else
+                print_cfg->set_key_value(key, new ConfigOptionBool(value));
+        }
+        if (ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>(key))
+            opt->value = value;
+        else if (ConfigOptionInt *opt = preset_bundle->project_config.option<ConfigOptionInt>(key))
+            opt->value = value ? 1 : 0;
+        else
+            preset_bundle->project_config.set_key_value(key, new ConfigOptionBool(value));
+    };
     auto set_mixed_mode = [preset_bundle, print_cfg](bool enabled) {
         if (print_cfg) {
             if (ConfigOptionBool *opt = print_cfg->option<ConfigOptionBool>("mixed_filament_gradient_mode"))
@@ -7088,6 +7172,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (print_cfg && print_cfg->has("wall_loops"))
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
+    const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
     float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
     float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
     float mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.f), -2.f, 2.f);
@@ -7185,13 +7270,14 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         const bool same_layer_mode = entry.distribution_mode == int(MixedFilament::SameLayerPointillisme);
         return build_effective_pair_preview_sequence(entry.component_a, entry.component_b, effective_mix_b, same_layer_mode);
     };
-    auto compute_entry_display_color = [num_physical, &physical_colors, &nozzle_diameters, blend_from_sequence, build_entry_preview_sequence, preview_settings](const MixedFilament &entry) {
-        if (mixed_filament_supports_bias_apparent_color(entry, preview_settings) &&
+    auto compute_entry_display_color = [num_physical, &physical_colors, &nozzle_diameters, blend_from_sequence, build_entry_preview_sequence,
+                                        preview_settings, component_bias_enabled](const MixedFilament &entry) {
+        if (mixed_filament_supports_bias_apparent_color(entry, preview_settings, component_bias_enabled) &&
             entry.component_a >= 1 && entry.component_b >= 1 &&
             entry.component_a <= num_physical && entry.component_b <= num_physical &&
             entry.component_a <= physical_colors.size() && entry.component_b <= physical_colors.size()) {
             const auto [apparent_pct_a, apparent_pct_b] =
-                mixed_filament_apparent_pair_percentages(entry, preview_settings, nozzle_diameters);
+                mixed_filament_apparent_pair_percentages(entry, preview_settings, nozzle_diameters, component_bias_enabled);
             return MixedFilamentManager::blend_color(
                 physical_colors[entry.component_a - 1],
                 physical_colors[entry.component_b - 1],
@@ -7225,11 +7311,21 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         mixed_mgr.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
     }
 
+    if (component_bias_enabled) {
+        for (MixedFilament &entry : mixed_mgr.mixed_filaments()) {
+            const float bias_value = mixed_filament_single_surface_offset_value(entry, nozzle_diameters);
+            const auto balanced_pair = mixed_filament_single_surface_offset_pair(entry, bias_value, nozzle_diameters);
+            entry.component_a_surface_offset = balanced_pair.first;
+            entry.component_b_surface_offset = balanced_pair.second;
+        }
+    }
+
     // During project load, sidebar may refresh before physical filament combos
     // finish syncing. Avoid overwriting persisted mixed definitions while the
     // physical filament set is incomplete.
     if (num_physical >= 2) {
         set_mixed_mode(height_weighted_mode);
+        set_mixed_bool("mixed_filament_component_bias_enabled", component_bias_enabled);
         set_mixed_float("mixed_filament_height_lower_bound", lower_bound);
         set_mixed_float("mixed_filament_height_upper_bound", upper_bound);
         set_mixed_float("mixed_color_layer_height_a", preferred_local_z_a);
@@ -7640,7 +7736,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             return row->GetClientRect().Contains(local);
         };
 
-        auto ensure_editor = [this, mixed_id, num_physical, physical_colors, nozzle_diameters, palette, preview_settings, preset_bundle,
+        auto ensure_editor = [this, mixed_id, num_physical, physical_colors, nozzle_diameters, palette, preview_settings, component_bias_enabled, preset_bundle,
                               editor_host, editor_sizer, swatch, summary_label, header_panel, row,
                               rows_scroller, mixed_summary_text, apply_mixed_entry_changes]() {
             if (!preset_bundle || !editor_sizer || editor_sizer->GetItemCount() > 0)
@@ -7652,6 +7748,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
                 return;
 
             auto *editor = new MixedFilamentConfigPanel(editor_host, mixed_id, mfs[mixed_id], num_physical, physical_colors, nozzle_diameters, palette, preview_settings,
+                component_bias_enabled,
                 [this, mixed_id, swatch, summary_label, header_panel, row, rows_scroller, mixed_summary_text, apply_mixed_entry_changes](const MixedFilament &updated_mf) {
                     apply_mixed_entry_changes(mixed_id, updated_mf, true);
 
@@ -10360,6 +10457,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "mixed_filament_advanced_dithering",
                                     "mixed_filament_pointillism_pixel_size",
                                     "mixed_filament_pointillism_line_gap",
+                                    "mixed_filament_component_bias_enabled",
                                     "mixed_filament_surface_indentation"
                                 };
                                 preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);

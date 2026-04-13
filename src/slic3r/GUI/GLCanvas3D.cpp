@@ -9364,10 +9364,12 @@ void GLCanvas3D::_load_print_object_toolpaths(const PrintObject& print_object, c
                 for (const LayerRegion* layerm : layer->regions()) {
                     if (layerm->slices.surfaces.empty())
                         continue;
-                    const PrintRegionConfig& cfg = layerm->region().config();
-                    if (cfg.wall_filament.value    == m_selected_extruder ||
-                        cfg.sparse_infill_filament.value       == m_selected_extruder ||
-                        cfg.solid_infill_filament.value == m_selected_extruder ) {
+                    const int effective_wall_filament          = int(layerm->extruder(frPerimeter));
+                    const int effective_sparse_infill_filament = int(layerm->extruder(frInfill));
+                    const int effective_solid_infill_filament  = int(layerm->extruder(frSolidInfill));
+                    if (effective_wall_filament == m_selected_extruder ||
+                        effective_sparse_infill_filament == m_selected_extruder ||
+                        effective_solid_infill_filament == m_selected_extruder) {
                         at_least_one_has_correct_extruder = true;
                         break;
                     }
@@ -9389,16 +9391,19 @@ void GLCanvas3D::_load_print_object_toolpaths(const PrintObject& print_object, c
                 for (const LayerRegion *layerm : layer->regions()) {
                     if (is_selected_separate_extruder)
                     {
-                        const PrintRegionConfig& cfg = layerm->region().config();
+                        const int effective_wall_filament          = int(layerm->extruder(frPerimeter));
                         const int effective_sparse_infill_filament = int(layerm->extruder(frInfill));
-                        if (cfg.wall_filament.value != m_selected_extruder &&
+                        const int effective_solid_infill_filament  = int(layerm->extruder(frSolidInfill));
+                        if (effective_wall_filament != m_selected_extruder &&
                             effective_sparse_infill_filament != m_selected_extruder &&
-                            cfg.solid_infill_filament.value != m_selected_extruder)
+                            effective_solid_infill_filament != m_selected_extruder)
                             continue;
                     }
-                    if (ctxt.has_perimeters)
+                    if (ctxt.has_perimeters) {
+                        const int effective_wall_filament = int(layerm->extruder(frPerimeter));
                         _3DScene::extrusionentity_to_verts(layerm->perimeters, float(layer->print_z), copy,
-                        	select_geometry(idx_layer, layerm->region().config().wall_filament.value, 0));
+                            select_geometry(idx_layer, effective_wall_filament, 0));
+                    }
                     if (ctxt.has_infill) {
                         for (const ExtrusionEntity *ee : layerm->fills.entities) {
                             // fill represents infill extrusions of a single island.
@@ -9406,13 +9411,14 @@ void GLCanvas3D::_load_print_object_toolpaths(const PrintObject& print_object, c
                             if (! fill->entities.empty())
                             {
                                 const int effective_sparse_infill_filament = int(layerm->extruder(frInfill));
+                                const int effective_solid_infill_filament = int(layerm->extruder(frSolidInfill));
                                 _3DScene::extrusionentity_to_verts(*fill, float(layer->print_z), copy,
                                     select_geometry(idx_layer,
                                                     (fill->entities.front()->role() == erSolidInfill &&
                                                      std::abs(layerm->region().config().sparse_infill_density.value - 100.) < EPSILON) ?
-                                                        int(layerm->extruder(frSolidInfill)) :
+                                                        effective_solid_infill_filament :
                                                         (is_solid_infill(fill->entities.front()->role()) ?
-                                                             layerm->region().config().solid_infill_filament :
+                                                             effective_solid_infill_filament :
                                                              effective_sparse_infill_filament),
                                                     1));
                             }

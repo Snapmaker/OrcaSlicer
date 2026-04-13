@@ -1173,7 +1173,8 @@ std::string string_printf(const char *format, ...)
 
 std::string header_slic3r_generated()
 {
-	return std::string(SLIC3R_APP_NAME " " Snapmaker_VERSION);
+    // Keep generated G-code branded like Snapmaker Orca for printer-side compatibility.
+    return std::string("Snapmaker Orca ") + Snapmaker_VERSION;
 }
 
 std::string header_gcodeviewer_generated()

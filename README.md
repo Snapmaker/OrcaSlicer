@@ -48,6 +48,7 @@ Snapmaker Orca FullSpectrum includes support for **virtual mixed-color filaments
 - Visual preview showing the additive color blend
 - Enable/disable individual mixed filaments
 - Per-layer resolution control with customizable ratios
+- Optional per-pair Bias control for slightly recessing one component to push the apparent color toward the other
 - Seamless integration with the existing filament management system
 
 ### Using Mixed Filaments
@@ -60,6 +61,16 @@ Snapmaker Orca FullSpectrum includes support for **virtual mixed-color filaments
    - Enable/disable checkbox
 4. Mixed filaments can be assigned to objects just like physical filaments
 5. During slicing, the mixed filament resolves to alternating layers of its components
+
+### Bias Control
+Snapmaker Orca FullSpectrum also includes an optional **Bias** control for mixed filament pairs. When enabled in **Print Settings -> Others -> Mixed Filaments**, each mixed row gets a compact inline Bias value:
+
+- **Positive Bias** recesses the second filament in the pair
+- **Negative Bias** recesses the first filament in the pair
+- This lets you shift the apparent color without changing the nominal layer cadence
+- The inline preview updates to show the estimated apparent mix shift
+
+Example: for a pair like `F1 + F2`, a positive bias makes `F2` sit slightly lower, so `F1` visually dominates more. A negative bias does the opposite and recesses `F1`.
 
 ### Dithering Settings
 Snapmaker Orca FullSpectrum includes advanced dithering controls to fine-tune the layer alternation behavior for mixed filaments. These settings are found in **Others → Dithering** in the print settings:

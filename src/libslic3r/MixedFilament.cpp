@@ -216,6 +216,18 @@ static float clamp_surface_offset(float v)
     return std::clamp(v, -2.f, 2.f);
 }
 
+static float canonical_signed_bias_value(float component_a_surface_offset, float component_b_surface_offset)
+{
+    const float offset_a = clamp_surface_offset(component_a_surface_offset);
+    const float offset_b = clamp_surface_offset(component_b_surface_offset);
+
+    if (std::abs(offset_b) > EPSILON)
+        return offset_b;
+    if (std::abs(offset_a) > EPSILON)
+        return (offset_a >= 0.f) ? -std::abs(offset_a) : std::abs(offset_a);
+    return 0.f;
+}
+
 static std::string format_surface_offset_token(float value)
 {
     std::ostringstream ss;
@@ -1444,10 +1456,11 @@ float MixedFilamentManager::component_surface_offset(unsigned int filament_id,
                                           layer_print_z,
                                           layer_height,
                                           force_height_weighted);
-    if (resolved == mixed_row->component_a)
-        return clamp_surface_offset(mixed_row->component_a_surface_offset);
-    if (resolved == mixed_row->component_b)
-        return clamp_surface_offset(mixed_row->component_b_surface_offset);
+    const float signed_bias = canonical_signed_bias_value(mixed_row->component_a_surface_offset, mixed_row->component_b_surface_offset);
+    if (signed_bias > EPSILON && resolved == mixed_row->component_b)
+        return signed_bias;
+    if (signed_bias < -EPSILON && resolved == mixed_row->component_a)
+        return -signed_bias;
     return 0.f;
 }
 
@@ -1591,14 +1604,48 @@ std::string MixedFilamentManager::blend_color(const std::string &color_a,
     return rgb_to_hex({int(out_r), int(out_g), int(out_b)});
 }
 
+float MixedFilamentManager::max_component_surface_offset_mm(float reference_width_mm)
+{
+    const float safe_reference = std::max(0.05f, std::abs(reference_width_mm));
+    return std::clamp(safe_reference, 0.01f, 0.35f);
+}
+
+float MixedFilamentManager::max_pair_bias_mm(float reference_width_mm)
+{
+    return max_component_surface_offset_mm(reference_width_mm);
+}
+
+std::pair<float, float> MixedFilamentManager::surface_offset_pair_from_signed_bias(float bias_mm,
+                                                                                    float reference_width_mm)
+{
+    const float clamped_bias = std::clamp(bias_mm,
+                                          -max_pair_bias_mm(reference_width_mm),
+                                          max_pair_bias_mm(reference_width_mm));
+    if (clamped_bias > EPSILON)
+        return std::make_pair(0.f, clamped_bias);
+    if (clamped_bias < -EPSILON)
+        return std::make_pair(-clamped_bias, 0.f);
+    return std::make_pair(0.f, 0.f);
+}
+
+float MixedFilamentManager::bias_ui_value_from_surface_offsets(float component_a_surface_offset,
+                                                               float component_b_surface_offset,
+                                                               float reference_width_mm)
+{
+    return std::clamp(canonical_signed_bias_value(component_a_surface_offset, component_b_surface_offset),
+                      -max_pair_bias_mm(reference_width_mm),
+                      max_pair_bias_mm(reference_width_mm));
+}
+
 int MixedFilamentManager::apparent_mix_b_percent(int   mix_b_percent,
                                                  float component_a_surface_offset,
                                                  float component_b_surface_offset,
                                                  float reference_width_mm)
 {
     const float safe_reference = std::max(0.05f, std::abs(reference_width_mm));
-    const float shift_pct = 100.f * (clamp_surface_offset(component_a_surface_offset) -
-                                     clamp_surface_offset(component_b_surface_offset)) / safe_reference;
+    const float shift_pct = -100.f * std::clamp(canonical_signed_bias_value(component_a_surface_offset, component_b_surface_offset),
+                                                -max_pair_bias_mm(reference_width_mm),
+                                                max_pair_bias_mm(reference_width_mm)) / safe_reference;
     return clamp_int(int(std::lround(float(clamp_int(mix_b_percent, 0, 100)) + shift_pct)), 0, 100);
 }
 

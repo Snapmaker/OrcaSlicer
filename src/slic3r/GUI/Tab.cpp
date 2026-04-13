@@ -1793,6 +1793,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
+    const bool refresh_mixed_filament_panel =
+        m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled";
+
     // Keep Mixed Filaments global settings in sync with project_config. In
     // full_fff_config(), project_config is applied last and would otherwise
     // override the edited print preset value from the Others panel.
@@ -1805,6 +1808,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
          opt_key == "mixed_filament_advanced_dithering" ||
          opt_key == "mixed_filament_pointillism_pixel_size" ||
          opt_key == "mixed_filament_pointillism_line_gap" ||
+         opt_key == "mixed_filament_component_bias_enabled" ||
          opt_key == "mixed_filament_surface_indentation" ||
          opt_key == "mixed_filament_region_collapse" ||
          opt_key == "dithering_z_step_size" ||
@@ -1820,6 +1824,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if(m_active_page)
         m_active_page->update_visibility(m_mode, true);
     m_page_view->GetParent()->Layout();
+
+    if (refresh_mixed_filament_panel && wxGetApp().plater() != nullptr)
+        wxGetApp().sidebar().update_mixed_filament_panel(false);
 }
 
 void Tab::show_timelapse_warning_dialog() {
@@ -2543,6 +2550,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
         optgroup->append_single_option_line("mixed_filament_advanced_dithering");
         optgroup->append_single_option_line("mixed_filament_pointillism_pixel_size");
         optgroup->append_single_option_line("mixed_filament_pointillism_line_gap");
+        optgroup->append_single_option_line("mixed_filament_component_bias_enabled");
         optgroup->append_single_option_line("mixed_filament_surface_indentation");
         optgroup->append_single_option_line("mixed_filament_region_collapse");
         optgroup->append_single_option_line("dithering_z_step_size");

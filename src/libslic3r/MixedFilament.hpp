@@ -229,6 +229,13 @@ public:
     static std::string blend_color(const std::string &color_a,
                                    const std::string &color_b,
                                    int ratio_a, int ratio_b);
+    static float max_component_surface_offset_mm(float reference_width_mm = 0.4f);
+    static float max_pair_bias_mm(float reference_width_mm = 0.4f);
+    static std::pair<float, float> surface_offset_pair_from_signed_bias(float bias_mm,
+                                                                        float reference_width_mm = 0.4f);
+    static float bias_ui_value_from_surface_offsets(float component_a_surface_offset,
+                                                    float component_b_surface_offset,
+                                                    float reference_width_mm = 0.4f);
     static int apparent_mix_b_percent(int   mix_b_percent,
                                       float component_a_surface_offset,
                                       float component_b_surface_offset,

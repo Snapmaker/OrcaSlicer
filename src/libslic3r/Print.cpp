@@ -296,6 +296,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "mixed_filament_height_lower_bound"
             || opt_key == "mixed_filament_height_upper_bound"
             || opt_key == "mixed_filament_advanced_dithering"
+            || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_surface_indentation"
             || opt_key == "mixed_filament_region_collapse"
             || opt_key == "mixed_filament_definitions"

@@ -404,6 +404,8 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
 // Remove leftover paritally downloaded files, if any.
 void PresetUpdater::priv::prune_tmps() const
 {
+    if (!fs::exists(cache_path) || !fs::is_directory(cache_path))
+        return;
     for (auto &dir_entry : boost::filesystem::directory_iterator(cache_path))
 		if (is_plain_file(dir_entry) && dir_entry.path().extension() == TMP_EXTENSION) {
 			BOOST_LOG_TRIVIAL(debug) << "[Orca Updater]remove old cached files: " << dir_entry.path().string();
@@ -883,11 +885,10 @@ void PresetUpdater::priv::download_profiles_resource_async(const std::string& ur
                     }
                 }
             }
-
-            bool show_dialog = !isAuto_check;  // If not auto check, show dialog to user
-            GUI::wxGetApp().CallAfter([show_dialog]() {
+            
+            GUI::wxGetApp().CallAfter([]() {
                 // Call check_config_updates_from_updater to check and apply updates
-                GUI::wxGetApp().check_config_updates_from_updater(show_dialog);
+                GUI::wxGetApp().check_config_updates_from_updater(true);
             });
         })
         .timeout_max(TIMEOUT_CONNECT)  
@@ -1072,13 +1073,14 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 auto reservedData    = dataObj.value("reserved_1", "");
                 auto reservedData2   = dataObj.value("reserved_2", "");
 
-                auto        localProfilesjson    = cache_path / "profiles/Snapmaker.json";
-                std::string json_path            = data_dir() + "/system/Snapmaker.json";
-                std::string fileName             = cache_profile_path.string() + "/profiles.zip";                
-                Semver      currentPresetVersion = get_version_from_json(json_path);
-                Semver      remoteVersion(fileVersion);
-                Semver      minSpVersion(minSupportPcVersion);
-                Semver      maxSpVersion(maxSupportPcVersion);
+                std::string fileName = cache_profile_path.string() + "/profiles.zip";
+                // Compare server package against the vendor version actually loaded in the running app (not OTA cache / stale file).
+                Semver currentPresetVersion;
+                if (GUI::wxGetApp().preset_bundle)
+                    currentPresetVersion =
+                        GUI::wxGetApp().preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE);
+                else
+                    currentPresetVersion = get_version_from_json(data_dir() + "/system/Snapmaker.json");
 
                 std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
@@ -1106,15 +1108,28 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     return;
                 }
 
+                const auto remoteParsed = Semver::parse(fileVersion);
+                if (!remoteParsed) {
+                    BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: invalid file_version in OTA response: " << fileVersion;
+                    if (!isAuto_check) {
+                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                        GUI::wxGetApp().QueueEvent(evt);
+                    }
+                    return;
+                }
+                const Semver remoteVersion = *remoteParsed;
+
                 bool maxRes = false;
                 bool minRes = false;
 
                 if (!maxSupportPcVersion.empty()) {
-                    maxRes = currentSoftVersion > maxSpVersion;
+                    if (const auto maxSp = Semver::parse(maxSupportPcVersion))
+                        maxRes = currentSoftVersion > *maxSp;
                 }
 
                 if (!minSupportPcVersion.empty()) {
-                    minRes = currentSoftVersion < minSpVersion;
+                    if (const auto minSp = Semver::parse(minSupportPcVersion))
+                        minRes = currentSoftVersion < *minSp;
                 }
 
                 if (maxRes || minRes) {                
@@ -1123,6 +1138,15 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                         GUI::wxGetApp().QueueEvent(evt);
 
                         BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
+                    }
+                    return;
+                }
+
+                if (fileUrl.empty()) {
+                    BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: OTA response missing file_url";
+                    if (!isAuto_check) {
+                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                        GUI::wxGetApp().QueueEvent(evt);
                     }
                     return;
                 }
@@ -1626,8 +1650,8 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
     auto cache_profile_path =  cache_path / "profiles/profiles";
     BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:cache_profile_path: " << cache_profile_path.string()
                             << ", exists: " << fs::exists(cache_profile_path);
-    if (!fs::exists(cache_profile_path)) {
-        BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:cache_profile_path does not exist, no updates available";
+    if (!fs::exists(cache_profile_path) || !fs::is_directory(cache_profile_path)) {
+        BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:cache_profile_path missing or not a directory, no updates";
         return updates;
     }
 
@@ -1653,7 +1677,10 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                 || fs::exists(print_in_cache)
                 || fs::exists(filament_in_cache)
                 || fs::exists(machine_in_cache)) {
-                Semver vendor_ver = get_version_from_json(path_in_vendor.string());
+                // OTA may ship a new vendor before any system vendor JSON exists; avoid reading a missing path.
+                Semver vendor_ver;
+                if (fs::exists(path_in_vendor))
+                    vendor_ver = get_version_from_json(path_in_vendor.string());
 
                 std::map<std::string, std::string> key_values;
                 std::vector<std::string> keys(3);
@@ -1846,7 +1873,8 @@ static bool reload_configs_update_gui()
 
 	GUI::wxGetApp().preset_bundle->load_presets(*app_config, ForwardCompatibilitySubstitutionRule::EnableSilentDisableSystem);
 	GUI::wxGetApp().load_current_presets();
-	GUI::wxGetApp().plater()->set_bed_shape();
+	if (GUI::Plater* pl = GUI::wxGetApp().plater())
+		pl->set_bed_shape();
 
 	return true;
 }
@@ -1886,22 +1914,23 @@ PresetUpdater::UpdateResult PresetUpdater::config_update(const Semver& old_slic3
                 BOOST_LOG_TRIVIAL(warning) << format("[Orca Updater]:reload_configs_update_gui failed");
                 return R_INCOMPAT_EXIT;
             }
-            for(auto b : bundles){
-            Semver cur_ver = GUI::wxGetApp().preset_bundle->get_vendor_profile_version(b);
-            GUI::wxGetApp()
-                .plater()
-                ->get_notification_manager()
-                ->push_notification(GUI::NotificationType::PresetUpdateFinished,
-                                    GUI::NotificationManager::NotificationLevel::ImportantNotificationLevel,
-                                    _u8L("Configuration package: ") + b + _u8L(" updated to ") + cur_ver.to_string());
+            if (GUI::Plater* plater = GUI::wxGetApp().plater()) {
+                for (const auto &b : bundles) {
+                    Semver cur_ver = GUI::wxGetApp().preset_bundle->get_vendor_profile_version(b);
+                    plater->get_notification_manager()->push_notification(
+                        GUI::NotificationType::PresetUpdateFinished,
+                        GUI::NotificationManager::NotificationLevel::ImportantNotificationLevel,
+                        _u8L("Configuration package: ") + b + _u8L(" updated to ") + cur_ver.to_string());
+                }
             }
             return R_UPDATE_INSTALLED;
         }
 
-        // regular update
-        if (/* params == UpdateParams::SHOW_NOTIFICATION */0) {
+        // regular update: background sync uses SHOW_NOTIFICATION (no modal); manual check uses dialog below.
+        if (params == UpdateParams::SHOW_NOTIFICATION) {
             p->set_waiting_updates(updates);
-            GUI::wxGetApp().plater()->get_notification_manager()->push_notification(GUI::NotificationType::PresetUpdateAvailable);
+            if (GUI::Plater* plater = GUI::wxGetApp().plater())
+                plater->get_notification_manager()->push_notification(GUI::NotificationType::PresetUpdateAvailable);
         }
         else {
             BOOST_LOG_TRIVIAL(info) << format("[Orca Updater]:Configuration package available. size %1%, need to confirm...", p->waiting_updates.updates.size());
@@ -2175,7 +2204,7 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
                 return;
             }
 
-            app->recreate_GUI(_L("Update web resources"));
+            app->schedule_recreate_gui_when_no_modal(_L("Update web resources"));
         }
             
 

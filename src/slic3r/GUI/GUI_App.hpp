@@ -505,6 +505,7 @@ private:
     void            check_printer_presets();
 
     void            recreate_GUI(const wxString& message);
+    void            schedule_recreate_gui_when_no_modal(const wxString& message);
     void            system_info();
     void            keyboard_shortcuts();
     void            load_project(wxWindow *parent, wxString& input_file) const;

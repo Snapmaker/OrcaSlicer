@@ -1,4 +1,4 @@
-# Snapmaker Orca FullSpectrum v0.9.51
+# Snapmaker Orca FullSpectrum v0.9.6
 
 Mixed-filament bias controls, preview updates, and release cleanup.
 Based on Snapmaker Orca v2.3.1.
@@ -24,7 +24,7 @@ Based on Snapmaker Orca v2.3.1.
 - Fixed region handling so recessed mixed-filament space is not immediately refilled by the other component in the common painted path.
 
 ### Release And Project Maintenance
-- Bumped the FullSpectrum version to `0.9.51`.
+- Bumped the FullSpectrum version to `0.9.6`.
 - Moved older changelogs and release notes into `doc/changelogs/` and updated the release workflow to read them from there.
 - Refreshed the README mixed-filament section to document the Bias feature and added a compatibility warning for older `.3mf` projects.
 

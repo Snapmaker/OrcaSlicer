@@ -53,7 +53,43 @@ using Slic3r::GUI::Config::SnapshotDB;
 // FIXME: Incompat bundle resolution doesn't deal with inherited user presets
 
 namespace Slic3r {
+namespace {
 
+// While profile `MsgUpdateConfig` is shown, Flutter `load_flutter_web` skips its own `MsgUpdateConfig` (no stacked modals).
+struct ProfileConfigUpdateDlgScope {
+    Slic3r::GUI::GUI_App *app;
+    explicit ProfileConfigUpdateDlgScope(Slic3r::GUI::GUI_App *a) : app(a)
+    {
+        if (app)
+            app->set_profile_config_update_dlg_open(true);
+    }
+    ~ProfileConfigUpdateDlgScope()
+    {
+        if (app)
+            app->set_profile_config_update_dlg_open(false);
+    }
+    ProfileConfigUpdateDlgScope(const ProfileConfigUpdateDlgScope &)            = delete;
+    ProfileConfigUpdateDlgScope &operator=(const ProfileConfigUpdateDlgScope &) = delete;
+};
+
+// Covers `MsgUpdateConfig::ShowModal()` in `load_flutter_web`; profiles CallAfter checks this (atomic).
+struct FlutterWebConfigUpdateDlgScope {
+    Slic3r::GUI::GUI_App *app;
+    explicit FlutterWebConfigUpdateDlgScope(Slic3r::GUI::GUI_App *p) : app(p)
+    {
+        if (app)
+            app->set_flutter_web_config_update_dlg_open(true);
+    }
+    ~FlutterWebConfigUpdateDlgScope()
+    {
+        if (app)
+            app->set_flutter_web_config_update_dlg_open(false);
+    }
+    FlutterWebConfigUpdateDlgScope(const FlutterWebConfigUpdateDlgScope &)            = delete;
+    FlutterWebConfigUpdateDlgScope &operator=(const FlutterWebConfigUpdateDlgScope &) = delete;
+};
+
+} // namespace
 
 static const char *INDEX_FILENAME = "index.idx";
 static const char *TMP_EXTENSION = ".data";
@@ -886,9 +922,13 @@ void PresetUpdater::priv::download_profiles_resource_async(const std::string& ur
                 }
             }
             
-            GUI::wxGetApp().CallAfter([]() {
-                // Call check_config_updates_from_updater to check and apply updates
-                GUI::wxGetApp().check_config_updates_from_updater(true);
+            GUI::wxGetApp().CallAfter([isAuto_check]() {
+                Slic3r::GUI::GUI_App &app = GUI::wxGetApp();
+                if (app.flutter_web_config_update_dlg_open()) {
+                    app.check_config_updates_from_updater(false);
+                    return;
+                }
+                app.check_config_updates_from_updater(!isAuto_check);
             });
         })
         .timeout_max(TIMEOUT_CONNECT)  
@@ -1927,7 +1967,7 @@ PresetUpdater::UpdateResult PresetUpdater::config_update(const Semver& old_slic3
         }
 
         // regular update: background sync uses SHOW_NOTIFICATION (no modal); manual check uses dialog below.
-        if (params == UpdateParams::SHOW_NOTIFICATION) {
+        if (/*params == UpdateParams::SHOW_NOTIFICATION*/0) {
             p->set_waiting_updates(updates);
             if (GUI::Plater* plater = GUI::wxGetApp().plater())
                 plater->get_notification_manager()->push_notification(GUI::NotificationType::PresetUpdateAvailable);
@@ -1943,9 +1983,14 @@ PresetUpdater::UpdateResult PresetUpdater::config_update(const Semver& old_slic3
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
 
-            GUI::MsgUpdateConfig dlg(updates_msg, params == UpdateParams::FORCED_BEFORE_WIZARD);
+            GUI::GUI_App *app_ptr = dynamic_cast<GUI::GUI_App *>(&GUI::wxGetApp());
+            int           res      = wxID_CANCEL;
+            {
+                ProfileConfigUpdateDlgScope profile_cfg_scope(app_ptr);
+                GUI::MsgUpdateConfig        dlg(updates_msg, params == UpdateParams::FORCED_BEFORE_WIZARD);
+                res = dlg.ShowModal();
+            } // Flag cleared as soon as modal returns (atomic: visible to updater threads / CallAfter).
 
-            const auto res = dlg.ShowModal();
             if (res == wxID_OK) {
                 BOOST_LOG_TRIVIAL(debug) << "[Orca Updater]:selected yes to update";
                 if (! p->perform_updates(std::move(updates)) ||
@@ -2020,9 +2065,13 @@ void PresetUpdater::on_update_notification_confirm()
 		updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
 	}
 
-	GUI::MsgUpdateConfig dlg(updates_msg);
-
-	const auto res = dlg.ShowModal();
+	GUI::GUI_App *app_ptr = dynamic_cast<GUI::GUI_App *>(&GUI::wxGetApp());
+	int           res     = wxID_CANCEL;
+	{
+		ProfileConfigUpdateDlgScope profile_cfg_scope(app_ptr);
+		GUI::MsgUpdateConfig        dlg(updates_msg);
+		res = dlg.ShowModal();
+	}
 	if (res == wxID_OK) {
 		BOOST_LOG_TRIVIAL(debug) << "User agreed to perform the update";
 		if (p->perform_updates(std::move(p->waiting_updates)) &&
@@ -2047,9 +2096,13 @@ void PresetUpdater::do_printer_config_update()
         updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
     }
 
-    GUI::MsgUpdateConfig dlg(updates_msg);
-
-    const auto res = dlg.ShowModal();
+    GUI::GUI_App *app_ptr = dynamic_cast<GUI::GUI_App *>(&GUI::wxGetApp());
+    int           res     = wxID_CANCEL;
+    {
+        ProfileConfigUpdateDlgScope profile_cfg_scope(app_ptr);
+        GUI::MsgUpdateConfig        dlg(updates_msg);
+        res = dlg.ShowModal();
+    }
     if (res == wxID_OK) {
         BOOST_LOG_TRIVIAL(debug) << "User agreed to perform the update";
         if (p->perform_updates(std::move(p->waiting_printer_updates)))
@@ -2174,9 +2227,18 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
 
-            GUI::MsgUpdateConfig dlg(updates_msg);
+            if (app && app->profile_config_update_dlg_open()) {
+                BOOST_LOG_TRIVIAL(info) << "[Flutter Updater] Skipping web resource configuration dialog: profile configuration dialog is active.";
+                boost::filesystem::remove_all(temp_path);
+                return;
+            }
 
-            const auto res = dlg.ShowModal();
+            int res = wxID_CANCEL;
+            {
+                FlutterWebConfigUpdateDlgScope flutter_dlg_scope(app);
+                GUI::MsgUpdateConfig           dlg(updates_msg);
+                res                            = dlg.ShowModal();
+            }
 
             if (res == wxID_OK) {
                 p->perform_updates(std::move(updates));
@@ -2371,9 +2433,12 @@ void PresetUpdater::import_system_profile()
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
 
-            GUI::MsgUpdateConfig dlg(updates_msg);
-
-            const auto res = dlg.ShowModal();
+            int res = wxID_CANCEL;
+            {
+                ProfileConfigUpdateDlgScope profile_cfg_scope(app);
+                GUI::MsgUpdateConfig        dlg(updates_msg);
+                res = dlg.ShowModal();
+            }
 
             if (res == wxID_OK) {
                 p->perform_updates(std::move(updates));

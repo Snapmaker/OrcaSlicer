@@ -1440,6 +1440,11 @@ std::string AppConfig::config_path()
 
 std::string AppConfig::get_preset_upgrade_url() 
 {
+    std::string resourceUrl = get("profile_upgrade_url");
+    
+    if(!resourceUrl.empty())
+        return resourceUrl;
+    
     std::string localLanguage = get("language");
     if (localLanguage != "zh_CN")
         localLanguage = "en";
@@ -1453,6 +1458,12 @@ std::string AppConfig::get_preset_upgrade_url()
 
 std::string AppConfig::get_web_resource_upgrade_url()
 {
+    
+    std::string resourceUrl = get("flutter_upgrade_url");
+    
+    if(!resourceUrl.empty())
+        return resourceUrl;
+    
     std::string localLanguage = get("language");
     if (localLanguage != "zh_CN")
         localLanguage = "en";
@@ -1465,7 +1476,13 @@ std::string AppConfig::get_web_resource_upgrade_url()
 }
 
 std::string AppConfig::get_version_upgrade_url(bool stable_only /* = false*/) 
-{ 
+{
+    
+    std::string resourceUrl = get("orca_upgrade_url");
+    
+    if(!resourceUrl.empty())
+        return resourceUrl;
+    
     //get local area and get the resource from diff server
     std::string localLanguage = get("language");
     if (localLanguage != "zh_CN")

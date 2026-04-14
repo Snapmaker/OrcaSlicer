@@ -1097,7 +1097,23 @@ Sidebar::Sidebar(Plater *parent)
             std::string                device_name = "";
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
-            if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type == "Snapmaker U1")
+            const bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+
+            const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
+            if (!sync_nozzle_slots.empty()) {
+                nozzle_diameters.clear();
+                for (const auto& slot : sync_nozzle_slots) {
+                    std::string nd = slot.nozzle_info;
+                    boost::algorithm::trim(nd);
+                    if (nd.size() > 2 && boost::iends_with(nd, "mm")) {
+                        nd.resize(nd.size() - 2);
+                        boost::algorithm::trim(nd);
+                    }
+                    if (!nd.empty())
+                        nozzle_diameters.push_back(nd);
+                }
+            }
+            if (got_machine_info && machine_type == "Snapmaker U1")
             {
                 if (nozzle_diameters.size() <= 0)
                 {
@@ -6378,6 +6394,9 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
     wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));
    
+    if (isPeiBedMatchTpu && isPeiBedMatchNotPla)
+        isPeiBedMatchNotPla = false;
+
     if (isGraphicMatch || isPeiBedMatchNotPla)
     {
         notification_manager->close_notification_of_type(NotificationType::CustomNotification);

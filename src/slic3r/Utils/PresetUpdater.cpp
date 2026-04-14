@@ -53,7 +53,43 @@ using Slic3r::GUI::Config::SnapshotDB;
 // FIXME: Incompat bundle resolution doesn't deal with inherited user presets
 
 namespace Slic3r {
+namespace {
 
+// While profile `MsgUpdateConfig` is shown, Flutter `load_flutter_web` skips its own `MsgUpdateConfig` (no stacked modals).
+struct ProfileConfigUpdateDlgScope {
+    Slic3r::GUI::GUI_App *app;
+    explicit ProfileConfigUpdateDlgScope(Slic3r::GUI::GUI_App *a) : app(a)
+    {
+        if (app)
+            app->set_profile_config_update_dlg_open(true);
+    }
+    ~ProfileConfigUpdateDlgScope()
+    {
+        if (app)
+            app->set_profile_config_update_dlg_open(false);
+    }
+    ProfileConfigUpdateDlgScope(const ProfileConfigUpdateDlgScope &)            = delete;
+    ProfileConfigUpdateDlgScope &operator=(const ProfileConfigUpdateDlgScope &) = delete;
+};
+
+// Covers `MsgUpdateConfig::ShowModal()` in `load_flutter_web`; profiles CallAfter checks this (atomic).
+struct FlutterWebConfigUpdateDlgScope {
+    Slic3r::GUI::GUI_App *app;
+    explicit FlutterWebConfigUpdateDlgScope(Slic3r::GUI::GUI_App *p) : app(p)
+    {
+        if (app)
+            app->set_flutter_web_config_update_dlg_open(true);
+    }
+    ~FlutterWebConfigUpdateDlgScope()
+    {
+        if (app)
+            app->set_flutter_web_config_update_dlg_open(false);
+    }
+    FlutterWebConfigUpdateDlgScope(const FlutterWebConfigUpdateDlgScope &)            = delete;
+    FlutterWebConfigUpdateDlgScope &operator=(const FlutterWebConfigUpdateDlgScope &) = delete;
+};
+
+} // namespace
 
 static const char *INDEX_FILENAME = "index.idx";
 static const char *TMP_EXTENSION = ".data";
@@ -232,6 +268,8 @@ struct PresetUpdater::priv
     void sync_resources(std::string http_url, std::map<std::string, Resource> &resources, bool check_patch = false,  std::string current_version="", std::string changelog_file="");
     void sync_config(bool isAuto_check = true);
     void sync_update_flutter_resource(bool isAuto_check = true);
+    void download_flutter_resource_async(const std::string& url, const std::string& target_path, const std::string& version, bool isAuto_check);
+    void download_profiles_resource_async(const std::string& url, const std::string& target_path, const std::string& version, bool isAuto_check);
     bool download_file(const std::string&            url,
                        const std::string&            target_path,
                        const std::string&            extract_path,
@@ -402,6 +440,8 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
 // Remove leftover paritally downloaded files, if any.
 void PresetUpdater::priv::prune_tmps() const
 {
+    if (!fs::exists(cache_path) || !fs::is_directory(cache_path))
+        return;
     for (auto &dir_entry : boost::filesystem::directory_iterator(cache_path))
 		if (is_plain_file(dir_entry) && dir_entry.path().extension() == TMP_EXTENSION) {
 			BOOST_LOG_TRIVIAL(debug) << "[Orca Updater]remove old cached files: " << dir_entry.path().string();
@@ -739,6 +779,163 @@ bool PresetUpdater::priv::download_file(const std::string& url,
 }
 
 
+void PresetUpdater::priv::download_flutter_resource_async(const std::string& url, const std::string& target_path, const std::string& version, bool isAuto_check)
+{
+    bool res = false;
+    fs::path tmp_path = target_path + ".tmp";
+
+    Slic3r::Http::get(url)
+        .on_progress([this](Slic3r::Http::Progress progress, bool& cancel_http) {
+            if (m_web_thread_cancel) {
+                cancel_http = true;
+            }
+        })
+        .on_error([this, target_path, isAuto_check](std::string body, std::string error, unsigned http_status) {
+            BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Download failed: " << target_path << ", HTTP status: " << http_status << ", error: " << error;
+            if (!isAuto_check) {
+                wxCommandEvent* evt = new wxCommandEvent(EVT_REQUEST_SERVER_FAIL);
+                wxString errorMsg = wxString::Format(_L("Flutter resource download failed: %s"), error);
+                evt->SetString(errorMsg);
+                GUI::wxGetApp().QueueEvent(evt);
+            }
+        })
+        .on_complete([this, target_path, tmp_path, version, isAuto_check](std::string body, unsigned http_status) {
+            if (http_status != 200) {
+                BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Download failed with HTTP status: " << http_status;
+                return;
+            }
+
+            // Save file
+            fs::path target(target_path);
+            if (!fs::exists(target.parent_path())) {
+                fs::create_directories(target.parent_path());
+            }
+
+            fs::fstream file(tmp_path, std::ios::out | std::ios::binary | std::ios::trunc);
+            if (!file.is_open()) {
+                BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Failed to open file for writing: " << tmp_path;
+                return;
+            }
+            file.write(body.c_str(), body.size());
+            file.close();
+
+            boost::system::error_code ec;
+            fs::rename(tmp_path, target_path, ec);
+            if (ec) {
+                BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Failed to rename temp file: " << ec.message();
+                return;
+            }
+
+            BOOST_LOG_TRIVIAL(info) << "[Flutter Updater] Download completed: " << target_path;
+
+            // Extract file
+            auto extract_path = (fs::path(target_path).parent_path() / "flutter_web").string();
+            if (!extract_file(target_path, extract_path)) {
+                BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Failed to extract file: " << target_path;
+                return;
+            }
+
+            GUI::wxGetApp().CallAfter([target_path]() {
+                GUI::wxGetApp().preset_updater->load_flutter_web(target_path, true);
+            });
+        })
+        .timeout_max(60)  
+        .perform_sync();  
+}
+
+void PresetUpdater::priv::download_profiles_resource_async(const std::string& url, const std::string& target_path, const std::string& version, bool isAuto_check)
+{
+    bool res = false;
+    fs::path tmp_path = target_path + ".tmp";
+
+    Slic3r::Http::get(url)
+        .on_progress([this](Slic3r::Http::Progress progress, bool& cancel_http) {
+            if (cancel) {
+                cancel_http = true;
+            }
+        })
+        .on_error([this, target_path, isAuto_check](std::string body, std::string error, unsigned http_status) {
+            BOOST_LOG_TRIVIAL(error) << "[Profiles Updater] Download failed: " << target_path << ", HTTP status: " << http_status << ", error: " << error;
+            if (!isAuto_check) {
+                wxCommandEvent* evt = new wxCommandEvent(EVT_REQUEST_SERVER_FAIL);
+                wxString errorMsg = wxString::Format(_L("Profiles resource download failed: %s"), error);
+                evt->SetString(errorMsg);
+                GUI::wxGetApp().QueueEvent(evt);
+            }
+        })
+        .on_complete([this, target_path, tmp_path, version, isAuto_check](std::string body, unsigned http_status) {
+            if (http_status != 200) {
+                BOOST_LOG_TRIVIAL(error) << "[Profiles Updater] Download failed with HTTP status: " << http_status;
+                return;
+            }
+
+            // Save file
+            fs::path target(target_path);
+            if (!fs::exists(target.parent_path())) {
+                fs::create_directories(target.parent_path());
+            }
+
+            fs::fstream file(tmp_path, std::ios::out | std::ios::binary | std::ios::trunc);
+            if (!file.is_open()) {
+                BOOST_LOG_TRIVIAL(error) << "[Profiles Updater] Failed to open file for writing: " << tmp_path;
+                return;
+            }
+            file.write(body.c_str(), body.size());
+            file.close();
+
+            boost::system::error_code ec;
+            fs::rename(tmp_path, target_path, ec);
+            if (ec) {
+                BOOST_LOG_TRIVIAL(error) << "[Profiles Updater] Failed to rename temp file: " << ec.message();
+                return;
+            }
+
+            BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Download completed: " << target_path;
+
+            auto extract_path = (fs::path(target_path).parent_path() / "profiles/profiles").string();
+            BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Extracting to: " << extract_path;
+
+            if (!extract_file(target_path, extract_path)) {
+                BOOST_LOG_TRIVIAL(error) << "[Profiles Updater] Failed to extract file: " << target_path;
+                return;
+            }
+
+            // Verify the extraction was successful
+            auto expected_path = cache_path / "profiles/profiles";
+            BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Checking expected path: " << expected_path.string()
+                                    << ", exists: " << fs::exists(expected_path);
+
+            // List directory contents for debugging
+            if (fs::exists(expected_path)) {
+                BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Listing contents of " << expected_path.string() << ":";
+                for (auto &dir_entry : boost::filesystem::directory_iterator(expected_path)) {
+                    BOOST_LOG_TRIVIAL(info) << "[Profiles Updater]   - " << dir_entry.path().filename().string();
+                }
+            } else {
+                // Check parent directory if expected path doesn't exist
+                auto parent_path = cache_path / "profiles";
+                if (fs::exists(parent_path)) {
+                    BOOST_LOG_TRIVIAL(warning) << "[Profiles Updater] Expected path does not exist. Listing contents of " << parent_path.string() << ":";
+                    for (auto &dir_entry : boost::filesystem::directory_iterator(parent_path)) {
+                        BOOST_LOG_TRIVIAL(info) << "[Profiles Updater]   - " << dir_entry.path().filename().string();
+                    }
+                }
+            }
+            
+            GUI::wxGetApp().CallAfter([isAuto_check]() {
+                Slic3r::GUI::GUI_App &app = GUI::wxGetApp();
+                if (app.flutter_web_config_update_dlg_open()) {
+                    app.check_config_updates_from_updater(false);
+                    return;
+                }
+                app.check_config_updates_from_updater(!isAuto_check);
+            });
+        })
+        .timeout_max(TIMEOUT_CONNECT)  
+        .perform_sync();  
+}
+
+
 void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
 {
     auto cache_profile_path = cache_path;
@@ -841,17 +1038,18 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
                 }
 
                 if (currentPresetVersion < remoteVersion) {
-                    
+
                     if (fs::exists(fileName))
-                        fs::remove(fileName);    
+                        fs::remove(fileName);
 
                     fs::path tmpPath = fileName;
                     auto     dirPath = tmpPath.parent_path() / "profiles/flutter_web";
 
                     if (fs::exists(dirPath))
-                        fs::remove_all(dirPath);   
+                        fs::remove_all(dirPath);
 
-                    download_file(fileUrl, fileName, "../ota/profiles/");
+                    // Download file asynchronously to avoid blocking UI
+                    download_flutter_resource_async(fileUrl, fileName, fileVersion, isAuto_check);
                 }
                 else {
                     if (!isAuto_check) {
@@ -915,13 +1113,14 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 auto reservedData    = dataObj.value("reserved_1", "");
                 auto reservedData2   = dataObj.value("reserved_2", "");
 
-                auto        localProfilesjson    = cache_path / "profiles/Snapmaker.json";
-                std::string json_path            = data_dir() + "/system/Snapmaker.json";
-                std::string fileName             = cache_profile_path.string() + "/profiles.zip";                
-                Semver      currentPresetVersion = get_version_from_json(json_path);
-                Semver      remoteVersion(fileVersion);
-                Semver      minSpVersion(minSupportPcVersion);
-                Semver      maxSpVersion(maxSupportPcVersion);
+                std::string fileName = cache_profile_path.string() + "/profiles.zip";
+                // Compare server package against the vendor version actually loaded in the running app (not OTA cache / stale file).
+                Semver currentPresetVersion;
+                if (GUI::wxGetApp().preset_bundle)
+                    currentPresetVersion =
+                        GUI::wxGetApp().preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE);
+                else
+                    currentPresetVersion = get_version_from_json(data_dir() + "/system/Snapmaker.json");
 
                 std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
@@ -949,15 +1148,28 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     return;
                 }
 
+                const auto remoteParsed = Semver::parse(fileVersion);
+                if (!remoteParsed) {
+                    BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: invalid file_version in OTA response: " << fileVersion;
+                    if (!isAuto_check) {
+                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                        GUI::wxGetApp().QueueEvent(evt);
+                    }
+                    return;
+                }
+                const Semver remoteVersion = *remoteParsed;
+
                 bool maxRes = false;
                 bool minRes = false;
 
                 if (!maxSupportPcVersion.empty()) {
-                    maxRes = currentSoftVersion > maxSpVersion;
+                    if (const auto maxSp = Semver::parse(maxSupportPcVersion))
+                        maxRes = currentSoftVersion > *maxSp;
                 }
 
                 if (!minSupportPcVersion.empty()) {
-                    minRes = currentSoftVersion < minSpVersion;
+                    if (const auto minSp = Semver::parse(minSupportPcVersion))
+                        minRes = currentSoftVersion < *minSp;
                 }
 
                 if (maxRes || minRes) {                
@@ -970,6 +1182,15 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     return;
                 }
 
+                if (fileUrl.empty()) {
+                    BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: OTA response missing file_url";
+                    if (!isAuto_check) {
+                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                        GUI::wxGetApp().QueueEvent(evt);
+                    }
+                    return;
+                }
+
                 if (currentPresetVersion < remoteVersion) {
                     if (fs::exists(fileName))
                         fs::remove(fileName);
@@ -978,9 +1199,10 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                     auto     dirPath = tmpPath.parent_path() / "profiles/profiles";
 
                     if (fs::exists(dirPath))
-                        fs::remove_all(dirPath);   
+                        fs::remove_all(dirPath);
 
-                    download_file(fileUrl, fileName, "../ota/profiles/profiles/");
+                    // Download profiles file and automatically check updates after download completes
+                    download_profiles_resource_async(fileUrl, fileName, fileVersion, isAuto_check);
                 }
                 else {
                     if (!isAuto_check) {
@@ -1466,8 +1688,12 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 
 	BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:Checking for cached configuration updates...";
     auto cache_profile_path =  cache_path / "profiles/profiles";
-    if (!fs::exists(cache_profile_path))
+    BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:cache_profile_path: " << cache_profile_path.string()
+                            << ", exists: " << fs::exists(cache_profile_path);
+    if (!fs::exists(cache_profile_path) || !fs::is_directory(cache_profile_path)) {
+        BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:cache_profile_path missing or not a directory, no updates";
         return updates;
+    }
 
     // File filter for directory copy: skip binary and large files that don't need to be in system presets
     auto should_skip_file = [](const std::string name) {
@@ -1491,7 +1717,10 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                 || fs::exists(print_in_cache)
                 || fs::exists(filament_in_cache)
                 || fs::exists(machine_in_cache)) {
-                Semver vendor_ver = get_version_from_json(path_in_vendor.string());
+                // OTA may ship a new vendor before any system vendor JSON exists; avoid reading a missing path.
+                Semver vendor_ver;
+                if (fs::exists(path_in_vendor))
+                    vendor_ver = get_version_from_json(path_in_vendor.string());
 
                 std::map<std::string, std::string> key_values;
                 std::vector<std::string> keys(3);
@@ -1569,7 +1798,7 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                             if (fs::exists(rules_src)) {
                                 // Ensure target directory exists
                                 fs::create_directories(rules_dst.parent_path());
-                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), vendor_name, "", "",
+                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
                                                              force_update, false, legal);
                             }
                         }
@@ -1657,9 +1886,7 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
 		    this->p->sync_config();
 		    if (p->cancel)
 			    return;
-            GUI::wxGetApp().CallAfter([] {
-                GUI::wxGetApp().check_config_updates_from_updater();
-            });
+            // Note: check_config_updates_from_updater will be called automatically after download completes in download_profiles_resource_async
         }
 		if (p->cancel)
 			return;
@@ -1686,7 +1913,8 @@ static bool reload_configs_update_gui()
 
 	GUI::wxGetApp().preset_bundle->load_presets(*app_config, ForwardCompatibilitySubstitutionRule::EnableSilentDisableSystem);
 	GUI::wxGetApp().load_current_presets();
-	GUI::wxGetApp().plater()->set_bed_shape();
+	if (GUI::Plater* pl = GUI::wxGetApp().plater())
+		pl->set_bed_shape();
 
 	return true;
 }
@@ -1726,22 +1954,23 @@ PresetUpdater::UpdateResult PresetUpdater::config_update(const Semver& old_slic3
                 BOOST_LOG_TRIVIAL(warning) << format("[Orca Updater]:reload_configs_update_gui failed");
                 return R_INCOMPAT_EXIT;
             }
-            for(auto b : bundles){
-            Semver cur_ver = GUI::wxGetApp().preset_bundle->get_vendor_profile_version(b);
-            GUI::wxGetApp()
-                .plater()
-                ->get_notification_manager()
-                ->push_notification(GUI::NotificationType::PresetUpdateFinished,
-                                    GUI::NotificationManager::NotificationLevel::ImportantNotificationLevel,
-                                    _u8L("Configuration package: ") + b + _u8L(" updated to ") + cur_ver.to_string());
+            if (GUI::Plater* plater = GUI::wxGetApp().plater()) {
+                for (const auto &b : bundles) {
+                    Semver cur_ver = GUI::wxGetApp().preset_bundle->get_vendor_profile_version(b);
+                    plater->get_notification_manager()->push_notification(
+                        GUI::NotificationType::PresetUpdateFinished,
+                        GUI::NotificationManager::NotificationLevel::ImportantNotificationLevel,
+                        _u8L("Configuration package: ") + b + _u8L(" updated to ") + cur_ver.to_string());
+                }
             }
             return R_UPDATE_INSTALLED;
         }
 
-        // regular update
-        if (/* params == UpdateParams::SHOW_NOTIFICATION */0) {
+        // regular update: background sync uses SHOW_NOTIFICATION (no modal); manual check uses dialog below.
+        if (/*params == UpdateParams::SHOW_NOTIFICATION*/0) {
             p->set_waiting_updates(updates);
-            GUI::wxGetApp().plater()->get_notification_manager()->push_notification(GUI::NotificationType::PresetUpdateAvailable);
+            if (GUI::Plater* plater = GUI::wxGetApp().plater())
+                plater->get_notification_manager()->push_notification(GUI::NotificationType::PresetUpdateAvailable);
         }
         else {
             BOOST_LOG_TRIVIAL(info) << format("[Orca Updater]:Configuration package available. size %1%, need to confirm...", p->waiting_updates.updates.size());
@@ -1754,9 +1983,14 @@ PresetUpdater::UpdateResult PresetUpdater::config_update(const Semver& old_slic3
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
 
-            GUI::MsgUpdateConfig dlg(updates_msg, params == UpdateParams::FORCED_BEFORE_WIZARD);
+            GUI::GUI_App *app_ptr = dynamic_cast<GUI::GUI_App *>(&GUI::wxGetApp());
+            int           res      = wxID_CANCEL;
+            {
+                ProfileConfigUpdateDlgScope profile_cfg_scope(app_ptr);
+                GUI::MsgUpdateConfig        dlg(updates_msg, params == UpdateParams::FORCED_BEFORE_WIZARD);
+                res = dlg.ShowModal();
+            } // Flag cleared as soon as modal returns (atomic: visible to updater threads / CallAfter).
 
-            const auto res = dlg.ShowModal();
             if (res == wxID_OK) {
                 BOOST_LOG_TRIVIAL(debug) << "[Orca Updater]:selected yes to update";
                 if (! p->perform_updates(std::move(updates)) ||
@@ -1797,12 +2031,7 @@ void PresetUpdater::sync_web_async(bool isAutoUpdata)
     p->m_web_resource_thread = std::thread([this, isAutoUpdata]() {
         BOOST_LOG_TRIVIAL(debug) << "[Orca Updater] sync_web_async started";
         this->p->sync_update_flutter_resource(isAutoUpdata);
-
-        GUI::wxGetApp().CallAfter([this] {
-            std::string zipfilepath = this->p->cache_path.string() + "/flutter_web.zip";
-            BOOST_LOG_TRIVIAL(debug) << "[Orca Updater] sync_web_async completed, checking updates...";
-            load_flutter_web(zipfilepath, true);
-        });
+        // Note: load_flutter_web will be called automatically after download completes in download_flutter_resource_async
     });
 }
 
@@ -1817,11 +2046,7 @@ void PresetUpdater::sync_config_async()
 	p->thread = std::thread([this]() {
 		BOOST_LOG_TRIVIAL(debug) << "[Orca Updater] sync_config_async started";
 		this->p->sync_config(false);
-		
-		GUI::wxGetApp().CallAfter([] {
-            BOOST_LOG_TRIVIAL(debug) << "[Orca Updater] sync_config_async completed, checking updates...";
-			GUI::wxGetApp().check_config_updates_from_updater(true);
-		});
+		// Note: check_config_updates_from_updater will be called automatically after download completes in download_profiles_resource_async
 	});
 }
 
@@ -1840,9 +2065,13 @@ void PresetUpdater::on_update_notification_confirm()
 		updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
 	}
 
-	GUI::MsgUpdateConfig dlg(updates_msg);
-
-	const auto res = dlg.ShowModal();
+	GUI::GUI_App *app_ptr = dynamic_cast<GUI::GUI_App *>(&GUI::wxGetApp());
+	int           res     = wxID_CANCEL;
+	{
+		ProfileConfigUpdateDlgScope profile_cfg_scope(app_ptr);
+		GUI::MsgUpdateConfig        dlg(updates_msg);
+		res = dlg.ShowModal();
+	}
 	if (res == wxID_OK) {
 		BOOST_LOG_TRIVIAL(debug) << "User agreed to perform the update";
 		if (p->perform_updates(std::move(p->waiting_updates)) &&
@@ -1867,9 +2096,13 @@ void PresetUpdater::do_printer_config_update()
         updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
     }
 
-    GUI::MsgUpdateConfig dlg(updates_msg);
-
-    const auto res = dlg.ShowModal();
+    GUI::GUI_App *app_ptr = dynamic_cast<GUI::GUI_App *>(&GUI::wxGetApp());
+    int           res     = wxID_CANCEL;
+    {
+        ProfileConfigUpdateDlgScope profile_cfg_scope(app_ptr);
+        GUI::MsgUpdateConfig        dlg(updates_msg);
+        res = dlg.ShowModal();
+    }
     if (res == wxID_OK) {
         BOOST_LOG_TRIVIAL(debug) << "User agreed to perform the update";
         if (p->perform_updates(std::move(p->waiting_printer_updates)))
@@ -1994,9 +2227,18 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
 
-            GUI::MsgUpdateConfig dlg(updates_msg);
+            if (app && app->profile_config_update_dlg_open()) {
+                BOOST_LOG_TRIVIAL(info) << "[Flutter Updater] Skipping web resource configuration dialog: profile configuration dialog is active.";
+                boost::filesystem::remove_all(temp_path);
+                return;
+            }
 
-            const auto res = dlg.ShowModal();
+            int res = wxID_CANCEL;
+            {
+                FlutterWebConfigUpdateDlgScope flutter_dlg_scope(app);
+                GUI::MsgUpdateConfig           dlg(updates_msg);
+                res                            = dlg.ShowModal();
+            }
 
             if (res == wxID_OK) {
                 p->perform_updates(std::move(updates));
@@ -2024,7 +2266,7 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
                 return;
             }
 
-            app->recreate_GUI(_L("Update web resources"));
+            app->schedule_recreate_gui_when_no_modal(_L("Update web resources"));
         }
             
 
@@ -2191,9 +2433,12 @@ void PresetUpdater::import_system_profile()
                 updates_msg.emplace_back(update.vendor, update.version.config_version, update.descriptions, std::move(changelog));
             }
 
-            GUI::MsgUpdateConfig dlg(updates_msg);
-
-            const auto res = dlg.ShowModal();
+            int res = wxID_CANCEL;
+            {
+                ProfileConfigUpdateDlgScope profile_cfg_scope(app);
+                GUI::MsgUpdateConfig        dlg(updates_msg);
+                res = dlg.ShowModal();
+            }
 
             if (res == wxID_OK) {
                 p->perform_updates(std::move(updates));

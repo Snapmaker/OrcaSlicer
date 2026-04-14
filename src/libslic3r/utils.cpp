@@ -1521,8 +1521,7 @@ void copy_directory_recursively(const boost::filesystem::path &source, const boo
     std::string error_message;
 
     if (!boost::filesystem::exists(source) || !boost::filesystem::is_directory(source)) {
-        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);
-        throw Slic3r::CriticalException(Slic3r::format(("Copying directory %1% to %2% failed: source directory does not exist"),source, target));
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);        
     }
 
     if (boost::filesystem::exists(target))

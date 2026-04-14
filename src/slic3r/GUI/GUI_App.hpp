@@ -540,6 +540,8 @@ private:
     bool            is_user_login();
 
     wxString get_international_url(const wxString& origin_url);
+    wxString flutter_web_base_url(const wxString& path);
+    wxString build_flutter_web_url(const wxString& path);
 
     // SM
     struct SMUserInfo

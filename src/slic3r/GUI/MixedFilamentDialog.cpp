@@ -343,7 +343,6 @@ wxBoxSizer* MixedFilamentDialog::create_material_selection()
 
         auto* combo = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition,
                                    wxSize(FromDIP(166), FromDIP(24)), 0, nullptr, wxCB_READONLY);
-        combo->SetKeepDropArrow(true);
         combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_filament_changed(); });
         row->Add(combo, 1, wxALIGN_CENTER_VERTICAL);
 
@@ -362,7 +361,6 @@ wxBoxSizer* MixedFilamentDialog::create_material_selection()
     m_btn_add_material->SetTextColor(wxColour("#262E30"));
     m_btn_add_material->SetMinSize(wxSize(-1, FromDIP(23)));
     m_btn_add_material->SetCursor(wxCursor(wxCURSOR_HAND));
-    m_btn_add_material->EnableTooltipEvenDisabled();
     m_btn_add_material->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_add_material(); });
     btn_sizer->Add(m_btn_add_material, 1, wxRIGHT, FromDIP(6));
 
@@ -659,7 +657,6 @@ wxBoxSizer* MixedFilamentDialog::create_gradient_section()
 
     m_combo_gradient_dir = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition,
                                         wxSize(FromDIP(152), FromDIP(24)), 0, nullptr, wxCB_READONLY);
-    m_combo_gradient_dir->SetKeepDropArrow(true);
     update_gradient_direction_items();
     m_combo_gradient_dir->SetSelection(m_result.gradient_direction);
     m_combo_gradient_dir->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_gradient_direction_changed(); });
@@ -865,14 +862,7 @@ void MixedFilamentDialog::rebuild_all_combos()
             if (others_selected.count(phys_1based))
                 continue;
 
-            int style = 0;
-            if (!others_types.empty() && !m_physical_types.empty()) {
-                std::string this_type = (j < m_physical_types.size()) ? m_physical_types[j] : "PLA";
-                if (others_types.find(this_type) == others_types.end())
-                    style = DD_ITEM_STYLE_DIMMED;
-            }
-
-            int idx = combo->Append(wxString::FromUTF8(m_physical_names[j]), make_swatch_bitmap(j), style);
+            int idx = combo->Append(wxString::FromUTF8(m_physical_names[j]), make_swatch_bitmap(j));
             m_combo_to_physical[i].push_back(phys_1based);
 
             if (phys_1based == cur_phys)
@@ -998,7 +988,6 @@ void MixedFilamentDialog::on_add_material()
 
     auto* combo = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition,
                                wxSize(FromDIP(166), FromDIP(24)), 0, nullptr, wxCB_READONLY);
-    combo->SetKeepDropArrow(true);
     combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_filament_changed(); });
     row->Add(combo, 1, wxALIGN_CENTER_VERTICAL);
 
@@ -1094,7 +1083,6 @@ void MixedFilamentDialog::on_recommendation_clicked_triple(unsigned int a, unsig
 
             auto* combo = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition,
                                        wxSize(FromDIP(166), FromDIP(24)), 0, nullptr, wxCB_READONLY);
-            combo->SetKeepDropArrow(true);
             combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_filament_changed(); });
             row->Add(combo, 1, wxALIGN_CENTER_VERTICAL);
 

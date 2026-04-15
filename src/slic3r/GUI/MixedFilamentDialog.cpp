@@ -912,7 +912,8 @@ void MixedFilamentDialog::on_gradient_toggled()
 
     if (checked) {
         auto& print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-        if (!print_config.opt_bool("dithering_local_z_mode")) {
+        const auto *opt = print_config.option<ConfigOptionBool>("dithering_local_z_mode");
+        if (!opt || !opt->value) {
             wxMessageDialog dlg(this,
                 _L("Gradient effect requires 'Local Z dithering mode' to be enabled. Enable it now?"),
                 _L("Local Z Dithering"),

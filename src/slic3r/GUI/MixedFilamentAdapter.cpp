@@ -46,6 +46,16 @@ MixedFilamentResult mixed_filament_to_dialog_result(const MixedFilament &mf)
     result.ratios = {100 - mf.mix_b_percent, mf.mix_b_percent};
     result.gradient_enabled = (mf.distribution_mode == int(MixedFilament::LayerCycle));
     result.gradient_direction = 0;
+    if (result.gradient_enabled && !mf.gradient_component_ids.empty()) {
+        // Decode first ID from gradient_component_ids (each char is '1'-'9')
+        unsigned int first_id = 0;
+        char ch = mf.gradient_component_ids[0];
+        if (ch >= '1' && ch <= '9')
+            first_id = unsigned(ch - '0');
+        // If first gradient component is component_b, direction is reversed
+        if (first_id > 0 && first_id == mf.component_b)
+            result.gradient_direction = 1;
+    }
     return result;
 }
 

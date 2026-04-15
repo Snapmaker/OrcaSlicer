@@ -191,7 +191,7 @@ endif ()
 
 if (MSVC)
     if (SLIC3R_MSVC_COMPILE_PARALLEL AND NOT IS_CLANG_CL)
-           add_compile_options(/MP)
+           add_compile_options(/MP /FS)
     endif ()
     # /bigobj (Increase Number of Sections in .Obj file)
     # error C3859: virtual memory range for PCH exceeded; please recompile with a command line option of '-Zm90' or greater
@@ -936,7 +936,7 @@ set (CPACK_PACKAGE_VERSION_MAJOR "${ORCA_VERSION_MAJOR}")
 set (CPACK_PACKAGE_VERSION_MINOR "${ORCA_VERSION_MINOR}")
 set (CPACK_PACKAGE_VERSION_PATCH "${ORCA_VERSION_PATCH}")
 set (CPACK_PACKAGE_FILE_NAME "Snapmaker_Orca_Windows_Installer_V${Snapmaker_VERSION}")
-set (CPACK_PACKAGE_DESCRIPTION_SUMMARY "Snapmaker Orca is an open source slicer for FDM printers")
+set (CPACK_PACKAGE_DESCRIPTION_SUMMARY "SnapmakerOrca-FullSpectrum is an open source slicer for FDM printers")
 set (CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Snapmaker/OrcaSlicer")
 set (CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})
 set (CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/images\\\\Snapmaker_Orca.ico")
@@ -946,14 +946,14 @@ set (CPACK_NSIS_INSTALLED_ICON_NAME  "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
 set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
 set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
-    CreateShortCut \\\"$DESKTOP\\\\Snapmaker Orca.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
+    CreateShortCut \\\"$DESKTOP\\\\SnapmakerOrca-FullSpectrum.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
 ")
 set (CPACK_PACKAGE_CHECKSUM SHA256)
 set (CPACK_PACKAGE_INSTALL_REGISTRY_KEY "Snapmaker_Orca")
 set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
 set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
 # set (CPACK_NSIS_MODIFY_PATH "ON")
-set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;Snapmaker Orca")
+set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;SnapmakerOrca-FullSpectrum")
 set(CPACK_CREATE_DESKTOP_LINKS "snapmaker-orca")
 set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also include in install command
 

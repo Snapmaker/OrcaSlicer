@@ -50,12 +50,14 @@ public:
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
     void plan_toolchange(float z_par, float layer_height_par, unsigned int old_tool, unsigned int new_tool, float wipe_volume = 0.f);
+    void plan_local_z_reserve(float z_par, float layer_height_par, size_t reserve_slot_count, float wipe_volume = 0.f);
 
 	// Iterates through prepared m_plan, generates ToolChangeResults and appends them to "result"
 	void generate(std::vector<std::vector<WipeTower::ToolChangeResult>> &result);
 
     float get_depth() const { return m_wipe_tower_depth; }
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
+    std::vector<std::vector<WipeTower::box_coordinates>> get_local_z_reserve_boxes() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
 
@@ -118,6 +120,8 @@ public:
 	// Returns gcode for a toolchange and a final print head position.
 	// On the first layer, extrude a brim around the future wipe tower first.
     WipeTower::ToolChangeResult tool_change(size_t new_tool);
+    WipeTower::ToolChangeResult local_z_tool_change(size_t new_tool, const WipeTower::box_coordinates& cleaning_box, float wipe_volume);
+    void set_current_tool(size_t tool) { m_current_tool = tool; }
 
 	// Fill the unfilled space with a sparse infill.
 	// Call this method only if layer_finished() is false.
@@ -254,6 +258,7 @@ private:
 	float			m_extra_flow      = 1.f;
 	float			m_extra_spacing_wipe    = 1.f;
 	float			m_extra_spacing_ramming = 1.f;
+    float           m_local_z_wipe_tower_purge_lines = 3.f;
 
     bool is_first_layer() const { return size_t(m_layer_info - m_plan.begin()) == m_first_layer_idx; }
 
@@ -289,6 +294,10 @@ private:
 		float height;	// layer height
 		float depth;	// depth of the layer based on all layers above
 		float toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
+        float local_z_reserve_slot_depth { 0.f };
+        size_t local_z_reserve_slot_count { 0 };
+        float local_z_reserve_depth() const { return local_z_reserve_slot_depth * float(local_z_reserve_slot_count); }
+        float planned_depth() const { return toolchanges_depth() + local_z_reserve_depth(); }
 
 		std::vector<ToolChange> tool_changes;
 

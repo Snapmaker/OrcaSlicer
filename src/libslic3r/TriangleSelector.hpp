@@ -10,14 +10,15 @@
 
 namespace Slic3r {
 
-enum class EnforcerBlockerType : int8_t {
+enum class EnforcerBlockerType : int16_t {
     // Maximum is 3. The value is serialized in TriangleSelector into 2 bits.
     NONE      = 0,
     ENFORCER  = 1,
     BLOCKER   = 2,
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
-    // Maximum is 15. The value is serialized in TriangleSelector into 6 bits using a 2 bit prefix code.
+    // Extruder states are serialized using a 2-bit prefix plus one or more 4-bit nibbles.
+    // This allows more than 16 painted states while keeping backward compatibility.
     Extruder1 = ENFORCER,
     Extruder2 = BLOCKER,
     Extruder3,
@@ -34,7 +35,7 @@ enum class EnforcerBlockerType : int8_t {
     Extruder14,
     Extruder15,
     Extruder16,
-    ExtruderMax = Extruder16
+    ExtruderMax = 255
 };
 
 // Type alias for the state mapping array to improve code readability
@@ -360,7 +361,8 @@ public:
                      bool                                                                  needs_reset = true,
                      EnforcerBlockerType                                                   max_ebt     = EnforcerBlockerType::ExtruderMax,
                      EnforcerBlockerType                                                   to_delete_filament = EnforcerBlockerType::NONE,
-                     EnforcerBlockerType                                                   replace_filament   = EnforcerBlockerType::NONE);
+                     EnforcerBlockerType                                                   replace_filament   = EnforcerBlockerType::NONE,
+                     const EnforcerBlockerStateMap                                        *state_map         = nullptr);
 
     // Extract all used facet states from the given TriangleSplittingData.
     static std::vector<EnforcerBlockerType> extract_used_facet_states(const TriangleSplittingData &data);

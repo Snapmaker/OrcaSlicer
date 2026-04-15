@@ -75,6 +75,44 @@ namespace GUI {
 
 class Bed3D;
 
+namespace {
+
+struct ResolvedInfillFilament
+{
+    int  wall_filament          = 1;
+    int  sparse_infill_filament = 1;
+    bool override_enabled       = false;
+};
+
+template <typename ConfigLike>
+ResolvedInfillFilament resolve_infill_filament(const ConfigLike &config, int inherited_wall_filament, bool inherited_override_enabled, int inherited_sparse_infill_filament)
+{
+    ResolvedInfillFilament resolved;
+    resolved.wall_filament          = inherited_wall_filament;
+    resolved.sparse_infill_filament = inherited_sparse_infill_filament;
+    resolved.override_enabled       = inherited_override_enabled;
+
+    if (const ConfigOption *wall_opt = config.option("wall_filament"); wall_opt != nullptr)
+        resolved.wall_filament = wall_opt->getInt();
+
+    const ConfigOption *sparse_opt   = config.option("sparse_infill_filament");
+    const ConfigOption *override_opt = config.option("enable_infill_filament_override");
+    if (override_opt != nullptr)
+        resolved.override_enabled = override_opt->getBool();
+    else if (sparse_opt != nullptr)
+        resolved.override_enabled = sparse_opt->getInt() != resolved.wall_filament;
+
+    if (sparse_opt != nullptr)
+        resolved.sparse_infill_filament = sparse_opt->getInt();
+
+    if (!resolved.override_enabled)
+        resolved.sparse_infill_filament = resolved.wall_filament;
+
+    return resolved;
+}
+
+} // namespace
+
 ColorRGBA PartPlate::SELECT_COLOR		= { 0.2666f, 0.2784f, 0.2784f, 1.0f }; //{ 0.4196f, 0.4235f, 0.4235f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_COLOR		= { 0.82f, 0.82f, 0.82f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_DARK_COLOR		= { 0.384f, 0.384f, 0.412f, 1.0f };
@@ -1350,7 +1388,8 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 	int glb_support_intf_extr = glb_config.opt_int("support_interface_filament");
 	int glb_support_extr = glb_config.opt_int("support_filament");
 	int glb_wall_extr = glb_config.opt_int("wall_filament");
-	int glb_sparse_infill_extr = glb_config.opt_int("sparse_infill_filament");
+	const ResolvedInfillFilament global_infill { glb_wall_extr, glb_wall_extr, false };
+	int glb_sparse_infill_extr = glb_wall_extr;
 	int glb_solid_infill_extr = glb_config.opt_int("solid_infill_filament");
 	bool glb_support = glb_config.opt_bool("enable_support");
     glb_support |= glb_config.opt_int("raft_layers") > 0;
@@ -1405,23 +1444,16 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
                 plate_extruders.push_back(glb_support_extr);
         }
 
-        int obj_wall_extr = 1;
+        int obj_wall_extr = glb_wall_extr;
 		const ConfigOption* wall_opt = mo->config.option("wall_filament");
 		if (wall_opt != nullptr)
 			obj_wall_extr = wall_opt->getInt();
 		if (obj_wall_extr != 1)
 			plate_extruders.push_back(obj_wall_extr);
-		else if (glb_wall_extr != 1)
-			plate_extruders.push_back(glb_wall_extr);
 
-		int obj_sparse_infill_extr = 1;
-		const ConfigOption* sparse_infill_opt = mo->config.option("sparse_infill_filament");
-		if (sparse_infill_opt != nullptr)
-			obj_sparse_infill_extr = sparse_infill_opt->getInt();
-		if (obj_sparse_infill_extr != 1)
-			plate_extruders.push_back(obj_sparse_infill_extr);
-		else if (glb_sparse_infill_extr != 1)
-			plate_extruders.push_back(glb_sparse_infill_extr);
+		const ResolvedInfillFilament object_infill = resolve_infill_filament(mo->config, glb_wall_extr, global_infill.override_enabled, glb_sparse_infill_extr);
+		if (object_infill.override_enabled && object_infill.sparse_infill_filament != 1)
+			plate_extruders.push_back(object_infill.sparse_infill_filament);
 
 		int obj_solid_infill_extr = 1;
 		const ConfigOption* solid_infill_opt = mo->config.option("solid_infill_filament");
@@ -1439,9 +1471,10 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
         int nums_extruders = 0;
         if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(wxGetApp().preset_bundle->project_config.option("filament_colour"))) {
             nums_extruders = color_option->values.size();
+            const size_t total_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(size_t(nums_extruders));
 			if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
 				for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
+					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(total_filaments))
 						plate_extruders.push_back(item.extruder);
 				}
 			}
@@ -1462,7 +1495,8 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
     int glb_support_intf_extr = full_config.opt_int("support_interface_filament");
     int glb_support_extr = full_config.opt_int("support_filament");
 	int glb_wall_extr = full_config.opt_int("wall_filament");
-	int glb_sparse_infill_extr = full_config.opt_int("sparse_infill_filament");
+	const ResolvedInfillFilament global_infill { glb_wall_extr, glb_wall_extr, false };
+	int glb_sparse_infill_extr = glb_wall_extr;
 	int glb_solid_infill_extr = full_config.opt_int("solid_infill_filament");
 
     bool glb_support = full_config.opt_bool("enable_support");
@@ -1527,23 +1561,16 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
             else if (glb_support_extr != 0)
                 plate_extruders.push_back(glb_support_extr);
 
-			int obj_wall_extr = 1;
+			int obj_wall_extr = glb_wall_extr;
 			const ConfigOption* wall_opt = object->config.option("wall_filament");
 			if (wall_opt != nullptr)
 				obj_wall_extr = wall_opt->getInt();
 			if (obj_wall_extr != 1)
 				plate_extruders.push_back(obj_wall_extr);
-			else if (glb_wall_extr != 1)
-				plate_extruders.push_back(glb_wall_extr);
 
-			int obj_sparse_infill_extr = 1;
-			const ConfigOption* sparse_infill_opt = object->config.option("sparse_infill_filament");
-			if (sparse_infill_opt != nullptr)
-				obj_sparse_infill_extr = sparse_infill_opt->getInt();
-			if (obj_sparse_infill_extr != 1)
-				plate_extruders.push_back(obj_sparse_infill_extr);
-			else if (glb_sparse_infill_extr != 1)
-				plate_extruders.push_back(glb_sparse_infill_extr);
+			const ResolvedInfillFilament object_infill = resolve_infill_filament(object->config, glb_wall_extr, global_infill.override_enabled, glb_sparse_infill_extr);
+			if (object_infill.override_enabled && object_infill.sparse_infill_filament != 1)
+				plate_extruders.push_back(object_infill.sparse_infill_filament);
 
 			int obj_solid_infill_extr = 1;
 			const ConfigOption* solid_infill_opt = object->config.option("solid_infill_filament");
@@ -1561,9 +1588,12 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
         int nums_extruders = 0;
         if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(full_config.option("filament_colour"))) {
             nums_extruders = color_option->values.size();
+            size_t total_filaments = size_t(nums_extruders);
+            if (wxGetApp().preset_bundle != nullptr)
+                total_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(total_filaments);
             if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
                 for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-                    if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
+                    if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(total_filaments))
                         plate_extruders.push_back(item.extruder);
                 }
             }
@@ -1606,9 +1636,10 @@ std::vector<int> PartPlate::get_extruders_without_support(bool conside_custom_gc
 		int nums_extruders = 0;
 		if (const ConfigOptionStrings* color_option = dynamic_cast<const ConfigOptionStrings*>(wxGetApp().preset_bundle->project_config.option("filament_colour"))) {
 			nums_extruders = color_option->values.size();
+            const size_t total_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(size_t(nums_extruders));
 			if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
 				for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
+					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(total_filaments))
 						plate_extruders.push_back(item.extruder);
 				}
 			}

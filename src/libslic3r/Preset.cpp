@@ -565,12 +565,35 @@ void Preset::save(DynamicPrintConfig* parent_config)
 
     //BBS: only save difference if it has parent
     if (parent_config) {
+        auto option_differs_from_default = [](const ConfigBase &cfg, const t_config_option_key &opt_key, const ConfigOption *opt) {
+            if (opt == nullptr)
+                return false;
+            const ConfigDef *def = cfg.def();
+            if (def == nullptr)
+                return true;
+            const ConfigOptionDef *opt_def = def->get(opt_key);
+            if (opt_def == nullptr || opt_def->default_value.get() == nullptr)
+                return true;
+            if (opt->type() != opt_def->default_value->type())
+                return true;
+            return *opt != *opt_def->default_value;
+        };
+
         DynamicPrintConfig temp_config;
         std::vector<std::string> dirty_options = config.diff(*parent_config);
+        for (const t_config_option_key &opt_key : config.keys()) {
+            const ConfigOption *opt_src = config.option(opt_key);
+            if (opt_src != nullptr && parent_config->option(opt_key) == nullptr &&
+                option_differs_from_default(config, opt_key, opt_src))
+                dirty_options.emplace_back(opt_key);
+        }
+        std::sort(dirty_options.begin(), dirty_options.end());
+        dirty_options.erase(std::unique(dirty_options.begin(), dirty_options.end()), dirty_options.end());
 
-        for (auto option: dirty_options)
-        {
-            ConfigOption *opt_src = config.option(option);
+        for (const std::string &option : dirty_options) {
+            const ConfigOption *opt_src = config.option(option);
+            if (opt_src == nullptr)
+                continue;
             ConfigOption *opt_dst = temp_config.option(option, true);
             opt_dst->set(opt_src);
         }
@@ -848,7 +871,7 @@ static std::vector<std::string> s_Preset_print_options {
     "support_interface_pattern", "support_interface_spacing", "support_interface_loop_pattern",
     "support_top_z_distance", "support_on_build_plate_only","support_critical_regions_only", "bridge_no_support", "thick_bridges", "thick_internal_bridges","dont_filter_internal_bridges","enable_extra_bridge_layer", "max_bridge_length", "print_sequence", "print_order", "support_remove_small_overhang",
     "filename_format", "wall_filament", "support_bottom_z_distance",
-    "sparse_infill_filament", "solid_infill_filament", "support_filament", "support_interface_filament","support_interface_not_for_body",
+    "enable_infill_filament_override", "infill_filament_use_base_first_layers", "infill_filament_use_base_last_layers", "sparse_infill_filament", "solid_infill_filament", "support_filament", "support_interface_filament","support_interface_not_for_body",
     "ooze_prevention", "standby_temperature_delta", "preheat_time","delta_temperature","preheat_steps", "interface_shells", "line_width", "initial_layer_line_width", "inner_wall_line_width",
     "outer_wall_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width",
     "skin_infill_line_width","skeleton_infill_line_width",
@@ -875,7 +898,7 @@ static std::vector<std::string> s_Preset_print_options {
      "tree_support_brim_width", "gcode_comments", "gcode_label_objects",
      "initial_layer_travel_speed", "exclude_object", "slow_down_layers", "infill_anchor", "infill_anchor_max","initial_layer_min_bead_width",
      "make_overhang_printable", "make_overhang_printable_angle", "make_overhang_printable_hole_size" ,"notes",
-     "wipe_tower_cone_angle", "wipe_tower_extra_spacing","wipe_tower_max_purge_speed", 
+     "wipe_tower_cone_angle", "wipe_tower_extra_spacing","wipe_tower_max_purge_speed", "local_z_wipe_tower_purge_lines",
      "wipe_tower_wall_type", "wipe_tower_extra_rib_length", "wipe_tower_rib_width", "wipe_tower_fillet_wall",
      "wipe_tower_filament", "wiping_volumes_extruders","wipe_tower_bridging", "wipe_tower_extra_flow","single_extruder_multi_material_priming",
      "wipe_tower_rotation_angle", "tree_support_branch_distance_organic", "tree_support_branch_diameter_organic", "tree_support_branch_angle_organic",
@@ -1160,12 +1183,6 @@ void PresetCollection::load_presets(
         if (Slic3r::is_json_file(file_name)) {
             // Remove the .ini suffix.
             std::string name = file_name.erase(file_name.size() - 5);
-            if (this->find_preset(name, false)) {
-                // This happens when there's is a preset (most likely legacy one) with the same name as a system preset
-                // that's already been loaded from a bundle.
-                BOOST_LOG_TRIVIAL(warning) << "Preset already present, not loading: " << name;
-                continue;
-            }
             try {
                 Preset preset(m_type, name, false);
                 preset.file = dir_entry.path().string();
@@ -1193,6 +1210,28 @@ void PresetCollection::load_presets(
                             fs::remove(file_path);
                         BOOST_LOG_TRIVIAL(error) << boost::format("parse config %1% failed")%preset.file;
                         ++m_errors;
+                        continue;
+                    }
+
+                    auto type_it = key_values.find(BBL_JSON_KEY_TYPE);
+                    if (type_it != key_values.end()) {
+                        Preset::Type file_type = Preset::get_type_from_string(type_it->second);
+                        if (file_type != m_type) {
+                            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(
+                                ": skip preset %1% because file type %2% does not match collection type %3%")
+                                % preset.file % type_it->second % Preset::get_type_string(m_type);
+                            continue;
+                        }
+                    }
+
+                    auto name_it = key_values.find(BBL_JSON_KEY_NAME);
+                    if (name_it != key_values.end() && !name_it->second.empty())
+                        preset.name = name_it->second;
+
+                    if (this->find_preset(preset.name, false)) {
+                        // This happens when there is a preset with the same logical name already loaded,
+                        // typically from a system bundle or from another JSON file with a different filename.
+                        BOOST_LOG_TRIVIAL(warning) << "Preset already present, not loading: " << preset.name;
                         continue;
                     }
 
@@ -1240,7 +1279,7 @@ void PresetCollection::load_presets(
                         // Find a default preset for the config. The PrintPresetCollection provides different default preset based on the "printer_technology" field.
                         preset.config = default_preset.config;
                     }
-                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " load preset: " << name << " and filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
+                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " load preset: " << preset.name << " and filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
                     preset.config.apply(std::move(config));
                     Preset::normalize(preset.config);
                     // Report configuration fields, which are misplaced into a wrong group.
@@ -1316,12 +1355,35 @@ Preset* PresetCollection::get_preset_differed_for_save(Preset& preset)
         parent_preset = this->find_preset(inherits, false, true);
     }
     if (parent_preset) {
+        auto option_differs_from_default = [](const ConfigBase &cfg, const t_config_option_key &opt_key, const ConfigOption *opt) {
+            if (opt == nullptr)
+                return false;
+            const ConfigDef *def = cfg.def();
+            if (def == nullptr)
+                return true;
+            const ConfigOptionDef *opt_def = def->get(opt_key);
+            if (opt_def == nullptr || opt_def->default_value.get() == nullptr)
+                return true;
+            if (opt->type() != opt_def->default_value->type())
+                return true;
+            return *opt != *opt_def->default_value;
+        };
+
         DynamicPrintConfig temp_config;
         std::vector<std::string> dirty_options = preset.config.diff(parent_preset->config);
+        for (const t_config_option_key &opt_key : preset.config.keys()) {
+            const ConfigOption *opt_src = preset.config.option(opt_key);
+            if (opt_src != nullptr && parent_preset->config.option(opt_key) == nullptr &&
+                option_differs_from_default(preset.config, opt_key, opt_src))
+                dirty_options.emplace_back(opt_key);
+        }
+        std::sort(dirty_options.begin(), dirty_options.end());
+        dirty_options.erase(std::unique(dirty_options.begin(), dirty_options.end()), dirty_options.end());
 
-        for (auto option: dirty_options)
-        {
-            ConfigOption *opt_src = preset.config.option(option);
+        for (const std::string &option : dirty_options) {
+            const ConfigOption *opt_src = preset.config.option(option);
+            if (opt_src == nullptr)
+                continue;
             ConfigOption *opt_dst = temp_config.option(option, true);
             opt_dst->set(opt_src);
         }
@@ -1347,12 +1409,33 @@ int PresetCollection::get_differed_values_to_update(Preset& preset, std::map<std
         parent_preset = this->find_preset(inherit_preset, false, true);
     }
     if (parent_preset) {
+        auto option_differs_from_default = [](const ConfigBase &cfg, const t_config_option_key &opt_key, const ConfigOption *opt) {
+            if (opt == nullptr)
+                return false;
+            const ConfigDef *def = cfg.def();
+            if (def == nullptr)
+                return true;
+            const ConfigOptionDef *opt_def = def->get(opt_key);
+            if (opt_def == nullptr || opt_def->default_value.get() == nullptr)
+                return true;
+            if (opt->type() != opt_def->default_value->type())
+                return true;
+            return *opt != *opt_def->default_value;
+        };
+
         DynamicPrintConfig temp_config;
         std::vector<std::string> dirty_options = preset.config.diff(parent_preset->config);
+        for (const t_config_option_key &opt_key : preset.config.keys()) {
+            const ConfigOption *opt_src = preset.config.option(opt_key);
+            if (opt_src != nullptr && parent_preset->config.option(opt_key) == nullptr &&
+                option_differs_from_default(preset.config, opt_key, opt_src))
+                dirty_options.emplace_back(opt_key);
+        }
+        std::sort(dirty_options.begin(), dirty_options.end());
+        dirty_options.erase(std::unique(dirty_options.begin(), dirty_options.end()), dirty_options.end());
 
-        for (auto option: dirty_options)
-        {
-            ConfigOption *opt_src = preset.config.option(option);
+        for (const std::string &option : dirty_options) {
+            const ConfigOption *opt_src = preset.config.option(option);
             if (opt_src)
                 key_values[option] = opt_src->serialize();
         }
@@ -1948,7 +2031,7 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
                     continue;
                 ConfigOption *opt_src = iter->config.option(opt);
                 ConfigOption *opt_dst = cfg.option(opt);
-                if (opt_src && opt_dst && (*opt_src != *opt_dst)) {
+                if (opt_src && opt_dst && opt_src->type() == opt_dst->type() && (*opt_src != *opt_dst)) {
                     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" change key %1% from old_value %2% to inherit's value %3%, preset_name %4%, inherits_name %5%")
                             %opt %(opt_dst->serialize()) %(opt_src->serialize()) %original_name %inherits;
                     opt_dst->set(opt_src);
@@ -1962,7 +2045,7 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
                 continue;
             ConfigOption *opt_src = it->config.option(opt);
             ConfigOption *opt_dst = cfg.option(opt);
-            if (opt_src && opt_dst && (*opt_src != *opt_dst)) {
+            if (opt_src && opt_dst && opt_src->type() == opt_dst->type() && (*opt_src != *opt_dst)) {
                 BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" change key %1% from old_value %2% to new_value %3%, preset_name %4%")
                         %opt %(opt_dst->serialize()) %(opt_src->serialize()) %original_name;
                 opt_dst->set(opt_src);
@@ -2751,6 +2834,42 @@ void add_correct_opts_to_diff(const std::string &opt_key, t_config_option_keys& 
     }
 }
 
+static bool option_differs_from_default(const ConfigBase &cfg, const t_config_option_key &opt_key, const ConfigOption *opt)
+{
+    if (opt == nullptr)
+        return false;
+    const ConfigDef *def = cfg.def();
+    if (def == nullptr)
+        return true;
+    const ConfigOptionDef *opt_def = def->get(opt_key);
+    if (opt_def == nullptr || opt_def->default_value.get() == nullptr)
+        return true;
+    if (opt->type() != opt_def->default_value->type())
+        return true;
+    return *opt != *opt_def->default_value;
+}
+
+static void append_missing_nondefault_options(const ConfigBase &edited, const ConfigBase &reference,
+                                              t_config_option_keys &diff, const std::set<std::string> *skip = nullptr)
+{
+    for (const t_config_option_key &opt_key : edited.keys()) {
+        if (skip && skip->count(opt_key) != 0)
+            continue;
+        const ConfigOption *edited_opt = edited.option(opt_key);
+        if (edited_opt == nullptr || reference.option(opt_key) != nullptr)
+            continue;
+        if (option_differs_from_default(edited, opt_key, edited_opt))
+            diff.emplace_back(opt_key);
+    }
+}
+
+static bool has_missing_nondefault_option(const ConfigBase &edited, const ConfigBase &reference, const std::set<std::string> *skip = nullptr)
+{
+    t_config_option_keys missing;
+    append_missing_nondefault_options(edited, reference, missing, skip);
+    return !missing.empty();
+}
+
 // Use deep_diff to correct return of changed options, considering individual options for each extruder.
 inline t_config_option_keys deep_diff(const ConfigBase &config_this, const ConfigBase &config_other)
 {
@@ -2758,8 +2877,13 @@ inline t_config_option_keys deep_diff(const ConfigBase &config_this, const Confi
     for (const t_config_option_key &opt_key : config_this.keys()) {
         const ConfigOption *this_opt  = config_this.option(opt_key);
         const ConfigOption *other_opt = config_other.option(opt_key);
-        if (this_opt != nullptr && other_opt != nullptr && *this_opt != *other_opt)
-        {
+        if (this_opt != nullptr && other_opt != nullptr) {
+            if (this_opt->type() != other_opt->type()) {
+                diff.emplace_back(opt_key);
+                continue;
+            }
+            if (*this_opt == *other_opt)
+                continue;
             //BBS: add bed_exclude_area
             if (opt_key == "printable_area" || opt_key == "bed_exclude_area" || opt_key == "compatible_prints" || opt_key == "compatible_printers" || opt_key == "thumbnails") {
                 // Scalar variable, or a vector variable, which is independent from number of extruders,
@@ -2793,6 +2917,9 @@ inline t_config_option_keys deep_diff(const ConfigBase &config_this, const Confi
             }
         }
     }
+    append_missing_nondefault_options(config_this, config_other, diff);
+    std::sort(diff.begin(), diff.end());
+    diff.erase(std::unique(diff.begin(), diff.end()), diff.end());
     return diff;
 }
 
@@ -2805,6 +2932,8 @@ bool PresetCollection::is_dirty(const Preset *edited, const Preset *reference)
     if (edited != nullptr && reference != nullptr) {
         // Only compares options existing in both configs.
         if (! reference->config.equals(edited->config, &skipped_in_dirty))
+            return true;
+        if (has_missing_nondefault_option(edited->config, reference->config, &skipped_in_dirty))
             return true;
         // The "compatible_printers" option key is handled differently from the others:
         // It is not mandatory. If the key is missing, it means it is compatible with any printer.
@@ -2824,12 +2953,15 @@ std::vector<std::string> PresetCollection::dirty_options(const Preset *edited, c
         changed = deep_compare ?
                 deep_diff(edited->config, reference->config) :
                 reference->config.diff(edited->config);
+        append_missing_nondefault_options(edited->config, reference->config, changed);
         // The "compatible_printers" option key is handled differently from the others:
         // It is not mandatory. If the key is missing, it means it is compatible with any printer.
         // If the key exists and it is empty, it means it is compatible with no printer.
         for (auto &opt_key : optional_keys)
             if (reference->config.has(opt_key) != edited->config.has(opt_key))
                 changed.emplace_back(opt_key);
+        std::sort(changed.begin(), changed.end());
+        changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
     }
     return changed;
 }
@@ -2843,6 +2975,7 @@ std::vector<std::string> PresetCollection::dirty_options_without_option_list(con
         changed = deep_compare ?
                 deep_diff(edited->config, reference->config) :
                 reference->config.diff(edited->config);
+        append_missing_nondefault_options(edited->config, reference->config, changed);
         // The "compatible_printers" option key is handled differently from the others:
         // It is not mandatory. If the key is missing, it means it is compatible with any printer.
         // If the key exists and it is empty, it means it is compatible with no printer.
@@ -2850,6 +2983,8 @@ std::vector<std::string> PresetCollection::dirty_options_without_option_list(con
             if (reference->config.has(opt_key) != edited->config.has(opt_key))
                 changed.emplace_back(opt_key);
         }
+        std::sort(changed.begin(), changed.end());
+        changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
         auto iter = changed.begin();
         while (iter != changed.end()) {
             if (option_ignore_list.find(*iter) != option_ignore_list.end()) {

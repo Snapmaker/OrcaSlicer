@@ -71,11 +71,8 @@ public:
 
     void data_changed(bool is_serializing) override;
 
-    // TriangleSelector::serialization/deserialization has a limit to store 19 different states.
-    // EXTRUDER_LIMIT + 1 states are used to storing the painting because also uncolored triangles are stored.
-    // When increasing EXTRUDER_LIMIT, it needs to ensure that TriangleSelector::serialization/deserialization
-    // will be also extended to support additional states, requiring at least one state to remain free out of 19 states.
-    static const constexpr size_t EXTRUDERS_LIMIT = 16;
+    // Keep this in sync with the shared triangle-selector state range.
+    static const constexpr size_t EXTRUDERS_LIMIT = static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
 
     const float get_cursor_radius_min() const override { return CursorRadiusMin; }
 
@@ -88,7 +85,12 @@ protected:
     ColorRGBA get_cursor_hover_color() const override;
     void on_set_state() override;
 
-    EnforcerBlockerType get_left_button_state_type() const override { return EnforcerBlockerType(m_selected_extruder_idx + 1); }
+    EnforcerBlockerType get_left_button_state_type() const override
+    {
+        if (m_selected_extruder_idx < m_display_filament_ids.size())
+            return EnforcerBlockerType(m_display_filament_ids[m_selected_extruder_idx]);
+        return EnforcerBlockerType::Extruder1;
+    }
     EnforcerBlockerType get_right_button_state_type() const override { return EnforcerBlockerType(-1); }
 
     void on_render_input_window(float x, float y, float bottom_limit) override;
@@ -106,6 +108,7 @@ protected:
     // BBS
     size_t                            m_selected_extruder_idx = 0;
     std::vector<ColorRGBA>            m_extruders_colors;
+    std::vector<unsigned int>         m_display_filament_ids;
     std::vector<int>                  m_volumes_extruder_idxs;
 
     // BBS
@@ -136,6 +139,7 @@ private:
     // BBS
     void update_triangle_selectors_colors();
     void init_extruders_data();
+    void init_extruders_data(const std::vector<ColorRGBA> &extruder_colors);
     
     // Filament remapping methods
     void remap_filament_assignments();

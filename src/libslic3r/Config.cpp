@@ -473,8 +473,12 @@ bool ConfigBase::equals(const ConfigBase &other, const std::set<std::string>* sk
             continue;
         const ConfigOption *this_opt  = this->option(opt_key);
         const ConfigOption *other_opt = other.option(opt_key);
-        if (this_opt != nullptr && other_opt != nullptr && *this_opt != *other_opt)
-            return false;
+        if (this_opt != nullptr && other_opt != nullptr) {
+            if (this_opt->type() != other_opt->type())
+                return false;
+            if (*this_opt != *other_opt)
+                return false;
+        }
     }
     return true;
 }
@@ -486,8 +490,10 @@ t_config_option_keys ConfigBase::diff(const ConfigBase &other) const
     for (const t_config_option_key &opt_key : this->keys()) {
         const ConfigOption *this_opt  = this->option(opt_key);
         const ConfigOption *other_opt = other.option(opt_key);
-        if (this_opt != nullptr && other_opt != nullptr && *this_opt != *other_opt)
-            diff.emplace_back(opt_key);
+        if (this_opt != nullptr && other_opt != nullptr) {
+            if (this_opt->type() != other_opt->type() || *this_opt != *other_opt)
+                diff.emplace_back(opt_key);
+        }
     }
     return diff;
 }
@@ -499,7 +505,8 @@ t_config_option_keys ConfigBase::equal(const ConfigBase &other) const
     for (const t_config_option_key &opt_key : this->keys()) {
         const ConfigOption *this_opt  = this->option(opt_key);
         const ConfigOption *other_opt = other.option(opt_key);
-        if (this_opt != nullptr && other_opt != nullptr && *this_opt == *other_opt)
+        if (this_opt != nullptr && other_opt != nullptr &&
+            this_opt->type() == other_opt->type() && *this_opt == *other_opt)
             equal.emplace_back(opt_key);
     }
     return equal;
@@ -897,8 +904,33 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                     if (optdef && optdef->type == coStrings) {
                         use_comma = false;
                     }
+                    std::vector<std::string> array_values;
+                    array_values.reserve(it.value().size());
                     for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
                         if (iter.value().is_string()) {
+                            array_values.emplace_back(iter.value());
+                        }
+                        else {
+                            //should not happen
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" error, invalid json array for " << it.key();
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if (valid && optdef != nullptr && optdef->is_scalar() && optdef->type != coPoint && optdef->type != coPoint3) {
+                        if (array_values.size() == 1) {
+                            value_str = array_values.front();
+                        } else if (!array_values.empty() &&
+                                   std::all_of(array_values.begin() + 1, array_values.end(),
+                                               [&](const std::string &value) { return value == array_values.front(); })) {
+                            value_str = array_values.front();
+                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                                                       << ": collapsing redundant json array for scalar option " << it.key()
+                                                       << " in " << file;
+                        }
+                    }
+                    if (valid && value_str.empty()) {
+                        for (const std::string &array_value : array_values) {
                             if (!first) {
                                 if (use_comma)
                                     value_str += ",";
@@ -909,18 +941,12 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                                 first = false;
 
                             if (use_comma)
-                                value_str += iter.value();
+                                value_str += array_value;
                             else {
                                 value_str += "\"";
-                                value_str += escape_string_cstyle(iter.value());
+                                value_str += escape_string_cstyle(array_value);
                                 value_str += "\"";
                             }
-                        }
-                        else {
-                            //should not happen
-                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" error, invalid json array for " << it.key();
-                            valid = false;
-                            break;
                         }
                     }
                     if (valid)
@@ -1282,10 +1308,9 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
     bool has_delimiters = true;
     {
         //BBS
-        std::string bambuslicer_gcode_header = "; Snapmaker_Orca";
-
-        std::string Snapmaker_Orca_gcode_header = std::string("; generated by ");
-        Snapmaker_Orca_gcode_header += SLIC3R_APP_NAME;
+        std::string bambuslicer_gcode_header      = "; Snapmaker_Orca";
+        std::string legacy_fs_gcode_header        = std::string("; generated by ") + SLIC3R_APP_NAME;
+        std::string compat_snapmaker_gcode_header = "; generated by Snapmaker Orca";
 
         std::string header;
         bool        header_found = false;
@@ -1297,7 +1322,8 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
             line_c = skip_whitespaces(line_c);
             // BBS
             if (strncmp(bambuslicer_gcode_header.c_str(), line_c, strlen(bambuslicer_gcode_header.c_str())) == 0 ||
-                strncmp(Snapmaker_Orca_gcode_header.c_str(), line_c, strlen(Snapmaker_Orca_gcode_header.c_str())) == 0) {
+                strncmp(legacy_fs_gcode_header.c_str(), line_c, strlen(legacy_fs_gcode_header.c_str())) == 0 ||
+                strncmp(compat_snapmaker_gcode_header.c_str(), line_c, strlen(compat_snapmaker_gcode_header.c_str())) == 0) {
                 header_found = true;
                 break;
             }
@@ -1763,7 +1789,11 @@ static inline bool dynamic_config_iterate(const DynamicConfig &lhs, const Dynami
 bool DynamicConfig::equals(const DynamicConfig &other, const std::set<std::string>* skipped_keys) const
 {
     return ! dynamic_config_iterate(*this, other,
-        [](const t_config_option_key & /* key */, const ConfigOption *l, const ConfigOption *r) { return *l != *r; },
+        [](const t_config_option_key & /* key */, const ConfigOption *l, const ConfigOption *r) {
+            if (l->type() != r->type())
+                return true;
+            return *l != *r;
+        },
         skipped_keys);
 }
 
@@ -1773,7 +1803,7 @@ t_config_option_keys DynamicConfig::diff(const DynamicConfig &other) const
     t_config_option_keys diff;
     dynamic_config_iterate(*this, other,
         [&diff](const t_config_option_key &key, const ConfigOption *l, const ConfigOption *r) {
-            if (*l != *r)
+            if (l->type() != r->type() || *l != *r)
                 diff.emplace_back(key);
             // Continue iterating.
             return false;
@@ -1787,7 +1817,7 @@ t_config_option_keys DynamicConfig::equal(const DynamicConfig &other) const
     t_config_option_keys equal;
     dynamic_config_iterate(*this, other,
         [&equal](const t_config_option_key &key, const ConfigOption *l, const ConfigOption *r) {
-            if (*l == *r)
+            if (l->type() == r->type() && *l == *r)
                 equal.emplace_back(key);
             // Continue iterating.
             return false;

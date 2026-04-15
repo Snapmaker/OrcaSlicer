@@ -2477,6 +2477,17 @@ void ModelVolume::update_extruder_count(size_t extruder_count)
     std::vector<int> used_extruders = get_extruders();
     for (int extruder_id : used_extruders) {
         if (extruder_id > extruder_count) {
+            std::string used_extruders_str;
+            for (size_t i = 0; i < used_extruders.size(); ++i) {
+                if (i > 0)
+                    used_extruders_str += ",";
+                used_extruders_str += std::to_string(used_extruders[i]);
+            }
+            BOOST_LOG_TRIVIAL(warning) << "ModelVolume::update_extruder_count clipping painted extruders to limit"
+                                       << " volume_name=" << this->name
+                                       << " volume_id=" << this->id().id
+                                       << " requested_limit=" << extruder_count
+                                       << " used_extruders=[" << used_extruders_str << "]";
             mmu_segmentation_facets.set_enforcer_block_type_limit(*this, (EnforcerBlockerType)extruder_count);
             break;
         }
@@ -2491,6 +2502,20 @@ void ModelVolume::update_extruder_count_when_delete_filament(size_t extruder_cou
             mmu_segmentation_facets.set_enforcer_block_type_limit(*this, (EnforcerBlockerType) (extruder_count),
                                                                   (EnforcerBlockerType) (filament_id),
                                                                   (EnforcerBlockerType) (replace_filament_id));
+            break;
+        }
+    }
+}
+
+void ModelVolume::remap_extruder_ids(size_t extruder_count, const EnforcerBlockerStateMap &state_map)
+{
+    std::vector<int> used_extruders = get_extruders();
+    for (int extruder_id : used_extruders) {
+        if (extruder_id <= 0)
+            continue;
+        if (extruder_id >= int(state_map.size()) || extruder_id > int(extruder_count) ||
+            state_map[size_t(extruder_id)] != EnforcerBlockerType(extruder_id)) {
+            mmu_segmentation_facets.remap_enforcer_block_types(*this, EnforcerBlockerType(extruder_count), state_map);
             break;
         }
     }
@@ -3397,6 +3422,15 @@ void FacetsAnnotation::set_enforcer_block_type_limit(const ModelVolume&  mv,
 {
     TriangleSelector selector(mv.mesh());
     selector.deserialize(m_data, false, max_type, to_delete_filament, replace_filament);
+    this->set(selector);
+}
+
+void FacetsAnnotation::remap_enforcer_block_types(const ModelVolume& mv,
+                                                  EnforcerBlockerType max_type,
+                                                  const EnforcerBlockerStateMap &state_map)
+{
+    TriangleSelector selector(mv.mesh());
+    selector.deserialize(m_data, false, max_type, EnforcerBlockerType::NONE, EnforcerBlockerType::NONE, &state_map);
     this->set(selector);
 }
 

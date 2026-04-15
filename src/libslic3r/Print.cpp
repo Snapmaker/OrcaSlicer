@@ -53,6 +53,50 @@ template class PrintState<PrintObjectStep, posCount>;
 PrintRegion::PrintRegion(const PrintRegionConfig &config) : PrintRegion(config, config.hash()) {}
 PrintRegion::PrintRegion(PrintRegionConfig &&config) : PrintRegion(std::move(config), config.hash()) {}
 
+static size_t estimate_local_z_wipe_tower_reserve_slots(const PrintObject& print_object, coordf_t print_z)
+{
+    const Layer* object_layer = print_object.get_layer_at_printz(print_z, EPSILON);
+    if (object_layer == nullptr)
+        return 0;
+
+    const auto& intervals = print_object.local_z_intervals();
+    const auto& plans     = print_object.local_z_sublayer_plan();
+    if (intervals.empty() || plans.empty())
+        return 0;
+
+    const size_t layer_id = size_t(object_layer->id());
+    const auto interval_it = std::find_if(intervals.begin(), intervals.end(), [layer_id](const LocalZInterval& interval) {
+        return interval.layer_id == layer_id;
+    });
+    if (interval_it == intervals.end() || !interval_it->has_mixed_paint || interval_it->sublayer_count <= 1 ||
+        interval_it->first_sublayer_idx >= plans.size()) {
+        return 0;
+    }
+
+    const size_t first_idx = interval_it->first_sublayer_idx;
+    const size_t end_idx   = std::min(plans.size(), first_idx + interval_it->sublayer_count);
+    size_t reserve_slots = 0;
+    int    previous_extruder = -1;
+    for (size_t plan_idx = first_idx; plan_idx < end_idx; ++plan_idx) {
+        const SubLayerPlan& plan = plans[plan_idx];
+        if (!plan.split_interval)
+            continue;
+
+        for (size_t extruder_id = 0; extruder_id < plan.painted_masks_by_extruder.size(); ++extruder_id) {
+            if (plan.painted_masks_by_extruder[extruder_id].empty())
+                continue;
+            if (previous_extruder != int(extruder_id)) {
+                ++reserve_slots;
+                previous_extruder = int(extruder_id);
+            }
+        }
+    }
+
+    if (reserve_slots > 0)
+        ++reserve_slots;
+    return reserve_slots;
+}
+
 //BBS
 // ORCA: Now this is a parameter
 //float Print::min_skirt_length = 0;
@@ -247,6 +291,17 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "filament_shrinkage_compensation_z"
             || opt_key == "resolution"
             || opt_key == "precise_z_height"
+            || opt_key == "dithering_z_step_size"
+            || opt_key == "dithering_local_z_mode"
+            || opt_key == "dithering_step_painted_zones_only"
+            || opt_key == "mixed_filament_gradient_mode"
+            || opt_key == "mixed_filament_height_lower_bound"
+            || opt_key == "mixed_filament_height_upper_bound"
+            || opt_key == "mixed_filament_advanced_dithering"
+            || opt_key == "mixed_filament_component_bias_enabled"
+            || opt_key == "mixed_filament_surface_indentation"
+            || opt_key == "mixed_filament_region_collapse"
+            || opt_key == "mixed_filament_definitions"
             // Spiral Vase forces different kind of slicing than the normal model:
             // In Spiral Vase mode, holes are closed and only the largest area contour is kept at each layer.
             // Therefore toggling the Spiral Vase on / off requires complete reslicing.
@@ -478,10 +533,11 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
 
     if (conside_custom_gcode) {
         //BBS
-        int num_extruders = m_config.filament_colour.size();
+        const size_t num_physical = m_config.filament_colour.size();
+        const size_t num_filaments = m_mixed_filament_mgr.total_filaments(num_physical);
         if (m_model.plates_custom_gcodes.find(m_model.curr_plate_index) != m_model.plates_custom_gcodes.end()) {
             for (auto item : m_model.plates_custom_gcodes.at(m_model.curr_plate_index).gcodes) {
-                if (item.type == CustomGCode::Type::ToolChange && item.extruder <= num_extruders)
+                if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(num_filaments))
                     extruders.push_back((unsigned int)(item.extruder - 1));
             }
         }
@@ -1152,7 +1208,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             layer_height_profiles.assign(m_objects.size(), std::vector<coordf_t>());
         std::vector<coordf_t>   &profile      = layer_height_profiles[print_object_idx];
         if (profile.empty())
-            PrintObject::update_layer_height_profile(*print_object.model_object(), print_object.slicing_parameters(), profile);
+            PrintObject::update_layer_height_profile(*print_object.model_object(), print_object.slicing_parameters(), profile, &print_object);
         return profile;
     };
 
@@ -2891,6 +2947,17 @@ void Print::_make_wipe_tower()
                         current_extruder_id = extruder_id;
                     }
                 }
+
+                if (m_config.dithering_local_z_mode) {
+                    size_t local_z_reserve_slots = 0;
+                    for (const PrintObject* print_object : m_objects)
+                        local_z_reserve_slots += estimate_local_z_wipe_tower_reserve_slots(*print_object, layer_tools.print_z);
+                    if (local_z_reserve_slots > 0) {
+                        wipe_tower.plan_local_z_reserve((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
+                                                        local_z_reserve_slots, (float) m_config.prime_volume);
+                    }
+                }
+
                 layer_tools.wiping_extrusions().ensure_perimeters_infills_order(*this);
                 if (&layer_tools == &m_wipe_tower_data.tool_ordering.back() || (&layer_tools + 1)->wipe_tower_partitions == 0)
                     break;
@@ -2902,6 +2969,7 @@ void Print::_make_wipe_tower()
         wipe_tower.generate(m_wipe_tower_data.tool_changes);
         m_wipe_tower_data.depth             = wipe_tower.get_depth();
         m_wipe_tower_data.z_and_depth_pairs = wipe_tower.get_z_and_depth_pairs();
+        m_wipe_tower_data.local_z_reserve_boxes = wipe_tower.get_local_z_reserve_boxes();
         m_wipe_tower_data.brim_width        = wipe_tower.get_brim_width();
         m_wipe_tower_data.height            = wipe_tower.get_wipe_tower_height();
 

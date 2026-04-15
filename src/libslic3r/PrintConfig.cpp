@@ -3378,6 +3378,31 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(100., true));
 
+    def = this->add("enable_infill_filament_override", coBool);
+    def->label = L("Override infill filament");
+    def->category = L("Extruders");
+    def->tooltip = L("Allow this print, object, or part to use a dedicated filament for sparse infill instead of inheriting its regular filament.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("infill_filament_use_base_first_layers", coInt);
+    def->label = L("Base infill on first layers");
+    def->category = L("Extruders");
+    def->tooltip = L("Keep using the regular object filament for this many bottom infill layers before switching to the infill override filament.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("infill_filament_use_base_last_layers", coInt);
+    def->label = L("Base infill on last layers");
+    def->category = L("Extruders");
+    def->tooltip = L("Keep using the regular object filament for this many top infill layers after switching back from the infill override filament.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("sparse_infill_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Infill");
@@ -4177,6 +4202,159 @@ void PrintConfigDef::init_fff_params()
     def->height = 6;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings());
+
+    def = this->add("mixed_color_layer_height_a", coFloat);
+    def->label = L("Dithering cadence height A");
+    def->category = L("Others");
+    def->tooltip = L("Layer height contribution of component A for dithering virtual filaments. "
+                     "Set to 0 to use normal 1-layer A / 1-layer B alternation.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->sidetext = "mm";
+    def->min = 0.;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("mixed_color_layer_height_b", coFloat);
+    def->label = L("Dithering cadence height B");
+    def->category = L("Others");
+    def->tooltip = L("Layer height contribution of component B for dithering virtual filaments. "
+                     "Set to 0 to use normal 1-layer A / 1-layer B alternation.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->sidetext = "mm";
+    def->min = 0.;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("mixed_filament_gradient_mode", coBool);
+    def->label = L("Height-weighted cadence");
+    def->category = L("Others");
+    def->tooltip = L("Enable height-weighted cadence for mixed filaments. "
+                     "Limitation: only one height-weighted mixed color should be present at a given Z plane, "
+                     "because independent per-color layer heights are not supported and the resulting layer height applies to the whole plane. "
+                     "When disabled, layer-cycle cadence is used.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("mixed_filament_height_lower_bound", coFloat);
+    def->label = L("Mixed filament lower height bound");
+    def->category = L("Others");
+    def->tooltip = L("Lower bound used by the height-weighted mixed filament gradient mode.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->sidetext = "mm";
+    def->min = 0.01;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.04));
+
+    def = this->add("mixed_filament_height_upper_bound", coFloat);
+    def->label = L("Mixed filament upper height bound");
+    def->category = L("Others");
+    def->tooltip = L("Upper bound used by the height-weighted mixed filament gradient mode.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->sidetext = "mm";
+    def->min = 0.01;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.16));
+
+    def = this->add("mixed_filament_advanced_dithering", coBool);
+    def->label = L("Advanced dithering");
+    def->category = L("Others");
+    def->tooltip = L("Distribute mixed filament layer-cycle cadence using an advanced ordered dithering pattern "
+                     "instead of a simple contiguous A-then-B run. This can reduce visible striping for some hues.\n\n"
+                     "This is an even more experimental mode and the perceived color may differ from normal dithering "
+                     "for the same filament pair and ratio.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("mixed_filament_pointillism_pixel_size", coFloat);
+    def->label = L("Pointillisme pixel size");
+    def->category = L("Others");
+    def->tooltip = L("Length of one pointillisme segment along an extrusion path for same-layer pointillisme mode. "
+                     "Set to 0 to use automatic nozzle-based sizing.\n\n"
+                     "Warning: Same-layer pointillisme is extremely experimental and may produce unusable results.");
+    def->sidetext = "mm";
+    def->min = 0.;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("mixed_filament_pointillism_line_gap", coFloat);
+    def->label = L("Pointillisme line gap");
+    def->category = L("Others");
+    def->tooltip = L("Optional non-extruded spacing between adjacent pointillisme segments. "
+                     "Increase carefully to improve separation and print quality.\n\n"
+                     "Warning: Same-layer pointillisme is extremely experimental and may produce unusable results.");
+    def->sidetext = "mm";
+    def->min = 0.;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("mixed_filament_component_bias_enabled", coBool);
+    def->label = L("Enable mixed filament bias");
+    def->category = L("Others");
+    def->tooltip = L("Show and apply the per-row mixed filament Bias control.\n\n"
+                     "When enabled, the selected filament in a mixed pair is recessed slightly so the other component becomes more visible.\n\n"
+                     "Bias is ignored for grouped wall patterns, same-layer pointillisme, and Local Z dithering.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("mixed_filament_surface_indentation", coFloat);
+    def->label = L("Selective Expansion contraction");
+    def->category = L("Others");
+    def->tooltip = L("XY offset applied to mixed-filament painted regions before region assignment.\n\n"
+                     "Positive values contract the mixed zone inward. Negative values expand it outward.\n\n"
+                     "This applies to mixed filament usage in layer cadence, height cadence, same-layer pointillisme, and local Z dithering.");
+    def->sidetext = "mm";
+    def->min = -2.0;
+    def->max = 2.0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("mixed_filament_region_collapse", coBool);
+    def->label = L("Collapse same-color mixed regions");
+    def->category = L("Others");
+    def->tooltip = L("Merge ordinary mixed-filament painted regions into a single area when they resolve to the same physical filament on a layer.\n\n"
+                     "This improves continuity for adjacent same-color areas. Local Z dithering turns this off automatically when enabled, but you may turn it back on manually.\n\n"
+                     "Experimental with Local Z dithering.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("mixed_filament_definitions", coString);
+    def->label = L("Mixed filament custom definitions");
+    def->tooltip = L("Serialized custom mixed filament rows.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->gui_flags = "serialized";
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("dithering_z_step_size", coFloat);
+    def->label = L("Dithering Z step size");
+    def->category = L("Others");
+    def->tooltip = L("Layer height used in Z zones painted with dithering (mixed virtual filaments). "
+                     "Set to 0 to keep normal layer height in those zones.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->sidetext = "mm";
+    def->min = 0.;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.0));
+
+    def = this->add("dithering_local_z_mode", coBool);
+    def->label = L("Local Z dithering mode");
+    def->category = L("Others");
+    def->tooltip = L("Use Variable Layers for Color Blending\n\n"
+                     "Blend colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\n"
+                     "This setting increases color blending smoothness by splitting each blended layer according to the blend ratio. For example, a 66/33 blend at 0.12 mm layer height will print as one 0.08 mm layer and one 0.04 mm layer. At 0.20 mm layer height, a 75/25 blend will print as one 0.15 mm layer and one 0.05 mm layer.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("dithering_step_painted_zones_only", coBool);
+    def->label = L("Use step size in painted zones only");
+    def->category = L("Others");
+    def->tooltip = L("When enabled, dithering Z step size is applied only where mixed filament is painted. "
+                     "Unpainted zones keep their original layer height.\n\n"
+                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
     
     def = this->add("printer_model", coString);
     def->label = L("Printer type");
@@ -5948,6 +6126,16 @@ void PrintConfigDef::init_fff_params()
     def->max = 300.;
     def->set_default_value(new ConfigOptionPercent(100.));
 
+    def = this->add("local_z_wipe_tower_purge_lines", coFloat);
+    def->label = L("Local-Z mini wipe lines");
+    def->tooltip = L("Number of purge lines reserved for each runtime Local-Z wipe tower toolchange. "
+                     "Higher values improve cleanup but increase tower depth. "
+                     "Only used when Local-Z dithering and the prime tower are enabled.");
+    def->sidetext = L("lines");
+    def->mode = comAdvanced;
+    def->min = 1.0;
+    def->set_default_value(new ConfigOptionFloat(3.0));
+
     def = this->add("idle_temperature", coInts);
     def->label = L("Idle temperature");
     def->tooltip = L("Nozzle temperature when the tool is currently not used in multi-tool setups. "
@@ -7191,6 +7379,13 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
         }
     }
 
+    if (!this->has("enable_infill_filament_override") && this->has("sparse_infill_filament")) {
+        const int wall_filament = this->has("wall_filament") ? this->option("wall_filament")->getInt() : 1;
+        const int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
+        if (sparse_infill_filament > 0 && sparse_infill_filament != wall_filament)
+            this->opt<ConfigOptionBool>("enable_infill_filament_override", true)->value = true;
+    }
+
     if (this->has("wipe_tower_filament")) {
         // If invalid, replace with 0.
         int extruder      = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
@@ -7270,6 +7465,13 @@ void DynamicPrintConfig::normalize_fdm_1()
             // if (!this->has("support_interface_filament"))
             //     this->option("support_interface_filament", true)->setInt(extruder);
         }
+    }
+
+    if (!this->has("enable_infill_filament_override") && this->has("sparse_infill_filament")) {
+        const int wall_filament = this->has("wall_filament") ? this->option("wall_filament")->getInt() : 1;
+        const int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
+        if (sparse_infill_filament > 0 && sparse_infill_filament != wall_filament)
+            this->opt<ConfigOptionBool>("enable_infill_filament_override", true)->value = true;
     }
 
     if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))

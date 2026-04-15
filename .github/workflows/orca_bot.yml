@@ -1,7 +1,5 @@
 name: Orca bot
 on:
-  schedule:
-    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       logLevel:

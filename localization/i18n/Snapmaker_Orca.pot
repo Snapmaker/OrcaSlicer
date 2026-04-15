@@ -8121,10 +8121,16 @@ msgstr ""
 msgid "Approximate color matching."
 msgstr ""
 
-msgid "Append"
+msgid "Append all"
 msgstr ""
 
-msgid "Add consumable extruder after existing extruders."
+msgid "Add all clustered colors after the existing filaments."
+msgstr ""
+
+msgid "Keep color"
+msgstr ""
+
+msgid "Add this cluster color as a new filament."
 msgstr ""
 
 msgid "Reset mapped extruders."

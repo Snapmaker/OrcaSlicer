@@ -4,6 +4,7 @@
 #include "Preset.hpp"
 #include "AppConfig.hpp"
 #include "enum_bitmask.hpp"
+#include "MixedFilament.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -162,6 +163,9 @@ public:
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
 
+    // Mixed (virtual) filaments for layer-based colour mixing.
+    MixedFilamentManager        mixed_filaments;
+
     // Snapmaker
     std::map<int, std::pair<std::string, std::string>> machine_filaments;
     std::vector<ConnectMachineInfo>                    m_connect_machine_info_list;
@@ -258,7 +262,22 @@ public:
 
     // Read out the number of extruders from an active printer preset,
     // update size and content of filament_presets.
-    void                        update_multi_material_filament_presets(size_t to_delete_filament_id = size_t(-1));
+    void                        update_multi_material_filament_presets(size_t to_delete_filament_id = size_t(-1),
+                                                                       size_t old_num_filaments = size_t(-1));
+    // Rebuild old->new virtual filament mapping after mixed-row enable/delete
+    // changes when the physical filament count itself did not change.
+    void                        update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
+                                                               size_t old_num_filaments,
+                                                               size_t new_num_filaments);
+    // Mapping generated during the latest filament count change.
+    // Index is old 1-based filament ID, value is new 1-based filament ID (0 = removed).
+    const std::vector<unsigned int>& last_filament_id_remap() const { return m_last_filament_id_remap; }
+    std::vector<unsigned int> consume_last_filament_id_remap()
+    {
+        std::vector<unsigned int> out = std::move(m_last_filament_id_remap);
+        m_last_filament_id_remap.clear();
+        return out;
+    }
 
     // Update the is_compatible flag of all print and filament presets depending on whether they are marked
     // as compatible with the currently selected printer (and print in case of filament presets).
@@ -313,6 +332,11 @@ private:
     std::pair<PresetsConfigSubstitutions, std::string> load_system_presets_from_json(ForwardCompatibilitySubstitutionRule compatibility_rule);
     // Merge one vendor's presets with the other vendor's presets, report duplicates.
     std::vector<std::string>    merge_presets(PresetBundle &&other);
+    void                        build_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
+                                                        size_t old_num_filaments,
+                                                        size_t new_num_filaments,
+                                                        bool deleting_filament,
+                                                        unsigned int deleted_1based);
     // Update renamed_from and alias maps of system profiles.
     void 						update_system_maps();
 
@@ -335,6 +359,7 @@ private:
     bool validation_mode = false;
     std::string vendor_to_validate = ""; 
     int m_errors = 0;
+    std::vector<unsigned int> m_last_filament_id_remap;
 
 };
 

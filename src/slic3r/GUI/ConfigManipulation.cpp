@@ -536,6 +536,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     PresetBundle *preset_bundle  = wxGetApp().preset_bundle;
 
     auto gcflavor = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value;
+    const bool bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
 
     bool have_volumetric_extrusion_rate_slope = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope")->value > 0;
     float have_volumetric_extrusion_rate_slope_segment_length = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope_segment_length")->value;
@@ -556,10 +557,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         toggle_field(el, have_perimeters);
 
     bool have_infill = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0;
+    const bool show_infill_filament_override_toggle = !is_global_config && have_infill && !bSEMM;
     // sparse_infill_filament uses the same logic as in Print::extruders()
     for (auto el : { "sparse_infill_pattern", "infill_combination",
-        "minimum_sparse_infill_area", "sparse_infill_filament", "infill_anchor_max","infill_shift_step","sparse_infill_rotate_template","symmetric_infill_y_axis"})
+        "minimum_sparse_infill_area", "infill_anchor_max","infill_shift_step","sparse_infill_rotate_template","symmetric_infill_y_axis"})
         toggle_line(el, have_infill);
+    toggle_line("enable_infill_filament_override", show_infill_filament_override_toggle);
 
     bool have_combined_infill = config->opt_bool("infill_combination") && have_infill;
     toggle_line("infill_combination_max_layer_height", have_combined_infill);
@@ -748,8 +751,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
 
     toggle_field("single_extruder_multi_material", !is_BBL_Printer);
 
-    auto bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
-
     toggle_field("ooze_prevention", !bSEMM);
     bool have_ooze_prevention = config->opt_bool("ooze_prevention");
     toggle_line("standby_temperature_delta", have_ooze_prevention);
@@ -764,6 +765,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : {"wall_filament", "sparse_infill_filament", "solid_infill_filament", "wipe_tower_filament"})
         toggle_line(el, !bSEMM);
 
+    const bool show_sparse_infill_filament =
+        show_infill_filament_override_toggle && config->opt_bool("enable_infill_filament_override");
+    toggle_line("infill_filament_use_base_first_layers", show_sparse_infill_filament);
+    toggle_line("infill_filament_use_base_last_layers", show_sparse_infill_filament);
+    toggle_line("sparse_infill_filament", show_sparse_infill_filament);
+
     bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
 
     for (auto el : {"wipe_tower_rotation_angle", "wipe_tower_cone_angle",
@@ -773,6 +780,11 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
                     "wipe_tower_bridging", "wipe_tower_extra_flow",
                     "wipe_tower_no_sparse_layers"})
       toggle_line(el, have_prime_tower && !is_BBL_Printer);
+
+    const bool local_z_dithering_enabled =
+        config->has("dithering_local_z_mode") && config->option("dithering_local_z_mode") != nullptr &&
+        config->opt_bool("dithering_local_z_mode");
+    toggle_line("local_z_wipe_tower_purge_lines", have_prime_tower && !is_BBL_Printer && local_z_dithering_enabled);
 
     WipeTowerWallType wipe_tower_wall_type = config->opt_enum<WipeTowerWallType>("wipe_tower_wall_type");
     toggle_line("wipe_tower_cone_angle", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwCone);

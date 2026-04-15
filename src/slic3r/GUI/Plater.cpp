@@ -2,7 +2,12 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
+#include "MixedFilamentDialog.hpp"
+#include "MixedFilamentAdapter.hpp"
 #include "common_func/common_func.hpp"
+
+// UI switch: define to use BS-style modal dialog, undefine to use FS sidebar panel
+#define USE_NEW_MIXED_UI
 
 #include <cstddef>
 #include <array>
@@ -762,6 +767,20 @@ struct Sidebar::priv
     std::vector<uint64_t>                m_mixed_filament_ui_order;
     bool                                 m_mixed_filament_drag_active = false;
     size_t                               m_mixed_filament_drag_source_mixed_id = size_t(-1);
+
+#ifdef USE_NEW_MIXED_UI
+    // BS-style modal dialog UI members
+    wxPanel*            m_panel_new_mixed_title = nullptr;
+    wxStaticText*       m_text_new_mixed_title = nullptr;
+    ScalableButton*     m_btn_new_mixed_add = nullptr;
+    ScalableButton*     m_btn_new_mixed_del = nullptr;
+    wxPanel*            m_panel_new_mixed_content = nullptr;
+    wxBoxSizer*         m_sizer_new_mixed_filaments = nullptr;
+    wxPanel*            m_panel_new_mixed_warning = nullptr;
+    wxStaticText*       m_text_new_mixed_warning = nullptr;
+    bool                m_new_mixed_filament_broken = false;
+#endif
+
     wxStaticLine* m_staticline2;
     wxPanel* m_panel_project_title;
     ScalableButton* m_filament_icon = nullptr;
@@ -1692,7 +1711,8 @@ Sidebar::Sidebar(Plater *parent)
     scrolled_sizer->Add(p->m_panel_filament_content, 0, wxEXPAND, 0);
     }
 
-    // --- Mixed Filaments Panel (Collapsible) ---
+#ifndef USE_NEW_MIXED_UI
+    // --- Mixed Filaments Panel (FS-style: Collapsible sidebar) ---
     {
     // Create title bar (StaticBox for collapsible header)
     p->m_panel_mixed_filaments_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
@@ -1861,6 +1881,92 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_mixed_filaments_title->Hide();
     p->m_panel_mixed_filaments_content->Hide();
     }
+#else // USE_NEW_MIXED_UI
+    // --- Mixed Filaments Panel (BS-style: modal dialog) ---
+    {
+    // Title bar
+    p->m_panel_new_mixed_title = new wxPanel(p->scrolled, wxID_ANY);
+    p->m_panel_new_mixed_title->SetBackgroundColour(wxColour("#FAFAFA"));
+    auto *h_sizer_new_mixed = new wxBoxSizer(wxHORIZONTAL);
+
+    auto *icon = new ScalableButton(p->m_panel_new_mixed_title, wxID_ANY, "filament");
+    p->m_text_new_mixed_title = new Label(p->m_panel_new_mixed_title, _L("Mixed Filaments"));
+    p->m_btn_new_mixed_add = new ScalableButton(p->m_panel_new_mixed_title, wxID_ANY, "add_filament");
+    p->m_btn_new_mixed_del = new ScalableButton(p->m_panel_new_mixed_title, wxID_ANY, "delete_filament");
+
+    h_sizer_new_mixed->Add(icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(10));
+    h_sizer_new_mixed->Add(p->m_text_new_mixed_title, 0, wxALIGN_CENTER | wxLEFT, FromDIP(5));
+    h_sizer_new_mixed->AddStretchSpacer();
+    h_sizer_new_mixed->Add(p->m_btn_new_mixed_add, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(5));
+    h_sizer_new_mixed->Add(p->m_btn_new_mixed_del, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(10));
+    p->m_panel_new_mixed_title->SetSizer(h_sizer_new_mixed);
+
+    // Content panel (mixed filament rows)
+    p->m_panel_new_mixed_content = new wxPanel(p->scrolled, wxID_ANY);
+    p->m_sizer_new_mixed_filaments = new wxBoxSizer(wxVERTICAL);
+    p->m_panel_new_mixed_content->SetSizer(p->m_sizer_new_mixed_filaments);
+
+    // Warning panel (hidden by default)
+    p->m_panel_new_mixed_warning = new wxPanel(p->scrolled, wxID_ANY);
+    p->m_panel_new_mixed_warning->SetBackgroundColour(wxColour(255, 230, 230));
+    auto *warn_sizer = new wxBoxSizer(wxHORIZONTAL);
+    p->m_text_new_mixed_warning = new wxStaticText(p->m_panel_new_mixed_warning, wxID_ANY, _L("Some mixed filaments have invalid components"));
+    warn_sizer->Add(p->m_text_new_mixed_warning, 1, wxALIGN_CENTER | wxALL, FromDIP(5));
+    p->m_panel_new_mixed_warning->SetSizer(warn_sizer);
+    p->m_panel_new_mixed_warning->Hide();
+
+    // Add button handler: open BS-style MixedFilamentDialog
+    p->m_btn_new_mixed_add->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+        if (!wxGetApp().preset_bundle) return;
+        auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
+        auto *co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        std::vector<std::string> colors = co ? co->values : std::vector<std::string>();
+        if (colors.size() < 2) return;
+
+        // Build names and types for dialog
+        std::vector<std::string> names, types;
+        for (size_t i = 0; i < colors.size(); ++i)
+            names.push_back("Filament " + std::to_string(i + 1));
+
+        MixedFilamentDialog dlg(this, colors, names, types);
+        if (dlg.ShowModal() == wxID_OK) {
+            auto result = dlg.get_result();
+            auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions");
+            apply_dialog_result_to_manager(result, mgr, colors, opt);
+            update_mixed_filament_panel(false);
+            m_scrolled_sizer->Layout();
+        }
+    });
+
+    // Delete button handler: remove last mixed filament
+    p->m_btn_new_mixed_del->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+        if (!wxGetApp().preset_bundle) return;
+        auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
+        auto &entries = mgr.mixed_filaments();
+        if (entries.empty()) return;
+        entries.pop_back();
+        auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions");
+        if (opt) opt->value = mgr.serialize_custom_entries();
+        update_mixed_filament_panel(false);
+        m_scrolled_sizer->Layout();
+    });
+
+    // Add to scrolled sizer
+    auto spliter_mixed_top = new ::StaticLine(p->scrolled);
+    spliter_mixed_top->SetLineColour("#A6A9AA");
+    scrolled_sizer->Add(spliter_mixed_top, 0, wxEXPAND);
+    scrolled_sizer->Add(p->m_panel_new_mixed_title, 0, wxEXPAND);
+    scrolled_sizer->Add(p->m_panel_new_mixed_warning, 0, wxEXPAND);
+    scrolled_sizer->Add(p->m_panel_new_mixed_content, 0, wxEXPAND);
+    auto spliter_mixed_bot = new ::StaticLine(p->scrolled);
+    spliter_mixed_bot->SetLineColour("#CECECE");
+    scrolled_sizer->Add(spliter_mixed_bot, 0, wxEXPAND);
+
+    // Initially hidden until 2+ filaments
+    p->m_panel_new_mixed_title->Hide();
+    p->m_panel_new_mixed_content->Hide();
+    }
+#endif // USE_NEW_MIXED_UI
 
     {
     //add project title
@@ -7624,16 +7730,26 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         p->m_btn_add_color->Enable(num_physical >= 2);
 
     if (num_physical < 2) {
+#ifndef USE_NEW_MIXED_UI
         p->m_panel_mixed_filaments_title->Hide();
         p->m_panel_mixed_filaments_content->Hide();
+#else
+        if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Hide();
+        if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Hide();
+#endif
         Layout();
         refresh_model_canvas_colors();
         return;
     }
 
     // Show the panels
+#ifndef USE_NEW_MIXED_UI
     p->m_panel_mixed_filaments_title->Show();
     p->m_panel_mixed_filaments_content->Show();
+#else
+    if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Show();
+    if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Show();
+#endif
     
     // Reset the max size in case it was collapsed
     p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});

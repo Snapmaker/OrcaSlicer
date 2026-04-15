@@ -1913,59 +1913,42 @@ Sidebar::Sidebar(Plater *parent)
 
     // Add button handler: open BS-style MixedFilamentDialog
     p->m_btn_new_mixed_add->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
-        BOOST_LOG_TRIVIAL(error) << "[MixedDlg] Add button clicked";
-        if (!wxGetApp().preset_bundle) { BOOST_LOG_TRIVIAL(error) << "[MixedDlg] preset_bundle is null, abort"; return; }
+        if (!wxGetApp().preset_bundle) return;
         auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
         auto *co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         std::vector<std::string> colors = co ? co->values : std::vector<std::string>();
-        BOOST_LOG_TRIVIAL(error) << "[MixedDlg] colors.size()=" << colors.size();
-        if (colors.size() < 2) { BOOST_LOG_TRIVIAL(error) << "[MixedDlg] colors < 2, abort"; return; }
+        if (colors.size() < 2) return;
 
-        // Build names and types for dialog
         std::vector<std::string> names, types;
         for (size_t i = 0; i < colors.size(); ++i)
             names.push_back("Filament " + std::to_string(i + 1));
 
-        BOOST_LOG_TRIVIAL(error) << "[MixedDlg] Opening dialog...";
         MixedFilamentDialog dlg(this, colors, names, types);
-        int modal_ret = dlg.ShowModal();
-        BOOST_LOG_TRIVIAL(error) << "[MixedDlg] ShowModal returned " << modal_ret << " (wxID_OK=" << wxID_OK << ")";
-        if (modal_ret == wxID_OK) {
+        if (dlg.ShowModal() == wxID_OK) {
             auto result = dlg.get_result();
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] result: components=" << result.components.size()
-                                     << " ratios=" << result.ratios.size()
-                                     << " gradient=" << result.gradient_enabled;
-            if (result.components.size() >= 2)
-                BOOST_LOG_TRIVIAL(error) << "[MixedDlg] comp[0]=" << result.components[0] << " comp[1]=" << result.components[1]
-                                         << " ratio[0]=" << result.ratios[0] << " ratio[1]=" << result.ratios[1];
             auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions");
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] opt_definitions ptr=" << (void*)opt;
-            size_t before = mgr.mixed_filaments().size();
             apply_dialog_result_to_manager(result, mgr, colors, opt);
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] manager entries: " << before << " -> " << mgr.mixed_filaments().size();
-            if (opt) BOOST_LOG_TRIVIAL(error) << "[MixedDlg] serialized definitions: " << opt->value;
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] calling update_multi_material_filament_presets...";
-            wxGetApp().preset_bundle->update_multi_material_filament_presets();
-            size_t num = wxGetApp().preset_bundle->filament_presets.size();
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] calling Plater::on_filaments_change(" << num << ")";
-            wxGetApp().plater()->on_filaments_change(num);
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] Add handler done";
-        } else {
-            BOOST_LOG_TRIVIAL(error) << "[MixedDlg] Dialog cancelled";
+            // Refresh mixed filament panel only — do NOT call
+            // update_multi_material_filament_presets() here because it
+            // clear/reload custom entries from config and would overwrite
+            // the entry we just added.
+            update_mixed_filament_panel(false);
+            m_scrolled_sizer->Layout();
         }
     });
 
-    // Delete button handler: remove last mixed filament
+    // Delete button handler: remove last custom mixed filament
     p->m_btn_new_mixed_del->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
         if (!wxGetApp().preset_bundle) return;
         auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
         auto &entries = mgr.mixed_filaments();
         if (entries.empty()) return;
+        // Only remove the last custom entry (pop from the back)
         entries.pop_back();
         auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions");
         if (opt) opt->value = mgr.serialize_custom_entries();
-        wxGetApp().preset_bundle->update_multi_material_filament_presets();
-        wxGetApp().plater()->on_filaments_change(wxGetApp().preset_bundle->filament_presets.size());
+        update_mixed_filament_panel(false);
+        m_scrolled_sizer->Layout();
     });
 
     // Add to scrolled sizer

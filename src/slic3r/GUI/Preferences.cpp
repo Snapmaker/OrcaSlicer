@@ -1242,6 +1242,7 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_calc_mode = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time the color changed."), page, _L("If enabled, auto-calculate every time the color changed."), 50, "auto_calculate");
     auto item_calc_in_long_retract = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time when the filament is changed."), page, _L("If enabled, auto-calculate every time when filament is changed"), 50, "auto_calculate_when_filament_change");
     auto item_auto_generate_gradients = create_item_checkbox(_L("Mixed filaments: Auto-generate gradients."), page, _L("If enabled, Snapmaker Orca automatically creates gradient mixed filaments from physical filament pairs."), 50, "auto_generate_gradients");
+    auto item_new_mixed_ui = create_item_checkbox(_L("Mixed filaments: Use new dialog UI"), page, _L("Switch between the classic sidebar panel and the new modal dialog for managing mixed filaments. Takes effect immediately."), 50, "use_new_mixed_filament_ui");
     auto title_full_spectrum = create_item_title(_devL("FullSpectrum"), page, _devL("FullSpectrum"));
     auto item_remember_printer_config = create_item_checkbox(_L("Remember printer configuration"), page, _L("If enabled, Orca will remember and switch filament/process configuration for each printer automatically."), 50, "remember_printer_config");
     auto item_step_mesh_setting = create_item_checkbox(_L("Show the step mesh parameter setting dialog."), page, _L("If enabled,a parameter settings dialog will appear during STEP file import."), 50, "enable_step_mesh_setting");
@@ -1355,6 +1356,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_save_presets, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_full_spectrum, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_auto_generate_gradients, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_new_mixed_ui, 0, wxTOP, FromDIP(3));
     //sizer_page->Add(title_network, 0, wxTOP | wxEXPAND, FromDIP(20));
     //sizer_page->Add(item_check_stable_version_only, 0, wxTOP, FromDIP(3));
 

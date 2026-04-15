@@ -6,9 +6,6 @@
 #include "MixedFilamentAdapter.hpp"
 #include "common_func/common_func.hpp"
 
-// UI switch: define to use BS-style modal dialog, undefine to use FS sidebar panel
-#define USE_NEW_MIXED_UI
-
 #include <cstddef>
 #include <array>
 #include <cctype>
@@ -768,8 +765,10 @@ struct Sidebar::priv
     bool                                 m_mixed_filament_drag_active = false;
     size_t                               m_mixed_filament_drag_source_mixed_id = size_t(-1);
 
-#ifdef USE_NEW_MIXED_UI
-    // BS-style modal dialog UI members
+    // Runtime UI mode switch: false = FS sidebar, true = BS modal dialog
+    bool                m_use_new_mixed_ui = false;
+
+    // BS-style modal dialog UI members (always declared, shown/hidden at runtime)
     wxPanel*            m_panel_new_mixed_title = nullptr;
     wxStaticText*       m_text_new_mixed_title = nullptr;
     ScalableButton*     m_btn_new_mixed_add = nullptr;
@@ -779,7 +778,6 @@ struct Sidebar::priv
     wxPanel*            m_panel_new_mixed_warning = nullptr;
     wxStaticText*       m_text_new_mixed_warning = nullptr;
     bool                m_new_mixed_filament_broken = false;
-#endif
 
     wxStaticLine* m_staticline2;
     wxPanel* m_panel_project_title;
@@ -1711,7 +1709,6 @@ Sidebar::Sidebar(Plater *parent)
     scrolled_sizer->Add(p->m_panel_filament_content, 0, wxEXPAND, 0);
     }
 
-#ifndef USE_NEW_MIXED_UI
     // --- Mixed Filaments Panel (FS-style: Collapsible sidebar) ---
     {
     // Create title bar (StaticBox for collapsible header)
@@ -1881,7 +1878,6 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_mixed_filaments_title->Hide();
     p->m_panel_mixed_filaments_content->Hide();
     }
-#else // USE_NEW_MIXED_UI
     // --- Mixed Filaments Panel (BS-style: modal dialog) ---
     {
     // Title bar
@@ -1966,7 +1962,10 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_new_mixed_title->Hide();
     p->m_panel_new_mixed_content->Hide();
     }
-#endif // USE_NEW_MIXED_UI
+
+    // Read runtime UI mode preference from AppConfig
+    if (auto *app_config = wxGetApp().app_config)
+        p->m_use_new_mixed_ui = app_config->get_bool("use_new_mixed_filament_ui");
 
     {
     //add project title
@@ -7173,6 +7172,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (!p->m_panel_mixed_filaments_title || !p->m_panel_mixed_filaments_content)
         return;
 
+    // Refresh UI mode from preferences (allows runtime switching)
+    if (auto *app_config = wxGetApp().app_config)
+        p->m_use_new_mixed_ui = app_config->get_bool("use_new_mixed_filament_ui");
+
     wxWindowUpdateLocker noUpdates_sidebar(this);
     wxWindowUpdateLocker noUpdates_mixed_panel(p->m_panel_mixed_filaments_content);
 
@@ -7730,26 +7733,31 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         p->m_btn_add_color->Enable(num_physical >= 2);
 
     if (num_physical < 2) {
-#ifndef USE_NEW_MIXED_UI
-        p->m_panel_mixed_filaments_title->Hide();
-        p->m_panel_mixed_filaments_content->Hide();
-#else
-        if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Hide();
-        if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Hide();
-#endif
+        // Hide whichever UI is active
+        if (p->m_use_new_mixed_ui) {
+            if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Hide();
+            if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Hide();
+        } else {
+            p->m_panel_mixed_filaments_title->Hide();
+            p->m_panel_mixed_filaments_content->Hide();
+        }
         Layout();
         refresh_model_canvas_colors();
         return;
     }
 
-    // Show the panels
-#ifndef USE_NEW_MIXED_UI
-    p->m_panel_mixed_filaments_title->Show();
-    p->m_panel_mixed_filaments_content->Show();
-#else
-    if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Show();
-    if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Show();
-#endif
+    // Show the active UI, hide the other
+    if (p->m_use_new_mixed_ui) {
+        if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Show();
+        if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Show();
+        p->m_panel_mixed_filaments_title->Hide();
+        p->m_panel_mixed_filaments_content->Hide();
+    } else {
+        p->m_panel_mixed_filaments_title->Show();
+        p->m_panel_mixed_filaments_content->Show();
+        if (p->m_panel_new_mixed_title) p->m_panel_new_mixed_title->Hide();
+        if (p->m_panel_new_mixed_content) p->m_panel_new_mixed_content->Hide();
+    }
     
     // Reset the max size in case it was collapsed
     p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});

@@ -2830,21 +2830,16 @@ bool GUI_App::on_init_inner()
                        "The Snapmaker Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker Orca has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
-BOOST_LOG_TRIVIAL(info) << "Debug build detected, enabling WebSocket debug mode";
-    Slic3r::GUI::SSWCP::enable_debug_mode(true, 8766);
-    return true;
-    // Enable WebSocket debug mode for Flutter Web debugging
-#ifdef _DEBUG
-    BOOST_LOG_TRIVIAL(info) << "Debug build detected, enabling WebSocket debug mode";
-    Slic3r::GUI::SSWCP::enable_debug_mode(true, 8766);
-#else
-    // Check environment variable for release builds
-    const char* debug_env = std::getenv("ORCA_WEBSOCKET_DEBUG");
-    if (debug_env && std::string(debug_env) == "1") {
-        BOOST_LOG_TRIVIAL(info) << "ORCA_WEBSOCKET_DEBUG=1, enabling WebSocket debug mode";
+
+    // WebSocket debug server: only when Preferences → "Web Debug Mode" (websocket_debug) is on.
+    // When off, explicitly stop the debug server so port 8766 is not left listening.
+    const bool websocket_debug_pref = app_config->get_bool("websocket_debug");
+    if (websocket_debug_pref) {
+        BOOST_LOG_TRIVIAL(info) << "Web Debug Mode enabled in preferences, starting WebSocket debug server (port 8766)";
         Slic3r::GUI::SSWCP::enable_debug_mode(true, 8766);
+    } else {
+        Slic3r::GUI::SSWCP::enable_debug_mode(false, 8766);
     }
-#endif
 
     return true;
 }

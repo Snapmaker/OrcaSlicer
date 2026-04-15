@@ -779,6 +779,13 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " sync_user_preset: " << (sync ? "true" : "false");
         }
 
+        if (param == "use_new_mixed_filament_ui") {
+            if (wxGetApp().plater() != nullptr) {
+                wxGetApp().plater()->sidebar().update_mixed_filament_panel(false);
+                wxGetApp().plater()->sidebar().Layout();
+            }
+        }
+
         if (param == "auto_generate_gradients") {
             MixedFilamentManager::set_auto_generate_enabled(checkbox->GetValue());
             if (wxGetApp().preset_bundle != nullptr && wxGetApp().plater() != nullptr) {

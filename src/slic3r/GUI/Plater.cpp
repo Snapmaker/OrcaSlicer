@@ -1929,8 +1929,8 @@ Sidebar::Sidebar(Plater *parent)
             auto result = dlg.get_result();
             auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions");
             apply_dialog_result_to_manager(result, mgr, colors, opt);
-            update_mixed_filament_panel(false);
-            m_scrolled_sizer->Layout();
+            wxGetApp().preset_bundle->update_multi_material_filament_presets();
+            on_filaments_change(wxGetApp().preset_bundle->filament_presets.size());
         }
     });
 
@@ -1943,8 +1943,8 @@ Sidebar::Sidebar(Plater *parent)
         entries.pop_back();
         auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions");
         if (opt) opt->value = mgr.serialize_custom_entries();
-        update_mixed_filament_panel(false);
-        m_scrolled_sizer->Layout();
+        wxGetApp().preset_bundle->update_multi_material_filament_presets();
+        on_filaments_change(wxGetApp().preset_bundle->filament_presets.size());
     });
 
     // Add to scrolled sizer

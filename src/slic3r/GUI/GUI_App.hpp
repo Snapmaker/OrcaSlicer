@@ -31,6 +31,7 @@
 #include <wx/snglinst.h>
 #include <wx/msgdlg.h>
 
+#include <atomic>
 #include <mutex>
 #include <stack>
 #include <unordered_map>
@@ -251,6 +252,10 @@ private:
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
+    /// Set only for the duration of `MsgUpdateConfig::ShowModal()` in load_flutter_web (atomic: safe vs updater threads + CallAfter).
+    std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };
+    /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
+    std::atomic<bool> m_profile_config_update_dlg_open{ false };
 #ifdef __linux__
     bool            m_opengl_initialized{ false };
 #endif
@@ -407,6 +412,16 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
+    bool flutter_web_config_update_dlg_open() const
+    {
+        return m_flutter_web_config_update_dlg_open.load(std::memory_order_acquire);
+    }
+    void set_flutter_web_config_update_dlg_open(bool v)
+    {
+        m_flutter_web_config_update_dlg_open.store(v, std::memory_order_release);
+    }
+    bool profile_config_update_dlg_open() const { return m_profile_config_update_dlg_open.load(std::memory_order_acquire); }
+    void set_profile_config_update_dlg_open(bool v) { m_profile_config_update_dlg_open.store(v, std::memory_order_release); }
     std::string logo_name() const { return is_editor() ? "Snapmaker_Orca" : "Snapmaker_Orca-gcodeviewer"; }
     
     // SoftFever
@@ -505,6 +520,7 @@ private:
     void            check_printer_presets();
 
     void            recreate_GUI(const wxString& message);
+    void            schedule_recreate_gui_when_no_modal(const wxString& message);
     void            system_info();
     void            keyboard_shortcuts();
     void            load_project(wxWindow *parent, wxString& input_file) const;

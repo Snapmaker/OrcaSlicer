@@ -2391,6 +2391,12 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBools { false });
 
+    def          = this->add("filament_is_high_temperature", coBools);
+    def->label   = L("Is high-temperature filament");
+    def->tooltip = L("Indicates whether this is a high-temperature filament that requires elevated printing temperatures.");
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionBools{false});
+
     // BBS
     def = this->add("temperature_vitrification", coInts);
     def->label = L("Softening temperature");

@@ -244,6 +244,14 @@ struct MixedColorMatchRecipeResult
 MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow *parent,
                                                            const std::vector<std::string> &physical_colors,
                                                            const wxColour &initial_color);
+double color_delta_e00(const wxColour &lhs, const wxColour &rhs);
+
+namespace {
+
+MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string> &physical_colors);
+wxColour compute_color_match_recipe_display_color(const MixedColorMatchRecipeResult &recipe, const MixedFilamentDisplayContext &context);
+
+} // namespace
 
 #define PRINTER_THUMBNAIL_SIZE (wxSize(FromDIP(48), FromDIP(48)))
 #define PRINTER_THUMBNAIL_SIZE_SMALL (wxSize(FromDIP(32), FromDIP(32)))
@@ -1561,7 +1569,9 @@ Sidebar::Sidebar(Plater *parent)
             return;
         }
 
+        const MixedFilamentDisplayContext display_context = build_mixed_filament_display_context(colors);
         auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
+        mgr.set_display_context(display_context);
         mgr.add_custom_filament(recipe.component_a, recipe.component_b, recipe.mix_b_percent, colors);
         auto &mfs = mgr.mixed_filaments();
         if (!mfs.empty()) {
@@ -1573,7 +1583,7 @@ Sidebar::Sidebar(Plater *parent)
             created.pointillism_all_filaments = false;
             created.distribution_mode = recipe.gradient_component_ids.empty() ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
             created.custom = true;
-            created.display_color = recipe.preview_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+            created.display_color = compute_color_match_recipe_display_color(recipe, display_context).GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
         }
 
         if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -3785,6 +3795,7 @@ public:
     {
         m_recipe_timer.SetOwner(this);
         m_loading_timer.SetOwner(this);
+        m_display_context = build_mixed_filament_display_context(m_physical_colors);
 
         m_palette.reserve(m_physical_colors.size());
         for (const std::string &hex : m_physical_colors)
@@ -3983,6 +3994,16 @@ public:
     }
 
 private:
+    void sync_recipe_preview(MixedColorMatchRecipeResult &recipe, const wxColour *requested_target = nullptr)
+    {
+        if (!recipe.valid)
+            return;
+
+        recipe.preview_color = compute_color_match_recipe_display_color(recipe, m_display_context);
+        if (requested_target != nullptr && requested_target->IsOk())
+            recipe.delta_e = color_delta_e00(*requested_target, recipe.preview_color);
+    }
+
     void update_range_label()
     {
         if (m_range_value)
@@ -3995,6 +4016,8 @@ private:
             return;
 
         m_presets = build_color_match_presets(m_physical_colors, m_min_component_percent);
+        for (MixedColorMatchRecipeResult &preset : m_presets)
+            sync_recipe_preview(preset);
 
         m_presets_host->Freeze();
         while (m_presets_sizer->GetItemCount() > 0) {
@@ -4128,6 +4151,7 @@ private:
 
         m_has_recipe_result = true;
         m_selected_recipe = std::move(recipe);
+        sync_recipe_preview(m_selected_recipe, &requested_target);
         set_recipe_loading(false, wxEmptyString);
 
         if (m_selected_recipe.valid) {
@@ -4145,6 +4169,7 @@ private:
     void apply_preset(MixedColorMatchRecipeResult preset)
     {
         preset.delta_e = 0.0;
+        sync_recipe_preview(preset);
         ++m_recipe_request_token;
         m_requested_target = preset.preview_color;
         m_selected_target = preset.preview_color;
@@ -4228,6 +4253,7 @@ private:
 
 private:
     std::vector<std::string>                m_physical_colors;
+    MixedFilamentDisplayContext             m_display_context;
     std::vector<wxColour>                   m_palette;
     std::vector<MixedColorMatchRecipeResult> m_presets;
     MixedFilamentColorMapPanel             *m_color_map        = nullptr;
@@ -4557,17 +4583,6 @@ private:
 
 // Forward declaration for MixedMixPreview (defined below)
 class MixedMixPreview;
-
-struct MixedFilamentPreviewSettings
-{
-    double nominal_layer_height { 0.2 };
-    double mixed_lower_bound { 0.04 };
-    double mixed_upper_bound { 0.16 };
-    double preferred_a_height { 0.0 };
-    double preferred_b_height { 0.0 };
-    bool   local_z_mode { false };
-    size_t wall_loops { 1 };
-};
 
 // Inline editor panel for configuring a single mixed filament
 class MixedFilamentConfigPanel : public wxPanel
@@ -5532,88 +5547,7 @@ std::vector<double> MixedFilamentConfigPanel::build_local_z_preview_pass_heights
 int MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(const MixedFilament &mf,
                                                                       const MixedFilamentPreviewSettings &preview_settings)
 {
-    if (!preview_settings.local_z_mode)
-        return std::clamp(mf.mix_b_percent, 0, 100);
-
-    const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
-    if (!normalized_pattern.empty() || mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
-        return std::clamp(mf.mix_b_percent, 0, 100);
-
-    const std::vector<unsigned int> gradient_ids = decode_gradient_ids(mf.gradient_component_ids);
-    if (gradient_ids.size() >= 3)
-        return std::clamp(mf.mix_b_percent, 0, 100);
-
-    const std::vector<double> pass_heights = build_local_z_preview_pass_heights(preview_settings.nominal_layer_height,
-                                                                                 preview_settings.mixed_lower_bound,
-                                                                                 preview_settings.mixed_upper_bound,
-                                                                                 preview_settings.preferred_a_height,
-                                                                                 preview_settings.preferred_b_height,
-                                                                                 mf.mix_b_percent,
-                                                                                 0);
-    if (pass_heights.empty())
-        return std::clamp(mf.mix_b_percent, 0, 100);
-
-    double expected_h_a = preview_settings.preferred_a_height;
-    double expected_h_b = preview_settings.preferred_b_height;
-    if (expected_h_a <= EPSILON && expected_h_b <= EPSILON) {
-        const int mix_b = std::clamp(mf.mix_b_percent, 0, 100);
-        const double pct_b = double(mix_b) / 100.0;
-        const double pct_a = 1.0 - pct_b;
-        const double lo = std::max<double>(0.01, preview_settings.mixed_lower_bound);
-        const double hi = std::max<double>(lo, preview_settings.mixed_upper_bound);
-        expected_h_a = lo + pct_a * (hi - lo);
-        expected_h_b = lo + pct_b * (hi - lo);
-    }
-
-    auto choose_start_with_component_a = [](const std::vector<double> &passes, double local_expected_h_a, double local_expected_h_b) {
-        double err_ab = 0.0;
-        double err_ba = 0.0;
-        for (size_t pass_i = 0; pass_i < passes.size(); ++pass_i) {
-            const double expected_ab = (pass_i % 2) == 0 ? local_expected_h_a : local_expected_h_b;
-            const double expected_ba = (pass_i % 2) == 0 ? local_expected_h_b : local_expected_h_a;
-            err_ab += std::abs(passes[pass_i] - expected_ab);
-            err_ba += std::abs(passes[pass_i] - expected_ba);
-        }
-        if (err_ab + 1e-6 < err_ba)
-            return true;
-        if (err_ba + 1e-6 < err_ab)
-            return false;
-        return local_expected_h_a >= local_expected_h_b;
-    };
-
-    const bool start_with_a = choose_start_with_component_a(pass_heights, expected_h_a, expected_h_b);
-    double total_a = 0.0;
-    double total_b = 0.0;
-    for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {
-        const bool even_pass = (pass_i % 2) == 0;
-        const bool pass_is_a = even_pass ? start_with_a : !start_with_a;
-        if (pass_is_a)
-            total_a += pass_heights[pass_i];
-        else
-            total_b += pass_heights[pass_i];
-    }
-
-    const double total = total_a + total_b;
-    if (total <= EPSILON)
-        return std::clamp(mf.mix_b_percent, 0, 100);
-    return std::clamp(int(std::lround(100.0 * total_b / total)), 0, 100);
-}
-
-static bool mixed_filament_supports_bias_apparent_color(const MixedFilament &mf,
-                                                        const MixedFilamentPreviewSettings &preview_settings,
-                                                        bool                                bias_mode_enabled)
-{
-    if (!bias_mode_enabled)
-        return false;
-    if (preview_settings.local_z_mode)
-        return false;
-    if (mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
-        return false;
-    if (!MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty())
-        return false;
-    if (mf.gradient_component_ids.size() >= 3)
-        return false;
-    return mf.component_a >= 1 && mf.component_b >= 1 && mf.component_a != mf.component_b;
+    return Slic3r::mixed_filament_effective_local_z_preview_mix_b_percent(mf, preview_settings);
 }
 
 static double mixed_filament_reference_nozzle_mm(unsigned int               component_a,
@@ -5660,35 +5594,18 @@ static std::pair<float, float> mixed_filament_single_surface_offset_pair(const M
     return MixedFilamentManager::surface_offset_pair_from_signed_bias(value, float(reference_nozzle_mm));
 }
 
-static std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedFilament               &mf,
-                                                                    const MixedFilamentPreviewSettings &preview_settings,
-                                                                    const std::vector<double>          &nozzle_diameters,
-                                                                    bool                                bias_mode_enabled)
-{
-    const int base_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(mf, preview_settings);
-    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
-        return { 100 - base_b, base_b };
-
-    const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
-    const int apparent_b = MixedFilamentManager::apparent_mix_b_percent(base_b,
-                                                                        mf.component_a_surface_offset,
-                                                                        mf.component_b_surface_offset,
-                                                                        float(reference_nozzle_mm));
-    return { 100 - apparent_b, apparent_b };
-}
-
 static std::string mixed_filament_apparent_pair_summary(const MixedFilament               &mf,
                                                         const MixedFilamentPreviewSettings &preview_settings,
                                                         const std::vector<double>          &nozzle_diameters,
                                                         bool                                bias_mode_enabled)
 {
-    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
+    if (!Slic3r::mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
         return {};
 
     const int base_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(mf, preview_settings);
     const int base_a = 100 - base_b;
     const auto [apparent_a, apparent_b] =
-        mixed_filament_apparent_pair_percentages(mf, preview_settings, nozzle_diameters, bias_mode_enabled);
+        Slic3r::mixed_filament_apparent_pair_percentages(mf, preview_settings, nozzle_diameters, bias_mode_enabled);
 
     if (std::abs(mf.component_a_surface_offset - mf.component_b_surface_offset) > 1e-4f &&
         (apparent_a != base_a || apparent_b != base_b)) {
@@ -5700,6 +5617,202 @@ static std::string mixed_filament_apparent_pair_summary(const MixedFilament     
     std::ostringstream ss;
     ss << apparent_a << "%/" << apparent_b << '%';
     return ss.str();
+}
+
+MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string> &physical_colors)
+{
+    MixedFilamentDisplayContext context;
+    context.num_physical = physical_colors.size();
+    context.physical_colors = physical_colors;
+    context.nozzle_diameters.assign(context.num_physical, 0.4);
+
+    auto *preset_bundle = wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return context;
+
+    DynamicPrintConfig *print_cfg = &preset_bundle->prints.get_edited_preset().config;
+    if (const ConfigOptionFloats *opt = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter")) {
+        const size_t opt_count = opt->values.size();
+        if (opt_count > 0) {
+            for (size_t i = 0; i < context.num_physical; ++i)
+                context.nozzle_diameters[i] = std::max(0.05, opt->get_at(unsigned(std::min(i, opt_count - 1))));
+        }
+    }
+
+    auto get_mixed_bool = [preset_bundle, print_cfg](const std::string &key, bool fallback) {
+        if (const ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>(key))
+            return opt->value;
+        if (const ConfigOptionInt *opt = preset_bundle->project_config.option<ConfigOptionInt>(key))
+            return opt->value != 0;
+        if (print_cfg != nullptr) {
+            if (const ConfigOptionBool *opt = print_cfg->option<ConfigOptionBool>(key))
+                return opt->value;
+            if (const ConfigOptionInt *opt = print_cfg->option<ConfigOptionInt>(key))
+                return opt->value != 0;
+        }
+        return fallback;
+    };
+    auto get_mixed_float = [preset_bundle, print_cfg](const std::string &key, float fallback) {
+        if (preset_bundle->project_config.has(key))
+            return float(preset_bundle->project_config.opt_float(key));
+        if (print_cfg != nullptr && print_cfg->has(key))
+            return float(print_cfg->opt_float(key));
+        return fallback;
+    };
+
+    context.preview_settings.mixed_lower_bound = std::max(0.01, double(get_mixed_float("mixed_filament_height_lower_bound", 0.04f)));
+    context.preview_settings.mixed_upper_bound = std::max(context.preview_settings.mixed_lower_bound,
+                                                          double(get_mixed_float("mixed_filament_height_upper_bound", 0.16f)));
+    context.preview_settings.preferred_a_height = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_a", 0.f)));
+    context.preview_settings.preferred_b_height = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_b", 0.f)));
+    context.preview_settings.nominal_layer_height = 0.2;
+    if (print_cfg != nullptr && print_cfg->has("layer_height"))
+        context.preview_settings.nominal_layer_height = std::max(0.01, print_cfg->opt_float("layer_height"));
+    if (print_cfg != nullptr && print_cfg->has("wall_loops"))
+        context.preview_settings.wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
+    context.preview_settings.local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
+    context.component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
+
+    return context;
+}
+
+static std::vector<unsigned int> build_display_weighted_multi_sequence(const std::vector<unsigned int> &ids,
+                                                                       const std::vector<int>          &weights,
+                                                                       size_t                           max_cycle_limit = 0)
+{
+    if (ids.empty())
+        return {};
+
+    std::vector<unsigned int> filtered_ids;
+    std::vector<int>          counts;
+    filtered_ids.reserve(ids.size());
+    counts.reserve(ids.size());
+
+    const std::vector<int> normalized = normalize_color_match_weights(weights, ids.size());
+    for (size_t idx = 0; idx < ids.size(); ++idx) {
+        const int weight = idx < normalized.size() ? std::max(0, normalized[idx]) : 0;
+        if (weight <= 0)
+            continue;
+        filtered_ids.emplace_back(ids[idx]);
+        counts.emplace_back(weight);
+    }
+    if (filtered_ids.empty()) {
+        filtered_ids = ids;
+        counts.assign(ids.size(), 1);
+    }
+
+    int g = 0;
+    for (const int count : counts)
+        g = std::gcd(g, std::max(1, count));
+    if (g > 1) {
+        for (int &count : counts)
+            count = std::max(1, count / g);
+    }
+
+    constexpr size_t k_max_cycle = 48;
+    const size_t effective_cycle_limit =
+        max_cycle_limit > 0 ? std::min(k_max_cycle, std::max<size_t>(1, max_cycle_limit)) : k_max_cycle;
+    reduce_weight_counts_to_cycle_limit(counts, effective_cycle_limit);
+
+    std::vector<unsigned int> reduced_ids;
+    std::vector<int>          reduced_counts;
+    reduced_ids.reserve(filtered_ids.size());
+    reduced_counts.reserve(counts.size());
+    for (size_t idx = 0; idx < counts.size(); ++idx) {
+        if (counts[idx] <= 0)
+            continue;
+        reduced_ids.emplace_back(filtered_ids[idx]);
+        reduced_counts.emplace_back(counts[idx]);
+    }
+    if (reduced_ids.empty())
+        return {};
+    filtered_ids = std::move(reduced_ids);
+    counts = std::move(reduced_counts);
+
+    const int total = std::accumulate(counts.begin(), counts.end(), 0);
+    if (total <= 0)
+        return std::vector<unsigned int>(filtered_ids.begin(), filtered_ids.end());
+
+    const size_t cycle = size_t(total);
+
+    std::vector<unsigned int> sequence;
+    sequence.reserve(cycle);
+    std::vector<int> emitted(counts.size(), 0);
+    for (size_t pos = 0; pos < cycle; ++pos) {
+        size_t best_idx = 0;
+        double best_score = -1e9;
+        for (size_t idx = 0; idx < counts.size(); ++idx) {
+            const double target = double(pos + 1) * double(counts[idx]) / double(total);
+            const double score = target - double(emitted[idx]);
+            if (score > best_score) {
+                best_score = score;
+                best_idx = idx;
+            }
+        }
+        ++emitted[best_idx];
+        sequence.emplace_back(filtered_ids[best_idx]);
+    }
+    if (sequence.empty())
+        sequence = filtered_ids;
+    return sequence;
+}
+
+static std::string blend_display_color_from_sequence(const std::vector<std::string> &colors,
+                                                     size_t                           num_physical,
+                                                     const std::vector<unsigned int> &sequence,
+                                                     const std::string               &fallback)
+{
+    if (colors.empty() || sequence.empty() || num_physical == 0)
+        return fallback;
+
+    std::vector<size_t> counts(num_physical + 1, size_t(0));
+    size_t total = 0;
+    for (const unsigned int id : sequence) {
+        if (id == 0 || id > num_physical)
+            continue;
+        ++counts[id];
+        ++total;
+    }
+    if (total == 0)
+        return fallback;
+
+    unsigned int first_id = 0;
+    for (size_t id = 1; id <= num_physical; ++id) {
+        if (counts[id] > 0) {
+            first_id = unsigned(id);
+            break;
+        }
+    }
+    if (first_id == 0 || first_id > colors.size())
+        return fallback;
+
+    std::string blended = colors[first_id - 1];
+    int         accumulated = int(counts[first_id]);
+    for (size_t id = size_t(first_id + 1); id <= num_physical; ++id) {
+        if (counts[id] == 0 || id > colors.size())
+            continue;
+        blended = MixedFilamentManager::blend_color(blended, colors[id - 1], accumulated, int(counts[id]));
+        accumulated += int(counts[id]);
+    }
+
+    return blended;
+}
+
+wxColour compute_color_match_recipe_display_color(const MixedColorMatchRecipeResult &recipe, const MixedFilamentDisplayContext &context)
+{
+    if (!recipe.valid)
+        return recipe.preview_color.IsOk() ? recipe.preview_color : wxColour("#26A69A");
+
+    MixedFilament entry;
+    entry.component_a = recipe.component_a;
+    entry.component_b = recipe.component_b;
+    entry.mix_b_percent = recipe.mix_b_percent;
+    entry.manual_pattern = recipe.manual_pattern;
+    entry.gradient_component_ids = recipe.gradient_component_ids;
+    entry.gradient_component_weights = recipe.gradient_component_weights;
+    entry.distribution_mode = recipe.gradient_component_ids.empty() ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
+
+    return parse_mixed_color(compute_mixed_filament_display_color(entry, context));
 }
 
 std::string MixedFilamentConfigPanel::summarize_sequence(const std::vector<unsigned int> &seq)
@@ -6367,11 +6480,11 @@ void MixedFilamentConfigPanel::build_ui()
                 m_blend_selector->set_multi_preview(corner_colors, *m_selected_weight_state);
         }
 
-        if (mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings, m_bias_mode_enabled) &&
+        if (Slic3r::mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings, m_bias_mode_enabled) &&
             m_mf.component_a >= 1 && m_mf.component_b >= 1 &&
             m_mf.component_a <= m_physical_colors.size() && m_mf.component_b <= m_physical_colors.size()) {
             const auto [apparent_pct_a, apparent_pct_b] =
-                mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
+                Slic3r::mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
             m_mf.display_color = MixedFilamentManager::blend_color(
                 m_physical_colors[size_t(m_mf.component_a - 1)],
                 m_physical_colors[size_t(m_mf.component_b - 1)],
@@ -6680,11 +6793,11 @@ void MixedFilamentConfigPanel::update_preview()
     }
 
     if (m_mix_preview) {
-        if (mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings, m_bias_mode_enabled) &&
+        if (Slic3r::mixed_filament_supports_bias_apparent_color(m_mf, m_preview_settings, m_bias_mode_enabled) &&
             m_mf.component_a >= 1 && m_mf.component_b >= 1 &&
             m_mf.component_a <= m_physical_colors.size() && m_mf.component_b <= m_physical_colors.size()) {
             const auto [apparent_pct_a, apparent_pct_b] =
-                mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
+                Slic3r::mixed_filament_apparent_pair_percentages(m_mf, m_preview_settings, m_nozzle_diameters, m_bias_mode_enabled);
             m_mf.display_color = MixedFilamentManager::blend_color(
                 m_physical_colors[size_t(m_mf.component_a - 1)],
                 m_physical_colors[size_t(m_mf.component_b - 1)],
@@ -7187,6 +7300,13 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         local_z_mode,
         wall_loops
     };
+    const MixedFilamentDisplayContext display_context {
+        num_physical,
+        physical_colors,
+        nozzle_diameters,
+        preview_settings,
+        component_bias_enabled
+    };
     auto summarize_sequence = [num_physical](const std::vector<unsigned int> &sequence) {
         if (sequence.empty() || num_physical == 0)
             return std::string();
@@ -7213,97 +7333,12 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return ss.str();
     };
-    auto blend_from_sequence = [num_physical](const std::vector<std::string> &colors, const std::vector<unsigned int> &sequence, const std::string &fallback) {
-        if (colors.empty() || sequence.empty() || num_physical == 0)
-            return fallback;
-        std::vector<size_t> counts(num_physical + 1, size_t(0));
-        size_t total = 0;
-        for (const unsigned int id : sequence) {
-            if (id == 0 || id > num_physical)
-                continue;
-            ++counts[id];
-            ++total;
-        }
-        if (total == 0)
-            return fallback;
-
-        unsigned int first_id = 0;
-        for (size_t id = 1; id <= num_physical; ++id) {
-            if (counts[id] > 0) {
-                first_id = unsigned(id);
-                break;
-            }
-        }
-        if (first_id == 0 || first_id > colors.size())
-            return fallback;
-
-        std::string blended = colors[first_id - 1];
-        int         acc     = int(counts[first_id]);
-        for (size_t id = size_t(first_id + 1); id <= num_physical; ++id) {
-            if (counts[id] == 0 || id > colors.size())
-                continue;
-            blended = MixedFilamentManager::blend_color(blended, colors[id - 1], acc, int(counts[id]));
-            acc += int(counts[id]);
-        }
-        return blended;
-    };
-    auto build_entry_preview_sequence = [decode_manual_pattern_ids, decode_gradient_ids, decode_gradient_weights,
-                                         build_weighted_multi_sequence, preview_settings](const MixedFilament &entry) {
-        const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
-        if (!normalized_pattern.empty())
-            return decode_manual_pattern_ids(normalized_pattern,
-                                             entry.component_a,
-                                             entry.component_b,
-                                             preview_settings.wall_loops);
-
-        const bool simple_mode = entry.distribution_mode == int(MixedFilament::Simple);
-        if (!simple_mode) {
-            const std::vector<unsigned int> gradient_ids = decode_gradient_ids(entry.gradient_component_ids);
-            if (gradient_ids.size() >= 3) {
-                const std::vector<int> gradient_weights =
-                    decode_gradient_weights(entry.gradient_component_weights, gradient_ids.size());
-                return build_weighted_multi_sequence(gradient_ids, gradient_weights, 0);
-            }
-        }
-
-        const int effective_mix_b = MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(entry, preview_settings);
-        const bool same_layer_mode = entry.distribution_mode == int(MixedFilament::SameLayerPointillisme);
-        return build_effective_pair_preview_sequence(entry.component_a, entry.component_b, effective_mix_b, same_layer_mode);
-    };
-    auto compute_entry_display_color = [num_physical, &physical_colors, &nozzle_diameters, blend_from_sequence, build_entry_preview_sequence,
-                                        preview_settings, component_bias_enabled](const MixedFilament &entry) {
-        if (mixed_filament_supports_bias_apparent_color(entry, preview_settings, component_bias_enabled) &&
-            entry.component_a >= 1 && entry.component_b >= 1 &&
-            entry.component_a <= num_physical && entry.component_b <= num_physical &&
-            entry.component_a <= physical_colors.size() && entry.component_b <= physical_colors.size()) {
-            const auto [apparent_pct_a, apparent_pct_b] =
-                mixed_filament_apparent_pair_percentages(entry, preview_settings, nozzle_diameters, component_bias_enabled);
-            return MixedFilamentManager::blend_color(
-                physical_colors[entry.component_a - 1],
-                physical_colors[entry.component_b - 1],
-                apparent_pct_a,
-                apparent_pct_b);
-        }
-
-        const std::vector<unsigned int> sequence = build_entry_preview_sequence(entry);
-        if (!sequence.empty())
-            return blend_from_sequence(physical_colors, sequence, "#26A69A");
-
-        if (entry.component_a == 0 || entry.component_b == 0 ||
-            entry.component_a > num_physical || entry.component_b > num_physical ||
-            entry.component_a > physical_colors.size() || entry.component_b > physical_colors.size()) {
-            return std::string("#26A69A");
-        }
-
-        const int mix_b = std::clamp(entry.mix_b_percent, 0, 100);
-        return MixedFilamentManager::blend_color(
-            physical_colors[entry.component_a - 1],
-            physical_colors[entry.component_b - 1],
-            100 - mix_b,
-            mix_b);
+    auto compute_entry_display_color = [display_context](const MixedFilament &entry) {
+        return compute_mixed_filament_display_color(entry, display_context);
     };
 
     auto &mixed_mgr = preset_bundle->mixed_filaments;
+    mixed_mgr.set_display_context(display_context);
     if (sync_manager) {
         mixed_mgr.auto_generate(physical_colors);
         mixed_mgr.clear_custom_entries();

@@ -77,10 +77,10 @@ jobs:
 
         notes_content=""
         for notes_file in \
-          "doc/changelogs/CHANGELOG_v${version}.md" \
           "doc/changelogs/RELEASE_NOTES_v${version}.md" \
-          "CHANGELOG_v${version}.md" \
-          "RELEASE_NOTES_v${version}.md"; do
+          "doc/changelogs/CHANGELOG_v${version}.md" \
+          "RELEASE_NOTES_v${version}.md" \
+          "CHANGELOG_v${version}.md"; do
           if [ -f "$notes_file" ]; then
             notes_content=$(cat "$notes_file")
             break

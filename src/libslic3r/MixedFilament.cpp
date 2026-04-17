@@ -861,6 +861,601 @@ static std::vector<unsigned int> build_weighted_gradient_sequence(const std::vec
     return sequence;
 }
 
+static unsigned int decode_manual_pattern_preview_token(char token, unsigned int component_a, unsigned int component_b, size_t num_physical)
+{
+    unsigned int extruder_id = 0;
+    if (token == '1')
+        extruder_id = component_a;
+    else if (token == '2')
+        extruder_id = component_b;
+    else if (token >= '3' && token <= '9')
+        extruder_id = unsigned(token - '0');
+
+    return (extruder_id >= 1 && extruder_id <= num_physical) ? extruder_id : 0;
+}
+
+static std::vector<unsigned int> build_grouped_manual_pattern_preview_sequence(const std::string &pattern,
+                                                                               unsigned int       component_a,
+                                                                               unsigned int       component_b,
+                                                                               size_t             num_physical,
+                                                                               size_t             wall_loops)
+{
+    std::vector<unsigned int> sequence;
+    if (num_physical == 0)
+        return sequence;
+
+    const std::string normalized = MixedFilamentManager::normalize_manual_pattern(pattern);
+    if (normalized.empty())
+        return sequence;
+
+    const std::vector<std::string> groups = split_manual_pattern_groups(normalized);
+    if (groups.empty())
+        return sequence;
+
+    if (groups.size() == 1) {
+        sequence.reserve(normalized.size());
+        for (const char token : normalized) {
+            const unsigned int extruder_id =
+                decode_manual_pattern_preview_token(token, component_a, component_b, num_physical);
+            if (extruder_id != 0)
+                sequence.emplace_back(extruder_id);
+        }
+        return sequence;
+    }
+
+    constexpr size_t k_max_preview_cycle = 48;
+    size_t cycle = 1;
+    for (const std::string &group : groups) {
+        if (group.empty())
+            continue;
+        cycle = std::lcm(cycle, group.size());
+        if (cycle >= k_max_preview_cycle) {
+            cycle = k_max_preview_cycle;
+            break;
+        }
+    }
+
+    const size_t preview_wall_loops = std::max<size_t>(1, wall_loops == 0 ? groups.size() : wall_loops);
+    sequence.reserve(preview_wall_loops * cycle);
+    for (size_t layer_idx = 0; layer_idx < cycle; ++layer_idx) {
+        for (size_t wall_idx = 0; wall_idx < preview_wall_loops; ++wall_idx) {
+            const std::string &group = groups[std::min(wall_idx, groups.size() - 1)];
+            if (group.empty())
+                continue;
+            const char token = group[layer_idx % group.size()];
+            const unsigned int extruder_id =
+                decode_manual_pattern_preview_token(token, component_a, component_b, num_physical);
+            if (extruder_id != 0)
+                sequence.emplace_back(extruder_id);
+        }
+    }
+
+    return sequence;
+}
+
+static std::pair<int, int> effective_pair_preview_ratios(int percent_b)
+{
+    const int mix_b = std::clamp(percent_b, 0, 100);
+    int       ratio_a = 1;
+    int       ratio_b = 0;
+
+    if (mix_b >= 100) {
+        ratio_a = 0;
+        ratio_b = 1;
+    } else if (mix_b > 0) {
+        const int pct_b       = mix_b;
+        const int pct_a       = 100 - pct_b;
+        const bool b_is_major = pct_b >= pct_a;
+        const int major_pct   = b_is_major ? pct_b : pct_a;
+        const int minor_pct   = b_is_major ? pct_a : pct_b;
+        const int major_layers =
+            std::max(1, int(std::lround(double(major_pct) / double(std::max(1, minor_pct)))));
+        ratio_a = b_is_major ? 1 : major_layers;
+        ratio_b = b_is_major ? major_layers : 1;
+    }
+
+    if (ratio_a > 0 && ratio_b > 0) {
+        const int g = std::gcd(ratio_a, ratio_b);
+        if (g > 1) {
+            ratio_a /= g;
+            ratio_b /= g;
+        }
+    }
+
+    return { std::max(0, ratio_a), std::max(0, ratio_b) };
+}
+
+static std::vector<unsigned int> build_effective_pair_preview_sequence(unsigned int component_a,
+                                                                       unsigned int component_b,
+                                                                       int          percent_b,
+                                                                       bool         limit_cycle)
+{
+    std::vector<unsigned int> sequence;
+    if (component_a == 0 || component_b == 0 || component_a == component_b)
+        return sequence;
+
+    auto [ratio_a, ratio_b] = effective_pair_preview_ratios(percent_b);
+    constexpr int k_max_cycle = 24;
+    if (limit_cycle && ratio_a > 0 && ratio_b > 0 && ratio_a + ratio_b > k_max_cycle) {
+        const double scale = double(k_max_cycle) / double(ratio_a + ratio_b);
+        ratio_a = std::max(1, int(std::round(double(ratio_a) * scale)));
+        ratio_b = std::max(1, int(std::round(double(ratio_b) * scale)));
+    }
+    if (ratio_a == 0 && ratio_b == 0)
+        ratio_a = 1;
+
+    const int cycle = std::max(1, ratio_a + ratio_b);
+    sequence.reserve(size_t(cycle));
+    for (int pos = 0; pos < cycle; ++pos) {
+        const int b_before = (pos * ratio_b) / cycle;
+        const int b_after  = ((pos + 1) * ratio_b) / cycle;
+        sequence.emplace_back((b_after > b_before) ? component_b : component_a);
+    }
+    return sequence;
+}
+
+static std::string blend_display_color_from_sequence(const std::vector<std::string> &colors,
+                                                     size_t                           num_physical,
+                                                     const std::vector<unsigned int> &sequence,
+                                                     const std::string               &fallback)
+{
+    if (colors.empty() || sequence.empty() || num_physical == 0)
+        return fallback;
+
+    std::vector<size_t> counts(num_physical + 1, size_t(0));
+    size_t total = 0;
+    for (const unsigned int id : sequence) {
+        if (id == 0 || id > num_physical)
+            continue;
+        ++counts[id];
+        ++total;
+    }
+    if (total == 0)
+        return fallback;
+
+    std::vector<std::pair<std::string, int>> color_percents;
+    color_percents.reserve(num_physical);
+    for (size_t id = 1; id <= num_physical; ++id) {
+        if (counts[id] == 0 || id > colors.size())
+            continue;
+        color_percents.emplace_back(colors[id - 1], int(counts[id]));
+    }
+    if (color_percents.empty())
+        return fallback;
+
+    if (color_percents.size() == 1)
+        return color_percents.front().first;
+
+    return MixedFilamentManager::blend_color_multi(color_percents);
+}
+
+static std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_height,
+                                                              double lower_bound,
+                                                              double upper_bound,
+                                                              double preferred_a_height,
+                                                              double preferred_b_height,
+                                                              int    mix_b_percent,
+                                                              int    max_sublayers_limit)
+{
+    if (nominal_layer_height <= EPSILON)
+        return {};
+
+    const double base_height = nominal_layer_height;
+    const double lo = std::max<double>(0.01, lower_bound);
+    const double hi = std::max<double>(lo, upper_bound);
+    const size_t max_passes_limit = max_sublayers_limit >= 2 ? size_t(max_sublayers_limit) : size_t(0);
+
+    auto fit_pass_heights_to_interval = [](std::vector<double> &passes, double total_height, double local_lo, double local_hi) {
+        if (passes.empty() || total_height <= EPSILON)
+            return false;
+
+        const auto within = [local_lo, local_hi](double value) {
+            return value >= local_lo - 1e-6 && value <= local_hi + 1e-6;
+        };
+
+        double sum = 0.0;
+        for (const double h : passes)
+            sum += h;
+
+        double delta = total_height - sum;
+        if (std::abs(delta) > 1e-6) {
+            if (delta > 0.0) {
+                for (double &h : passes) {
+                    if (delta <= 1e-6)
+                        break;
+                    const double room = local_hi - h;
+                    if (room <= 1e-6)
+                        continue;
+                    const double take = std::min(room, delta);
+                    h += take;
+                    delta -= take;
+                }
+            } else {
+                for (auto it = passes.rbegin(); it != passes.rend() && delta < -1e-6; ++it) {
+                    const double room = *it - local_lo;
+                    if (room <= 1e-6)
+                        continue;
+                    const double take = std::min(room, -delta);
+                    *it -= take;
+                    delta += take;
+                }
+            }
+        }
+
+        if (std::abs(delta) > 1e-6)
+            return false;
+        return std::all_of(passes.begin(), passes.end(), within);
+    };
+
+    auto build_uniform = [&fit_pass_heights_to_interval, base_height, lo, hi, max_passes_limit]() {
+        std::vector<double> out;
+        size_t min_passes = size_t(std::max<double>(1.0, std::ceil((base_height - EPSILON) / hi)));
+        size_t max_passes = size_t(std::max<double>(1.0, std::floor((base_height + EPSILON) / lo)));
+        size_t pass_count = min_passes;
+
+        if (max_passes >= min_passes) {
+            const double target_step = 0.5 * (lo + hi);
+            const size_t target_passes =
+                size_t(std::max<double>(1.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
+            pass_count = std::clamp(target_passes, min_passes, max_passes);
+        }
+
+        if (max_passes_limit > 0 && pass_count > max_passes_limit)
+            pass_count = max_passes_limit;
+
+        if (pass_count == 1 && base_height >= 2.0 * lo - EPSILON && max_passes >= 2)
+            pass_count = 2;
+
+        if (pass_count <= 1) {
+            out.emplace_back(base_height);
+            return out;
+        }
+
+        out.assign(pass_count, base_height / double(pass_count));
+        double accumulated = 0.0;
+        for (size_t i = 0; i + 1 < out.size(); ++i)
+            accumulated += out[i];
+        out.back() = std::max<double>(EPSILON, base_height - accumulated);
+        if (!fit_pass_heights_to_interval(out, base_height, lo, hi) && max_passes_limit == 0) {
+            out.assign(pass_count, base_height / double(pass_count));
+            accumulated = 0.0;
+            for (size_t i = 0; i + 1 < out.size(); ++i)
+                accumulated += out[i];
+            out.back() = std::max<double>(EPSILON, base_height - accumulated);
+        }
+        return out;
+    };
+
+    auto build_alternating = [&build_uniform, &fit_pass_heights_to_interval, base_height, lo, hi, max_passes_limit](double gradient_h_a, double gradient_h_b) {
+        if (base_height < 2.0 * lo - EPSILON)
+            return std::vector<double>{ base_height };
+
+        const double cycle_h = std::max<double>(EPSILON, gradient_h_a + gradient_h_b);
+        const double ratio_a = std::clamp(gradient_h_a / cycle_h, 0.0, 1.0);
+
+        size_t min_passes = size_t(std::max<double>(2.0, std::ceil((base_height - EPSILON) / hi)));
+        if ((min_passes % 2) != 0)
+            ++min_passes;
+
+        size_t max_passes = size_t(std::max<double>(2.0, std::floor((base_height + EPSILON) / lo)));
+        if ((max_passes % 2) != 0)
+            --max_passes;
+        if (max_passes_limit > 0) {
+            size_t capped_limit = std::max<size_t>(2, max_passes_limit);
+            if ((capped_limit % 2) != 0)
+                --capped_limit;
+            if (capped_limit >= 2)
+                max_passes = std::min(max_passes, capped_limit);
+        }
+        if (max_passes < 2)
+            return build_uniform();
+        if (min_passes > max_passes)
+            min_passes = max_passes;
+        if (min_passes < 2)
+            min_passes = 2;
+        if ((min_passes % 2) != 0)
+            ++min_passes;
+        if (min_passes > max_passes)
+            return build_uniform();
+
+        const double target_step = 0.5 * (lo + hi);
+        size_t target_passes =
+            size_t(std::max<double>(2.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
+        if ((target_passes % 2) != 0) {
+            const size_t round_up = (target_passes < max_passes) ? (target_passes + 1) : max_passes;
+            const size_t round_down = (target_passes > min_passes) ? (target_passes - 1) : min_passes;
+            if (round_up > max_passes)
+                target_passes = round_down;
+            else if (round_down < min_passes)
+                target_passes = round_up;
+            else
+                target_passes = ((round_up - target_passes) <= (target_passes - round_down)) ? round_up : round_down;
+        }
+        target_passes = std::clamp(target_passes, min_passes, max_passes);
+
+        bool                has_best           = false;
+        std::vector<double> best_passes;
+        double              best_ratio_error   = 0.0;
+        size_t              best_pass_distance = 0;
+        double              best_max_height    = 0.0;
+        size_t              best_pass_count    = 0;
+
+        for (size_t pass_count = min_passes; pass_count <= max_passes; pass_count += 2) {
+            const size_t pair_count = pass_count / 2;
+            if (pair_count == 0)
+                continue;
+            const double pair_h = base_height / double(pair_count);
+
+            const double h_a_min = std::max(lo, pair_h - hi);
+            const double h_a_max = std::min(hi, pair_h - lo);
+            if (h_a_min > h_a_max + EPSILON)
+                continue;
+
+            const double h_a = std::clamp(pair_h * ratio_a, h_a_min, h_a_max);
+            const double h_b = pair_h - h_a;
+
+            std::vector<double> out;
+            out.reserve(pass_count);
+            for (size_t pair_idx = 0; pair_idx < pair_count; ++pair_idx) {
+                out.emplace_back(h_a);
+                out.emplace_back(h_b);
+            }
+            if (!fit_pass_heights_to_interval(out, base_height, lo, hi))
+                continue;
+
+            const double ratio_actual = (h_a + h_b > EPSILON) ? (h_a / (h_a + h_b)) : 0.5;
+            const double ratio_error  = std::abs(ratio_actual - ratio_a);
+            const size_t pass_distance =
+                (pass_count > target_passes) ? (pass_count - target_passes) : (target_passes - pass_count);
+            const double max_height = std::max(h_a, h_b);
+
+            const bool better_ratio       = !has_best || (ratio_error + 1e-6 < best_ratio_error);
+            const bool similar_ratio      = has_best && std::abs(ratio_error - best_ratio_error) <= 1e-6;
+            const bool better_distance    = similar_ratio && (pass_distance < best_pass_distance);
+            const bool similar_distance   = similar_ratio && (pass_distance == best_pass_distance);
+            const bool better_max_height  = similar_distance && (max_height + 1e-6 < best_max_height);
+            const bool similar_max_height = similar_distance && std::abs(max_height - best_max_height) <= 1e-6;
+            const bool better_pass_count  = similar_max_height && (pass_count > best_pass_count);
+
+            if (better_ratio || better_distance || better_max_height || better_pass_count) {
+                has_best = true;
+                best_passes = std::move(out);
+                best_ratio_error = ratio_error;
+                best_pass_distance = pass_distance;
+                best_max_height = max_height;
+                best_pass_count = pass_count;
+            }
+        }
+
+        return has_best ? best_passes : build_uniform();
+    };
+
+    if (preferred_a_height > EPSILON || preferred_b_height > EPSILON) {
+        std::vector<double> cadence_unit;
+        if (preferred_a_height > EPSILON)
+            cadence_unit.push_back(std::clamp(preferred_a_height, lo, hi));
+        if (preferred_b_height > EPSILON)
+            cadence_unit.push_back(std::clamp(preferred_b_height, lo, hi));
+
+        if (!cadence_unit.empty()) {
+            std::vector<double> out;
+            out.reserve(size_t(std::ceil(base_height / lo)) + 2);
+
+            double z_used = 0.0;
+            size_t idx = 0;
+            size_t guard = 0;
+            while (z_used + cadence_unit[idx] < base_height - EPSILON && guard++ < 100000) {
+                out.push_back(cadence_unit[idx]);
+                z_used += cadence_unit[idx];
+                idx = (idx + 1) % cadence_unit.size();
+            }
+
+            const double remainder = base_height - z_used;
+            if (remainder > EPSILON)
+                out.push_back(remainder);
+
+            if (fit_pass_heights_to_interval(out, base_height, lo, hi) &&
+                (max_passes_limit == 0 || out.size() <= max_passes_limit))
+                return out;
+        }
+
+        if (preferred_a_height > EPSILON && preferred_b_height > EPSILON)
+            return build_alternating(preferred_a_height, preferred_b_height);
+        return build_uniform();
+    }
+
+    const int mix_b = std::clamp(mix_b_percent, 0, 100);
+    const double pct_b = double(mix_b) / 100.0;
+    const double pct_a = 1.0 - pct_b;
+    const double gradient_h_a = lo + pct_a * (hi - lo);
+    const double gradient_h_b = lo + pct_b * (hi - lo);
+    return build_alternating(gradient_h_a, gradient_h_b);
+}
+
+static double mixed_filament_reference_nozzle_mm(unsigned int               component_a,
+                                                 unsigned int               component_b,
+                                                 const std::vector<double> &nozzle_diameters)
+{
+    std::vector<double> samples;
+    samples.reserve(2);
+
+    auto append_if_valid = [&samples, &nozzle_diameters](unsigned int component_id) {
+        if (component_id >= 1 && component_id <= nozzle_diameters.size())
+            samples.emplace_back(std::max(0.05, nozzle_diameters[size_t(component_id - 1)]));
+    };
+
+    append_if_valid(component_a);
+    append_if_valid(component_b);
+
+    if (samples.empty())
+        return 0.4;
+    return std::accumulate(samples.begin(), samples.end(), 0.0) / double(samples.size());
+}
+
+int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament               &mf,
+                                                           const MixedFilamentPreviewSettings &preview_settings)
+{
+    if (!preview_settings.local_z_mode)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+    if (!normalized_pattern.empty() || mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    const std::vector<unsigned int> gradient_ids = decode_gradient_component_ids(mf.gradient_component_ids, 9);
+    if (gradient_ids.size() >= 3)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    const std::vector<double> pass_heights = build_local_z_preview_pass_heights(preview_settings.nominal_layer_height,
+                                                                                preview_settings.mixed_lower_bound,
+                                                                                preview_settings.mixed_upper_bound,
+                                                                                preview_settings.preferred_a_height,
+                                                                                preview_settings.preferred_b_height,
+                                                                                mf.mix_b_percent,
+                                                                                0);
+    if (pass_heights.empty())
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
+    double expected_h_a = preview_settings.preferred_a_height;
+    double expected_h_b = preview_settings.preferred_b_height;
+    if (expected_h_a <= EPSILON && expected_h_b <= EPSILON) {
+        const int mix_b = std::clamp(mf.mix_b_percent, 0, 100);
+        const double pct_b = double(mix_b) / 100.0;
+        const double pct_a = 1.0 - pct_b;
+        const double lo = std::max<double>(0.01, preview_settings.mixed_lower_bound);
+        const double hi = std::max<double>(lo, preview_settings.mixed_upper_bound);
+        expected_h_a = lo + pct_a * (hi - lo);
+        expected_h_b = lo + pct_b * (hi - lo);
+    }
+
+    auto choose_start_with_component_a = [](const std::vector<double> &passes, double local_expected_h_a, double local_expected_h_b) {
+        double err_ab = 0.0;
+        double err_ba = 0.0;
+        for (size_t pass_i = 0; pass_i < passes.size(); ++pass_i) {
+            const double expected_ab = (pass_i % 2) == 0 ? local_expected_h_a : local_expected_h_b;
+            const double expected_ba = (pass_i % 2) == 0 ? local_expected_h_b : local_expected_h_a;
+            err_ab += std::abs(passes[pass_i] - expected_ab);
+            err_ba += std::abs(passes[pass_i] - expected_ba);
+        }
+        if (err_ab + 1e-6 < err_ba)
+            return true;
+        if (err_ba + 1e-6 < err_ab)
+            return false;
+        return local_expected_h_a >= local_expected_h_b;
+    };
+
+    const bool start_with_a = choose_start_with_component_a(pass_heights, expected_h_a, expected_h_b);
+    double total_a = 0.0;
+    double total_b = 0.0;
+    for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {
+        const bool even_pass = (pass_i % 2) == 0;
+        const bool pass_is_a = even_pass ? start_with_a : !start_with_a;
+        if (pass_is_a)
+            total_a += pass_heights[pass_i];
+        else
+            total_b += pass_heights[pass_i];
+    }
+
+    const double total = total_a + total_b;
+    if (total <= EPSILON)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+    return std::clamp(int(std::lround(100.0 * total_b / total)), 0, 100);
+}
+
+bool mixed_filament_supports_bias_apparent_color(const MixedFilament               &mf,
+                                                 const MixedFilamentPreviewSettings &preview_settings,
+                                                 bool                                bias_mode_enabled)
+{
+    if (!bias_mode_enabled)
+        return false;
+    if (preview_settings.local_z_mode)
+        return false;
+    if (mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return false;
+    if (!MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty())
+        return false;
+    if (decode_gradient_component_ids(mf.gradient_component_ids, 9).size() >= 3)
+        return false;
+    return mf.component_a >= 1 && mf.component_b >= 1 && mf.component_a != mf.component_b;
+}
+
+std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedFilament               &mf,
+                                                             const MixedFilamentPreviewSettings &preview_settings,
+                                                             const std::vector<double>          &nozzle_diameters,
+                                                             bool                                bias_mode_enabled)
+{
+    const int base_b = mixed_filament_effective_local_z_preview_mix_b_percent(mf, preview_settings);
+    if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
+        return { 100 - base_b, base_b };
+
+    const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
+    const int apparent_b = MixedFilamentManager::apparent_mix_b_percent(base_b,
+                                                                        mf.component_a_surface_offset,
+                                                                        mf.component_b_surface_offset,
+                                                                        float(reference_nozzle_mm));
+    return { 100 - apparent_b, apparent_b };
+}
+
+std::string compute_mixed_filament_display_color(const MixedFilament &entry, const MixedFilamentDisplayContext &context)
+{
+    constexpr const char *fallback = "#26A69A";
+    if (context.num_physical == 0 || context.physical_colors.empty())
+        return fallback;
+
+    if (mixed_filament_supports_bias_apparent_color(entry, context.preview_settings, context.component_bias_enabled) &&
+        entry.component_a >= 1 && entry.component_b >= 1 &&
+        entry.component_a <= context.num_physical && entry.component_b <= context.num_physical &&
+        entry.component_a <= context.physical_colors.size() && entry.component_b <= context.physical_colors.size()) {
+        const auto [apparent_pct_a, apparent_pct_b] =
+            mixed_filament_apparent_pair_percentages(entry, context.preview_settings, context.nozzle_diameters, context.component_bias_enabled);
+        return MixedFilamentManager::blend_color(
+            context.physical_colors[entry.component_a - 1],
+            context.physical_colors[entry.component_b - 1],
+            apparent_pct_a,
+            apparent_pct_b);
+    }
+
+    const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
+    if (!normalized_pattern.empty()) {
+        const std::vector<unsigned int> sequence = build_grouped_manual_pattern_preview_sequence(
+            normalized_pattern, entry.component_a, entry.component_b, context.num_physical, context.preview_settings.wall_loops);
+        if (!sequence.empty())
+            return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback);
+    }
+
+    if (entry.distribution_mode != int(MixedFilament::Simple)) {
+        const std::vector<unsigned int> gradient_ids = decode_gradient_component_ids(entry.gradient_component_ids, context.num_physical);
+        if (gradient_ids.size() >= 3) {
+            const std::vector<int> gradient_weights =
+                decode_gradient_component_weights(entry.gradient_component_weights, gradient_ids.size());
+            const std::vector<unsigned int> sequence = build_weighted_gradient_sequence(
+                gradient_ids, gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights);
+            if (!sequence.empty())
+                return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback);
+        }
+    }
+
+    const int effective_mix_b = mixed_filament_effective_local_z_preview_mix_b_percent(entry, context.preview_settings);
+    const bool same_layer_mode = entry.distribution_mode == int(MixedFilament::SameLayerPointillisme);
+    const std::vector<unsigned int> pair_sequence =
+        build_effective_pair_preview_sequence(entry.component_a, entry.component_b, effective_mix_b, same_layer_mode);
+    if (!pair_sequence.empty())
+        return blend_display_color_from_sequence(context.physical_colors, context.num_physical, pair_sequence, fallback);
+
+    if (entry.component_a == 0 || entry.component_b == 0 ||
+        entry.component_a > context.num_physical || entry.component_b > context.num_physical ||
+        entry.component_a > context.physical_colors.size() || entry.component_b > context.physical_colors.size()) {
+        return fallback;
+    }
+
+    const int mix_b = std::clamp(entry.mix_b_percent, 0, 100);
+    return MixedFilamentManager::blend_color(
+        context.physical_colors[entry.component_a - 1],
+        context.physical_colors[entry.component_b - 1],
+        100 - mix_b,
+        mix_b);
+}
+
 // ---------------------------------------------------------------------------
 // MixedFilamentManager
 // ---------------------------------------------------------------------------
@@ -1651,54 +2246,16 @@ int MixedFilamentManager::apparent_mix_b_percent(int   mix_b_percent,
 
 void MixedFilamentManager::refresh_display_colors(const std::vector<std::string> &filament_colours)
 {
-    for (MixedFilament &mf : m_mixed) {
-        const std::vector<unsigned int> gradient_ids = decode_gradient_component_ids(mf.gradient_component_ids, filament_colours.size());
-        if (mf.distribution_mode != int(MixedFilament::Simple) && gradient_ids.size() >= 3) {
-            const std::vector<int> gradient_weights =
-                decode_gradient_component_weights(mf.gradient_component_weights, gradient_ids.size());
-            const std::vector<unsigned int> gradient_sequence =
-                build_weighted_gradient_sequence(gradient_ids,
-                    gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights);
-            if (gradient_sequence.empty()) {
-                mf.display_color = "#26A69A";
-                continue;
-            }
+    MixedFilamentDisplayContext context = m_display_context;
+    context.num_physical = filament_colours.size();
+    context.physical_colors = filament_colours;
+    if (context.preview_settings.wall_loops == 0)
+        context.preview_settings.wall_loops = 1;
+    if (context.nozzle_diameters.size() < context.num_physical)
+        context.nozzle_diameters.resize(context.num_physical, 0.4);
 
-            std::vector<int> counts(gradient_ids.size(), 0);
-            for (const unsigned int id : gradient_sequence) {
-                auto it = std::find(gradient_ids.begin(), gradient_ids.end(), id);
-                if (it != gradient_ids.end())
-                    ++counts[size_t(it - gradient_ids.begin())];
-            }
-            std::vector<std::pair<std::string, int>> color_percents;
-            color_percents.reserve(gradient_ids.size());
-            for (size_t i = 0; i < gradient_ids.size(); ++i) {
-                const int wi = std::max(0, counts[i]);
-                if (wi == 0)
-                    continue;
-                color_percents.emplace_back(filament_colours[gradient_ids[i] - 1], wi);
-            }
-            mf.display_color = blend_color_multi(color_percents);
-            continue;
-        }
-        if (mf.component_a == 0 || mf.component_b == 0 ||
-            mf.component_a > filament_colours.size() || mf.component_b > filament_colours.size()) {
-            mf.display_color = "#26A69A";
-            continue;
-        }
-        const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
-        const int ratio_b =
-            (mf.distribution_mode != int(MixedFilament::SameLayerPointillisme) &&
-             normalized_pattern.empty() &&
-             gradient_ids.size() < 3) ?
-                apparent_mix_b_percent(mf.mix_b_percent, mf.component_a_surface_offset, mf.component_b_surface_offset) :
-                clamp_int(mf.mix_b_percent, 0, 100);
-        const int ratio_a = std::max(0, 100 - ratio_b);
-        mf.display_color = blend_color(
-            filament_colours[mf.component_a - 1],
-            filament_colours[mf.component_b - 1],
-            ratio_a, ratio_b);
-    }
+    for (MixedFilament &mf : m_mixed)
+        mf.display_color = compute_mixed_filament_display_color(mf, context);
 }
 
 size_t MixedFilamentManager::enabled_count() const
@@ -1717,6 +2274,19 @@ std::vector<std::string> MixedFilamentManager::display_colors() const
         if (mf.enabled && !mf.deleted)
             colors.push_back(mf.display_color);
     return colors;
+}
+
+void MixedFilamentManager::set_display_context(const MixedFilamentDisplayContext &context)
+{
+    m_display_context = context;
+    if (m_display_context.num_physical == 0 || m_display_context.num_physical < m_display_context.physical_colors.size())
+        m_display_context.num_physical = m_display_context.physical_colors.size();
+    if (m_display_context.preview_settings.wall_loops == 0)
+        m_display_context.preview_settings.wall_loops = 1;
+    if (m_display_context.nozzle_diameters.size() < m_display_context.num_physical)
+        m_display_context.nozzle_diameters.resize(m_display_context.num_physical, 0.4);
+    if (!m_display_context.physical_colors.empty())
+        refresh_display_colors(m_display_context.physical_colors);
 }
 
 } // namespace Slic3r

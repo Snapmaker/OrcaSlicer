@@ -112,6 +112,37 @@ struct MixedFilament
     bool operator!=(const MixedFilament &rhs) const { return !(*this == rhs); }
 };
 
+struct MixedFilamentPreviewSettings
+{
+    double nominal_layer_height { 0.2 };
+    double mixed_lower_bound { 0.04 };
+    double mixed_upper_bound { 0.16 };
+    double preferred_a_height { 0.0 };
+    double preferred_b_height { 0.0 };
+    bool   local_z_mode { false };
+    size_t wall_loops { 1 };
+};
+
+struct MixedFilamentDisplayContext
+{
+    size_t                       num_physical { 0 };
+    std::vector<std::string>     physical_colors;
+    std::vector<double>          nozzle_diameters;
+    MixedFilamentPreviewSettings preview_settings;
+    bool                         component_bias_enabled { false };
+};
+
+int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament               &mf,
+                                                           const MixedFilamentPreviewSettings &preview_settings);
+bool mixed_filament_supports_bias_apparent_color(const MixedFilament               &mf,
+                                                 const MixedFilamentPreviewSettings &preview_settings,
+                                                 bool                                bias_mode_enabled);
+std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedFilament               &mf,
+                                                             const MixedFilamentPreviewSettings &preview_settings,
+                                                             const std::vector<double>          &nozzle_diameters,
+                                                             bool                                bias_mode_enabled);
+std::string compute_mixed_filament_display_color(const MixedFilament &entry, const MixedFilamentDisplayContext &context);
+
 // ---------------------------------------------------------------------------
 // MixedFilamentManager
 //
@@ -253,6 +284,7 @@ public:
 
     // Return the display colours of all enabled mixed filaments (in order).
     std::vector<std::string> display_colors() const;
+    void set_display_context(const MixedFilamentDisplayContext &context);
 
 private:
     // Convert a 1-based virtual ID to a 0-based index into m_mixed.
@@ -271,6 +303,7 @@ private:
     float                      m_height_upper_bound  = 0.16f;
     bool                       m_advanced_dithering  = false;
     uint64_t                   m_next_stable_id      = 1;
+    MixedFilamentDisplayContext m_display_context;
 };
 
 } // namespace Slic3r

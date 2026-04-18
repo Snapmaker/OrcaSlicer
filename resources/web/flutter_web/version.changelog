@@ -1,11 +1,10 @@
 #  Changelog
 
-## 2026-03-11
+## 2026-04-16
 
-### Features
-- Feature: 
-  * Added a new model entry
-  * Support more official consumables
-  * Add new types of consumables color editing
 ### Bugfix
-  * Fixed the issue where devices would automatically disconnect when connected over Lan network
+  *   - Fixed an issue on the "Print Preprocessing" page: when more than 4 preset filaments were available,
+		users could not select the excess filaments to match with the mounted filaments on the device. 
+		
+### 问题修复
+  *   - 修复了预设耗材超过 4 个时，超过部分无法在 "打印预处理页" 选择设备挂载耗材的问题

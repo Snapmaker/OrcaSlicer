@@ -7572,7 +7572,7 @@ std::map<std::string, std::string> DynamicPrintConfig::validate(bool under_cli)
 
 std::string DynamicPrintConfig::get_filament_type(std::string &displayed_filament_type, int id)
 {
-    auto* filament_id = dynamic_cast<const ConfigOptionStrings*>(this->option("filament_id"));
+    auto* filament_id = dynamic_cast<const ConfigOptionStrings*>(this->option("filament_ids"));
     auto* filament_type = dynamic_cast<const ConfigOptionStrings*>(this->option("filament_type"));
     auto* filament_is_support = dynamic_cast<const ConfigOptionBools*>(this->option("filament_is_support"));
 

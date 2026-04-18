@@ -237,3 +237,30 @@ SCENARIO("DynamicPrintConfig serialization", "[Config]") {
         }
     }
 }
+
+TEST_CASE("DynamicPrintConfig normalizes support filament types from filament_ids", "[Config]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.option<ConfigOptionStrings>("filament_type", true)->values      = { "PLA", "PA" };
+    config.option<ConfigOptionStrings>("filament_ids", true)->values       = { "GFS00", "GFS01" };
+    config.option<ConfigOptionBools>("filament_is_support", true)->values  = { true, true };
+
+    std::string display_type;
+    CHECK(config.get_filament_type(display_type, 0) == "PLA-S");
+    CHECK(display_type == "Sup.PLA");
+
+    CHECK(config.get_filament_type(display_type, 1) == "PA-S");
+    CHECK(display_type == "Sup.PA");
+}
+
+TEST_CASE("DynamicPrintConfig keeps ordinary filament types unchanged", "[Config]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.option<ConfigOptionStrings>("filament_type", true)->values      = { "PLA" };
+    config.option<ConfigOptionStrings>("filament_ids", true)->values       = { "GFSL99" };
+    config.option<ConfigOptionBools>("filament_is_support", true)->values  = { false };
+
+    std::string display_type;
+    CHECK(config.get_filament_type(display_type, 0) == "PLA");
+    CHECK(display_type == "PLA");
+}

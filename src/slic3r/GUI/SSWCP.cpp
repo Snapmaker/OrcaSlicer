@@ -10,6 +10,7 @@
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <iomanip>
 #include <regex>
 #include <thread>
 #include <string_view>
@@ -3109,6 +3110,21 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 filament_types.emplace_back(std::move(filament_type));
             }
             response["filament_type"] = filament_types;
+        }
+
+        // file nozzle diameters
+        if (full_config.has("nozzle_diameter")) {
+            const auto *opt_nozzle_diameters = full_config.option<ConfigOptionFloats>("nozzle_diameter");
+            if (opt_nozzle_diameters != nullptr) {
+                std::vector<std::string> nozzle_diameters;
+                nozzle_diameters.reserve(opt_nozzle_diameters->values.size());
+                for (double diameter : opt_nozzle_diameters->values) {
+                    std::ostringstream stream;
+                    stream << std::fixed << std::setprecision(1) << diameter;
+                    nozzle_diameters.emplace_back(stream.str());
+                }
+                response["nozzle_diameters"] = nozzle_diameters;
+            }
         }
         
 

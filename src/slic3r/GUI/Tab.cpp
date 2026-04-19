@@ -1491,19 +1491,34 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         update_wiping_button_visibility();
     }
 
-    if (opt_key == "dithering_local_z_mode" &&
-        boost::any_cast<bool>(value) &&
-        (!m_config->has("mixed_filament_region_collapse") ||
-         m_config->option("mixed_filament_region_collapse") == nullptr ||
-         m_config->opt_bool("mixed_filament_region_collapse"))) {
-        change_opt_value(*m_config, "mixed_filament_region_collapse", boost::any(false));
-        if (m_type == Preset::TYPE_PRINT) {
-            DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-            project_cfg.set_key_value("mixed_filament_region_collapse", new ConfigOptionBool(false));
+    if (opt_key == "dithering_local_z_mode") {
+        const bool local_z_enabled = boost::any_cast<bool>(value);
+        if (local_z_enabled &&
+            (!m_config->has("mixed_filament_region_collapse") ||
+             m_config->option("mixed_filament_region_collapse") == nullptr ||
+             m_config->opt_bool("mixed_filament_region_collapse"))) {
+            change_opt_value(*m_config, "mixed_filament_region_collapse", boost::any(false));
+            if (m_type == Preset::TYPE_PRINT) {
+                DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
+                project_cfg.set_key_value("mixed_filament_region_collapse", new ConfigOptionBool(false));
+            }
+            if (Field *field = this->get_field("mixed_filament_region_collapse"))
+                field->set_value(boost::any(false), false);
+            update_dirty();
         }
-        if (Field *field = this->get_field("mixed_filament_region_collapse"))
-            field->set_value(boost::any(false), false);
-        update_dirty();
+        if (!local_z_enabled &&
+            m_config->has("dithering_local_z_whole_objects") &&
+            m_config->option("dithering_local_z_whole_objects") != nullptr &&
+            m_config->opt_bool("dithering_local_z_whole_objects")) {
+            change_opt_value(*m_config, "dithering_local_z_whole_objects", boost::any(false));
+            if (m_type == Preset::TYPE_PRINT) {
+                DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
+                project_cfg.set_key_value("dithering_local_z_whole_objects", new ConfigOptionBool(false));
+            }
+            if (Field *field = this->get_field("dithering_local_z_whole_objects"))
+                field->set_value(boost::any(false), false);
+            update_dirty();
+        }
     }
 
 
@@ -1813,6 +1828,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
          opt_key == "mixed_filament_region_collapse" ||
          opt_key == "dithering_z_step_size" ||
          opt_key == "dithering_local_z_mode" ||
+         opt_key == "dithering_local_z_whole_objects" ||
          opt_key == "dithering_step_painted_zones_only" ||
          opt_key == "mixed_filament_definitions")) {
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
@@ -2557,6 +2573,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
         optgroup->append_single_option_line("mixed_filament_region_collapse");
         optgroup->append_single_option_line("dithering_z_step_size");
         optgroup->append_single_option_line("dithering_local_z_mode");
+        optgroup->append_single_option_line("dithering_local_z_whole_objects");
         optgroup->append_single_option_line("dithering_step_painted_zones_only");
 
         optgroup = page->new_optgroup(L("Fuzzy Skin"), L"fuzzy_skin");

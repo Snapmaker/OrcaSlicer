@@ -4292,6 +4292,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("dithering_local_z_whole_objects", coBool);
+    def->label = L("Apply Local-Z to whole mixed objects");
+    def->category = L("Others");
+    def->tooltip = L("Experimental. Extend Local-Z dithering beyond painted mixed zones so mixed wall regions can use Local-Z across the whole object.\n\n"
+                     "This also lets Local-Z continue through default mixed walls around painted areas instead of limiting the effect strictly to painted masks.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("dithering_step_painted_zones_only", coBool);
     def->label = L("Use step size in painted zones only");
     def->category = L("Others");

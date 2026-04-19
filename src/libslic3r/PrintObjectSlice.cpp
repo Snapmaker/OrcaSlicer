@@ -2578,6 +2578,151 @@ static void export_local_z_plan_debug(const PrintObject &print_object, coordf_t 
     }
 }
 
+static std::vector<std::vector<ExPolygons>> whole_object_local_z_segmentation_by_mixed_wall(const PrintObject &print_object)
+{
+    std::vector<std::vector<ExPolygons>> segmentation;
+
+    const Print *print = print_object.print();
+    if (print == nullptr || print_object.layer_count() == 0)
+        return segmentation;
+
+    const size_t num_physical = print->config().filament_colour.size();
+    const size_t num_total    = print->mixed_filament_manager().total_filaments(num_physical);
+    if (num_total <= num_physical)
+        return segmentation;
+
+    segmentation.assign(print_object.layer_count(), std::vector<ExPolygons>(num_total + 1));
+    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
+    size_t mixed_region_layers = 0;
+    size_t mixed_region_count  = 0;
+
+    for (size_t layer_id = 0; layer_id < print_object.layer_count(); ++layer_id) {
+        const Layer &layer = *print_object.get_layer(int(layer_id));
+        bool layer_has_mixed_region = false;
+        for (int region_id = 0; region_id < layer.region_count(); ++region_id) {
+            const LayerRegion *layerm = layer.get_region(region_id);
+            if (layerm == nullptr || layerm->slices.empty())
+                continue;
+
+            const unsigned int filament_id = unsigned(std::max(0, layerm->region().config().wall_filament.value));
+            if (!mixed_mgr.is_mixed(filament_id, num_physical))
+                continue;
+            if (filament_id >= segmentation[layer_id].size())
+                continue;
+
+            ExPolygons state_masks = to_expolygons(layerm->slices.surfaces);
+            if (state_masks.empty())
+                continue;
+
+            append(segmentation[layer_id][filament_id], std::move(state_masks));
+            layer_has_mixed_region = true;
+            ++mixed_region_count;
+        }
+
+        if (layer_has_mixed_region) {
+            ++mixed_region_layers;
+            for (size_t channel_idx = num_physical + 1; channel_idx < segmentation[layer_id].size(); ++channel_idx) {
+                ExPolygons &state_masks = segmentation[layer_id][channel_idx];
+                if (state_masks.size() > 1)
+                    state_masks = union_ex(state_masks);
+            }
+        }
+    }
+
+    if (mixed_region_count == 0)
+        return {};
+
+    BOOST_LOG_TRIVIAL(info) << "Local-Z whole-object wall segmentation prepared"
+                            << " object=" << (print_object.model_object() ? print_object.model_object()->name : std::string("<unknown>"))
+                            << " mixed_region_layers=" << mixed_region_layers
+                            << " mixed_region_count=" << mixed_region_count
+                            << " physical_filaments=" << num_physical
+                            << " total_filaments=" << num_total;
+    return segmentation;
+}
+
+static std::vector<std::vector<ExPolygons>> local_z_planner_segmentation_with_whole_object_mixed_wall(
+    const PrintObject                          &print_object,
+    const std::vector<std::vector<ExPolygons>> &paint_segmentation)
+{
+    const Print *print = print_object.print();
+    if (print == nullptr || paint_segmentation.empty())
+        return paint_segmentation;
+
+    std::vector<std::vector<ExPolygons>> augmented = whole_object_local_z_segmentation_by_mixed_wall(print_object);
+    if (augmented.empty())
+        return paint_segmentation;
+
+    const size_t num_physical           = print->config().filament_colour.size();
+    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
+    size_t overlay_layers              = 0;
+    size_t overlay_mixed_channels      = 0;
+    size_t physical_override_layers    = 0;
+
+    for (size_t layer_id = 0; layer_id < augmented.size() && layer_id < paint_segmentation.size(); ++layer_id) {
+        if (augmented[layer_id].size() < paint_segmentation[layer_id].size())
+            augmented[layer_id].resize(paint_segmentation[layer_id].size());
+
+        ExPolygons painted_overrides;
+        for (size_t channel_idx = 1; channel_idx < paint_segmentation[layer_id].size(); ++channel_idx) {
+            const ExPolygons &state_masks = paint_segmentation[layer_id][channel_idx];
+            if (!state_masks.empty())
+                append(painted_overrides, state_masks);
+        }
+        if (painted_overrides.size() > 1)
+            painted_overrides = union_ex(painted_overrides);
+
+        bool layer_has_overlay = false;
+        if (!painted_overrides.empty()) {
+            bool clipped_for_physical_override = false;
+            for (size_t channel_idx = num_physical + 1; channel_idx < augmented[layer_id].size(); ++channel_idx) {
+                ExPolygons &state_masks = augmented[layer_id][channel_idx];
+                if (state_masks.empty())
+                    continue;
+                const ExPolygons clipped_masks = diff_ex(state_masks, painted_overrides);
+                if (clipped_masks.size() != state_masks.size())
+                    clipped_for_physical_override = true;
+                state_masks = clipped_masks;
+            }
+            if (clipped_for_physical_override)
+                ++physical_override_layers;
+            layer_has_overlay = true;
+        }
+
+        for (size_t channel_idx = 1; channel_idx < paint_segmentation[layer_id].size(); ++channel_idx) {
+            const ExPolygons &state_masks = paint_segmentation[layer_id][channel_idx];
+            if (state_masks.empty())
+                continue;
+
+            const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
+            if (channel_idx >= augmented[layer_id].size())
+                augmented[layer_id].resize(channel_idx + 1);
+
+            append(augmented[layer_id][channel_idx], state_masks);
+            layer_has_overlay = true;
+            if (mixed_mgr.is_mixed(state_id, num_physical))
+                ++overlay_mixed_channels;
+        }
+
+        for (size_t channel_idx = num_physical + 1; channel_idx < augmented[layer_id].size(); ++channel_idx) {
+            ExPolygons &state_masks = augmented[layer_id][channel_idx];
+            if (state_masks.size() > 1)
+                state_masks = union_ex(state_masks);
+        }
+        if (layer_has_overlay)
+            ++overlay_layers;
+    }
+
+    if (overlay_layers > 0) {
+        BOOST_LOG_TRIVIAL(info) << "Local-Z planner merged whole-object mixed wall masks with painted overrides"
+                                << " object=" << (print_object.model_object() ? print_object.model_object()->name : std::string("<unknown>"))
+                                << " overlay_layers=" << overlay_layers
+                                << " overlay_mixed_channels=" << overlay_mixed_channels
+                                << " physical_override_layers=" << physical_override_layers;
+    }
+    return augmented;
+}
+
 template<typename ThrowOnCancel>
 static void build_local_z_plan(PrintObject &print_object, const std::vector<std::vector<ExPolygons>> &segmentation, ThrowOnCancel throw_on_cancel)
 {
@@ -2597,6 +2742,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     const DynamicPrintConfig &full_cfg  = print->full_print_config();
     const PrintConfig        &print_cfg = print->config();
     const bool local_z_mode = bool_from_full_config(full_cfg, "dithering_local_z_mode", print_cfg.dithering_local_z_mode.value);
+    const bool local_z_whole_objects =
+        bool_from_full_config(full_cfg, "dithering_local_z_whole_objects", print_cfg.dithering_local_z_whole_objects.value);
     if (!local_z_mode) {
         BOOST_LOG_TRIVIAL(debug) << "Local-Z plan skipped: mode disabled"
                                  << " object=" << object_name;
@@ -2707,7 +2854,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     // Multi-color layer-cycle rows choose a pair once per nominal layer/zone
     // and rotate that pair independently from per-subpass A/B cadence.
     std::vector<int> row_layer_cycle_index(mixed_rows.size(), 0);
-    // Reset row cadence at the start of each disjoint painted zone.
+    // Painted-only Local-Z keeps cadence isolated per zone. Whole-object Local-Z
+    // instead syncs newly introduced painted rows to the dominant mixed cadence
+    // so painted islands do not restart their phase at the boundary.
     std::vector<uint8_t> row_active_prev_layer(mixed_rows.size(), uint8_t(0));
     for (size_t layer_id = 0; layer_id < print_object.layer_count(); ++layer_id) {
         throw_on_cancel();
@@ -2757,8 +2906,18 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         }
         for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
             if (row_active_this_layer[row_idx] != 0 && row_active_prev_layer[row_idx] == 0) {
-                row_cadence_index[row_idx]     = 0;
-                row_layer_cycle_index[row_idx] = 0;
+                const bool can_sync_to_dominant =
+                    local_z_whole_objects &&
+                    dominant_mixed_idx < mixed_rows.size() &&
+                    dominant_mixed_idx != row_idx &&
+                    row_active_this_layer[dominant_mixed_idx] != 0;
+                if (can_sync_to_dominant) {
+                    row_cadence_index[row_idx]     = row_cadence_index[dominant_mixed_idx];
+                    row_layer_cycle_index[row_idx] = row_layer_cycle_index[dominant_mixed_idx];
+                } else {
+                    row_cadence_index[row_idx]     = 0;
+                    row_layer_cycle_index[row_idx] = 0;
+                }
             }
         }
         std::vector<LocalZActivePair> row_active_pairs(mixed_rows.size());
@@ -2799,11 +2958,16 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         const size_t active_mixed_rows = size_t(std::count(row_active_this_layer.begin(), row_active_this_layer.end(), uint8_t(1)));
         std::vector<ExPolygons> row_state_masks(mixed_rows.size());
         std::vector<unsigned int> row_state_ids(mixed_rows.size(), 0);
+        std::vector<ExPolygons> fixed_state_masks_by_extruder(num_physical);
         for (size_t channel_idx = 0; channel_idx < segmentation[layer_id].size(); ++channel_idx) {
             const ExPolygons &state_masks = segmentation[layer_id][channel_idx];
             if (state_masks.empty())
                 continue;
             const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
+            if (state_id >= 1 && state_id <= num_physical) {
+                append(fixed_state_masks_by_extruder[state_id - 1], state_masks);
+                continue;
+            }
             if (!mixed_mgr.is_mixed(state_id, num_physical))
                 continue;
             const int mixed_idx = mixed_mgr.mixed_index_from_filament_id(state_id, num_physical);
@@ -2818,6 +2982,29 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         for (ExPolygons &state_masks : row_state_masks)
             if (state_masks.size() > 1)
                 state_masks = union_ex(state_masks);
+        for (ExPolygons &state_masks : fixed_state_masks_by_extruder)
+            if (state_masks.size() > 1)
+                state_masks = union_ex(state_masks);
+
+        ExPolygons fixed_state_masks_union;
+        for (const ExPolygons &state_masks : fixed_state_masks_by_extruder)
+            if (!state_masks.empty())
+                append(fixed_state_masks_union, state_masks);
+        if (fixed_state_masks_union.size() > 1)
+            fixed_state_masks_union = union_ex(fixed_state_masks_union);
+        if (interval.has_mixed_paint && !fixed_state_masks_union.empty()) {
+            if (!base_masks.empty()) {
+                base_masks = diff_ex(base_masks, fixed_state_masks_union);
+                if (!base_masks.empty()) {
+                    const Polygons filtered = opening(to_polygons(base_masks), scaled<float>(5. * EPSILON), scaled<float>(5. * EPSILON));
+                    base_masks = union_ex(filtered);
+                }
+            }
+            append(mixed_masks, fixed_state_masks_union);
+            if (mixed_masks.size() > 1)
+                mixed_masks = union_ex(mixed_masks);
+        }
+
         size_t active_row_mask_components = 0;
         size_t active_row_mask_vertices   = 0;
         for (size_t row_idx = 0; row_idx < row_state_masks.size(); ++row_idx)
@@ -3025,6 +3212,16 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                             ++split_passes_with_painted_masks;
                             interval_has_split_painted_masks = true;
                         }
+                        for (size_t extruder_idx = 0; extruder_idx < fixed_state_masks_by_extruder.size(); ++extruder_idx)
+                            if (!fixed_state_masks_by_extruder[extruder_idx].empty())
+                                append(plan.painted_masks_by_extruder[extruder_idx], fixed_state_masks_by_extruder[extruder_idx]);
+                        if (!fixed_state_masks_union.empty()) {
+                            ++split_passes_with_painted_masks;
+                            interval_has_split_painted_masks = true;
+                        }
+                        for (ExPolygons &masks : plan.painted_masks_by_extruder)
+                            if (masks.size() > 1)
+                                masks = union_ex(masks);
 
                         isolated_plans.emplace_back(std::move(plan));
                         row_used = true;
@@ -3160,6 +3357,11 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         append(plan.painted_masks_by_extruder[target_extruder - 1], state_masks);
                         pass_has_painted_masks = true;
                     }
+                    for (size_t extruder_idx = 0; extruder_idx < fixed_state_masks_by_extruder.size(); ++extruder_idx)
+                        if (!fixed_state_masks_by_extruder[extruder_idx].empty()) {
+                            append(plan.painted_masks_by_extruder[extruder_idx], fixed_state_masks_by_extruder[extruder_idx]);
+                            pass_has_painted_masks = true;
+                        }
                     for (ExPolygons &masks : plan.painted_masks_by_extruder)
                         if (masks.size() > 1)
                             masks = union_ex(masks);
@@ -3234,6 +3436,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 }
                 append(plan.painted_masks_by_extruder[target_extruder - 1], state_masks);
             }
+            for (size_t extruder_idx = 0; extruder_idx < fixed_state_masks_by_extruder.size(); ++extruder_idx)
+                if (!fixed_state_masks_by_extruder[extruder_idx].empty())
+                    append(plan.painted_masks_by_extruder[extruder_idx], fixed_state_masks_by_extruder[extruder_idx]);
             for (ExPolygons &masks : plan.painted_masks_by_extruder)
                 if (masks.size() > 1)
                     masks = union_ex(masks);
@@ -4213,6 +4418,9 @@ void PrintObject::slice_volumes()
     BOOST_LOG_TRIVIAL(info) << "Slicing volumes..." << log_memory_info();
     const Print *print                      = this->print();
     const auto   throw_on_cancel_callback   = std::function<void()>([print](){ print->throw_if_canceled(); });
+    const bool   local_z_whole_objects_enabled =
+        bool_from_full_config(print->full_print_config(), "dithering_local_z_whole_objects",
+                              print->config().dithering_local_z_whole_objects.value);
 
     // Clear old LayerRegions, allocate for new PrintRegions.
     for (Layer* layer : m_layers) {
@@ -4289,11 +4497,22 @@ void PrintObject::slice_volumes()
         // Same-layer pointillisme is applied in G-code path domain (segment-level assignment),
         // not by XY state mask splitting, to avoid boolean-induced voids.
         BOOST_LOG_TRIVIAL(info) << "Same-layer pointillisme uses path-domain G-code segmentation";
-        build_local_z_plan(*this, mm_segmentation, [print]() { print->throw_if_canceled(); });
+        std::vector<std::vector<ExPolygons>> local_z_segmentation =
+            local_z_whole_objects_enabled
+                ? local_z_planner_segmentation_with_whole_object_mixed_wall(*this, mm_segmentation)
+                : mm_segmentation;
+        build_local_z_plan(*this, local_z_segmentation, [print]() { print->throw_if_canceled(); });
         apply_mm_segmentation(*this, std::move(mm_segmentation), [print]() { print->throw_if_canceled(); });
     }
 
     apply_mixed_region_surface_offsets(*this);
+
+    if (local_z_whole_objects_enabled && this->local_z_intervals().empty()) {
+        std::vector<std::vector<ExPolygons>> whole_object_local_z_segmentation =
+            whole_object_local_z_segmentation_by_mixed_wall(*this);
+        if (!whole_object_local_z_segmentation.empty())
+            build_local_z_plan(*this, whole_object_local_z_segmentation, [print]() { print->throw_if_canceled(); });
+    }
 
     // Is any ModelVolume fuzzy skin painted?
     if (this->model_object()->is_fuzzy_skin_painted()) {

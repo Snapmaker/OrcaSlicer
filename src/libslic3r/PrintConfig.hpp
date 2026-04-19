@@ -1368,6 +1368,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionString,             mixed_filament_definitions))
     ((ConfigOptionFloat,              dithering_z_step_size))
     ((ConfigOptionBool,               dithering_local_z_mode))
+    ((ConfigOptionBool,               dithering_local_z_whole_objects))
     ((ConfigOptionBool,               dithering_step_painted_zones_only))
     ((ConfigOptionString,             printer_model))
     ((ConfigOptionFloat,              resolution))

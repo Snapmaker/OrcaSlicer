@@ -784,6 +784,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     const bool local_z_dithering_enabled =
         config->has("dithering_local_z_mode") && config->option("dithering_local_z_mode") != nullptr &&
         config->opt_bool("dithering_local_z_mode");
+    toggle_line("dithering_local_z_whole_objects", local_z_dithering_enabled);
     toggle_line("local_z_wipe_tower_purge_lines", have_prime_tower && !is_BBL_Printer && local_z_dithering_enabled);
 
     WipeTowerWallType wipe_tower_wall_type = config->opt_enum<WipeTowerWallType>("wipe_tower_wall_type");

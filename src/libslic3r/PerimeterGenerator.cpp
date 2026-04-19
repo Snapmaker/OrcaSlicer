@@ -30,6 +30,14 @@ namespace Slic3r {
     
 using namespace Slic3r::Feature::FuzzySkin;
 
+static bool is_gap_fill_allowed_for_surface(const PrintObjectConfig* config, const SurfaceType surface_type)
+{
+    if (config == nullptr || config->gap_fill_target.value == gftNowhere)
+        return false;
+
+    return surface_type != stInternalSolid || config->gap_fill_target.value == gftEverywhere;
+}
+
 static void append_collapsed_infill_gap_fill(const ExPolygons          &areas,
                                              const Flow                &flow,
                                              const double               simplify_resolution,
@@ -1706,7 +1714,7 @@ void PerimeterGenerator::process_classic()
             not_filled_exp,
             float(-inset - min_perimeter_infill_spacing / 2.),
             float(min_perimeter_infill_spacing / 2.));
-        if (infill_exp.empty() && has_gap_fill) {
+        if (infill_exp.empty() && has_gap_fill && is_gap_fill_allowed_for_surface(object_config, surface.surface_type)) {
             ExPolygons gap_fill_source = not_filled_exp.empty() ? collapsed_gap_fill_source : not_filled_exp;
             if (gap_fill_source.empty())
                 gap_fill_source = ExPolygons { surface.expolygon };
@@ -2581,7 +2589,8 @@ void PerimeterGenerator::process_arachne()
             not_filled_exp,
             float(-min_perimeter_infill_spacing / 2.),
             float(inset + min_perimeter_infill_spacing / 2.));
-        if (infill_exp.empty() && this->config->gap_infill_speed.value > 0) {
+        if (infill_exp.empty() && this->config->gap_infill_speed.value > 0 &&
+            is_gap_fill_allowed_for_surface(object_config, surface.surface_type)) {
             ExPolygons gap_fill_source = not_filled_exp.empty() ? collapsed_gap_fill_source : not_filled_exp;
             if (gap_fill_source.empty())
                 gap_fill_source = ExPolygons { surface.expolygon };

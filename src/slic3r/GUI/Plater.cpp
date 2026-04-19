@@ -6069,6 +6069,10 @@ void MixedFilamentConfigPanel::build_ui()
     const int component_b = std::clamp(int(m_mf.component_b), 1, int(m_num_physical));
 
     const std::vector<unsigned int> initial_gradient_ids = decode_gradient_ids(m_mf.gradient_component_ids);
+    if (m_mf.distribution_mode == int(MixedFilament::SameLayerPointillisme)) {
+        m_mf.distribution_mode = initial_gradient_ids.size() >= 3 ? int(MixedFilament::LayerCycle) : int(MixedFilament::Simple);
+        m_mf.pointillism_all_filaments = false;
+    }
     const int stored_distribution_mode = std::clamp(m_mf.distribution_mode,
                                                     int(MixedFilament::LayerCycle),
                                                     int(MixedFilament::Simple));
@@ -6213,7 +6217,6 @@ void MixedFilamentConfigPanel::build_ui()
         wxColour color_b = (component_b >= 1 && component_b <= int(m_palette.size())) ? m_palette[component_b - 1] : wxColour("#26A69A");
         m_blend_selector = new MixedGradientSelector(this, color_a, color_b, std::clamp(m_mf.mix_b_percent, 0, 100));
         m_blend_selector->SetBackgroundColour(panel_bg);
-        const bool same_layer_mode = row_distribution_mode == int(MixedFilament::SameLayerPointillisme);
         m_blend_label = nullptr;
         picker_row->AddSpacer(gap);
         picker_row->Add(m_blend_selector, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL | wxLEFT, gap);
@@ -6242,7 +6245,7 @@ void MixedFilamentConfigPanel::build_ui()
     const wxString bias_tooltip =
         _L("Positive bias recesses the second filament in the pair; negative bias recesses the first filament.\n\n"
            "The color chip shows which filament the current value affects.\n\n"
-           "Grouped wall patterns, same-layer pointillisme, and Local-Z dithering ignore it.");
+           "Grouped wall patterns and Local-Z dithering ignore it.");
 
     auto *surface_offset_label = new wxStaticText(this, wxID_ANY, _L("Bias"));
     surface_offset_label->SetForegroundColour(is_dark ? wxColour(236, 236, 236) : wxColour(20, 20, 20));
@@ -6359,7 +6362,6 @@ void MixedFilamentConfigPanel::build_ui()
             m_local_z_limit_spin->Enable(m_local_z_limit_checkbox != nullptr &&
                                          m_local_z_limit_checkbox->GetValue());
 
-        const bool preserve_same_layer_mode = m_mf.distribution_mode == int(MixedFilament::SameLayerPointillisme);
         m_mf.component_a = unsigned(a);
         m_mf.component_b = unsigned(b);
         if (m_bias_mode_enabled) {
@@ -6413,11 +6415,8 @@ void MixedFilamentConfigPanel::build_ui()
             if (m_choice_d && m_choice_d->GetSelection() > 0)
                 add_unique(unsigned(m_choice_d->GetSelection()));
             const bool multi_gradient_mode = selected_ids.size() >= 3;
-            m_mf.distribution_mode = multi_gradient_mode ?
-                (preserve_same_layer_mode ? int(MixedFilament::SameLayerPointillisme) : int(MixedFilament::LayerCycle)) :
-                int(MixedFilament::Simple);
+            m_mf.distribution_mode = multi_gradient_mode ? int(MixedFilament::LayerCycle) : int(MixedFilament::Simple);
             simple_mode = m_mf.distribution_mode == int(MixedFilament::Simple);
-            same_layer_mode = m_mf.distribution_mode == int(MixedFilament::SameLayerPointillisme);
             m_mf.mix_b_percent = std::clamp(m_blend_selector ? m_blend_selector->value() : 50, 0, 100);
             m_mf.manual_pattern.clear();
             m_mf.pointillism_all_filaments = false;
@@ -6494,12 +6493,10 @@ void MixedFilamentConfigPanel::build_ui()
             m_mf.display_color = blend_from_sequence(m_physical_colors, preview_sequence, "#26A69A");
             if (m_blend_label) {
                 if (selected_gradient_ids.size() >= 3) {
-                    m_blend_label->SetLabel(wxString::Format(same_layer_mode ? _L("%d-color pointillisme") : _L("%d-color layer cycle"),
-                                                            int(selected_gradient_ids.size())));
+                    m_blend_label->SetLabel(wxString::Format(_L("%d-color layer cycle"), int(selected_gradient_ids.size())));
                 } else {
-                    m_blend_label->SetLabel(wxString::Format(simple_mode ? _L("Simple %d%%/%d%%") :
-                                                               (same_layer_mode ? _L("Pointillisme %d%%/%d%%") : _L("%d%%/%d%%")),
-                                                               100 - preview_mix_b_percent, preview_mix_b_percent));
+                    m_blend_label->SetLabel(wxString::Format(simple_mode ? _L("Simple %d%%/%d%%") : _L("%d%%/%d%%"),
+                                                            100 - preview_mix_b_percent, preview_mix_b_percent));
                 }
             }
         } else {
@@ -6507,9 +6504,8 @@ void MixedFilamentConfigPanel::build_ui()
                 m_physical_colors[size_t(a - 1)], m_physical_colors[size_t(b - 1)],
                 100 - preview_mix_b_percent, preview_mix_b_percent);
             if (m_blend_label)
-                m_blend_label->SetLabel(wxString::Format(simple_mode ? _L("Simple %d%%/%d%%") :
-                                                           (same_layer_mode ? _L("Pointillisme %d%%/%d%%") : _L("%d%%/%d%%")),
-                                                           100 - preview_mix_b_percent, preview_mix_b_percent));
+                m_blend_label->SetLabel(wxString::Format(simple_mode ? _L("Simple %d%%/%d%%") : _L("%d%%/%d%%"),
+                                                        100 - preview_mix_b_percent, preview_mix_b_percent));
         }
 
         if (m_mix_preview) {

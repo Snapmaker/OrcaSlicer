@@ -2544,12 +2544,14 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
 
         // Use default (no icon) here to avoid runtime bitmap load failures.
         optgroup = page->new_optgroup(L("Mixed Filaments"));
-        optgroup->append_single_option_line("mixed_filament_gradient_mode");
+        // Height-weighted cadence is no longer exposed in the Others tab.
+        // optgroup->append_single_option_line("mixed_filament_gradient_mode");
         optgroup->append_single_option_line("mixed_filament_height_lower_bound");
         optgroup->append_single_option_line("mixed_filament_height_upper_bound");
         optgroup->append_single_option_line("mixed_filament_advanced_dithering");
-        optgroup->append_single_option_line("mixed_filament_pointillism_pixel_size");
-        optgroup->append_single_option_line("mixed_filament_pointillism_line_gap");
+        // Pointillisme controls are retired; keep config keys for compatibility only.
+        // optgroup->append_single_option_line("mixed_filament_pointillism_pixel_size");
+        // optgroup->append_single_option_line("mixed_filament_pointillism_line_gap");
         optgroup->append_single_option_line("mixed_filament_component_bias_enabled");
         optgroup->append_single_option_line("mixed_filament_surface_indentation");
         optgroup->append_single_option_line("mixed_filament_region_collapse");

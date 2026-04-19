@@ -4180,9 +4180,10 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("mixed_filament_height_lower_bound", coFloat);
-    def->label = L("Mixed filament lower height bound");
+    def->label = L("Local-Z lower height bound");
     def->category = L("Others");
-    def->tooltip = L("Lower bound used by the height-weighted mixed filament gradient mode.\n\n"
+    def->tooltip = L("Lower bound used when Local-Z mixed-filament dithering chooses per-color sublayer heights.\n\n"
+                     "Smaller values let Local-Z use thinner sublayers for a color when needed.\n\n"
                      "Detailed mixed filament setting explanations will be published once the project wiki is available.");
     def->sidetext = "mm";
     def->min = 0.01;
@@ -4190,9 +4191,10 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(0.04));
 
     def = this->add("mixed_filament_height_upper_bound", coFloat);
-    def->label = L("Mixed filament upper height bound");
+    def->label = L("Local-Z upper height bound");
     def->category = L("Others");
-    def->tooltip = L("Upper bound used by the height-weighted mixed filament gradient mode.\n\n"
+    def->tooltip = L("Upper bound used when Local-Z mixed-filament dithering chooses per-color sublayer heights.\n\n"
+                     "Larger values let Local-Z use thicker sublayers for a color when needed.\n\n"
                      "Detailed mixed filament setting explanations will be published once the project wiki is available.");
     def->sidetext = "mm";
     def->min = 0.01;

@@ -211,6 +211,8 @@ static int clamp_int(int v, int lo, int hi)
     return std::max(lo, std::min(hi, v));
 }
 
+static int normalize_distribution_mode_without_pointillism(int distribution_mode, const std::string &gradient_component_ids);
+
 static float clamp_surface_offset(float v)
 {
     return std::clamp(v, -2.f, 2.f);
@@ -568,9 +570,14 @@ static bool parse_row_definition(const std::string &row,
         manual_pattern = joined_pattern.str();
     }
 
-    // Compatibility for early same-layer prototype rows.
+    // Compatibility for early same-layer prototype rows is intentionally
+    // disabled while pointillisme is retired from the mixed-filament path.
+#if 0
     if (distribution_mode == int(MixedFilament::LayerCycle) && pointillism_all_filaments)
         distribution_mode = int(MixedFilament::SameLayerPointillisme);
+#endif
+    pointillism_all_filaments = false;
+    distribution_mode = normalize_distribution_mode_without_pointillism(distribution_mode, gradient_component_ids);
     return true;
 }
 
@@ -697,6 +704,22 @@ static std::vector<unsigned int> decode_gradient_component_ids(const std::string
         ids.emplace_back(id);
     }
     return ids;
+}
+
+static int normalize_distribution_mode_without_pointillism(int distribution_mode, const std::string &gradient_component_ids)
+{
+    const int clamped_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
+    if (clamped_mode != int(MixedFilament::SameLayerPointillisme))
+        return clamped_mode;
+
+    const size_t gradient_count = decode_gradient_component_ids(gradient_component_ids, 9).size();
+    return gradient_count >= 3 ? int(MixedFilament::LayerCycle) : int(MixedFilament::Simple);
+}
+
+static void disable_pointillism_mode(MixedFilament &mf)
+{
+    mf.pointillism_all_filaments = false;
+    mf.distribution_mode = normalize_distribution_mode_without_pointillism(mf.distribution_mode, mf.gradient_component_ids);
 }
 
 static std::vector<int> parse_gradient_weight_tokens(const std::string &weights)
@@ -1661,6 +1684,7 @@ void MixedFilamentManager::apply_gradient_settings(int   gradient_mode,
     m_advanced_dithering = advanced_dithering;
 
     for (MixedFilament &mf : m_mixed) {
+        disable_pointillism_mode(mf);
         if (!mf.custom) {
             mf.ratio_a = 1;
             mf.ratio_b = 1;
@@ -1678,6 +1702,7 @@ std::string MixedFilamentManager::serialize_custom_entries()
         if (!first)
             ss << ';';
         first = false;
+        disable_pointillism_mode(mf);
         mf.stable_id = normalize_stable_id(mf.stable_id);
         const std::string normalized_ids = normalize_gradient_component_ids(mf.gradient_component_ids);
         const std::string normalized_weights = normalize_gradient_component_weights(mf.gradient_component_weights, normalized_ids.size());
@@ -1825,6 +1850,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                 mf.enabled = false;
             mf.custom = false;
             mf.origin_auto = true;
+            disable_pointillism_mode(mf);
 
             rebuilt.push_back(std::move(mf));
             consumed_auto_pairs.insert(key);
@@ -1856,6 +1882,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             mf.enabled = false;
         mf.custom = custom;
         mf.origin_auto = origin_auto;
+        disable_pointillism_mode(mf);
         rebuilt.push_back(std::move(mf));
         ++loaded_rows;
     }

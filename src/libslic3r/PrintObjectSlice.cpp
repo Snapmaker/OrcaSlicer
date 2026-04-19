@@ -1811,6 +1811,7 @@ static std::vector<unsigned int> build_weighted_gradient_sequence(const std::vec
 
 static std::vector<unsigned int> pointillism_sequence_for_row(const MixedFilament &mf, size_t num_physical)
 {
+#if 0
     if (!mf.enabled || num_physical == 0)
         return {};
 
@@ -1873,6 +1874,10 @@ static std::vector<unsigned int> pointillism_sequence_for_row(const MixedFilamen
     if (!seen_a || !seen_b)
         return {};
     return sequence;
+#endif
+    (void)mf;
+    (void)num_physical;
+    return {};
 }
 
 static bool local_z_eligible_mixed_row(const MixedFilament &mf)
@@ -2137,6 +2142,7 @@ static size_t non_empty_mask_count(const std::vector<ExPolygons> &masks_by_extru
 template<typename ThrowOnCancel>
 static bool apply_pointillism_mixed_segmentation(PrintObject &print_object, std::vector<std::vector<ExPolygons>> &segmentation, ThrowOnCancel throw_on_cancel)
 {
+#if 0
     const Print *print = print_object.print();
     if (print == nullptr || segmentation.empty())
         return false;
@@ -2334,6 +2340,11 @@ static bool apply_pointillism_mixed_segmentation(PrintObject &print_object, std:
                                    << " stripe_pitch_mm=" << stripe_pitch_mm
                                    << " skipped_states=" << skipped_states;
     }
+    return false;
+#endif
+    (void)print_object;
+    (void)segmentation;
+    (void)throw_on_cancel;
     return false;
 }
 

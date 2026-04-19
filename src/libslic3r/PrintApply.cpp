@@ -1180,9 +1180,12 @@ static void append_mixed_component_extruders(const MixedFilamentManager &mixed_m
 
 static bool same_layer_pointillism_enabled(const MixedFilamentManager &mixed_mgr)
 {
+#if 0
     for (const MixedFilament &mf : mixed_mgr.mixed_filaments())
         if (mf.enabled && mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
             return true;
+#endif
+    (void)mixed_mgr;
     return false;
 }
 

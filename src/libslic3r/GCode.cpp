@@ -3796,6 +3796,7 @@ static size_t unique_extruder_count_for_gcode(const std::vector<unsigned int>& s
 
 static std::vector<unsigned int> pointillism_sequence_for_row_for_gcode(const MixedFilament& mf, size_t num_physical)
 {
+#if 0
     if (!mf.enabled || num_physical == 0 || mf.distribution_mode != int(MixedFilament::SameLayerPointillisme))
         return {};
 
@@ -3856,6 +3857,10 @@ static std::vector<unsigned int> pointillism_sequence_for_row_for_gcode(const Mi
     if (!seen_a || !seen_b)
         return {};
     return sequence;
+#endif
+    (void)mf;
+    (void)num_physical;
+    return {};
 }
 
 static void split_polyline_by_length_for_pointillism(const Polyline& src,

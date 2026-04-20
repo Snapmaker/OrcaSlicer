@@ -82,6 +82,8 @@ static std::vector<std::string> s_project_options {
     "mixed_color_layer_height_b",
     "dithering_z_step_size",
     "dithering_local_z_mode",
+    "dithering_local_z_whole_objects",
+    "dithering_local_z_direct_multicolor",
     "dithering_step_painted_zones_only",
 };
 

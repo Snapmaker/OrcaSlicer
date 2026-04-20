@@ -120,6 +120,7 @@ struct MixedFilamentPreviewSettings
     double preferred_a_height { 0.0 };
     double preferred_b_height { 0.0 };
     bool   local_z_mode { false };
+    bool   local_z_direct_multicolor { false };
     size_t wall_loops { 1 };
 };
 

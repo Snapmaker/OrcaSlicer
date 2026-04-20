@@ -1519,6 +1519,19 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 field->set_value(boost::any(false), false);
             update_dirty();
         }
+        if (!local_z_enabled &&
+            m_config->has("dithering_local_z_direct_multicolor") &&
+            m_config->option("dithering_local_z_direct_multicolor") != nullptr &&
+            m_config->opt_bool("dithering_local_z_direct_multicolor")) {
+            change_opt_value(*m_config, "dithering_local_z_direct_multicolor", boost::any(false));
+            if (m_type == Preset::TYPE_PRINT) {
+                DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
+                project_cfg.set_key_value("dithering_local_z_direct_multicolor", new ConfigOptionBool(false));
+            }
+            if (Field *field = this->get_field("dithering_local_z_direct_multicolor"))
+                field->set_value(boost::any(false), false);
+            update_dirty();
+        }
     }
 
 
@@ -1829,6 +1842,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
          opt_key == "dithering_z_step_size" ||
          opt_key == "dithering_local_z_mode" ||
          opt_key == "dithering_local_z_whole_objects" ||
+         opt_key == "dithering_local_z_direct_multicolor" ||
          opt_key == "dithering_step_painted_zones_only" ||
          opt_key == "mixed_filament_definitions")) {
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
@@ -2574,6 +2588,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
         optgroup->append_single_option_line("dithering_z_step_size");
         optgroup->append_single_option_line("dithering_local_z_mode");
         optgroup->append_single_option_line("dithering_local_z_whole_objects");
+        optgroup->append_single_option_line("dithering_local_z_direct_multicolor");
         optgroup->append_single_option_line("dithering_step_painted_zones_only");
 
         optgroup = page->new_optgroup(L("Fuzzy Skin"), L"fuzzy_skin");

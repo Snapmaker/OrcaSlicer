@@ -4865,6 +4865,7 @@ LayerResult GCode::process_layer(const Print& print,
     constexpr double LOCAL_Z_BASE_MASK_EXPAND_MM      = 0.04;
     const float      local_z_perimeter_mask_expand    = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
     const float      local_z_base_mask_expand         = float(scale_(LOCAL_Z_BASE_MASK_EXPAND_MM));
+    const bool       local_z_whole_objects_enabled    = print.full_print_config().opt_bool("dithering_local_z_whole_objects");
 
     struct LocalZPassBucket {
         const SubLayerPlan*                                   plan { nullptr };
@@ -4933,17 +4934,45 @@ LayerResult GCode::process_layer(const Print& print,
 
                 LocalZPassBucket bucket;
                 bucket.plan = &plan;
-                bucket.compensated_masks_by_extruder.assign(plan.painted_masks_by_extruder.size(), ExPolygons());
+                const size_t plan_mask_slots = std::max(plan.painted_masks_by_extruder.size(), plan.fixed_painted_masks_by_extruder.size());
+                bucket.compensated_masks_by_extruder.assign(plan_mask_slots, ExPolygons());
                 bool pass_has_raw_masks         = false;
                 bool pass_has_compensated_masks = false;
-                for (size_t extruder_id = 0; extruder_id < plan.painted_masks_by_extruder.size(); ++extruder_id) {
-                    const ExPolygons& raw_masks = plan.painted_masks_by_extruder[extruder_id];
-                    if (raw_masks.empty())
+                ExPolygons fixed_raw_masks_union;
+                for (const ExPolygons &fixed_masks : plan.fixed_painted_masks_by_extruder)
+                    if (!fixed_masks.empty())
+                        append(fixed_raw_masks_union, fixed_masks);
+                if (!fixed_raw_masks_union.empty() && fixed_raw_masks_union.size() > 1)
+                    fixed_raw_masks_union = union_ex(fixed_raw_masks_union);
+                const ExPolygons fixed_compensated_guard =
+                    fixed_raw_masks_union.empty() ? ExPolygons() : local_z_compensate_masks(fixed_raw_masks_union, local_z_perimeter_mask_expand, true);
+
+                for (size_t extruder_id = 0; extruder_id < plan_mask_slots; ++extruder_id) {
+                    const ExPolygons mixed_raw_masks =
+                        extruder_id < plan.painted_masks_by_extruder.size() ? plan.painted_masks_by_extruder[extruder_id] : ExPolygons();
+                    const ExPolygons fixed_raw_masks =
+                        extruder_id < plan.fixed_painted_masks_by_extruder.size() ? plan.fixed_painted_masks_by_extruder[extruder_id] : ExPolygons();
+                    if (mixed_raw_masks.empty() && fixed_raw_masks.empty())
                         continue;
                     pass_has_raw_masks = true;
-                    raw_mask_polygon_count += raw_masks.size();
-                    append(raw_mixed_masks_union, raw_masks);
-                    ExPolygons compensated = local_z_compensate_masks(raw_masks, local_z_perimeter_mask_expand, true);
+                    raw_mask_polygon_count += mixed_raw_masks.size() + fixed_raw_masks.size();
+                    if (!mixed_raw_masks.empty())
+                        append(raw_mixed_masks_union, mixed_raw_masks);
+                    if (!fixed_raw_masks.empty())
+                        append(raw_mixed_masks_union, fixed_raw_masks);
+
+                    ExPolygons compensated;
+                    if (!mixed_raw_masks.empty()) {
+                        ExPolygons compensated_mixed = local_z_compensate_masks(mixed_raw_masks, local_z_perimeter_mask_expand, true);
+                        if (local_z_whole_objects_enabled && !fixed_compensated_guard.empty())
+                            compensated_mixed = diff_ex(compensated_mixed, fixed_compensated_guard);
+                        if (!compensated_mixed.empty())
+                            append(compensated, compensated_mixed);
+                    }
+                    if (!fixed_raw_masks.empty())
+                        append(compensated, fixed_raw_masks);
+                    if (!compensated.empty() && compensated.size() > 1)
+                        compensated = union_ex(compensated);
                     if (!compensated.empty()) {
                         pass_has_compensated_masks = true;
                         compensated_mask_polygon_count += compensated.size();

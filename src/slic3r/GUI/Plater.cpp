@@ -5671,6 +5671,10 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
     if (print_cfg != nullptr && print_cfg->has("wall_loops"))
         context.preview_settings.wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     context.preview_settings.local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
+    context.preview_settings.local_z_direct_multicolor =
+        get_mixed_bool("dithering_local_z_direct_multicolor", false) &&
+        context.preview_settings.preferred_a_height <= EPSILON &&
+        context.preview_settings.preferred_b_height <= EPSILON;
     context.component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
 
     return context;
@@ -5866,6 +5870,26 @@ std::string MixedFilamentConfigPanel::summarize_local_z_breakdown(const MixedFil
     };
 
     const std::vector<unsigned int> ids = decode_gradient_ids(mf.gradient_component_ids);
+    if (preview_settings.local_z_mode && preview_settings.local_z_direct_multicolor && ids.size() >= 3) {
+        const std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
+        const size_t effective_sublayers =
+            mf.local_z_max_sublayers >= 2 ? size_t(std::max(2, mf.local_z_max_sublayers)) : ids.size();
+
+        std::ostringstream ss;
+        ss << "Local-Z direct multicolor solver: ";
+        for (size_t idx = 0; idx < ids.size(); ++idx) {
+            if (idx > 0)
+                ss << ", ";
+            const int pct = idx < normalized.size() ? normalized[idx] : 0;
+            ss << 'F' << ids[idx] << ' ' << pct << '%';
+        }
+        ss << ".\nCarry-over error is distributed directly across all " << ids.size()
+           << " components instead of collapsing them into pair cadence.";
+        if (mf.local_z_max_sublayers >= 2)
+            ss << "\nEffective Local-Z cap: up to " << effective_sublayers << " sublayers per nominal layer.";
+        return ss.str();
+    }
+
     if (ids.size() >= 4) {
         const std::vector<int> normalized = normalize_gradient_weights(weights, ids.size());
         const std::vector<unsigned int> pair_tokens = { 1, 2 };
@@ -7281,6 +7305,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (print_cfg && print_cfg->has("wall_loops"))
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
+    const bool local_z_direct_multicolor =
+        get_mixed_bool("dithering_local_z_direct_multicolor", false) &&
+        preferred_local_z_a <= EPSILON &&
+        preferred_local_z_b <= EPSILON;
     const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
     float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
     float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
@@ -7294,6 +7322,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         preferred_local_z_a,
         preferred_local_z_b,
         local_z_mode,
+        local_z_direct_multicolor,
         wall_loops
     };
     const MixedFilamentDisplayContext display_context {
@@ -10493,6 +10522,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "dithering_z_step_size",
                                     "dithering_local_z_mode",
                                     "dithering_local_z_whole_objects",
+                                    "dithering_local_z_direct_multicolor",
                                     "dithering_step_painted_zones_only"
                                 };
                                 preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);

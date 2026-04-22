@@ -125,7 +125,10 @@ std::string generate_output_path(
     if (!output_base.empty()) {
         base_name = output_base;
     } else {
-        base_name = input_path.parent_path().string() + "/" + input_path.stem().string();
+        boost::filesystem::path parent = input_path.parent_path();
+        if (parent.empty())
+            parent = boost::filesystem::current_path();
+        base_name = parent.string() + "/" + input_path.stem().string();
     }
 
     std::string extension = (format == OutputFormat::GCODE_3MF) ? ".gcode.3mf" : ".gcode";
@@ -548,6 +551,16 @@ int main(int argc, char* argv[]) {
         auto apply_status = print.apply(model, config);
         BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
 
+        // Assign unique arrange_order to each model instance so that
+        // sort_object_instances_by_model_order() works correctly in validate().
+        // GUI sets this during object arrangement; headless mode must set it manually.
+        {
+            int order = 1;
+            for (ModelObject* obj : model.objects)
+                for (ModelInstance* inst : obj->instances)
+                    inst->arrange_order = order++;
+        }
+
         // --- PRE-PROCESSING VALIDATION ---
         // Mirrors GUI's BackgroundSlicingProcess::validate() -> Print::validate()
         {
@@ -824,10 +837,24 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // Copy objects_and_instances from obj_inst_map (matches GUI's PartPlate.cpp:5358-5362)
+                // Build objects_and_instances using model.objects array indices (not raw 3MF object IDs).
+                // obj_inst_map key = 3MF object_id (e.g. 2, 4), but store_bbs_3mf expects
+                // 0-based model.objects indices. Match via loaded_id == identify_id (set during load).
                 pd->objects_and_instances.clear();
-                for (const auto& entry : pd->obj_inst_map) {
-                    pd->objects_and_instances.emplace_back(entry.first, entry.second.first);
+                for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
+                    const ModelObject* obj = model.objects[obj_idx];
+                    for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
+                        const ModelInstance* inst = obj->instances[inst_idx];
+                        // Check if this instance belongs to this plate via its loaded_id (= identify_id)
+                        for (const auto& entry : pd->obj_inst_map) {
+                            if (entry.second.second == static_cast<int>(inst->loaded_id)) {
+                                pd->objects_and_instances.emplace_back(
+                                    static_cast<int>(obj_idx),
+                                    static_cast<int>(inst_idx));
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 BOOST_LOG_TRIVIAL(info) << "Plate " << pd->plate_index

@@ -62,8 +62,8 @@ if(PAHO_WITH_MQTT_C)
     message(STATUS "Paho C: Bundled")
 
     ## Build the Paho C library from the submodule
-    set(PAHO_ENABLE_TESTING FALSE CACHE BOOL "No Paho C tests")
-    set(PAHO_HIGH_PERFORMANCE TRUE CACHE BOOL "Paho C high performance")
+    set(PAHO_ENABLE_TESTING FALSE CACHE BOOL "No Paho C tests" FORCE)
+    set(PAHO_HIGH_PERFORMANCE TRUE CACHE BOOL "Paho C high performance" FORCE)
 
     # TODO: Remove this when the next Paho C update is released.
     set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)

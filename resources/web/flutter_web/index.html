@@ -46,33 +46,7 @@
   <link rel="apple-touch-startup-image" href="splash.png">
 </head>
 <body>
-  <script>
-    (async function bootstrapDesktopFlutter() {
-      if ('serviceWorker' in navigator) {
-        try {
-          const registrations = await navigator.serviceWorker.getRegistrations();
-          await Promise.allSettled(registrations.map((registration) => registration.unregister()));
-        } catch (error) {
-          console.warn('Failed to unregister service workers:', error);
-        }
-      }
-
-      if ('caches' in window) {
-        try {
-          const cacheNames = await caches.keys();
-          const flutterCaches = cacheNames.filter((name) => name.startsWith('flutter-'));
-          await Promise.allSettled(flutterCaches.map((name) => caches.delete(name)));
-        } catch (error) {
-          console.warn('Failed to clear Flutter caches:', error);
-        }
-      }
-
-      const bootstrapScript = document.createElement('script');
-      bootstrapScript.src = 'flutter_bootstrap.js';
-      bootstrapScript.async = true;
-      document.body.appendChild(bootstrapScript);
-    })();
-  </script>
+  <script src="flutter_bootstrap.js" async></script>
 
   <script>
     if ('application/octet-stream' in MimeType) {

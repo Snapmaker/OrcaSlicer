@@ -96,6 +96,11 @@ void WebSocketDebugServer::stop()
         m_send_thread.join();
     }
 
+    for (auto& t : m_session_threads) {
+        if (t.joinable()) t.join();
+    }
+    m_session_threads.clear();
+
     m_has_client.store(false);
     BOOST_LOG_TRIVIAL(info) << "WebSocket Debug Server stopped";
 }
@@ -120,8 +125,8 @@ void WebSocketDebugServer::accept_loop()
             BOOST_LOG_TRIVIAL(info) << "🔌 Flutter Web client connected from "
                                     << socket.remote_endpoint().address().to_string();
 
-            // Handle the session (blocking until client disconnects)
-            session_loop(std::move(socket));
+            // Spawn a thread per session so accept_loop stays unblocked
+            m_session_threads.emplace_back(&WebSocketDebugServer::session_loop, this, std::move(socket));
 
         } catch (std::exception& e) {
             if (m_running.load()) {

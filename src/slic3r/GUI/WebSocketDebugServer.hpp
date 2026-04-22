@@ -12,6 +12,7 @@
 #include <queue>
 #include <atomic>
 #include <string>
+#include <vector>
 
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
@@ -58,6 +59,7 @@ private:
     std::unique_ptr<tcp::acceptor> m_acceptor;
     std::thread m_accept_thread;
     std::thread m_send_thread;
+    std::vector<std::thread> m_session_threads;
 
     std::shared_ptr<websocket::stream<tcp::socket>> m_ws_stream;
     MessageCallback m_message_callback;

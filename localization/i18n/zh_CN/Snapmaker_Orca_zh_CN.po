@@ -10035,6 +10035,12 @@ msgstr "支撑材料"
 msgid "Support material is commonly used to print supports and support interfaces."
 msgstr "支撑材料通常用于打印支撑体和支撑接触面"
 
+msgid "Is high-temperature filament"
+msgstr "是否为高温耗材"
+
+msgid "Indicates whether this is a high-temperature filament that requires elevated printing temperatures."
+msgstr "指示此耗材是否为需要较高打印温度的高温耗材。"
+
 msgid "Softening temperature"
 msgstr "软化温度"
 

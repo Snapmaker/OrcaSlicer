@@ -39,6 +39,8 @@ target_link_libraries(orca-slice-engine
     TBB::tbb
     TBB::tbbmalloc
     nanosvg
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # Platform-specific configurations

@@ -49,6 +49,8 @@ static const int EXIT_FILE_NOT_FOUND = 2;
 static const int EXIT_LOAD_ERROR = 3;
 static const int EXIT_SLICING_ERROR = 4;
 static const int EXIT_EXPORT_ERROR = 5;
+static const int EXIT_VALIDATION_ERROR = 6;
+static const int EXIT_POSTPROCESS_WARNING = 7;
 
 // Output format enum
 enum class OutputFormat {
@@ -81,6 +83,16 @@ void print_usage(const char* program_name) {
     std::cout << "                         Format: YYYY-MM-DD HH:MM:SS (e.g., \"2024-01-01 12:00:00\")" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;
     std::cout << "  -h, --help             Show this help message" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Exit codes:" << std::endl;
+    std::cout << "  0  Success" << std::endl;
+    std::cout << "  1  Invalid arguments" << std::endl;
+    std::cout << "  2  Input file not found" << std::endl;
+    std::cout << "  3  3MF load error" << std::endl;
+    std::cout << "  4  Slicing error" << std::endl;
+    std::cout << "  5  G-code export error" << std::endl;
+    std::cout << "  6  Pre-processing validation error (e.g. collision, invalid config)" << std::endl;
+    std::cout << "  7  Post-processing warning (toolpath outside print volume)" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  " << program_name << " model.3mf                        # All plates -> model.gcode.3mf" << std::endl;
@@ -536,6 +548,50 @@ int main(int argc, char* argv[]) {
         auto apply_status = print.apply(model, config);
         BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
 
+        // --- PRE-PROCESSING VALIDATION ---
+        // Mirrors GUI's BackgroundSlicingProcess::validate() -> Print::validate()
+        {
+            StringObjectException warning;
+            StringObjectException err = print.validate(&warning, nullptr, nullptr);
+
+            // Surface any warning (non-fatal, slicing continues)
+            if (!warning.string.empty()) {
+                std::string obj_name;
+                if (warning.object) {
+                    auto mo = dynamic_cast<ModelObject const*>(warning.object);
+                    if (!mo) {
+                        if (auto po = dynamic_cast<PrintObjectBase const*>(warning.object))
+                            mo = po->model_object();
+                    }
+                    if (mo) obj_name = " [object: " + mo->name + "]";
+                }
+                std::string opt_hint = warning.opt_key.empty() ? "" : " (config: " + warning.opt_key + ")";
+                BOOST_LOG_TRIVIAL(warning) << "[Pre-processing] WARNING: " << warning.string << obj_name << opt_hint;
+                std::cerr << "[WARNING] Plate " << current_plate_id << ": " << warning.string << obj_name << opt_hint << std::endl;
+            }
+
+            // A non-empty error string means slicing must be aborted
+            if (!err.string.empty()) {
+                std::string obj_name;
+                if (err.object) {
+                    auto mo = dynamic_cast<ModelObject const*>(err.object);
+                    if (!mo) {
+                        if (auto po = dynamic_cast<PrintObjectBase const*>(err.object))
+                            mo = po->model_object();
+                    }
+                    if (mo) obj_name = " [object: " + mo->name + "]";
+                }
+                std::string opt_hint = err.opt_key.empty() ? "" : " (config: " + err.opt_key + ")";
+                BOOST_LOG_TRIVIAL(error) << "[Pre-processing] ERROR: " << err.string << obj_name << opt_hint;
+                std::cerr << "[ERROR] Plate " << current_plate_id << ": " << err.string << obj_name << opt_hint << std::endl;
+                // Cleanup temp files before exit
+                for (const auto& file : temp_files) {
+                    try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
+                }
+                return EXIT_VALIDATION_ERROR;
+            }
+        }
+
         // Execute slicing
         BOOST_LOG_TRIVIAL(info) << "Starting slicing process for plate " << current_plate_id << "...";
 
@@ -581,6 +637,78 @@ int main(int argc, char* argv[]) {
             const PrintStatistics& ps = print.print_statistics();
             slice_result.total_weight = ps.total_weight;
             slice_result.support_used = print.is_support_used();
+
+            // --- POST-PROCESSING CHECKS ---
+            // Mirror GUI's on_process_completed() checks on GCodeProcessorResult
+
+            // Check for toolpaths outside the print volume
+            if (slice_result.gcode_result.toolpath_outside) {
+                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
+                    << ": Some toolpaths are outside the printable area.";
+                std::cerr << "[WARNING] Plate " << current_plate_id
+                    << ": Some toolpaths are outside the printable area." << std::endl;
+            }
+
+            // Check conflict detection result (actual toolpath collision between objects,
+            // distinct from validate()'s geometric pre-check — this runs during G-code generation)
+            if (slice_result.gcode_result.conflict_result.has_value()) {
+                const auto& cr = slice_result.gcode_result.conflict_result.value();
+                std::string obj1 = cr._obj1 ? cr._objName1 : "Wipe Tower";
+                std::string obj2 = cr._obj2 ? cr._objName2 : "Wipe Tower";
+                BOOST_LOG_TRIVIAL(error) << "[Post-processing] ERROR: Plate " << current_plate_id
+                    << ": Toolpath conflict detected between \"" << obj1 << "\" and \"" << obj2
+                    << "\" at Z=" << cr._height << "mm.";
+                std::cerr << "[ERROR] Plate " << current_plate_id
+                    << ": Toolpath conflict between \"" << obj1 << "\" and \"" << obj2
+                    << "\" at Z=" << cr._height << "mm." << std::endl;
+            }
+
+            // Check bed/filament compatibility result (set during G-code export in GCode::do_export)
+            if (!slice_result.gcode_result.bed_match_result.match) {
+                const auto& bm = slice_result.gcode_result.bed_match_result;
+                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
+                    << ": Filament " << (bm.extruder_id + 1)
+                    << " is not compatible with bed type \"" << bm.bed_type_name << "\".";
+                std::cerr << "[WARNING] Plate " << current_plate_id
+                    << ": Filament " << (bm.extruder_id + 1)
+                    << " is not compatible with bed type \"" << bm.bed_type_name << "\"." << std::endl;
+            }
+
+            // Check timelapse warning codes (mirrors GUI's PartPlate::store_to_3mf_structure)
+            // Bit 0: spiral vase + I3 printer -> timelapse not supported
+            // Bit 1: by-object sequence + I3 printer -> timelapse not supported
+            if (slice_result.gcode_result.timelapse_warning_code & 1) {
+                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
+                    << ": Timelapse is not supported in spiral vase mode on this printer.";
+                std::cerr << "[WARNING] Plate " << current_plate_id
+                    << ": Timelapse is not supported in spiral vase mode on this printer." << std::endl;
+            }
+            if ((slice_result.gcode_result.timelapse_warning_code >> 1) & 1) {
+                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
+                    << ": Timelapse is not supported with by-object print sequence on this printer.";
+                std::cerr << "[WARNING] Plate " << current_plate_id
+                    << ": Timelapse is not supported with by-object print sequence on this printer." << std::endl;
+            }
+
+            // Check per-step warnings collected during slicing
+            // SliceWarning::level: 0=tip, 1=warning, 2=error
+            // These mirror GUI's modal dialog for critical warnings on G-code export
+            for (const auto& w : slice_result.gcode_result.warnings) {
+                if (w.level >= 2) {
+                    BOOST_LOG_TRIVIAL(error) << "[Post-processing] ERROR: Plate " << current_plate_id
+                        << ": " << w.msg << " (code: " << w.error_code << ")";
+                    std::cerr << "[ERROR] Plate " << current_plate_id << ": " << w.msg
+                        << " (code: " << w.error_code << ")" << std::endl;
+                } else if (w.level == 1) {
+                    BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
+                        << ": " << w.msg << " (code: " << w.error_code << ")";
+                    std::cerr << "[WARNING] Plate " << current_plate_id << ": " << w.msg
+                        << " (code: " << w.error_code << ")" << std::endl;
+                } else {
+                    BOOST_LOG_TRIVIAL(info) << "[Post-processing] TIP: Plate " << current_plate_id
+                        << ": " << w.msg;
+                }
+            }
 
             plate_results[current_plate_id] = slice_result;
         }

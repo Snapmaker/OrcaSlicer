@@ -1526,19 +1526,18 @@ bool MainFrame::can_send_gcode() const
     if (m_plater && !m_plater->model().objects.empty())
     {
         auto        devices     = wxGetApp().app_config->get_devices();
-        std::string preset_name = "Snapmaker U1 0.4 nozzle";
         const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
 
-        std::string local_name = "";
-        if (edit_preset.is_system) {
-            local_name = edit_preset.name;
-        } else {
-            const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(edit_preset);
-            local_name              = base_preset->name;
+        auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+        bool is_snapmaker_u1   = false;
+        if (printer_model_opt) {
+            std::string printer_model = printer_model_opt->value;
+            is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
         }
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
-        if (local_name == preset_name) {
+
+        if (is_snapmaker_u1)
+        {
             return true;
         }
 
@@ -1553,27 +1552,6 @@ bool MainFrame::can_send_gcode() const
     }
     return true;
 }
-
-/*bool MainFrame::can_export_gcode_sd() const
-{
-    if (m_plater == nullptr)
-        return false;
-
-    if (m_plater->model().objects.empty())
-        return false;
-
-    if (m_plater->is_export_gcode_scheduled())
-        return false;
-
-    // TODO:: add other filters
-
-    return wxGetApp().removable_drive_manager()->status().has_removable_drives;
-}
-
-bool MainFrame::can_eject() const
-{
-	return wxGetApp().removable_drive_manager()->status().has_eject;
-}*/
 
 bool MainFrame::can_slice() const
 {

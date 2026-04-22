@@ -89,7 +89,7 @@ static std::vector<std::string> s_project_options {
 
 // SM_FEATURE: add Snapmaker machine as default
 const char* PresetBundle::SM_BUNDLE = "Snapmaker";
-const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker U1(0.4 nozzle)";
+const char* PresetBundle::SM_DEFAULT_PRINTER_MODEL = "Snapmaker U1";
 const char* PresetBundle::SM_DEFAULT_PRINTER_VARIANT = "0.4";
 const char* PresetBundle::SM_DEFAULT_FILAMENT        = "Snapmaker PLA SnapSpeed";
 const char *PresetBundle::ORCA_FILAMENT_LIBRARY = "OrcaFilamentLibrary";
@@ -1524,11 +1524,36 @@ static inline std::string remove_ini_suffix(const std::string &name)
     return out;
 }
 
+void PresetBundle::install_missing_variants_for_enabled_models(AppConfig &config)
+{
+    for (const auto &vendor_entry : this->vendors) {
+        const VendorProfile &vendor_profile = vendor_entry.second;
+        if (!vendor_profile.valid())
+            continue;
+        for (const auto &model : vendor_profile.models) {
+            if (model.variants.size() <= 1)
+                continue;
+            bool any_enabled = false;
+            for (const auto &v : model.variants) {
+                if (config.get_variant(vendor_profile.id, model.id, v.name)) {
+                    any_enabled = true;
+                    break;
+                }
+            }
+            if (!any_enabled)
+                continue;
+            for (const auto &v : model.variants)
+                config.set_variant(vendor_profile.id, model.id, v.name, true);
+        }
+    }
+}
+
 // Set the "enabled" flag for printer vendors, printer models and printer variants
 // based on the user configuration.
 // If the "vendor" section is missing, enable all models and variants of the particular vendor.
-void PresetBundle::load_installed_printers(const AppConfig &config)
+void PresetBundle::load_installed_printers(AppConfig &config)
 {
+    this->install_missing_variants_for_enabled_models(config);
 	this->update_system_maps();
     for (auto &preset : printers)
         preset.set_visible_from_appconfig(config);

@@ -286,6 +286,7 @@ enum BedType {
     btPEI,
     btPTE,
     btPCT,
+    btGESP,
     btSuperTack,
     btCount
 };
@@ -422,6 +423,9 @@ static std::string get_bed_temp_key(const BedType type)
     if (type == btPTE)
         return "textured_plate_temp";
 
+    if (type == btGESP)
+        return "graphic_effect_plate_temp";
+
     return "";
 }
 
@@ -444,6 +448,9 @@ static std::string get_bed_temp_1st_layer_key(const BedType type)
 
     if (type == btPTE)
         return "textured_plate_temp_initial_layer";
+
+    if (type == btGESP)
+        return "graphic_effect_plate_temp_initial_layer";
 
     return "";
 }
@@ -1304,12 +1311,14 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,               eng_plate_temp))
     ((ConfigOptionInts,               hot_plate_temp)) // hot is short for high temperature
     ((ConfigOptionInts,               textured_plate_temp))
+    ((ConfigOptionInts,               graphic_effect_plate_temp))
     ((ConfigOptionInts,               supertack_plate_temp_initial_layer))
     ((ConfigOptionInts,               cool_plate_temp_initial_layer))
     ((ConfigOptionInts,               textured_cool_plate_temp_initial_layer))
     ((ConfigOptionInts,               eng_plate_temp_initial_layer))
     ((ConfigOptionInts,               hot_plate_temp_initial_layer)) // hot is short for high temperature
     ((ConfigOptionInts,               textured_plate_temp_initial_layer))
+    ((ConfigOptionInts,               graphic_effect_plate_temp_initial_layer))
     ((ConfigOptionBools,              enable_overhang_bridge_fan))
     ((ConfigOptionInts,               overhang_fan_speed))
     ((ConfigOptionEnumsGeneric,       overhang_fan_threshold))

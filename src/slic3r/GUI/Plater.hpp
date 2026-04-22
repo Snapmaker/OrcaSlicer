@@ -207,6 +207,7 @@ public:
     Search::OptionsSearcher&        get_searcher();
     std::string&                    get_search_line();
     void                            update_printer_thumbnail();
+    const std::vector<std::string>& get_bed_type_combo_enum_values() const { return m_bed_type_combo_enum_values; }
 
 private:
     struct priv;
@@ -214,6 +215,7 @@ private:
 
     wxBoxSizer* m_scrolled_sizer = nullptr;
     ComboBox* m_bed_type_list = nullptr;
+    std::vector<std::string> m_bed_type_combo_enum_values;
     ScalableButton* connection_btn = nullptr;
     ScalableButton* machine_connecting_btn = nullptr;
     ScalableButton* ams_btn = nullptr;

@@ -1,9 +1,6 @@
 #  Changelog
 
-## 2026-03-06
-
-### Features
-- Feature: Added a new model entry
+## 2026-04-15
 
 ### Bugfix
-  Fixed the issue where devices would automatically disconnect when connected over Lan network
+  * Fixed an issue where slicing files with more than 4 filaments could not initiate printing

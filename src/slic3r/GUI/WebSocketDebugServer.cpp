@@ -58,6 +58,7 @@ void WebSocketDebugServer::stop()
 
     BOOST_LOG_TRIVIAL(info) << "Stopping WebSocket Debug Server...";
     m_running.store(false);
+    m_send_cv.notify_all();  // 唤醒 send_worker 让它退出
 
     try {
         // Close acceptor
@@ -153,10 +154,23 @@ void WebSocketDebugServer::session_loop(tcp::socket socket)
         // Accept WebSocket handshake
         ws->accept();
 
+        // Swap in the new stream under the lock, then close old streams outside
+        // the lock so send_worker is never blocked waiting for TCP teardown.
+        std::vector<std::shared_ptr<websocket::stream<tcp::socket>>> to_close;
         {
             std::lock_guard<std::mutex> lock(m_client_mutex);
+            to_close = std::move(m_old_streams);
+            if (m_ws_stream) {
+                to_close.push_back(m_ws_stream);
+            }
             m_ws_stream = ws;
             m_has_client.store(true);
+        }
+        for (auto& old : to_close) {
+            if (old && old->is_open()) {
+                boost::system::error_code ec;
+                old->close(websocket::close_code::going_away, ec);
+            }
         }
 
         BOOST_LOG_TRIVIAL(info) << "✅ WebSocket handshake completed, client ready";
@@ -217,11 +231,15 @@ void WebSocketDebugServer::send_worker()
         std::string message;
 
         {
-            std::lock_guard<std::mutex> lock(m_send_mutex);
-            if (!m_send_queue.empty()) {
-                message = m_send_queue.front();
-                m_send_queue.pop();
-            }
+            std::unique_lock<std::mutex> lock(m_send_mutex);
+            m_send_cv.wait(lock, [this] {
+                return !m_send_queue.empty() || !m_running.load();
+            });
+
+            if (!m_running.load()) break;
+
+            message = m_send_queue.front();
+            m_send_queue.pop();
         }
 
         if (!message.empty()) {
@@ -241,8 +259,6 @@ void WebSocketDebugServer::send_worker()
                     BOOST_LOG_TRIVIAL(error) << "Send exception: " << e.what();
                 }
             }
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 }
@@ -254,8 +270,11 @@ void WebSocketDebugServer::send_message(const std::string& message)
         return;
     }
 
-    std::lock_guard<std::mutex> lock(m_send_mutex);
-    m_send_queue.push(message);
+    {
+        std::lock_guard<std::mutex> lock(m_send_mutex);
+        m_send_queue.push(message);
+    }
+    m_send_cv.notify_one();
 }
 
 void WebSocketDebugServer::set_message_callback(MessageCallback callback)

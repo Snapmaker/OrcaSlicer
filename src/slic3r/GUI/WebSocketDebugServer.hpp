@@ -62,9 +62,11 @@ private:
     std::vector<std::thread> m_session_threads;
 
     std::shared_ptr<websocket::stream<tcp::socket>> m_ws_stream;
+    std::vector<std::shared_ptr<websocket::stream<tcp::socket>>> m_old_streams;
     MessageCallback m_message_callback;
 
     std::mutex m_send_mutex;
+    std::condition_variable m_send_cv;
     std::queue<std::string> m_send_queue;
     std::mutex m_client_mutex;
 };

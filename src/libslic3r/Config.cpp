@@ -794,9 +794,7 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
     CNumericLocalesSetter locales_setter;
 
     try {
-        boost::nowide::ifstream ifs(file);
-        ifs >> j;
-        ifs.close();
+        j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(file)));
 
         const ConfigDef* config_def = this->def();
         if (config_def == nullptr) {

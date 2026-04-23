@@ -55,9 +55,7 @@ namespace Slic3r {
 Semver get_min_version_from_json(std::string file_path)
 {
     try {
-        boost::nowide::ifstream ifs(file_path);
-        json                    j;
-        ifs >> j;
+        json j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(file_path)));
         if (!j.count(BBL_JSON_KEY_MIN_VERSION)) {
             return Semver();
         }
@@ -85,13 +83,7 @@ Semver get_version_from_json(std::string file_path)
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": file not found: " << file_path;
             return Semver();
         }
-        boost::nowide::ifstream ifs(file_path);
-        if (!ifs.good()) {
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": cannot open: " << file_path;
-            return Semver();
-        }
-        json j;
-        ifs >> j;
+        json j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(file_path)));
         if (j.is_null() || !j.is_object() || !j.contains(BBL_JSON_KEY_VERSION)) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": missing version key in " << file_path;
             return Semver();
@@ -119,9 +111,7 @@ Semver get_version_from_json(std::string file_path)
 int get_values_from_json(std::string file_path, std::vector<std::string>& keys, std::map<std::string, std::string>& key_values)
 {
     try {
-        boost::nowide::ifstream ifs(file_path);
-        json j;
-        ifs >> j;
+        json j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(file_path)));
 
         for (int i=0; i < keys.size(); i++)
         {

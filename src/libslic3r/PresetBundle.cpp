@@ -2787,9 +2787,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         }
     };
     try {
-        boost::nowide::ifstream ifs(root_file);
-        json j;
-        ifs >> j;
+        json j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(root_file)));
         //parse the json elements
         for (auto it = j.begin(); it != j.end(); it++) {
             if (boost::iequals(it.key(), BBL_JSON_KEY_VERSION)) {
@@ -2853,9 +2851,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         VendorProfile::PrinterModel model;
         model.id = machine_model.first;
         try {
-            boost::nowide::ifstream ifs(subfile);
-            json j;
-            ifs >> j;
+            json j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(subfile)));
             //parse the json elements
             for (auto it = j.begin(); it != j.end(); it++) {
                 if (boost::iequals(it.key(), BBL_JSON_KEY_VERSION)) {

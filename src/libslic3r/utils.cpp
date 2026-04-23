@@ -1570,6 +1570,54 @@ void load_string_file(const boost::filesystem::path& p, std::string& str)
     file.read(&str[0], sz);
 }
 
+#ifdef WIN32
+namespace {
+static bool slic3r_buffer_is_strict_utf8(const char *data, size_t len)
+{
+    if (len == 0)
+        return true;
+    const int n = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, static_cast<int>(len), nullptr, 0);
+    return n > 0;
+}
+
+static std::string slic3r_acp_bytes_to_utf8(const std::string &s)
+{
+    if (s.empty())
+        return s;
+    const int wlen = ::MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    if (wlen <= 0)
+        return s;
+    std::wstring w(static_cast<size_t>(wlen), 0);
+    if (::MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), w.data(), wlen) <= 0)
+        return s;
+    const int u8len = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, nullptr, 0, nullptr, nullptr);
+    if (u8len <= 0)
+        return s;
+    std::string out(static_cast<size_t>(u8len), 0);
+    if (::WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, out.data(), u8len, nullptr, nullptr) <= 0)
+        return s;
+    return out;
+}
+} // namespace
+#endif
+
+std::string read_text_file_for_json_parse(const boost::filesystem::path &path)
+{
+    std::string str;
+    load_string_file(path, str);
+    if (str.size() >= 3 &&
+        static_cast<unsigned char>(str[0]) == 0xEF &&
+        static_cast<unsigned char>(str[1]) == 0xBB &&
+        static_cast<unsigned char>(str[2]) == 0xBF) {
+        str.erase(0, 3);
+    }
+#ifdef WIN32
+    if (::GetACP() != CP_UTF8 && !slic3r_buffer_is_strict_utf8(str.data(), str.size()))
+        str = slic3r_acp_bytes_to_utf8(str);
+#endif
+    return str;
+}
+
 // pattern string supprt these pattern: "
 // 1. 5#1, insert 1 solid layer every 5 layers. this can be simplified to 5
 // 2."1,7,9", explicitly insert solid layer at layer 1, 7, 9

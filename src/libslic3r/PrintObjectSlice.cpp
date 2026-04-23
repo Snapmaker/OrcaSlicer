@@ -3535,6 +3535,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
 
                     double z_cursor = interval.z_lo;
                     bool   row_used = false;
+                    size_t row_dependency_order = 0;
                     for (size_t pass_i = 0; pass_i < row_passes.size(); ++pass_i) {
                         if (z_cursor >= interval.z_hi - EPSILON)
                             break;
@@ -3552,6 +3553,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         plan.z_hi           = z_next;
                         plan.print_z        = z_next;
                         plan.flow_height    = pass_height;
+                        plan.dependency_group = row_idx + 1;
+                        plan.dependency_order = row_dependency_order++;
                         plan.painted_masks_by_extruder.assign(num_physical, ExPolygons());
                         plan.fixed_painted_masks_by_extruder.assign(num_physical, ExPolygons());
                         ++split_passes_total;
@@ -3659,6 +3662,16 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 // maps thicker/thinner subpasses to the intended component.
                 std::vector<uint8_t> start_with_component_a(mixed_rows.size(), uint8_t(1));
                 std::vector<std::vector<unsigned int>> row_direct_pass_sequences(mixed_rows.size());
+                size_t single_dependency_group = 0;
+                size_t active_dependency_rows = 0;
+                for (size_t row_idx = 0; row_idx < row_state_masks.size(); ++row_idx) {
+                    if (row_state_masks[row_idx].empty() || row_state_ids[row_idx] == 0)
+                        continue;
+                    ++active_dependency_rows;
+                    single_dependency_group = row_idx + 1;
+                }
+                if (active_dependency_rows != 1)
+                    single_dependency_group = 0;
                 if (preferred_a <= EPSILON && preferred_b <= EPSILON) {
                     for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
                         if (row_active_this_layer[row_idx] == 0 || !local_z_eligible_mixed_row(mixed_rows[row_idx]))
@@ -3708,6 +3721,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     plan.z_hi           = z_next;
                     plan.print_z        = z_next;
                     plan.flow_height    = pass_height;
+                    plan.dependency_group = single_dependency_group;
+                    plan.dependency_order = pass_idx;
                     plan.painted_masks_by_extruder.assign(num_physical, ExPolygons());
                     plan.fixed_painted_masks_by_extruder.assign(num_physical, ExPolygons());
                     ++split_passes_total;
@@ -3816,6 +3831,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             plan.z_hi           = interval.z_hi;
             plan.print_z        = interval.z_hi;
             plan.flow_height    = interval.base_height;
+            plan.dependency_order = 0;
             plan.base_masks     = base_masks;
             plan.painted_masks_by_extruder.assign(num_physical, ExPolygons());
             plan.fixed_painted_masks_by_extruder.assign(num_physical, ExPolygons());

@@ -2115,10 +2115,12 @@ void GUI_App::copy_web_resources() {
             boost::property_tree::ptree source_config, target_config;
             boost::property_tree::read_json(source_version_file.string(), source_config);
             boost::property_tree::read_json(target_version_file.string(), target_config);
-            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
-            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
+            const std::string source_version_str = source_config.get<std::string>("version", "0");
+            const std::string target_version_str = target_config.get<std::string>("version", "0");
+            const Semver      source_ver         = Semver::parse(source_version_str).get_value_or(Semver::zero());
+            const Semver      target_ver         = Semver::parse(target_version_str).get_value_or(Semver::zero());
 
-            if (source_build_number_str > target_build_number_str) {
+            if (target_ver < source_ver) {
                 auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
                 auto target_path = data_web_path / "flutter_web";
                 copy_directory_recursively(source_path, target_path);

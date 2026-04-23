@@ -330,6 +330,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PhysicalPrinterDialog.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp
+    GUI/ExportSnapmakerU1.cpp
+    GUI/Plater_export_snapmaker_u1.cpp
     GUI/Plater.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp

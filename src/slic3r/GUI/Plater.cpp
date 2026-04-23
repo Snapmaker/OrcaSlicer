@@ -1,4 +1,8 @@
 #include "Plater.hpp"
+#include "AddColorMixDialog.hpp"
+#include "MixedGradientSelector.hpp"
+#include "MixedColorMatchPanel.hpp"
+#include "MixedFilamentColorMapPanel.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
@@ -230,31 +234,6 @@ wxDEFINE_EVENT(EVT_ADD_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_DEL_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
 
-struct MixedColorMatchRecipeResult
-{
-    bool        cancelled     = false;
-    bool        valid         = false;
-    unsigned int component_a  = 1;
-    unsigned int component_b  = 2;
-    int         mix_b_percent = 50;
-    std::string manual_pattern;
-    std::string gradient_component_ids;
-    std::string gradient_component_weights;
-    wxColour    preview_color = wxColour("#26A69A");
-    double      delta_e       = std::numeric_limits<double>::infinity();
-};
-
-MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow *parent,
-                                                           const std::vector<std::string> &physical_colors,
-                                                           const wxColour &initial_color);
-double color_delta_e00(const wxColour &lhs, const wxColour &rhs);
-
-namespace {
-
-MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string> &physical_colors);
-wxColour compute_color_match_recipe_display_color(const MixedColorMatchRecipeResult &recipe, const MixedFilamentDisplayContext &context);
-
-} // namespace
 
 #define PRINTER_THUMBNAIL_SIZE (wxSize(FromDIP(48), FromDIP(48)))
 #define PRINTER_THUMBNAIL_SIZE_SMALL (wxSize(FromDIP(32), FromDIP(32)))
@@ -770,6 +749,13 @@ struct Sidebar::priv
     std::vector<uint64_t>                m_mixed_filament_ui_order;
     bool                                 m_mixed_filament_drag_active = false;
     size_t                               m_mixed_filament_drag_source_mixed_id = size_t(-1);
+    // Color mix panel
+    StaticBox*      m_panel_color_mix_title   = nullptr;
+    wxPanel*        m_panel_color_mix_content = nullptr;
+    wxBoxSizer*     m_sizer_color_mix_content = nullptr;
+    ScalableButton* m_btn_add_color_mix       = nullptr;
+    ScalableButton* m_btn_del_color_mix       = nullptr;
+
     wxStaticLine* m_staticline2;
     wxPanel* m_panel_project_title;
     ScalableButton* m_filament_icon = nullptr;
@@ -1694,7 +1680,10 @@ Sidebar::Sidebar(Plater *parent)
     wxSizer *sizer_filaments2 = new wxBoxSizer(wxVERTICAL);
     sizer_filaments2->AddSpacer(FromDIP(16));
     sizer_filaments2->Add(p->sizer_filaments, 0, wxEXPAND, 0);
-    sizer_filaments2->AddSpacer(FromDIP(16));
+    sizer_filaments2->AddSpacer(FromDIP(8));
+    // --- Color Mix Panel (inside filament content, same level as filaments) ---
+    init_color_mix_panel(p->m_panel_filament_content, sizer_filaments2);
+    sizer_filaments2->AddSpacer(FromDIP(8));
     p->m_panel_filament_content->SetSizer(sizer_filaments2);
     p->m_panel_filament_content->Layout();
     scrolled_sizer->Add(p->m_panel_filament_content, 0, wxEXPAND, 0);
@@ -2657,76 +2646,12 @@ void Sidebar::on_filaments_change(size_t num_filaments)
     update_mixed_filament_panel();
 }
 
-namespace {
 wxColour parse_mixed_color(const std::string &value)
 {
     wxColour color(value);
     if (!color.IsOk())
         color = wxColour("#26A69A");
     return color;
-}
-
-wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, float t)
-{
-    const wxColour safe_left = left.IsOk() ? left : wxColour("#26A69A");
-    const wxColour safe_right = right.IsOk() ? right : wxColour("#26A69A");
-
-    unsigned char out_r = static_cast<unsigned char>(safe_left.Red());
-    unsigned char out_g = static_cast<unsigned char>(safe_left.Green());
-    unsigned char out_b = static_cast<unsigned char>(safe_left.Blue());
-    ::Slic3r::filament_mixer_lerp(static_cast<unsigned char>(safe_left.Red()),
-                                  static_cast<unsigned char>(safe_left.Green()),
-                                  static_cast<unsigned char>(safe_left.Blue()),
-                                  static_cast<unsigned char>(safe_right.Red()),
-                                  static_cast<unsigned char>(safe_right.Green()),
-                                  static_cast<unsigned char>(safe_right.Blue()),
-                                  std::clamp(t, 0.f, 1.f),
-                                  &out_r, &out_g, &out_b);
-    return wxColour(out_r, out_g, out_b);
-}
-
-wxColour blend_multi_filament_mixer(const std::vector<wxColour> &colors, const std::vector<double> &weights)
-{
-    if (colors.empty() || weights.empty())
-        return wxColour("#26A69A");
-
-    unsigned char out_r = 0;
-    unsigned char out_g = 0;
-    unsigned char out_b = 0;
-    double accumulated_weight = 0.0;
-    bool has_color = false;
-
-    for (size_t i = 0; i < colors.size() && i < weights.size(); ++i) {
-        const double weight = std::max(0.0, weights[i]);
-        if (weight <= 0.0)
-            continue;
-
-        const wxColour safe = colors[i].IsOk() ? colors[i] : wxColour("#26A69A");
-        const unsigned char r = static_cast<unsigned char>(safe.Red());
-        const unsigned char g = static_cast<unsigned char>(safe.Green());
-        const unsigned char b = static_cast<unsigned char>(safe.Blue());
-
-        if (!has_color) {
-            out_r = r;
-            out_g = g;
-            out_b = b;
-            accumulated_weight = weight;
-            has_color = true;
-            continue;
-        }
-
-        const double new_total = accumulated_weight + weight;
-        if (new_total <= 0.0)
-            continue;
-        const float t = float(weight / new_total);
-        ::Slic3r::filament_mixer_lerp(out_r, out_g, out_b, r, g, b, t, &out_r, &out_g, &out_b);
-        accumulated_weight = new_total;
-    }
-
-    if (!has_color)
-        return wxColour("#26A69A");
-
-    return wxColour(out_r, out_g, out_b);
 }
 
 wxString normalize_color_match_hex(const wxString &value)
@@ -2759,6 +2684,8 @@ bool try_parse_color_match_hex(const wxString &value, wxColour &color_out)
     color_out = parsed;
     return true;
 }
+
+namespace {
 
 std::vector<unsigned int> decode_color_match_gradient_ids(const std::string &value)
 {
@@ -2799,6 +2726,8 @@ std::vector<int> decode_color_match_gradient_weights(const std::string &value, s
         weights.clear();
     return weights;
 }
+
+} // namespace
 
 std::vector<int> normalize_color_match_weights(const std::vector<int> &weights, size_t count)
 {
@@ -2847,6 +2776,8 @@ std::vector<int> normalize_color_match_weights(const std::vector<int> &weights, 
 std::vector<unsigned int> build_color_match_sequence(const std::vector<unsigned int> &ids, const std::vector<int> &weights);
 wxColour blend_sequence_filament_mixer(const std::vector<wxColour> &palette, const std::vector<unsigned int> &sequence);
 
+namespace {
+
 bool color_match_weights_within_range(const std::vector<int> &weights, int min_component_percent)
 {
     if (min_component_percent <= 0)
@@ -2859,23 +2790,6 @@ bool color_match_weights_within_range(const std::vector<int> &weights, int min_c
             continue;
         ++active_components;
         if (weight < min_allowed)
-            return false;
-    }
-    return active_components >= 2;
-}
-
-bool color_match_raw_weights_within_range(const std::vector<double> &weights, int min_component_percent)
-{
-    if (min_component_percent <= 0)
-        return true;
-
-    const double min_allowed = double(std::clamp(min_component_percent, 0, 50));
-    int active_components = 0;
-    for (const double weight : weights) {
-        if (weight <= 1e-4)
-            continue;
-        ++active_components;
-        if (weight * 100.0 + 1e-6 < min_allowed)
             return false;
     }
     return active_components >= 2;
@@ -2968,6 +2882,10 @@ MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<
     return candidate;
 }
 
+} // namespace
+
+// Functions declared in MixedColorMatchHelpers.hpp — must be in Slic3r::GUI scope
+
 std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeResult &recipe, size_t num_physical)
 {
     std::vector<int> weights(num_physical, 0);
@@ -3042,7 +2960,7 @@ wxBitmap make_color_match_swatch_bitmap(const wxColour &color, const wxSize &siz
 }
 
 std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::vector<std::string> &physical_colors,
-                                                                   int                             min_component_percent = 0)
+                                                                   int                             min_component_percent)
 {
     std::vector<MixedColorMatchRecipeResult> presets;
     if (physical_colors.size() < 2)
@@ -3206,7 +3124,7 @@ wxColour blend_sequence_filament_mixer(const std::vector<wxColour> &palette, con
 
 MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string> &physical_colors,
                                                           const wxColour                 &target_color,
-                                                          int                             min_component_percent = 0)
+                                                          int                             min_component_percent)
 {
     MixedColorMatchRecipeResult best;
     if (!target_color.IsOk() || physical_colors.size() < 2)
@@ -3329,700 +3247,6 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
 
     return best;
 }
-class MixedFilamentColorMapPanel : public wxPanel
-{
-public:
-    MixedFilamentColorMapPanel(wxWindow                        *parent,
-                               const std::vector<unsigned int> &filament_ids,
-                               const std::vector<wxColour>     &palette,
-                               const std::vector<int>          &initial_weights,
-                               const wxSize                    &min_size)
-        : wxPanel(parent, wxID_ANY, wxDefaultPosition, min_size, wxBORDER_SIMPLE)
-    {
-        SetBackgroundStyle(wxBG_STYLE_PAINT);
-        SetMinSize(min_size);
-        m_render_timer.SetOwner(this);
-
-        m_colors.reserve(filament_ids.size());
-        for (const unsigned int filament_id : filament_ids) {
-            if (filament_id >= 1 && filament_id <= palette.size())
-                m_colors.emplace_back(palette[filament_id - 1]);
-            else
-                m_colors.emplace_back(wxColour("#26A69A"));
-        }
-        if (m_colors.empty())
-            m_colors.emplace_back(wxColour("#26A69A"));
-
-        set_normalized_weights(initial_weights, false);
-
-        Bind(wxEVT_PAINT, &MixedFilamentColorMapPanel::on_paint, this);
-        Bind(wxEVT_LEFT_DOWN, &MixedFilamentColorMapPanel::on_left_down, this);
-        Bind(wxEVT_LEFT_UP, &MixedFilamentColorMapPanel::on_left_up, this);
-        Bind(wxEVT_MOTION, &MixedFilamentColorMapPanel::on_mouse_move, this);
-        Bind(wxEVT_MOUSE_CAPTURE_LOST, &MixedFilamentColorMapPanel::on_capture_lost, this);
-        Bind(wxEVT_SIZE, &MixedFilamentColorMapPanel::on_size, this);
-        Bind(wxEVT_TIMER, &MixedFilamentColorMapPanel::on_render_timer, this, m_render_timer.GetId());
-    }
-
-    ~MixedFilamentColorMapPanel() override
-    {
-        if (HasCapture())
-            ReleaseMouse();
-        if (m_render_timer.IsRunning())
-            m_render_timer.Stop();
-    }
-
-    std::vector<int> normalized_weights() const
-    {
-        return m_weights;
-    }
-
-    wxColour selected_color() const
-    {
-        std::vector<double> weights;
-        weights.reserve(m_weights.size());
-        for (const int weight : m_weights)
-            weights.emplace_back(double(std::max(0, weight)));
-        return blend_multi_filament_mixer(m_colors, weights);
-    }
-
-    void set_normalized_weights(const std::vector<int> &weights, bool notify)
-    {
-        m_weights = normalize_color_match_weights(weights, m_colors.size());
-        initialize_cursor_from_weights();
-        Refresh();
-        if (notify)
-            emit_changed();
-    }
-
-    void set_min_component_percent(int min_component_percent)
-    {
-        const int clamped = std::clamp(min_component_percent, 0, 50);
-        if (m_min_component_percent == clamped)
-            return;
-        m_min_component_percent = clamped;
-        invalidate_cached_bitmap();
-        Refresh();
-    }
-
-private:
-    enum class GeometryMode {
-        Point,
-        Line,
-        Triangle,
-        TriangleWithCenter,
-        Radial
-    };
-
-    struct AnchorPoint {
-        double x { 0.5 };
-        double y { 0.5 };
-    };
-
-    struct Vec2 {
-        double x { 0.0 };
-        double y { 0.0 };
-    };
-
-    GeometryMode geometry_mode() const
-    {
-        if (m_colors.size() <= 1)
-            return GeometryMode::Point;
-        if (m_colors.size() == 2)
-            return GeometryMode::Line;
-        if (m_colors.size() == 3)
-            return GeometryMode::Triangle;
-        if (m_colors.size() == 4)
-            return GeometryMode::TriangleWithCenter;
-        return GeometryMode::Radial;
-    }
-
-    wxRect canvas_rect() const
-    {
-        const wxSize size = GetClientSize();
-        return wxRect(0, 0, std::max(1, size.GetWidth()), std::max(1, size.GetHeight()));
-    }
-
-    static Vec2 make_vec(double x, double y)
-    {
-        return Vec2 { x, y };
-    }
-
-    static Vec2 add_vec(const Vec2 &lhs, const Vec2 &rhs)
-    {
-        return Vec2 { lhs.x + rhs.x, lhs.y + rhs.y };
-    }
-
-    static Vec2 sub_vec(const Vec2 &lhs, const Vec2 &rhs)
-    {
-        return Vec2 { lhs.x - rhs.x, lhs.y - rhs.y };
-    }
-
-    static Vec2 scale_vec(const Vec2 &value, double factor)
-    {
-        return Vec2 { value.x * factor, value.y * factor };
-    }
-
-    static double dot_vec(const Vec2 &lhs, const Vec2 &rhs)
-    {
-        return lhs.x * rhs.x + lhs.y * rhs.y;
-    }
-
-    static double length_sq(const Vec2 &value)
-    {
-        return dot_vec(value, value);
-    }
-
-    static double dist_sq(const Vec2 &lhs, const Vec2 &rhs)
-    {
-        return length_sq(sub_vec(lhs, rhs));
-    }
-
-    std::array<Vec2, 3> simplex_vertices() const
-    {
-        return { make_vec(0.50, 0.05), make_vec(0.08, 0.94), make_vec(0.92, 0.94) };
-    }
-
-    Vec2 simplex_center() const
-    {
-        const auto vertices = simplex_vertices();
-        return make_vec((vertices[0].x + vertices[1].x + vertices[2].x) / 3.0,
-                        (vertices[0].y + vertices[1].y + vertices[2].y) / 3.0);
-    }
-
-    std::vector<AnchorPoint> radial_anchor_points() const
-    {
-        std::vector<AnchorPoint> anchors;
-        const size_t count = m_colors.size();
-        anchors.reserve(count);
-        if (count == 0)
-            return anchors;
-        if (count == 1) {
-            anchors.emplace_back(AnchorPoint { 0.5, 0.5 });
-            return anchors;
-        }
-        if (count == 2) {
-            anchors.emplace_back(AnchorPoint { 0.0, 0.5 });
-            anchors.emplace_back(AnchorPoint { 1.0, 0.5 });
-            return anchors;
-        }
-        if (count == 3) {
-            anchors.emplace_back(AnchorPoint { 0.0, 0.5 });
-            anchors.emplace_back(AnchorPoint { 1.0, 0.0 });
-            anchors.emplace_back(AnchorPoint { 1.0, 1.0 });
-            return anchors;
-        }
-        if (count == 4) {
-            anchors.emplace_back(AnchorPoint { 0.0, 0.0 });
-            anchors.emplace_back(AnchorPoint { 1.0, 0.0 });
-            anchors.emplace_back(AnchorPoint { 1.0, 1.0 });
-            anchors.emplace_back(AnchorPoint { 0.0, 1.0 });
-            return anchors;
-        }
-
-        constexpr double k_pi = 3.14159265358979323846;
-        const double center_x = 0.5;
-        const double center_y = 0.5;
-        const double radius = 0.45;
-        for (size_t idx = 0; idx < count; ++idx) {
-            const double angle = (2.0 * k_pi * double(idx)) / double(count);
-            anchors.emplace_back(AnchorPoint { center_x + radius * std::cos(angle), center_y + radius * std::sin(angle) });
-        }
-        return anchors;
-    }
-
-    std::vector<AnchorPoint> anchor_points() const
-    {
-        std::vector<AnchorPoint> anchors;
-        switch (geometry_mode()) {
-        case GeometryMode::Point:
-            anchors.emplace_back(AnchorPoint { 0.5, 0.5 });
-            break;
-        case GeometryMode::Line:
-            anchors.emplace_back(AnchorPoint { 0.06, 0.5 });
-            anchors.emplace_back(AnchorPoint { 0.94, 0.5 });
-            break;
-        case GeometryMode::Triangle: {
-            const auto vertices = simplex_vertices();
-            for (const Vec2 &vertex : vertices)
-                anchors.emplace_back(AnchorPoint { vertex.x, vertex.y });
-            break;
-        }
-        case GeometryMode::TriangleWithCenter: {
-            const auto vertices = simplex_vertices();
-            for (const Vec2 &vertex : vertices)
-                anchors.emplace_back(AnchorPoint { vertex.x, vertex.y });
-            const Vec2 center = simplex_center();
-            anchors.emplace_back(AnchorPoint { center.x, center.y });
-            break;
-        }
-        case GeometryMode::Radial:
-            anchors = radial_anchor_points();
-            break;
-        }
-        return anchors;
-    }
-
-    static std::array<double, 3> triangle_barycentric(const Vec2 &point, const std::array<Vec2, 3> &triangle)
-    {
-        const Vec2 &a = triangle[0];
-        const Vec2 &b = triangle[1];
-        const Vec2 &c = triangle[2];
-        const double denom = ((b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y));
-        if (std::abs(denom) <= 1e-9)
-            return { 1.0, 0.0, 0.0 };
-        const double w0 = ((b.y - c.y) * (point.x - c.x) + (c.x - b.x) * (point.y - c.y)) / denom;
-        const double w1 = ((c.y - a.y) * (point.x - c.x) + (a.x - c.x) * (point.y - c.y)) / denom;
-        const double w2 = 1.0 - w0 - w1;
-        return { w0, w1, w2 };
-    }
-
-    static bool point_in_triangle(const Vec2 &point, const std::array<Vec2, 3> &triangle)
-    {
-        const auto barycentric = triangle_barycentric(point, triangle);
-        constexpr double eps = 1e-6;
-        return barycentric[0] >= -eps && barycentric[1] >= -eps && barycentric[2] >= -eps;
-    }
-
-    static Vec2 closest_point_on_segment(const Vec2 &point, const Vec2 &start, const Vec2 &end)
-    {
-        const Vec2 edge = sub_vec(end, start);
-        const double edge_len_sq = length_sq(edge);
-        if (edge_len_sq <= 1e-9)
-            return start;
-        const double t = std::clamp(dot_vec(sub_vec(point, start), edge) / edge_len_sq, 0.0, 1.0);
-        return add_vec(start, scale_vec(edge, t));
-    }
-
-    static Vec2 closest_point_on_triangle(const Vec2 &point, const std::array<Vec2, 3> &triangle)
-    {
-        if (point_in_triangle(point, triangle))
-            return point;
-
-        Vec2 best = triangle[0];
-        double best_dist = std::numeric_limits<double>::max();
-        for (int edge_idx = 0; edge_idx < 3; ++edge_idx) {
-            const Vec2 candidate = closest_point_on_segment(point, triangle[edge_idx], triangle[(edge_idx + 1) % 3]);
-            const double candidate_dist = dist_sq(point, candidate);
-            if (candidate_dist < best_dist) {
-                best_dist = candidate_dist;
-                best = candidate;
-            }
-        }
-        return best;
-    }
-
-    Vec2 normalized_point_from_mouse(const wxMouseEvent &evt) const
-    {
-        const wxRect rect = canvas_rect();
-        const int width = std::max(1, rect.GetWidth() - 1);
-        const int height = std::max(1, rect.GetHeight() - 1);
-        return make_vec(
-            std::clamp(double(evt.GetX() - rect.GetLeft()) / double(width), 0.0, 1.0),
-            std::clamp(double(evt.GetY() - rect.GetTop()) / double(height), 0.0, 1.0));
-    }
-
-    Vec2 clamp_point_to_geometry(const Vec2 &point) const
-    {
-        switch (geometry_mode()) {
-        case GeometryMode::Point:
-            return make_vec(0.5, 0.5);
-        case GeometryMode::Line:
-            return make_vec(std::clamp(point.x, 0.0, 1.0), 0.5);
-        case GeometryMode::Triangle:
-        case GeometryMode::TriangleWithCenter:
-            return closest_point_on_triangle(point, simplex_vertices());
-        case GeometryMode::Radial:
-            return make_vec(std::clamp(point.x, 0.0, 1.0), std::clamp(point.y, 0.0, 1.0));
-        }
-        return point;
-    }
-
-    std::vector<double> simplex_weights_from_pos(const Vec2 &point) const
-    {
-        const auto triangle = simplex_vertices();
-        const Vec2 clamped = closest_point_on_triangle(point, triangle);
-        const auto barycentric = triangle_barycentric(clamped, triangle);
-
-        if (geometry_mode() == GeometryMode::Triangle)
-            return { std::max(0.0, barycentric[0]), std::max(0.0, barycentric[1]), std::max(0.0, barycentric[2]) };
-
-        const double shared = std::max(0.0, std::min({ barycentric[0], barycentric[1], barycentric[2] }));
-        return {
-            std::max(0.0, barycentric[0] - shared),
-            std::max(0.0, barycentric[1] - shared),
-            std::max(0.0, barycentric[2] - shared),
-            std::max(0.0, shared * 3.0)
-        };
-    }
-
-    Vec2 triangle_point_from_weights() const
-    {
-        const auto vertices = simplex_vertices();
-        double total = 0.0;
-        for (size_t idx = 0; idx < 3 && idx < m_weights.size(); ++idx)
-            total += std::max(0, m_weights[idx]);
-        if (total <= 0.0)
-            return simplex_center();
-
-        Vec2 out = make_vec(0.0, 0.0);
-        for (size_t idx = 0; idx < 3 && idx < m_weights.size(); ++idx) {
-            const double weight = double(std::max(0, m_weights[idx])) / total;
-            out = add_vec(out, scale_vec(vertices[idx], weight));
-        }
-        return out;
-    }
-
-    void initialize_cursor_from_grid_search()
-    {
-        double best_x = 0.5;
-        double best_y = 0.5;
-        double best_error = std::numeric_limits<double>::max();
-        constexpr int grid = 96;
-        for (int y_idx = 0; y_idx <= grid; ++y_idx) {
-            for (int x_idx = 0; x_idx <= grid; ++x_idx) {
-                const Vec2 point = clamp_point_to_geometry(make_vec(double(x_idx) / double(grid), double(y_idx) / double(grid)));
-                const std::vector<int> probe = normalized_weights_from_pos(point.x, point.y);
-                if (probe.size() != m_weights.size())
-                    continue;
-                double error = 0.0;
-                for (size_t idx = 0; idx < probe.size(); ++idx) {
-                    const double delta = double(probe[idx] - m_weights[idx]);
-                    error += delta * delta;
-                }
-                if (error < best_error) {
-                    best_error = error;
-                    best_x = point.x;
-                    best_y = point.y;
-                }
-            }
-        }
-        m_cursor_x = best_x;
-        m_cursor_y = best_y;
-        m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
-    }
-
-    std::vector<double> raw_weights_from_pos(double normalized_x, double normalized_y) const
-    {
-        switch (geometry_mode()) {
-        case GeometryMode::Point:
-            return { 1.0 };
-        case GeometryMode::Line: {
-            const double t = std::clamp(normalized_x, 0.0, 1.0);
-            return { 1.0 - t, t };
-        }
-        case GeometryMode::Triangle:
-        case GeometryMode::TriangleWithCenter:
-            return simplex_weights_from_pos(make_vec(normalized_x, normalized_y));
-        case GeometryMode::Radial:
-            break;
-        }
-
-        const std::vector<AnchorPoint> anchors = radial_anchor_points();
-        std::vector<double> out(anchors.size(), 0.0);
-        if (anchors.empty())
-            return out;
-
-        constexpr double eps = 1e-8;
-        size_t exact_idx = size_t(-1);
-        for (size_t idx = 0; idx < anchors.size(); ++idx) {
-            const double dx = normalized_x - anchors[idx].x;
-            const double dy = normalized_y - anchors[idx].y;
-            const double d2 = dx * dx + dy * dy;
-            if (d2 <= eps) {
-                exact_idx = idx;
-                break;
-            }
-            out[idx] = 1.0 / std::max(1e-6, d2);
-        }
-        if (exact_idx != size_t(-1)) {
-            std::fill(out.begin(), out.end(), 0.0);
-            out[exact_idx] = 1.0;
-            return out;
-        }
-
-        double sum = 0.0;
-        for (const double value : out)
-            sum += value;
-        if (sum <= 0.0) {
-            out.assign(out.size(), 0.0);
-            out[0] = 1.0;
-            return out;
-        }
-        for (double &value : out)
-            value /= sum;
-        return out;
-    }
-
-    std::vector<int> normalized_weights_from_pos(double normalized_x, double normalized_y) const
-    {
-        std::vector<int> raw_weights;
-        const std::vector<double> raw = raw_weights_from_pos(normalized_x, normalized_y);
-        raw_weights.reserve(raw.size());
-        for (const double value : raw)
-            raw_weights.emplace_back(std::max(0, int(std::lround(value * 100.0))));
-        return normalize_color_match_weights(raw_weights, raw.size());
-    }
-
-    void initialize_cursor_from_weights()
-    {
-        if (m_weights.empty()) {
-            m_cursor_x = 0.5;
-            m_cursor_y = 0.5;
-            return;
-        }
-
-        switch (geometry_mode()) {
-        case GeometryMode::Point:
-            m_cursor_x = 0.5;
-            m_cursor_y = 0.5;
-            break;
-        case GeometryMode::Line: {
-            const int total = std::accumulate(m_weights.begin(), m_weights.end(), 0);
-            const double t = total > 0 && m_weights.size() >= 2 ? double(std::max(0, m_weights[1])) / double(total) : 0.5;
-            m_cursor_x = std::clamp(t, 0.0, 1.0);
-            m_cursor_y = 0.5;
-            m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
-            break;
-        }
-        case GeometryMode::Triangle: {
-            const Vec2 point = triangle_point_from_weights();
-            m_cursor_x = point.x;
-            m_cursor_y = point.y;
-            m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
-            break;
-        }
-        case GeometryMode::TriangleWithCenter:
-        case GeometryMode::Radial:
-            initialize_cursor_from_grid_search();
-            break;
-        }
-    }
-
-    void emit_changed()
-    {
-        wxCommandEvent evt(wxEVT_SLIDER, GetId());
-        evt.SetEventObject(this);
-        ProcessWindowEvent(evt);
-    }
-
-    void update_from_mouse(const wxMouseEvent &evt, bool notify)
-    {
-        const Vec2 point = clamp_point_to_geometry(normalized_point_from_mouse(evt));
-        m_cursor_x = point.x;
-        m_cursor_y = point.y;
-        m_weights = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
-        Refresh();
-        if (notify)
-            emit_changed();
-    }
-
-    wxColour canvas_background_color() const
-    {
-        return GetBackgroundColour().IsOk() ? GetBackgroundColour() : wxColour(245, 245, 245);
-    }
-
-    bool cached_bitmap_matches(const wxSize &size, const wxColour &background) const
-    {
-        return m_cached_bitmap.IsOk() && m_cached_bitmap_size == size && m_cached_background == background;
-    }
-
-    void schedule_cached_bitmap_render()
-    {
-        if (!m_render_timer.IsRunning())
-            m_render_timer.StartOnce(80);
-    }
-
-    void invalidate_cached_bitmap()
-    {
-        m_cached_bitmap = wxBitmap();
-        m_cached_bitmap_size = wxSize();
-        m_cached_background = wxColour();
-    }
-
-    void render_cached_bitmap(const wxSize &size, const wxColour &background)
-    {
-        const int width = size.GetWidth();
-        const int height = size.GetHeight();
-        if (width <= 0 || height <= 0)
-            return;
-
-        wxImage image(width, height);
-        unsigned char *data = image.GetData();
-        if (data != nullptr) {
-            for (int y = 0; y < height; ++y) {
-                const double normalized_y = (height > 1) ? double(y) / double(height - 1) : 0.5;
-                for (int x = 0; x < width; ++x) {
-                    const double normalized_x = (width > 1) ? double(x) / double(width - 1) : 0.5;
-                    const int data_idx = (y * width + x) * 3;
-                    bool paint_pixel = true;
-                    if (geometry_mode() == GeometryMode::Triangle || geometry_mode() == GeometryMode::TriangleWithCenter)
-                        paint_pixel = point_in_triangle(make_vec(normalized_x, normalized_y), simplex_vertices());
-
-                    const std::vector<double> raw_weights = raw_weights_from_pos(normalized_x, normalized_y);
-                    wxColour color = paint_pixel ? blend_multi_filament_mixer(m_colors, raw_weights) : background;
-                    if (paint_pixel && m_min_component_percent > 0 &&
-                        !color_match_raw_weights_within_range(raw_weights, m_min_component_percent)) {
-                        const bool stripe = (((x + y) / 8) % 2) == 0;
-                        const double factor = stripe ? 0.12 : 0.38;
-                        color = wxColour(
-                            static_cast<unsigned char>(std::clamp(int(std::lround(double(color.Red()) * factor)), 0, 255)),
-                            static_cast<unsigned char>(std::clamp(int(std::lround(double(color.Green()) * factor)), 0, 255)),
-                            static_cast<unsigned char>(std::clamp(int(std::lround(double(color.Blue()) * factor)), 0, 255)));
-                    }
-                    data[data_idx + 0] = color.Red();
-                    data[data_idx + 1] = color.Green();
-                    data[data_idx + 2] = color.Blue();
-                }
-            }
-        }
-
-        m_cached_bitmap = wxBitmap(image);
-        m_cached_bitmap_size = size;
-        m_cached_background = background;
-    }
-
-    void draw_cached_bitmap(wxAutoBufferedPaintDC &dc, const wxRect &rect)
-    {
-        if (!m_cached_bitmap.IsOk())
-            return;
-
-        if (m_cached_bitmap_size == rect.GetSize()) {
-            dc.DrawBitmap(m_cached_bitmap, rect.GetLeft(), rect.GetTop(), false);
-            return;
-        }
-
-        wxMemoryDC memdc;
-        memdc.SelectObject(m_cached_bitmap);
-        dc.StretchBlit(rect.GetLeft(), rect.GetTop(), rect.GetWidth(), rect.GetHeight(),
-                       &memdc, 0, 0, m_cached_bitmap_size.GetWidth(), m_cached_bitmap_size.GetHeight());
-        memdc.SelectObject(wxNullBitmap);
-    }
-
-    void on_paint(wxPaintEvent &)
-    {
-        wxAutoBufferedPaintDC dc(this);
-        dc.SetBackground(wxBrush(GetBackgroundColour()));
-        dc.Clear();
-
-        const wxRect rect = canvas_rect();
-        const int width = rect.GetWidth();
-        const int height = rect.GetHeight();
-        if (width <= 0 || height <= 0)
-            return;
-
-        const wxColour background = canvas_background_color();
-        if (!cached_bitmap_matches(rect.GetSize(), background)) {
-            if (!m_cached_bitmap.IsOk())
-                render_cached_bitmap(rect.GetSize(), background);
-            else
-                schedule_cached_bitmap_render();
-        }
-        draw_cached_bitmap(dc, rect);
-
-        if (geometry_mode() == GeometryMode::Triangle || geometry_mode() == GeometryMode::TriangleWithCenter) {
-            const auto triangle = simplex_vertices();
-            wxPoint points[3] = {
-                wxPoint(rect.GetLeft() + int(std::lround(triangle[0].x * double(std::max(1, width - 1)))),
-                        rect.GetTop()  + int(std::lround(triangle[0].y * double(std::max(1, height - 1))))),
-                wxPoint(rect.GetLeft() + int(std::lround(triangle[1].x * double(std::max(1, width - 1)))),
-                        rect.GetTop()  + int(std::lround(triangle[1].y * double(std::max(1, height - 1))))),
-                wxPoint(rect.GetLeft() + int(std::lround(triangle[2].x * double(std::max(1, width - 1)))),
-                        rect.GetTop()  + int(std::lround(triangle[2].y * double(std::max(1, height - 1)))))
-            };
-            dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
-            dc.SetBrush(*wxTRANSPARENT_BRUSH);
-            dc.DrawPolygon(3, points);
-            if (geometry_mode() == GeometryMode::TriangleWithCenter) {
-                const Vec2 center = simplex_center();
-                const wxPoint center_pt(rect.GetLeft() + int(std::lround(center.x * double(std::max(1, width - 1)))),
-                                        rect.GetTop()  + int(std::lround(center.y * double(std::max(1, height - 1)))));
-                dc.SetPen(wxPen(wxColour(180, 180, 180), 1, wxPENSTYLE_DOT));
-                for (const wxPoint &vertex : points)
-                    dc.DrawLine(center_pt, vertex);
-            }
-        } else {
-            dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
-            dc.SetBrush(*wxTRANSPARENT_BRUSH);
-            dc.DrawRectangle(rect);
-        }
-
-        dc.SetPen(wxPen(wxColour(160, 160, 160), 1));
-        dc.SetBrush(*wxTRANSPARENT_BRUSH);
-
-        const auto anchors = anchor_points();
-        for (size_t idx = 0; idx < anchors.size() && idx < m_colors.size(); ++idx) {
-            const int anchor_x = rect.GetLeft() + int(std::lround(anchors[idx].x * double(std::max(1, width - 1))));
-            const int anchor_y = rect.GetTop() + int(std::lround(anchors[idx].y * double(std::max(1, height - 1))));
-            dc.SetPen(wxPen(wxColour(30, 30, 30), 1));
-            dc.SetBrush(wxBrush(m_colors[idx]));
-            dc.DrawCircle(wxPoint(anchor_x, anchor_y), FromDIP(4));
-        }
-
-        const int cursor_x = rect.GetLeft() + int(std::lround(m_cursor_x * double(std::max(1, width - 1))));
-        const int cursor_y = rect.GetTop() + int(std::lround(m_cursor_y * double(std::max(1, height - 1))));
-        dc.SetPen(wxPen(wxColour(255, 255, 255), 3));
-        dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.DrawCircle(wxPoint(cursor_x, cursor_y), FromDIP(7));
-        dc.SetPen(wxPen(wxColour(30, 30, 30), 1));
-        dc.DrawCircle(wxPoint(cursor_x, cursor_y), FromDIP(7));
-    }
-
-    void on_left_down(wxMouseEvent &evt)
-    {
-        if (!HasCapture())
-            CaptureMouse();
-        m_dragging = true;
-        update_from_mouse(evt, true);
-    }
-
-    void on_left_up(wxMouseEvent &evt)
-    {
-        if (m_dragging)
-            update_from_mouse(evt, true);
-        m_dragging = false;
-        if (HasCapture())
-            ReleaseMouse();
-    }
-
-    void on_mouse_move(wxMouseEvent &evt)
-    {
-        if (m_dragging && evt.LeftIsDown())
-            update_from_mouse(evt, true);
-    }
-
-    void on_capture_lost(wxMouseCaptureLostEvent &)
-    {
-        m_dragging = false;
-    }
-
-    void on_size(wxSizeEvent &evt)
-    {
-        if (m_cached_bitmap.IsOk())
-            schedule_cached_bitmap_render();
-        Refresh(false);
-        evt.Skip();
-    }
-
-    void on_render_timer(wxTimerEvent &)
-    {
-        const wxRect rect = canvas_rect();
-        render_cached_bitmap(rect.GetSize(), canvas_background_color());
-        Refresh(false);
-    }
-
-private:
-    std::vector<wxColour>     m_colors;
-    std::vector<int>          m_weights;
-    wxBitmap                  m_cached_bitmap;
-    wxSize                    m_cached_bitmap_size;
-    wxColour                  m_cached_background;
-    wxTimer                   m_render_timer;
-    int                       m_min_component_percent { 0 };
-    double                    m_cursor_x { 0.5 };
-    double                    m_cursor_y { 0.5 };
-    bool                      m_dragging { false };
-};
 
 class MixedFilamentColorMatchDialog : public DPIDialog
 {
@@ -4532,221 +3756,6 @@ private:
     bool                                    m_syncing_inputs { false };
 };
 
-class MixedGradientSelector : public wxPanel
-{
-public:
-    MixedGradientSelector(wxWindow *parent, const wxColour &left, const wxColour &right, int value_percent)
-        : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
-        , m_left(left)
-        , m_right(right)
-        , m_value(std::clamp(value_percent, 0, 100))
-    {
-        SetBackgroundStyle(wxBG_STYLE_PAINT);
-        SetMinSize(wxSize(FromDIP(96), FromDIP(12)));
-        Bind(wxEVT_PAINT, &MixedGradientSelector::on_paint, this);
-        Bind(wxEVT_LEFT_DOWN, &MixedGradientSelector::on_left_down, this);
-        Bind(wxEVT_LEFT_UP, &MixedGradientSelector::on_left_up, this);
-        Bind(wxEVT_MOTION, &MixedGradientSelector::on_mouse_move, this);
-        Bind(wxEVT_MOUSE_CAPTURE_LOST, &MixedGradientSelector::on_capture_lost, this);
-    }
-
-    ~MixedGradientSelector() override
-    {
-        if (HasCapture())
-            ReleaseMouse();
-    }
-
-    int value() const { return m_value; }
-    bool is_multi_mode() const { return m_multi_mode; }
-
-    void set_colors(const wxColour &left, const wxColour &right)
-    {
-        m_left = left;
-        m_right = right;
-        m_multi_mode = false;
-        m_multi_colors.clear();
-        m_multi_weights.clear();
-        Refresh();
-    }
-
-    void set_multi_preview(const std::vector<wxColour> &corner_colors, const std::vector<int> &weights)
-    {
-        m_multi_mode = corner_colors.size() >= 3;
-        m_multi_colors = corner_colors;
-        m_multi_weights = weights;
-        Refresh();
-    }
-
-private:
-    wxRect gradient_rect() const
-    {
-        const int margin_x = FromDIP(2);
-        const int margin_y = FromDIP(1);
-        const wxSize sz = GetClientSize();
-        return wxRect(margin_x, margin_y, std::max(1, sz.GetWidth() - margin_x * 2), std::max(1, sz.GetHeight() - margin_y * 2));
-    }
-
-    int value_from_x(int x) const
-    {
-        const wxRect rect = gradient_rect();
-        const int min_x = rect.GetLeft();
-        const int max_x = rect.GetLeft() + rect.GetWidth();
-        const int clamped_x = std::clamp(x, min_x, max_x);
-        return ((clamped_x - min_x) * 100 + rect.GetWidth() / 2) / rect.GetWidth();
-    }
-
-    void update_from_x(int x, bool notify)
-    {
-        const int new_value = value_from_x(x);
-        m_value = new_value;
-        Refresh();
-
-        if (notify) {
-            wxCommandEvent evt(wxEVT_SLIDER, GetId());
-            evt.SetInt(m_value);
-            evt.SetEventObject(this);
-            ProcessWindowEvent(evt);
-        }
-    }
-
-    void on_paint(wxPaintEvent &)
-    {
-        wxAutoBufferedPaintDC dc(this);
-        dc.SetBackground(wxBrush(GetBackgroundColour()));
-        dc.Clear();
-        const bool is_dark = wxGetApp().dark_mode();
-
-        const wxRect rect = gradient_rect();
-        if (m_multi_mode && m_multi_colors.size() >= 3) {
-            const wxPoint tl(rect.GetLeft(), rect.GetTop());
-            const wxPoint tr(rect.GetRight(), rect.GetTop());
-            const wxPoint br(rect.GetRight(), rect.GetBottom());
-            const wxPoint bl(rect.GetLeft(), rect.GetBottom());
-            const wxPoint cc(rect.GetLeft() + rect.GetWidth() / 2, rect.GetTop() + rect.GetHeight() / 2);
-            auto draw_tri = [&dc](const wxColour &color, const wxPoint &a, const wxPoint &b, const wxPoint &c) {
-                wxPoint pts[3] = { a, b, c };
-                dc.SetPen(*wxTRANSPARENT_PEN);
-                dc.SetBrush(wxBrush(color));
-                dc.DrawPolygon(3, pts);
-            };
-
-            if (m_multi_colors.size() >= 4) {
-                draw_tri(m_multi_colors[0], tl, tr, cc);
-                draw_tri(m_multi_colors[1], tr, br, cc);
-                draw_tri(m_multi_colors[2], br, bl, cc);
-                draw_tri(m_multi_colors[3], bl, tl, cc);
-            } else {
-                // 3-color layout: first color occupies one full side, two others on the opposite corners.
-                draw_tri(m_multi_colors[0], tl, bl, cc);
-                draw_tri(m_multi_colors[1], tl, tr, cc);
-                draw_tri(m_multi_colors[2], bl, br, cc);
-            }
-
-            if (m_multi_weights.size() == m_multi_colors.size()) {
-                dc.SetTextForeground(is_dark ? wxColour(236, 236, 236) : wxColour(20, 20, 20));
-                dc.SetFont(Label::Body_10);
-                const int pad = FromDIP(2);
-                if (m_multi_colors.size() >= 4) {
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[0]), rect.GetLeft() + pad, rect.GetTop() + pad);
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[1]), rect.GetRight() - FromDIP(28), rect.GetTop() + pad);
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[2]), rect.GetRight() - FromDIP(28), rect.GetBottom() - FromDIP(14));
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[3]), rect.GetLeft() + pad, rect.GetBottom() - FromDIP(14));
-                } else {
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[0]), rect.GetLeft() + pad, rect.GetTop() + rect.GetHeight() / 2 - FromDIP(6));
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[1]), rect.GetRight() - FromDIP(28), rect.GetTop() + pad);
-                    dc.DrawText(wxString::Format("%d%%", m_multi_weights[2]), rect.GetRight() - FromDIP(28), rect.GetBottom() - FromDIP(14));
-                }
-            }
-        } else {
-            const int w = rect.GetWidth();
-            const int h = rect.GetHeight();
-            wxImage img(w, h);
-            unsigned char *data = img.GetData();
-            if (data != nullptr) {
-                for (int x = 0; x < w; ++x) {
-                    const float t = (w > 1) ? float(x) / float(w - 1) : 0.5f;
-                    const wxColour col = blend_pair_filament_mixer(m_left, m_right, t);
-                    const unsigned char r = static_cast<unsigned char>(col.Red());
-                    const unsigned char g = static_cast<unsigned char>(col.Green());
-                    const unsigned char b = static_cast<unsigned char>(col.Blue());
-                    for (int y = 0; y < h; ++y) {
-                        const int idx = (y * w + x) * 3;
-                        data[idx + 0] = r;
-                        data[idx + 1] = g;
-                        data[idx + 2] = b;
-                    }
-                }
-                dc.DrawBitmap(wxBitmap(img), rect.GetLeft(), rect.GetTop(), false);
-            } else {
-                dc.GradientFillLinear(rect, m_left, m_right, wxEAST);
-            }
-        }
-        dc.SetPen(wxPen(is_dark ? wxColour(100, 100, 106) : wxColour(170, 170, 170), 1));
-        dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.DrawRectangle(rect);
-
-        if (m_multi_mode) {
-            dc.SetTextForeground(is_dark ? wxColour(236, 236, 236) : wxColour(30, 30, 30));
-            dc.SetFont(Label::Body_10);
-            const wxString hint = _L("Click to edit");
-            wxSize text_sz = dc.GetTextExtent(hint);
-            dc.DrawText(hint, rect.GetRight() - text_sz.GetWidth() - FromDIP(4), rect.GetTop() + FromDIP(2));
-            return;
-        }
-
-        int marker_x = rect.GetLeft() + (rect.GetWidth() * m_value + 50) / 100;
-        marker_x = std::clamp(marker_x, rect.GetLeft(), rect.GetRight());
-        dc.SetPen(wxPen(wxColour(255, 255, 255), 3));
-        dc.DrawLine(marker_x, rect.GetTop(), marker_x, rect.GetBottom());
-        dc.SetPen(wxPen(wxColour(33, 33, 33), 1));
-        dc.DrawLine(marker_x, rect.GetTop(), marker_x, rect.GetBottom());
-    }
-
-    void on_left_down(wxMouseEvent &evt)
-    {
-        if (m_multi_mode)
-            return;
-        if (!HasCapture())
-            CaptureMouse();
-        m_dragging = true;
-        update_from_x(evt.GetX(), false);
-    }
-
-    void on_left_up(wxMouseEvent &evt)
-    {
-        if (m_multi_mode) {
-            wxCommandEvent click_evt(wxEVT_BUTTON, GetId());
-            click_evt.SetEventObject(this);
-            ProcessWindowEvent(click_evt);
-            return;
-        }
-        if (m_dragging)
-            update_from_x(evt.GetX(), true);
-        m_dragging = false;
-        if (HasCapture())
-            ReleaseMouse();
-    }
-
-    void on_mouse_move(wxMouseEvent &evt)
-    {
-        if (m_dragging && evt.LeftIsDown())
-            update_from_x(evt.GetX(), false);
-    }
-
-    void on_capture_lost(wxMouseCaptureLostEvent &)
-    {
-        m_dragging = false;
-    }
-
-private:
-    wxColour m_left;
-    wxColour m_right;
-    bool     m_multi_mode { false };
-    std::vector<wxColour> m_multi_colors;
-    std::vector<int>      m_multi_weights;
-    int      m_value {50};
-    bool     m_dragging {false};
-};
 
 class MixedGradientWeightsDialog : public wxDialog
 {
@@ -7177,8 +6186,6 @@ static std::vector<size_t> build_mixed_filament_ui_indices(const std::vector<Mix
     return ordered_indices;
 }
 
-} // namespace
-
 MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow *parent,
                                                            const std::vector<std::string> &physical_colors,
                                                            const wxColour &initial_color)
@@ -7192,6 +6199,291 @@ MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow *parent,
     }
 
     return dlg.selected_recipe();
+}
+
+void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
+{
+    StateColor title_bg(std::pair<wxColour, int>(wxColour(0xF1F1F1), StateColor::Normal));
+
+    // Title bar — same parent as filament content
+    p->m_panel_color_mix_title = new StaticBox(parent, wxID_ANY, wxDefaultPosition,
+                                               wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
+    p->m_panel_color_mix_title->SetBackgroundColor(title_bg);
+    p->m_panel_color_mix_title->SetBackgroundColor2(0xF1F1F1);
+
+    auto* icon = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "filament");
+    auto* label = new Label(p->m_panel_color_mix_title, _L("Color Mix"), LB_PROPAGATE_MOUSE_EVENT);
+
+    p->m_btn_del_color_mix = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "delete_filament");
+    p->m_btn_add_color_mix = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "add_filament");
+
+    auto* h_title = new wxBoxSizer(wxHORIZONTAL);
+    h_title->Add(icon,  0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(8));
+    h_title->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(4));
+    h_title->AddStretchSpacer();
+    h_title->Add(p->m_btn_del_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
+    h_title->Add(p->m_btn_add_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    p->m_panel_color_mix_title->SetSizer(h_title);
+    p->m_panel_color_mix_title->Layout();
+
+    // Content panel — same parent
+    p->m_panel_color_mix_content = new wxPanel(parent);
+    p->m_sizer_color_mix_content = new wxBoxSizer(wxVERTICAL);
+    p->m_panel_color_mix_content->SetSizer(p->m_sizer_color_mix_content);
+
+    sizer->Add(p->m_panel_color_mix_title,   0, wxEXPAND, 0);
+    sizer->Add(p->m_panel_color_mix_content, 0, wxEXPAND, 0);
+
+    // Add button: open dialog to create new mix
+    p->m_btn_add_color_mix->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        auto* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
+        if (colors.size() < 2) return;
+
+        AddColorMixDialog dlg(wxGetApp().mainframe, colors);
+        if (dlg.ShowModal() != wxID_OK) return;
+
+        auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+        const MixedFilament& r = dlg.GetResult();
+        mgr.add_custom_filament(r.component_a, r.component_b, r.mix_b_percent, colors);
+        auto& mfs = mgr.mixed_filaments();
+        if (!mfs.empty()) {
+            mfs.back().distribution_mode       = r.distribution_mode;
+            mfs.back().manual_pattern          = r.manual_pattern;
+            mfs.back().gradient_component_ids      = r.gradient_component_ids;
+            mfs.back().gradient_component_weights  = r.gradient_component_weights;
+            mfs.back().ratio_a                     = r.ratio_a;
+            mfs.back().ratio_b                     = r.ratio_b;
+            mfs.back().custom                  = true;
+        }
+        if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+            opt->value = mgr.serialize_custom_entries();
+        update_color_mix_panel();
+        m_scrolled_sizer->Layout();
+    });
+
+    // Delete button: remove last custom entry
+    p->m_btn_del_color_mix->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+        auto& mfs = mgr.mixed_filaments();
+        for (int i = static_cast<int>(mfs.size()) - 1; i >= 0; --i) {
+            if (mfs[i].custom && !mfs[i].deleted) {
+                mfs[i].deleted = true;
+                break;
+            }
+        }
+        if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+            opt->value = mgr.serialize_custom_entries();
+        update_color_mix_panel();
+        m_scrolled_sizer->Layout();
+    });
+
+    // Initial visibility: hide if fewer than 2 physical filaments
+    update_color_mix_panel();
+}
+
+void Sidebar::update_color_mix_panel()
+{
+    if (!p->m_panel_color_mix_content) return;
+
+    auto* co = wxGetApp().preset_bundle
+                   ? wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour")
+                   : nullptr;
+    const int n_physical = co ? static_cast<int>(co->values.size()) : 0;
+    const bool show = (n_physical >= 2);
+    p->m_panel_color_mix_title->Show(show);
+    p->m_panel_color_mix_content->Show(show);
+    if (!show) return;
+
+    wxWindowUpdateLocker no_updates(p->m_panel_color_mix_content);
+    p->m_sizer_color_mix_content->Clear(true);
+
+    auto* preset_bundle = wxGetApp().preset_bundle;
+    const size_t num_physical = p->combos_filament.size();
+
+    std::vector<std::string> physical_colors = co->values;
+    physical_colors.resize(num_physical, "#26A69A");
+
+    std::vector<double> nozzle_diameters(num_physical, 0.4);
+    if (const ConfigOptionFloats* opt = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter")) {
+        const size_t opt_count = opt->values.size();
+        if (opt_count > 0)
+            for (size_t i = 0; i < num_physical; ++i)
+                nozzle_diameters[i] = std::max(0.05, opt->get_at(unsigned(std::min(i, opt_count - 1))));
+    }
+
+    float lower_bound = 0.04f, upper_bound = 0.16f;
+    if (preset_bundle->project_config.has("mixed_filament_height_lower_bound"))
+        lower_bound = std::max(0.01f, float(preset_bundle->project_config.opt_float("mixed_filament_height_lower_bound")));
+    if (preset_bundle->project_config.has("mixed_filament_height_upper_bound"))
+        upper_bound = std::max(lower_bound, float(preset_bundle->project_config.opt_float("mixed_filament_height_upper_bound")));
+
+    bool local_z_mode = false;
+    if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
+        local_z_mode = opt->value;
+
+    bool component_bias_enabled = false;
+    if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_component_bias_enabled"))
+        component_bias_enabled = opt->value;
+
+    const MixedFilamentPreviewSettings preview_settings {
+        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, false, 1
+    };
+    const MixedFilamentDisplayContext display_context {
+        num_physical, physical_colors, nozzle_diameters, preview_settings, component_bias_enabled
+    };
+    preset_bundle->mixed_filaments.set_display_context(display_context);
+
+    auto& mfs = preset_bundle->mixed_filaments.mixed_filaments();
+    bool any_visible = false;
+    for (const MixedFilament& mf : mfs)
+        if (!mf.deleted) { any_visible = true; break; }
+
+    if (!any_visible) {
+        auto* hint = new wxStaticText(p->m_panel_color_mix_content, wxID_ANY,
+                                      _L("No color mixes. Click + to add one."));
+        hint->SetForegroundColour(wxColour(120, 120, 120));
+        p->m_sizer_color_mix_content->Add(hint, 0, wxALL, FromDIP(8));
+        p->m_panel_color_mix_content->Layout();
+        return;
+    }
+
+    // 2-column grid matching the physical filament panel layout
+    auto* grid_sizer = new wxBoxSizer(wxHORIZONTAL);
+    auto* col0 = new wxBoxSizer(wxVERTICAL);
+    auto* col1 = new wxBoxSizer(wxVERTICAL);
+    grid_sizer->Add(col0, 1, wxEXPAND);
+    grid_sizer->Add(col1, 1, wxEXPAND);
+
+    int visible_idx = 0;
+    for (size_t i = 0; i < mfs.size(); ++i) {
+        MixedFilament& mf = mfs[i];
+        if (mf.deleted) continue;
+
+        const std::string synced_color = compute_mixed_filament_display_color(mf, display_context);
+        if (mf.display_color != synced_color)
+            mf.display_color = synced_color;
+
+        const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
+        const wxColour badge_color = parse_mixed_color(mf.display_color);
+
+        // Badge button: colored background + virtual filament number
+        auto* badge = new wxButton(p->m_panel_color_mix_content, wxID_ANY,
+                                   wxString::Format("%d", virtual_id),
+                                   wxDefaultPosition,
+                                   wxSize(FromDIP(20), FromDIP(20)),
+                                   wxBU_EXACTFIT | wxBORDER_NONE);
+        badge->SetBackgroundColour(badge_color);
+        {
+            // Pick white or black text for contrast
+            const int luma = badge_color.Red() * 299 + badge_color.Green() * 587 + badge_color.Blue() * 114;
+            badge->SetForegroundColour(luma > 128000 ? *wxBLACK : *wxWHITE);
+        }
+
+        const std::string normalized_pattern_cm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+        wxString lbl;
+        if (!normalized_pattern_cm.empty())
+            lbl = _L("Pattern");
+        else if (mf.gradient_component_ids.size() >= 3) {
+            // parse weights
+            const size_t n = mf.gradient_component_ids.size();
+            std::vector<int> weights;
+            {
+                std::string token;
+                for (const char c : mf.gradient_component_weights) {
+                    if (c >= '0' && c <= '9') { token.push_back(c); continue; }
+                    if (!token.empty()) { weights.emplace_back(std::max(0, std::atoi(token.c_str()))); token.clear(); }
+                }
+                if (!token.empty()) weights.emplace_back(std::max(0, std::atoi(token.c_str())));
+                if (weights.size() != n) weights.assign(n, int(100 / n));
+            }
+            // normalize to 100
+            int sum = 0; for (int v : weights) sum += v;
+            if (sum <= 0) { weights.assign(n, 0); weights[0] = 100; sum = 100; }
+            for (size_t k = 0; k < n; ++k) {
+                const unsigned int fid = unsigned(mf.gradient_component_ids[k] - '0');
+                const int pct = int(std::round(100.0 * weights[k] / sum));
+                if (k > 0) lbl += "+";
+                lbl += wxString::Format("F%u %d%%", fid, pct);
+            }
+        }
+        else {
+            const int pct_b = std::clamp(mf.mix_b_percent, 0, 100);
+            const int pct_a = 100 - pct_b;
+            lbl = wxString::Format("F%u %d%%+F%u %d%%", mf.component_a, pct_a, mf.component_b, pct_b);
+            for (char c : mf.gradient_component_ids)
+                lbl += wxString::Format("+F%d", int(c - '0'));
+        }
+        auto* name_lbl = new wxStaticText(p->m_panel_color_mix_content, wxID_ANY, lbl);
+
+        auto* menu_btn = new ScalableButton(p->m_panel_color_mix_content, wxID_ANY, "menu_filament");
+        menu_btn->SetToolTip(_L("Options"));
+        menu_btn->Bind(wxEVT_BUTTON, [this, i, menu_btn](wxCommandEvent&) {
+            wxMenu menu;
+            const int edit_id = wxWindow::NewControlId();
+            const int del_id  = wxWindow::NewControlId();
+            menu.Append(edit_id, _L("Edit"));
+            menu.Bind(wxEVT_MENU, [this, i](wxCommandEvent&) {
+                auto* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+                const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
+                if (colors.size() < 2) return;
+                auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+                auto& mfs2 = mgr.mixed_filaments();
+                if (i >= mfs2.size()) return;
+                AddColorMixDialog dlg(wxGetApp().mainframe, colors, mfs2[i]);
+                if (dlg.ShowModal() != wxID_OK) return;
+                const MixedFilament& r = dlg.GetResult();
+                mfs2[i].component_a                = r.component_a;
+                mfs2[i].component_b                = r.component_b;
+                mfs2[i].mix_b_percent              = r.mix_b_percent;
+                mfs2[i].distribution_mode          = r.distribution_mode;
+                mfs2[i].manual_pattern             = r.manual_pattern;
+                mfs2[i].gradient_component_ids     = r.gradient_component_ids;
+                mfs2[i].gradient_component_weights = r.gradient_component_weights;
+                mfs2[i].ratio_a                    = r.ratio_a;
+                mfs2[i].ratio_b                    = r.ratio_b;
+                if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+                    opt->value = mgr.serialize_custom_entries();
+                wxTheApp->CallAfter([this]() {
+                    update_color_mix_panel();
+                    m_scrolled_sizer->Layout();
+                });
+            }, edit_id);
+            menu.Append(del_id, _L("Delete"));
+            menu.Bind(wxEVT_MENU, [this, i](wxCommandEvent&) {
+                auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+                auto& mfs2 = mgr.mixed_filaments();
+                if (i < mfs2.size()) mfs2[i].deleted = true;
+                if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+                    opt->value = mgr.serialize_custom_entries();
+                wxTheApp->CallAfter([this]() {
+                    update_color_mix_panel();
+                    m_scrolled_sizer->Layout();
+                });
+            }, del_id);
+            wxPoint pt{0, menu_btn->GetSize().GetHeight()};
+            pt = menu_btn->ClientToScreen(pt);
+            pt = wxGetApp().mainframe->ScreenToClient(pt);
+            wxGetApp().mainframe->PopupMenu(&menu, pt);
+        });
+
+        auto* cell = new wxBoxSizer(wxHORIZONTAL);
+        cell->AddSpacer(FromDIP(12));
+        cell->Add(badge,    0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        cell->Add(name_lbl, 1, wxALIGN_CENTER_VERTICAL);
+        cell->Add(menu_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
+
+        (visible_idx % 2 == 0 ? col0 : col1)->Add(cell, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
+
+        ++visible_idx;
+    }
+
+    // If odd count, pad right column so left column doesn't stretch
+    if (visible_idx % 2 == 1)
+        col1->AddStretchSpacer(1);
+
+    p->m_sizer_color_mix_content->Add(grid_sizer, 0, wxEXPAND | wxALL, FromDIP(8));
+    p->m_panel_color_mix_content->Layout();
 }
 
 void Sidebar::update_mixed_filament_panel(bool sync_manager)
@@ -8252,6 +7544,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     m_scrolled_sizer->Layout();
     Layout();
     refresh_model_canvas_colors();
+    update_color_mix_panel();
 }
 
 std::vector<unsigned int> Sidebar::get_ui_ordered_filament_ids() const

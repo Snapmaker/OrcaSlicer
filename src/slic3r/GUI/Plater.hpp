@@ -1,7 +1,9 @@
 #ifndef slic3r_Plater_hpp_
 #define slic3r_Plater_hpp_
 
+#include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
@@ -10,6 +12,7 @@
 #include <wx/notebook.h>
 
 #include "Selection.hpp"
+#include "MixedColorMatchHelpers.hpp"
 
 #include "libslic3r/enum_bitmask.hpp"
 #include "libslic3r/Preset.hpp"
@@ -156,6 +159,8 @@ public:
     void edit_filament();
 
     void on_filaments_delete(size_t filament_id);
+    void init_color_mix_panel(wxWindow* parent, wxSizer* sizer);
+    void update_color_mix_panel();
     void update_mixed_filament_panel(bool sync_manager = true);
     std::vector<unsigned int> get_ui_ordered_filament_ids() const;
     // BBS
@@ -864,6 +869,7 @@ private:
 };
 
 std::vector<int> get_min_flush_volumes(const DynamicPrintConfig& full_config);
+
 } // namespace GUI
 } // namespace Slic3r
 

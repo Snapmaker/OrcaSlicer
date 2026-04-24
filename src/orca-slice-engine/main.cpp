@@ -31,6 +31,8 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/Exception.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -430,21 +432,16 @@ int main(int argc, char* argv[]) {
 
         // Set printable state for all model instances
         // Only instances on current plate should be printable
-        // Also set print_volume_state to ensure is_printable() returns correct value
-        // is_printable() checks: object->printable && printable && (print_volume_state == ModelInstancePVS_Inside)
         int instances_on_plate = 0;
         for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
             ModelObject* obj = model.objects[obj_idx];
             for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
                 ModelInstance* inst = obj->instances[inst_idx];
-                // Match instances by loaded_id (which was set from identify_id during 3MF load)
                 bool on_current_plate = (current_plate_identify_ids.find(static_cast<int>(inst->loaded_id)) != current_plate_identify_ids.end());
                 inst->printable = on_current_plate;
-                // Explicitly set print_volume_state to handle edge cases where 3MF has instances outside build volume
                 inst->print_volume_state = on_current_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Fully_Outside;
-                if (on_current_plate) {
+                if (on_current_plate)
                     instances_on_plate++;
-                }
             }
         }
 
@@ -455,6 +452,48 @@ int main(int argc, char* argv[]) {
         if (instances_on_plate == 0) {
             BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << current_plate_id;
             continue;
+        }
+
+        // --- PRE-PROCESSING: Build volume check ---
+        // Mirrors GUI's Snapmaker_Orca.cpp: BuildVolume + model.update_print_volume_state()
+        // Detects instances that are partly outside the printable area or exceed height limit.
+        if (config.has("printable_area") && config.has("printable_height")) {
+            auto printable_area_opt = config.option<ConfigOptionPoints>("printable_area");
+            double printable_height = config.opt_float("printable_height");
+            if (printable_area_opt && !printable_area_opt->values.empty() && printable_height > 0) {
+                BuildVolume build_volume(printable_area_opt->values, printable_height);
+                model.update_print_volume_state(build_volume);
+
+                bool has_partly_outside = false;
+                for (ModelObject* obj : model.objects) {
+                    for (ModelInstance* inst : obj->instances) {
+                        if (!inst->printable) continue;
+                        if (inst->print_volume_state == ModelInstancePVS_Partly_Outside) {
+                            BOOST_LOG_TRIVIAL(error) << "[Pre-processing] ERROR: Plate " << current_plate_id
+                                << ": Object \"" << obj->name << "\" is placed on the boundary of or exceeds the build volume.";
+                            std::cerr << "[ERROR] Plate " << current_plate_id
+                                << ": Object \"" << obj->name << "\" is placed on the boundary of or exceeds the build volume." << std::endl;
+                            has_partly_outside = true;
+                        }
+                    }
+                }
+                if (has_partly_outside) {
+                    for (const auto& file : temp_files) {
+                        try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
+                    }
+                    return EXIT_VALIDATION_ERROR;
+                }
+
+                // Restore printable state — update_print_volume_state may have changed it
+                for (ModelObject* obj : model.objects) {
+                    for (ModelInstance* inst : obj->instances) {
+                        bool on_plate = (current_plate_identify_ids.find(static_cast<int>(inst->loaded_id)) != current_plate_identify_ids.end());
+                        inst->printable = on_plate;
+                        if (!on_plate)
+                            inst->print_volume_state = ModelInstancePVS_Fully_Outside;
+                    }
+                }
+            }
         }
 
         // Create Print object for this plate
@@ -579,7 +618,6 @@ int main(int argc, char* argv[]) {
                     if (mo) obj_name = " [object: " + mo->name + "]";
                 }
                 std::string opt_hint = warning.opt_key.empty() ? "" : " (config: " + warning.opt_key + ")";
-                BOOST_LOG_TRIVIAL(warning) << "[Pre-processing] WARNING: " << warning.string << obj_name << opt_hint;
                 std::cerr << "[WARNING] Plate " << current_plate_id << ": " << warning.string << obj_name << opt_hint << std::endl;
             }
 
@@ -595,7 +633,6 @@ int main(int argc, char* argv[]) {
                     if (mo) obj_name = " [object: " + mo->name + "]";
                 }
                 std::string opt_hint = err.opt_key.empty() ? "" : " (config: " + err.opt_key + ")";
-                BOOST_LOG_TRIVIAL(error) << "[Pre-processing] ERROR: " << err.string << obj_name << opt_hint;
                 std::cerr << "[ERROR] Plate " << current_plate_id << ": " << err.string << obj_name << opt_hint << std::endl;
                 // Cleanup temp files before exit
                 for (const auto& file : temp_files) {
@@ -611,15 +648,34 @@ int main(int argc, char* argv[]) {
         try {
             print.process();
         }
-        catch (std::exception& e) {
-            BOOST_LOG_TRIVIAL(error) << "Slicing failed for plate " << current_plate_id << ": " << e.what();
-            // Cleanup temp files before exit
+        catch (SlicingErrors& exs) {
+            // Multiple objects failed — mirrors GUI's BackgroundSlicingProcess::format_error_message()
+            for (const auto& ex : exs.errors_)
+                std::cerr << "[ERROR] Plate " << current_plate_id << ": " << ex.what() << std::endl;
             for (const auto& file : temp_files) {
-                try {
-                    if (boost::filesystem::exists(file)) {
-                        boost::filesystem::remove(file);
-                    }
-                } catch (...) {}
+                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
+            }
+            return EXIT_SLICING_ERROR;
+        }
+        catch (SlicingError& ex) {
+            // Single object failed (e.g. levitating object without supports)
+            std::cerr << "[ERROR] Plate " << current_plate_id << ": " << ex.what() << std::endl;
+            for (const auto& file : temp_files) {
+                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
+            }
+            return EXIT_SLICING_ERROR;
+        }
+        catch (CanceledException&) {
+            std::cerr << "[ERROR] Plate " << current_plate_id << ": Slicing was cancelled." << std::endl;
+            for (const auto& file : temp_files) {
+                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
+            }
+            return EXIT_SLICING_ERROR;
+        }
+        catch (std::exception& e) {
+            std::cerr << "[ERROR] Plate " << current_plate_id << ": " << e.what() << std::endl;
+            for (const auto& file : temp_files) {
+                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
             }
             return EXIT_SLICING_ERROR;
         }

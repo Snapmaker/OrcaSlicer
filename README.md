@@ -20,7 +20,6 @@ If you find this fun or interesting!
 **This fork is currently in active development and has been tested on actual hardware.**
 
 - **Use at Your Own Risk**: As with any slicer fork, please review critical prints and generated G-code before production use
-- **Project Compatibility Warning**: Some `.3mf` files created with older FullSpectrum builds may not open or migrate cleanly in newer versions because mixed-filament data and project serialization have changed over time
 
 ---
 

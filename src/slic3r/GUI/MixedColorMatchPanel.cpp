@@ -82,6 +82,8 @@ public:
     }
 
 private:
+    static constexpr int SEGMENTS = 24;
+
     void on_paint(wxPaintEvent &)
     {
         wxAutoBufferedPaintDC dc(this);
@@ -91,21 +93,37 @@ private:
 
         if (m_colors.empty() || m_weights.empty()) return;
 
+        // Build a Bresenham-scheduled sequence of colour indices, same as draw_strip.
+        std::vector<int> ids, counts;
         int total = 0;
         for (int w : m_weights) total += std::max(0, w);
         if (total <= 0) return;
+        for (size_t i = 0; i < m_weights.size(); ++i)
+            if (m_weights[i] > 0) { ids.push_back((int)i); counts.push_back(m_weights[i]); }
 
-        int y = 0;
-        for (size_t i = 0; i < m_colors.size() && i < m_weights.size(); ++i) {
-            const int w = std::max(0, m_weights[i]);
-            if (w <= 0) continue;
-            const int stripe_h = (i + 1 < m_colors.size())
-                ? int(std::lround(double(w) / double(total) * sz.GetHeight()))
-                : sz.GetHeight() - y;
-            dc.SetBrush(wxBrush(m_colors[i].IsOk() ? m_colors[i] : wxColour(200, 200, 200)));
+        std::vector<int> pattern;
+        pattern.reserve(SEGMENTS);
+        std::vector<int> emitted(counts.size(), 0);
+        for (int pos = 0; pos < SEGMENTS; ++pos) {
+            int best = 0; double best_score = -1e9;
+            for (int i = 0; i < (int)counts.size(); ++i) {
+                double score = double(pos + 1) * double(counts[i]) / double(total) - double(emitted[i]);
+                if (score > best_score) { best_score = score; best = i; }
+            }
+            ++emitted[best];
+            pattern.push_back(ids[best]);
+        }
+
+        const int seg = std::max(1, sz.GetHeight() / SEGMENTS);
+        for (int s = 0; s < SEGMENTS; ++s) {
+            const int idx = pattern[s];
+            const wxColour &c = (idx >= 0 && idx < (int)m_colors.size() && m_colors[idx].IsOk())
+                ? m_colors[idx] : wxColour(200, 200, 200);
+            dc.SetBrush(wxBrush(c));
             dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.DrawRectangle(0, y, sz.GetWidth(), stripe_h);
-            y += stripe_h;
+            const int y   = s * seg;
+            const int len = (s == SEGMENTS - 1) ? (sz.GetHeight() - y) : seg;
+            dc.DrawRectangle(0, y, sz.GetWidth(), len);
         }
     }
 

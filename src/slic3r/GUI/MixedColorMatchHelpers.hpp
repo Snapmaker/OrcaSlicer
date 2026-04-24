@@ -59,8 +59,19 @@ wxColour compute_color_match_recipe_display_color(
     const MixedColorMatchRecipeResult  &recipe,
     const MixedFilamentDisplayContext  &context);
 
-MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow *parent,
-                                                           const std::vector<std::string> &physical_colors,
-                                                           const wxColour &initial_color);
+std::vector<unsigned int> decode_color_match_gradient_ids(const std::string& value);
+std::vector<int>          decode_color_match_gradient_weights(const std::string& value, size_t expected_components);
+MixedColorMatchRecipeResult build_pair_color_match_candidate(const std::vector<wxColour>& palette,
+                                                             unsigned int                 component_a,
+                                                             unsigned int                 component_b,
+                                                             int                          mix_b_percent,
+                                                             int                          min_component_percent = 0);
+MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<wxColour>&     palette,
+                                                              const std::vector<unsigned int>& ids,
+                                                              const std::vector<int>&          weights,
+                                                              int                              min_component_percent = 0);
+bool color_match_weights_within_range(const std::vector<int>& weights, int min_component_percent);
+std::vector<unsigned int>   build_color_match_sequence(const std::vector<unsigned int>& ids, const std::vector<int>& weights);
+wxColour                    blend_sequence_filament_mixer(const std::vector<wxColour>& palette, const std::vector<unsigned int>& sequence);
 
 }} // namespace Slic3r::GUI

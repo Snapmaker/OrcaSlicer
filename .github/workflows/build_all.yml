@@ -73,7 +73,7 @@ jobs:
         safe_ref=$(printf '%s' "$ref_name" | tr '/ ' '--' | tr -cd '[:alnum:]._-' )
         version=$(grep 'set(Snapmaker_VERSION' version.inc | cut -d '"' -f2)
         tag="v${version}"
-        title="SnapmakerOrca-FullSpectrum v${version}"
+        title="Snapmaker Orca v${version}"
 
         notes_content=""
         for notes_file in \

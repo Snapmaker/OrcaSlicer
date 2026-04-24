@@ -1,7 +1,6 @@
 #pragma once
 
 #include "GUI_Utils.hpp"
-#include "Plater.hpp"
 
 #include <wx/wx.h>
 #include <wx/gauge.h>
@@ -12,6 +11,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include "MixedColorMatchHelpers.hpp"
 
 namespace Slic3r { namespace GUI {
 

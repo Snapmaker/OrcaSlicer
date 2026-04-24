@@ -339,20 +339,11 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 	}
 #endif
 
-    // Prefer LOCALAPPDATA on Windows so runtime logs are written under:
-    // C:\\Users\\[user]\\AppData\\Local\\Snapmaker_Orca\\log\\*.log
-    // Keep g_data_dir fallback for non-Windows or missing environment.
-    boost::filesystem::path log_folder = boost::filesystem::path(g_data_dir) / "log";
-#ifdef _WIN32
-    // boost::filesystem is configured to interpret narrow paths as UTF-8.
-    // On Windows, std::getenv() may return ANSI-encoded bytes, which breaks
-    // non-ASCII profile paths (for example usernames containing umlauts).
-    if (const char *local_appdata = boost::nowide::getenv("LOCALAPPDATA"); local_appdata != nullptr && *local_appdata != '\0')
-        log_folder = boost::filesystem::path(local_appdata) / "Snapmaker_Orca" / "log";
-#endif
-    if (!boost::filesystem::exists(log_folder)) {
-        boost::filesystem::create_directories(log_folder);
-    }
+	//BBS log file at C:\\Users\\[yourname]\\AppData\\Roaming\\Snapmaker_Orca\\log\\[log_filename].log
+	auto log_folder = boost::filesystem::path(g_data_dir) / "log";
+	if (!boost::filesystem::exists(log_folder)) {
+		boost::filesystem::create_directories(log_folder);
+	}
 	auto full_path = (log_folder / file).make_preferred();
 
 	g_log_sink = boost::log::add_file_log(

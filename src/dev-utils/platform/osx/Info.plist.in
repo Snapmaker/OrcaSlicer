@@ -132,7 +132,7 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>SnapmakerOrca-FullSpectrum needs access to your local network to discover and connect to your 3D printer(s), and to serve the app's device interface on localhost.</string>
+  <string>Snapmaker Orca needs access to your local network to discover and connect to your 3D printer(s), and to serve the app's device interface on localhost.</string>
   <key>NSBonjourServices</key>
   <array>
     <string>_http._tcp</string>

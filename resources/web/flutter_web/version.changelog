@@ -1,11 +1,6 @@
 #  Changelog
 
-## 2026-04-8
+## 2026-04-15
 
-### Features
-- Feature: 
-  * Multiple nozzle configurations are supported
-  * Support multi-color display of official consumables
 ### Bugfix
-  * Fixed failure to obtain consumables after online
-  * Fixed the exception of getting firmware version information
+  * Fixed an issue where slicing files with more than 4 filaments could not initiate printing

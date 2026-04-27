@@ -44,6 +44,59 @@
 
 using namespace Slic3r;
 
+// RAII guard that removes a list of temp files on destruction
+struct TempFileGuard {
+    std::vector<std::string>& mFiles;
+    explicit TempFileGuard(std::vector<std::string>& f) : mFiles(f) {}
+    ~TempFileGuard() { cleanup(); }
+    void cleanup() {
+        for (const auto& file : mFiles) {
+            try {
+                if (boost::filesystem::exists(file))
+                    boost::filesystem::remove(file);
+            } catch (...) {}
+        }
+    }
+    // Prevent copy
+    TempFileGuard(const TempFileGuard&) = delete;
+    TempFileGuard& operator=(const TempFileGuard&) = delete;
+};
+
+// Emit a structured log line to both boost-log and stderr.
+// stage:   "[Pre-processing]" or "[Post-processing]" — preserved so callers can distinguish origin
+// level:   "ERROR" | "WARNING" | "TIP"
+// plate:   current plate id
+// msg:     message body
+static void log_plate_message(const char* stage, const char* level, int plate, const std::string& msg)
+{
+    std::string full = std::string(stage) + " " + level + ": Plate " + std::to_string(plate) + ": " + msg;
+    if (std::strcmp(level, "ERROR") == 0)
+        BOOST_LOG_TRIVIAL(error) << full;
+    else if (std::strcmp(level, "WARNING") == 0)
+        BOOST_LOG_TRIVIAL(warning) << full;
+    else
+        BOOST_LOG_TRIVIAL(info) << full;
+
+    if (std::strcmp(level, "TIP") != 0)
+        std::cerr << "[" << level << "] Plate " << plate << ": " << msg << std::endl;
+}
+
+// Extract human-readable object name and config hint from a StringObjectException
+static std::pair<std::string, std::string> format_exception_context(const StringObjectException& ex)
+{
+    std::string obj_name;
+    if (ex.object) {
+        auto mo = dynamic_cast<ModelObject const*>(ex.object);
+        if (!mo) {
+            if (auto po = dynamic_cast<PrintObjectBase const*>(ex.object))
+                mo = po->model_object();
+        }
+        if (mo) obj_name = " [object: " + mo->name + "]";
+    }
+    std::string opt_hint = ex.opt_key.empty() ? "" : " (config: " + ex.opt_key + ")";
+    return {obj_name, opt_hint};
+}
+
 // Exit codes
 static const int EXIT_OK = 0;
 static const int EXIT_INVALID_ARGS = 1;
@@ -61,7 +114,7 @@ enum class OutputFormat {
 };
 
 // Compute column count for plate grid layout (matches GUI's PartPlate.hpp logic)
-inline int compute_colum_count(int count) {
+inline int compute_column_count(int count) {
     float value = sqrt((float)count);
     float round_value = round(value);
     return (value > round_value) ? (round_value + 1) : round_value;
@@ -81,7 +134,6 @@ void print_usage(const char* program_name) {
     std::cout << "  -f, --format <fmt>     Output format: gcode | gcode.3mf (default: gcode.3mf)" << std::endl;
     std::cout << "                         Note: All plates always use gcode.3mf" << std::endl;
     std::cout << "  -r, --resources <dir>  Resources directory containing printer profiles" << std::endl;
-    // std::cout << "  -t, --timestamp <ts>   Fixed timestamp for reproducible G-code output" << std::endl;
     std::cout << "                         Format: YYYY-MM-DD HH:MM:SS (e.g., \"2024-01-01 12:00:00\")" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;
     std::cout << "  -h, --help             Show this help message" << std::endl;
@@ -155,7 +207,6 @@ int main(int argc, char* argv[]) {
     std::string input_file;
     std::string output_base;
     std::string resources_dir;
-    // std::string custom_timestamp;  // Custom timestamp for reproducible builds
     bool verbose = false;
     int plate_id = 0;  // 0 = all plates
     OutputFormat format = OutputFormat::GCODE_3MF;  // Default to gcode.3mf
@@ -207,9 +258,6 @@ int main(int argc, char* argv[]) {
                 return EXIT_INVALID_ARGS;
             }
         }
-        // else if ((arg == "-t" || arg == "--timestamp") && i + 1 < argc) {
-        //     custom_timestamp = argv[++i];
-        // }
         else if (arg[0] != '-') {
             if (input_file.empty()) {
                 input_file = arg;
@@ -310,8 +358,9 @@ int main(int argc, char* argv[]) {
     set_temporary_dir(temp_dir);
     BOOST_LOG_TRIVIAL(debug) << "Temporary directory: " << temp_dir;
 
-    // Track temporary files for cleanup
+    // Track temporary files for cleanup — TempFileGuard ensures cleanup on any exit path
     std::vector<std::string> temp_files;
+    TempFileGuard temp_guard(temp_files);
 
     // Load 3MF file with embedded configuration
     BOOST_LOG_TRIVIAL(info) << "Loading 3MF file...";
@@ -409,6 +458,7 @@ int main(int argc, char* argv[]) {
         GCodeProcessorResult gcode_result;
         double total_weight;
         bool support_used;
+        bool has_postprocess_warning = false;
     };
     std::map<int, PlateSliceResult> plate_results;
 
@@ -469,20 +519,14 @@ int main(int argc, char* argv[]) {
                     for (ModelInstance* inst : obj->instances) {
                         if (!inst->printable) continue;
                         if (inst->print_volume_state == ModelInstancePVS_Partly_Outside) {
-                            BOOST_LOG_TRIVIAL(error) << "[Pre-processing] ERROR: Plate " << current_plate_id
-                                << ": Object \"" << obj->name << "\" is placed on the boundary of or exceeds the build volume.";
-                            std::cerr << "[ERROR] Plate " << current_plate_id
-                                << ": Object \"" << obj->name << "\" is placed on the boundary of or exceeds the build volume." << std::endl;
+                            log_plate_message("[Pre-processing]", "ERROR", current_plate_id,
+                                "Object \"" + obj->name + "\" is placed on the boundary of or exceeds the build volume.");
                             has_partly_outside = true;
                         }
                     }
                 }
-                if (has_partly_outside) {
-                    for (const auto& file : temp_files) {
-                        try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
-                    }
+                if (has_partly_outside)
                     return EXIT_VALIDATION_ERROR;
-                }
 
                 // Restore printable state — update_print_volume_state may have changed it
                 for (ModelObject* obj : model.objects) {
@@ -510,10 +554,10 @@ int main(int argc, char* argv[]) {
         print.set_plate_index(plate_index);
 
         // Get plate dimensions from printable_area config
-        // GUI uses bed extended bounding box size minus DefaultTipRadius (2.5f) for plate size
+        // GUI uses bed extended bounding box size minus DefaultTipRadius (1.25mm) for plate size
         // See: src/slic3r/GUI/Plater.cpp:9167
         // partplate_list.reset_size(max.x() - min.x() - Bed3D::Axes::DefaultTipRadius, ...)
-        static const double BED_AXES_TIP_RADIUS = 2.5 * 0.5;  // Match Bed3D::Axes::DefaultTipRadius = 1.25
+        static const double BED_AXES_TIP_RADIUS = 1.25;  // Bed3D::Axes::DefaultTipRadius
         double plate_width = 200.0;   // Default fallback
         double plate_depth = 200.0;   // Default fallback
 
@@ -544,7 +588,7 @@ int main(int argc, char* argv[]) {
         const double LOGICAL_PART_PLATE_GAP = 0.2;  // 1/5, same as GUI
         // CRITICAL: Use total plate count from source 3MF, not plates_to_process.size()
         // GUI uses the total number of plates in the project to calculate layout
-        const int plate_cols = compute_colum_count(static_cast<int>(plate_data.size()));
+        const int plate_cols = compute_column_count(static_cast<int>(plate_data.size()));
 
         BOOST_LOG_TRIVIAL(info) << "=== PLATE ORIGIN DEBUG ===";
         BOOST_LOG_TRIVIAL(info) << "Total plates to process: " << plates_to_process.size();
@@ -580,12 +624,6 @@ int main(int argc, char* argv[]) {
         // 3. GCode generation adds plate_origin back via set_gcode_offset()
         // Modifying offsets here would cause double-subtraction and incorrect output.
 
-        // Set custom timestamp for reproducible G-code output (engine mode)
-        // if (!custom_timestamp.empty()) {
-        //     print.set_gcode_timestamp(custom_timestamp);
-        //     BOOST_LOG_TRIVIAL(info) << "Using custom G-code timestamp: " << custom_timestamp;
-        // }
-
         // Apply model and config to print
         auto apply_status = print.apply(model, config);
         BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
@@ -608,36 +646,14 @@ int main(int argc, char* argv[]) {
 
             // Surface any warning (non-fatal, slicing continues)
             if (!warning.string.empty()) {
-                std::string obj_name;
-                if (warning.object) {
-                    auto mo = dynamic_cast<ModelObject const*>(warning.object);
-                    if (!mo) {
-                        if (auto po = dynamic_cast<PrintObjectBase const*>(warning.object))
-                            mo = po->model_object();
-                    }
-                    if (mo) obj_name = " [object: " + mo->name + "]";
-                }
-                std::string opt_hint = warning.opt_key.empty() ? "" : " (config: " + warning.opt_key + ")";
+                auto [obj_name, opt_hint] = format_exception_context(warning);
                 std::cerr << "[WARNING] Plate " << current_plate_id << ": " << warning.string << obj_name << opt_hint << std::endl;
             }
 
             // A non-empty error string means slicing must be aborted
             if (!err.string.empty()) {
-                std::string obj_name;
-                if (err.object) {
-                    auto mo = dynamic_cast<ModelObject const*>(err.object);
-                    if (!mo) {
-                        if (auto po = dynamic_cast<PrintObjectBase const*>(err.object))
-                            mo = po->model_object();
-                    }
-                    if (mo) obj_name = " [object: " + mo->name + "]";
-                }
-                std::string opt_hint = err.opt_key.empty() ? "" : " (config: " + err.opt_key + ")";
+                auto [obj_name, opt_hint] = format_exception_context(err);
                 std::cerr << "[ERROR] Plate " << current_plate_id << ": " << err.string << obj_name << opt_hint << std::endl;
-                // Cleanup temp files before exit
-                for (const auto& file : temp_files) {
-                    try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
-                }
                 return EXIT_VALIDATION_ERROR;
             }
         }
@@ -652,31 +668,19 @@ int main(int argc, char* argv[]) {
             // Multiple objects failed — mirrors GUI's BackgroundSlicingProcess::format_error_message()
             for (const auto& ex : exs.errors_)
                 std::cerr << "[ERROR] Plate " << current_plate_id << ": " << ex.what() << std::endl;
-            for (const auto& file : temp_files) {
-                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
-            }
             return EXIT_SLICING_ERROR;
         }
         catch (SlicingError& ex) {
             // Single object failed (e.g. levitating object without supports)
             std::cerr << "[ERROR] Plate " << current_plate_id << ": " << ex.what() << std::endl;
-            for (const auto& file : temp_files) {
-                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
-            }
             return EXIT_SLICING_ERROR;
         }
         catch (CanceledException&) {
             std::cerr << "[ERROR] Plate " << current_plate_id << ": Slicing was cancelled." << std::endl;
-            for (const auto& file : temp_files) {
-                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
-            }
             return EXIT_SLICING_ERROR;
         }
         catch (std::exception& e) {
             std::cerr << "[ERROR] Plate " << current_plate_id << ": " << e.what() << std::endl;
-            for (const auto& file : temp_files) {
-                try { if (boost::filesystem::exists(file)) boost::filesystem::remove(file); } catch (...) {}
-            }
             return EXIT_SLICING_ERROR;
         }
 
@@ -709,13 +713,13 @@ int main(int argc, char* argv[]) {
 
             // --- POST-PROCESSING CHECKS ---
             // Mirror GUI's on_process_completed() checks on GCodeProcessorResult
+            bool has_postprocess_warning = false;
 
             // Check for toolpaths outside the print volume
             if (slice_result.gcode_result.toolpath_outside) {
-                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
-                    << ": Some toolpaths are outside the printable area.";
-                std::cerr << "[WARNING] Plate " << current_plate_id
-                    << ": Some toolpaths are outside the printable area." << std::endl;
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Some toolpaths are outside the printable area.");
+                has_postprocess_warning = true;
             }
 
             // Check conflict detection result (actual toolpath collision between objects,
@@ -724,39 +728,32 @@ int main(int argc, char* argv[]) {
                 const auto& cr = slice_result.gcode_result.conflict_result.value();
                 std::string obj1 = cr._obj1 ? cr._objName1 : "Wipe Tower";
                 std::string obj2 = cr._obj2 ? cr._objName2 : "Wipe Tower";
-                BOOST_LOG_TRIVIAL(error) << "[Post-processing] ERROR: Plate " << current_plate_id
-                    << ": Toolpath conflict detected between \"" << obj1 << "\" and \"" << obj2
-                    << "\" at Z=" << cr._height << "mm.";
-                std::cerr << "[ERROR] Plate " << current_plate_id
-                    << ": Toolpath conflict between \"" << obj1 << "\" and \"" << obj2
-                    << "\" at Z=" << cr._height << "mm." << std::endl;
+                log_plate_message("[Post-processing]", "ERROR", current_plate_id,
+                    "Toolpath conflict detected between \"" + obj1 + "\" and \"" + obj2
+                    + "\" at Z=" + std::to_string(cr._height) + "mm.");
             }
 
             // Check bed/filament compatibility result (set during G-code export in GCode::do_export)
             if (!slice_result.gcode_result.bed_match_result.match) {
                 const auto& bm = slice_result.gcode_result.bed_match_result;
-                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
-                    << ": Filament " << (bm.extruder_id + 1)
-                    << " is not compatible with bed type \"" << bm.bed_type_name << "\".";
-                std::cerr << "[WARNING] Plate " << current_plate_id
-                    << ": Filament " << (bm.extruder_id + 1)
-                    << " is not compatible with bed type \"" << bm.bed_type_name << "\"." << std::endl;
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Filament " + std::to_string(bm.extruder_id + 1)
+                    + " is not compatible with bed type \"" + bm.bed_type_name + "\".");
+                has_postprocess_warning = true;
             }
 
             // Check timelapse warning codes (mirrors GUI's PartPlate::store_to_3mf_structure)
             // Bit 0: spiral vase + I3 printer -> timelapse not supported
             // Bit 1: by-object sequence + I3 printer -> timelapse not supported
             if (slice_result.gcode_result.timelapse_warning_code & 1) {
-                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
-                    << ": Timelapse is not supported in spiral vase mode on this printer.";
-                std::cerr << "[WARNING] Plate " << current_plate_id
-                    << ": Timelapse is not supported in spiral vase mode on this printer." << std::endl;
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Timelapse is not supported in spiral vase mode on this printer.");
+                has_postprocess_warning = true;
             }
             if ((slice_result.gcode_result.timelapse_warning_code >> 1) & 1) {
-                BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
-                    << ": Timelapse is not supported with by-object print sequence on this printer.";
-                std::cerr << "[WARNING] Plate " << current_plate_id
-                    << ": Timelapse is not supported with by-object print sequence on this printer." << std::endl;
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Timelapse is not supported with by-object print sequence on this printer.");
+                has_postprocess_warning = true;
             }
 
             // Check per-step warnings collected during slicing
@@ -764,33 +761,23 @@ int main(int argc, char* argv[]) {
             // These mirror GUI's modal dialog for critical warnings on G-code export
             for (const auto& w : slice_result.gcode_result.warnings) {
                 if (w.level >= 2) {
-                    BOOST_LOG_TRIVIAL(error) << "[Post-processing] ERROR: Plate " << current_plate_id
-                        << ": " << w.msg << " (code: " << w.error_code << ")";
-                    std::cerr << "[ERROR] Plate " << current_plate_id << ": " << w.msg
-                        << " (code: " << w.error_code << ")" << std::endl;
+                    log_plate_message("[Post-processing]", "ERROR", current_plate_id,
+                        w.msg + " (code: " + std::to_string(w.error_code) + ")");
                 } else if (w.level == 1) {
-                    BOOST_LOG_TRIVIAL(warning) << "[Post-processing] WARNING: Plate " << current_plate_id
-                        << ": " << w.msg << " (code: " << w.error_code << ")";
-                    std::cerr << "[WARNING] Plate " << current_plate_id << ": " << w.msg
-                        << " (code: " << w.error_code << ")" << std::endl;
+                    log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                        w.msg + " (code: " + std::to_string(w.error_code) + ")");
+                    has_postprocess_warning = true;
                 } else {
-                    BOOST_LOG_TRIVIAL(info) << "[Post-processing] TIP: Plate " << current_plate_id
-                        << ": " << w.msg;
+                    log_plate_message("[Post-processing]", "TIP", current_plate_id, w.msg);
                 }
             }
+
+            slice_result.has_postprocess_warning = has_postprocess_warning;
 
             plate_results[current_plate_id] = slice_result;
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to export G-code for plate " << current_plate_id << ": " << e.what();
-            // Cleanup temp files before exit
-            for (const auto& file : temp_files) {
-                try {
-                    if (boost::filesystem::exists(file)) {
-                        boost::filesystem::remove(file);
-                    }
-                } catch (...) {}
-            }
             return EXIT_EXPORT_ERROR;
         }
     }
@@ -896,20 +883,19 @@ int main(int argc, char* argv[]) {
                 // Build objects_and_instances using model.objects array indices (not raw 3MF object IDs).
                 // obj_inst_map key = 3MF object_id (e.g. 2, 4), but store_bbs_3mf expects
                 // 0-based model.objects indices. Match via loaded_id == identify_id (set during load).
+                std::set<int> plate_identify_ids;
+                for (const auto& entry : pd->obj_inst_map)
+                    plate_identify_ids.insert(entry.second.second);
+
                 pd->objects_and_instances.clear();
                 for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
                     const ModelObject* obj = model.objects[obj_idx];
                     for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
                         const ModelInstance* inst = obj->instances[inst_idx];
-                        // Check if this instance belongs to this plate via its loaded_id (= identify_id)
-                        for (const auto& entry : pd->obj_inst_map) {
-                            if (entry.second.second == static_cast<int>(inst->loaded_id)) {
-                                pd->objects_and_instances.emplace_back(
-                                    static_cast<int>(obj_idx),
-                                    static_cast<int>(inst_idx));
-                                break;
-                            }
-                        }
+                        if (plate_identify_ids.count(static_cast<int>(inst->loaded_id)))
+                            pd->objects_and_instances.emplace_back(
+                                static_cast<int>(obj_idx),
+                                static_cast<int>(inst_idx));
                     }
                 }
 
@@ -956,11 +942,12 @@ int main(int argc, char* argv[]) {
         std::vector<ThumbnailData*> pick_thumbnail_data;
         std::vector<ThumbnailData*> calibration_thumbnail_data;
         std::vector<PlateBBoxData*> id_bboxes;
-
-        // Initialize empty bounding boxes for each plate
+        // Use unique_ptr to own the PlateBBoxData objects; raw pointers are passed to params
+        std::vector<std::unique_ptr<PlateBBoxData>> id_bboxes_owned;
+        id_bboxes_owned.reserve(plate_data.size());
         for (size_t i = 0; i < plate_data.size(); ++i) {
-            PlateBBoxData* bbox = new PlateBBoxData();
-            id_bboxes.push_back(bbox);
+            id_bboxes_owned.push_back(std::make_unique<PlateBBoxData>());
+            id_bboxes.push_back(id_bboxes_owned.back().get());
         }
 
         params.thumbnail_data = thumbnail_data;
@@ -978,44 +965,29 @@ int main(int argc, char* argv[]) {
             bool success = store_bbs_3mf(params);
             if (!success) {
                 BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package";
-                // Cleanup PlateBBoxData and temp files before exit
-                for (auto* bbox : id_bboxes) { delete bbox; }
-                for (const auto& file : temp_files) {
-                    try { if (boost::filesystem::exists(file)) { boost::filesystem::remove(file); } } catch (...) {}
-                }
                 return EXIT_EXPORT_ERROR;
             }
             BOOST_LOG_TRIVIAL(info) << "gcode.3mf package created: " << output_path;
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package: " << e.what();
-            // Cleanup PlateBBoxData and temp files before exit
-            for (auto* bbox : id_bboxes) { delete bbox; }
-            for (const auto& file : temp_files) {
-                try { if (boost::filesystem::exists(file)) { boost::filesystem::remove(file); } } catch (...) {}
-            }
             return EXIT_EXPORT_ERROR;
         }
-
-        // Cleanup PlateBBoxData after successful export
-        for (auto* bbox : id_bboxes) { delete bbox; }
     }
 
     BOOST_LOG_TRIVIAL(info) << "Done!";
     std::cout << "Output: " << output_path << std::endl;
 
-    // Cleanup temporary files
-    for (const auto& file : temp_files) {
-        try {
-            if (boost::filesystem::exists(file)) {
-                boost::filesystem::remove(file);
-                BOOST_LOG_TRIVIAL(debug) << "Cleaned up temp file: " << file;
-            }
-        } catch (...) {
-            // Ignore cleanup errors
-        }
+    // Determine final exit code: warn if any plate had post-processing warnings
+    bool any_postprocess_warning = false;
+    for (const auto& [id, result] : plate_results) {
+        if (result.has_postprocess_warning)
+            any_postprocess_warning = true;
     }
 
+    // Explicitly clean up before quick_exit (which bypasses destructors)
+    temp_guard.cleanup();
+
     // Use quick_exit to avoid crashes in global destructors
-    std::quick_exit(EXIT_OK);
+    std::quick_exit(any_postprocess_warning ? EXIT_POSTPROCESS_WARNING : EXIT_OK);
 }

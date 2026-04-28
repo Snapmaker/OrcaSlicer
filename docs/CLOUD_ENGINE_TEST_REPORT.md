@@ -1,0 +1,210 @@
+# OrcaSlicer Cloud Engine - Test Report Template
+
+## Executive Summary
+
+This report validates whether the one-shot execution model of `orca-slice-engine` meets cloud deployment requirements.
+
+**Test Date**: [DATE]
+**Engine Version**: [VERSION]
+**Test Environment**: [SPECIFICATIONS]
+
+---
+
+## 1. Test Objectives
+
+| Objective | Success Criteria |
+|-----------|------------------|
+| Startup Performance | Process startup < 100ms |
+| Slicing Performance | Complete within acceptable time limits |
+| Memory Management | No memory leaks, memory released after execution |
+| Concurrent Execution | Support multiple parallel slicing tasks |
+| Error Handling | Graceful error recovery, proper exit codes |
+| Output Integrity | Valid G-code/3MF output files |
+
+---
+
+## 2. Test Environment
+
+### Hardware
+- **CPU**: [e.g., Intel Xeon E5-2680 v4 @ 2.40GHz, 28 cores]
+- **Memory**: [e.g., 64GB DDR4]
+- **Storage**: [e.g., SSD 500GB]
+- **OS**: [e.g., Ubuntu 22.04 LTS]
+
+### Software
+- **Engine**: orca-slice-engine v[X.X.X]
+- **Python**: 3.10.x
+- **Test Model**: [Model description, file size, complexity]
+
+---
+
+## 3. Test Results
+
+### 3.1 Startup Time
+
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| Average | [X] ms | < 100ms | ✓/✗ |
+| Min | [X] ms | - | - |
+| Max | [X] ms | - | - |
+| Std Dev | [X] ms | - | - |
+
+**Interpretation**: [Analysis of startup overhead impact on cloud deployment]
+
+---
+
+### 3.2 Single Slicing Performance
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Average Duration | [X] ms | - |
+| Peak Memory | [X] MB | - |
+| Success Rate | [X]% | - |
+
+**Interpretation**: [Analysis of single-task performance]
+
+---
+
+### 3.3 Concurrent Execution
+
+| Workers | Tasks | Total Time | Throughput | Success Rate |
+|---------|-------|------------|------------|--------------|
+| 2 | 4 | [X] s | [X] tasks/min | [X]% |
+| 4 | 8 | [X] s | [X] tasks/min | [X]% |
+| 8 | 16 | [X] s | [X] tasks/min | [X]% |
+
+**Interpretation**: [Analysis of scalability]
+
+---
+
+### 3.4 Memory Management
+
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| Memory Before | [X] MB | - | - |
+| Memory After | [X] MB | - | - |
+| Memory Leak | [X] MB | < 50MB | ✓/✗ |
+
+**Interpretation**: [Analysis of memory cleanup behavior]
+
+---
+
+### 3.5 Error Handling
+
+| Test Case | Expected Behavior | Result |
+|-----------|-------------------|--------|
+| Invalid file path | Exit code 2 | ✓/✗ |
+| Invalid plate ID | Exit code 1 | ✓/✗ |
+| Corrupted 3MF | Exit code 3 | ✓/✗ |
+
+**Interpretation**: [Analysis of error recovery]
+
+---
+
+### 3.6 Output Validation
+
+| Metric | Value | Status |
+|--------|-------|--------|
+| Output file exists | Yes/No | ✓/✗ |
+| Valid 3MF format | Yes/No | ✓/✗ |
+| File size | [X] KB | - |
+
+**Interpretation**: [Analysis of output integrity]
+
+---
+
+## 4. Cloud Deployment Suitability Analysis
+
+### 4.1 Process Model Assessment
+
+| Aspect | One-Shot Model | Assessment |
+|--------|----------------|------------|
+| Memory Safety | Process isolation prevents memory leaks | ✓ Advantage |
+| Config Isolation | Each task has independent config | ✓ Advantage |
+| Error Isolation | Failures don't affect other tasks | ✓ Advantage |
+| Startup Overhead | [X] ms per task | ⚠ Trade-off |
+| Resource Cleanup | Automatic on process exit | ✓ Advantage |
+
+### 4.2 Throughput Analysis
+
+Based on test results:
+
+```
+Single worker throughput: [X] tasks/hour
+Recommended worker count: [X]
+Estimated max throughput: [X] tasks/hour
+```
+
+### 4.3 Resource Requirements
+
+| Resource | Per Task | Recommended Allocation |
+|----------|----------|------------------------|
+| CPU | [X] cores | [X] cores per worker |
+| Memory | [X] MB peak | [X] MB per worker |
+| Disk I/O | [X] MB | SSD recommended |
+
+---
+
+## 5. Recommendations
+
+### 5.1 Deployment Configuration
+
+```yaml
+# Recommended Kubernetes resource limits
+resources:
+  requests:
+    memory: "[X]Gi"
+    cpu: "[X]"
+  limits:
+    memory: "[X]Gi"
+    cpu: "[X]"
+```
+
+### 5.2 Task Queue Configuration
+
+```python
+# Recommended Celery configuration
+CELERY_WORKER_CONCURRENCY = [X]  # Based on CPU cores
+CELERY_TASK_TIME_LIMIT = [X]     # Based on max slicing time
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 100  # Prevent memory accumulation
+```
+
+### 5.3 Monitoring Metrics
+
+- Average slicing time per model complexity
+- Memory usage per worker
+- Task success/failure rate
+- Queue depth and wait time
+
+---
+
+## 6. Conclusion
+
+Based on the test results:
+
+**[PASS/FAIL]** The one-shot execution model meets cloud deployment requirements.
+
+### Key Findings
+
+1. **Performance**: [Summary]
+2. **Reliability**: [Summary]
+3. **Scalability**: [Summary]
+4. **Recommendations**: [Summary]
+
+---
+
+## Appendix A: Raw Test Data
+
+See `benchmark_results.json` for complete test data.
+
+## Appendix B: Test Model Details
+
+- **File**: [filename.3mf]
+- **Size**: [X] MB
+- **Objects**: [X]
+- **Plates**: [X]
+- **Complexity**: [Low/Medium/High]
+
+---
+
+*Report generated by OrcaSlicer Cloud Engine Benchmark Suite*

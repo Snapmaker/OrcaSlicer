@@ -16,6 +16,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <fstream>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -31,6 +32,8 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/Exception.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -42,6 +45,59 @@
 
 using namespace Slic3r;
 
+// RAII guard that removes a list of temp files on destruction
+struct TempFileGuard {
+    std::vector<std::string>& mFiles;
+    explicit TempFileGuard(std::vector<std::string>& f) : mFiles(f) {}
+    ~TempFileGuard() { cleanup(); }
+    void cleanup() {
+        for (const auto& file : mFiles) {
+            try {
+                if (boost::filesystem::exists(file))
+                    boost::filesystem::remove(file);
+            } catch (...) {}
+        }
+    }
+    // Prevent copy
+    TempFileGuard(const TempFileGuard&) = delete;
+    TempFileGuard& operator=(const TempFileGuard&) = delete;
+};
+
+// Emit a structured log line to both boost-log and stderr.
+// stage:   "[Pre-processing]" or "[Post-processing]" — preserved so callers can distinguish origin
+// level:   "ERROR" | "WARNING" | "TIP"
+// plate:   current plate id
+// msg:     message body
+static void log_plate_message(const char* stage, const char* level, int plate, const std::string& msg)
+{
+    std::string full = std::string(stage) + " " + level + ": Plate " + std::to_string(plate) + ": " + msg;
+    if (std::strcmp(level, "ERROR") == 0)
+        BOOST_LOG_TRIVIAL(error) << full;
+    else if (std::strcmp(level, "WARNING") == 0)
+        BOOST_LOG_TRIVIAL(warning) << full;
+    else
+        BOOST_LOG_TRIVIAL(info) << full;
+
+    if (std::strcmp(level, "TIP") != 0)
+        std::cerr << "[" << level << "] Plate " << plate << ": " << msg << std::endl;
+}
+
+// Extract human-readable object name and config hint from a StringObjectException
+static std::pair<std::string, std::string> format_exception_context(const StringObjectException& ex)
+{
+    std::string obj_name;
+    if (ex.object) {
+        auto mo = dynamic_cast<ModelObject const*>(ex.object);
+        if (!mo) {
+            if (auto po = dynamic_cast<PrintObjectBase const*>(ex.object))
+                mo = po->model_object();
+        }
+        if (mo) obj_name = " [object: " + mo->name + "]";
+    }
+    std::string opt_hint = ex.opt_key.empty() ? "" : " (config: " + ex.opt_key + ")";
+    return {obj_name, opt_hint};
+}
+
 // Exit codes
 static const int EXIT_OK = 0;
 static const int EXIT_INVALID_ARGS = 1;
@@ -49,6 +105,8 @@ static const int EXIT_FILE_NOT_FOUND = 2;
 static const int EXIT_LOAD_ERROR = 3;
 static const int EXIT_SLICING_ERROR = 4;
 static const int EXIT_EXPORT_ERROR = 5;
+static const int EXIT_VALIDATION_ERROR = 6;
+static const int EXIT_POSTPROCESS_WARNING = 7;
 
 // Output format enum
 enum class OutputFormat {
@@ -56,8 +114,56 @@ enum class OutputFormat {
     GCODE_3MF
 };
 
+// Output statistics structure for JSON export
+struct SliceOutputStats {
+    // Filament detail for each extruder
+    struct FilamentDetail {
+        int extruder_id;
+        std::string type;        // Filament type (e.g., "PLA", "ABS")
+        std::string color;       // Filament color (e.g., "#FF0000")
+        double used_g;           // Used weight in grams
+    };
+    
+    // Per-plate statistics
+    struct PlateStats {
+        int plate_id;
+        bool success;
+        std::string gcode_file;
+        
+        // Time statistics (in seconds)
+        float total_time;
+        float prepare_time;
+        float print_time;         // Actual print time (excluding prepare time)
+        
+        // Filament statistics
+        double total_filament_m;      // Total filament in meters
+        double total_filament_g;      // Total filament in grams
+        double model_filament_m;      // Model filament in meters
+        double model_filament_g;      // Model filament in grams
+        double total_cost;            // Total cost
+        
+        // Per-extruder filament usage
+        std::map<int, double> filament_used_m;   // Per extruder: meters
+        std::map<int, double> filament_used_g;   // Per extruder: grams
+        
+        // Additional info
+        bool support_used;
+        bool toolpath_outside;
+        
+        // New fields for enhanced JSON output
+        std::vector<double> nozzle_diameters;    // Nozzle diameter for each extruder
+        int plate_count;                         // Total number of plates
+        std::vector<FilamentDetail> filament_details;  // Detailed filament info per extruder
+        std::string model_thumbnail;             // Model thumbnail (base64 encoded PNG)
+    };
+    
+    bool success;
+    std::string error_message;
+    std::vector<PlateStats> plates;
+};
+
 // Compute column count for plate grid layout (matches GUI's PartPlate.hpp logic)
-inline int compute_colum_count(int count) {
+inline int compute_column_count(int count) {
     float value = sqrt((float)count);
     float round_value = round(value);
     return (value > round_value) ? (round_value + 1) : round_value;
@@ -77,10 +183,27 @@ void print_usage(const char* program_name) {
     std::cout << "  -f, --format <fmt>     Output format: gcode | gcode.3mf (default: gcode.3mf)" << std::endl;
     std::cout << "                         Note: All plates always use gcode.3mf" << std::endl;
     std::cout << "  -r, --resources <dir>  Resources directory containing printer profiles" << std::endl;
-    // std::cout << "  -t, --timestamp <ts>   Fixed timestamp for reproducible G-code output" << std::endl;
-    std::cout << "                         Format: YYYY-MM-DD HH:MM:SS (e.g., \"2024-01-01 12:00:00\")" << std::endl;
+    std::cout << "  -j, --json <file>      Output slice statistics as JSON to specified file" << std::endl;
+    std::cout << "                         If not specified, JSON is printed to stdout" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;
     std::cout << "  -h, --help             Show this help message" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Exit codes:" << std::endl;
+    std::cout << "  0  Success" << std::endl;
+    std::cout << "  1  Invalid arguments" << std::endl;
+    std::cout << "  2  Input file not found" << std::endl;
+    std::cout << "  3  3MF load error" << std::endl;
+    std::cout << "  4  Slicing error" << std::endl;
+    std::cout << "  5  G-code export error" << std::endl;
+    std::cout << "  6  Pre-processing validation error (e.g. collision, invalid config)" << std::endl;
+    std::cout << "  7  Post-processing warning (toolpath outside print volume)" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Output:" << std::endl;
+    std::cout << "  On success, outputs JSON with slicing statistics including:" << std::endl;
+    std::cout << "    - success: true/false" << std::endl;
+    std::cout << "    - plates[].time: total, prepare, print time (seconds and formatted)" << std::endl;
+    std::cout << "    - plates[].filament: total/model filament (m, g), cost, per-extruder usage" << std::endl;
+    std::cout << "    - plates[].gcode_file: path to output file" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  " << program_name << " model.3mf                        # All plates -> model.gcode.3mf" << std::endl;
@@ -88,6 +211,7 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " model.3mf -p 1 -f gcode          # Plate 1 -> model-p1.gcode (plain text)" << std::endl;
     std::cout << "  " << program_name << " model.3mf -p 1 -o output         # Plate 1 -> output.gcode.3mf" << std::endl;
     std::cout << "  " << program_name << " model.3mf -o result              # All plates -> result.gcode.3mf" << std::endl;
+    std::cout << "  " << program_name << " model.3mf -j stats.json          # Output statistics to stats.json" << std::endl;
 }
 
 void default_status_callback(const PrintBase::SlicingStatus& status) {
@@ -96,6 +220,146 @@ void default_status_callback(const PrintBase::SlicingStatus& status) {
         std::cout << "[Progress] " << status.percent << "% - " << status.text << std::endl;
     } else {
         std::cout << "[Status] " << status.text << std::endl;
+    }
+}
+
+// Helper function to format time as HH:MM:SS
+std::string format_time_hhmmss(float seconds) {
+    if (seconds < 0) return "00:00:00";
+    int total_secs = static_cast<int>(seconds);
+    int hours = total_secs / 3600;
+    int mins = (total_secs % 3600) / 60;
+    int secs = total_secs % 60;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hours, mins, secs);
+    return std::string(buf);
+}
+
+// Helper function to escape JSON strings
+std::string json_escape(const std::string& s) {
+    std::string result;
+    result.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '"': result += "\\\""; break;
+            case '\\': result += "\\\\"; break;
+            case '\b': result += "\\b"; break;
+            case '\f': result += "\\f"; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default: result += c; break;
+        }
+    }
+    return result;
+}
+
+// Helper function to encode binary data to base64
+static const char BASE64_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+std::string base64_encode(const unsigned char* input, size_t input_len) {
+    std::string result;
+    result.reserve((input_len + 2) / 3 * 4);
+    
+    int val = 0;
+    int valb = 0;
+    for (size_t i = 0; i < input_len; ++i) {
+        val = (val << 8) + input[i];
+        valb += 8;
+        while (valb >= 6) {
+            valb -= 6;
+            result.push_back(BASE64_CHARS[(val >> valb) & 0x3F]);
+        }
+    }
+    if (valb > 0) {
+        result.push_back(BASE64_CHARS[((val << (6 - valb)) & 0x3F)]);
+    }
+    while (result.size() % 4) {
+        result.push_back('=');
+    }
+    return result;
+}
+
+// Output slice statistics as JSON to stdout or file (new simplified format)
+void output_slice_statistics(const SliceOutputStats& stats, const std::string& json_output_path) {
+    std::ostringstream json;
+    json << std::fixed << std::setprecision(2);
+    
+    json << "{\n";
+    json << "  \"success\": " << (stats.success ? "true" : "false") << ",\n";
+    
+    if (!stats.success && !stats.error_message.empty()) {
+        json << "  \"error\": \"" << json_escape(stats.error_message) << "\",\n";
+    }
+    
+    json << "  \"plates\": [\n";
+    for (size_t i = 0; i < stats.plates.size(); ++i) {
+        const SliceOutputStats::PlateStats& plate = stats.plates[i];
+        json << "    {\n";
+        json << "      \"plate_id\": " << plate.plate_id << ",\n";
+        json << "      \"success\": " << (plate.success ? "true" : "false") << ",\n";
+        
+        if (plate.success) {
+            json << "      \"gcode_file\": \"" << json_escape(plate.gcode_file) << "\",\n";
+            
+            // Print time in seconds and formatted
+            json << "      \"print_time_seconds\": " << plate.print_time << ",\n";
+            json << "      \"print_time_formatted\": \"" << format_time_hhmmss(plate.print_time) << "\",\n";
+            
+            // Total consumed weight in grams
+            json << "      \"total_weight_g\": " << plate.total_filament_g << ",\n";
+            
+            // Nozzle diameters
+            json << "      \"nozzle_diameters\": [";
+            for (size_t j = 0; j < plate.nozzle_diameters.size(); ++j) {
+                if (j > 0) json << ", ";
+                json << plate.nozzle_diameters[j];
+            }
+            json << "],\n";
+            
+            // Plate count (total number of plates in the job)
+            json << "      \"plate_count\": " << plate.plate_count << ",\n";
+            
+            // Filament details (type, color, and consumed weight per extruder)
+            json << "      \"filaments\": [\n";
+            for (size_t j = 0; j < plate.filament_details.size(); ++j) {
+                const auto& detail = plate.filament_details[j];
+                json << "        {\n";
+                json << "          \"extruder_id\": " << detail.extruder_id << ",\n";
+                json << "          \"type\": \"" << json_escape(detail.type) << "\",\n";
+                json << "          \"color\": \"" << json_escape(detail.color) << "\",\n";
+                json << "          \"used_g\": " << detail.used_g << "\n";
+                json << "        }";
+                if (j < plate.filament_details.size() - 1) json << ",";
+                json << "\n";
+            }
+            json << "      ],\n";
+            
+            // Model thumbnail (base64 encoded PNG, or empty if not available)
+            json << "      \"model_thumbnail\": \"" << json_escape(plate.model_thumbnail) << "\"\n";
+        }
+        
+        json << "    }";
+        if (i < stats.plates.size() - 1) json << ",";
+        json << "\n";
+    }
+    json << "  ]\n";
+    json << "}\n";
+    
+    // Output to stdout
+    std::cout << "\n=== SLICE STATISTICS (JSON) ===" << std::endl;
+    std::cout << json.str() << std::endl;
+    std::cout << "=== END STATISTICS ===" << std::endl;
+    
+    // Optionally write to file
+    if (!json_output_path.empty()) {
+        std::ofstream ofs(json_output_path);
+        if (ofs.is_open()) {
+            ofs << json.str();
+            ofs.close();
+            BOOST_LOG_TRIVIAL(info) << "Statistics written to: " << json_output_path;
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "Failed to write statistics to: " << json_output_path;
+        }
     }
 }
 
@@ -113,7 +377,10 @@ std::string generate_output_path(
     if (!output_base.empty()) {
         base_name = output_base;
     } else {
-        base_name = input_path.parent_path().string() + "/" + input_path.stem().string();
+        boost::filesystem::path parent = input_path.parent_path();
+        if (parent.empty())
+            parent = boost::filesystem::current_path();
+        base_name = parent.string() + "/" + input_path.stem().string();
     }
 
     std::string extension = (format == OutputFormat::GCODE_3MF) ? ".gcode.3mf" : ".gcode";
@@ -138,7 +405,7 @@ int main(int argc, char* argv[]) {
     std::string input_file;
     std::string output_base;
     std::string resources_dir;
-    // std::string custom_timestamp;  // Custom timestamp for reproducible builds
+    std::string json_output_path;
     bool verbose = false;
     int plate_id = 0;  // 0 = all plates
     OutputFormat format = OutputFormat::GCODE_3MF;  // Default to gcode.3mf
@@ -160,6 +427,9 @@ int main(int argc, char* argv[]) {
         }
         else if ((arg == "-r" || arg == "--resources") && i + 1 < argc) {
             resources_dir = argv[++i];
+        }
+        else if ((arg == "-j" || arg == "--json") && i + 1 < argc) {
+            json_output_path = argv[++i];
         }
         else if ((arg == "-p" || arg == "--plate") && i + 1 < argc) {
             std::string plate_arg = argv[++i];
@@ -190,9 +460,6 @@ int main(int argc, char* argv[]) {
                 return EXIT_INVALID_ARGS;
             }
         }
-        // else if ((arg == "-t" || arg == "--timestamp") && i + 1 < argc) {
-        //     custom_timestamp = argv[++i];
-        // }
         else if (arg[0] != '-') {
             if (input_file.empty()) {
                 input_file = arg;
@@ -293,8 +560,9 @@ int main(int argc, char* argv[]) {
     set_temporary_dir(temp_dir);
     BOOST_LOG_TRIVIAL(debug) << "Temporary directory: " << temp_dir;
 
-    // Track temporary files for cleanup
+    // Track temporary files for cleanup — TempFileGuard ensures cleanup on any exit path
     std::vector<std::string> temp_files;
+    TempFileGuard temp_guard(temp_files);
 
     // Load 3MF file with embedded configuration
     BOOST_LOG_TRIVIAL(info) << "Loading 3MF file...";
@@ -392,8 +660,17 @@ int main(int argc, char* argv[]) {
         GCodeProcessorResult gcode_result;
         double total_weight;
         bool support_used;
+        bool has_postprocess_warning = false;
+        // Additional statistics for JSON output
+        double total_used_filament = 0.0;
+        double total_cost = 0.0;
+        std::map<size_t, double> filament_volumes;  // per extruder
     };
     std::map<int, PlateSliceResult> plate_results;
+    
+    // Global output statistics
+    SliceOutputStats output_stats;
+    output_stats.success = false;  // Will be set to true on successful completion
 
     // Process each plate
     for (int current_plate_id : plates_to_process) {
@@ -415,21 +692,16 @@ int main(int argc, char* argv[]) {
 
         // Set printable state for all model instances
         // Only instances on current plate should be printable
-        // Also set print_volume_state to ensure is_printable() returns correct value
-        // is_printable() checks: object->printable && printable && (print_volume_state == ModelInstancePVS_Inside)
         int instances_on_plate = 0;
         for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
             ModelObject* obj = model.objects[obj_idx];
             for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
                 ModelInstance* inst = obj->instances[inst_idx];
-                // Match instances by loaded_id (which was set from identify_id during 3MF load)
                 bool on_current_plate = (current_plate_identify_ids.find(static_cast<int>(inst->loaded_id)) != current_plate_identify_ids.end());
                 inst->printable = on_current_plate;
-                // Explicitly set print_volume_state to handle edge cases where 3MF has instances outside build volume
                 inst->print_volume_state = on_current_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Fully_Outside;
-                if (on_current_plate) {
+                if (on_current_plate)
                     instances_on_plate++;
-                }
             }
         }
 
@@ -440,6 +712,42 @@ int main(int argc, char* argv[]) {
         if (instances_on_plate == 0) {
             BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << current_plate_id;
             continue;
+        }
+
+        // --- PRE-PROCESSING: Build volume check ---
+        // Mirrors GUI's Snapmaker_Orca.cpp: BuildVolume + model.update_print_volume_state()
+        // Detects instances that are partly outside the printable area or exceed height limit.
+        if (config.has("printable_area") && config.has("printable_height")) {
+            auto printable_area_opt = config.option<ConfigOptionPoints>("printable_area");
+            double printable_height = config.opt_float("printable_height");
+            if (printable_area_opt && !printable_area_opt->values.empty() && printable_height > 0) {
+                BuildVolume build_volume(printable_area_opt->values, printable_height);
+                model.update_print_volume_state(build_volume);
+
+                bool has_partly_outside = false;
+                for (ModelObject* obj : model.objects) {
+                    for (ModelInstance* inst : obj->instances) {
+                        if (!inst->printable) continue;
+                        if (inst->print_volume_state == ModelInstancePVS_Partly_Outside) {
+                            log_plate_message("[Pre-processing]", "ERROR", current_plate_id,
+                                "Object \"" + obj->name + "\" is placed on the boundary of or exceeds the build volume.");
+                            has_partly_outside = true;
+                        }
+                    }
+                }
+                if (has_partly_outside)
+                    return EXIT_VALIDATION_ERROR;
+
+                // Restore printable state — update_print_volume_state may have changed it
+                for (ModelObject* obj : model.objects) {
+                    for (ModelInstance* inst : obj->instances) {
+                        bool on_plate = (current_plate_identify_ids.find(static_cast<int>(inst->loaded_id)) != current_plate_identify_ids.end());
+                        inst->printable = on_plate;
+                        if (!on_plate)
+                            inst->print_volume_state = ModelInstancePVS_Fully_Outside;
+                    }
+                }
+            }
         }
 
         // Create Print object for this plate
@@ -456,10 +764,10 @@ int main(int argc, char* argv[]) {
         print.set_plate_index(plate_index);
 
         // Get plate dimensions from printable_area config
-        // GUI uses bed extended bounding box size minus DefaultTipRadius (2.5f) for plate size
+        // GUI uses bed extended bounding box size minus DefaultTipRadius (1.25mm) for plate size
         // See: src/slic3r/GUI/Plater.cpp:9167
         // partplate_list.reset_size(max.x() - min.x() - Bed3D::Axes::DefaultTipRadius, ...)
-        static const double BED_AXES_TIP_RADIUS = 2.5 * 0.5;  // Match Bed3D::Axes::DefaultTipRadius = 1.25
+        static const double BED_AXES_TIP_RADIUS = 1.25;  // Bed3D::Axes::DefaultTipRadius
         double plate_width = 200.0;   // Default fallback
         double plate_depth = 200.0;   // Default fallback
 
@@ -490,7 +798,7 @@ int main(int argc, char* argv[]) {
         const double LOGICAL_PART_PLATE_GAP = 0.2;  // 1/5, same as GUI
         // CRITICAL: Use total plate count from source 3MF, not plates_to_process.size()
         // GUI uses the total number of plates in the project to calculate layout
-        const int plate_cols = compute_colum_count(static_cast<int>(plate_data.size()));
+        const int plate_cols = compute_column_count(static_cast<int>(plate_data.size()));
 
         BOOST_LOG_TRIVIAL(info) << "=== PLATE ORIGIN DEBUG ===";
         BOOST_LOG_TRIVIAL(info) << "Total plates to process: " << plates_to_process.size();
@@ -526,15 +834,39 @@ int main(int argc, char* argv[]) {
         // 3. GCode generation adds plate_origin back via set_gcode_offset()
         // Modifying offsets here would cause double-subtraction and incorrect output.
 
-        // Set custom timestamp for reproducible G-code output (engine mode)
-        // if (!custom_timestamp.empty()) {
-        //     print.set_gcode_timestamp(custom_timestamp);
-        //     BOOST_LOG_TRIVIAL(info) << "Using custom G-code timestamp: " << custom_timestamp;
-        // }
-
         // Apply model and config to print
         auto apply_status = print.apply(model, config);
         BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
+
+        // Assign unique arrange_order to each model instance so that
+        // sort_object_instances_by_model_order() works correctly in validate().
+        // GUI sets this during object arrangement; headless mode must set it manually.
+        {
+            int order = 1;
+            for (ModelObject* obj : model.objects)
+                for (ModelInstance* inst : obj->instances)
+                    inst->arrange_order = order++;
+        }
+
+        // --- PRE-PROCESSING VALIDATION ---
+        // Mirrors GUI's BackgroundSlicingProcess::validate() -> Print::validate()
+        {
+            StringObjectException warning;
+            StringObjectException err = print.validate(&warning, nullptr, nullptr);
+
+            // Surface any warning (non-fatal, slicing continues)
+            if (!warning.string.empty()) {
+                auto [obj_name, opt_hint] = format_exception_context(warning);
+                std::cerr << "[WARNING] Plate " << current_plate_id << ": " << warning.string << obj_name << opt_hint << std::endl;
+            }
+
+            // A non-empty error string means slicing must be aborted
+            if (!err.string.empty()) {
+                auto [obj_name, opt_hint] = format_exception_context(err);
+                std::cerr << "[ERROR] Plate " << current_plate_id << ": " << err.string << obj_name << opt_hint << std::endl;
+                return EXIT_VALIDATION_ERROR;
+            }
+        }
 
         // Execute slicing
         BOOST_LOG_TRIVIAL(info) << "Starting slicing process for plate " << current_plate_id << "...";
@@ -542,16 +874,23 @@ int main(int argc, char* argv[]) {
         try {
             print.process();
         }
+        catch (SlicingErrors& exs) {
+            // Multiple objects failed — mirrors GUI's BackgroundSlicingProcess::format_error_message()
+            for (const auto& ex : exs.errors_)
+                std::cerr << "[ERROR] Plate " << current_plate_id << ": " << ex.what() << std::endl;
+            return EXIT_SLICING_ERROR;
+        }
+        catch (SlicingError& ex) {
+            // Single object failed (e.g. levitating object without supports)
+            std::cerr << "[ERROR] Plate " << current_plate_id << ": " << ex.what() << std::endl;
+            return EXIT_SLICING_ERROR;
+        }
+        catch (CanceledException&) {
+            std::cerr << "[ERROR] Plate " << current_plate_id << ": Slicing was cancelled." << std::endl;
+            return EXIT_SLICING_ERROR;
+        }
         catch (std::exception& e) {
-            BOOST_LOG_TRIVIAL(error) << "Slicing failed for plate " << current_plate_id << ": " << e.what();
-            // Cleanup temp files before exit
-            for (const auto& file : temp_files) {
-                try {
-                    if (boost::filesystem::exists(file)) {
-                        boost::filesystem::remove(file);
-                    }
-                } catch (...) {}
-            }
+            std::cerr << "[ERROR] Plate " << current_plate_id << ": " << e.what() << std::endl;
             return EXIT_SLICING_ERROR;
         }
 
@@ -581,19 +920,79 @@ int main(int argc, char* argv[]) {
             const PrintStatistics& ps = print.print_statistics();
             slice_result.total_weight = ps.total_weight;
             slice_result.support_used = print.is_support_used();
+            
+            // Collect additional statistics for JSON output
+            slice_result.total_used_filament = ps.total_used_filament;
+            slice_result.total_cost = ps.total_cost;
+            slice_result.filament_volumes = slice_result.gcode_result.print_statistics.total_volumes_per_extruder;
+
+            // --- POST-PROCESSING CHECKS ---
+            // Mirror GUI's on_process_completed() checks on GCodeProcessorResult
+            bool has_postprocess_warning = false;
+
+            // Check for toolpaths outside the print volume
+            if (slice_result.gcode_result.toolpath_outside) {
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Some toolpaths are outside the printable area.");
+                has_postprocess_warning = true;
+            }
+
+            // Check conflict detection result (actual toolpath collision between objects,
+            // distinct from validate()'s geometric pre-check — this runs during G-code generation)
+            if (slice_result.gcode_result.conflict_result.has_value()) {
+                const auto& cr = slice_result.gcode_result.conflict_result.value();
+                std::string obj1 = cr._obj1 ? cr._objName1 : "Wipe Tower";
+                std::string obj2 = cr._obj2 ? cr._objName2 : "Wipe Tower";
+                log_plate_message("[Post-processing]", "ERROR", current_plate_id,
+                    "Toolpath conflict detected between \"" + obj1 + "\" and \"" + obj2
+                    + "\" at Z=" + std::to_string(cr._height) + "mm.");
+            }
+
+            // Check bed/filament compatibility result (set during G-code export in GCode::do_export)
+            if (!slice_result.gcode_result.bed_match_result.match) {
+                const auto& bm = slice_result.gcode_result.bed_match_result;
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Filament " + std::to_string(bm.extruder_id + 1)
+                    + " is not compatible with bed type \"" + bm.bed_type_name + "\".");
+                has_postprocess_warning = true;
+            }
+
+            // Check timelapse warning codes (mirrors GUI's PartPlate::store_to_3mf_structure)
+            // Bit 0: spiral vase + I3 printer -> timelapse not supported
+            // Bit 1: by-object sequence + I3 printer -> timelapse not supported
+            if (slice_result.gcode_result.timelapse_warning_code & 1) {
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Timelapse is not supported in spiral vase mode on this printer.");
+                has_postprocess_warning = true;
+            }
+            if ((slice_result.gcode_result.timelapse_warning_code >> 1) & 1) {
+                log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                    "Timelapse is not supported with by-object print sequence on this printer.");
+                has_postprocess_warning = true;
+            }
+
+            // Check per-step warnings collected during slicing
+            // SliceWarning::level: 0=tip, 1=warning, 2=error
+            // These mirror GUI's modal dialog for critical warnings on G-code export
+            for (const auto& w : slice_result.gcode_result.warnings) {
+                if (w.level >= 2) {
+                    log_plate_message("[Post-processing]", "ERROR", current_plate_id,
+                        w.msg + " (code: " + std::to_string(w.error_code) + ")");
+                } else if (w.level == 1) {
+                    log_plate_message("[Post-processing]", "WARNING", current_plate_id,
+                        w.msg + " (code: " + std::to_string(w.error_code) + ")");
+                    has_postprocess_warning = true;
+                } else {
+                    log_plate_message("[Post-processing]", "TIP", current_plate_id, w.msg);
+                }
+            }
+
+            slice_result.has_postprocess_warning = has_postprocess_warning;
 
             plate_results[current_plate_id] = slice_result;
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to export G-code for plate " << current_plate_id << ": " << e.what();
-            // Cleanup temp files before exit
-            for (const auto& file : temp_files) {
-                try {
-                    if (boost::filesystem::exists(file)) {
-                        boost::filesystem::remove(file);
-                    }
-                } catch (...) {}
-            }
             return EXIT_EXPORT_ERROR;
         }
     }
@@ -696,10 +1095,23 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                // Copy objects_and_instances from obj_inst_map (matches GUI's PartPlate.cpp:5358-5362)
+                // Build objects_and_instances using model.objects array indices (not raw 3MF object IDs).
+                // obj_inst_map key = 3MF object_id (e.g. 2, 4), but store_bbs_3mf expects
+                // 0-based model.objects indices. Match via loaded_id == identify_id (set during load).
+                std::set<int> plate_identify_ids;
+                for (const auto& entry : pd->obj_inst_map)
+                    plate_identify_ids.insert(entry.second.second);
+
                 pd->objects_and_instances.clear();
-                for (const auto& entry : pd->obj_inst_map) {
-                    pd->objects_and_instances.emplace_back(entry.first, entry.second.first);
+                for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx) {
+                    const ModelObject* obj = model.objects[obj_idx];
+                    for (size_t inst_idx = 0; inst_idx < obj->instances.size(); ++inst_idx) {
+                        const ModelInstance* inst = obj->instances[inst_idx];
+                        if (plate_identify_ids.count(static_cast<int>(inst->loaded_id)))
+                            pd->objects_and_instances.emplace_back(
+                                static_cast<int>(obj_idx),
+                                static_cast<int>(inst_idx));
+                    }
                 }
 
                 BOOST_LOG_TRIVIAL(info) << "Plate " << pd->plate_index
@@ -745,11 +1157,12 @@ int main(int argc, char* argv[]) {
         std::vector<ThumbnailData*> pick_thumbnail_data;
         std::vector<ThumbnailData*> calibration_thumbnail_data;
         std::vector<PlateBBoxData*> id_bboxes;
-
-        // Initialize empty bounding boxes for each plate
+        // Use unique_ptr to own the PlateBBoxData objects; raw pointers are passed to params
+        std::vector<std::unique_ptr<PlateBBoxData>> id_bboxes_owned;
+        id_bboxes_owned.reserve(plate_data.size());
         for (size_t i = 0; i < plate_data.size(); ++i) {
-            PlateBBoxData* bbox = new PlateBBoxData();
-            id_bboxes.push_back(bbox);
+            id_bboxes_owned.push_back(std::make_unique<PlateBBoxData>());
+            id_bboxes.push_back(id_bboxes_owned.back().get());
         }
 
         params.thumbnail_data = thumbnail_data;
@@ -767,44 +1180,170 @@ int main(int argc, char* argv[]) {
             bool success = store_bbs_3mf(params);
             if (!success) {
                 BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package";
-                // Cleanup PlateBBoxData and temp files before exit
-                for (auto* bbox : id_bboxes) { delete bbox; }
-                for (const auto& file : temp_files) {
-                    try { if (boost::filesystem::exists(file)) { boost::filesystem::remove(file); } } catch (...) {}
-                }
                 return EXIT_EXPORT_ERROR;
             }
             BOOST_LOG_TRIVIAL(info) << "gcode.3mf package created: " << output_path;
         }
         catch (std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package: " << e.what();
-            // Cleanup PlateBBoxData and temp files before exit
-            for (auto* bbox : id_bboxes) { delete bbox; }
-            for (const auto& file : temp_files) {
-                try { if (boost::filesystem::exists(file)) { boost::filesystem::remove(file); } } catch (...) {}
-            }
             return EXIT_EXPORT_ERROR;
         }
-
-        // Cleanup PlateBBoxData after successful export
-        for (auto* bbox : id_bboxes) { delete bbox; }
     }
 
     BOOST_LOG_TRIVIAL(info) << "Done!";
     std::cout << "Output: " << output_path << std::endl;
 
-    // Cleanup temporary files
-    for (const auto& file : temp_files) {
-        try {
-            if (boost::filesystem::exists(file)) {
-                boost::filesystem::remove(file);
-                BOOST_LOG_TRIVIAL(debug) << "Cleaned up temp file: " << file;
-            }
-        } catch (...) {
-            // Ignore cleanup errors
-        }
+    // Determine final exit code: warn if any plate had post-processing warnings
+    bool any_postprocess_warning = false;
+    for (const auto& [id, result] : plate_results) {
+        if (result.has_postprocess_warning)
+            any_postprocess_warning = true;
     }
+    
+    // Build and output slice statistics as JSON
+    output_stats.success = true;
+    for (const auto& [plate_id, result] : plate_results) {
+        SliceOutputStats::PlateStats plate_stats;
+        plate_stats.plate_id = plate_id;
+        plate_stats.success = true;
+        plate_stats.gcode_file = result.gcode_path;
+        
+        // Time statistics from GCodeProcessorResult
+        auto& modes = result.gcode_result.print_statistics.modes;
+        auto& normal_mode = modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)];
+        plate_stats.total_time = normal_mode.time;
+        plate_stats.prepare_time = normal_mode.prepare_time;
+        plate_stats.print_time = normal_mode.time - normal_mode.prepare_time;
+        
+        // Filament statistics
+        plate_stats.total_filament_m = result.total_used_filament;
+        plate_stats.total_filament_g = result.total_weight;
+        plate_stats.total_cost = result.total_cost;
+        plate_stats.support_used = result.support_used;
+        plate_stats.toolpath_outside = result.gcode_result.toolpath_outside;
+        
+        // Calculate model filament (total - support - flush - wipe tower)
+        // These values are calculated in GCodeViewer.cpp
+        double total_support_m = 0.0, total_support_g = 0.0;
+        double total_flush_m = 0.0, total_flush_g = 0.0;
+        double total_wipe_tower_m = 0.0, total_wipe_tower_g = 0.0;
+        
+        // Get filament diameter and density for conversions
+        const auto& filament_diameters = result.gcode_result.filament_diameters;
+        const auto& filament_densities = result.gcode_result.filament_densities;
+        
+        // Calculate per-extruder filament usage
+        for (const auto& [extruder_id, volume] : result.filament_volumes) {
+            if (extruder_id < filament_diameters.size() && extruder_id < filament_densities.size()) {
+                double diameter = filament_diameters[extruder_id];
+                double density = filament_densities[extruder_id];
+                double cross_section = M_PI * 0.25 * diameter * diameter;
+                double used_m = (volume / cross_section) * 0.001;  // mm³ to m
+                double used_g = volume * density * 0.001;  // mm³ to g
+                plate_stats.filament_used_m[extruder_id] = used_m;
+                plate_stats.filament_used_g[extruder_id] = used_g;
+            }
+        }
+        
+        // Get support, flush, and wipe tower volumes from print_statistics
+        auto& ps = result.gcode_result.print_statistics;
+        
+        // Support volumes
+        for (const auto& [extruder_id, volume] : ps.support_volumes_per_extruder) {
+            if (extruder_id < filament_diameters.size() && extruder_id < filament_densities.size()) {
+                double diameter = filament_diameters[extruder_id];
+                double density = filament_densities[extruder_id];
+                double cross_section = M_PI * 0.25 * diameter * diameter;
+                total_support_m += (volume / cross_section) * 0.001;
+                total_support_g += volume * density * 0.001;
+            }
+        }
+        
+        // Wipe tower volumes
+        for (const auto& [extruder_id, volume] : ps.wipe_tower_volumes_per_extruder) {
+            if (extruder_id < filament_diameters.size() && extruder_id < filament_densities.size()) {
+                double diameter = filament_diameters[extruder_id];
+                double density = filament_densities[extruder_id];
+                double cross_section = M_PI * 0.25 * diameter * diameter;
+                total_wipe_tower_m += (volume / cross_section) * 0.001;
+                total_wipe_tower_g += volume * density * 0.001;
+            }
+        }
+        
+        // Flush volumes (flush_per_filament)
+        for (const auto& [extruder_id, volume] : ps.flush_per_filament) {
+            if (extruder_id < filament_diameters.size() && extruder_id < filament_densities.size()) {
+                double diameter = filament_diameters[extruder_id];
+                double density = filament_densities[extruder_id];
+                double cross_section = M_PI * 0.25 * diameter * diameter;
+                total_flush_m += (volume / cross_section) * 0.001;
+                total_flush_g += volume * density * 0.001;
+            }
+        }
+        
+        // Model filament = total - support - flush - wipe tower
+        plate_stats.model_filament_m = plate_stats.total_filament_m - total_support_m - total_flush_m - total_wipe_tower_m;
+        plate_stats.model_filament_g = plate_stats.total_filament_g - total_support_g - total_flush_g - total_wipe_tower_g;
+        
+        // NEW: Add nozzle diameters from config
+        if (config.has("nozzle_diameter")) {
+            auto nozzle_opt = config.option<ConfigOptionFloats>("nozzle_diameter");
+            if (nozzle_opt) {
+                plate_stats.nozzle_diameters = nozzle_opt->values;
+            }
+        }
+        
+        // NEW: Add plate count (total number of plates in the job)
+        plate_stats.plate_count = static_cast<int>(plate_data.size());
+        
+        // NEW: Build filament details with type, color, and consumed weight
+        // Get filament configuration arrays from config
+        const ConfigOptionStrings* filament_types = nullptr;
+        const ConfigOptionStrings* filament_colors = nullptr;
+        if (config.has("filament_type")) {
+            filament_types = config.option<ConfigOptionStrings>("filament_type");
+        }
+        if (config.has("filament_colour")) {
+            filament_colors = config.option<ConfigOptionStrings>("filament_colour");
+        }
+        
+        // Create filament details for each extruder
+        for (const auto& [extruder_id, used_g] : plate_stats.filament_used_g) {
+            SliceOutputStats::FilamentDetail detail;
+            detail.extruder_id = extruder_id;
+            detail.used_g = used_g;
+            
+            // Get filament type
+            if (filament_types && extruder_id < static_cast<int>(filament_types->values.size())) {
+                detail.type = filament_types->values[extruder_id];
+            } else {
+                detail.type = "Unknown";
+            }
+            
+            // Get filament color
+            if (filament_colors && extruder_id < static_cast<int>(filament_colors->values.size())) {
+                detail.color = filament_colors->values[extruder_id];
+            } else {
+                detail.color = "#000000";  // Default to black if not specified
+            }
+            
+            plate_stats.filament_details.push_back(detail);
+        }
+        
+        // NEW: Add model thumbnail (base64 encoded PNG)
+        // For headless mode, we generate a simple placeholder thumbnail
+        // In a real deployment, you might generate actual 3D preview images
+        plate_stats.model_thumbnail = "";  // Empty for now (headless mode)
+        
+        output_stats.plates.push_back(plate_stats);
+    }
+    
+    // Output JSON statistics
+    output_slice_statistics(output_stats, json_output_path);
+
+    // Explicitly clean up before quick_exit (which bypasses destructors)
+    temp_guard.cleanup();
 
     // Use quick_exit to avoid crashes in global destructors
-    std::quick_exit(EXIT_OK);
+    std::quick_exit(any_postprocess_warning ? EXIT_POSTPROCESS_WARNING : EXIT_OK);
 }

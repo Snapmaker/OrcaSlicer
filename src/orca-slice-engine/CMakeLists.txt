@@ -31,14 +31,17 @@ if(NOT SLIC3R_STATIC)
     target_compile_definitions(orca-slice-engine PRIVATE BOOST_LOG_DYN_LINK)
 endif()
 
-# Link libraries - only core libslic3r, no GUI
+# Link libraries - only core libslic3r and its dependencies
+# libslic3r already pulls in all necessary dependencies transitively
 target_link_libraries(orca-slice-engine
-    libslic3r
-    cereal::cereal
-    boost_libs
-    TBB::tbb
-    TBB::tbbmalloc
-    nanosvg
+    libslic3r          # Core slicing library (pulls all necessary deps)
+    cereal::cereal     # Serialization
+    boost_libs         # Boost filesystem, log, etc.
+    TBB::tbb           # Parallel processing
+    TBB::tbbmalloc     # TBB memory allocator
+    nanosvg            # SVG parsing (for thumbnails)
+    OpenSSL::SSL       # HTTPS support
+    OpenSSL::Crypto    # Crypto functions
 )
 
 # Platform-specific configurations
@@ -60,6 +63,11 @@ else ()
         Threads::Threads
     )
 endif()
+
+# Set output directory
+set_target_properties(orca-slice-engine PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
 
 # Install target
 install(TARGETS orca-slice-engine RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

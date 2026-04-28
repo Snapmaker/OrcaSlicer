@@ -3322,7 +3322,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 append(fixed_state_masks_union, state_masks);
         if (fixed_state_masks_union.size() > 1)
             fixed_state_masks_union = union_ex(fixed_state_masks_union);
-        if (interval.has_mixed_paint && !fixed_state_masks_union.empty()) {
+        if (interval.has_mixed_paint && local_z_whole_objects && !fixed_state_masks_union.empty()) {
             if (!base_masks.empty()) {
                 base_masks = diff_ex(base_masks, fixed_state_masks_union);
                 if (!base_masks.empty()) {
@@ -3491,6 +3491,64 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
 
         const bool split_interval = interval.has_mixed_paint && (isolated_multi_row_mode || pass_heights.size() > 1);
         const bool force_height_resolve = true;
+        auto build_whole_object_fixed_plans = [&](size_t first_pass_index) {
+            std::vector<SubLayerPlan> fixed_plans;
+            if (!local_z_whole_objects || fixed_state_masks_union.empty() || interval.base_height <= EPSILON)
+                return fixed_plans;
+
+            const std::vector<double> fixed_z_cuts {
+                interval.z_lo,
+                interval.z_lo + 0.5 * interval.base_height,
+                interval.z_hi
+            };
+            const size_t fixed_pass_count      = fixed_z_cuts.size() - 1;
+            const size_t fixed_dependency_group = mixed_rows.size() + 1;
+            for (size_t fixed_pass_idx = 0; fixed_pass_idx < fixed_pass_count; ++fixed_pass_idx) {
+                const double z_lo = fixed_z_cuts[fixed_pass_idx];
+                const double z_hi = fixed_z_cuts[fixed_pass_idx + 1];
+                const double pass_height = z_hi - z_lo;
+                if (pass_height <= EPSILON)
+                    continue;
+
+                const std::vector<ExPolygons> fixed_masks_for_pass =
+                    build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
+                                                                  prev_fixed_state_masks_by_extruder,
+                                                                  next_fixed_state_masks_by_extruder,
+                                                                  fixed_pass_idx,
+                                                                  fixed_pass_count);
+
+                SubLayerPlan fixed_plan;
+                fixed_plan.layer_id         = layer_id;
+                fixed_plan.pass_index       = first_pass_index + fixed_plans.size();
+                fixed_plan.split_interval   = true;
+                fixed_plan.z_lo             = z_lo;
+                fixed_plan.z_hi             = z_hi;
+                fixed_plan.print_z          = z_hi;
+                fixed_plan.flow_height      = pass_height;
+                fixed_plan.dependency_group = fixed_dependency_group;
+                fixed_plan.dependency_order = fixed_pass_idx;
+                fixed_plan.painted_masks_by_extruder.assign(num_physical, ExPolygons());
+                fixed_plan.fixed_painted_masks_by_extruder.assign(num_physical, ExPolygons());
+
+                bool plan_has_fixed_masks = false;
+                for (size_t extruder_idx = 0; extruder_idx < fixed_masks_for_pass.size() &&
+                                             extruder_idx < fixed_plan.fixed_painted_masks_by_extruder.size();
+                     ++extruder_idx) {
+                    if (fixed_masks_for_pass[extruder_idx].empty())
+                        continue;
+                    append(fixed_plan.fixed_painted_masks_by_extruder[extruder_idx], fixed_masks_for_pass[extruder_idx]);
+                    plan_has_fixed_masks = true;
+                }
+                if (!plan_has_fixed_masks)
+                    continue;
+
+                for (ExPolygons &masks : fixed_plan.fixed_painted_masks_by_extruder)
+                    if (masks.size() > 1)
+                        masks = union_ex(masks);
+                fixed_plans.emplace_back(std::move(fixed_plan));
+            }
+            return fixed_plans;
+        };
         if (split_interval) {
             ++split_intervals;
             bool   interval_has_split_painted_masks = false;
@@ -3607,41 +3665,41 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 }
 
                 if (!isolated_plans.empty()) {
-                    std::sort(isolated_plans.begin(), isolated_plans.end(), [](const SubLayerPlan &lhs, const SubLayerPlan &rhs) {
-                        if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
-                            return lhs.print_z < rhs.print_z;
-                        if (std::abs(lhs.z_lo - rhs.z_lo) > EPSILON)
-                            return lhs.z_lo < rhs.z_lo;
-                        return lhs.pass_index < rhs.pass_index;
-                    });
+                    auto sort_local_z_plans = [](std::vector<SubLayerPlan> &plans) {
+                        std::sort(plans.begin(), plans.end(), [](const SubLayerPlan &lhs, const SubLayerPlan &rhs) {
+                            if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
+                                return lhs.print_z < rhs.print_z;
+                            if (std::abs(lhs.z_lo - rhs.z_lo) > EPSILON)
+                                return lhs.z_lo < rhs.z_lo;
+                            return lhs.pass_index < rhs.pass_index;
+                        });
+                    };
+
+                    sort_local_z_plans(isolated_plans);
+
+                    std::vector<SubLayerPlan> fixed_plans = build_whole_object_fixed_plans(isolated_plans.size());
+                    if (!fixed_plans.empty()) {
+                        isolated_plans.insert(isolated_plans.end(),
+                                              std::make_move_iterator(fixed_plans.begin()),
+                                              std::make_move_iterator(fixed_plans.end()));
+                        sort_local_z_plans(isolated_plans);
+                    }
+
                     double min_flow_height = isolated_plans.front().flow_height;
                     double max_flow_height = isolated_plans.front().flow_height;
                     for (size_t idx = 0; idx < isolated_plans.size(); ++idx) {
                         isolated_plans[idx].pass_index = idx;
                         min_flow_height = std::min(min_flow_height, isolated_plans[idx].flow_height);
                         max_flow_height = std::max(max_flow_height, isolated_plans[idx].flow_height);
-                        const std::vector<ExPolygons> fixed_masks_for_pass =
-                            build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
-                                                                          prev_fixed_state_masks_by_extruder,
-                                                                          next_fixed_state_masks_by_extruder,
-                                                                          idx,
-                                                                          isolated_plans.size());
-                        bool plan_has_fixed_masks = false;
-                        for (size_t extruder_idx = 0; extruder_idx < fixed_masks_for_pass.size() &&
-                                                     extruder_idx < isolated_plans[idx].fixed_painted_masks_by_extruder.size();
-                             ++extruder_idx) {
-                            if (fixed_masks_for_pass[extruder_idx].empty())
-                                continue;
-                            append(isolated_plans[idx].fixed_painted_masks_by_extruder[extruder_idx], fixed_masks_for_pass[extruder_idx]);
-                            plan_has_fixed_masks = true;
-                        }
                         for (ExPolygons &masks : isolated_plans[idx].painted_masks_by_extruder)
                             if (masks.size() > 1)
                                 masks = union_ex(masks);
                         for (ExPolygons &masks : isolated_plans[idx].fixed_painted_masks_by_extruder)
                             if (masks.size() > 1)
                                 masks = union_ex(masks);
-                        if (plan_has_fixed_masks) {
+                        if (std::any_of(isolated_plans[idx].fixed_painted_masks_by_extruder.begin(),
+                                        isolated_plans[idx].fixed_painted_masks_by_extruder.end(),
+                                        [](const ExPolygons &masks) { return !masks.empty(); })) {
                             ++split_passes_with_painted_masks;
                             interval_has_split_painted_masks = true;
                         }
@@ -3777,17 +3835,6 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         append(plan.painted_masks_by_extruder[target_extruder - 1], state_masks);
                         pass_has_painted_masks = true;
                     }
-                    const std::vector<ExPolygons> fixed_masks_for_pass =
-                        build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
-                                                                      prev_fixed_state_masks_by_extruder,
-                                                                      next_fixed_state_masks_by_extruder,
-                                                                      pass_idx,
-                                                                      pass_heights.size());
-                    for (size_t extruder_idx = 0; extruder_idx < fixed_masks_for_pass.size(); ++extruder_idx)
-                        if (!fixed_masks_for_pass[extruder_idx].empty()) {
-                            append(plan.fixed_painted_masks_by_extruder[extruder_idx], fixed_masks_for_pass[extruder_idx]);
-                            pass_has_painted_masks = true;
-                        }
                     for (ExPolygons &masks : plan.painted_masks_by_extruder)
                         if (masks.size() > 1)
                             masks = union_ex(masks);
@@ -3812,6 +3859,15 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                             row_uses_direct_multicolor_solver[mixed_idx] == 0)
                             ++row_cadence_index[mixed_idx];
                     z_cursor = z_next;
+                }
+                std::vector<SubLayerPlan> fixed_plans = build_whole_object_fixed_plans(pass_idx);
+                for (SubLayerPlan &fixed_plan : fixed_plans) {
+                    interval.sublayer_height = std::min(interval.sublayer_height, fixed_plan.flow_height);
+                    plans.emplace_back(std::move(fixed_plan));
+                    ++interval.sublayer_count;
+                    ++total_generated_sublayer_cnt;
+                    ++split_passes_with_painted_masks;
+                    interval_has_split_painted_masks = true;
                 }
                 for (size_t row_idx = 0; row_idx < row_seen_sequence_in_interval.size(); ++row_idx)
                     if (row_seen_sequence_in_interval[row_idx] != 0 &&

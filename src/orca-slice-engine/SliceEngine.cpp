@@ -58,12 +58,19 @@ bool SliceEngine::run() {
         process_plate(plate_id);
     }
 
-    // Package output
+    // Package output — only if no errors occurred
     bool has_output = !m_plate_results.empty();
-    if (has_output && (m_cfg.format == OutputFormat::GCODE_3MF || !m_cfg.single_plate))
+    if (has_output && !m_any_error && (m_cfg.format == OutputFormat::GCODE_3MF || !m_cfg.single_plate))
         package_output();
 
-    if (has_output)
+    // For single-plate GCODE mode, the file is written directly to m_output_path
+    // during export_gcode. Remove it if errors occurred.
+    if (m_any_error && m_cfg.single_plate && m_cfg.format == OutputFormat::GCODE) {
+        boost::filesystem::remove(m_output_path);
+        BOOST_LOG_TRIVIAL(info) << "Removed output file due to errors: " << m_output_path;
+    }
+
+    if (has_output && !m_any_error)
         BOOST_LOG_TRIVIAL(info) << "Done!";
 
     // Build JSON statistics
@@ -302,6 +309,7 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
 
     if (has_partly_outside) {
         BOOST_LOG_TRIVIAL(error) << "Plate " << plate_id << " has objects outside build volume, skipping";
+        m_any_error = true;
         return false;
     }
     return true;
@@ -406,6 +414,7 @@ bool SliceEngine::run_validation(int plate_id, Print& print) {
         issue.z_height = -1.0;
         issue.message = err.string + opt_hint;
         m_stats.issues.push_back(issue);
+        m_any_error = true;
         return false;
     }
 
@@ -428,6 +437,7 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
             issue.message = ex.what();
             m_stats.issues.push_back(issue);
         }
+        m_any_error = true;
         return false;
     }
     catch (SlicingError& ex) {
@@ -438,6 +448,7 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
         issue.z_height = -1.0;
         issue.message = ex.what();
         m_stats.issues.push_back(issue);
+        m_any_error = true;
         return false;
     }
     catch (CanceledException&) {
@@ -448,6 +459,7 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
         issue.z_height = -1.0;
         issue.message = "Slicing was cancelled";
         m_stats.issues.push_back(issue);
+        m_any_error = true;
         return false;
     }
     catch (std::exception& e) {
@@ -458,6 +470,7 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
         issue.z_height = -1.0;
         issue.message = e.what();
         m_stats.issues.push_back(issue);
+        m_any_error = true;
         return false;
     }
 
@@ -497,6 +510,7 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
         issue.z_height = -1.0;
         issue.message = std::string("G-code export failed: ") + e.what();
         m_stats.issues.push_back(issue);
+        m_any_error = true;
         m_plate_results[plate_id] = PlateSliceResult{};
         return false;
     }

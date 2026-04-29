@@ -977,10 +977,10 @@ int main(int argc, char* argv[]) {
             for (const auto& w : slice_result.gcode_result.warnings) {
                 if (w.level >= 2) {
                     log_plate_message("[Post-processing]", "ERROR", current_plate_id,
-                        w.msg + " (code: " + std::to_string(w.error_code) + ")");
+                        w.msg + " (code: " + w.error_code + ")");
                 } else if (w.level == 1) {
                     log_plate_message("[Post-processing]", "WARNING", current_plate_id,
-                        w.msg + " (code: " + std::to_string(w.error_code) + ")");
+                        w.msg + " (code: " + w.error_code + ")");
                     has_postprocess_warning = true;
                 } else {
                     log_plate_message("[Post-processing]", "TIP", current_plate_id, w.msg);

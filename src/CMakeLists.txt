@@ -114,6 +114,8 @@ if(ORCA_TOOLS)
     endif()
 endif()
 
+# Snapmaker_Orca target (GUI mode only)
+if (SLIC3R_GUI)
 # Create a slic3r executable
 # Process mainfests for various platforms.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.rc.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc @ONLY)
@@ -154,7 +156,6 @@ else ()
 endif ()
 
 # Add the Slic3r GUI library, libcurl, OpenGL and GLU libraries.
-if (SLIC3R_GUI)
 #    target_link_libraries(Snapmaker_Orca ws2_32 uxtheme setupapi libslic3r_gui ${wxWidgets_LIBRARIES})
 target_link_libraries(Snapmaker_Orca libslic3r_gui)
     if (MSVC)
@@ -172,7 +173,6 @@ target_link_libraries(Snapmaker_Orca libslic3r_gui)
     #    find_library(PSAPI_LIB NAMES Psapi)
     #    target_link_libraries(Snapmaker_Orca ${PSAPI_LIB})
     #endif ()
-endif ()
 
 # Sentry crash reporting integration
 if (SLIC3R_SENTRY)
@@ -187,7 +187,7 @@ if (WIN32)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -municode")
     endif()
 
-    
+
     add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp common_func/common_func.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
     # Generate debug symbols even in release mode.
     if(MSVC)
@@ -196,7 +196,7 @@ if (WIN32)
     target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
-    
+
     if (SLIC3R_SENTRY)
         target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry nlohmann_json Snapmaker_Orca)
     else()
@@ -329,7 +329,7 @@ else ()
                 VERBATIM)
             # Update the rpath for libsentry.dylib
             add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-                COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true            
+                COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true
                 COMMENT "Updating rpath for libsentry.dylib"
                 VERBATIM)
         endif()
@@ -358,3 +358,5 @@ if (WIN32)
 else ()
     install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()
+
+endif() # SLIC3R_GUI

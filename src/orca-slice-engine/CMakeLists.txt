@@ -19,6 +19,28 @@ target_include_directories(orca-slice-engine PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 
+# Find cereal serialization library (header-only)
+# When building as part of the main project, this is handled by the root CMakeLists.txt.
+# When building standalone, we need to configure it ourselves.
+if (NOT TARGET cereal::cereal)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/modules/")
+    find_package(cereal QUIET)
+    if (TARGET cereal AND NOT TARGET cereal::cereal)
+        # Fix the include path set by Findcereal.cmake (its relative "include" resolves
+        # to this subdirectory, not the repo root where headers actually live)
+        target_include_directories(cereal INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/build/OrcaSlicer_dep/usr/local/include
+        )
+        add_library(cereal::cereal ALIAS cereal)
+    elseif (NOT TARGET cereal)
+        add_library(cereal INTERFACE)
+        target_include_directories(cereal INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/build/OrcaSlicer_dep/usr/local/include
+        )
+        add_library(cereal::cereal ALIAS cereal)
+    endif()
+endif()
+
 # Compile definitions
 target_compile_definitions(orca-slice-engine PRIVATE
     -DUSE_TBB
@@ -64,9 +86,9 @@ else ()
     )
 endif()
 
-# Set output directory
+# Set output directory to build root
 set_target_properties(orca-slice-engine PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/src/orca-slice-engine"
 )
 
 # Install target

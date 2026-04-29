@@ -1528,6 +1528,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
     filaments_cnt = std::min(filaments_cnt, static_cast<int>(icons.size()));
     filaments_cnt = std::min(filaments_cnt, static_cast<int>(filament_presets.size()));
 
+    // Add physical filaments as merge targets
     for (int i = 0; i < filaments_cnt; i++) {
         if (i == active_filament_menu_id)
             continue;
@@ -1539,8 +1540,47 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
             sub_menu, wxID_ANY, item_name, "", [i](wxCommandEvent&) { plater()->sidebar().change_filament(-2, i); }, *icons[i], menu,
             []() { return true; }, m_parent);
     }
+
+    // Add mixed filaments as merge targets
+    auto& mixed_mgr = wxGetApp().preset_bundle->mixed_filaments;
+    const auto& mfs = mixed_mgr.mixed_filaments();
+    const size_t num_physical = filament_presets.size();
+    
+    // Get icon dimensions
+    const double em = Slic3r::GUI::wxGetApp().em_unit();
+    const int icon_width = lround(2 * em);
+    const int icon_height = lround(2 * em);
+    
+    size_t visible_idx = 0;
+    for (size_t j = 0; j < mfs.size(); ++j) {
+        if (mfs[j].deleted) continue;
+        
+        const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
+        wxString item_name = wxString::Format(_L("Mixed Filament %d"), virtual_id);
+        
+        // Create a colored bitmap for the mixed filament
+        std::string color_str = mfs[j].display_color.empty() ? "#808080" : mfs[j].display_color;
+        wxBitmap* mixed_bmp = get_extruder_color_icon(color_str, std::to_string(virtual_id), icon_width, icon_height);
+        
+        size_t captured_visible_idx = visible_idx;
+        append_menu_item(
+            sub_menu, wxID_ANY, item_name, "", [captured_visible_idx, num_physical](wxCommandEvent&) {
+                // Target is mixed filament with visible_idx
+                // Virtual ID (0-based) = num_physical + visible_idx
+                size_t target_virtual_id = num_physical + captured_visible_idx;
+                plater()->sidebar().change_filament(-2, target_virtual_id);
+            }, *mixed_bmp, menu,
+            []() { return true; }, m_parent);
+        
+        visible_idx++;
+    }
+
+    // Show merge menu if there are any targets available
+    size_t total_targets = filaments_cnt + visible_idx;
     append_submenu(
-        menu, sub_menu, wxID_ANY, _L("Merge with"), "", "", [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
+        menu, sub_menu, wxID_ANY, _L("Merge with"), "", "", [total_targets, active_filament_menu_id]() { 
+            return total_targets > 1 || (total_targets == 1 && active_filament_menu_id < 0); 
+        }, m_parent);
 }
 
 //BBS: add part plate related logic

@@ -1488,7 +1488,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 return;
             }
 
-            if (!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() || !j_value.count("filament_type") ||
+            if (!j_value.count("nozzle_diameters") ||!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
+                !j_value.count("filament_type") ||
                 !j_value["filament_type"].is_array() || !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
                 ((!j_value.count("filament_color") || !j_value["filament_color"].is_array()) &&
                  (!j_value.count("filament_color_rgba") || !j_value["filament_color_rgba"].is_array())) ||
@@ -1502,6 +1503,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
             // 存储耗材，并触发更新
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+            auto& machine_nozzles = wxGetApp().preset_bundle->m_connect_machine_info_list;
             static auto tmp_filaments = filaments;
 
             if (m_first_connected) {
@@ -1509,11 +1511,13 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 m_first_connected = false;
             }
 
+            machine_nozzles.clear();
             filaments.clear();
 
             size_t count = 0;
             for (size_t i = 0; i < j_value["filament_official"].size(); ++i) {
                 bool is_official = j_value["filament_official"][i].get<bool>();
+                ConnectMachineInfo machineData;
                 if (/*is_official*/ true) {
                     std::string vendor   = j_value["filament_vendor"][i].get<std::string>();
                     std::string type     = j_value["filament_type"][i].get<std::string>();
@@ -1539,7 +1543,10 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
                         j_value["filament_color_rgba"].size() != 0) {
                         std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                        filaments.insert({int(i), {name, str_color}});
+                        filaments.insert({int(i), {name, str_color}});    
+                        machineData.index = i;
+                        machineData.color_info = str_color;
+                        machineData.filament_info = name;
                     } else {
                         if (j_value["filament_color"][i].is_number()) {
                             int                color = j_value["filament_color"][i].get<int>();
@@ -1549,11 +1556,20 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
                             std::string str_color = oss.str();
                             filaments.insert({int(i), {name, str_color}});
+                            machineData.index         = i;
+                            machineData.color_info    = str_color;
+                            machineData.filament_info = name;
                         } else {
                             std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
                             filaments.insert({int(i), {name, str_color}});
+                            machineData.index         = i;
+                            machineData.color_info    = str_color;
+                            machineData.filament_info = name;
                         }
                     }
+                    if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
+                        machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
+                    machine_nozzles.push_back(machineData);
                 }
             }
 
@@ -1566,7 +1582,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 if (tmp_filaments.count(iter->first)) {
                     auto pair     = iter->second;
                     auto tmp_pair = tmp_filaments[iter->first];
-                    if (pair.first == tmp_pair.first && pair.second == pair.second) {
+                    if (pair.first == tmp_pair.first && pair.second == tmp_pair.second) {
                         continue;
                     } else {
                         need_load_preset = true;
@@ -3123,6 +3139,25 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             response["filament_extruder_map"] = object;
         }
 
+        //nozzle info
+        PartPlate*  cur_plate        = wxGetApp().plater()->get_partplate_list().get_curr_plate();      
+        if (cur_plate)
+        {
+            auto*  nozzle_opt = cur_plate->fff_print()->config().option<ConfigOptionFloats>("nozzle_diameter");
+            std::vector<std::string> nozzle_list;
+            if (nozzle_opt) {
+                for (float d : nozzle_opt->values) {
+                    nozzle_list.push_back(std::abs(d - 0.2f) < 1e-5f ? "0.2" :
+                                          std::abs(d - 0.4f) < 1e-5f ? "0.4" :
+                                          std::abs(d - 0.6f) < 1e-5f ? "0.6" :
+                                          std::abs(d - 0.8f) < 1e-5f ? "0.8" :
+                                                                       std::to_string(d));
+                }
+
+                response["nozzle_info"] = nozzle_list;
+            }
+        }
+
         // printer model
         auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
         std::string c_preset = "";
@@ -4386,26 +4421,40 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
 
         if (fileUrl.empty() || fileName.empty()) {
-            handle_general_fail(-1, "file_url and file_name are required");
+            handle_general_fail(-1, wxString::FromUTF8("file_url and file_name are required"));
             return;
         }
 
         // Use Download Manager
         DownloadManager* download_mgr = wxGetApp().download_manager();
         if (!download_mgr) {
-            handle_general_fail(-1, "Download Manager not available");
+            handle_general_fail(-1, wxString::FromUTF8("Download Manager not available"));
             return;
         }
 
-        wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+        // WebView script message runs inside the webview event handler; calling ShowModal() synchronously
+        // (via GenericDownloadDialog in downloadOpenProject) causes re-entrancy / crashes on Windows.
+        // Defer to the next event-loop iteration — same pattern as sw_UserLogin().
+        std::shared_ptr<SSWCP_UserLogin_Instance> self =
+            std::static_pointer_cast<SSWCP_UserLogin_Instance>(shared_from_this());
+        wxGetApp().CallAfter([self, fileUrl, fileName]() {
+            if (!wxGetApp().mainframe) {
+                self->handle_general_fail(-1, wxString::FromUTF8("Main window not available"));
+                return;
+            }
+            try {
+                wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
+                self->m_status = 0;
+                self->m_msg    = "success";
+                self->send_to_js();
+                self->finish_job();
+            } catch (const std::exception& e) {
+                self->handle_general_fail(-1, wxString::FromUTF8(e.what()));
+            }
+        });
 
-        m_status = 0;
-        m_msg    = "success";
-        send_to_js();
-        finish_job();
-
-    } catch (std::exception& e) {
-        handle_general_fail(-1, e.what());
+    } catch (const std::exception& e) {
+        handle_general_fail(-1, wxString::FromUTF8(e.what()));
     }
 }
 
@@ -5599,6 +5648,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                             }
 
                                         } else {
+                      
                                             info.nozzle_sizes = nozzle_diameters;
                                             info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
                                             wxGetApp().app_config->save_device_info(info);
@@ -5794,13 +5844,13 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     // wxGetApp().mainframe->load_printer_url("http://" + ip);  //到时全部加载本地交互页面
 
                                     if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                        wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                        wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
                                                                                "/web/flutter_web/index.html?path=2");
                                         auto     real_url = wxGetApp().get_international_url(url);
                                         wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
                                     } else {
                                         if (reload_device_view) {
-                                            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+                                            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
                                                                                    "/web/flutter_web/index.html?path=2");
                                             auto     real_url = wxGetApp().get_international_url(url);
 

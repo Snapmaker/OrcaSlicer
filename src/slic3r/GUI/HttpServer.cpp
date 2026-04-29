@@ -228,13 +228,23 @@ void HttpServer::IOServer::stop_all()
 
 HttpServer::IOServer::IOServer(HttpServer& server) : server(server), acceptor(io_service)
 {
-    boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
-    acceptor.open(endpoint.protocol());
-    acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
-    acceptor.bind(endpoint);
+    try {
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
+        acceptor.open(endpoint.protocol());
+        acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+        acceptor.bind(endpoint);
+    } 
+    catch (const boost::system::system_error& errorInfo)
+    {
+        BOOST_LOG_TRIVIAL(error) << "local server start failed with port:" << server.port;
+        BOOST_LOG_TRIVIAL(error) << "local server start failed with errorInfo:" << errorInfo.what();
+    }
 }
 
-HttpServer::HttpServer(boost::asio::ip::port_type port) : port(port) {}
+HttpServer::HttpServer(boost::asio::ip::port_type port) : port(port)
+{ 
+    std::cout << "local server init";
+}
 
 HttpServer::~HttpServer()
 {
@@ -265,9 +275,12 @@ boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port
     // 尝试从起始端口开始查找可用端口
     for (boost::asio::ip::port_type p = start_port; p < start_port + 1000; ++p) {
         if (is_port_available(p)) {
+            BOOST_LOG_TRIVIAL(error) << "use new port for start server:"<<p;
             return p;
         }
     }
+    BOOST_LOG_TRIVIAL(fatal) << "no available port for start server:";
+
     throw std::runtime_error("No available ports found");
 }
 
@@ -302,6 +315,7 @@ void HttpServer::start()
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         if (!start_http_server) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server:" << port;
             throw std::runtime_error("Failed to start HTTP server");
         }
 
@@ -370,20 +384,20 @@ void HttpServer::restart()
 bool HttpServer::is_healthy()
 {
     if (!start_http_server || !server_) {
-        BOOST_LOG_TRIVIAL(debug) << "Health check failed: server not started or server object is null";
+        BOOST_LOG_TRIVIAL(fatal) << "Health check failed: server not started or server object is null";
         return false;
     }
     
     try {
         // 检查acceptor是否正常打开
         if (!server_->acceptor.is_open()) {
-            BOOST_LOG_TRIVIAL(debug) << "Health check failed: acceptor is not open";
+            BOOST_LOG_TRIVIAL(fatal) << "Health check failed: acceptor is not open";
             return false;
         }
         
         // 检查io_service是否正在运行
         if (server_->io_service.stopped()) {
-            BOOST_LOG_TRIVIAL(debug) << "Health check failed: io_service is stopped";
+            BOOST_LOG_TRIVIAL(fatal) << "Health check failed: io_service is stopped";
             return false;
         }
         
@@ -401,10 +415,10 @@ bool HttpServer::is_healthy()
             return true;
         }
         
-        BOOST_LOG_TRIVIAL(debug) << "Health check failed: test connection failed with error: " << ec.message();
+        BOOST_LOG_TRIVIAL(fatal) << "Health check failed: test connection failed with error: " << ec.message();
         return false;
     } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(debug) << "Health check failed with exception: " << e.what();
+        BOOST_LOG_TRIVIAL(fatal) << "Health check failed with exception: " << e.what();
         return false;
     }
 }
@@ -457,7 +471,7 @@ void HttpServer::start_health_check()
             
             // 检查服务器是否健康，或者服务器是否已经停止运行
             if ((start_http_server && !is_healthy()) || !start_http_server) {
-                BOOST_LOG_TRIVIAL(warning) << "HTTP server health check failed or server stopped, performing restart...";
+                BOOST_LOG_TRIVIAL(error) << "HTTP server health check failed or server stopped, performing restart...";
                 try {
                     // 在健康检查线程中直接执行重启，避免通过标志传递
                     restart();
@@ -482,7 +496,7 @@ void HttpServer::stop_health_check()
         std::lock_guard<std::mutex> lock(m_health_check_mutex);
         
         if (!m_health_check_enabled) {
-            BOOST_LOG_TRIVIAL(debug) << "Health check is not running";
+            BOOST_LOG_TRIVIAL(error) << "Health check is not running";
             return;
         }
         
@@ -697,6 +711,11 @@ std::shared_ptr<HttpServer::Response> HttpServer::web_server_handle_request(cons
 
     std::string file_path = map_url_to_file_path(url);
 
+    if (file_path.empty())
+    {
+        BOOST_LOG_TRIVIAL(error) << "file path is null for: " << url;
+    }
+
     BOOST_LOG_TRIVIAL(info) << "Handling file_path request for URL: " << file_path;
     return std::make_shared<ResponseFile>(file_path);
 }
@@ -715,10 +734,17 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
     }
 
     if (trimmed_url == "/") {
-        trimmed_url = "/flutter_web/index.html"; // 默认首页
-    } else if (trimmed_url.substr(0, 11) == "/localfile/") {
+        trimmed_url = "/flutter_web/index.html"; // defualt home page
+    }
+    else if (trimmed_url.substr(0, 11) == "/localfile/") {
         auto real_path = trimmed_url.substr(11);
-        return real_path.ToStdString(wxConvUTF8);
+        auto realUTF8Path = real_path.ToStdString(wxConvUTF8);
+
+        if (realUTF8Path.empty()) {
+            BOOST_LOG_TRIVIAL(error) << "realUTF8Path is null for: " << trimmed_url;
+        }
+
+        return realUTF8Path;
     }
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
@@ -727,13 +753,25 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
         copy_directory_recursively(source_path, target_path);
     }
 
-    if (trimmed_url.find("flutter_web") == std::string::npos) {
-        wxString res = wxString::FromUTF8(resources_dir()) + trimmed_url;
-        return res.ToStdString(wxConvUTF8);
-    } else {
-        wxString res = wxString::FromUTF8(data_dir()) + trimmed_url;
-        return res.ToStdString(wxConvUTF8);
+    wxString res = "";
+    if (trimmed_url.find("flutter_web") == std::string::npos) 
+    {
+       res = wxString::FromUTF8(resources_dir()) + trimmed_url;
     }
+    else
+    {
+       res = wxString::FromUTF8(data_dir()) + trimmed_url;
+    }
+ 
+    auto strUTF8 = res.ToStdString(wxConvUTF8);
+
+    if (strUTF8.empty())
+    {
+        BOOST_LOG_TRIVIAL(error) << "strUTF8 is null for: " << res;
+    }
+
+    return strUTF8;
+    
 }
 
 void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)

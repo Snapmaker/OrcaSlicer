@@ -4,7 +4,6 @@
 #include "libslic3r.h"
 #include <string>
 #include <charconv>
-#include <unordered_map>
 #include "Extruder.hpp"
 #include "Point.hpp"
 #include "PrintConfig.hpp"
@@ -120,26 +119,6 @@ public:
     void set_is_first_layer(bool bval) { m_is_first_layer = bval; }
     GCodeFlavor get_gcode_flavor() const { return config.gcode_flavor; }
 
-    // SM Orca: 设置耗材-挤出机映射
-    void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
-    const std::unordered_map<int, int>& get_filament_extruder_map() const { return m_filament_extruder_map; }
-    // SM Orca: 获取物理挤出机ID
-    // 关键修复：当映射表为空时，使用模运算而不是直接返回耗材ID，避免越界
-    // 例如：4个物理挤出机时，耗材0-7分别映射到0,1,2,3,0,1,2,3
-    int get_physical_extruder(int filament_idx) const {
-        auto it = m_filament_extruder_map.find(filament_idx);
-        int physical_extruder_id;
-        if (it != m_filament_extruder_map.end()) {
-            // 从映射表获取
-            physical_extruder_id = it->second;
-        } else {
-            // 映射表为空或没有该耗材的映射，使用默认模运算映射
-            physical_extruder_id = filament_idx % m_physical_extruder_count;
-        }
-
-        return physical_extruder_id;
-    }
-
     // Returns whether this flavor supports separate print and travel acceleration.
     static bool supports_separate_travel_acceleration(GCodeFlavor flavor);
   private:
@@ -190,11 +169,6 @@ public:
     bool            m_is_bbl_printers = false;
     double          m_current_speed;
     bool            m_is_first_layer = true;
-
-    // SM Orca: 耗材到物理挤出机的映射表（filament_idx -> physical_extruder_id）
-    std::unordered_map<int, int> m_filament_extruder_map;
-    // SM Orca: 物理挤出机数量（用于默认模运算映射）
-    size_t m_physical_extruder_count = 1;  // 默认为1，防止除零
 
     enum class Acceleration {
         Travel,

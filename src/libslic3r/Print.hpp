@@ -23,7 +23,7 @@
 
 #include <functional>
 #include <set>
-#include <unordered_map>
+#include <vector>
 
 #include "calib.hpp"
 
@@ -38,6 +38,9 @@ class SupportLayer;
 // BBS
 class TreeSupportData;
 class TreeSupport;
+class PresetCollection;
+class PresetBundle;
+struct NozzleFilamentRuleMismatch;
 
 #define MAX_OUTER_NOZZLE_DIAMETER   4
 // BBS: move from PrintObjectSlice.cpp
@@ -888,35 +891,14 @@ public:
 
     std::vector<unsigned int> object_extruders() const;
     std::vector<unsigned int> support_material_extruders() const;
-
-    // SM Orca: 设置耗材-挤出机映射
-    void set_filament_extruder_map(const std::unordered_map<int, int>& map) { m_filament_extruder_map = map; }
-    // SM Orca: 获取耗材-挤出机映射表
-    const std::unordered_map<int, int>& get_filament_extruder_map() const { return m_filament_extruder_map; }
-    // SM Orca: 获取物理挤出机ID（根据耗材索引）
-    // 关键修复：当映射表为空时，使用模运算而不是直接返回耗材ID，避免越界
-    int get_physical_extruder(int filament_idx) const {
-        auto it = m_filament_extruder_map.find(filament_idx);
-        int physical_extruder_id;
-        if (it != m_filament_extruder_map.end()) {
-            // 从映射表获取
-            physical_extruder_id = it->second;
-        } else {
-            // 映射表为空或没有该耗材的映射，使用默认模运算映射
-            size_t physical_count = m_config.nozzle_diameter.values.size();
-            if (physical_count == 0) {
-                // 防止除零，使用安全的默认值
-                physical_extruder_id = 0;
-                
-            } else {
-                physical_extruder_id = filament_idx % physical_count;
-            }
-        }
-        return physical_extruder_id;
-    }
-    // SM Orca: Initialize filament-to-physical-extruder mapping table
-    void                initialize_filament_extruder_map();
     std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
+    // On-demand evaluation vs filament_hot_bed_nozzles.json (calls extruders(true) once internally).
+    void                filament_rule_mismatch_flags(NozzleFilamentRuleMismatch& out_nozzle_mismatch,
+                                                     bool& out_gesp,
+                                                     bool& out_pei_not_pla,
+                                                     bool& out_pei_tpu,
+                                                     const PresetBundle* preset_bundle = nullptr) const;
+    
     double              max_allowed_layer_height() const;
     bool                has_support_material() const;
     // Make sure the background processing has no access to this model_object during this call!
@@ -1094,9 +1076,6 @@ private:
     
     //SoftFever: calibration
     Calib_Params m_calib_params;
-
-    // SM Orca: 耗材到物理挤出机的映射表
-    std::unordered_map<int, int> m_filament_extruder_map;
 
     // To allow GCode to set the Print's GCodeExport step status.
     friend class GCode;

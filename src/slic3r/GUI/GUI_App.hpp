@@ -31,9 +31,10 @@
 #include <wx/snglinst.h>
 #include <wx/msgdlg.h>
 
+#include <atomic>
 #include <mutex>
 #include <stack>
-
+#include <unordered_map>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
 #define LOG_FILES_MAX_NUM           30
@@ -251,6 +252,10 @@ private:
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
+    /// Set only for the duration of `MsgUpdateConfig::ShowModal()` in load_flutter_web (atomic: safe vs updater threads + CallAfter).
+    std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };
+    /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
+    std::atomic<bool> m_profile_config_update_dlg_open{ false };
 #ifdef __linux__
     bool            m_opengl_initialized{ false };
 #endif
@@ -336,7 +341,7 @@ private:
     bool             m_side_popup_status{false};
     bool             m_show_http_errpr_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;
+    //HttpServer       m_http_server;
 
 public:
     HttpServer       m_page_http_server;
@@ -407,6 +412,16 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
+    bool flutter_web_config_update_dlg_open() const
+    {
+        return m_flutter_web_config_update_dlg_open.load(std::memory_order_acquire);
+    }
+    void set_flutter_web_config_update_dlg_open(bool v)
+    {
+        m_flutter_web_config_update_dlg_open.store(v, std::memory_order_release);
+    }
+    bool profile_config_update_dlg_open() const { return m_profile_config_update_dlg_open.load(std::memory_order_acquire); }
+    void set_profile_config_update_dlg_open(bool v) { m_profile_config_update_dlg_open.store(v, std::memory_order_release); }
     std::string logo_name() const { return is_editor() ? "Snapmaker_Orca" : "Snapmaker_Orca-gcodeviewer"; }
     
     // SoftFever
@@ -422,6 +437,14 @@ private:
     wxString get_inf_dialog_contect () {return m_info_dialog_content;};
 
     std::vector<std::string> split_str(std::string src, std::string separator);
+    void            load_filament_hot_bed_nozzle_relations();
+    bool            has_filament_hot_bed_nozzle_rules() const;
+    bool            is_bed_filament_supported(const std::string& bed_key, const std::string& filament_type) const;
+    bool            is_bed_filament_warning(const std::string& bed_key, const std::string& filament_type) const;
+    bool            is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                               Slic3r::NozzleType nozzle_type = Slic3r::NozzleType::ntUndefine) const;
+    bool            is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
+                                               Slic3r::NozzleType nozzle_type = Slic3r::NozzleType::ntUndefine) const;
     // To be called after the GUI is fully built up.
     // Process command line parameters cached in this->init_params,
     // load configs, STLs etc.
@@ -497,6 +520,7 @@ private:
     void            check_printer_presets();
 
     void            recreate_GUI(const wxString& message);
+    void            schedule_recreate_gui_when_no_modal(const wxString& message);
     void            system_info();
     void            keyboard_shortcuts();
     void            load_project(wxWindow *parent, wxString& input_file) const;
@@ -604,12 +628,14 @@ private:
     void            sync_preset(Preset* preset);
     void            start_sync_user_preset(bool with_progress_dlg = false);
     void            stop_sync_user_preset();
-    void            start_http_server();
-    void            stop_http_server();
+    //void            start_http_server();
+    //void            stop_http_server();
 
     // page loading http server
     void            start_page_http_server();
     void            stop_page_http_server();
+    /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
+    boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
     void            switch_staff_pick(bool on);
     bool            check_privacy_update();
     
@@ -826,7 +852,6 @@ private:
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
     std::string             m_open_method;
-
     SMUserInfo m_login_userinfo;
 
 public:

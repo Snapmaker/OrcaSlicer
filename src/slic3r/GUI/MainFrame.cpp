@@ -1155,10 +1155,9 @@ void MainFrame::init_tabpanel() {
     Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent &evt) {
         wxString url = evt.GetString();
         wxString key = evt.GetAPIkey();
-        //select_tab(MainFrame::tpMonitor);
-        m_printer_view->Show();
         m_printer_view->load_url(url, key);
     });
+
     m_printer_view->Hide();
 
     if (wxGetApp().is_enable_multi_machine()) {
@@ -1255,8 +1254,6 @@ void MainFrame::show_device(bool bBBLPrinter) {
             Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
                 wxString url = evt.GetString();
                 wxString key = evt.GetAPIkey();
-                // select_tab(MainFrame::tpMonitor);
-                m_printer_view->Show();
                 m_printer_view->load_url(url, key);
             });
         }
@@ -1529,19 +1526,18 @@ bool MainFrame::can_send_gcode() const
     if (m_plater && !m_plater->model().objects.empty())
     {
         auto        devices     = wxGetApp().app_config->get_devices();
-        std::string preset_name = "Snapmaker U1 0.4 nozzle";
         const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
 
-        std::string local_name = "";
-        if (edit_preset.is_system) {
-            local_name = edit_preset.name;
-        } else {
-            const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(edit_preset);
-            local_name              = base_preset->name;
+        auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+        bool is_snapmaker_u1   = false;
+        if (printer_model_opt) {
+            std::string printer_model = printer_model_opt->value;
+            is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
         }
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
-        if (local_name == preset_name) {
+
+        if (is_snapmaker_u1)
+        {
             return true;
         }
 
@@ -1556,27 +1552,6 @@ bool MainFrame::can_send_gcode() const
     }
     return true;
 }
-
-/*bool MainFrame::can_export_gcode_sd() const
-{
-    if (m_plater == nullptr)
-        return false;
-
-    if (m_plater->model().objects.empty())
-        return false;
-
-    if (m_plater->is_export_gcode_scheduled())
-        return false;
-
-    // TODO:: add other filters
-
-    return wxGetApp().removable_drive_manager()->status().has_removable_drives;
-}
-
-bool MainFrame::can_eject() const
-{
-	return wxGetApp().removable_drive_manager()->status().has_eject;
-}*/
 
 bool MainFrame::can_slice() const
 {
@@ -2822,23 +2797,10 @@ void MainFrame::init_menubar_as_editor()
             [this](wxCommandEvent&) { m_plater->toggle_show_wireframe(); m_plater->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT)); }, this,
             [this]() { return m_plater->is_wireframe_enabled(); }, [this]() { return m_plater->is_show_wireframe(); }, this);*/
 
-        //viewMenu->AppendSeparator();
-        ////BBS orthogonal view
-        //append_menu_check_item(viewMenu, wxID_ANY, _L("Show Edges(TODO)"), _L("Show Edges."),
-        //    [this](wxCommandEvent& evt) {
-        //        wxGetApp().app_config->set("show_build_edges", evt.GetInt() == 1 ? "true" : "false");
-        //    }, nullptr, [this]() {return can_select(); }, [this]() {
-        //        std::string show_build_edges = wxGetApp().app_config->get("show_build_edges");
-        //        return show_build_edges.compare("true") == 0;
-        //    }, this);
     }
 
     wxWindowID config_id_base = wxWindow::NewControlId(int(ConfigMenuCnt));
-    //TODO remove
-    //auto config_wizard_name = _(ConfigWizard::name(true) + "(Debug)");
-    //const auto config_wizard_tooltip = from_u8((boost::format(_utf8(L("Run %s"))) % config_wizard_name).str());
-    //auto config_item = new wxMenuItem(m_topbar->GetTopMenu(), ConfigMenuWizard + config_id_base, config_wizard_name, config_wizard_tooltip);
-#ifdef __APPLE__
+   #ifdef __APPLE__
     wxWindowID bambu_studio_id_base = wxWindow::NewControlId(int(2));
     wxMenu* parent_menu = m_menubar->OSXGetAppleMenu();
     //auto preference_item = new wxMenuItem(parent_menu, OrcaSlicerMenuPreferences + bambu_studio_id_base, _L("Preferences") + "\t" + ctrl + ",", "");
@@ -2847,98 +2809,11 @@ void MainFrame::init_menubar_as_editor()
     auto preference_item = new wxMenuItem(parent_menu, ConfigMenuPreferences + config_id_base, _L("Preferences") + "\t" + ctrl + "P", "");
 
 #endif
-    //auto printer_item = new wxMenuItem(parent_menu, ConfigMenuPrinter + config_id_base, _L("Printer"), "");
-    //auto language_item = new wxMenuItem(parent_menu, ConfigMenuLanguage + config_id_base, _L("Switch Language"), "");
-//    parent_menu->Bind(wxEVT_MENU, [this, config_id_base](wxEvent& event) {
-//        switch (event.GetId() - config_id_base) {
-//        //case ConfigMenuLanguage:
-//        //{
-//        //    /* Before change application language, let's check unsaved changes on 3D-Scene
-//        //     * and draw user's attention to the application restarting after a language change
-//        //     */
-//        //    {
-//        //        // the dialog needs to be destroyed before the call to switch_language()
-//        //        // or sometimes the application crashes into wxDialogBase() destructor
-//        //        // so we put it into an inner scope
-//        //        wxString title = _L("Language selection");
-//        //        wxMessageDialog dialog(nullptr,
-//        //            _L("Switching the language requires application restart.\n") + "\n\n" +
-//        //            _L("Do you want to continue?"),
-//        //            title,
-//        //            wxICON_QUESTION | wxOK | wxCANCEL);
-//        //        if (dialog.ShowModal() == wxID_CANCEL)
-//        //            return;
-//        //    }
-//
-//        //    wxGetApp().switch_language();
-//        //    break;
-//        //}
-//        //case ConfigMenuWizard:
-//        //{
-//        //    wxGetApp().run_wizard(ConfigWizard::RR_USER);
-//        //    break;
-//        //}
-//        case ConfigMenuPrinter:
-//        {
-//            wxGetApp().params_dialog()->Popup();
-//            wxGetApp().get_tab(Preset::TYPE_PRINTER)->restore_last_select_item();
-//            break;
-//        }
-//        case ConfigMenuPreferences:
-//        {
-//            CallAfter([this] {
-//                PreferencesDialog dlg(this);
-//                dlg.ShowModal();
-//#if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-//                if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
-//#else
-//                if (dlg.seq_top_layer_only_changed())
-//#endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-//                    plater()->refresh_print();
-//#if ENABLE_CUSTOMIZABLE_FILES_ASSOCIATION_ON_WIN
-//#ifdef _WIN32
-//                /*
-//                if (wxGetApp().app_config()->get("associate_3mf") == "true")
-//                    wxGetApp().associate_3mf_files();
-//                if (wxGetApp().app_config()->get("associate_stl") == "true")
-//                    wxGetApp().associate_stl_files();
-//                /*if (wxGetApp().app_config()->get("associate_step") == "true")
-//                    wxGetApp().associate_step_files();*/
-//#endif // _WIN32
-//#endif
-//            });
-//            break;
-//        }
-//        default:
-//            break;
-//        }
-//    });
+   
 
 #ifdef __APPLE__
     wxString about_title = wxString::Format(_L("&About %s"), SLIC3R_APP_FULL_NAME);
-    //auto about_item = new wxMenuItem(parent_menu, Snapmaker_OrcaMenuAbout + bambu_studio_id_base, about_title, "");
-        //parent_menu->Bind(wxEVT_MENU, [this, bambu_studio_id_base](wxEvent& event) {
-        //    switch (event.GetId() - bambu_studio_id_base) {
-        //        case Snapmaker_OrcaMenuAbout:
-        //            Slic3r::GUI::about();
-        //            break;
-        //        case Snapmaker_OrcaMenuPreferences:
-        //            CallAfter([this] {
-        //                PreferencesDialog dlg(this);
-        //                dlg.ShowModal();
-        //#if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-        //                if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
-        //#else
-        //                if (dlg.seq_top_layer_only_changed())
-        //#endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-        //                    plater()->refresh_print();
-        //            });
-        //            break;
-        //        default:
-        //            break;
-        //    }
-        //});
-    //parent_menu->Insert(0, about_item);
+
     append_menu_item(
         parent_menu, wxID_ANY, _L(about_title), "",
         [this](wxCommandEvent &) { Slic3r::GUI::about();},
@@ -2978,10 +2853,7 @@ void MainFrame::init_menubar_as_editor()
             plater()->get_current_canvas3D()->force_set_focus();
         },
         "", nullptr, []() { return true; }, this);
-    //m_topbar->AddDropDownMenuItem(preference_item);
-    //m_topbar->AddDropDownMenuItem(printer_item);
-    //m_topbar->AddDropDownMenuItem(language_item);
-    //m_topbar->AddDropDownMenuItem(config_item);
+
     m_topbar->AddDropDownSubMenu(helpMenu, _L("Help"));
 
     // SoftFever calibrations
@@ -4027,8 +3899,17 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
 {
     // std::string fileUrl = "https://public.resource.snapmaker.com/model/public/3mf/test_for_download.3mf";
     // std::string           filename     = "test_for_download.3mf";
+    wxString fileNameEx = wxString::FromUTF8(fileName.c_str()).Lower();
+    std::string releaFileName = "";
 
-    GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, fileName, completeFilePath);
+    bool strRes = fileNameEx.EndsWith(".3mf");
+
+    if (strRes)
+        releaFileName = fileName;
+    else
+        releaFileName = fileName + ".3mf";
+
+    GenericDownloadDialog dlg(_L("downloading the model"), fileUrl, releaFileName, completeFilePath);
     auto res = dlg.ShowModal();
 
     if (res != wxID_OK)
@@ -4036,7 +3917,7 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
 
     if (completeFilePath.empty()) {
         auto downloadPath = wxGetApp().app_config->get("download_path");
-        completeFilePath  = downloadPath + "/" + fileName;
+        completeFilePath  = downloadPath + "/" + releaFileName;
     }
     if (!boost::filesystem::exists(completeFilePath)) 
     {
@@ -4057,7 +3938,7 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
     else
     {
         // Not a valid 3mf file, show error message
-        wxString msg = wxString::Format(_L("The downloaded file '%s' is not a valid 3MF project file."), fileName);
+        wxString msg = wxString::Format(_L("The downloaded file '%s' is not a valid 3MF project file."), releaFileName);
         MessageDialog(this, msg, _L("Invalid File"), wxOK | wxICON_WARNING).ShowModal();
     }
 

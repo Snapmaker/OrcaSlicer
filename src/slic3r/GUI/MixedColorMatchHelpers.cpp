@@ -183,15 +183,11 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
         presets.emplace_back(std::move(candidate));
     };
 
-    constexpr int pair_ratios[] = {25, 50, 75};
+    // Only generate 50:50 ratio for two-color combinations
     for (size_t left_idx = 0; left_idx < palette.size() && presets.size() < k_max_presets; ++left_idx) {
         for (size_t right_idx = left_idx + 1; right_idx < palette.size() && presets.size() < k_max_presets; ++right_idx) {
-            for (const int mix_b_percent : pair_ratios) {
-                add_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent,
-                                                               min_component_percent));
-                if (presets.size() >= k_max_presets)
-                    break;
-            }
+            add_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), 50,
+                                                           min_component_percent));
         }
     }
 

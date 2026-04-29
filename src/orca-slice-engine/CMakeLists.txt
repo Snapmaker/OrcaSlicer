@@ -10,6 +10,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Source files
 add_executable(orca-slice-engine
     main.cpp
+    SliceEngine.cpp
+    JsonReport.cpp
+    Utils.cpp
     nanosvg.cpp  # nanosvg implementation for headless build
 )
 

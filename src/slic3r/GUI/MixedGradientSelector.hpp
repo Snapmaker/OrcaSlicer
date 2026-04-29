@@ -18,11 +18,15 @@ wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, 
 class MixedGradientSelector : public wxPanel
 {
 public:
+    // Min/max limits for ratio mode (in percent)
+    static constexpr int MIN_RATIO_PERCENT = 10;
+    static constexpr int MAX_RATIO_PERCENT = 90;
+
     MixedGradientSelector(wxWindow *parent, const wxColour &left, const wxColour &right, int value_percent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
         , m_left(left)
         , m_right(right)
-        , m_value(std::clamp(value_percent, 0, 100))
+        , m_value(std::clamp(value_percent, MIN_RATIO_PERCENT, MAX_RATIO_PERCENT))
     {
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         SetMinSize(wxSize(FromDIP(96), FromDIP(24)));
@@ -44,7 +48,7 @@ public:
 
     void set_value(int value_percent)
     {
-        m_value = std::clamp(value_percent, 0, 100);
+        m_value = std::clamp(value_percent, MIN_RATIO_PERCENT, MAX_RATIO_PERCENT);
         Refresh();
     }
 

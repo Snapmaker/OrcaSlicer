@@ -887,7 +887,7 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                 old_pos = transformed_pos;
             }
 			else {
-				continue; // 过滤未经转换后的点
+				continue;
 			}
         }
 

@@ -5574,10 +5574,18 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
             mfs.back().gradient_component_weights  = r.gradient_component_weights;
             mfs.back().ratio_a                     = r.ratio_a;
             mfs.back().ratio_b                     = r.ratio_b;
+            mfs.back().local_z_max_sublayers       = r.local_z_max_sublayers;
+            mfs.back().gradient_enabled            = r.gradient_enabled;
+            mfs.back().gradient_start              = r.gradient_start;
+            mfs.back().gradient_end                = r.gradient_end;
             mfs.back().custom                  = true;
         }
         if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
+        if (r.gradient_enabled) {
+            if (auto* opt_lz = wxGetApp().preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
+                opt_lz->value = true;
+        }
         update_color_mix_panel();
         m_scrolled_sizer->Layout();
     });
@@ -5687,20 +5695,74 @@ void Sidebar::update_color_mix_panel()
         const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
         const wxColour badge_color = parse_mixed_color(mf.display_color);
 
-        // Badge button: colored background + virtual filament number
-        auto* badge = new wxButton(p->m_panel_color_mix_content, wxID_ANY,
-                                   wxString::Format("%d", virtual_id),
-                                   wxDefaultPosition,
-                                   wxSize(FromDIP(20), FromDIP(20)),
-                                   wxBU_EXACTFIT | wxBORDER_NONE);
-        badge->SetBackgroundColour(badge_color);
-        {
-            // Pick white or black text for contrast
-            const int luma = badge_color.Red() * 299 + badge_color.Green() * 587 + badge_color.Blue() * 114;
-            badge->SetForegroundColour(luma > 128000 ? *wxBLACK : *wxWHITE);
+        const std::string normalized_pattern_cm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+        const bool z_gradient_tile = mf.gradient_enabled && mf.component_a != mf.component_b
+            && normalized_pattern_cm.empty() && mf.gradient_component_ids.size() < 3;
+
+        wxWindow* badge = nullptr;
+        if (z_gradient_tile) {
+            auto filament_colour = [&](unsigned fid) -> wxColour {
+                if (fid == 0 || fid > physical_colors.size()) return wxColour("#26A69A");
+                return parse_mixed_color(physical_colors[fid - 1]);
+            };
+            const wxColour col_a = filament_colour(mf.component_a);
+            const wxColour col_b = filament_colour(mf.component_b);
+            const bool a_to_b    = mf.gradient_start >= mf.gradient_end;
+            const wxColour c_from = a_to_b ? col_a : col_b;
+            const wxColour c_to   = a_to_b ? col_b : col_a;
+
+            auto* grad_badge = new wxPanel(p->m_panel_color_mix_content, wxID_ANY,
+                wxDefaultPosition, wxSize(FromDIP(20), FromDIP(20)), wxBORDER_NONE);
+            grad_badge->SetMinSize(wxSize(FromDIP(20), FromDIP(20)));
+            grad_badge->SetMaxSize(wxSize(FromDIP(20), FromDIP(20)));
+            grad_badge->SetBackgroundStyle(wxBG_STYLE_PAINT);
+            const int vid = virtual_id;
+            grad_badge->Bind(wxEVT_PAINT, [grad_badge, c_from, c_to, vid](wxPaintEvent&) {
+                wxAutoBufferedPaintDC dc(grad_badge);
+                wxRect r = wxRect(grad_badge->GetClientSize());
+                const int w = r.width, h = r.height;
+                if (w > 0 && h > 0) {
+                    wxImage img(w, h);
+                    unsigned char* data = img.GetData();
+                    for (int y = 0; y < h; ++y)
+                        for (int x = 0; x < w; ++x) {
+                            float t = (w + h > 2) ? float(x + y) / float(w + h - 2) : 0.5f;
+                            wxColour c = blend_pair_filament_mixer(c_from, c_to, t);
+                            int idx      = (y * w + x) * 3;
+                            data[idx]     = c.Red();
+                            data[idx + 1] = c.Green();
+                            data[idx + 2] = c.Blue();
+                        }
+                    dc.DrawBitmap(wxBitmap(img), r.x, r.y, false);
+                }
+                dc.SetPen(wxPen(GUI_App::dark_mode() ? wxColour(100, 100, 106) : wxColour(170, 170, 170), 1));
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+                dc.DrawRectangle(r);
+                const wxColour mid = blend_pair_filament_mixer(c_from, c_to, 0.5f);
+                const int luma     = mid.Red() * 299 + mid.Green() * 587 + mid.Blue() * 114;
+                dc.SetTextForeground(luma > 128000 ? *wxBLACK : *wxWHITE);
+                dc.SetFont(Label::Body_10);
+                const wxString tstr = wxString::Format("%d", vid);
+                wxSize ts = dc.GetTextExtent(tstr);
+                dc.DrawText(tstr, r.x + (w - ts.GetWidth()) / 2, r.y + (h - ts.GetHeight()) / 2);
+            });
+            badge = grad_badge;
+        } else {
+            // Badge button: colored background + virtual filament number
+            auto* badge_btn = new wxButton(p->m_panel_color_mix_content, wxID_ANY,
+                                           wxString::Format("%d", virtual_id),
+                                           wxDefaultPosition,
+                                           wxSize(FromDIP(20), FromDIP(20)),
+                                           wxBU_EXACTFIT | wxBORDER_NONE);
+            badge_btn->SetBackgroundColour(badge_color);
+            {
+                const int luma =
+                    badge_color.Red() * 299 + badge_color.Green() * 587 + badge_color.Blue() * 114;
+                badge_btn->SetForegroundColour(luma > 128000 ? *wxBLACK : *wxWHITE);
+            }
+            badge = badge_btn;
         }
 
-        const std::string normalized_pattern_cm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
         wxString lbl;
         if (!normalized_pattern_cm.empty())
             lbl = _L("Pattern");
@@ -5726,8 +5788,13 @@ void Sidebar::update_color_mix_panel()
                 if (k > 0) lbl += "+";
                 lbl += wxString::Format("F%u %d%%", fid, pct);
             }
-        }
-        else {
+        } else if (z_gradient_tile) {
+            const unsigned from_id =
+                mf.gradient_start >= mf.gradient_end ? mf.component_a : mf.component_b;
+            const unsigned to_id =
+                mf.gradient_start >= mf.gradient_end ? mf.component_b : mf.component_a;
+            lbl = wxString::Format("F%u->F%u", from_id, to_id);
+        } else {
             const int pct_b = std::clamp(mf.mix_b_percent, 0, 100);
             const int pct_a = 100 - pct_b;
             lbl = wxString::Format("F%u %d%%+F%u %d%%", mf.component_a, pct_a, mf.component_b, pct_b);
@@ -5764,8 +5831,16 @@ void Sidebar::update_color_mix_panel()
                 mfs2[i].gradient_component_weights = r.gradient_component_weights;
                 mfs2[i].ratio_a                    = r.ratio_a;
                 mfs2[i].ratio_b                    = r.ratio_b;
+                mfs2[i].local_z_max_sublayers      = r.local_z_max_sublayers;
+                mfs2[i].gradient_enabled           = r.gradient_enabled;
+                mfs2[i].gradient_start             = r.gradient_start;
+                mfs2[i].gradient_end               = r.gradient_end;
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();
+                if (r.gradient_enabled) {
+                    if (auto* opt_lz = wxGetApp().preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
+                        opt_lz->value = true;
+                }
                 wxTheApp->CallAfter([this]() {
                     update_color_mix_panel();
                     m_scrolled_sizer->Layout();

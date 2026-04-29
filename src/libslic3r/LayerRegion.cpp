@@ -76,7 +76,9 @@ unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionC
                                        int(layer.id()),
                                        innermost_perimeter_index,
                                        float(layer.print_z),
-                                       float(layer.height));
+                                       float(layer.height),
+                                       false,
+                                       object);
 }
 
 bool use_base_infill_filament(const PrintRegionConfig &config, int layer_index, int layer_count)

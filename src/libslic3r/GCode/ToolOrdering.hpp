@@ -153,6 +153,7 @@ public:
     float                       mixed_layer_height_a    = 0.f;
     float                       mixed_layer_height_b    = 0.f;
     float                       mixed_base_layer_height = 0.2f;
+    const PrintObject          *current_object = nullptr;
 
 private:
     // Resolve a 1-based filament ID through the mixed-filament manager for this layer.
@@ -228,7 +229,8 @@ private:
     unsigned int resolve_mixed(unsigned int filament_id_1based,
                                int          layer_index,
                                float        layer_print_z = 0.f,
-                               float        layer_height  = 0.f) const;
+                               float        layer_height  = 0.f,
+                               const PrintObject* current_object = nullptr) const;
 
     std::vector<LayerTools>    m_layer_tools;
     // First printing extruder, including the multi-material priming sequence.

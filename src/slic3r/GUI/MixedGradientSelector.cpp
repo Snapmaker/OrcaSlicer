@@ -38,7 +38,8 @@ int MixedGradientSelector::value_from_x(int x) const
     const int min_x   = rect.GetLeft();
     const int max_x   = rect.GetLeft() + rect.GetWidth();
     const int cx      = std::clamp(x, min_x, max_x);
-    return ((cx - min_x) * 100 + rect.GetWidth() / 2) / rect.GetWidth();
+    int raw_value = ((cx - min_x) * 100 + rect.GetWidth() / 2) / rect.GetWidth();
+    return std::clamp(raw_value, MIN_RATIO_PERCENT, MAX_RATIO_PERCENT);
 }
 
 void MixedGradientSelector::update_from_x(int x, bool notify)

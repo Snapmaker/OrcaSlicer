@@ -272,6 +272,23 @@ public:
     // Mapping generated during the latest filament count change.
     // Index is old 1-based filament ID, value is new 1-based filament ID (0 = removed).
     const std::vector<unsigned int>& last_filament_id_remap() const { return m_last_filament_id_remap; }
+    
+    // Build custom remap for mixed filament merge operations
+    // This is used when merging a mixed filament into another filament (physical or mixed)
+    void build_merge_filament_remap(size_t from_id, size_t to_id, size_t total_filaments)
+    {
+        m_last_filament_id_remap.assign(total_filaments + 1, 0);
+        for (size_t i = 0; i <= total_filaments; ++i) {
+            if (i == from_id + 1) {
+                m_last_filament_id_remap[i] = (unsigned int)(to_id + 1);  // Remap source to target
+            } else if (i > from_id + 1) {
+                m_last_filament_id_remap[i] = (unsigned int)(i - 1);  // Shift down IDs after deleted one
+            } else {
+                m_last_filament_id_remap[i] = (unsigned int)i;  // Keep unchanged
+            }
+        }
+    }
+    
     std::vector<unsigned int> consume_last_filament_id_remap()
     {
         std::vector<unsigned int> out = std::move(m_last_filament_id_remap);

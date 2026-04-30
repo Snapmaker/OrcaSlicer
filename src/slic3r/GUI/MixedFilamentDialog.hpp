@@ -1,13 +1,7 @@
 #pragma once
 
 #include "GUI_Utils.hpp"
-#include "MixedGradientSelector.hpp"
-#include "MixedColorMatchPanel.hpp"
 #include "libslic3r/MixedFilament.hpp"
-#include "Widgets/RadioGroup.hpp"
-#include "Widgets/Button.hpp"
-#include "Widgets/ComboBox.hpp"
-#include "Widgets/Label.hpp"
 
 #include <wx/wx.h>
 #include <wx/statline.h>
@@ -16,15 +10,23 @@
 #include <vector>
 #include <string>
 
-#include "MixedColorMatchHelpers.hpp"
+// Forward declarations (in global namespace)
+class ScalableButton;
+class RadioGroup;
+class Button;
+class ComboBox;
 
 namespace Slic3r { namespace GUI {
 
-class AddColorMixDialog : public DPIDialog
+// Forward declarations (only pointers are stored)
+class MixedGradientSelector;
+class MixedColorMatchPanel;
+
+class MixedFilamentDialog : public DPIDialog
 {
 public:
-    AddColorMixDialog(wxWindow* parent, const std::vector<std::string>& filament_colours);
-    AddColorMixDialog(wxWindow* parent, const std::vector<std::string>& filament_colours,
+    MixedFilamentDialog(wxWindow* parent, const std::vector<std::string>& filament_colours);
+    MixedFilamentDialog(wxWindow* parent, const std::vector<std::string>& filament_colours,
                       const Slic3r::MixedFilament& existing);
 
     const Slic3r::MixedFilament& GetResult() const { return m_result; }
@@ -52,6 +54,8 @@ private:
 
     RadioGroup*             m_mode_radio          = nullptr;
     wxStaticText*           m_filament_title      = nullptr;
+    ScalableButton*         m_btn_add_filament    = nullptr;
+    ScalableButton*         m_btn_remove_filament = nullptr;
     wxPanel*                m_filament_rows_panel = nullptr;
     wxBoxSizer*             m_filament_rows_sizer = nullptr;
     wxPanel*                m_preview_panel       = nullptr;
@@ -66,7 +70,7 @@ private:
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_tri_strip_panel     = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
-    wxPanel*                m_swatch_grid_panel   = nullptr;
+    wxScrolledWindow*       m_swatch_grid_panel   = nullptr;
     wxStaticLine*           m_line_below_mid      = nullptr;
     wxStaticLine*           m_line_above_swatch   = nullptr;
     wxStaticLine*           m_line_below_swatch   = nullptr;
@@ -86,10 +90,16 @@ private:
 
     void build_tri_picker();
     void update_ratio_or_tri_visibility();
+    void rebuild_all_combos();  // Rebuild all combo box options without recreating controls
+    void rebuild_all_combos_with_selections(const std::vector<int>& selections);  // Rebuild with specified selections
+
+    // Helper: get actual filament index from combo box selection
+    int get_filament_index(int row_idx) const;
 
     struct FilamentRow {
         wxPanel*  swatch = nullptr;
         ComboBox* combo  = nullptr;
+        std::vector<int> filament_indices;  // Maps combo box index to actual filament index
     };
     std::vector<FilamentRow> m_filament_rows;
 

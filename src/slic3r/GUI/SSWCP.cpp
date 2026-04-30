@@ -466,6 +466,8 @@ void SSWCP_Instance::process() {
         sw_OpenBrowser();
     } else if (m_cmd == "sw_OpenNetworkDialog"){
         sw_OpenNetworkDialog();
+    } else if (m_cmd == "sw_GetSoftwareInfo") {
+        sw_GetSoftwareInfo();
     }
     else {
         handle_general_fail();
@@ -510,6 +512,20 @@ void SSWCP_Instance::sw_UploadEvent() {
     }
 }
 
+void SSWCP_Instance::sw_GetSoftwareInfo()
+{
+    try {
+        m_res_data["version"] = std::string(Snapmaker_VERSION);
+
+        auto& server = wxGetApp().m_page_http_server;
+        m_res_data["http_host"] = std::string("127.0.0.1:") + std::to_string(server.get_port());
+
+        send_to_js();
+        finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+}
 
 void SSWCP_Instance::sw_OpenNetworkDialog() {
     try {

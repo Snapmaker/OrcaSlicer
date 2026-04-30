@@ -3533,9 +3533,30 @@ void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx)
     wipe_tower_y->values.resize(m_plate_list.size(), wipe_tower_y->values.front());
 
     auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
-    // set the default position, the same with print config(left top)
-    ConfigOptionFloat wt_x_opt(WIPE_TOWER_DEFAULT_X_POS);
-    ConfigOptionFloat wt_y_opt(WIPE_TOWER_DEFAULT_Y_POS);
+
+    // BBS: compute default position from the actual bed dimensions so the tower is always
+    // within the printable area, even on small beds (issue #135).
+    // Strategy: place the tower in the top-right corner with a safety margin from each edge.
+    // Fallback to the original hardcoded constants if bed info is not available.
+    static const float margin          = 10.f;   // mm from bed edge
+    static const float depth_estimate  = 30.f;   // conservative depth estimate for position calc
+    float default_x = WIPE_TOWER_DEFAULT_X_POS;
+    float default_y = WIPE_TOWER_DEFAULT_Y_POS;
+
+    const auto* area_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionPoints>("printable_area");
+    if (area_opt && area_opt->values.size() >= 2) {
+        BoundingBoxf bed_bbox(area_opt->values);
+        float bed_width  = float(bed_bbox.size().x());
+        float bed_height = float(bed_bbox.size().y());
+        const auto* tw_opt = wxGetApp().preset_bundle->prints.get_edited_preset().config.option<ConfigOptionFloat>("prime_tower_width");
+        float tower_width = tw_opt ? float(tw_opt->value) : 60.f;
+        default_x = std::max(0.f, bed_width  - tower_width  - margin);
+        default_y = std::max(0.f, bed_height - depth_estimate - margin);
+    }
+
+    // I3 printers place the tower flush against the left edge; keep that override.
+    ConfigOptionFloat wt_x_opt(default_x);
+    ConfigOptionFloat wt_y_opt(default_y);
     if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
         wt_x_opt = ConfigOptionFloat(I3_WIPE_TOWER_DEFAULT_X_POS);
         wt_y_opt = ConfigOptionFloat(I3_WIPE_TOWER_DEFAULT_Y_POS);

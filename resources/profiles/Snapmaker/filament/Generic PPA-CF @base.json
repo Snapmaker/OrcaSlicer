@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic PPA-CF @base",
+    "inherits": "fdm_filament_ppa",
+    "from": "system",
+    "filament_id": "GFLPPA_B1",
+    "instantiation": "false",
+    "filament_start_gcode": [
+        "; filament start gcode"
+    ]
+}

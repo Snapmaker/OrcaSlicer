@@ -1978,6 +1978,15 @@ void GUI_App::init_download_path()
 #if wxUSE_WEBVIEW_EDGE
 void GUI_App::init_webview_runtime()
 {
+    // BBS: force WebView2 to use the current user's profile directory (issue #100).
+    // Without this, WebView2 may fall back to a cached registry path that points to
+    // the account that originally installed the app (e.g. Admin), causing a write-
+    // permission failure for standard users on Windows.
+    {
+        std::string webview_data_dir = data_dir() + "/EBWebView";
+        wxSetEnv(wxS("WEBVIEW2_USER_DATA_FOLDER"), wxString::FromUTF8(webview_data_dir));
+    }
+
     // Check WebView Runtime
     if (!WebView::CheckWebViewRuntime()) {
         int nRet = wxMessageBox(_L("Snapmaker Orca requires the Microsoft WebView2 Runtime to operate certain features.\nClick Yes to install it now."),
@@ -2091,6 +2100,22 @@ void GUI_App::init_app_config()
 #endif // _WIN32
     }
     set_logging_level(Slic3r::level_string_to_boost(app_config->get("log_severity_level")));
+
+    // BBS: restore Snapmaker login state from AppConfig (issue #116)
+    // WebKit on macOS/Linux does not persist session cookies, so we serialise the token ourselves.
+    if (app_config) {
+        std::string sm_token = app_config->get("sm_user_token");
+        if (!sm_token.empty()) {
+            m_login_userinfo.set_user_token(sm_token);
+            m_login_userinfo.set_user_login(true);
+            std::string sm_name = app_config->get("sm_user_name");
+            if (!sm_name.empty())
+                m_login_userinfo.set_user_name(sm_name);
+            std::string sm_icon = app_config->get("sm_user_icon_url");
+            if (!sm_icon.empty())
+                m_login_userinfo.set_user_icon_url(sm_icon);
+        }
+    }
 
 }
 
@@ -4018,7 +4043,14 @@ void GUI_App::sm_ShowUserLogin(bool show)
 void GUI_App::sm_request_user_logout()
 {
     if (m_login_userinfo.is_user_login()) {
-        m_login_userinfo.set_user_login(false);
+        m_login_userinfo.clear();
+        // BBS: erase persisted login state so credentials are not restored on next launch (issue #116)
+        if (app_config) {
+            app_config->set("sm_user_token", "");
+            app_config->set("sm_user_name", "");
+            app_config->set("sm_user_icon_url", "");
+            app_config->save();
+        }
     }
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
@@ -4035,6 +4067,7 @@ void GUI_App::sm_request_user_logout()
         ;
     }
 }
+
 
 //BBS
 void GUI_App::request_login(bool show_user_info)

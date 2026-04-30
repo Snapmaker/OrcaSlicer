@@ -5098,6 +5098,28 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             }
                         }
 
+                        // BBS: issue #111 — warn when 3MF was made for a different printer
+                        {
+                            auto* loaded_printer_id_opt = config.option<ConfigOptionString>("printer_settings_id");
+                            if (loaded_printer_id_opt && !loaded_printer_id_opt->value.empty()) {
+                                const std::string loaded_printer  = loaded_printer_id_opt->value;
+                                const std::string current_printer = preset_bundle->printers.get_edited_preset().name;
+                                if (loaded_printer != current_printer) {
+                                    const wxString msg = wxString::Format(
+                                        _L("This project was created for \"%s\", but \"%s\" is currently selected.\n\nSwitch to \"%s\"?"),
+                                        from_u8(loaded_printer), from_u8(current_printer), from_u8(loaded_printer));
+                                    MessageDialog printer_dlg(q, msg, _L("Printer Mismatch"),
+                                                              wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+                                    if (printer_dlg.ShowModal() == wxID_NO) {
+                                        // User wants to keep current printer — strip the printer/process presets
+                                        // from the loaded config so only geometry is imported.
+                                        config.erase("printer_settings_id");
+                                        config.erase("print_settings_id");
+                                    }
+                                }
+                            }
+                        }
+
                         //always load config
                         {
                             // BBS: save the wipe tower pos in file here, will be used later

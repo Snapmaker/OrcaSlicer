@@ -372,6 +372,12 @@ enum CounterboreHoleBridgingOption {
      wtwRib
  };
 
+// BBS: issue #173 - prime tower construction mode
+enum WipeTowerBuildMode {
+    wtbmLayerByLayer = 0,
+    wtbmSideBySide
+};
+
 static std::string bed_type_to_gcode_string(const BedType type)
 {
     std::string type_str;
@@ -487,6 +493,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PrintHostType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(AuthorizationType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WipeTowerWallType)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WipeTowerBuildMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PerimeterGeneratorType)
 
 #undef CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS
@@ -1407,12 +1414,16 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPercent,            wipe_tower_extra_spacing))
     ((ConfigOptionFloat,              wipe_tower_max_purge_speed))
     ((ConfigOptionEnum<WipeTowerWallType>,    wipe_tower_wall_type))
+    // BBS: issue #173 - prime tower construction mode
+    ((ConfigOptionEnum<WipeTowerBuildMode>,  wipe_tower_build_mode))
     ((ConfigOptionFloat,              wipe_tower_extra_rib_length))
     ((ConfigOptionFloat,              wipe_tower_rib_width))
     ((ConfigOptionBool,               wipe_tower_fillet_wall))
     ((ConfigOptionInt,                wipe_tower_filament))
     ((ConfigOptionFloats,             wiping_volumes_extruders))
     ((ConfigOptionInts,       idle_temperature))
+    // BBS: turn off idle hotend heaters entirely during multicolor prints (issue #143)
+    ((ConfigOptionBool,               turn_off_idle_hotend))
 
 
     // BBS: wipe tower is only used for priming

@@ -100,6 +100,19 @@ void WKWebView_setTransparentBackground(void * web)
     [webView registerForDraggedTypes: @[NSFilenamesPboardType]];
 }
 
+void WKWebView_allowLocalNetworkAccess(void * web)
+{
+    // BBS: fix #58 / #167 - home and device tabs show blank on macOS because
+    // WKWebView blocks cross-origin fetch() calls to http://localhost:13619
+    // (the Snapmaker companion service).  The page is loaded from a custom
+    // scheme so its origin differs from localhost; WebKit's CORS policy
+    // rejects the request.  Setting allowUniversalAccessFromFileURLs via KVC
+    // relaxes this restriction for all content loaded in this webview.
+    WKWebView *webView = (WKWebView*)web;
+    [webView.configuration.preferences setValue:@YES
+                                         forKey:@"allowUniversalAccessFromFileURLs"];
+}
+
 void openFolderForFile(wxString const & file)
 {
     NSArray *fileURLs = [NSArray arrayWithObjects:wxCFStringRef(file).AsNSString(), /* ... */ nil];

@@ -1,6 +1,7 @@
 #include "JsonReport.hpp"
 #include "Utils.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -65,14 +66,53 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
     std::ostringstream json;
     json << std::fixed << std::setprecision(2);
 
+    // ---- Aggregate totals for print_info_total ----
+    double total_print_time = 0;
+    double total_weight = 0;
+    int plate_count = static_cast<int>(stats.plates.size());
+    // Aggregate filament totals by (type, color), summing used_g across all plates.
+    // Use a simple vector and linear search since there are only a handful of filaments.
+    struct AggregatedFilament { std::string type; std::string color; double used_g = 0; };
+    std::vector<AggregatedFilament> total_filaments;
+
+    for (const auto& plate : stats.plates) {
+        if (plate.success) {
+            total_print_time += plate.print_time;
+            total_weight += plate.total_filament_g;
+            for (const auto& detail : plate.filament_details) {
+                auto it = std::find_if(total_filaments.begin(), total_filaments.end(),
+                    [&](const AggregatedFilament& a) { return a.type == detail.type && a.color == detail.color; });
+                if (it != total_filaments.end())
+                    it->used_g += detail.used_g;
+                else
+                    total_filaments.push_back({detail.type, detail.color, detail.used_g});
+            }
+        }
+    }
+
     json << "{\n";
     json << "  \"success\": " << (stats.success ? "true" : "false") << ",\n";
 
-    if (!stats.success && !stats.error_message.empty()) {
-        json << "  \"error\": \"" << json_escape(stats.error_message) << "\",\n";
+    // -- print_info_total --
+    json << "  \"print_info_total\": {\n";
+    json << "    \"print_time_seconds\": " << total_print_time << ",\n";
+    json << "    \"print_time_formatted\": \"" << format_time_hhmmss(static_cast<float>(total_print_time)) << "\",\n";
+    json << "    \"total_weight_g\": " << total_weight << ",\n";
+    json << "    \"plate_count\": " << plate_count << ",\n";
+    json << "    \"filaments\": [\n";
+    for (size_t fi = 0; fi < total_filaments.size(); ++fi) {
+        json << "      {\n";
+        json << "        \"type\": \"" << json_escape(total_filaments[fi].type) << "\",\n";
+        json << "        \"color\": \"" << json_escape(total_filaments[fi].color) << "\",\n";
+        json << "        \"used_g\": " << total_filaments[fi].used_g << "\n";
+        json << "      }";
+        if (fi < total_filaments.size() - 1) json << ",";
+        json << "\n";
     }
+    json << "    ]\n";
+    json << "  },\n";
 
-    // Global issues array
+    // -- Global issues --
     json << "  \"issues\": [\n";
     for (size_t i = 0; i < stats.issues.size(); ++i) {
         write_issue_json(json, stats.issues[i], "    ");
@@ -81,35 +121,31 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
     }
     json << "  ],\n";
 
+    // -- Plates --
     json << "  \"plates\": [\n";
     for (size_t i = 0; i < stats.plates.size(); ++i) {
-        const SliceOutputStats::PlateStats& plate = stats.plates[i];
+        const auto& plate = stats.plates[i];
         json << "    {\n";
         json << "      \"plate_id\": " << plate.plate_id << ",\n";
-        json << "      \"success\": " << (plate.success ? "true" : "false") << ",\n";
+        json << "      \"success\": " << (plate.success ? "true" : "false");
 
-        // Per-plate issues array
-        json << "      \"issues\": [\n";
-        for (size_t j = 0; j < plate.issues.size(); ++j) {
-            write_issue_json(json, plate.issues[j], "        ");
-            if (j < plate.issues.size() - 1) json << ",";
-            json << "\n";
+        // Per-plate issues (only when non-empty)
+        if (!plate.issues.empty()) {
+            json << ",\n";
+            json << "      \"issues\": [\n";
+            for (size_t j = 0; j < plate.issues.size(); ++j) {
+                write_issue_json(json, plate.issues[j], "        ");
+                if (j < plate.issues.size() - 1) json << ",";
+                json << "\n";
+            }
+            json << "      ]";
         }
-        json << "      ]";
 
         if (plate.success) {
             json << ",\n";
-            json << "      \"gcode_file\": \"" << json_escape(plate.gcode_file) << "\",\n";
             json << "      \"print_time_seconds\": " << plate.print_time << ",\n";
             json << "      \"print_time_formatted\": \"" << format_time_hhmmss(plate.print_time) << "\",\n";
             json << "      \"total_weight_g\": " << plate.total_filament_g << ",\n";
-            json << "      \"nozzle_diameters\": [";
-            for (size_t j = 0; j < plate.nozzle_diameters.size(); ++j) {
-                if (j > 0) json << ", ";
-                json << plate.nozzle_diameters[j];
-            }
-            json << "],\n";
-            json << "      \"plate_count\": " << plate.plate_count << ",\n";
             json << "      \"filaments\": [\n";
             for (size_t j = 0; j < plate.filament_details.size(); ++j) {
                 const auto& detail = plate.filament_details[j];
@@ -124,9 +160,6 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
             }
             json << "      ],\n";
             json << "      \"model_thumbnail\": \"" << json_escape(plate.model_thumbnail) << "\"\n";
-        } else {
-            json << ",\n";
-            json << "      \"plate_count\": " << plate.plate_count << "\n";
         }
 
         json << "    }";

@@ -76,7 +76,7 @@ struct SliceOutputStats {
         std::vector<Issue> issues;               // Per-plate issues (errors/warnings/tips)
     };
 
-    bool success;
+    bool success = false;
     std::string error_message;
     std::vector<PlateStats> plates;
     std::vector<Issue> issues;                   // Global issues (e.g. load errors)

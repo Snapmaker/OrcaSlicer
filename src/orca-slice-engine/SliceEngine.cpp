@@ -33,50 +33,50 @@ SliceEngine::SliceEngine(const EngineConfig& cfg, std::vector<std::string>& temp
 }
 
 bool SliceEngine::run() {
-    if (!load_3mf())
-        return false;
+    bool load_ok = load_3mf();
+    bool validate_ok = load_ok && validate_input();
 
-    if (!validate_input())
-        return false;
+    if (load_ok && validate_ok) {
+        m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
+                                             m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
+        BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
 
-    m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
-                                         m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
-    BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
+        // Collect plates to process
+        std::vector<int> plates_to_process;
+        if (m_cfg.single_plate) {
+            plates_to_process.push_back(m_cfg.plate_id);
+        } else {
+            for (const auto& pd : m_plate_data)
+                plates_to_process.push_back(pd->plate_index);
+        }
 
-    // Collect plates to process
-    std::vector<int> plates_to_process;
-    if (m_cfg.single_plate) {
-        plates_to_process.push_back(m_cfg.plate_id);
-    } else {
-        for (const auto& pd : m_plate_data)
-            plates_to_process.push_back(pd->plate_index);
+        // Process each plate
+        for (int plate_id : plates_to_process) {
+            BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << plate_id << " ===";
+            process_plate(plate_id);
+        }
+
+        // Package output — only if no errors occurred
+        bool has_output = !m_plate_results.empty();
+        if (has_output && !m_any_error && (m_cfg.format == OutputFormat::GCODE_3MF || !m_cfg.single_plate))
+            package_output();
+
+        // For single-plate GCODE mode, the file is written directly to m_output_path
+        // during export_gcode. Remove it if errors occurred.
+        if (m_any_error && m_cfg.single_plate && m_cfg.format == OutputFormat::GCODE) {
+            boost::filesystem::remove(m_output_path);
+            BOOST_LOG_TRIVIAL(info) << "Removed output file due to errors: " << m_output_path;
+        }
+
+        if (has_output && !m_any_error)
+            BOOST_LOG_TRIVIAL(info) << "Done!";
     }
 
-    // Process each plate
-    for (int plate_id : plates_to_process) {
-        BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << plate_id << " ===";
-        process_plate(plate_id);
-    }
-
-    // Package output — only if no errors occurred
-    bool has_output = !m_plate_results.empty();
-    if (has_output && !m_any_error && (m_cfg.format == OutputFormat::GCODE_3MF || !m_cfg.single_plate))
-        package_output();
-
-    // For single-plate GCODE mode, the file is written directly to m_output_path
-    // during export_gcode. Remove it if errors occurred.
-    if (m_any_error && m_cfg.single_plate && m_cfg.format == OutputFormat::GCODE) {
-        boost::filesystem::remove(m_output_path);
-        BOOST_LOG_TRIVIAL(info) << "Removed output file due to errors: " << m_output_path;
-    }
-
-    if (has_output && !m_any_error)
-        BOOST_LOG_TRIVIAL(info) << "Done!";
-
-    // Build JSON statistics
+    // Always build JSON statistics (even on early failure) so
+    // success=false and error_message are reflected in JSON output.
     build_statistics();
 
-    return has_output;
+    return !m_plate_results.empty();
 }
 
 // ============================================================================
@@ -109,11 +109,15 @@ bool SliceEngine::load_3mf() {
     }
     catch (std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to load 3MF file: " << e.what();
+        m_any_error = true;
+        m_stats.error_message = std::string("Failed to load 3MF file: ") + e.what();
         return false;
     }
 
     if (m_model.objects.empty()) {
         BOOST_LOG_TRIVIAL(error) << "No objects found in 3MF file";
+        m_any_error = true;
+        m_stats.error_message = "3MF file contains no sliceable model objects";
         return false;
     }
 
@@ -155,6 +159,8 @@ bool SliceEngine::validate_input() {
                 std::cerr << m_plate_data[i]->plate_index;
             }
             std::cerr << std::endl;
+            m_any_error = true;
+            m_stats.error_message = "Requested plate " + std::to_string(m_cfg.plate_id) + " not found in 3MF file";
             return false;
         }
     }

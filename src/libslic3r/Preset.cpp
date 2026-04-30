@@ -392,8 +392,16 @@ void Preset::normalize(DynamicPrintConfig &config)
         for (const std::string key : { "filament_settings_id" }) {
             auto *opt = config.option(key, false);
             assert(opt == nullptr || opt->type() == coStrings);
-            if (opt != nullptr && opt->type() == coStrings)
-                static_cast<ConfigOptionStrings*>(opt)->values.resize(n, std::string());
+            if (opt != nullptr && opt->type() == coStrings) {
+                // Use filament_colour size as the target count, since n may be
+                // based on extruder/nozzle count which can be smaller than the
+                // actual number of filament slots (e.g. multi-material setup).
+                size_t target = n;
+                if (auto* fcol = config.option<ConfigOptionStrings>("filament_colour"))
+                    if (fcol->values.size() > target)
+                        target = fcol->values.size();
+                static_cast<ConfigOptionStrings*>(opt)->values.resize(target, std::string());
+            }
         }
     }
 

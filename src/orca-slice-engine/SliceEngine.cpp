@@ -111,6 +111,12 @@ bool SliceEngine::load_3mf() {
         BOOST_LOG_TRIVIAL(error) << "Failed to load 3MF file: " << e.what();
         m_any_error = true;
         m_stats.error_message = std::string("Failed to load 3MF file: ") + e.what();
+        Issue issue;
+        issue.level = "error";
+        issue.plate_id = -1;
+        issue.z_height = -1.0;
+        issue.message = m_stats.error_message;
+        m_stats.issues.push_back(issue);
         return false;
     }
 
@@ -118,6 +124,12 @@ bool SliceEngine::load_3mf() {
         BOOST_LOG_TRIVIAL(error) << "No objects found in 3MF file";
         m_any_error = true;
         m_stats.error_message = "3MF file contains no sliceable model objects";
+        Issue issue;
+        issue.level = "error";
+        issue.plate_id = -1;
+        issue.z_height = -1.0;
+        issue.message = m_stats.error_message;
+        m_stats.issues.push_back(issue);
         return false;
     }
 
@@ -161,6 +173,12 @@ bool SliceEngine::validate_input() {
             std::cerr << std::endl;
             m_any_error = true;
             m_stats.error_message = "Requested plate " + std::to_string(m_cfg.plate_id) + " not found in 3MF file";
+            Issue issue;
+            issue.level = "error";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.message = m_stats.error_message;
+            m_stats.issues.push_back(issue);
             return false;
         }
     }

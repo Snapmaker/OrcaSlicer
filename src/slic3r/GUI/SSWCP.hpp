@@ -188,6 +188,9 @@ private:
     // Sentry
     void sw_UploadEvent();
 
+    // Get software basic info
+    void sw_GetSoftwareInfo();
+
     // open network dialog
     void sw_OpenNetworkDialog();
 

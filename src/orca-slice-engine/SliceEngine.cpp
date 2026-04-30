@@ -297,13 +297,14 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
         }
     }
 
-    // Restore printable state
+    // Restore printable state — update_print_volume_state may have changed
+    // print_volume_state for on-plate instances (e.g. marked them Fully_Outside
+    // because grid-layout positions are far from build-volume origin).
     for (ModelObject* obj : m_model.objects) {
         for (ModelInstance* inst : obj->instances) {
             bool on_plate = (identify_ids.find(static_cast<int>(inst->loaded_id)) != identify_ids.end());
             inst->printable = on_plate;
-            if (!on_plate)
-                inst->print_volume_state = ModelInstancePVS_Fully_Outside;
+            inst->print_volume_state = on_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Fully_Outside;
         }
     }
 
@@ -316,60 +317,32 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
 }
 
 void SliceEngine::setup_print_origin(int plate_id, double plate_width, double plate_depth) {
-    int plate_zero_based = plate_id; // Already 0-based from 3MF load
-    const int plate_cols = compute_column_count(static_cast<int>(m_plate_data.size()));
-
-    BOOST_LOG_TRIVIAL(info) << "=== PLATE ORIGIN DEBUG ===";
-    BOOST_LOG_TRIVIAL(info) << "Computed plate_cols: " << plate_cols;
-    BOOST_LOG_TRIVIAL(info) << "Current plate_id: " << plate_id;
+    BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " origin: (0, 0, 0)"
+        << " (cloud slicing, independent per-plate)";
     BOOST_LOG_TRIVIAL(info) << "Plate dimensions: " << plate_width << " x " << plate_depth;
-
-    int row = plate_zero_based / plate_cols;
-    int col = plate_zero_based % plate_cols;
-
-    double plate_stride_x = plate_width * (1.0 + LOGICAL_PART_PLATE_GAP);
-    double plate_stride_y = plate_depth * (1.0 + LOGICAL_PART_PLATE_GAP);
-
-    BOOST_LOG_TRIVIAL(info) << "Calculated row: " << row << ", col: " << col;
-    BOOST_LOG_TRIVIAL(info) << "Plate stride: X=" << plate_stride_x << ", Y=" << plate_stride_y;
-
-    // Note: we don't have a Print reference here; origin is applied in apply_model
-    // by extracting the plate_origin from print object context
-    BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " origin: ("
-        << (col * plate_stride_x) << ", " << (-row * plate_stride_y) << ", 0)";
-    BOOST_LOG_TRIVIAL(info) << "=== END PLATE ORIGIN DEBUG ===";
 }
 
 bool SliceEngine::apply_model(int plate_id, Print& print) {
-    // Set plate index and origin
-    int plate_zero_based = plate_id;
-    print.set_plate_index(plate_zero_based);
+    // plate_index from m_plate_data is already 0-based (import does -1 conversion)
+    print.set_plate_index(plate_id);
 
-    // Calculate plate origin
-    double plate_width = 200.0;
-    double plate_depth = 200.0;
-    if (m_config.has("printable_area")) {
-        auto opt = m_config.option<ConfigOptionPoints>("printable_area");
-        if (opt && !opt->values.empty()) {
-            BoundingBoxf bbox;
-            for (const Vec2d& pt : opt->values) bbox.merge(pt);
-            plate_width = bbox.size().x() - BED_AXES_TIP_RADIUS;
-            plate_depth = bbox.size().y() - BED_AXES_TIP_RADIUS;
+    // Cloud slicing: each plate is sliced independently at origin.
+    // Plate origin offsets are only meaningful for GUI multi-plate layout display.
+    print.set_plate_origin(Vec3d(0, 0, 0));
+
+    // Diagnostic: check shared model state before apply
+    BOOST_LOG_TRIVIAL(info) << "=== DIAG plate " << plate_id << " shared model state ===";
+    for (ModelObject* obj : m_model.objects) {
+        BOOST_LOG_TRIVIAL(info) << "  Obj \"" << obj->name << "\" obj.printable=" << obj->printable
+            << " instances=" << obj->instances.size();
+        for (ModelInstance* inst : obj->instances) {
+            BOOST_LOG_TRIVIAL(info) << "    inst lid=" << inst->loaded_id
+                << " p=" << inst->printable
+                << " pvs=" << static_cast<int>(inst->print_volume_state)
+                << " is_p=" << inst->is_printable();
         }
     }
-
-    const int plate_cols = compute_column_count(static_cast<int>(m_plate_data.size()));
-    int row = plate_zero_based / plate_cols;
-    int col = plate_zero_based % plate_cols;
-    double plate_stride_x = plate_width * (1.0 + LOGICAL_PART_PLATE_GAP);
-    double plate_stride_y = plate_depth * (1.0 + LOGICAL_PART_PLATE_GAP);
-
-    Vec3d plate_origin(
-        col * plate_stride_x,
-        -row * plate_stride_y,
-        0
-    );
-    print.set_plate_origin(plate_origin);
+    BOOST_LOG_TRIVIAL(info) << "=== END DIAG ===";
 
     auto apply_status = print.apply(m_model, m_config);
     BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
@@ -420,7 +393,6 @@ bool SliceEngine::run_validation(int plate_id, Print& print) {
 
     return true;
 }
-
 bool SliceEngine::run_slicing(int plate_id, Print& print) {
     BOOST_LOG_TRIVIAL(info) << "Starting slicing process for plate " << plate_id << "...";
 

@@ -91,8 +91,8 @@ function(ensure_flutter_deps)
                 message(FATAL_ERROR "Flutter SDK not found and Flutter Linux headers not in deps. Install Flutter or build deps first.")
             endif()
 
-            set(_hdr_src "${_engine_cache}/linux-x64/client_wrapper/include/flutter")
-            set(_so_src  "${_engine_cache}/linux-x64/client_wrapper/libflutter_linux_gtk.so")
+            set(_hdr_src "${_engine_cache}/linux-x64/flutter_linux")
+            set(_so_src  "${_engine_cache}/linux-x64/libflutter_linux_gtk.so")
 
             if(NOT EXISTS "${_hdr_src}")
                 message(FATAL_ERROR "Flutter Linux artifacts not found at ${_hdr_src}. Run 'flutter precache --linux' first.")

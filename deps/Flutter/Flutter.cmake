@@ -82,7 +82,7 @@ elseif (WIN32)
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
     if(NOT EXISTS "${_flutter_headers}")
-        message(FATAL_ERROR "Flutter Windows artifacts not found. Run 'flutter precache --windows' first.")
+        message(FATAL_ERROR "Flutter Windows artifacts not found at ${_flutter_headers}. Run 'flutter precache --windows' first.")
     endif()
 
     add_custom_target(dep_Flutter ALL
@@ -107,16 +107,14 @@ elseif (WIN32)
 # ── Linux ───────────────────────────────────────────────────────────────
 
 elseif (UNIX AND NOT APPLE)
-    set(_flutter_client "${_engine_cache}/linux-x64/client_wrapper")
     set(_flutter_engine_dir "${_engine_cache}/linux-x64")
-
-    set(_flutter_headers "${_flutter_client}/include/flutter")
-    set(_flutter_so "${_flutter_client}/libflutter_linux_gtk.so")
+    set(_flutter_headers "${_flutter_engine_dir}/flutter_linux")
+    set(_flutter_so "${_flutter_engine_dir}/libflutter_linux_gtk.so")
     set(_flutter_engine_so "${_flutter_engine_dir}/libflutter_engine.so")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
     if(NOT EXISTS "${_flutter_headers}")
-        message(FATAL_ERROR "Flutter Linux artifacts not found. Run 'flutter precache --linux' first.")
+        message(FATAL_ERROR "Flutter Linux artifacts not found at ${_flutter_headers}. Run 'flutter precache --linux' first.")
     endif()
 
     add_custom_target(dep_Flutter ALL

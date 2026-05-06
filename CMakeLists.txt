@@ -946,12 +946,13 @@ set (CPACK_NSIS_INSTALLED_ICON_NAME  "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
 set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
 # Block install while snapmaker-orca is running (avoids locked Snapmaker_Orca.dll / write failures).
+# NSIS: tasklist | findstr (no nested cmd quotes); $SYSDIR\cmd.exe for reliable ExecWait.
 set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS [=[
 snapmaker_proc_check:
-  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
+  ExecWait '"$SYSDIR\cmd.exe" /c tasklist 2^>nul ^| findstr /b /i snapmaker-orca.exe ^>nul' $0
   IntCmp $0 0 snapmaker_running snapmaker_try_legacy snapmaker_try_legacy
 snapmaker_try_legacy:
-  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul' $0
+  ExecWait '"$SYSDIR\cmd.exe" /c tasklist 2^>nul ^| findstr /b /i Snapmaker_Orca.exe ^>nul' $0
   IntCmp $0 0 snapmaker_running snapmaker_ok snapmaker_ok
 snapmaker_running:
   IfSilent snapmaker_silent snapmaker_ask

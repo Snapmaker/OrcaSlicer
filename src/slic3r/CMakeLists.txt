@@ -632,7 +632,6 @@ if (APPLE)
             GUI/wxMediaCtrl2.mm
             GUI/wxMediaCtrl2.h
             GUI/Flutter/flutter_host_macos.mm
-            GUI/Flutter/flutter_host.h
         )
     FIND_LIBRARY(DISKARBITRATION_LIBRARY DiskArbitration)
 else ()
@@ -682,7 +681,7 @@ if (WIN32)
         target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/include/flutter")
         target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/flutter_windows.lib")
     else()
-        message(WARNING "Flutter Windows headers not found in deps. Build deps first.")
+        message(FATAL_ERROR "Flutter Windows headers not found in deps. Build deps first.")
     endif()
 endif()
 
@@ -714,7 +713,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/include/flutter")
         target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so")
     else()
-        message(WARNING "Flutter Linux headers not found in deps. Build deps first.")
+        message(FATAL_ERROR "Flutter Linux headers not found in deps. Build deps first.")
     endif()
 elseif (APPLE)
     target_link_libraries(libslic3r_gui ${DISKARBITRATION_LIBRARY} "-framework Security")
@@ -727,7 +726,7 @@ elseif (APPLE)
             GUI/Flutter/flutter_host_macos.mm
             PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     else()
-        message(WARNING "FlutterMacOS.framework not found in deps. Build deps first.")
+        message(FATAL_ERROR "FlutterMacOS.framework not found in deps. Build deps first.")
     endif()
 endif()
 

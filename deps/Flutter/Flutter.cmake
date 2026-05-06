@@ -32,10 +32,7 @@ if(NOT FLUTTER_SDK_PATH)
 endif()
 
 if(NOT FLUTTER_SDK_PATH)
-    message(WARNING "Flutter SDK not found — skipping Flutter dependency. Install Flutter or pass -DFLUTTER_SDK_PATH=/path/to/flutter")
-    add_custom_target(dep_Flutter ALL
-        COMMAND ${CMAKE_COMMAND} -E echo "Flutter SDK not found — skipping")
-    return()
+    message(FATAL_ERROR "Flutter SDK not found. Install Flutter or pass -DFLUTTER_SDK_PATH=/path/to/flutter")
 endif()
 
 set(_engine_cache "${FLUTTER_SDK_PATH}/bin/cache/artifacts/engine")
@@ -61,18 +58,16 @@ if (APPLE)
     set(_flutter_fw_src "${_engine_cache}/darwin-x64/FlutterMacOS.xcframework/${_flutter_arch}/FlutterMacOS.framework")
     set(_flutter_fw_dest "${DESTDIR}/FlutterMacOS.framework")
 
-    if(EXISTS "${_flutter_fw_src}")
-        add_custom_target(dep_Flutter ALL
-            COMMAND ${CMAKE_COMMAND} -E echo "Copying FlutterMacOS.framework to deps..."
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_flutter_fw_src}" "${_flutter_fw_dest}"
-            COMMENT "Copying FlutterMacOS.framework → ${_flutter_fw_dest}"
-        )
-        message(STATUS "Flutter deps (macOS): FlutterMacOS.framework from ${FLUTTER_SDK_PATH}")
-    else()
-        message(WARNING "FlutterMacOS.framework not found at ${_flutter_fw_src}. Run 'flutter precache --macos' first.")
-        add_custom_target(dep_Flutter ALL
-            COMMAND ${CMAKE_COMMAND} -E echo "Flutter macOS artifacts not found — skipping")
+    if(NOT EXISTS "${_flutter_fw_src}")
+        message(FATAL_ERROR "FlutterMacOS.framework not found at ${_flutter_fw_src}. Run 'flutter precache --macos' first.")
     endif()
+
+    add_custom_target(dep_Flutter ALL
+        COMMAND ${CMAKE_COMMAND} -E echo "Copying FlutterMacOS.framework to deps..."
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${_flutter_fw_src}" "${_flutter_fw_dest}"
+        COMMENT "Copying FlutterMacOS.framework → ${_flutter_fw_dest}"
+    )
+    message(STATUS "Flutter deps (macOS): FlutterMacOS.framework from ${FLUTTER_SDK_PATH}")
 
 # ── Windows ─────────────────────────────────────────────────────────────
 
@@ -86,30 +81,28 @@ elseif (WIN32)
     set(_flutter_engine_dll "${_flutter_engine_dir}/flutter_engine.dll")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
-    if(EXISTS "${_flutter_headers}")
-        add_custom_target(dep_Flutter ALL
-            # Headers
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${_flutter_headers}" "${DESTDIR}/include/flutter"
-            # Import library
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_lib}" "${DESTDIR}/lib/flutter_windows.lib"
-            # DLLs
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_dll}" "${DESTDIR}/bin/flutter_windows.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_engine_dll}" "${DESTDIR}/bin/flutter_engine.dll"
-            # ICU data
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
-            COMMENT "Copying Flutter Windows engine → ${DESTDIR}"
-        )
-        message(STATUS "Flutter deps (Windows): engine from ${FLUTTER_SDK_PATH}")
-    else()
-        message(WARNING "Flutter Windows artifacts not found. Run 'flutter precache --windows' first.")
-        add_custom_target(dep_Flutter ALL
-            COMMAND ${CMAKE_COMMAND} -E echo "Flutter Windows artifacts not found — skipping")
+    if(NOT EXISTS "${_flutter_headers}")
+        message(FATAL_ERROR "Flutter Windows artifacts not found. Run 'flutter precache --windows' first.")
     endif()
+
+    add_custom_target(dep_Flutter ALL
+        # Headers
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${_flutter_headers}" "${DESTDIR}/include/flutter"
+        # Import library
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_lib}" "${DESTDIR}/lib/flutter_windows.lib"
+        # DLLs
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_dll}" "${DESTDIR}/bin/flutter_windows.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_dll}" "${DESTDIR}/bin/flutter_engine.dll"
+        # ICU data
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
+        COMMENT "Copying Flutter Windows engine → ${DESTDIR}"
+    )
+    message(STATUS "Flutter deps (Windows): engine from ${FLUTTER_SDK_PATH}")
 
 # ── Linux ───────────────────────────────────────────────────────────────
 
@@ -122,25 +115,23 @@ elseif (UNIX AND NOT APPLE)
     set(_flutter_engine_so "${_flutter_engine_dir}/libflutter_engine.so")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
-    if(EXISTS "${_flutter_headers}")
-        add_custom_target(dep_Flutter ALL
-            # Headers
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${_flutter_headers}" "${DESTDIR}/include/flutter"
-            # Shared libs
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_so}" "${DESTDIR}/lib/libflutter_linux_gtk.so"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_engine_so}" "${DESTDIR}/lib/libflutter_engine.so"
-            # ICU data
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
-            COMMENT "Copying Flutter Linux engine → ${DESTDIR}"
-        )
-        message(STATUS "Flutter deps (Linux): engine from ${FLUTTER_SDK_PATH}")
-    else()
-        message(WARNING "Flutter Linux artifacts not found. Run 'flutter precache --linux' first.")
-        add_custom_target(dep_Flutter ALL
-            COMMAND ${CMAKE_COMMAND} -E echo "Flutter Linux artifacts not found — skipping")
+    if(NOT EXISTS "${_flutter_headers}")
+        message(FATAL_ERROR "Flutter Linux artifacts not found. Run 'flutter precache --linux' first.")
     endif()
+
+    add_custom_target(dep_Flutter ALL
+        # Headers
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${_flutter_headers}" "${DESTDIR}/include/flutter"
+        # Shared libs
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_so}" "${DESTDIR}/lib/libflutter_linux_gtk.so"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_so}" "${DESTDIR}/lib/libflutter_engine.so"
+        # ICU data
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
+        COMMENT "Copying Flutter Linux engine → ${DESTDIR}"
+    )
+    message(STATUS "Flutter deps (Linux): engine from ${FLUTTER_SDK_PATH}")
 endif()

@@ -551,14 +551,14 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
     if (!result.gcode_result.bed_match_result.match) {
         const auto& bm = result.gcode_result.bed_match_result;
         log_plate_message("[Post-processing]", "WARNING", plate_id,
-            "Filament " + std::to_string(bm.filament_id + 1)
+            "Filament " + std::to_string(bm.extruder_id + 1)
             + " is not compatible with bed type \"" + bm.bed_type_name + "\".");
         has_postprocess_warning = true;
         Issue issue;
         issue.level = "warning";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "Filament " + std::to_string(bm.filament_id + 1)
+        issue.message = "Filament " + std::to_string(bm.extruder_id + 1)
             + " is not compatible with bed type \"" + bm.bed_type_name + "\"";
         result.issues.push_back(issue);
     }
@@ -829,40 +829,40 @@ void SliceEngine::build_statistics() {
             const auto& fd = result.gcode_result.filament_diameters;
             const auto& fdens = result.gcode_result.filament_densities;
 
-            for (const auto& [filament_id, volume] : result.filament_volumes) {
-                if (filament_id < fd.size() && filament_id < fdens.size()) {
-                    double diameter = fd[filament_id];
-                    double density = fdens[filament_id];
+            for (const auto& [extruder_id, volume] : result.filament_volumes) {
+                if (extruder_id < fd.size() && extruder_id < fdens.size()) {
+                    double diameter = fd[extruder_id];
+                    double density = fdens[extruder_id];
                     double cross_section = M_PI * 0.25 * diameter * diameter;
                     double used_m = (volume / cross_section) * 0.001;
                     double used_g = volume * density * 0.001;
-                    plate_stats.filament_used_m[filament_id] = used_m;
-                    plate_stats.filament_used_g[filament_id] = used_g;
+                    plate_stats.filament_used_m[extruder_id] = used_m;
+                    plate_stats.filament_used_g[extruder_id] = used_g;
                 }
             }
 
             auto& ps = result.gcode_result.print_statistics;
-            for (const auto& [filament_id, volume] : ps.support_volumes_per_extruder) {
-                if (filament_id < fd.size() && filament_id < fdens.size()) {
-                    double cross_section = M_PI * 0.25 * fd[filament_id] * fd[filament_id];
+            for (const auto& [extruder_id, volume] : ps.support_volumes_per_extruder) {
+                if (extruder_id < fd.size() && extruder_id < fdens.size()) {
+                    double cross_section = M_PI * 0.25 * fd[extruder_id] * fd[extruder_id];
                     total_support_m += (volume / cross_section) * 0.001;
-                    total_support_g += volume * fdens[filament_id] * 0.001;
+                    total_support_g += volume * fdens[extruder_id] * 0.001;
                 }
             }
 
-            for (const auto& [filament_id, volume] : ps.wipe_tower_volumes_per_extruder) {
-                if (filament_id < fd.size() && filament_id < fdens.size()) {
-                    double cross_section = M_PI * 0.25 * fd[filament_id] * fd[filament_id];
+            for (const auto& [extruder_id, volume] : ps.wipe_tower_volumes_per_extruder) {
+                if (extruder_id < fd.size() && extruder_id < fdens.size()) {
+                    double cross_section = M_PI * 0.25 * fd[extruder_id] * fd[extruder_id];
                     total_wipe_tower_m += (volume / cross_section) * 0.001;
-                    total_wipe_tower_g += volume * fdens[filament_id] * 0.001;
+                    total_wipe_tower_g += volume * fdens[extruder_id] * 0.001;
                 }
             }
 
-            for (const auto& [filament_id, volume] : ps.flush_per_filament) {
-                if (filament_id < fd.size() && filament_id < fdens.size()) {
-                    double cross_section = M_PI * 0.25 * fd[filament_id] * fd[filament_id];
+            for (const auto& [extruder_id, volume] : ps.flush_per_filament) {
+                if (extruder_id < fd.size() && extruder_id < fdens.size()) {
+                    double cross_section = M_PI * 0.25 * fd[extruder_id] * fd[extruder_id];
                     total_flush_m += (volume / cross_section) * 0.001;
-                    total_flush_g += volume * fdens[filament_id] * 0.001;
+                    total_flush_g += volume * fdens[extruder_id] * 0.001;
                 }
             }
 
@@ -882,18 +882,18 @@ void SliceEngine::build_statistics() {
             const ConfigOptionStrings* fcolors =
                 m_config.has("filament_colour") ? m_config.option<ConfigOptionStrings>("filament_colour") : nullptr;
 
-            for (const auto& [filament_id, used_g] : plate_stats.filament_used_g) {
+            for (const auto& [extruder_id, used_g] : plate_stats.filament_used_g) {
                 SliceOutputStats::FilamentDetail detail;
-                detail.filament_id = filament_id;
+                detail.extruder_id = extruder_id;
                 detail.used_g = used_g;
 
-                if (ftypes && filament_id < static_cast<int>(ftypes->values.size()))
-                    detail.type = ftypes->values[filament_id];
+                if (ftypes && extruder_id < static_cast<int>(ftypes->values.size()))
+                    detail.type = ftypes->values[extruder_id];
                 else
                     detail.type = "Unknown";
 
-                if (fcolors && filament_id < static_cast<int>(fcolors->values.size()))
-                    detail.color = fcolors->values[filament_id];
+                if (fcolors && extruder_id < static_cast<int>(fcolors->values.size()))
+                    detail.color = fcolors->values[extruder_id];
                 else
                     detail.color = "#000000";
 

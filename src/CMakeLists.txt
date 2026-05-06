@@ -141,6 +141,24 @@ if (APPLE)
     # -liconv: boost links to libiconv by default
     target_link_libraries(Snapmaker_Orca "-liconv -framework IOKit" "-framework CoreFoundation" "-framework AVFoundation" "-framework AVKit" "-framework CoreMedia" "-framework VideoToolbox" -lc++)
 
+    # Flutter framework — auto-detect or override via -DFLUTTER_XCFRAMEWORK_PATH=
+    if(NOT FLUTTER_XCFRAMEWORK_PATH)
+        file(GLOB FLUTTER_HOMEBREW_DIRS "/opt/homebrew/Caskroom/flutter/*")
+        if(FLUTTER_HOMEBREW_DIRS)
+            list(GET FLUTTER_HOMEBREW_DIRS 0 _flutter_latest)
+            set(FLUTTER_XCFRAMEWORK_PATH "${_flutter_latest}/flutter/bin/cache/artifacts/engine/darwin-x64/FlutterMacOS.xcframework/macos-arm64_x86_64"
+                CACHE PATH "Path to FlutterMacOS.xcframework")
+        else()
+            set(FLUTTER_XCFRAMEWORK_PATH "" CACHE PATH "Path to FlutterMacOS.xcframework")
+        endif()
+    endif()
+    if(FLUTTER_XCFRAMEWORK_PATH)
+        target_link_libraries(Snapmaker_Orca "-F${FLUTTER_XCFRAMEWORK_PATH}" "-framework FlutterMacOS")
+        target_link_options(Snapmaker_Orca PRIVATE "-Wl,-rpath,${FLUTTER_XCFRAMEWORK_PATH}")
+    else()
+        message(WARNING "FLUTTER_XCFRAMEWORK_PATH not set — Flutter support disabled. Pass -DFLUTTER_XCFRAMEWORK_PATH=/path/to/FlutterMacOS.xcframework")
+    endif()
+
 elseif (MSVC)
     # Manifest is provided through Snapmaker_Orca.rc, don't generate your own.
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")

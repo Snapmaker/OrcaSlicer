@@ -111,6 +111,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Field.hpp
     GUI/FileArchiveDialog.cpp
     GUI/FileArchiveDialog.hpp
+    GUI/Flutter/FlutterPanel.cpp
+    GUI/Flutter/FlutterPanel.hpp
     GUI/format.hpp
     GUI/GCodeViewer.cpp
     GUI/GCodeViewer.hpp
@@ -627,6 +629,8 @@ if (APPLE)
             GUI/GUI_UtilsMac.mm
             GUI/wxMediaCtrl2.mm
             GUI/wxMediaCtrl2.h
+            GUI/Flutter/flutter_host_macos.mm
+            GUI/Flutter/flutter_host.h
         )
     FIND_LIBRARY(DISKARBITRATION_LIBRARY DiskArbitration)
 else ()
@@ -695,6 +699,25 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
 elseif (APPLE)
     target_link_libraries(libslic3r_gui ${DISKARBITRATION_LIBRARY} "-framework Security")
+
+    # Flutter framework — auto-detect or override via -DFLUTTER_XCFRAMEWORK_PATH=
+    if(NOT FLUTTER_XCFRAMEWORK_PATH)
+        file(GLOB FLUTTER_HOMEBREW_DIRS "/opt/homebrew/Caskroom/flutter/*")
+        if(FLUTTER_HOMEBREW_DIRS)
+            list(GET FLUTTER_HOMEBREW_DIRS 0 _flutter_latest)
+            set(FLUTTER_XCFRAMEWORK_PATH "${_flutter_latest}/flutter/bin/cache/artifacts/engine/darwin-x64/FlutterMacOS.xcframework/macos-arm64_x86_64"
+                CACHE PATH "Path to FlutterMacOS.xcframework")
+        else()
+            set(FLUTTER_XCFRAMEWORK_PATH "" CACHE PATH "Path to FlutterMacOS.xcframework")
+        endif()
+    endif()
+    if(FLUTTER_XCFRAMEWORK_PATH)
+        target_include_directories(libslic3r_gui PRIVATE "${FLUTTER_XCFRAMEWORK_PATH}/FlutterMacOS.framework/Headers")
+        target_compile_options(libslic3r_gui PRIVATE "-F${FLUTTER_XCFRAMEWORK_PATH}")
+        set_source_files_properties(
+            GUI/Flutter/flutter_host_macos.mm
+            PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    endif()
 endif()
 
 if (SLIC3R_STATIC)

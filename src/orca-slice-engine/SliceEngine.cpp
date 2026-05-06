@@ -41,10 +41,10 @@ bool SliceEngine::run() {
                                              m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
         BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
 
-        // Collect plates to process
+        // Collect plates to process (internal plate_index is 0-based)
         std::vector<int> plates_to_process;
         if (m_cfg.single_plate) {
-            plates_to_process.push_back(m_cfg.plate_id);
+            plates_to_process.push_back(m_cfg.plate_id - 1);  // CLI 1-based → internal 0-based
         } else {
             for (const auto& pd : m_plate_data)
                 plates_to_process.push_back(pd->plate_index);
@@ -52,7 +52,7 @@ bool SliceEngine::run() {
 
         // Process each plate
         for (int plate_id : plates_to_process) {
-            BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << plate_id << " ===";
+            BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << (plate_id + 1) << " ===";
             process_plate(plate_id);
         }
 
@@ -148,7 +148,7 @@ bool SliceEngine::validate_input() {
     if (m_plate_data.empty()) {
         BOOST_LOG_TRIVIAL(warning) << "No plate data in 3MF, treating as single plate";
         PlateData* pd = new PlateData();
-        pd->plate_index = 1;
+        pd->plate_index = 0;
         m_plate_data.push_back(pd);
     }
 
@@ -156,9 +156,10 @@ bool SliceEngine::validate_input() {
 
     // Validate requested plate exists
     if (m_cfg.single_plate) {
+        // Internal plate_index is 0-based (from 3MF import), CLI plate_id is 1-based
         bool plate_found = false;
         for (const auto& pd : m_plate_data) {
-            if (pd->plate_index == m_cfg.plate_id) {
+            if (pd->plate_index + 1 == m_cfg.plate_id) {
                 plate_found = true;
                 break;
             }
@@ -168,7 +169,7 @@ bool SliceEngine::validate_input() {
             std::cerr << "Available plates: ";
             for (size_t i = 0; i < m_plate_data.size(); ++i) {
                 if (i > 0) std::cerr << ", ";
-                std::cerr << m_plate_data[i]->plate_index;
+                std::cerr << m_plate_data[i]->plate_index + 1;
             }
             std::cerr << std::endl;
             m_any_error = true;
@@ -196,10 +197,10 @@ void SliceEngine::process_plate(int plate_id) {
     int instances_on_plate = filter_instances(plate_id, identify_ids);
 
     BOOST_LOG_TRIVIAL(info) << "Filtered model: " << instances_on_plate
-        << " instances on plate " << plate_id;
+        << " instances on plate " << (plate_id + 1);
 
     if (instances_on_plate == 0) {
-        BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << plate_id;
+        BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << (plate_id + 1);
         return;
     }
 
@@ -251,7 +252,7 @@ void SliceEngine::process_plate(int plate_id) {
     if (!run_slicing(plate_id, print))
         return;
 
-    BOOST_LOG_TRIVIAL(info) << "Slicing completed for plate " << plate_id;
+    BOOST_LOG_TRIVIAL(info) << "Slicing completed for plate " << (plate_id + 1);
 
     // --- Export G-code ---
     PlateSliceResult slice_result;

@@ -345,7 +345,11 @@ endif()
 set(FREETYPE_PKG "")
 if(NOT FREETYPE_FOUND)
     include(FREETYPE/FREETYPE.cmake)
-    set(FREETYPE_PKG "dep_FREETYPE") 
+    set(FREETYPE_PKG "dep_FREETYPE")
+endif()
+
+if (APPLE)
+    include(Flutter/Flutter.cmake)
 endif()
 
 execute_process(
@@ -386,6 +390,10 @@ set(_dep_list
     ${EXPAT_PKG}
     dep_libnoise
     )
+
+if (APPLE)
+    list(APPEND _dep_list dep_Flutter)
+endif()
 
 if (MSVC)
     # Experimental

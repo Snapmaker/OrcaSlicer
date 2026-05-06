@@ -67,6 +67,7 @@
 #include "ConfigWizard.hpp"
 #include "Widgets/WebView.hpp"
 #include "DailyTips.hpp"
+#include "Flutter/FlutterPanel.hpp"
 
 #ifdef _WIN32
 #include <dbt.h>
@@ -967,6 +968,12 @@ void MainFrame::shutdown(bool isRecreate)
     // BBS: why clear ?
     //wxGetApp().plater_ = nullptr;
 
+    if (m_flutter_engine) {
+        m_flutter_engine->stop();
+        delete m_flutter_engine;
+        m_flutter_engine = nullptr;
+    }
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "MainFrame::shutdown exit";
 }
 
@@ -1081,6 +1088,11 @@ void MainFrame::init_tabpanel() {
                 wxWebView* printer_webview = m_printer_view->get_browser();
                 wxGetApp().page_state_notify_webview(printer_webview, "inactive");
             }
+        } else if (prev_monitored_tab == tpFlutterTest && sel != tpFlutterTest) {
+            // Leaving Flutter test tab
+            if (m_flutter_test_panel && m_flutter_test_panel->view()) {
+                m_flutter_test_panel->view()->invokeMethod("onPageState", "inactive");
+            }
         }
 
         // Send "active" to current tab if entering a monitored tab
@@ -1098,9 +1110,15 @@ void MainFrame::init_tabpanel() {
                 wxGetApp().page_state_notify_webview(printer_webview, "active");
             }
             prev_monitored_tab = tpMonitor;
+        } else if (sel == tpFlutterTest) {
+            // Entering Flutter test tab
+            if (m_flutter_test_panel && m_flutter_test_panel->view()) {
+                m_flutter_test_panel->view()->invokeMethod("onPageState", "active");
+            }
+            prev_monitored_tab = tpFlutterTest;
         } else {
             // Update prev_monitored_tab only when leaving a monitored tab
-            if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor) {
+            if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor && prev_monitored_tab != tpFlutterTest) {
                 prev_monitored_tab = -1;
             }
         }
@@ -1174,6 +1192,31 @@ void MainFrame::init_tabpanel() {
     m_calibration = new CalibrationPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
     m_calibration->SetBackgroundColour(*wxWHITE);
     m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
+
+    // Flutter test tab — simplest possible Flutter content
+    m_flutter_engine = createFlutterEngine("", "").release();
+    m_flutter_engine->start();
+    m_flutter_test_panel = new FlutterPanel(m_tabpanel);
+    m_tabpanel->AddPage(m_flutter_test_panel, _L("Flutter Test"), std::string("tab_home_active"), std::string("tab_home_active"), false);
+
+    CallAfter([this] {
+        if (!m_flutter_test_panel->startView(m_flutter_engine, "homeMain", "snapmaker/home")) {
+            BOOST_LOG_TRIVIAL(error) << "[Flutter] startView failed";
+            return;
+        }
+        Dispatcher d;
+        d.on("getVersion", [](auto, auto reply) {
+            reply("orca-test-1.0");
+        })
+        .on("sendMessage", [](auto args, auto reply) {
+            reply("[Orca] C++ received: " + args);
+        })
+        .on("incrementCounter", [](auto args, auto reply) {
+            reply(std::to_string(std::stoi(args) + 1));
+        });
+        m_flutter_test_panel->setHandler(d.handler());
+        BOOST_LOG_TRIVIAL(info) << "[Flutter] Test panel started";
+    });
 
     if (m_plater) {
         // load initial config

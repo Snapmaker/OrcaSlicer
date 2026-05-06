@@ -256,6 +256,33 @@ function build_slicer() {
             echo "Warning: libsentry.dylib not found at ${LIBSENTRY}"
         fi
 
+        # Copy Flutter frameworks
+        FLUTTER_MACOS_FW="${DEPS}/usr/local/FlutterMacOS.framework"
+        if [ -d "${FLUTTER_MACOS_FW}" ]; then
+            echo "Copying FlutterMacOS.framework to Frameworks..."
+            mkdir -p "${APP_FRAMEWORKS_DIR}"
+            cp -Rf "${FLUTTER_MACOS_FW}" "${APP_FRAMEWORKS_DIR}/FlutterMacOS.framework"
+            codesign --force --sign - "${APP_FRAMEWORKS_DIR}/FlutterMacOS.framework" 2>/dev/null || true
+        else
+            echo "Warning: FlutterMacOS.framework not found at ${FLUTTER_MACOS_FW}"
+        fi
+
+        # Copy App.framework (Dart AOT) if available
+        # Build your Flutter app and set FLUTTER_APP_BUILD_DIR, or place App.framework manually
+        if [ -n "${FLUTTER_APP_BUILD_DIR}" ] && [ -d "${FLUTTER_APP_BUILD_DIR}/App.framework" ]; then
+            echo "Copying App.framework from ${FLUTTER_APP_BUILD_DIR}..."
+            mkdir -p "${APP_FRAMEWORKS_DIR}"
+            cp -Rf "${FLUTTER_APP_BUILD_DIR}/App.framework" "${APP_FRAMEWORKS_DIR}/App.framework"
+            codesign --force --sign - "${APP_FRAMEWORKS_DIR}/App.framework" 2>/dev/null || true
+        elif [ -d "${PROJECT_DIR}/resources/flutter_app/App.framework" ]; then
+            echo "Copying App.framework from resources..."
+            mkdir -p "${APP_FRAMEWORKS_DIR}"
+            cp -Rf "${PROJECT_DIR}/resources/flutter_app/App.framework" "${APP_FRAMEWORKS_DIR}/App.framework"
+            codesign --force --sign - "${APP_FRAMEWORKS_DIR}/App.framework" 2>/dev/null || true
+        else
+            echo "Warning: App.framework not found. Flutter app will not render."
+        fi
+
         # Copy Snapmaker_Orca_profile_validator.app if it exists
         if [ -f "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
             echo "Copying Snapmaker_Orca_profile_validator.app..."

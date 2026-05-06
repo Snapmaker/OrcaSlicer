@@ -945,6 +945,24 @@ set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME  "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
 set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
+# Block install while snapmaker-orca is running (avoids locked Snapmaker_Orca.dll / write failures).
+set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS [=[
+snapmaker_proc_check:
+  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
+  IntCmp $0 0 snapmaker_running snapmaker_try_legacy snapmaker_try_legacy
+snapmaker_try_legacy:
+  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul' $0
+  IntCmp $0 0 snapmaker_running snapmaker_ok snapmaker_ok
+snapmaker_running:
+  IfSilent snapmaker_silent snapmaker_ask
+snapmaker_silent:
+  SetErrorLevel 7
+  Quit
+snapmaker_ask:
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is still running (snapmaker-orca.exe).$\r$\nClose the program, then click Retry, or Cancel to exit the installer." IDRETRY snapmaker_proc_check
+  Abort
+snapmaker_ok:
+]=])
 set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
     CreateShortCut \\\"$DESKTOP\\\\Snapmaker Orca.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
 ")

@@ -616,6 +616,7 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
 
     // Slice warnings
     for (const auto& w : result.gcode_result.warnings) {
+        if (w.error_code == "1000C001") continue; // bed temp warning irrelevant for cloud slicing
         if (w.level >= 2) {
             log_plate_message("[Post-processing]", "ERROR", plate_id,
                 w.msg + " (code: " + w.error_code + ")");

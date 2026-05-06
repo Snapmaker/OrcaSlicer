@@ -376,7 +376,10 @@ static bool parse_row_definition(const std::string &row,
                                  int               &local_z_max_sublayers,
                                  float             &component_a_surface_offset,
                                  float             &component_b_surface_offset,
-                                 bool              &deleted)
+                                 bool              &deleted,
+                                 bool              &gradient_enabled,
+                                 float             &gradient_start,
+                                 float             &gradient_end)
 {
     auto trim_copy = [](const std::string &s) {
         size_t lo = 0;
@@ -479,6 +482,9 @@ static bool parse_row_definition(const std::string &row,
     component_a_surface_offset = 0.f;
     component_b_surface_offset = 0.f;
     deleted = false;
+    gradient_enabled = false;
+    gradient_start = MixedFilament::k_default_gradient_dominant;
+    gradient_end   = MixedFilament::k_default_gradient_minority;
 
     size_t token_idx = 5;
     if (tokens.size() >= 6) {
@@ -490,7 +496,9 @@ static bool parse_row_definition(const std::string &row,
         if (legacy == "0" || legacy == "1") {
             pointillism_all_filaments = (legacy == "1");
             token_idx = 6;
-        } else if (legacy.empty() || legacy[0] == 'g' || legacy[0] == 'G' || legacy[0] == 'm' || legacy[0] == 'M') {
+        } else if (legacy.empty() || legacy[0] == 'g' || legacy[0] == 'G' ||
+                   legacy[0] == 'm' || legacy[0] == 'M' ||
+                   legacy[0] == 'r' || legacy[0] == 'R') {
             token_idx = 5;
         } else {
             manual_pattern = legacy;
@@ -557,6 +565,24 @@ static bool parse_row_definition(const std::string &row,
                 stable_id = parsed_stable_id;
             continue;
         }
+        if (tok[0] == 'r' || tok[0] == 'R') {
+            const std::string body = tok.substr(1);
+            size_t s1 = body.find('/');
+            size_t s2 = (s1 == std::string::npos) ? std::string::npos : body.find('/', s1 + 1);
+            if (s1 != std::string::npos && s2 != std::string::npos) {
+                int   parsed_flag  = gradient_enabled ? 1 : 0;
+                float parsed_start = gradient_start;
+                float parsed_end   = gradient_end;
+                if (parse_int_token(body.substr(0, s1), parsed_flag) &&
+                    parse_float_token(body.substr(s1 + 1, s2 - s1 - 1), parsed_start) &&
+                    parse_float_token(body.substr(s2 + 1), parsed_end)) {
+                    gradient_enabled = parsed_flag != 0;
+                    if (parsed_start > 0.f && parsed_start < 1.f) gradient_start = parsed_start;
+                    if (parsed_end   > 0.f && parsed_end   < 1.f) gradient_end   = parsed_end;
+                }
+            }
+            continue;
+        }
         pattern_tokens.push_back(tok);
     }
 
@@ -578,6 +604,20 @@ static bool parse_row_definition(const std::string &row,
 #endif
     pointillism_all_filaments = false;
     distribution_mode = normalize_distribution_mode_without_pointillism(distribution_mode, gradient_component_ids);
+    
+    // Validate gradient parameters if gradient is enabled
+    if (gradient_enabled) {
+        // Ensure start and end are in valid range (0.01 to 0.99)
+        gradient_start = std::clamp(gradient_start, 0.01f, 0.99f);
+        gradient_end   = std::clamp(gradient_end,   0.01f, 0.99f);
+        
+        // Ensure start and end are not too close (need meaningful gradient)
+        if (std::abs(gradient_start - gradient_end) < MixedFilament::k_min_gradient_difference) {
+            // Gradient range too small, disable gradient mode
+            gradient_enabled = false;
+        }
+    }
+    
     return true;
 }
 
@@ -1694,6 +1734,18 @@ void MixedFilamentManager::apply_gradient_settings(int   gradient_mode,
     }
 }
 
+std::vector<int> fill_continuous_layer_range(const std::vector<int> &sorted_layers)
+{
+    if (sorted_layers.empty()) return {};
+    const int first = sorted_layers.front();
+    const int last  = sorted_layers.back();
+    std::vector<int> result;
+    result.reserve(last - first + 1);
+    for (int layer = first; layer <= last; ++layer)
+        result.push_back(layer);
+    return result;
+}
+
 std::string MixedFilamentManager::serialize_custom_entries()
 {
     std::ostringstream ss;
@@ -1721,6 +1773,12 @@ std::string MixedFilamentManager::serialize_custom_entries()
            << 'd' << (mf.deleted ? 1 : 0) << ','
            << 'o' << (mf.origin_auto ? 1 : 0) << ','
            << 'u' << mf.stable_id;
+        if (mf.gradient_enabled) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%.4f/%.4f",
+                          double(mf.gradient_start), double(mf.gradient_end));
+            ss << ",r1/" << buf;
+        }
         const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
         if (!normalized_pattern.empty())
             ss << ',' << normalized_pattern;
@@ -1792,9 +1850,13 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         float component_a_surface_offset = 0.f;
         float component_b_surface_offset = 0.f;
         bool deleted = false;
+        bool gradient_enabled = false;
+        float gradient_start = 0.8f;
+        float gradient_end   = 0.2f;
         if (!parse_row_definition(row, a, b, stable_id, enabled, custom, origin_auto, mix, pointillism_all_filaments,
                                   gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode,
-                                  local_z_max_sublayers, component_a_surface_offset, component_b_surface_offset, deleted)) {
+                                  local_z_max_sublayers, component_a_surface_offset, component_b_surface_offset, deleted,
+                                  gradient_enabled, gradient_start, gradient_end)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
             continue;
@@ -1850,6 +1912,9 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                 mf.enabled = false;
             mf.custom = false;
             mf.origin_auto = true;
+            mf.gradient_enabled = gradient_enabled;
+            mf.gradient_start   = gradient_start;
+            mf.gradient_end     = gradient_end;
             disable_pointillism_mode(mf);
 
             rebuilt.push_back(std::move(mf));
@@ -1882,6 +1947,9 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             mf.enabled = false;
         mf.custom = custom;
         mf.origin_auto = origin_auto;
+        mf.gradient_enabled = gradient_enabled;
+        mf.gradient_start   = gradient_start;
+        mf.gradient_end     = gradient_end;
         disable_pointillism_mode(mf);
         rebuilt.push_back(std::move(mf));
         ++loaded_rows;
@@ -1919,12 +1987,52 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                             << ", mixed_total=" << m_mixed.size();
 }
 
+void MixedFilamentManager::set_gradient_runs(int mixed_idx, const PrintObject* object,
+                                             std::vector<std::vector<int>> runs) const
+{
+    if (mixed_idx < 0 || object == nullptr) return;
+    GradientRunsForObject g;
+    g.runs = std::move(runs);
+    m_gradient_runs[mixed_idx][object] = std::move(g);
+}
+
+bool MixedFilamentManager::gradient_run_position(int mixed_idx, const PrintObject* object,
+                                                 int layer_index,
+                                                 int &out_idx, int &out_total) const
+{
+    if (mixed_idx < 0 || object == nullptr) return false;
+    auto it_row = m_gradient_runs.find(mixed_idx);
+    if (it_row == m_gradient_runs.end()) return false;
+    auto it_obj = it_row->second.find(object);
+    if (it_obj == it_row->second.end()) return false;
+    for (const auto &run : it_obj->second.runs) {
+        if (run.empty()) continue;
+        const int first = run.front();
+        const int last  = run.back();
+        if (layer_index < first || layer_index > last) continue;
+        // Anchor to the [first, last] span. A layer_index that falls within
+        // the span but isn't precisely listed (e.g. when segmentation collapsed
+        // the painted channel for that layer) still produces a smoothly varying
+        // (idx, total) so the gradient stays continuous along Z.
+        out_idx   = layer_index - first;
+        out_total = last - first + 1;
+        return true;
+    }
+    return false;
+}
+
+void MixedFilamentManager::clear_gradient_runs() const
+{
+    m_gradient_runs.clear();
+}
+
 unsigned int MixedFilamentManager::resolve(unsigned int filament_id,
                                            size_t       num_physical,
                                            int          layer_index,
                                            float        layer_print_z,
                                            float        layer_height,
-                                           bool         force_height_weighted) const
+                                           bool         force_height_weighted,
+                                           const PrintObject* current_object) const
 {
     const int mixed_idx = mixed_index_from_filament_id(filament_id, num_physical);
     if (mixed_idx < 0)
@@ -1993,7 +2101,8 @@ unsigned int MixedFilamentManager::resolve_perimeter(unsigned int filament_id,
                                                      int          perimeter_index,
                                                      float        layer_print_z,
                                                      float        layer_height,
-                                                     bool         force_height_weighted) const
+                                                     bool         force_height_weighted,
+                                                     const PrintObject* current_object) const
 {
     const int mixed_idx = mixed_index_from_filament_id(filament_id, num_physical);
     if (mixed_idx < 0)
@@ -2014,7 +2123,7 @@ unsigned int MixedFilamentManager::resolve_perimeter(unsigned int filament_id,
         }
     }
 
-    return resolve(filament_id, num_physical, layer_index, layer_print_z, layer_height, force_height_weighted);
+    return resolve(filament_id, num_physical, layer_index, layer_print_z, layer_height, force_height_weighted, current_object);
 }
 
 unsigned int MixedFilamentManager::effective_painted_region_filament_id(unsigned int filament_id,

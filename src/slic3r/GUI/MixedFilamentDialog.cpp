@@ -18,6 +18,7 @@
 #include <wx/bmpbuttn.h>
 
 #include <algorithm>
+#include <utility>
 #include <set>
 
 namespace Slic3r { namespace GUI {
@@ -52,7 +53,9 @@ MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
     , m_filament_colours(filament_colours)
     , m_result(existing)
 {
-    if (!MixedFilamentManager::normalize_manual_pattern(existing.manual_pattern).empty())
+    if (existing.gradient_enabled)
+        m_current_mode = MODE_GRADIENT;
+    else if (!MixedFilamentManager::normalize_manual_pattern(existing.manual_pattern).empty())
         m_current_mode = MODE_CYCLE;
     else if (!existing.gradient_component_ids.empty() &&
              existing.distribution_mode == int(MixedFilament::Simple))
@@ -66,6 +69,13 @@ MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
         m_current_mode = MODE_GRADIENT;
     else
         m_current_mode = MODE_RATIO;
+
+    // Determine gradient direction from existing configuration
+    // Direction 0: A→B (component_a starts dominant, transitions to component_b)
+    //              Implemented as: gradient_start > gradient_end (e.g., 0.8 → 0.2)
+    // Direction 1: B→A (component_b starts dominant, transitions to component_a)
+    //              Implemented as: gradient_start < gradient_end (e.g., 0.2 → 0.8)
+    m_gradient_direction = (existing.gradient_start >= existing.gradient_end) ? 0 : 1;
 
     // Restore tri-picker weights from slash-separated weight string
     if (m_current_mode == MODE_RATIO && !existing.gradient_component_weights.empty()) {
@@ -117,7 +127,9 @@ wxBitmap MixedFilamentDialog::make_color_bitmap(const wxColour& c, int size)
 
 int MixedFilamentDialog::max_filaments_for_mode(int mode) const
 {
-    return (mode == MODE_RATIO) ? 3 : 4;
+    if (mode == MODE_RATIO)    return 3;
+    if (mode == MODE_GRADIENT) return 2;
+    return 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,16 +183,28 @@ void MixedFilamentDialog::build_ui()
     // Left column: title row + filament rows panel
     auto* left_col = new wxBoxSizer(wxVERTICAL);
     
-    // Title row for left column
+    // Create swap button for gradient direction (shown only in gradient mode)
+    m_btn_swap_gradient_dir = new wxButton(this, wxID_ANY, from_u8("\xe2\x86\x95"),
+                                           wxDefaultPosition, wxSize(FromDIP(24), FromDIP(24)));
+    m_btn_swap_gradient_dir->SetToolTip(_L("Swap gradient direction"));
+    m_btn_swap_gradient_dir->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_gradient_direction = 1 - m_gradient_direction;
+        if (m_preview_panel)
+            m_preview_panel->Refresh();
+    });
+    
+    // Title row for left column: title + swap button + add/remove buttons
     auto* title_row = new wxBoxSizer(wxHORIZONTAL);
     m_filament_title = new wxStaticText(this, wxID_ANY, _L("Mixed Filament"));
     title_row->Add(m_filament_title, 0, wxALIGN_CENTER_VERTICAL);
+    title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(8));
     title_row->AddStretchSpacer();
     title_row->Add(m_btn_remove_filament, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     title_row->Add(m_btn_add_filament, 0, wxALIGN_CENTER_VERTICAL);
     left_col->Add(title_row, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
 
     // Filament rows panel
+
     m_filament_rows_panel = new wxPanel(this);
     m_filament_rows_sizer = new wxBoxSizer(wxVERTICAL);
     m_filament_rows_panel->SetSizer(m_filament_rows_sizer);
@@ -190,6 +214,8 @@ void MixedFilamentDialog::build_ui()
 
     // Right column: preview panel
     auto* preview_col = new wxBoxSizer(wxVERTICAL);
+    m_preview_label = new wxStaticText(this, wxID_ANY, _L("Mix Color Effect"));
+    preview_col->Add(m_preview_label, 0, wxALIGN_CENTER | wxBOTTOM, FromDIP(4));
     m_preview_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
                                   wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
     m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
@@ -202,13 +228,17 @@ void MixedFilamentDialog::build_ui()
             int ib = std::max(0, std::min(get_filament_index(1), (int)m_filament_colours.size()-1));
             wxColour ca = parse_mixed_color(m_filament_colours[ia]);
             wxColour cb = parse_mixed_color(m_filament_colours[ib]);
+            if (m_gradient_direction != 0)
+                std::swap(ca, cb);
             wxImage img(sz.GetWidth(), sz.GetHeight());
             unsigned char* data = img.GetData();
+            // Use vertical gradient to represent Z-axis direction
+            // Top of preview = bottom layers, bottom of preview = top layers
             for (int y = 0; y < sz.GetHeight(); ++y) {
+                // Calculate gradient parameter t from 0 (top) to 1 (bottom)
+                float t = (sz.GetHeight() > 1) ? float(y) / float(sz.GetHeight() - 1) : 0.5f;
+                wxColour c = blend_pair_filament_mixer(ca, cb, t);
                 for (int x = 0; x < sz.GetWidth(); ++x) {
-                    float t = (sz.GetWidth() + sz.GetHeight() > 2)
-                        ? float(x + y) / float(sz.GetWidth() + sz.GetHeight() - 2) : 0.5f;
-                    wxColour c = blend_pair_filament_mixer(ca, cb, t);
                     int idx = (y * sz.GetWidth() + x) * 3;
                     data[idx]   = c.Red();
                     data[idx+1] = c.Green();
@@ -222,8 +252,6 @@ void MixedFilamentDialog::build_ui()
         }
     });
     preview_col->Add(m_preview_panel, 0, wxALIGN_CENTER);
-    m_preview_label = new wxStaticText(this, wxID_ANY, _L("Mix Color Effect"));
-    preview_col->Add(m_preview_label, 0, wxALIGN_CENTER | wxTOP, FromDIP(4));
     
     main_h_sizer->Add(preview_col, 0, wxALIGN_TOP);
 
@@ -669,34 +697,6 @@ void MixedFilamentDialog::rebuild_filament_rows()
 
         row->Add(cb, 1, wxALIGN_CENTER_VERTICAL);
 
-        if (m_current_mode == MODE_GRADIENT && i > 0) {
-            auto* btn_up = new wxButton(m_filament_rows_panel, wxID_ANY, wxString::FromUTF8("\xe2\x86\x91"),
-                                        wxDefaultPosition, wxSize(FromDIP(24), FromDIP(24)));
-            btn_up->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent&) {
-                if (i < 1 || i >= (int)m_filament_rows.size()) return;
-                
-                // Get all current selections
-                std::vector<int> selections;
-                for (int k = 0; k < (int)m_filament_rows.size(); ++k)
-                    selections.push_back(get_filament_index(k));
-                
-                // Swap the two rows
-                std::swap(selections[i - 1], selections[i]);
-                
-                // Update m_result
-                m_result.component_a = (unsigned int)(selections[0] + 1);
-                m_result.component_b = (unsigned int)(selections[1] + 1);
-                
-                // Rebuild all combos with new selections
-                rebuild_all_combos_with_selections(selections);
-                
-                // Update preview
-                update_preview();
-                if (m_preview_panel) m_preview_panel->Refresh();
-            });
-            row->Add(btn_up, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(4));
-        }
-
         m_filament_rows_sizer->Add(row, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
     }
 
@@ -877,6 +877,10 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
     if (m_tri_picker_sizer)    m_tri_picker_sizer->ShowItems(show_tri && !is_match_mode);
     if (m_pattern_panel_sizer) m_pattern_panel_sizer->ShowItems(is_cycle_mode);
     if (m_match_panel_sizer)   m_match_panel_sizer->ShowItems(is_match_mode);
+
+    const bool show_gradient_swap = (m_current_mode == MODE_GRADIENT) && (n == 2);
+    if (m_btn_swap_gradient_dir)
+        m_btn_swap_gradient_dir->Show(show_gradient_swap);
 }
 
 void MixedFilamentDialog::resize_gradient_ids(int target_count)
@@ -1348,6 +1352,8 @@ void MixedFilamentDialog::collect_result()
     sync_rows_to_result();
     int val = m_gradient_selector ? m_gradient_selector->value() : 50;
     m_result.mix_b_percent = val;
+    // Default: drop Z-gradient state. Only MODE_GRADIENT re-enables it below.
+    m_result.gradient_enabled = false;
     switch (m_current_mode) {
     case MODE_RATIO:
         m_result.gradient_component_weights.clear();
@@ -1413,9 +1419,39 @@ void MixedFilamentDialog::collect_result()
     }
     case MODE_GRADIENT:
         m_result.distribution_mode = int(MixedFilament::LayerCycle);
-        // gradient_component_ids already set by sync_rows_to_result(); keep it
+        // 2-filament Z gradient does not need extra component IDs/weights.
+        m_result.gradient_component_ids.clear();
         m_result.gradient_component_weights.clear();
         m_result.manual_pattern.clear();
+        m_result.gradient_enabled = true;
+        
+        // Gradient direction mapping:
+        // Direction 0: A→B (component_a starts dominant at 80%, ends at 20%)
+        //              gradient_start=0.8, gradient_end=0.2 (start > end)
+        // Direction 1: B→A (component_a starts at 20%, ends dominant at 80%)
+        //              gradient_start=0.2, gradient_end=0.8 (start < end)
+        // 
+        // The gradient_start/end values represent the ratio of component_a.
+        // Component_b ratio is always (1 - component_a_ratio).
+        
+        if (m_gradient_direction == 0) {
+            // A→B: component_a goes from dominant to minority
+            m_result.gradient_start = MixedFilament::k_default_gradient_dominant;
+            m_result.gradient_end   = MixedFilament::k_default_gradient_minority;
+        } else {
+            // B→A: component_a goes from minority to dominant
+            m_result.gradient_start = MixedFilament::k_default_gradient_minority;
+            m_result.gradient_end   = MixedFilament::k_default_gradient_dominant;
+        }
+        
+        // Mid-blend layer ratio (50%) keeps non-gradient consumers consistent.
+        m_result.mix_b_percent = 50;
+        m_result.ratio_a = 1;
+        m_result.ratio_b = 1;
+        // Force at least 2 sublayers per layer so the LocalZ planner emits the
+        // two sub-layers needed to realize the per-layer gradient ratio.
+        if (m_result.local_z_max_sublayers < 2)
+            m_result.local_z_max_sublayers = 2;
         break;
     }
     m_result.custom = true;

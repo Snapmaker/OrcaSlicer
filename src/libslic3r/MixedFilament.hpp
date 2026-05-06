@@ -6,9 +6,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <unordered_map>
 #include <utility>
 
 namespace Slic3r {
+
+class PrintObject;
+
+std::vector<int> fill_continuous_layer_range(const std::vector<int> &sorted_layers);
 
 // Represents a virtual "mixed" filament created from physical filaments
 // (layer cadence and/or same-layer interleaved stripe distribution). Display
@@ -64,6 +69,14 @@ struct MixedFilament
     // Optional Local-Z cap for this mixed row. 0 disables the cap.
     int local_z_max_sublayers = 0;
 
+    static constexpr float k_default_gradient_dominant = 0.8f;  // Dominant component ratio
+    static constexpr float k_default_gradient_minority = 0.2f;  // Minority component ratio
+    static constexpr float k_min_gradient_difference   = 0.05f; // Minimum difference for valid gradient
+    
+    bool  gradient_enabled = false;
+    float gradient_start = k_default_gradient_dominant;
+    float gradient_end   = k_default_gradient_minority;
+
     // Additional XY surface offsets, in mm, applied when this mixed row
     // resolves to component A or B for an entire layer. Positive values
     // contract inward; negative values expand outward.
@@ -90,6 +103,7 @@ struct MixedFilament
     bool operator==(const MixedFilament &rhs) const
     {
         constexpr float k_surface_offset_epsilon = 1e-6f;
+        constexpr float k_gradient_epsilon       = 1e-4f;
         return component_a == rhs.component_a &&
                component_b == rhs.component_b &&
                stable_id   == rhs.stable_id   &&
@@ -102,6 +116,9 @@ struct MixedFilament
                pointillism_all_filaments == rhs.pointillism_all_filaments &&
                distribution_mode == rhs.distribution_mode &&
                local_z_max_sublayers == rhs.local_z_max_sublayers &&
+               gradient_enabled == rhs.gradient_enabled &&
+               std::abs(gradient_start - rhs.gradient_start) <= k_gradient_epsilon &&
+               std::abs(gradient_end   - rhs.gradient_end)   <= k_gradient_epsilon &&
                std::abs(component_a_surface_offset - rhs.component_a_surface_offset) <= k_surface_offset_epsilon &&
                std::abs(component_b_surface_offset - rhs.component_b_surface_offset) <= k_surface_offset_epsilon &&
                enabled      == rhs.enabled &&
@@ -192,6 +209,23 @@ public:
     std::string serialize_custom_entries();
     void load_custom_entries(const std::string &serialized, const std::vector<std::string> &filament_colours);
 
+    // ---- Gradient runs (Bambu-style Z gradient) ------------------------
+    // Per (mixed_idx, PrintObject*) list of continuous-layer runs. Each run
+    // is a sorted vector of layer indices over which this mixed row prints
+    // continuously. A break between layers opens a new run.
+    struct GradientRunsForObject {
+        std::vector<std::vector<int>> runs;
+    };
+    void set_gradient_runs(int mixed_idx, const PrintObject* object,
+                           std::vector<std::vector<int>> runs) const;
+    // Locate which run contains layer_index and return (idx_in_run, run_total).
+    // Returns false if no run on this object contains layer_index, or gradient
+    // tracking has not been populated for this row.
+    bool gradient_run_position(int mixed_idx, const PrintObject* object,
+                               int layer_index,
+                               int &out_idx, int &out_total) const;
+    void clear_gradient_runs() const;
+
     // Normalize a manual mixed-pattern string into compact token form.
     // Accepts separators and A/B aliases. Returns empty string if invalid.
     static std::string normalize_manual_pattern(const std::string &pattern);
@@ -213,14 +247,16 @@ public:
                          int          layer_index,
                          float        layer_print_z = 0.f,
                          float        layer_height  = 0.f,
-                         bool         force_height_weighted = false) const;
+                         bool         force_height_weighted = false,
+                         const PrintObject* current_object = nullptr) const;
     unsigned int resolve_perimeter(unsigned int filament_id,
                                    size_t       num_physical,
                                    int          layer_index,
                                    int          perimeter_index,
                                    float        layer_print_z = 0.f,
                                    float        layer_height  = 0.f,
-                                   bool         force_height_weighted = false) const;
+                                   bool         force_height_weighted = false,
+                                   const PrintObject* current_object = nullptr) const;
     // Resolve the filament ID that should own painted regions on this layer.
     // Modes that require virtual identity later in G-code generation keep the
     // original mixed ID; ordinary mixed rows collapse to the current physical
@@ -305,6 +341,11 @@ private:
     bool                       m_advanced_dithering  = false;
     uint64_t                   m_next_stable_id      = 1;
     MixedFilamentDisplayContext m_display_context;
+
+    // Gradient run tracking: mutable because it's a cache populated during
+    // const operations (ToolOrdering::collect_extruders). The cache maps
+    // mixed_idx -> PrintObject* -> runs of layer indices.
+    mutable std::unordered_map<int, std::unordered_map<const PrintObject*, GradientRunsForObject>> m_gradient_runs;
 };
 
 } // namespace Slic3r

@@ -566,10 +566,7 @@ void MixedFilamentColorMapPanel::on_paint(wxPaintEvent&)
 
     const wxColour background = canvas_background_color();
     if (!cached_bitmap_matches(rect.GetSize(), background)) {
-        if (!m_cached_bitmap.IsOk())
-            render_cached_bitmap(rect.GetSize(), background);
-        else
-            schedule_cached_bitmap_render();
+        schedule_cached_bitmap_render();
     }
 
     const bool is_triangle_mode = geometry_mode() == GeometryMode::Triangle ||

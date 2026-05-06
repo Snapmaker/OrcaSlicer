@@ -942,7 +942,7 @@ set (CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})
 set (CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/images/Snapmaker_Orca.ico")
 set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
-set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\snapmaker-orca.exe")
+set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
 set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
 # Block install while snapmaker-orca is running (avoids locked Snapmaker_Orca.dll / write failures).
@@ -950,8 +950,8 @@ set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProt
 set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS [=[
   ; Avoid custom labels here: CPack may inject this block more than once,
   ; and duplicate labels break makensis parsing.
-  ExecWait '"$SYSDIR\cmd.exe" /c tasklist 2^>nul ^| findstr /b /i snapmaker-orca.exe ^>nul' $0
-  IntCmp $0 0 0 +8 +8
+  ExecWait '"$SYSDIR\\cmd.exe" /c tasklist 2^>nul ^| findstr /b /i snapmaker-orca.exe ^>nul' $0
+  IntCmp $0 0 0 0 +5
   IfSilent 0 +3
   SetErrorLevel 7
   Quit
@@ -968,6 +968,7 @@ set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
 # set (CPACK_NSIS_MODIFY_PATH "ON")
 set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;Snapmaker Orca")
 set(CPACK_CREATE_DESKTOP_LINKS "snapmaker-orca")
+set(CPACK_VERBATIM_VARIABLES ON)
 set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also include in install command
 
 set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")

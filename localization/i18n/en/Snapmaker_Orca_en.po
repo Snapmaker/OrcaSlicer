@@ -7231,6 +7231,9 @@ msgstr "Cannot send print tasks when an update is in progress"
 msgid "The selected printer is incompatible with the chosen printer presets."
 msgstr ""
 
+msgid "Incompatible filament types cannot be mixed. Please correct the selection."
+msgstr ""
+
 msgid "An SD card needs to be inserted before send to printer SD card."
 msgstr ""
 "A MicroSD card needs to be inserted before sending to the printer SD card."

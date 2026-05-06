@@ -3,6 +3,10 @@
 #include <unordered_set>
 #include <ColorSpaceConvert.hpp>
 #include "MixedFilamentColorMapPanel.hpp"
+#include "GUI_App.hpp"
+#include "PresetBundle.hpp"
+#include <algorithm>
+#include <boost/log/trivial.hpp>
 
 namespace Slic3r { namespace GUI {
 wxColour parse_mixed_color(const std::string& value)
@@ -648,6 +652,137 @@ wxColour blend_sequence_filament_mixer(const std::vector<wxColour>& palette, con
     }
 
     return blend_multi_filament_mixer(colors, weights);
+}
+
+// ---------------------------------------------------------------------------
+// Material compatibility
+// ---------------------------------------------------------------------------
+static const std::unordered_map<std::string, int>& filament_compatibility_group_map()
+{
+    static const std::unordered_map<std::string, int> m = {
+        {"PLA", 1}, {"PLA-AERO", 1}, {"PLA-CF", 1},
+        {"ABS", 2}, {"ABS-GF", 2},
+        {"ASA", 3}, {"ASA-Aero", 3},
+        {"PETG", 4}, {"PETG-CF", 4}, {"PETG-CF10", 4}, {"PETG-GF", 4},
+        {"TPU", 5}, {"FLEX", 5}, {"EVA", 5}, {"SBS", 5},
+        {"PCTG", 6},
+        {"HIPS", 7},
+        {"BVOH", 8}, {"PVA", 8}, {"PVB", 8},
+        {"PA", 9}, {"PA-CF", 9}, {"PA-GF", 9}, {"PA6-CF", 9}, {"PA11-CF", 9},
+        {"PC", 10}, {"PC-CF", 10},
+        {"PP", 11}, {"PP-CF", 11}, {"PP-GF", 11},
+        {"PE", 12}, {"PE-CF", 12},
+        {"PET-CF", 13},
+        {"PHA", 14},
+        {"PPS", 15}, {"PPS-CF", 15}, {"PPA", 15}, {"PPA-CF", 15}, {"PPA-GF", 15},
+    };
+    return m;
+}
+
+static std::string normalize_filament_type(const std::string& type)
+{
+    std::string normalized = type;
+    // Trim leading/trailing whitespace
+    size_t start = normalized.find_first_not_of(" \t\r\n");
+    size_t end = normalized.find_last_not_of(" \t\r\n");
+    if (start != std::string::npos && end != std::string::npos) {
+        normalized = normalized.substr(start, end - start + 1);
+    }
+    // Convert to uppercase
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+    return normalized;
+}
+
+int get_filament_compatibility_group(const std::string& filament_type)
+{
+    if (filament_type.empty()) {
+        BOOST_LOG_TRIVIAL(warning) << "Empty filament type in compatibility check";
+        return -1;
+    }
+
+    const auto& m = filament_compatibility_group_map();
+    auto it = m.find(filament_type);
+    if (it != m.end()) return it->second;
+    std::string normalized = normalize_filament_type(filament_type);
+    it = m.find(normalized);
+    if (it != m.end()) return it->second;
+
+    // Assign stable unique group IDs to unknown types (no hash collision risk)
+    static std::unordered_map<std::string, int> unknown_groups;
+    static int next_unknown_group = 100;
+    auto uit = unknown_groups.find(normalized);
+    if (uit != unknown_groups.end()) return uit->second;
+    int group = next_unknown_group++;
+    unknown_groups[normalized] = group;
+    BOOST_LOG_TRIVIAL(info) << "Unknown filament type '" << filament_type
+                            << "' assigned to compatibility group " << group;
+    return group;
+}
+
+bool are_filaments_compatible(const std::vector<unsigned int>& filament_ids)
+{
+    if (filament_ids.size() <= 1) return true;
+
+    PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+    if (!preset_bundle) {
+        BOOST_LOG_TRIVIAL(error) << "PresetBundle is null in filament compatibility check";
+        return false;
+    }
+
+    const std::vector<std::string>& filament_presets = preset_bundle->filament_presets;
+    
+    int common_group = -1;
+    std::string first_type_name;
+    
+    for (unsigned int id : filament_ids) {
+        if (id >= filament_presets.size()) {
+            BOOST_LOG_TRIVIAL(warning) << "Filament ID " << id << " out of range (max: " 
+                                       << filament_presets.size() - 1 << ")";
+            continue;
+        }
+        
+        const Preset* preset = preset_bundle->filaments.find_preset(filament_presets[id]);
+        if (!preset) {
+            BOOST_LOG_TRIVIAL(warning) << "Preset not found for filament ID " << id;
+            continue;
+        }
+        
+        auto* type_opt = dynamic_cast<const ConfigOptionStrings*>(preset->config.option("filament_type"));
+        if (!type_opt || type_opt->values.empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "Filament type not found for preset '" 
+                                       << preset->name << "'";
+            continue;
+        }
+        
+        const std::string& type_name = type_opt->values[0];
+        int group = get_filament_compatibility_group(type_name);
+        
+        if (group < 0) {
+            BOOST_LOG_TRIVIAL(warning) << "Invalid compatibility group for filament ID " << id;
+            continue;
+        }
+        
+        if (common_group < 0) {
+            common_group = group;
+            first_type_name = type_name;
+            BOOST_LOG_TRIVIAL(debug) << "Reference filament type: '" << type_name 
+                                     << "' (group " << group << ")";
+        }
+        else if (common_group != group) {
+            BOOST_LOG_TRIVIAL(info) << "Incompatible filament types detected: '" 
+                                    << first_type_name << "' (group " << common_group 
+                                    << ") vs '" << type_name << "' (group " << group << ")";
+            return false;
+        }
+    }
+    
+    if (common_group < 0) {
+        BOOST_LOG_TRIVIAL(warning) << "No valid filament types found in compatibility check";
+        return true;
+    }
+    
+    BOOST_LOG_TRIVIAL(debug) << "All filaments compatible (group " << common_group << ")";
+    return true;
 }
 
 }} // namespace Slic3r::GUI

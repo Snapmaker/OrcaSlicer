@@ -7317,6 +7317,9 @@ msgstr "設備升級中，無法傳送列印作業"
 msgid "The selected printer is incompatible with the chosen printer presets."
 msgstr "所選列印設備與選擇的列印設備預設檔不相容。"
 
+msgid "Incompatible filament types cannot be mixed. Please correct the selection."
+msgstr "不同類型耗材不可混色列印，請修正異常混色設定。"
+
 msgid "An SD card needs to be inserted before send to printer SD card."
 msgstr "傳送到列印設備需要插入 SD 記憶卡。"
 

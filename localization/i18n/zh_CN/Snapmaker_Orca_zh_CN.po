@@ -6960,6 +6960,9 @@ msgstr "设备升级中，无法发送打印任务"
 msgid "The selected printer is incompatible with the chosen printer presets."
 msgstr "所选打印机与选择的打印机预设不兼容。"
 
+msgid "Incompatible filament types cannot be mixed. Please correct the selection."
+msgstr "不同类型耗材不可混色打印，请修正异常混色设置。"
+
 msgid "An SD card needs to be inserted before send to printer SD card."
 msgstr "发送到打印机需要插入SD卡"
 

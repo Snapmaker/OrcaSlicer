@@ -150,7 +150,7 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
             for (size_t j = 0; j < plate.filament_details.size(); ++j) {
                 const auto& detail = plate.filament_details[j];
                 json << "        {\n";
-                json << "          \"extruder_id\": " << detail.extruder_id << ",\n";
+                json << "          \"filament_id\": " << detail.filament_id << ",\n";
                 json << "          \"type\": \"" << json_escape(detail.type) << "\",\n";
                 json << "          \"color\": \"" << json_escape(detail.color) << "\",\n";
                 json << "          \"used_g\": " << detail.used_g << "\n";

@@ -910,7 +910,7 @@ void SliceEngine::build_statistics() {
 
             for (const auto& [extruder_id, used_g] : plate_stats.filament_used_g) {
                 SliceOutputStats::FilamentDetail detail;
-                detail.extruder_id = extruder_id;
+                detail.filament_id = extruder_id;
                 detail.used_g = used_g;
 
                 if (ftypes && extruder_id < static_cast<int>(ftypes->values.size()))

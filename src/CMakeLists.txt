@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.13)
 project(Snapmaker_Orca-native)
 
+include(EnsureFlutterDeps)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -141,36 +143,27 @@ if (APPLE)
     # -liconv: boost links to libiconv by default
     target_link_libraries(Snapmaker_Orca "-liconv -framework IOKit" "-framework CoreFoundation" "-framework AVFoundation" "-framework AVKit" "-framework CoreMedia" "-framework VideoToolbox" -lc++)
 
-    # Flutter framework — from deps (CMAKE_PREFIX_PATH)
-    if(EXISTS "${CMAKE_PREFIX_PATH}/FlutterMacOS.framework")
-        target_link_libraries(Snapmaker_Orca "-F${CMAKE_PREFIX_PATH}" "-framework FlutterMacOS")
-        target_link_options(Snapmaker_Orca PRIVATE "-Wl,-rpath,@executable_path/../Frameworks")
-    else()
-        message(FATAL_ERROR "FlutterMacOS.framework not found in deps. Build deps first.")
-    endif()
+    # Flutter framework — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
+    ensure_flutter_deps()
+    target_link_libraries(Snapmaker_Orca "-F${CMAKE_PREFIX_PATH}" "-framework FlutterMacOS")
+    target_link_options(Snapmaker_Orca PRIVATE "-Wl,-rpath,@executable_path/../Frameworks")
 
 elseif (MSVC)
     # Manifest is provided through Snapmaker_Orca.rc, don't generate your own.
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
 
-    # Flutter — from deps (CMAKE_PREFIX_PATH)
-    if(EXISTS "${CMAKE_PREFIX_PATH}/lib/flutter_windows.lib")
-        target_link_libraries(Snapmaker_Orca "${CMAKE_PREFIX_PATH}/lib/flutter_windows.lib")
-    else()
-        message(FATAL_ERROR "Flutter Windows lib not found in deps. Build deps first.")
-    endif()
+    # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
+    ensure_flutter_deps()
+    target_link_libraries(Snapmaker_Orca "${CMAKE_PREFIX_PATH}/lib/flutter_windows.lib")
 else ()
     # Boost on Raspberry-Pi does not link to pthreads explicitely.
     target_link_libraries(Snapmaker_Orca ${CMAKE_DL_LIBS} -lstdc++ Threads::Threads pangoft2-1.0)
 
-    # Flutter — from deps (CMAKE_PREFIX_PATH)
-    if(EXISTS "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so")
-        target_link_libraries(Snapmaker_Orca
-            "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so"
-            "${CMAKE_PREFIX_PATH}/lib/libflutter_engine.so")
-    else()
-        message(FATAL_ERROR "Flutter Linux libs not found in deps. Build deps first.")
-    endif()
+    # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
+    ensure_flutter_deps()
+    target_link_libraries(Snapmaker_Orca
+        "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so"
+        "${CMAKE_PREFIX_PATH}/lib/libflutter_engine.so")
 endif ()
 
 # Add the Slic3r GUI library, libcurl, OpenGL and GLU libraries.

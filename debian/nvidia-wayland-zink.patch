@@ -1,0 +1,59 @@
+diff --git a/src/Snapmaker_Orca.cpp b/src/Snapmaker_Orca.cpp
+index 51361333b4..c8eccba8a8 100644
+--- a/src/Snapmaker_Orca.cpp
++++ b/src/Snapmaker_Orca.cpp
+@@ -21,6 +21,7 @@
+ #include <string>
+ #include <cstring>
+ #include <iostream>
++#include <fstream>
+ #include <math.h>
+ 
+ #if defined(__linux__) || defined(__LINUX__)
+@@ -1052,6 +1053,46 @@ int CLI::run(int argc, char **argv)
+     // instruct the window manager to fall back to X server mode.
+     ::setenv("GDK_BACKEND", "x11", /* replace */ true);
+ 
++    // On Wayland with NVIDIA drivers > 555, the GLX context fails under
++    // XWayland. Force Mesa's Zink driver (OpenGL-over-Vulkan) to work around.
++    {
++        const char *session_type = ::getenv("XDG_SESSION_TYPE");
++        const char *zink_disable = ::getenv("ZINK_DISABLE_OVERRIDE");
++        if (session_type && std::string(session_type) == "wayland" &&
++            !(zink_disable && std::string(zink_disable) == "1")) {
++            // Check if NVIDIA kernel module is loaded
++            std::ifstream nvidia_version("/proc/driver/nvidia/version");
++            if (nvidia_version.good()) {
++                bool force_zink = false;
++                std::string line;
++                while (std::getline(nvidia_version, line)) {
++                    // Parse: "NVRM version: NVIDIA ... Kernel Module  560.35.03 ..."
++                    auto pos = line.find("Kernel Module");
++                    if (pos != std::string::npos) {
++                        std::string after = line.substr(pos + 13);
++                        // Extract version number
++                        size_t start = after.find_first_of("0123456789");
++                        if (start != std::string::npos) {
++                            int major = std::atoi(after.c_str() + start);
++                            if (major > 555)
++                                force_zink = true;
++                        }
++                        break;
++                    }
++                }
++                nvidia_version.close();
++                if (force_zink) {
++                    ::setenv("__GLX_VENDOR_LIBRARY_NAME", "mesa", 0);
++                    ::setenv("__EGL_VENDOR_LIBRARY_FILENAMES",
++                             "/usr/share/glvnd/egl_vendor.d/50_mesa.json", 0);
++                    ::setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 0);
++                    ::setenv("GALLIUM_DRIVER", "zink", 0);
++                    ::setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 0);
++                }
++            }
++        }
++    }
++
+     // Also on Linux, we need to tell Xlib that we will be using threads,
+     // lest we crash when we fire up GStreamer.
+     XInitThreads();

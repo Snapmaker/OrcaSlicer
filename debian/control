@@ -1,0 +1,73 @@
+Source: snapmaker-orca
+Section: graphics
+Priority: optional
+Maintainer: Snapmaker Community <noreply@snapmaker.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake,
+               ninja-build,
+               clang,
+               g++,
+               m4,
+               pkgconf,
+               libgl1-mesa-dev,
+               libglu1-mesa-dev,
+               libosmesa6-dev,
+               libwayland-dev,
+               libxkbcommon-dev,
+               wayland-protocols,
+               extra-cmake-modules,
+               libcairo2-dev,
+               libgtk-3-dev,
+               libsoup2.4-dev,
+               libwebkit2gtk-4.1-dev,
+               libgstreamer1.0-dev,
+               libgstreamer-plugins-base1.0-dev,
+               gstreamer1.0-plugins-base,
+               gstreamer1.0-plugins-good,
+               gstreamer1.0-plugins-bad,
+               nasm,
+               yasm,
+               libx264-dev,
+               libboost-filesystem-dev,
+               libboost-system-dev,
+               libboost-thread-dev,
+               libboost-log-dev,
+               libboost-locale-dev,
+               libboost-iostreams-dev,
+               libcurlpp-dev,
+               libglew-dev,
+               libglfw3-dev,
+               libcereal-dev,
+               libnlopt-dev,
+               libnlopt-cxx-dev,
+               libopenvdb-dev,
+               libopenvdb-tools,
+               libwxgtk3.2-dev,
+               libcgal-dev,
+               libopencv-dev,
+               libocct-foundation-dev,
+               libocct-data-exchange-dev,
+               libocct-ocaf-dev,
+               libocct-modeling-data-dev,
+               libocct-modeling-algorithms-dev,
+               libocct-visualization-dev,
+               libnanovdb-tools
+Standards-Version: 4.6.2
+Homepage: https://github.com/SoftFever/OrcaSlicer
+
+Package: snapmaker-orca
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libgtk-3-0,
+         libgl1,
+         libglu1-mesa,
+         libcairo2,
+         libwebkit2gtk-4.1-0,
+         libgstreamer1.0-0,
+         libgstreamer-plugins-base1.0-0,
+         libcurl4,
+         libssl3
+Description: Snapmaker Orca - 3D Printing Slicer
+ Snapmaker Orca is a 3D printer slicer based on OrcaSlicer/BambuStudio.
+ It converts 3D models into G-code instructions for 3D printing,
+ supporting STL, 3MF, OBJ, AMF, and STEP file formats.

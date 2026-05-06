@@ -1,0 +1,55 @@
+#!/usr/bin/make -f
+
+export ROOT := $(CURDIR)
+export CMAKE_POLICY_VERSION_MINIMUM := 3.5
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Apply patches
+	git apply debian/nvidia-wayland-zink.patch || true
+	git apply debian/wxwidgets-url-cache.patch || true
+	# Build bundled dependencies first
+	mkdir -p deps/build deps/install
+	cmake --fresh -S deps -B deps/build -G Ninja \
+		-DDESTDIR=$(CURDIR)/deps/install \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DDEP_WX_GTK3=1 \
+		-DJPEG_VERSION=8
+	cmake --build deps/build -j2
+	# Configure Snapmaker Orca
+	cmake --fresh -S . -B orca_build -G "Ninja Multi-Config" \
+		-DCMAKE_PREFIX_PATH="$(CURDIR)/deps/install/usr/local" \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DSLIC3R_STATIC=1 \
+		-DSLIC3R_FHS=1 \
+		-DORCA_TOOLS=ON \
+		-DSLIC3R_GTK=3
+
+override_dh_auto_build:
+	cmake --build orca_build --config Release -j2
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/snapmaker-orca cmake --build orca_build --target install --config Release -j2
+	# Move LICENSE to proper doc location
+	mkdir -p $(CURDIR)/debian/snapmaker-orca/usr/share/doc/snapmaker-orca
+	mv $(CURDIR)/debian/snapmaker-orca/usr/LICENSE.txt \
+		$(CURDIR)/debian/snapmaker-orca/usr/share/doc/snapmaker-orca/LICENSE.txt || true
+
+override_dh_auto_test:
+	# Skip tests during package build
+
+override_dh_auto_clean:
+	rm -rf deps/build deps/install orca_build
+
+override_dh_shlibdeps:
+	dh_shlibdeps -- --ignore-missing-info
+
+override_dh_dwz:
+	# Binary too large for dwz optimization
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym

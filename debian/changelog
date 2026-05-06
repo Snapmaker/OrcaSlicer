@@ -1,0 +1,5 @@
+snapmaker-orca (2.3.2-1) unstable; urgency=medium
+
+  * Initial packaging for Debian.
+
+ -- Snapmaker Community <noreply@snapmaker.com>  Wed, 30 Apr 2026 00:00:00 +0000

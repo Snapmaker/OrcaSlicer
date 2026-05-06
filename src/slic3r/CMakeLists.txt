@@ -113,6 +113,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/FileArchiveDialog.hpp
     GUI/Flutter/FlutterPanel.cpp
     GUI/Flutter/FlutterPanel.hpp
+    GUI/Flutter/flutter_host.h
+    GUI/Flutter/flutter_host_win.cpp
+    GUI/Flutter/flutter_host_linux.cpp
     GUI/format.hpp
     GUI/GCodeViewer.cpp
     GUI/GCodeViewer.hpp
@@ -614,6 +617,7 @@ if (WIN32)
             GUI/dark_mode/UAHMenuBar.hpp
             GUI/dark_mode.hpp
             GUI/dark_mode.cpp
+            GUI/Flutter/flutter_host_win.cpp
         )
 endif ()
 
@@ -643,6 +647,7 @@ endif ()
 if (UNIX AND NOT APPLE)
     list(APPEND SLIC3R_GUI_SOURCES
         GUI/Printer/gstbambusrc.c
+        GUI/Flutter/flutter_host_linux.cpp
     )
 endif ()
 
@@ -673,6 +678,14 @@ target_include_directories(libslic3r_gui PRIVATE ${PAHO_MQTT_C_PATH}/src)
 if (WIN32)
     target_include_directories(libslic3r_gui SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/WebView2/include)
     target_link_libraries(libslic3r_gui Advapi32)
+
+    # Flutter — from deps (CMAKE_PREFIX_PATH)
+    if(EXISTS "${CMAKE_PREFIX_PATH}/include/flutter/flutter_windows.h")
+        target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/include/flutter")
+        target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/flutter_windows.lib")
+    else()
+        message(WARNING "Flutter Windows headers not found in deps. Build deps first.")
+    endif()
 endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SLIC3R_GUI_SOURCES})
@@ -697,6 +710,14 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ${WAYLAND_CLIENT_LIBRARIES}
         ${CURL_LIBRARIES}
     )
+
+    # Flutter — from deps (CMAKE_PREFIX_PATH)
+    if(EXISTS "${CMAKE_PREFIX_PATH}/include/flutter/flutter_linux.h")
+        target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/include/flutter")
+        target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so")
+    else()
+        message(WARNING "Flutter Linux headers not found in deps. Build deps first.")
+    endif()
 elseif (APPLE)
     target_link_libraries(libslic3r_gui ${DISKARBITRATION_LIBRARY} "-framework Security")
 

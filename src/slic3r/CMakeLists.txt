@@ -114,8 +114,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/Flutter/FlutterPanel.cpp
     GUI/Flutter/FlutterPanel.hpp
     GUI/Flutter/flutter_host.h
-    GUI/Flutter/flutter_host_win.cpp
-    GUI/Flutter/flutter_host_linux.cpp
     GUI/format.hpp
     GUI/GCodeViewer.cpp
     GUI/GCodeViewer.hpp

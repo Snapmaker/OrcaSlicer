@@ -7,6 +7,7 @@
 #include <cstdarg>
 #include <stdio.h>
 #include <filesystem>
+#include <stdexcept>
 
 #include "format.hpp"
 #include "Platform.hpp"
@@ -58,9 +59,12 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/path.hpp>
+#include <boost/filesystem/fstream.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/cstdio.hpp>
+
+#include "nlohmann/json.hpp"
 
 // We are using quite an old TBB 2017 U7, which does not support global control API officially.
 // Before we update our build servers, let's use the old API, which is deprecated in up to date TBB.
@@ -279,10 +283,21 @@ static std::string g_data_dir;
 
 void set_data_dir(const std::string &dir)
 {
+#ifdef WIN32
+    // `dir` is UTF-8 from wx (e.g. GetUserDataDir().ToUTF8()). Do not round-trip through
+    // path(wstring).string() — that uses the process narrow code page and corrupts CJK profile paths.
     g_data_dir = dir;
+    if (!g_data_dir.empty()) {
+        const boost::filesystem::path p(boost::nowide::widen(g_data_dir));
+        if (!boost::filesystem::exists(p))
+            boost::filesystem::create_directories(p);
+    }
+#else
+    g_data_dir = boost::filesystem::path(boost::nowide::widen(dir)).string();
     if (!g_data_dir.empty() && !boost::filesystem::exists(g_data_dir)) {
        boost::filesystem::create_directory(g_data_dir);
     }
+#endif
 }
 
 const std::string& data_dir()
@@ -290,9 +305,22 @@ const std::string& data_dir()
     return g_data_dir;
 }
 
+boost::filesystem::path data_dir_path()
+{
+#ifdef WIN32
+    if (g_data_dir.empty())
+        return {};
+    return boost::filesystem::path(boost::nowide::widen(g_data_dir));
+#else
+    return boost::filesystem::path(g_data_dir);
+#endif
+}
+
 std::string custom_shapes_dir()
 {
-    return (boost::filesystem::path(g_data_dir) / "shapes").string();
+    if (g_data_dir.empty())
+        return {};
+    return g_data_dir + "/shapes";
 }
 
 static std::atomic<bool> debug_out_path_called(false);
@@ -300,7 +328,7 @@ static std::atomic<bool> debug_out_path_called(false);
 std::string debug_out_path(const char *name, ...)
 {
 	//static constexpr const char *SLIC3R_DEBUG_OUT_PATH_PREFIX = "out/";
-	auto svg_folder = boost::filesystem::path(g_data_dir) / "SVG/";
+	auto svg_folder = data_dir_path() / "SVG/";
     if (! debug_out_path_called.exchange(true)) {
 		if (!boost::filesystem::exists(svg_folder)) {
 			boost::filesystem::create_directory(svg_folder);
@@ -317,9 +345,13 @@ std::string debug_out_path(const char *name, ...)
 	std::string buf(buffer);
 	if (size_t pos = buf.find_first_of('/'); pos != std::string::npos) {
 		std::string sub_dir = buf.substr(0, pos);
-		std::filesystem::create_directory(svg_folder.string() + sub_dir);
+		boost::filesystem::create_directories(svg_folder / sub_dir);
 	}
-	return svg_folder.string() + std::string(buffer);
+#ifdef WIN32
+	return boost::nowide::narrow((svg_folder / std::string(buffer)).wstring());
+#else
+	return (svg_folder / std::string(buffer)).string();
+#endif
 }
 
 namespace logging = boost::log;
@@ -338,14 +370,20 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 #endif
 
 	//BBS log file at C:\\Users\\[yourname]\\AppData\\Roaming\\Snapmaker_Orca\\log\\[log_filename].log
-	auto log_folder = boost::filesystem::path(g_data_dir) / "log";
+	auto log_folder = data_dir_path() / "log";
 	if (!boost::filesystem::exists(log_folder)) {
 		boost::filesystem::create_directory(log_folder);
 	}
 	auto full_path = (log_folder / file).make_preferred();
 
+#ifdef WIN32
+	const std::string log_file_pattern = boost::nowide::narrow(full_path.wstring()) + ".%N";
+#else
+	const std::string log_file_pattern = full_path.string() + ".%N";
+#endif
+
 	g_log_sink = boost::log::add_file_log(
-		keywords::file_name = full_path.string() + ".%N",
+		keywords::file_name = log_file_pattern,
 		keywords::rotation_size = 100 * 1024 * 1024,
 		keywords::format =
 		(
@@ -1529,17 +1567,26 @@ void copy_directory_recursively(const boost::filesystem::path &source, const boo
     boost::filesystem::create_directories(target);
     for (auto &dir_entry : boost::filesystem::directory_iterator(source))
     {
-        std::string source_file = dir_entry.path().string();
-        std::string name = dir_entry.path().filename().string();
-        std::string target_file = target.string() + "/" + name;
+        const boost::filesystem::path dest_child = target / dir_entry.path().filename();
+#ifdef WIN32
+        const std::string name = boost::nowide::narrow(dir_entry.path().filename().wstring());
+#else
+        const std::string name = dir_entry.path().filename().string();
+#endif
 
         if (boost::filesystem::is_directory(dir_entry)) {
-            const auto target_path = target / name;
-            copy_directory_recursively(dir_entry, target_path);
+            copy_directory_recursively(dir_entry.path(), dest_child);
         }
         else {
 			if(filter && filter(name))
 				continue;
+#ifdef WIN32
+            const std::string source_file = boost::nowide::narrow(dir_entry.path().wstring());
+            const std::string target_file = boost::nowide::narrow(dest_child.wstring());
+#else
+            const std::string source_file = dir_entry.path().string();
+            const std::string target_file = dest_child.string();
+#endif
             CopyFileResult cfr = copy_file(source_file, target_file, error_message, false);
             if (cfr != CopyFileResult::SUCCESS) {
                 BOOST_LOG_TRIVIAL(error) << "Copying failed(" << cfr << "): " << error_message;
@@ -1554,20 +1601,103 @@ void copy_directory_recursively(const boost::filesystem::path &source, const boo
 
 void save_string_file(const boost::filesystem::path& p, const std::string& str)
 {
-    boost::nowide::ofstream file;
+    boost::filesystem::ofstream file;
     file.exceptions(std::ios_base::failbit | std::ios_base::badbit);
-    file.open(p.generic_string(), std::ios_base::binary);
+    file.open(p, std::ios_base::binary);
     file.write(str.c_str(), str.size());
 }
 
 void load_string_file(const boost::filesystem::path& p, std::string& str)
 {
-    boost::nowide::ifstream file;
+    boost::filesystem::ifstream file;
     file.exceptions(std::ios_base::failbit | std::ios_base::badbit);
-    file.open(p.generic_string(), std::ios_base::binary);
-    std::size_t sz = static_cast<std::size_t>(boost::filesystem::file_size(p));
-    str.resize(sz, '\0');
-    file.read(&str[0], sz);
+    file.open(p, std::ios_base::binary);
+    // Size from the opened stream (matches handle; avoids a separate file_size vs. open race).
+    file.seekg(0, std::ios_base::end);
+    const std::streamoff ssize = static_cast<std::streamoff>(file.tellg());
+    if (ssize < 0)
+        throw std::runtime_error("load_string_file: could not determine file size");
+    file.seekg(0, std::ios_base::beg);
+    const std::size_t sz = static_cast<std::size_t>(ssize);
+    str.resize(sz);
+    // Do not call read(&str[0], 0): subscript on empty string is undefined behavior.
+    if (sz > 0)
+        file.read(str.data(), static_cast<std::streamsize>(sz));
+}
+
+#ifdef WIN32
+namespace {
+static bool slic3r_buffer_is_strict_utf8(const char *data, size_t len)
+{
+    if (len == 0)
+        return true;
+    const int n = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data, static_cast<int>(len), nullptr, 0);
+    return n > 0;
+}
+
+static std::string slic3r_codepage_bytes_to_utf8(const std::string &s, UINT codepage)
+{
+    if (s.empty())
+        return s;
+    const int wlen = ::MultiByteToWideChar(codepage, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    if (wlen <= 0)
+        return s;
+    std::wstring w(static_cast<size_t>(wlen), 0);
+    if (::MultiByteToWideChar(codepage, 0, s.data(), static_cast<int>(s.size()), w.data(), wlen) <= 0)
+        return s;
+    const int u8len = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, nullptr, 0, nullptr, nullptr);
+    if (u8len <= 0)
+        return s;
+    std::string out(static_cast<size_t>(u8len), 0);
+    if (::WideCharToMultiByte(CP_UTF8, 0, w.data(), wlen, out.data(), u8len, nullptr, nullptr) <= 0)
+        return s;
+    return out;
+}
+
+// Preset/vendor JSON is often UTF-8, but Windows "ANSI" saves may be GBK (CP936) or the current ACP.
+// nlohmann::json requires UTF-8. If bytes are already strict UTF-8, return as-is (do not re-decode).
+// Otherwise try GBK then ACP and pick the first strict UTF-8 string that json::accept agrees with.
+static std::string resolve_windows_json_payload(std::string raw)
+{
+    if (slic3r_buffer_is_strict_utf8(raw.data(), raw.size()))
+        return raw;
+
+    const auto utf8_json_ok = [](const std::string &s) {
+        return slic3r_buffer_is_strict_utf8(s.data(), s.size()) && nlohmann::json::accept(s);
+    };
+
+    const std::string as_gbk = slic3r_codepage_bytes_to_utf8(raw, 936);
+    if (utf8_json_ok(as_gbk))
+        return as_gbk;
+
+    const std::string as_acp = slic3r_codepage_bytes_to_utf8(raw, CP_ACP);
+    if (utf8_json_ok(as_acp))
+        return as_acp;
+
+    // No candidate is both valid UTF-8 and JSON; avoid passing invalid UTF-8 into json::parse.
+    if (slic3r_buffer_is_strict_utf8(as_gbk.data(), as_gbk.size()))
+        return as_gbk;
+    if (slic3r_buffer_is_strict_utf8(as_acp.data(), as_acp.size()))
+        return as_acp;
+    return raw;
+}
+} // namespace
+#endif
+
+std::string read_text_file_for_json_parse(const boost::filesystem::path &path)
+{
+    std::string str;
+    load_string_file(path, str);
+    if (str.size() >= 3 &&
+        static_cast<unsigned char>(str[0]) == 0xEF &&
+        static_cast<unsigned char>(str[1]) == 0xBB &&
+        static_cast<unsigned char>(str[2]) == 0xBF) {
+        str.erase(0, 3);
+    }
+#ifdef WIN32
+    str = resolve_windows_json_payload(std::move(str));
+#endif
+    return str;
 }
 
 // pattern string supprt these pattern: "

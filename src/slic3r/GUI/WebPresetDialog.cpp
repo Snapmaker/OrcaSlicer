@@ -877,7 +877,7 @@ bool WebPresetDialog::apply_config(AppConfig* app_config, PresetBundle* preset_b
     bool                     check_unsaved_preset_changes = false;
     std::vector<std::string> install_bundles;
     std::vector<std::string> remove_bundles;
-    const auto               vendor_dir = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
+    const auto               vendor_dir = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR).make_preferred();
     for (const auto& it : enabled_vendors) {
         if (it.second.size() > 0) {
             auto vendor_file = vendor_dir / (it.first + ".json");
@@ -1070,14 +1070,17 @@ bool WebPresetDialog::run()
         return false;
 }
 
-int WebPresetDialog::GetFilamentInfo(std::string VendorDirectory, json& pFilaList, std::string filepath, std::string& sVendor, std::string& sType)
+int WebPresetDialog::GetFilamentInfo(const boost::filesystem::path &vendor_root, json &pFilaList, const boost::filesystem::path &filepath,
+                                     std::string &sVendor, std::string &sType)
 {
-    // GetStardardFilePath(filepath);
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " GetFilamentInfo:VendorDirectory - " << VendorDirectory << ", Filepath - " << filepath;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " vendor_root=" << vendor_root << " filepath=" << filepath;
 
     try {
         std::string contents;
-        LoadFile(filepath, contents);
+        if (!LoadFile(filepath, contents) || contents.empty()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to read " << filepath;
+            return -1;
+        }
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": Json Contents: " << contents;
         json jLocal = json::parse(contents);
 
@@ -1107,15 +1110,11 @@ int WebPresetDialog::GetFilamentInfo(std::string VendorDirectory, json& pFilaLis
                 }
 
                 std::string FPath = pFilaList[FName]["sub_path"];
-                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Before Format Inherits Path: VendorDirectory - " << VendorDirectory
-                                        << ", sub_path - " << FPath;
-                wxString                strNewFile = wxString::Format("%s%c%s", wxString(VendorDirectory.c_str(), wxConvUTF8),
-                                                                      boost::filesystem::path::preferred_separator, FPath);
-                boost::filesystem::path inherits_path(w2s(strNewFile));
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " inherits sub_path=" << FPath;
+                const boost::filesystem::path inherits_path = (vendor_root / FPath).make_preferred();
 
-                // boost::filesystem::path nf(strNewFile.c_str());
                 if (boost::filesystem::exists(inherits_path))
-                    return GetFilamentInfo(VendorDirectory, pFilaList, inherits_path.string(), sVendor, sType);
+                    return GetFilamentInfo(vendor_root, pFilaList, inherits_path, sVendor, sType);
                 else {
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " inherits File Not Exist: " << inherits_path;
                     return -1;
@@ -1125,19 +1124,17 @@ int WebPresetDialog::GetFilamentInfo(std::string VendorDirectory, json& pFilaLis
                 if (sType == "") {
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "sType is Empty";
                     return -1;
-                } else
+                } else {
                     sVendor = "Generic";
-                return 0;
+                    return 0;
+                }
             }
         } else
             return 0;
-    } catch (nlohmann::detail::parse_error& err) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << filepath
-                                 << " got a nlohmann::detail::parse_error, reason = " << err.what();
+    } catch (nlohmann::detail::parse_error &err) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << filepath << " got a nlohmann::detail::parse_error, reason = " << err.what();
         return -1;
-    } catch (std::exception& e) {
-        // wxLogMessage("GUIDE: load_profile_error  %s ", e.what());
-        // wxMessageBox(e.what(), "", MB_OK);
+    } catch (std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << filepath << " got exception: " << e.what();
         return -1;
     }
@@ -1179,7 +1176,7 @@ int WebPresetDialog::LoadProfile()
         m_ProfileJson["filament"] = json::object();
         m_ProfileJson["process"]  = json::array();
 
-        vendor_dir      = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
+        vendor_dir      = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR).make_preferred();
         rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
 
         // BBS: add BBL as default
@@ -1208,45 +1205,27 @@ int WebPresetDialog::LoadProfile()
 
         //} while (_findnext(handle, &findData) == 0); // ???????????
 
-        // load BBL bundle from user data path
-        string                                targetPath = sm_bundle_path.make_preferred().string();
-        boost::filesystem::path               myPath(targetPath);
         boost::filesystem::directory_iterator endIter;
-        for (boost::filesystem::directory_iterator iter(myPath); iter != endIter; iter++) {
-            if (boost::filesystem::is_directory(*iter)) {
-                // cout << "is dir" << endl;
-                // cout << iter->path().string() << endl;
-            } else {
-                // cout << "is a file" << endl;
-                // cout << iter->path().string() << endl;
-
-                wxString strVendor    = from_u8(iter->path().string()).BeforeLast('.');
-                strVendor             = strVendor.AfterLast('\\');
-                strVendor             = strVendor.AfterLast('/');
-                wxString strExtension = from_u8(iter->path().string()).AfterLast('.').Lower();
-
-                if (w2s(strVendor) == PresetBundle::SM_BUNDLE && strExtension.CmpNoCase("json") == 0)
-                    LoadProfileFamily(w2s(strVendor), iter->path().string());
-            }
+        for (boost::filesystem::directory_iterator iter(sm_bundle_path); iter != endIter; ++iter) {
+            const boost::filesystem::path &fp = iter->path();
+            if (boost::filesystem::is_directory(fp))
+                continue;
+            if (!boost::iequals(fp.extension().string(), ".json"))
+                continue;
+            if (fp.stem().string() == PresetBundle::SM_BUNDLE)
+                LoadProfileFamily(PresetBundle::SM_BUNDLE, fp);
         }
 
-        // string                                others_targetPath = rsrc_vendor_dir.string();
         boost::filesystem::directory_iterator others_endIter;
-        for (boost::filesystem::directory_iterator iter(rsrc_vendor_dir); iter != others_endIter; iter++) {
-            if (boost::filesystem::is_directory(*iter)) {
-                // cout << "is dir" << endl;
-                // cout << iter->path().string() << endl;
-            } else {
-                // cout << "is a file" << endl;
-                // cout << iter->path().string() << endl;
-                wxString strVendor    = from_u8(iter->path().string()).BeforeLast('.');
-                strVendor             = strVendor.AfterLast('\\');
-                strVendor             = strVendor.AfterLast('/');
-                wxString strExtension = from_u8(iter->path().string()).AfterLast('.').Lower();
-
-                if (w2s(strVendor) != PresetBundle::SM_BUNDLE && strExtension.CmpNoCase("json") == 0)
-                    LoadProfileFamily(w2s(strVendor), iter->path().string());
-            }
+        for (boost::filesystem::directory_iterator iter(rsrc_vendor_dir); iter != others_endIter; ++iter) {
+            const boost::filesystem::path &fp = iter->path();
+            if (boost::filesystem::is_directory(fp))
+                continue;
+            if (!boost::iequals(fp.extension().string(), ".json"))
+                continue;
+            const std::string vid = fp.stem().string();
+            if (vid != PresetBundle::SM_BUNDLE)
+                LoadProfileFamily(vid, fp);
         }
 
         // LoadProfileFamily(PresetBundle::BBL_BUNDLE, bbl_bundle_path.string());
@@ -1322,17 +1301,14 @@ int WebPresetDialog::LoadProfile()
     return 0;
 }
 
-int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFilePath)
+int WebPresetDialog::LoadProfileFamily(std::string strVendor, const boost::filesystem::path &json_path)
 {
-    // wxString strFolder = strFilePath.BeforeLast(boost::filesystem::path::preferred_separator);
-    boost::filesystem::path file_path(strFilePath);
-    boost::filesystem::path vendor_dir = boost::filesystem::absolute(file_path.parent_path() / strVendor).make_preferred();
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",  vendor path %1%.") % vendor_dir.string();
+    const boost::filesystem::path file_path = json_path;
+    const boost::filesystem::path vendor_root = boost::filesystem::absolute(file_path.parent_path() / strVendor).make_preferred();
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",  vendor path %1%.") % vendor_root;
     try {
-        // wxLogMessage("GUIDE: json_path1  %s", w2s(strFilePath));
-
         std::string contents;
-        LoadFile(strFilePath, contents);
+        LoadFile(json_path, contents);
         // wxLogMessage("GUIDE: json_path1 content: %s", contents);
         json jLocal = json::parse(contents);
         // wxLogMessage("GUIDE: json_path1 Loaded");
@@ -1352,11 +1328,9 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFil
             std::string s1 = OneModel["model"];
             std::string s2 = OneModel["sub_path"];
 
-            boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_dir / s2).make_preferred();
-            std::string             sub_file = sub_path.string();
+            boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_root / s2).make_preferred();
 
-            // wxLogMessage("GUIDE: json_path2  %s", w2s(ModelFilePath));
-            LoadFile(sub_file, contents);
+            LoadFile(sub_path, contents);
             // wxLogMessage("GUIDE: json_path2 content: %s", contents);
             json pm = json::parse(contents);
             // wxLogMessage("GUIDE: json_path2  loaded");
@@ -1394,9 +1368,8 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFil
             std::string s2 = OneMachine["sub_path"];
 
             // wxString ModelFilePath = wxString::Format("%s\\%s\\%s", strFolder, strVendor, s2);
-            boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_dir / s2).make_preferred();
-            std::string             sub_file = sub_path.string();
-            LoadFile(sub_file, contents);
+            boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_root / s2).make_preferred();
+            LoadFile(sub_path, contents);
             json pm = json::parse(contents);
 
             std::string strInstant = pm["instantiation"];
@@ -1435,20 +1408,19 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFil
 
             if (!m_ProfileJson["filament"].contains(s1)) {
                 // wxString ModelFilePath = wxString::Format("%s\\%s\\%s", strFolder, strVendor, s2);
-                boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_dir / s2).make_preferred();
-                std::string             sub_file = sub_path.string();
-                LoadFile(sub_file, contents);
+                boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_root / s2).make_preferred();
+                LoadFile(sub_path, contents);
                 json pm = json::parse(contents);
 
                 std::string strInstant = pm["instantiation"];
-                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "Load Filament:" << s1 << ",Path:" << sub_file << ",instantiation?"
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "Load Filament:" << s1 << ",Path:" << sub_path << ",instantiation?"
                                         << strInstant;
 
                 if (strInstant == "true") {
                     std::string sV;
                     std::string sT;
 
-                    int nRet = GetFilamentInfo(vendor_dir.string(), tFilaList, sub_file, sV, sT);
+                    int nRet = GetFilamentInfo(vendor_root, tFilaList, sub_path, sV, sT);
                     if (nRet != 0) {
                         BOOST_LOG_TRIVIAL(info)
                             << __FUNCTION__ << "Load Filament:" << s1 << ",GetFilamentInfo Failed, Vendor:" << sV << ",Type:" << sT;
@@ -1492,9 +1464,8 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFil
 
             std::string s2 = OneProcess["sub_path"];
             // wxString ModelFilePath = wxString::Format("%s\\%s\\%s", strFolder, strVendor, s2);
-            boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_dir / s2).make_preferred();
-            std::string             sub_file = sub_path.string();
-            LoadFile(sub_file, contents);
+            boost::filesystem::path sub_path = boost::filesystem::absolute(vendor_root / s2).make_preferred();
+            LoadFile(sub_path, contents);
             json pm = json::parse(contents);
 
             std::string bInstall = pm["instantiation"];
@@ -1504,13 +1475,10 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFil
         }
 
     } catch (nlohmann::detail::parse_error& err) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << strFilePath
-                                 << " got a nlohmann::detail::parse_error, reason = " << err.what();
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << json_path << " got a nlohmann::detail::parse_error, reason = " << err.what();
         return -1;
     } catch (std::exception& e) {
-        // wxMessageBox(e.what(), "", MB_OK);
-        // wxLogMessage("GUIDE: LoadFamily Error: %s", e.what());
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << strFilePath << " got exception: " << e.what();
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": parse " << json_path << " got exception: " << e.what();
         return -1;
     }
 
@@ -1537,19 +1505,16 @@ void WebPresetDialog::GetStardardFilePath(std::string& FilePath)
     StrReplace(FilePath, "/", w2s(wxString::Format("%c", boost::filesystem::path::preferred_separator)));
 }
 
-bool WebPresetDialog::LoadFile(std::string jPath, std::string& sContent)
+bool WebPresetDialog::LoadFile(const boost::filesystem::path& p, std::string& sContent)
 {
     try {
-        boost::nowide::ifstream t(jPath);
-        std::stringstream       buffer;
-        buffer << t.rdbuf();
-        sContent = buffer.str();
-        BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << boost::format(", load %1% into buffer") % jPath;
+        Slic3r::load_string_file(p, sContent);
+        BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << boost::format(", load %1% into buffer") % p;
     } catch (std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ",  got exception: " << e.what();
+        sContent.clear();
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ", path " << p << ", exception: " << e.what();
         return false;
     }
-
     return true;
 }
 

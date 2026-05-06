@@ -151,6 +151,8 @@ const std::string& custom_gcodes_dir();
 void set_data_dir(const std::string &path);
 // Return a full path to the GUI resource files.
 const std::string& data_dir();
+// UTF-8 data_dir() as a boost::filesystem::path (Windows: native wide path; use for all file I/O under data_dir).
+boost::filesystem::path data_dir_path();
 
 // BBL: true: succeed create or dir exists; false: fail to create
 bool makedir(const std::string path);
@@ -683,6 +685,10 @@ void copy_directory_recursively(const boost::filesystem::path &source, const boo
 // Orca: Since 1.7.9 Boost deprecated save_string_file and load_string_file, copy and modified from boost 1.7.8
 void save_string_file(const boost::filesystem::path& p, const std::string& str);
 void load_string_file(const boost::filesystem::path& p, std::string& str);
+
+// Read raw file bytes, strip UTF-8 BOM, normalize to UTF-8 for nlohmann::json::parse.
+// On Windows (non-UTF-8 ACP), if the payload is not valid UTF-8 — e.g. profiles saved as Notepad "ANSI" under %AppData%/.../system — reinterpret from the system code page to UTF-8.
+std::string read_text_file_for_json_parse(const boost::filesystem::path& path);
 
 bool check_layer_id_pattern(const std::string& pattern, int layer_id);
 

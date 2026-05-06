@@ -21,14 +21,6 @@ struct NozzleFilamentRuleMismatch {
     std::string filament_preset_name; // resolved preset display name (may be empty)
 };
 
-// JSON: %AppData%/.../system/Snapmaker/filament/filament_hot_bed_nozzles.json (preferred), else bundled resources path.
-// Keys: bed ids (btPEI, btGESP), nozzle ids ("0.2mm" …) with support/warning.
-// 喷嘴规则（键名以 "mm" 结尾），任选其一：
-// 1) 单对象 { "type":"all"|材质, "forbidden":[...] }
-// 2) 数组 [ { "type", "forbidden" }, ... ]
-// 3) 按材质分键对象：键为 all / undefine / hardened_steel / stainless_steel / brass（可只写其中任意几种），
-//    值为 forbidden 数组、{ "forbidden": [...] }、warning 数组、{ "warning": [...] }，或同时含 forbidden / warning 的对象；
-//    "all" 表示任意喷嘴材质共用该条规则。warning 为提示级（不拦截切片），与热床 warning 语义类似。
 class FilamentHotBedNozzleRules
 {
 public:

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <boost/filesystem/operations.hpp>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <functional>
 #include <thread>
@@ -99,8 +100,15 @@ void copy_file_fix(const fs::path &source, const fs::path &target)
 {
 	BOOST_LOG_TRIVIAL(debug) << format("PresetUpdater: Copying %1% -> %2%", source, target);
 	std::string error_message;
-	//CopyFileResult cfr = Slic3r::GUI::copy_file_gui(source.string(), target.string(), error_message, false);
+	// copy_file() on Windows expects UTF-8; path::string() is not UTF-8 when path holds wchar internals.
+#ifdef _WIN32
+	const std::string from_u8 = boost::nowide::narrow(source.wstring());
+	const std::string to_u8   = boost::nowide::narrow(target.wstring());
+	CopyFileResult    cfr     = copy_file(from_u8, to_u8, error_message, false);
+#else
 	CopyFileResult cfr = copy_file(source.string(), target.string(), error_message, false);
+#endif
+
 	if (cfr != CopyFileResult::SUCCESS) {
 		BOOST_LOG_TRIVIAL(error) << "Copying failed(" << cfr << "): " << error_message;
 		throw Slic3r::CriticalException(GUI::format(
@@ -291,9 +299,15 @@ struct PresetUpdater::priv
 
 //BBS: change directories by design
 PresetUpdater::priv::priv()
+#ifdef _WIN32
+	: cache_path(fs::path(boost::nowide::widen(Slic3r::data_dir())) / "ota")
+	, rsrc_path(fs::path(boost::nowide::widen(Slic3r::resources_dir())) / "profiles")
+	, vendor_path(fs::path(boost::nowide::widen(Slic3r::data_dir())) / PRESET_SYSTEM_DIR)
+#else
 	: cache_path(fs::path(Slic3r::data_dir()) / "ota")
 	, rsrc_path(fs::path(resources_dir()) / "profiles")
 	, vendor_path(fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR)
+#endif
 	, cancel(false)
 {
 	//BBS: refine preset updater logic
@@ -302,8 +316,7 @@ PresetUpdater::priv::priv()
 	// Install indicies from resources. Only installs those that are either missing or older than in resources.
 	check_installed_vendor_profiles();
     perform_updates(get_printer_config_updates(), false);
-	// Load indices from the cache directory.
-	//index_db = Index::load_db();
+
 }
 
 // Pull relevant preferences from AppConfig
@@ -1226,7 +1239,7 @@ void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string languag
     try {
         std::string common_version = "00.00.00.00";
         std::string language_version = "00.00.00.00";
-        fs::path cache_root = fs::path(data_dir()) / "resources/tooltip";
+        fs::path cache_root = Slic3r::data_dir_path() / "resources" / "tooltip";
         try {
             auto vf = cache_root / "common" / "version";
             if (fs::exists(vf)) Slic3r::load_string_file(vf, common_version);
@@ -1254,8 +1267,7 @@ void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string languag
 // return true means there are plugins files
 bool PresetUpdater::priv::get_cached_plugins_version(std::string& cached_version, bool &force)
 {
-    std::string data_dir_str = data_dir();
-    boost::filesystem::path data_dir_path(data_dir_str);
+    const boost::filesystem::path data_dir_path = Slic3r::data_dir_path();
     auto cache_folder = data_dir_path / "ota";
     std::string network_library, player_library, live555_library;
     bool has_plugins = false;
@@ -1340,8 +1352,7 @@ void PresetUpdater::priv::sync_plugins(std::string http_url, std::string plugin_
         }
 
         if (need_delete_cache) {
-            std::string data_dir_str = data_dir();
-            boost::filesystem::path data_dir_path(data_dir_str);
+            const boost::filesystem::path data_dir_path = Slic3r::data_dir_path();
             auto cache_folder = data_dir_path / "ota";
 
 #if defined(_MSC_VER) || defined(_WIN32)
@@ -1454,8 +1465,7 @@ void PresetUpdater::priv::sync_printer_config(std::string http_url)
     std::string using_version = curr_version.substr(0, 6) + "00.00";
 
     std::string cached_version;
-    std::string data_dir_str = data_dir();
-    boost::filesystem::path data_dir_path(data_dir_str);
+    const boost::filesystem::path data_dir_path = Slic3r::data_dir_path();
     auto                    config_folder = data_dir_path / "printers";
     auto                    cache_folder = data_dir_path / "ota" / "printers";
 
@@ -1633,20 +1643,25 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
 
 Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
 {
-    std::string             data_dir_str = data_dir();
-    boost::filesystem::path data_dir_path(data_dir_str);
+    const boost::filesystem::path data_dir_path = Slic3r::data_dir_path();
     boost::filesystem::path resc_dir_path(resources_dir());
     auto                    config_folder = data_dir_path / "printers";
     auto                    resc_folder   = (update ? cache_path : resc_dir_path) / "printers";
     std::string             curr_version;
     std::string             resc_version;
     try {
-        Slic3r::load_string_file(resc_folder / "version.txt", resc_version);
-        boost::algorithm::trim(resc_version);
+        const auto resc_version_file = resc_folder / "version.txt";
+        if (boost::filesystem::exists(resc_version_file)) {
+            Slic3r::load_string_file(resc_version_file, resc_version);
+            boost::algorithm::trim(resc_version);
+        }
     } catch (...) {}
     try {
-        Slic3r::load_string_file(config_folder / "version.txt", curr_version);
-        boost::algorithm::trim(curr_version);
+        const auto curr_version_file = config_folder / "version.txt";
+        if (boost::filesystem::exists(curr_version_file)) {
+            Slic3r::load_string_file(curr_version_file, curr_version);
+            boost::algorithm::trim(curr_version);
+        }
     } catch (...) {}
 
     if (!curr_version.empty()) {
@@ -2147,7 +2162,7 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
         std::string ori_version_str      = "0";
         std::string ori_build_number_str = "0";
 
-        auto                        ori_version_file = boost::filesystem::path(data_dir()) / "web" / "flutter_web" / "version.json";
+        auto                        ori_version_file = Slic3r::data_dir_path() / "web" / "flutter_web" / "version.json";
         boost::property_tree::ptree ori_config;
         boost::property_tree::read_json(ori_version_file.string(), ori_config);
         ori_version_str      = ori_config.get<std::string>("version", "0");
@@ -2167,7 +2182,7 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
 
                     if (current_version < online_version) {
                         auto source_folder_path = fs::path(dir_entry.path().parent_path());
-                        auto target_folder_path = (boost::filesystem::path(data_dir()) / "web" / "flutter_web");
+                        auto target_folder_path = (Slic3r::data_dir_path() / "web" / "flutter_web");
 
                         Version version;
                         version.config_version = online_version; 

@@ -20,6 +20,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/cstdlib.hpp>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/iostream.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/ini_parser.hpp>
@@ -794,9 +795,12 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
     CNumericLocalesSetter locales_setter;
 
     try {
-        boost::nowide::ifstream ifs(file);
-        ifs >> j;
-        ifs.close();
+#ifdef WIN32
+        // `file` is UTF-8 (wx / data_dir); boost::filesystem::path(std::string) uses ACP on Windows.
+        j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(boost::nowide::widen(file))));
+#else
+        j = json::parse(read_text_file_for_json_parse(boost::filesystem::path(file)));
+#endif
 
         const ConfigDef* config_def = this->def();
         if (config_def == nullptr) {

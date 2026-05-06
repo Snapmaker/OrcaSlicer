@@ -73,7 +73,7 @@ bool Bundle::load(fs::path source_path, bool ais_in_resources, bool ais_sm_bundl
     this->is_sm_bundle = ais_sm_bundle;
 
     std::string path_string = source_path.string();
-    std::string parent_path = source_path.parent_path().string();
+    const boost::filesystem::path parent_path = source_path.parent_path();
     //BBS: add json logic for vendor bundles
     std::string vendor_name = source_path.filename().string();
     if (Slic3r::is_json_file(path_string)) {
@@ -120,7 +120,7 @@ BundleMap BundleMap::load()
     BundleMap res;
 
     //BBS: change directories by design
-    const auto vendor_dir = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
+    const auto vendor_dir = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR).make_preferred();
     const auto rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
 
     // SM_FEATURE
@@ -1857,7 +1857,7 @@ void ConfigWizard::priv::load_vendors()
     } else {
         // In case of legacy datadir, try to guess the preference based on the printer preset files that are present
         //BBS: change directories by design
-        const auto printer_dir = fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR / PRESET_PRINTER_NAME;
+        const auto printer_dir = Slic3r::data_dir_path() / PRESET_SYSTEM_DIR / PRESET_PRINTER_NAME;
         for (auto &dir_entry : boost::filesystem::directory_iterator(printer_dir))
             if (Slic3r::is_ini_file(dir_entry)) {
                 auto needle = legacy_preset_map.find(dir_entry.path().filename().string());

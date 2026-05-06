@@ -75,9 +75,10 @@ public:
     //Model - Machine - Filaments
     int LoadProfileData();
     int SaveProfileData();
-    int LoadProfileFamily(std::string strVendor, std::string strFilePath);
+    int LoadProfileFamily(std::string strVendor, const boost::filesystem::path &json_path);
     int SaveProfile();
-    int GetFilamentInfo( std::string VendorDirectory,json & pFilaList, std::string filepath, std::string &sVendor, std::string &sType);
+    int GetFilamentInfo(const boost::filesystem::path &vendor_root, json &pFilaList, const boost::filesystem::path &filepath,
+                        std::string &sVendor, std::string &sType);
 
 
     bool apply_config(AppConfig *app_config, PresetBundle *preset_bundle, const PresetUpdater *updater, bool& apply_keeped_changes);
@@ -86,7 +87,7 @@ public:
     void        StrReplace(std::string &strBase, std::string strSrc, std::string strDes);
     std::string w2s(wxString sSrc);
     void        GetStardardFilePath(std::string &FilePath);
-    bool LoadFile(std::string jPath, std::string & sContent);
+    bool LoadFile(const boost::filesystem::path &p, std::string &sContent);
 
     // install plugin
     int DownloadPlugin();
@@ -122,7 +123,7 @@ private:
     bool network_plugin_ready {false};
 
     json m_OrcaFilaList;
-    std::string m_OrcaFilaLibPath;
+    boost::filesystem::path m_OrcaFilaLibRoot;
 
 #if wxUSE_WEBVIEW_IE
     wxMenuItem *m_script_object_el;

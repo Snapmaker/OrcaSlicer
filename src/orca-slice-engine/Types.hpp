@@ -36,7 +36,7 @@ struct Issue {
 struct SliceOutputStats {
     // Filament detail for each extruder
     struct FilamentDetail {
-        int extruder_id;
+        int filament_id;
         std::string type;        // Filament type (e.g., "PLA", "ABS")
         std::string color;       // Filament color (e.g., "#FF0000")
         double used_g;           // Used weight in grams

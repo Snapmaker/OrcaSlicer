@@ -354,6 +354,32 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
     // Plate origin offsets are only meaningful for GUI multi-plate layout display.
     print.set_plate_origin(Vec3d(0, 0, 0));
 
+    // Guard against wipe tower / tool change mismatch.
+    // If the model only uses a single extruder but the 3MF config has multiple filaments,
+    // Print::has_wipe_tower() still returns true (filament count > 1), which causes
+    // "WipeTowerIntegration::append_tcr was asked to do a toolchange it didn't expect"
+    // during G-code export. Disable the prime tower when it's not needed.
+    {
+        std::set<int> used_extruders;
+        for (ModelObject* obj : m_model.objects) {
+            for (ModelInstance* inst : obj->instances) {
+                if (!inst->is_printable())
+                    continue;
+                for (ModelVolume* vol : obj->volumes) {
+                    if (!vol->is_model_part())
+                        continue;
+                    for (int eid : vol->get_extruders())
+                        used_extruders.insert(eid);
+                }
+            }
+        }
+        if (used_extruders.size() <= 1) {
+            BOOST_LOG_TRIVIAL(info) << "Only " << used_extruders.size()
+                << " extruder(s) used by model, disabling prime tower";
+            m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
+        }
+    }
+
     // Diagnostic: check shared model state before apply
     BOOST_LOG_TRIVIAL(info) << "=== DIAG plate " << plate_id << " shared model state ===";
     for (ModelObject* obj : m_model.objects) {

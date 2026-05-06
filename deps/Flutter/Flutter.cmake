@@ -32,7 +32,9 @@ if(NOT FLUTTER_SDK_PATH)
 endif()
 
 if(NOT FLUTTER_SDK_PATH)
-    message(WARNING "Flutter SDK not found. Install Flutter or pass -DFLUTTER_SDK_PATH=/path/to/flutter")
+    message(WARNING "Flutter SDK not found — skipping Flutter dependency. Install Flutter or pass -DFLUTTER_SDK_PATH=/path/to/flutter")
+    add_custom_target(dep_Flutter ALL
+        COMMAND ${CMAKE_COMMAND} -E echo "Flutter SDK not found — skipping")
     return()
 endif()
 
@@ -68,6 +70,8 @@ if (APPLE)
         message(STATUS "Flutter deps (macOS): FlutterMacOS.framework from ${FLUTTER_SDK_PATH}")
     else()
         message(WARNING "FlutterMacOS.framework not found at ${_flutter_fw_src}. Run 'flutter precache --macos' first.")
+        add_custom_target(dep_Flutter ALL
+            COMMAND ${CMAKE_COMMAND} -E echo "Flutter macOS artifacts not found — skipping")
     endif()
 
 # ── Windows ─────────────────────────────────────────────────────────────
@@ -103,6 +107,8 @@ elseif (WIN32)
         message(STATUS "Flutter deps (Windows): engine from ${FLUTTER_SDK_PATH}")
     else()
         message(WARNING "Flutter Windows artifacts not found. Run 'flutter precache --windows' first.")
+        add_custom_target(dep_Flutter ALL
+            COMMAND ${CMAKE_COMMAND} -E echo "Flutter Windows artifacts not found — skipping")
     endif()
 
 # ── Linux ───────────────────────────────────────────────────────────────
@@ -134,5 +140,7 @@ elseif (UNIX AND NOT APPLE)
         message(STATUS "Flutter deps (Linux): engine from ${FLUTTER_SDK_PATH}")
     else()
         message(WARNING "Flutter Linux artifacts not found. Run 'flutter precache --linux' first.")
+        add_custom_target(dep_Flutter ALL
+            COMMAND ${CMAKE_COMMAND} -E echo "Flutter Linux artifacts not found — skipping")
     endif()
 endif()

@@ -1,4 +1,5 @@
 #include "SliceEngine.hpp"
+#include "GeometryCheck.hpp"
 #include "Utils.hpp"
 
 #include <cmath>
@@ -40,6 +41,16 @@ bool SliceEngine::run() {
         m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
                                              m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
         BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
+
+        // --- Geometry defect detection (once, before any plate processing) ---
+        {
+            auto geom_issues = run_geometry_checks(m_model, -1);
+            for (auto& issue : geom_issues) {
+                if (issue.level == "error")
+                    m_any_error = true;
+                m_stats.issues.push_back(std::move(issue));
+            }
+        }
 
         // Collect plates to process (internal plate_index is 0-based)
         std::vector<int> plates_to_process;

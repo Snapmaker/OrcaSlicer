@@ -12,6 +12,7 @@ add_executable(orca-slice-engine
     main.cpp
     SliceEngine.cpp
     JsonReport.cpp
+    GeometryCheck.cpp
     Utils.cpp
     nanosvg.cpp  # nanosvg implementation for headless build
 )

@@ -986,10 +986,13 @@ SnapmakerOrcaPre_uninst:
   StrCpy $2 $0 1 -1
   StrCmp $2 "$\"" 0 +2
   StrCpy $0 $0 -1
-  StrCmp $4 "HKCU" 0 +2
+  StrCpy $3 ""
+  StrCmp $4 "HKCU" 0 SnapmakerOrcaPre_read_hklm_loc
   ReadRegStr $3 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "InstallLocation"
-  StrCmp $4 "HKLM" 0 +2
+  Goto SnapmakerOrcaPre_have_loc
+SnapmakerOrcaPre_read_hklm_loc:
   ReadRegStr $3 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "InstallLocation"
+SnapmakerOrcaPre_have_loc:
   StrCmp $3 "" 0 +3
   StrLen $2 "\${CPACK_NSIS_UNINSTALL_NAME}.exe"
   StrCpy $3 $0 -$2

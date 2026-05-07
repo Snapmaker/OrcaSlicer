@@ -16255,3 +16255,6 @@ msgstr ""
 
 msgid "OrcaSlicer is forked from Bambu Studio by Bambu Lab."
 msgstr ""
+
+msgid "Incompatible filament types cannot be mixed. Please correct the selection."
+msgstr ""

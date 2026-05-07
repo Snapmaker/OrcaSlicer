@@ -165,6 +165,7 @@ void MixedFilamentDialog::build_ui()
         resize_gradient_ids(new_count);
         wxTheApp->CallAfter([this]() {
             rebuild_filament_rows();
+            update_compatibility_warning();
             Layout(); Fit();
         });
     });
@@ -173,6 +174,7 @@ void MixedFilamentDialog::build_ui()
         resize_gradient_ids((int)m_filament_rows.size() + 1);
         wxTheApp->CallAfter([this]() {
             rebuild_filament_rows();
+            update_compatibility_warning();
             Layout(); Fit();
         });
     });
@@ -193,6 +195,21 @@ void MixedFilamentDialog::build_ui()
             m_preview_panel->Refresh();
     });
     
+    // Compatibility warning banner (hidden by default, shown when incompatible filaments are selected)
+    {
+        m_compat_warning_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                                              wxDefaultSize, wxBORDER_NONE | wxTAB_TRAVERSAL);
+        m_compat_warning_panel->SetBackgroundColour(wxColour("#FDE8E8"));
+        m_compat_warning_panel->Hide();
+        auto* warn_sizer = new wxBoxSizer(wxHORIZONTAL);
+        m_compat_warning_text = new wxStaticText(m_compat_warning_panel, wxID_ANY, wxEmptyString);
+        m_compat_warning_text->SetForegroundColour(wxColour("#D32F2F"));
+        m_compat_warning_text->Wrap(FromDIP(400));
+        warn_sizer->Add(m_compat_warning_text, 1, wxALL, FromDIP(8));
+        m_compat_warning_panel->SetSizer(warn_sizer);
+        left_col->Add(m_compat_warning_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
+    }
+
     // Title row for left column: title + swap button + add/remove buttons
     auto* title_row = new wxBoxSizer(wxHORIZONTAL);
     m_filament_title = new wxStaticText(this, wxID_ANY, _L("Mixed Filament"));
@@ -440,6 +457,7 @@ void MixedFilamentDialog::build_ui()
     SetSizer(top_sizer);
 
     rebuild_filament_rows();
+    update_compatibility_warning();
 
     // RadioGroup fires wxEVT_BUTTON on its internal label buttons; bind at panel level
     m_mode_radio->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this](wxCommandEvent&) {
@@ -693,6 +711,7 @@ void MixedFilamentDialog::rebuild_filament_rows()
             // Update preview
             if (m_tri_picker) m_tri_picker->Refresh();
             update_preview();
+            update_compatibility_warning();
         });
 
         row->Add(cb, 1, wxALIGN_CENTER_VERTICAL);
@@ -926,6 +945,37 @@ void MixedFilamentDialog::sync_rows_to_result()
         ids += char('1' + std::max(0, s));
     }
     m_result.gradient_component_ids = ids;
+}
+
+void MixedFilamentDialog::update_compatibility_warning()
+{
+    if (!m_compat_warning_panel || !m_compat_warning_text || !m_btn_confirm)
+        return;
+
+    sync_rows_to_result();
+
+    std::vector<unsigned int> fids;
+    if (!m_result.gradient_component_ids.empty()) {
+        for (char c : m_result.gradient_component_ids) {
+            int idx = c - '1';
+            if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
+        }
+    }
+    if (m_result.component_a >= 1) fids.push_back(m_result.component_a - 1);
+    if (m_result.component_b >= 1) fids.push_back(m_result.component_b - 1);
+
+    if (!are_filaments_compatible(fids)) {
+        m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+        m_compat_warning_text->Wrap(FromDIP(360));
+        m_compat_warning_panel->Show();
+        m_btn_confirm->SetStyle(ButtonStyle::Disabled, ButtonType::Window);
+        m_btn_confirm->Disable();
+    } else {
+        m_compat_warning_panel->Hide();
+        m_btn_confirm->SetStyle(ButtonStyle::Confirm, ButtonType::Window);
+        m_btn_confirm->Enable();
+    }
+    Layout();
 }
 
 std::string MixedFilamentDialog::compute_preview_color()
@@ -1286,6 +1336,7 @@ void MixedFilamentDialog::build_swatch_grid()
                 m_tri_wz = cand.wz;
             }
             update_preview();
+            update_compatibility_warning();
         });
         grid->Add(btn);
     }
@@ -1315,6 +1366,7 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
     rebuild_filament_rows();
     update_ratio_or_tri_visibility();
     update_preview();
+    update_compatibility_warning();
     Layout(); Fit();
 }
 

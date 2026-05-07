@@ -41,6 +41,7 @@ private:
     void build_swatch_grid();
     void sync_rows_to_result();
     void resize_gradient_ids(int target_count);
+    void update_compatibility_warning();
     std::string compute_preview_color();
     wxBitmap make_color_bitmap(const wxColour& c, int size);
     int max_filaments_for_mode(int mode_index) const;
@@ -75,6 +76,8 @@ private:
     wxStaticLine*           m_line_above_swatch   = nullptr;
     wxStaticLine*           m_line_below_swatch   = nullptr;
     wxStaticText*           m_recommended_label   = nullptr;
+    wxPanel*                m_compat_warning_panel  = nullptr;
+    wxStaticText*           m_compat_warning_text   = nullptr;
     Button*                 m_btn_cancel          = nullptr;
     Button*                 m_btn_confirm         = nullptr;
     wxTextCtrl*             m_pattern_ctrl        = nullptr;

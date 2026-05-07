@@ -945,6 +945,28 @@ set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
 set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
+# Block install while the app is running (locked DLLs / overwrite failures). Mirrors installer.nsi EnsureSnapmakerNotRunning.
+# CPack NSIS.template.in inserts this block once in Section "-Core installation"; named labels (no relative +N jumps).
+# ExecWait lines match installer.nsi (plain 2>nul | find) — not executed by the Actions shell; only makensis/cmd see them.
+set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS [=[
+SnapmakerOrcaPre_check_loop:
+  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
+  IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_try_legacy SnapmakerOrcaPre_try_legacy
+SnapmakerOrcaPre_try_legacy:
+  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul' $0
+  IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_idle SnapmakerOrcaPre_idle
+SnapmakerOrcaPre_idle:
+  Goto SnapmakerOrcaPre_done
+SnapmakerOrcaPre_in_use:
+  IfSilent SnapmakerOrcaPre_silent SnapmakerOrcaPre_prompt
+SnapmakerOrcaPre_silent:
+  SetErrorLevel 7
+  Quit
+SnapmakerOrcaPre_prompt:
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is still running.$\nClose the program, then click Retry to continue, or Cancel to exit the installer." IDRETRY SnapmakerOrcaPre_check_loop
+  Abort
+SnapmakerOrcaPre_done:
+]=])
 set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
     CreateShortCut \\\"$DESKTOP\\\\Snapmaker Orca.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
 ")
@@ -959,4 +981,5 @@ set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also in
 
 set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")
 set(CPACK_GENERATOR NSIS)
+set(CPACK_VERBATIM_VARIABLES ON)
 include(CPack)

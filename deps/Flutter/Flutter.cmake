@@ -113,19 +113,19 @@ elseif (WIN32)
 
 elseif (UNIX AND NOT APPLE)
     set(_flutter_engine_dir "${_engine_cache}/linux-x64")
-    set(_flutter_headers "${_flutter_engine_dir}/flutter_linux")
+    set(_flutter_hdr_dir "${_flutter_engine_dir}/flutter_linux")
     set(_flutter_so "${_flutter_engine_dir}/libflutter_linux_gtk.so")
     set(_flutter_engine_so "${_flutter_engine_dir}/libflutter_engine.so")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
-    if(NOT EXISTS "${_flutter_headers}")
-        message(FATAL_ERROR "Flutter Linux artifacts not found at ${_flutter_headers}. Run 'flutter precache --linux' first.")
+    if(NOT EXISTS "${_flutter_hdr_dir}")
+        message(FATAL_ERROR "Flutter Linux artifacts not found at ${_flutter_hdr_dir}. Run 'flutter precache --linux' first.")
     endif()
 
     add_custom_target(dep_Flutter ALL
-        # Headers
+        # Headers — preserve flutter_linux/ dir for internal #include paths
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${_flutter_headers}" "${DESTDIR}/include/flutter"
+            "${_flutter_hdr_dir}" "${DESTDIR}/include/flutter/flutter_linux"
         # Shared libs
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_so}" "${DESTDIR}/lib/libflutter_linux_gtk.so"

@@ -93,15 +93,16 @@ function(ensure_flutter_deps)
                 message(FATAL_ERROR "Flutter SDK not found and Flutter Linux headers not in deps. Install Flutter or build deps first.")
             endif()
 
-            set(_hdr_src "${_engine_cache}/linux-x64/flutter_linux")
+            set(_hdr_dir "${_engine_cache}/linux-x64/flutter_linux")
             set(_so_src  "${_engine_cache}/linux-x64/libflutter_linux_gtk.so")
 
-            if(NOT EXISTS "${_hdr_src}")
-                message(FATAL_ERROR "Flutter Linux artifacts not found at ${_hdr_src}. Run 'flutter precache --linux' first.")
+            if(NOT EXISTS "${_hdr_dir}")
+                message(FATAL_ERROR "Flutter Linux artifacts not found at ${_hdr_dir}. Run 'flutter precache --linux' first.")
             endif()
 
             message(STATUS "Populating Flutter Linux engine from Flutter SDK → deps")
-            file(COPY "${_hdr_src}" DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
+            # Preserve flutter_linux/ directory name for internal #include paths
+            file(COPY "${_hdr_dir}/" DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter/flutter_linux")
             file(COPY "${_so_src}" DESTINATION "${CMAKE_PREFIX_PATH}/lib/")
             if(EXISTS "${_engine_cache}/linux-x64/libflutter_engine.so")
                 file(COPY "${_engine_cache}/linux-x64/libflutter_engine.so"

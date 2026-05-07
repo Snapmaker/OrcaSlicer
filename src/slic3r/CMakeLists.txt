@@ -708,7 +708,9 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
     ensure_flutter_deps()
-    target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/include/flutter")
+    target_include_directories(libslic3r_gui PRIVATE
+        "${CMAKE_PREFIX_PATH}/include/flutter"
+        "${CMAKE_PREFIX_PATH}/include/flutter/flutter_linux")
     target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so")
 elseif (APPLE)
     target_link_libraries(libslic3r_gui ${DISKARBITRATION_LIBRARY} "-framework Security")

@@ -943,11 +943,13 @@ set (CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/images\\\\Snapmaker_Orca.
 set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
+set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
 set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
 set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
-# Block install while the app is running (locked DLLs / overwrite failures). Mirrors installer.nsi EnsureSnapmakerNotRunning.
-# CPack NSIS.template.in inserts this block once in Section "-Core installation"; named labels (no relative +N jumps).
-# ExecWait lines match installer.nsi (plain 2>nul | find) — not executed by the Actions shell; only makensis/cmd see them.
+# Preinstall guard in one place:
+# 1) Block while app is running.
+# 2) If old version exists, uninstall it with clear failure reason.
+# We keep this in EXTRA_PREINSTALL because CPack's default .onInit uninstall prompt runs before section logic.
 set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS [=[
 SnapmakerOrcaPre_check_loop:
   ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
@@ -966,13 +968,52 @@ SnapmakerOrcaPre_prompt:
   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is still running.$\nClose the program, then click Retry to continue, or Cancel to exit the installer." IDRETRY SnapmakerOrcaPre_check_loop
   Abort
 SnapmakerOrcaPre_done:
+  StrCpy $4 "HKLM"
+  ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
+  StrCmp $0 "" 0 +3
+  StrCpy $4 "HKCU"
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_finish
+
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker_Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+
+SnapmakerOrcaPre_uninst:
+  ClearErrors
+  StrCpy $2 $0 1 0
+  StrCmp $2 "$\"" 0 +2
+  StrCpy $0 $0 "" 1
+  StrCpy $2 $0 1 -1
+  StrCmp $2 "$\"" 0 +2
+  StrCpy $0 $0 -1
+  StrCmp $4 "HKCU" 0 +2
+  ReadRegStr $3 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "InstallLocation"
+  StrCmp $4 "HKLM" 0 +2
+  ReadRegStr $3 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "InstallLocation"
+  StrCmp $3 "" 0 +3
+  StrLen $2 "\${CPACK_NSIS_UNINSTALL_NAME}.exe"
+  StrCpy $3 $0 -$2
+  IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
+  ExecWait '"$0" /S _?=$3' $1
+  IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
+  IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
+
+SnapmakerOrcaPre_uninst_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Uninstall failed.$\nUninstaller path: $0$\nWorking dir: $3$\nExit code: $1$\n$\nPossible causes: Snapmaker Orca (or a related process) is still running, insufficient permissions, or a damaged previous installation.$\nPlease close all Snapmaker Orca processes and run installer as Administrator."
+  Abort
+
+SnapmakerOrcaPre_uninst_launch_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Failed to start uninstaller process.$\nUninstaller path: $0$\nWorking dir: $3$\n$\nSystem error: the uninstall command could not be executed by Windows (IfErrors set).$\nPossible causes: missing/corrupted uninstaller, access denied, or invalid install directory."
+  Abort
+
+SnapmakerOrcaPre_finish:
 ]=])
 set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
     CreateShortCut \\\"$DESKTOP\\\\Snapmaker Orca.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
 ")
 set (CPACK_PACKAGE_CHECKSUM SHA256)
 set (CPACK_PACKAGE_INSTALL_REGISTRY_KEY "Snapmaker_Orca")
-set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
 # set (CPACK_NSIS_MODIFY_PATH "ON")
 set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;Snapmaker Orca")

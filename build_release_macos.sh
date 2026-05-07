@@ -268,19 +268,19 @@ function build_slicer() {
         fi
 
         # Copy App.framework (Dart AOT) if available
-        # Build your Flutter app and set FLUTTER_APP_BUILD_DIR, or place App.framework manually
+        # Built by CMake flutter_app target, or set FLUTTER_APP_BUILD_DIR manually
         if [ -n "${FLUTTER_APP_BUILD_DIR}" ] && [ -d "${FLUTTER_APP_BUILD_DIR}/App.framework" ]; then
-            echo "Copying App.framework from ${FLUTTER_APP_BUILD_DIR}..."
+            echo "Copying App.framework from FLUTTER_APP_BUILD_DIR..."
             mkdir -p "${APP_FRAMEWORKS_DIR}"
             cp -Rf "${FLUTTER_APP_BUILD_DIR}/App.framework" "${APP_FRAMEWORKS_DIR}/App.framework"
             codesign --force --sign - "${APP_FRAMEWORKS_DIR}/App.framework" 2>/dev/null || true
-        elif [ -d "${PROJECT_DIR}/resources/flutter_app/App.framework" ]; then
-            echo "Copying App.framework from resources..."
+        elif [ -d "${PROJECT_BUILD_DIR}/flutter_app/App.framework" ]; then
+            echo "Copying App.framework from CMake build..."
             mkdir -p "${APP_FRAMEWORKS_DIR}"
-            cp -Rf "${PROJECT_DIR}/resources/flutter_app/App.framework" "${APP_FRAMEWORKS_DIR}/App.framework"
+            cp -Rf "${PROJECT_BUILD_DIR}/flutter_app/App.framework" "${APP_FRAMEWORKS_DIR}/App.framework"
             codesign --force --sign - "${APP_FRAMEWORKS_DIR}/App.framework" 2>/dev/null || true
         else
-            echo "Warning: App.framework not found. Flutter app will not render."
+            echo "Warning: App.framework not found. Run cmake build first or set FLUTTER_APP_BUILD_DIR."
         fi
 
         # Copy Snapmaker_Orca_profile_validator.app if it exists

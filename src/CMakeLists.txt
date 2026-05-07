@@ -196,6 +196,9 @@ if (SLIC3R_SENTRY)
     target_link_libraries(Snapmaker_Orca sentry::sentry)
 endif()
 
+# Ensure Flutter app is built before main executable
+add_dependencies(Snapmaker_Orca flutter_app)
+
 # On Windows, a shim application is required to produce a console / non console version of the Slic3r application.
 # Also the shim may load the Mesa software OpenGL renderer if the default renderer does not support OpenGL 2.0 and higher.
 if (WIN32)
@@ -229,7 +232,7 @@ set(output_dlls_Debug "")
 set(output_dlls_RelWithDebInfo "")
 if (WIN32)
     # This has to be a separate target due to the windows command line lenght limits
-    add_custom_target(COPY_DLLS ALL DEPENDS Snapmaker_Orca)
+    add_custom_target(COPY_DLLS ALL DEPENDS Snapmaker_Orca flutter_app)
 
     if (CMAKE_CONFIGURATION_TYPES)
         foreach (CONF ${CMAKE_CONFIGURATION_TYPES})
@@ -275,6 +278,16 @@ if (WIN32)
         endif()
     endif ()
 
+    # Copy Flutter app artifacts (built by flutter_app target) to output directory
+    add_custom_command(TARGET COPY_DLLS POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/flutter_app/flutter_app.dll"
+            "$<TARGET_FILE_DIR:Snapmaker_Orca_app_gui>/flutter_app.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_BINARY_DIR}/flutter_app/data"
+            "$<TARGET_FILE_DIR:Snapmaker_Orca_app_gui>/data"
+        COMMENT "Copying Flutter app artifacts to output"
+    )
 
 else ()
     if (APPLE AND NOT CMAKE_MACOSX_BUNDLE)
@@ -345,10 +358,36 @@ else ()
                 VERBATIM)
             # Update the rpath for libsentry.dylib
             add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-                COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true            
+                COMMAND install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$<TARGET_FILE:Snapmaker_Orca>" || true
                 COMMENT "Updating rpath for libsentry.dylib"
                 VERBATIM)
         endif()
+
+        # Copy Flutter App.framework (built by flutter_app target) into app bundle
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/flutter_app/App.framework"
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/App.framework"
+            COMMENT "Copying Flutter App.framework to app bundle"
+        )
+    endif()
+
+    # Linux: copy Flutter app artifacts to output directory
+    # Engine expects: <exe_dir>/lib/libflutter_app.so + <exe_dir>/data/
+    if(UNIX AND NOT APPLE)
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_BINARY_DIR}/flutter_app/lib/libflutter_app.so"
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/lib/libflutter_app.so"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/flutter_app/data"
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/data"
+            COMMENT "Copying Flutter app artifacts to output"
+        )
     endif()
 endif ()
 
@@ -371,6 +410,14 @@ if (WIN32)
         install(TARGETS Snapmaker_Orca_app_gui RUNTIME DESTINATION ".")
     endif ()
     install(FILES ${output_dlls_${build_type}} DESTINATION ".")
+    # Flutter app install
+    install(FILES "${CMAKE_BINARY_DIR}/flutter_app/flutter_app.dll" DESTINATION ".")
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/flutter_app/data/" DESTINATION "./data")
 else ()
     install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
+    # Flutter app install
+    if(UNIX AND NOT APPLE)
+        install(FILES "${CMAKE_BINARY_DIR}/flutter_app/lib/libflutter_app.so" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+        install(DIRECTORY "${CMAKE_BINARY_DIR}/flutter_app/data/" DESTINATION "${CMAKE_INSTALL_DATADIR}/Snapmaker_Orca/data")
+    endif()
 endif ()

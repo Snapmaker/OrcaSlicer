@@ -874,6 +874,10 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
 endfunction()
 
 
+# Build Flutter app from source (flutter build per platform)
+include(BuildFlutterApp)
+build_flutter_app()
+
 # libslic3r, Snapmaker_Orca GUI and the Snapmaker_Orca executable.
 add_subdirectory(deps_src)
 add_subdirectory(src)

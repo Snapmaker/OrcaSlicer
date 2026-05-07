@@ -954,17 +954,7 @@ void MixedFilamentDialog::update_compatibility_warning()
 
     sync_rows_to_result();
 
-    std::vector<unsigned int> fids;
-    if (!m_result.gradient_component_ids.empty()) {
-        for (char c : m_result.gradient_component_ids) {
-            int idx = c - '1';
-            if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
-        }
-    }
-    if (m_result.component_a >= 1) fids.push_back(m_result.component_a - 1);
-    if (m_result.component_b >= 1) fids.push_back(m_result.component_b - 1);
-
-    if (!are_filaments_compatible(fids)) {
+    if (!is_filament_compatible(m_result)) {
         m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
         m_compat_warning_text->Wrap(FromDIP(360));
         m_compat_warning_panel->Show();
@@ -1305,6 +1295,14 @@ void MixedFilamentDialog::build_swatch_grid()
     auto* grid = new wxGridSizer(0, cols, FromDIP(4), FromDIP(4));
 
     for (const auto& cand : candidates) {
+        {
+            std::vector<unsigned int> fids;
+            for (int r = 0; r < cand.n_rows; ++r)
+                fids.push_back(static_cast<unsigned int>(cand.rows[r]));
+            if (!is_filament_compatible(fids))
+                continue;
+        }
+
         auto* btn = new wxBitmapButton(m_swatch_grid_panel, wxID_ANY,
                                        make_color_bitmap(cand.color, FromDIP(20)),
                                        wxDefaultPosition, wxSize(FromDIP(24), FromDIP(24)));
@@ -1336,7 +1334,6 @@ void MixedFilamentDialog::build_swatch_grid()
                 m_tri_wz = cand.wz;
             }
             update_preview();
-            update_compatibility_warning();
         });
         grid->Add(btn);
     }

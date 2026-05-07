@@ -74,9 +74,7 @@ bool color_match_weights_within_range(const std::vector<int>& weights, int min_c
 std::vector<unsigned int>   build_color_match_sequence(const std::vector<unsigned int>& ids, const std::vector<int>& weights);
 wxColour                    blend_sequence_filament_mixer(const std::vector<wxColour>& palette, const std::vector<unsigned int>& sequence);
 
-// ---- material compatibility ----
-
-int  get_filament_compatibility_group(const std::string& filament_type);
-bool are_filaments_compatible(const std::vector<unsigned int>& filament_ids);
+bool is_filament_compatible(const std::vector<unsigned int>& filament_ids);
+bool is_filament_compatible(const MixedFilament& mf);
 
 }} // namespace Slic3r::GUI

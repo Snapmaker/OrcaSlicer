@@ -6,6 +6,7 @@
 #include "GUI_App.hpp"
 #include "PresetBundle.hpp"
 #include <algorithm>
+#include <atomic>
 #include <boost/log/trivial.hpp>
 
 namespace Slic3r { namespace GUI {
@@ -709,17 +710,17 @@ int get_filament_compatibility_group(const std::string& filament_type)
 
     // Assign stable unique group IDs to unknown types (no hash collision risk)
     static std::unordered_map<std::string, int> unknown_groups;
-    static int next_unknown_group = 100;
+    static std::atomic<int> next_unknown_group{100};
     auto uit = unknown_groups.find(normalized);
     if (uit != unknown_groups.end()) return uit->second;
-    int group = next_unknown_group++;
+    int group = next_unknown_group.fetch_add(1);
     unknown_groups[normalized] = group;
     BOOST_LOG_TRIVIAL(info) << "Unknown filament type '" << filament_type
                             << "' assigned to compatibility group " << group;
     return group;
 }
 
-bool are_filaments_compatible(const std::vector<unsigned int>& filament_ids)
+bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
 {
     if (filament_ids.size() <= 1) return true;
 
@@ -783,6 +784,20 @@ bool are_filaments_compatible(const std::vector<unsigned int>& filament_ids)
     
     BOOST_LOG_TRIVIAL(debug) << "All filaments compatible (group " << common_group << ")";
     return true;
+}
+
+bool is_filament_compatible(const MixedFilament& mf)
+{
+    std::vector<unsigned int> fids;
+    if (mf.component_a >= 1) fids.push_back(mf.component_a - 1);
+    if (mf.component_b >= 1) fids.push_back(mf.component_b - 1);
+    if (!mf.gradient_component_ids.empty()) {
+        for (char c : mf.gradient_component_ids) {
+            int idx = c - '1';
+            if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
+        }
+    }
+    return is_filament_compatible(fids);
 }
 
 }} // namespace Slic3r::GUI

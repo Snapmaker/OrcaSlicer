@@ -162,8 +162,11 @@ else ()
     # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
     ensure_flutter_deps()
     target_link_libraries(Snapmaker_Orca
-        "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so"
-        "${CMAKE_PREFIX_PATH}/lib/libflutter_engine.so")
+        "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so")
+    # libflutter_engine.so may not exist in newer Flutter SDKs (3.38+)
+    if(EXISTS "${CMAKE_PREFIX_PATH}/lib/libflutter_engine.so")
+        target_link_libraries(Snapmaker_Orca "${CMAKE_PREFIX_PATH}/lib/libflutter_engine.so")
+    endif()
 endif ()
 
 # Add the Slic3r GUI library, libcurl, OpenGL and GLU libraries.

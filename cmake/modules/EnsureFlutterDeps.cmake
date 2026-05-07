@@ -66,9 +66,9 @@ function(ensure_flutter_deps)
                 message(FATAL_ERROR "Flutter SDK not found and Flutter Windows headers not in deps. Install Flutter or build deps first.")
             endif()
 
-            set(_hdr_src "${_engine_cache}/windows-x64/client_wrapper/include/flutter")
-            set(_dll_src "${_engine_cache}/windows-x64/client_wrapper/flutter_windows.dll")
-            set(_lib_src "${_engine_cache}/windows-x64/client_wrapper/flutter_windows.lib")
+            set(_hdr_src "${_engine_cache}/windows-x64/cpp_client_wrapper/include/flutter")
+            set(_dll_src "${_engine_cache}/windows-x64/cpp_client_wrapper/flutter_windows.dll")
+            set(_lib_src "${_engine_cache}/windows-x64/cpp_client_wrapper/flutter_windows.lib")
 
             if(NOT EXISTS "${_hdr_src}")
                 message(FATAL_ERROR "Flutter Windows artifacts not found at ${_hdr_src}. Run 'flutter precache --windows' first.")
@@ -101,8 +101,10 @@ function(ensure_flutter_deps)
             message(STATUS "Populating Flutter Linux engine from Flutter SDK → deps")
             file(COPY "${_hdr_src}" DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
             file(COPY "${_so_src}" DESTINATION "${CMAKE_PREFIX_PATH}/lib/")
-            file(COPY "${_engine_cache}/linux-x64/libflutter_engine.so"
-                 DESTINATION "${CMAKE_PREFIX_PATH}/lib/")
+            if(EXISTS "${_engine_cache}/linux-x64/libflutter_engine.so")
+                file(COPY "${_engine_cache}/linux-x64/libflutter_engine.so"
+                     DESTINATION "${CMAKE_PREFIX_PATH}/lib/")
+            endif()
             file(COPY "${_engine_cache}/linux-x64/icudtl.dat"
                  DESTINATION "${CMAKE_PREFIX_PATH}/bin/")
         endif()

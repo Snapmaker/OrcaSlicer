@@ -72,8 +72,8 @@ if (APPLE)
 # ── Windows ─────────────────────────────────────────────────────────────
 
 elseif (WIN32)
-    set(_flutter_client "${_engine_cache}/windows-x64/client_wrapper")
     set(_flutter_engine_dir "${_engine_cache}/windows-x64")
+    set(_flutter_client "${_flutter_engine_dir}/cpp_client_wrapper")
 
     set(_flutter_headers "${_flutter_client}/include/flutter")
     set(_flutter_dll "${_flutter_client}/flutter_windows.dll")
@@ -124,12 +124,17 @@ elseif (UNIX AND NOT APPLE)
         # Shared libs
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_so}" "${DESTDIR}/lib/libflutter_linux_gtk.so"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_flutter_engine_so}" "${DESTDIR}/lib/libflutter_engine.so"
         # ICU data
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
         COMMENT "Copying Flutter Linux engine → ${DESTDIR}"
     )
+    # libflutter_engine.so — optional, removed in newer Flutter SDKs (3.38+)
+    if(EXISTS "${_flutter_engine_so}")
+        add_custom_command(TARGET dep_Flutter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_flutter_engine_so}" "${DESTDIR}/lib/libflutter_engine.so"
+        )
+    endif()
     message(STATUS "Flutter deps (Linux): engine from ${FLUTTER_SDK_PATH}")
 endif()

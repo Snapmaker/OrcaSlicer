@@ -38,19 +38,18 @@ EngineConfig parse_args(int argc, char* argv[]) {
             std::exit(EXIT_OK);
         }
         else if (arg == "-v" || arg == "--verbose") {
-            // verbose is handled separately (before engine creation)
             continue;
         }
         else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
             cfg.output_base = argv[++i];
         }
         else if ((arg == "-r" || arg == "--resources") && i + 1 < argc) {
-            // handled before engine creation
-            continue;
+            // Skip the parameter values to avoid being regarded as input files
+            ++i;
         }
         else if ((arg == "-j" || arg == "--json") && i + 1 < argc) {
-            // handled after engine runs
-            continue;
+            // Skip the parameter values to avoid being regarded as input files
+            ++i;
         }
         else if ((arg == "-p" || arg == "--plate") && i + 1 < argc) {
             std::string plate_arg = argv[++i];
@@ -80,6 +79,7 @@ EngineConfig parse_args(int argc, char* argv[]) {
                 std::exit(EXIT_INVALID_ARGS);
             }
         }
+        // Only parameters that are not recognized as options/option values are considered input files
         else if (arg[0] != '-') {
             if (cfg.input_file.empty()) {
                 cfg.input_file = arg;
@@ -93,6 +93,13 @@ EngineConfig parse_args(int argc, char* argv[]) {
             print_usage(argv[0]);
             std::exit(EXIT_INVALID_ARGS);
         }
+    }
+
+    // Validate that an input file was provided
+    if (cfg.input_file.empty()) {
+        std::cerr << "Error: No input file specified." << std::endl;
+        print_usage(argv[0]);
+        std::exit(EXIT_INVALID_ARGS);
     }
 
     return cfg;

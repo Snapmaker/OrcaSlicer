@@ -95,7 +95,7 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
 
     // -- print_info_total --
     json << "  \"print_info_total\": {\n";
-    json << "    \"output_file\": \"" << json_escape(output_file_path) << "\",\n";
+    json << "    \"output_file\": \"" << (stats.success ? json_escape(output_file_path) : "") << "\",\n";
     json << "    \"print_time_seconds\": " << total_print_time << ",\n";
     json << "    \"print_time_formatted\": \"" << format_time_hhmmss(static_cast<float>(total_print_time)) << "\",\n";
     json << "    \"total_weight_g\": " << total_weight << ",\n";

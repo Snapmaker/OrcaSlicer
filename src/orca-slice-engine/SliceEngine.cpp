@@ -10,6 +10,9 @@
 #include <boost/log/trivial.hpp>
 
 #include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/CustomGCode.hpp"
+
+static const int MAX_RETRIES = 3;
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/ProjectTask.hpp"
@@ -259,16 +262,43 @@ void SliceEngine::process_plate(int plate_id) {
     if (!run_validation(plate_id, print))
         return;
 
-    // --- Slicing ---
-    if (!run_slicing(plate_id, print))
-        return;
-
-    BOOST_LOG_TRIVIAL(info) << "Slicing completed for plate " << (plate_id + 1);
-
-    // --- Export G-code ---
+    // --- Slicing + Export (with retry for non-fatal exceptions) ---
     PlateSliceResult slice_result;
-    if (!export_gcode(plate_id, print, slice_result))
+    bool slice_ok = false;
+
+    for (int attempt = 1; attempt <= MAX_RETRIES; ++attempt) {
+        if (attempt > 1) {
+            BOOST_LOG_TRIVIAL(warning) << "Retry attempt " << attempt << "/" << MAX_RETRIES
+                << " for plate " << (plate_id + 1);
+            // Clear error issues from the previous failed attempt
+            m_stats.issues.erase(
+                std::remove_if(m_stats.issues.begin(), m_stats.issues.end(),
+                    [&](const Issue& i) { return i.plate_id == plate_id && i.level == "error"; }),
+                m_stats.issues.end());
+            m_any_error = false;
+        }
+
+        // Slicing
+        if (!run_slicing(plate_id, print)) {
+            continue; // retry
+        }
+
+        BOOST_LOG_TRIVIAL(info) << "Slicing completed for plate " << (plate_id + 1);
+
+        // Export G-code
+        if (!export_gcode(plate_id, print, slice_result)) {
+            continue; // retry
+        }
+
+        slice_ok = true;
+        break;
+    }
+
+    if (!slice_ok) {
+        BOOST_LOG_TRIVIAL(error) << "Slicing/export failed for plate " << (plate_id + 1)
+            << " after " << MAX_RETRIES << " attempts";
         return;
+    }
 
     // --- Post-processing ---
     run_postprocessing(plate_id, slice_result);
@@ -370,6 +400,12 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
     // If the model uses fewer extruders than filaments configured in the 3MF,
     // the wipe tower generates a tool change sequence that doesn't match actual
     // extrusion, causing "append_tcr was asked to do a toolchange it didn't expect".
+    //
+    // We must check multiple sources to avoid false positives on multi-color models:
+    //   1. vol->get_extruders()  — per-volume assignment + MMU painting
+    //   2. plates_custom_gcodes  — AMS per-layer ToolChange entries
+    //   3. single_extruder_multi_material — non-Bambu single-extruder multi-material
+    // Only trim when ALL sources agree the model is single-extruder.
     {
         std::set<int> used_extruders;
         for (ModelObject* obj : m_model.objects) {
@@ -389,6 +425,30 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
         if (m_config.has("filament_diameter")) {
             auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
             if (fd) num_filaments = static_cast<int>(fd->values.size());
+        }
+
+        // If volumes suggest single extruder, also check plate-level ToolChange
+        // custom G-code (AMS per-layer filament switching).
+        if (used_extruders.size() <= 1 && num_filaments > 1) {
+            auto it = m_model.plates_custom_gcodes.find(plate_id);
+            if (it != m_model.plates_custom_gcodes.end()) {
+                for (const auto& item : it->second.gcodes) {
+                    if (item.type == CustomGCode::Type::ToolChange && item.extruder > 0)
+                        used_extruders.insert(item.extruder);
+                }
+            }
+        }
+
+        // If still single, also check the single_extruder_multi_material config flag
+        // (used by non-Bambu printers for single-nozzle multi-filament).
+        if (used_extruders.size() <= 1 && num_filaments > 1) {
+            auto* semm = m_config.option<ConfigOptionBool>("single_extruder_multi_material");
+            if (semm && semm->value) {
+                // Model genuinely uses multiple filaments through one extruder.
+                // Insert sentinel values to prevent trimming.
+                used_extruders.insert(1);
+                used_extruders.insert(2);
+            }
         }
 
         BOOST_LOG_TRIVIAL(info) << "Extruder usage: model uses " << used_extruders.size()

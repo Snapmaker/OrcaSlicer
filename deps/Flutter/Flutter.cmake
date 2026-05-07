@@ -76,8 +76,8 @@ elseif (WIN32)
     set(_flutter_client "${_flutter_engine_dir}/cpp_client_wrapper")
 
     set(_flutter_headers "${_flutter_client}/include/flutter")
-    set(_flutter_dll "${_flutter_client}/flutter_windows.dll")
-    set(_flutter_lib "${_flutter_client}/flutter_windows.lib")
+    set(_flutter_dll "${_flutter_engine_dir}/flutter_windows.dll")
+    set(_flutter_lib "${_flutter_engine_dir}/flutter_windows.lib")
     set(_flutter_engine_dll "${_flutter_engine_dir}/flutter_engine.dll")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
@@ -92,16 +92,21 @@ elseif (WIN32)
         # Import library
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_lib}" "${DESTDIR}/lib/flutter_windows.lib"
-        # DLLs
+        # Embedder DLL (at root, not in cpp_client_wrapper)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_dll}" "${DESTDIR}/bin/flutter_windows.dll"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_flutter_engine_dll}" "${DESTDIR}/bin/flutter_engine.dll"
         # ICU data
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
         COMMENT "Copying Flutter Windows engine → ${DESTDIR}"
     )
+    # flutter_engine.dll — optional, removed in newer Flutter SDKs (3.38+)
+    if(EXISTS "${_flutter_engine_dll}")
+        add_custom_command(TARGET dep_Flutter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_flutter_engine_dll}" "${DESTDIR}/bin/flutter_engine.dll"
+        )
+    endif()
     message(STATUS "Flutter deps (Windows): engine from ${FLUTTER_SDK_PATH}")
 
 # ── Linux ───────────────────────────────────────────────────────────────

@@ -356,10 +356,9 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
     print.set_plate_origin(Vec3d(0, 0, 0));
 
     // Guard against wipe tower / tool change mismatch.
-    // If the model only uses a single extruder but the 3MF config has multiple filaments,
-    // Print::has_wipe_tower() still returns true (filament count > 1), which causes
-    // "WipeTowerIntegration::append_tcr was asked to do a toolchange it didn't expect"
-    // during G-code export. Disable the prime tower when it's not needed.
+    // If the model uses fewer extruders than filaments configured in the 3MF,
+    // the wipe tower generates a tool change sequence that doesn't match actual
+    // extrusion, causing "append_tcr was asked to do a toolchange it didn't expect".
     {
         std::set<int> used_extruders;
         for (ModelObject* obj : m_model.objects) {
@@ -374,29 +373,59 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
                 }
             }
         }
-        if (used_extruders.size() <= 1) {
-            BOOST_LOG_TRIVIAL(info) << "Only " << used_extruders.size()
-                << " extruder(s) used by model, disabling prime tower";
+
+        int num_filaments = 0;
+        if (m_config.has("filament_diameter")) {
+            auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
+            if (fd) num_filaments = static_cast<int>(fd->values.size());
+        }
+
+        BOOST_LOG_TRIVIAL(info) << "Extruder usage: model uses " << used_extruders.size()
+            << " extruder(s), config has " << num_filaments << " filament(s)";
+
+        if (used_extruders.size() <= 1 && num_filaments > 1) {
+            BOOST_LOG_TRIVIAL(info) << "Trimming filament config from " << num_filaments
+                << " to 1 to match single-extruder model";
+            m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
+
+            // Truncate all filament-related array options to 1 entry.
+            // This prevents Print::has_wipe_tower() from returning true due to
+            // filament_diameter.size() > 1, which is the root cause of the
+            // "append_tcr was asked to do a toolchange it didn't expect" error.
+            static const std::vector<const char*> trim_keys = {
+                "filament_diameter",
+                "filament_density",
+                "filament_cost",
+                "filament_colour",
+                "filament_type",
+                "filament_is_support",
+                "filament_settings_id",
+                "nozzle_diameter",
+            };
+            for (const char* key : trim_keys) {
+                auto* opt = m_config.option(key, true);
+                if (!opt) continue;
+                if (auto* fs = dynamic_cast<ConfigOptionFloats*>(opt)) {
+                    if (!fs->values.empty()) { fs->values.resize(1); m_config.set_key_value(key, new ConfigOptionFloats(fs->values)); }
+                } else if (auto* ss = dynamic_cast<ConfigOptionStrings*>(opt)) {
+                    if (!ss->values.empty()) { ss->values.resize(1); m_config.set_key_value(key, new ConfigOptionStrings(ss->values)); }
+                } else if (auto* bs = dynamic_cast<ConfigOptionBools*>(opt)) {
+                    if (!bs->values.empty()) { bs->values.resize(1); m_config.set_key_value(key, new ConfigOptionBools(bs->values)); }
+                }
+            }
+        } else if (used_extruders.size() <= 1) {
+            BOOST_LOG_TRIVIAL(info) << "Disabling prime tower (single extruder model)";
             m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
         }
     }
 
-    // Diagnostic: check shared model state before apply
-    BOOST_LOG_TRIVIAL(info) << "=== DIAG plate " << plate_id << " shared model state ===";
-    for (ModelObject* obj : m_model.objects) {
-        BOOST_LOG_TRIVIAL(info) << "  Obj \"" << obj->name << "\" obj.printable=" << obj->printable
-            << " instances=" << obj->instances.size();
-        for (ModelInstance* inst : obj->instances) {
-            BOOST_LOG_TRIVIAL(info) << "    inst lid=" << inst->loaded_id
-                << " p=" << inst->printable
-                << " pvs=" << static_cast<int>(inst->print_volume_state)
-                << " is_p=" << inst->is_printable();
-        }
-    }
-    BOOST_LOG_TRIVIAL(info) << "=== END DIAG ===";
-
     auto apply_status = print.apply(m_model, m_config);
     BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
+
+    // Verify prime tower state after apply
+    if (print.has_wipe_tower()) {
+        BOOST_LOG_TRIVIAL(warning) << "Prime tower still enabled after apply";
+    }
 
     if (print.num_object_instances() == 0) {
         BOOST_LOG_TRIVIAL(warning) << "Plate " << plate_id << " has no printable objects after apply, skipping";
@@ -532,9 +561,10 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
         issue.message = std::string("G-code export failed: ") + e.what();
+        result.issues.push_back(issue);
         m_stats.issues.push_back(issue);
         m_any_error = true;
-        m_plate_results[plate_id] = PlateSliceResult{};
+        m_plate_results[plate_id] = result;
         return false;
     }
 }

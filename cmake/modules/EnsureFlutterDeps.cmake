@@ -68,7 +68,7 @@ function(ensure_flutter_deps)
 
             set(_hdr_src "${_engine_cache}/windows-x64/cpp_client_wrapper/include/flutter")
             set(_dll_src "${_engine_cache}/windows-x64/flutter_windows.dll")
-            set(_lib_src "${_engine_cache}/windows-x64/flutter_windows.lib")
+            set(_lib_src "${_engine_cache}/windows-x64/flutter_windows.dll.lib")
 
             if(NOT EXISTS "${_hdr_src}")
                 message(FATAL_ERROR "Flutter Windows artifacts not found at ${_hdr_src}. Run 'flutter precache --windows' first.")
@@ -76,6 +76,9 @@ function(ensure_flutter_deps)
 
             message(STATUS "Populating Flutter Windows engine from Flutter SDK → deps")
             file(COPY "${_hdr_src}" DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
+            # C API headers at engine root (flutter_windows.h, etc.)
+            file(GLOB _flutter_root_hdrs "${_engine_cache}/windows-x64/*.h")
+            file(COPY ${_flutter_root_hdrs} DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
             file(COPY "${_dll_src}" DESTINATION "${CMAKE_PREFIX_PATH}/bin/")
             file(COPY "${_lib_src}" DESTINATION "${CMAKE_PREFIX_PATH}/lib/")
             if(EXISTS "${_engine_cache}/windows-x64/flutter_engine.dll")

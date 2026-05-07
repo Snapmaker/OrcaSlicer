@@ -154,7 +154,7 @@ elseif (MSVC)
 
     # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
     ensure_flutter_deps()
-    target_link_libraries(Snapmaker_Orca "${CMAKE_PREFIX_PATH}/lib/flutter_windows.lib")
+    target_link_libraries(Snapmaker_Orca "${CMAKE_PREFIX_PATH}/lib/flutter_windows.dll.lib")
 else ()
     # Boost on Raspberry-Pi does not link to pthreads explicitely.
     target_link_libraries(Snapmaker_Orca ${CMAKE_DL_LIBS} -lstdc++ Threads::Threads pangoft2-1.0)

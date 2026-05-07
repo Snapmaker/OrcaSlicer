@@ -1,107 +1,90 @@
 // Linux implementation: FlutterEngineHost + FlutterViewHost
-// Uses Flutter Linux desktop embedding C API (flutter_linux.h)
-#include <flutter_linux.h>
-#include <gdk/gdkx.h>
-#include <X11/Xlib.h>
+// Uses Flutter Linux desktop embedding GObject API (flutter_linux.h)
+#include <flutter_linux/flutter_linux.h>
 #include "flutter_host.h"
 #include <string>
-#include <vector>
 #include <cstring>
-
-// ── Helpers ───────────────────────────────────────────────────────────
-
-static std::string messageToString(const uint8_t* data, size_t size) {
-    if (!data || size == 0) return "";
-    return std::string(reinterpret_cast<const char*>(data), size);
-}
 
 // ── FlutterViewHostLinux ──────────────────────────────────────────────
 
 class FlutterViewHostLinux : public FlutterViewHost {
-    FlutterDesktopViewRef          m_view = nullptr;
-    FlutterDesktopEngineRef        m_engine = nullptr;
-    std::string                    m_channel;
-    MethodCallHandler              m_handler;
-    FlutterDesktopMessengerRef     m_messenger = nullptr;
+    FlView*            m_view = nullptr;
+    FlEngine*          m_engine = nullptr;
+    FlBinaryMessenger* m_messenger = nullptr;
+    std::string        m_channel;
+    MethodCallHandler  m_handler;
 
-    static void messageCallback(const FlutterDesktopMessage* msg, void* userData) {
-        auto* self = static_cast<FlutterViewHostLinux*>(userData);
-        if (!self->m_handler || !msg) return;
+    static void messageHandler(FlBinaryMessenger* messenger,
+                               const gchar* channel,
+                               GBytes* message,
+                               FlBinaryMessengerResponseHandle* response_handle,
+                               gpointer user_data) {
+        auto* self = static_cast<FlutterViewHostLinux*>(user_data);
+        if (!self->m_handler) return;
 
-        std::string method = msg->channel ? msg->channel : "";
-        std::string args = messageToString(msg->message, msg->message_size);
+        gsize data_size = 0;
+        const guint8* data = message
+            ? static_cast<const guint8*>(g_bytes_get_data(message, &data_size))
+            : nullptr;
 
-        FlutterDesktopMessage responseHandle = *msg;
+        std::string args;
+        if (data && data_size > 0)
+            args = std::string(reinterpret_cast<const char*>(data), data_size);
 
-        Reply reply = [self, responseHandle](const std::string& result) {
-            if (self->m_messenger) {
-                FlutterDesktopMessengerSendResponse(
-                    self->m_messenger,
-                    &responseHandle,
-                    reinterpret_cast<const uint8_t*>(result.data()),
-                    result.size());
-            }
+        // Take a ref on the response handle to use in the reply lambda
+        g_object_ref(response_handle);
+
+        Reply reply = [self, response_handle](const std::string& result) {
+            g_autoptr(GBytes) bytes = g_bytes_new(result.data(), result.size());
+            g_autoptr(GError) error = nullptr;
+            fl_binary_messenger_send_response(
+                self->m_messenger, response_handle, bytes, &error);
+            g_object_unref(response_handle);
         };
 
-        self->m_handler(method, args, reply);
+        self->m_handler(channel ? channel : "", args, reply);
     }
 
 public:
-    FlutterViewHostLinux(FlutterDesktopViewRef view,
-                         FlutterDesktopEngineRef engine,
+    FlutterViewHostLinux(FlView* view, FlEngine* engine,
+                         FlBinaryMessenger* messenger,
                          const std::string& channelName)
-        : m_view(view), m_engine(engine), m_channel(channelName) {
+        : m_view(view), m_engine(engine),
+          m_messenger(messenger), m_channel(channelName) {
 
-        m_messenger = FlutterDesktopEngineGetMessenger(engine);
-        if (m_messenger) {
-            FlutterDesktopMessengerSetCallback(
-                m_messenger, m_channel.c_str(), messageCallback, this);
-        }
+        fl_binary_messenger_set_message_handler_on_channel(
+            m_messenger, m_channel.c_str(), messageHandler, this, nullptr);
     }
 
     ~FlutterViewHostLinux() override {
         if (m_messenger) {
-            FlutterDesktopMessengerSetCallback(
-                m_messenger, m_channel.c_str(), nullptr, nullptr);
+            fl_binary_messenger_set_message_handler_on_channel(
+                m_messenger, m_channel.c_str(), nullptr, nullptr, nullptr);
         }
-        if (m_view) {
-            FlutterDesktopViewDestroy(m_view);
-        }
+        g_clear_object(&m_view);
+        g_clear_object(&m_engine);
     }
 
     void embedInto(void* parentHandle) override {
-        if (!m_view) return;
+        GtkWidget* parent = GTK_WIDGET(parentHandle);
+        if (!parent || !m_view) return;
 
-        // parentHandle is wxWindow::GetHandle() → GtkWidget*
-        GtkWidget* parentWidget = static_cast<GtkWidget*>(parentHandle);
-        if (!parentWidget) return;
-
-        GdkWindow* parentGdkWindow = gtk_widget_get_window(parentWidget);
-        if (!parentGdkWindow) return;
-
-        Display* display = gdk_x11_display_get_xdisplay(
-            gdk_window_get_display(parentGdkWindow));
-        Window parentXid = gdk_x11_window_get_xid(parentGdkWindow);
-        Window childXid = FlutterDesktopViewGetId(m_view);
-
-        // Reparent Flutter's X11 window into wxWidgets window
-        XReparentWindow(display, childXid, parentXid, 0, 0);
-
-        // Resize to fill parent
-        int w = gdk_window_get_width(parentGdkWindow);
-        int h = gdk_window_get_height(parentGdkWindow);
-        XResizeWindow(display, childXid, w, h);
-        XMapWindow(display, childXid);
-        XFlush(display);
+        gtk_widget_set_size_request(GTK_WIDGET(m_view),
+                                     gtk_widget_get_allocated_width(parent),
+                                     gtk_widget_get_allocated_height(parent));
+        gtk_container_add(GTK_CONTAINER(parent), GTK_WIDGET(m_view));
+        gtk_widget_show_all(GTK_WIDGET(m_view));
     }
 
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
         if (!m_messenger) return;
-        FlutterDesktopMessengerSend(
-            m_messenger, m_channel.c_str(),
-            reinterpret_cast<const uint8_t*>(arguments.data()),
-            arguments.size());
+
+        g_autoptr(GBytes) message = g_bytes_new(arguments.data(),
+                                                 arguments.size());
+        fl_binary_messenger_send_on_channel(
+            m_messenger, m_channel.c_str(), message,
+            nullptr, nullptr, nullptr);
     }
 
     void setMethodCallHandler(MethodCallHandler h) override {
@@ -130,29 +113,22 @@ public:
         const std::string& entrypoint,
         const std::string& channelName) override {
 
-        FlutterDesktopEngineProperties props = {};
-        props.assets_path = nullptr;
-        props.icu_data_path = nullptr;
+        g_autoptr(FlDartProject) project = fl_dart_project_new();
+        if (!project) return nullptr;
 
-        FlutterDesktopEngineRef engine =
-            FlutterDesktopEngineCreate(&props);
+        FlEngine* engine = fl_engine_new(project);
         if (!engine) return nullptr;
 
-        const char* ep = entrypoint.empty() ? nullptr : entrypoint.c_str();
-        if (!FlutterDesktopEngineRun(engine, ep)) {
-            FlutterDesktopEngineDestroy(engine);
-            return nullptr;
-        }
-
-        // Create view and connect to engine
-        FlutterDesktopViewRef view = FlutterDesktopViewCreate(800, 600, engine);
+        FlView* view = fl_view_new_for_engine(engine);
         if (!view) {
-            FlutterDesktopEngineDestroy(engine);
+            g_object_unref(engine);
             return nullptr;
         }
 
-        auto* hostView = new FlutterViewHostLinux(view, engine, channelName);
-        return std::unique_ptr<FlutterViewHost>(hostView);
+        FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
+
+        auto* host = new FlutterViewHostLinux(view, engine, messenger, channelName);
+        return std::unique_ptr<FlutterViewHost>(host);
     }
 };
 

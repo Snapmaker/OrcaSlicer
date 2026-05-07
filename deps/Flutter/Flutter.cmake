@@ -77,7 +77,7 @@ elseif (WIN32)
 
     set(_flutter_headers "${_flutter_client}/include/flutter")
     set(_flutter_dll "${_flutter_engine_dir}/flutter_windows.dll")
-    set(_flutter_lib "${_flutter_engine_dir}/flutter_windows.lib")
+    set(_flutter_lib "${_flutter_engine_dir}/flutter_windows.dll.lib")
     set(_flutter_engine_dll "${_flutter_engine_dir}/flutter_engine.dll")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
@@ -86,12 +86,23 @@ elseif (WIN32)
     endif()
 
     add_custom_target(dep_Flutter ALL
-        # Headers
+        # C++ wrapper headers (flutter_engine.h, flutter_view_controller.h, …)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${_flutter_headers}" "${DESTDIR}/include/flutter"
+        # C API headers at engine root (flutter_windows.h, flutter_export.h, …)
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_dir}/flutter_windows.h" "${DESTDIR}/include/flutter/flutter_windows.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_dir}/flutter_export.h" "${DESTDIR}/include/flutter/flutter_export.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_dir}/flutter_messenger.h" "${DESTDIR}/include/flutter/flutter_messenger.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_dir}/flutter_plugin_registrar.h" "${DESTDIR}/include/flutter/flutter_plugin_registrar.h"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_flutter_engine_dir}/flutter_texture_registrar.h" "${DESTDIR}/include/flutter/flutter_texture_registrar.h"
         # Import library
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_flutter_lib}" "${DESTDIR}/lib/flutter_windows.lib"
+            "${_flutter_lib}" "${DESTDIR}/lib/flutter_windows.dll.lib"
         # Embedder DLL (at root, not in cpp_client_wrapper)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_dll}" "${DESTDIR}/bin/flutter_windows.dll"

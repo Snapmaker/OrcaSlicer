@@ -62,7 +62,7 @@ void write_issue_json(std::ostringstream& json, const Issue& issue, const std::s
     json << indent << "}";
 }
 
-void output_slice_statistics(const SliceOutputStats& stats, const std::string& json_output_path) {
+void output_slice_statistics(const SliceOutputStats& stats, const std::string& json_output_path, const std::string& output_file_path) {
     std::ostringstream json;
     json << std::fixed << std::setprecision(2);
 
@@ -95,6 +95,7 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
 
     // -- print_info_total --
     json << "  \"print_info_total\": {\n";
+    json << "    \"output_file\": \"" << json_escape(output_file_path) << "\",\n";
     json << "    \"print_time_seconds\": " << total_print_time << ",\n";
     json << "    \"print_time_formatted\": \"" << format_time_hhmmss(static_cast<float>(total_print_time)) << "\",\n";
     json << "    \"total_weight_g\": " << total_weight << ",\n";

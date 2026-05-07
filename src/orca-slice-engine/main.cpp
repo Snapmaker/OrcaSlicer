@@ -202,7 +202,7 @@ int main(int argc, char* argv[]) {
         boost::filesystem::path out_path(engine.output_path());
         json_output_path = (out_path.parent_path() / out_path.stem().stem()).string() + ".json";
     }
-    output_slice_statistics(engine.stats(), json_output_path);
+    output_slice_statistics(engine.stats(), json_output_path, engine.output_path());
 
     // --- Cleanup & exit ---
     temp_guard.cleanup();

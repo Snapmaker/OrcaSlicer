@@ -88,7 +88,7 @@ function(ensure_flutter_deps)
 
     # ── Linux ────────────────────────────────────────────────────────────
     elseif(UNIX AND NOT APPLE)
-        if(NOT EXISTS "${CMAKE_PREFIX_PATH}/include/flutter/flutter_linux.h")
+        if(NOT EXISTS "${CMAKE_PREFIX_PATH}/include/flutter/flutter_linux/flutter_linux.h")
             if(NOT _flutter_sdk)
                 message(FATAL_ERROR "Flutter SDK not found and Flutter Linux headers not in deps. Install Flutter or build deps first.")
             endif()

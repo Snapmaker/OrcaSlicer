@@ -10,9 +10,6 @@
 #include <boost/log/trivial.hpp>
 
 #include "libslic3r/BuildVolume.hpp"
-#include "libslic3r/CustomGCode.hpp"
-
-static const int MAX_RETRIES = 3;
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/ProjectTask.hpp"

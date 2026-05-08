@@ -2,6 +2,7 @@
 // Uses Flutter Linux desktop embedding GObject API (flutter_linux.h)
 #include <flutter_linux/flutter_linux.h>
 #include "flutter_host.h"
+#include <cstdlib>
 #include <string>
 #include <cstring>
 
@@ -112,6 +113,10 @@ public:
     std::unique_ptr<FlutterViewHost> createView(
         const std::string& entrypoint,
         const std::string& channelName) override {
+
+        // Use software rendering to avoid GLX BadAccess conflict with
+        // the main application's OpenGL context on X11.
+        setenv("FLUTTER_LINUX_RENDERER", "software", 1);
 
         g_autoptr(FlDartProject) project = fl_dart_project_new();
         if (!project) return nullptr;

@@ -385,14 +385,14 @@ void Preset::normalize(DynamicPrintConfig &config)
             auto *opt = config.option(key, false);
             /*assert(opt != nullptr);
             assert(opt->is_vector());*/
-            if (opt != nullptr && opt->is_vector())
+            if (opt != nullptr && opt->is_vector() && static_cast<ConfigOptionVectorBase*>(opt)->size() < n)
                 static_cast<ConfigOptionVectorBase*>(opt)->resize(n, defaults.option(key));
         }
         // The following keys are mandatory for the UI, but they are not part of FullPrintConfig, therefore they are handled separately.
         for (const std::string key : { "filament_settings_id" }) {
             auto *opt = config.option(key, false);
             assert(opt == nullptr || opt->type() == coStrings);
-            if (opt != nullptr && opt->type() == coStrings)
+            if (opt != nullptr && opt->type() == coStrings && static_cast<ConfigOptionStrings*>(opt)->values.size() < n)
                 static_cast<ConfigOptionStrings*>(opt)->values.resize(n, std::string());
         }
     }

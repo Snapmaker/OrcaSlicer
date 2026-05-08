@@ -68,6 +68,9 @@ EngineConfig parse_args(int argc, char* argv[]) {
                 }
             }
         }
+        else if ((arg == "-d" || arg == "--data-dir") && i + 1 < argc) {
+            cfg.data_dir = argv[++i];
+        }
         else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
             std::string fmt = argv[++i];
             if (fmt == "gcode") {

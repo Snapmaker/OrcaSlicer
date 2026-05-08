@@ -54,10 +54,43 @@ void check_degenerate_faces(Slic3r::ModelVolume& volume,
     }
 }
 
+#ifdef _MSC_VER
+// Standalone helper: wraps the CGAL call in SEH __try/__except.
+// Must NOT use C++ try/catch and must NOT construct/destroy any C++
+// objects — otherwise MSVC refuses to compile (C2712/C2713).
+static bool cgal_self_intersect_safe(const Slic3r::TriangleMesh& mesh,
+                                     bool* crashed)
+{
+    *crashed = false;
+    __try {
+        return Slic3r::MeshBoolean::cgal::does_self_intersect(mesh);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *crashed = true;
+        return false;
+    }
+}
+#endif
+
 bool check_self_intersect(const Slic3r::ModelVolume& volume,
                           const std::string& obj_name, int plate_id,
                           std::vector<Issue>& out)
 {
+#ifdef _MSC_VER
+    bool crashed = false;
+    bool self_intersects = cgal_self_intersect_safe(volume.mesh(), &crashed);
+    if (crashed) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "GeometryCheck: CGAL self-intersect check crashed (SEH) for \""
+            << obj_name << "\" — skipping";
+    } else if (self_intersects) {
+        out.push_back(make_issue(
+            "error", plate_id, obj_name, "GEOM_SELF_INTERSECT",
+            "Self-intersecting mesh: faces penetrate each other. "
+            "This will cause incorrect slicing results."));
+        return true;
+    }
+    return false;
+#else
     try {
         if (Slic3r::MeshBoolean::cgal::does_self_intersect(volume.mesh())) {
             out.push_back(make_issue(
@@ -67,7 +100,6 @@ bool check_self_intersect(const Slic3r::ModelVolume& volume,
             return true;
         }
     } catch (const std::exception& e) {
-        // CGAL may fail on degenerate input; log and continue
         BOOST_LOG_TRIVIAL(warning)
             << "GeometryCheck: CGAL self-intersect check failed for \""
             << obj_name << "\": " << e.what();
@@ -77,6 +109,7 @@ bool check_self_intersect(const Slic3r::ModelVolume& volume,
             << obj_name << "\" (unknown error)";
     }
     return false;
+#endif
 }
 
 void check_multi_component(const Slic3r::ModelVolume& volume,

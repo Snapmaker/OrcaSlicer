@@ -7,6 +7,8 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Semver.hpp"
@@ -20,6 +22,7 @@ struct EngineConfig {
     OutputFormat format = OutputFormat::GCODE_3MF;
     bool single_plate = false;
     std::string temp_dir;          // temp directory for intermediate gcode files
+    std::string data_dir;          // --data-dir, custom system presets path (empty = auto)
 };
 
 // Intermediate result for a single plate during the pipeline
@@ -53,6 +56,9 @@ public:
 private:
     // --- Pipeline stages ---
     bool load_3mf();
+    void validate_config();
+    void load_system_presets();
+    void validate_presets();
     bool validate_input();
     void process_plate(int plate_id);
     void package_output();
@@ -80,8 +86,14 @@ private:
     // Loaded data
     Slic3r::Model m_model;
     Slic3r::DynamicPrintConfig m_config;
+    Slic3r::ConfigSubstitutionContext m_config_substitutions{
+        Slic3r::ForwardCompatibilitySubstitutionRule::Enable};
     Slic3r::PlateDataPtrs m_plate_data;
     std::vector<Slic3r::Preset*> m_project_presets;
     bool m_is_bbl_3mf = false;
     Slic3r::Semver m_file_version;
+
+    // Preset validation (requires system profiles at resources_dir/profiles/)
+    std::unique_ptr<Slic3r::PresetBundle> m_preset_bundle;
+    bool m_presets_available = false;
 };

@@ -41,9 +41,20 @@ SliceEngine::SliceEngine(const EngineConfig& cfg, std::vector<std::string>& temp
 
 bool SliceEngine::run() {
     bool load_ok = load_3mf();
-    bool validate_ok = load_ok && validate_input();
+    if (!load_ok) {
+        build_statistics();
+        return false;
+    }
+
+    // Config & preset validation (desktop parity — non-blocking)
+    validate_config();
+    load_system_presets();
+    validate_presets();
+
+    bool validate_ok = validate_input();
 
     if (load_ok && validate_ok) {
+        try {
         m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
                                              m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
         BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
@@ -69,7 +80,6 @@ bool SliceEngine::run() {
 
         // Process each plate
         for (int plate_id : plates_to_process) {
-            BOOST_LOG_TRIVIAL(info) << "=== Processing plate " << (plate_id + 1) << " ===";
             process_plate(plate_id);
         }
 
@@ -87,6 +97,30 @@ bool SliceEngine::run() {
 
         if (has_output && !m_any_error)
             BOOST_LOG_TRIVIAL(info) << "Done!";
+
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "Unhandled exception in slicing pipeline: " << e.what();
+            std::cerr << "[ERROR] Unhandled exception: " << e.what() << std::endl;
+            m_any_error = true;
+            Issue issue;
+            issue.level    = "error";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "INTERNAL_ERROR";
+            issue.message  = std::string("Unhandled exception: ") + e.what();
+            m_stats.issues.push_back(issue);
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(error) << "Unhandled non-standard exception in slicing pipeline";
+            std::cerr << "[ERROR] Unhandled unknown exception" << std::endl;
+            m_any_error = true;
+            Issue issue;
+            issue.level    = "error";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "INTERNAL_ERROR";
+            issue.message  = "Unhandled unknown exception in slicing pipeline";
+            m_stats.issues.push_back(issue);
+        }
     }
 
     // Always build JSON statistics (even on early failure) so
@@ -103,7 +137,8 @@ bool SliceEngine::run() {
 bool SliceEngine::load_3mf() {
     BOOST_LOG_TRIVIAL(info) << "Loading 3MF file...";
 
-    ConfigSubstitutionContext config_substitutions(ForwardCompatibilitySubstitutionRule::Enable);
+    // Reset substitution state from any prior run
+    m_config_substitutions = ConfigSubstitutionContext(ForwardCompatibilitySubstitutionRule::Enable);
 
     LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig |
                            LoadStrategy::AddDefaultInstances | LoadStrategy::LoadAuxiliary;
@@ -112,7 +147,7 @@ bool SliceEngine::load_3mf() {
         m_model = Model::read_from_file(
             m_cfg.input_file,
             &m_config,
-            &config_substitutions,
+            &m_config_substitutions,
             strategy,
             &m_plate_data,
             &m_project_presets,
@@ -157,7 +192,246 @@ bool SliceEngine::load_3mf() {
 }
 
 // ============================================================================
-// Stage 2: Validate input
+// Stage 2: Config & preset validation (desktop parity)
+// ============================================================================
+
+void SliceEngine::validate_config()
+{
+    // A1: Validate config values (layer_height, nozzle_diameter, etc.)
+    std::map<std::string, std::string> invalid = m_config.validate(true);
+    for (const auto& [key, msg] : invalid) {
+        BOOST_LOG_TRIVIAL(warning) << "Config validation: " << key << " - " << msg;
+        Issue issue;
+        issue.level    = "error";
+        issue.plate_id = -1;
+        issue.z_height = -1.0;
+        issue.code     = "CONFIG_INVALID_" + key;
+        issue.message  = msg;
+        m_stats.issues.push_back(issue);
+    }
+
+    // A2: Check config substitutions (unknown keys, forward-compat changes)
+    if (!m_config_substitutions.empty()) {
+        for (const auto& sub : m_config_substitutions.substitutions) {
+            const char* key = sub.opt_def ? sub.opt_def->opt_key.c_str() : "?";
+            BOOST_LOG_TRIVIAL(warning)
+                << "Config substitution: key=" << key
+                << " old_value=" << sub.old_value;
+            Issue issue;
+            issue.level    = "warning";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "CONFIG_SUBSTITUTION";
+            issue.message  = std::string("Config key '") + key
+                           + "' value was substituted (old: " + sub.old_value + ")";
+            m_stats.issues.push_back(issue);
+        }
+
+        for (const auto& key : m_config_substitutions.unrecogized_keys) {
+            BOOST_LOG_TRIVIAL(warning) << "Unrecognized config key in 3MF: " << key;
+            Issue issue;
+            issue.level    = "warning";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "CONFIG_UNRECOGNIZED";
+            issue.message  = std::string("Unrecognized config key '") + key
+                           + "' — may be from a newer slicer version";
+            m_stats.issues.push_back(issue);
+        }
+    }
+}
+
+void SliceEngine::load_system_presets()
+{
+    // Determine profiles directory: --data-dir takes precedence,
+    // otherwise derive from resources_dir/profiles/
+    std::string profiles_path;
+    if (!m_cfg.data_dir.empty()) {
+        profiles_path = m_cfg.data_dir;
+    } else {
+        const std::string res_dir = Slic3r::resources_dir();
+        if (res_dir.empty()) {
+            BOOST_LOG_TRIVIAL(info) << "No resources directory set; skipping preset validation";
+            return;
+        }
+        profiles_path = res_dir + "/profiles";
+    }
+
+    boost::filesystem::path profiles_dir(profiles_path);
+    if (!boost::filesystem::exists(profiles_dir) ||
+        !boost::filesystem::is_directory(profiles_dir)) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "Profiles directory not found: " << profiles_dir.string()
+            << "; skipping preset validation";
+        return;
+    }
+
+    // Collect vendor JSON files
+    std::vector<std::string> vendor_names;
+    for (auto& entry : boost::filesystem::directory_iterator(profiles_dir)) {
+        std::string file = entry.path().string();
+        if (!Slic3r::is_json_file(file))
+            continue;
+        std::string name = entry.path().filename().string();
+        name.erase(name.size() - 5); // strip .json
+        vendor_names.push_back(name);
+    }
+
+    if (vendor_names.empty()) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "No vendor JSON files in " << profiles_dir.string()
+            << "; skipping preset validation";
+        return;
+    }
+
+    // Move OrcaFilamentLibrary to the front (cross-vendor filament inheritance)
+    for (size_t i = 0; i < vendor_names.size(); ++i) {
+        if (vendor_names[i] == PresetBundle::ORCA_FILAMENT_LIBRARY) {
+            std::swap(vendor_names[0], vendor_names[i]);
+            break;
+        }
+    }
+
+    try {
+        m_preset_bundle = std::make_unique<Slic3r::PresetBundle>();
+
+        // In validation mode, load_vendor_configs_from_json reads presets
+        // into this PresetBundle. We load all vendors directly (no merge_presets
+        // needed — duplicate detection is not critical for cloud validation).
+        const auto rule = ForwardCompatibilitySubstitutionRule::EnableSilent;
+
+        for (size_t i = 0; i < vendor_names.size(); ++i) {
+            const std::string& vendor = vendor_names[i];
+            // First vendor: no base_bundle. Subsequent: pass this bundle for
+            // cross-vendor preset inheritance resolution.
+            const PresetBundle* base = (i == 0) ? nullptr : m_preset_bundle.get();
+            m_preset_bundle->load_vendor_configs_from_json(
+                profiles_dir.string(), vendor,
+                PresetBundle::LoadSystem, rule, base);
+        }
+
+        m_presets_available = true;
+        BOOST_LOG_TRIVIAL(info)
+            << "System presets loaded from " << vendor_names.size() << " vendor(s)";
+
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "Failed to load system presets: " << e.what()
+            << "; preset validation skipped";
+        m_preset_bundle.reset();
+        m_presets_available = false;
+    }
+}
+
+void SliceEngine::validate_presets()
+{
+    if (!m_presets_available || !m_preset_bundle) {
+        BOOST_LOG_TRIVIAL(info) << "Preset validation skipped (system presets not available)";
+        return;
+    }
+
+    PresetBundle& bundle = *m_preset_bundle;
+
+    // B2: Load project embedded presets
+    if (!m_project_presets.empty()) {
+        try {
+            PresetsConfigSubstitutions preset_subs =
+                bundle.load_project_embedded_presets(
+                    m_project_presets,
+                    ForwardCompatibilitySubstitutionRule::Enable);
+
+            for (const auto& ps : preset_subs) {
+                for (const auto& sub : ps.substitutions) {
+                    const char* key = sub.opt_def ? sub.opt_def->opt_key.c_str() : "?";
+                    Issue issue;
+                    issue.level    = "warning";
+                    issue.plate_id = -1;
+                    issue.z_height = -1.0;
+                    issue.code     = "PRESET_SUBSTITUTION";
+                    issue.message  = std::string("Embedded preset '") + ps.preset_name
+                                   + "' key '" + key + "' was substituted";
+                    m_stats.issues.push_back(issue);
+                }
+            }
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "Failed to load project embedded presets: " << e.what();
+        }
+    }
+
+    // B3: Validate presets against system profiles
+    try {
+        std::set<std::string> modified_gcodes;
+        int validated = bundle.validate_presets(
+            m_cfg.input_file, m_config, modified_gcodes);
+
+        switch (validated) {
+        case VALIDATE_PRESETS_SUCCESS:
+            BOOST_LOG_TRIVIAL(info) << "Preset validation passed";
+            break;
+
+        case VALIDATE_PRESETS_PRINTER_NOT_FOUND: {
+            std::string details;
+            for (const auto& name : modified_gcodes)
+                details += (details.empty() ? "" : ", ") + name;
+            BOOST_LOG_TRIVIAL(warning)
+                << "Preset validation: printer not found in system";
+            Issue issue;
+            issue.level    = "warning";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "PRESET_PRINTER_NOT_FOUND";
+            issue.message  = "Custom printer preset not found in system presets";
+            if (!details.empty())
+                issue.message += ": " + details;
+            m_stats.issues.push_back(issue);
+            break;
+        }
+
+        case VALIDATE_PRESETS_FILAMENTS_NOT_FOUND: {
+            std::string details;
+            for (const auto& name : modified_gcodes)
+                details += (details.empty() ? "" : ", ") + name;
+            BOOST_LOG_TRIVIAL(warning)
+                << "Preset validation: filament not found in system";
+            Issue issue;
+            issue.level    = "warning";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "PRESET_FILAMENT_NOT_FOUND";
+            issue.message  = "Custom filament preset not found in system presets";
+            if (!details.empty())
+                issue.message += ": " + details;
+            m_stats.issues.push_back(issue);
+            break;
+        }
+
+        case VALIDATE_PRESETS_MODIFIED_GCODES: {
+            std::string details;
+            for (const auto& name : modified_gcodes)
+                details += (details.empty() ? "" : ", ") + name;
+            BOOST_LOG_TRIVIAL(warning)
+                << "Preset validation: modified G-codes detected";
+            Issue issue;
+            issue.level    = "warning";
+            issue.plate_id = -1;
+            issue.z_height = -1.0;
+            issue.code     = "PRESET_MODIFIED_GCODES";
+            issue.message  = "Modified G-code keys found in presets";
+            if (!details.empty())
+                issue.message += ": " + details;
+            m_stats.issues.push_back(issue);
+            break;
+        }
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "Preset validation error: " << e.what();
+    }
+}
+
+// ============================================================================
+// Stage 3: Validate input
 // ============================================================================
 
 bool SliceEngine::validate_input() {

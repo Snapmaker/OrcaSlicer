@@ -51,6 +51,7 @@ void print_usage(const char* program_name) {
     std::cout << "  -f, --format <fmt>     Output format: gcode | gcode.3mf (default: gcode.3mf)" << std::endl;
     std::cout << "                         Note: All plates always use gcode.3mf" << std::endl;
     std::cout << "  -r, --resources <dir>  Resources directory containing printer profiles" << std::endl;
+    std::cout << "  -d, --data-dir <dir>   System presets directory (default: <resources>/profiles)" << std::endl;
     std::cout << "  -j, --json <file>      Output slice statistics as JSON to specified file" << std::endl;
     std::cout << "                         If not specified, JSON is auto-saved next to the output" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;

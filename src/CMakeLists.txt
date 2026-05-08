@@ -367,8 +367,12 @@ else ()
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            COMMAND rm -rf
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/App.framework"
+            COMMAND cp -R
                 "${CMAKE_BINARY_DIR}/flutter_app/App.framework"
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/App.framework"
+            COMMAND codesign --force --sign -
                 "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Frameworks/App.framework"
             COMMENT "Copying Flutter App.framework to app bundle"
         )

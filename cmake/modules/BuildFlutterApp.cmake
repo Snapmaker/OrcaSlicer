@@ -26,8 +26,9 @@ function(build_flutter_app)
         set(_flutter_sdk "$ENV{FLUTTER_HOME}")
     endif()
     if(NOT _flutter_sdk AND APPLE)
-        file(GLOB _homebrew_dirs "/opt/homebrew/Caskroom/flutter/*")
+        file(GLOB _homebrew_dirs "/opt/homebrew/Caskroom/flutter/[0-9]*")
         if(_homebrew_dirs)
+            list(SORT _homebrew_dirs COMPARE NATURAL ORDER DESCENDING)
             list(GET _homebrew_dirs 0 _latest)
             set(_flutter_sdk "${_latest}/flutter")
         endif()
@@ -57,7 +58,8 @@ function(build_flutter_app)
             OUTPUT "${_stamp}"
             COMMAND "${_flutter}" build macos --release
             COMMAND ${CMAKE_COMMAND} -E make_directory "${BFA_OUTPUT_DIR}"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_fw_src}" "${_fw_dest}"
+            COMMAND rm -rf "${_fw_dest}"
+            COMMAND cp -R "${_fw_src}" "${_fw_dest}"
             COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
             WORKING_DIRECTORY "${BFA_FLUTTER_APP_DIR}"
             COMMENT "Building Flutter app (macOS release)"

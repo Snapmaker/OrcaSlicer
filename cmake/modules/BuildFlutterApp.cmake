@@ -103,7 +103,7 @@ function(build_flutter_app)
             OUTPUT "${_stamp}"
             COMMAND "${_flutter}" build linux --release
             COMMAND ${CMAKE_COMMAND} -E make_directory "${BFA_OUTPUT_DIR}/lib"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src_dir}/lib/libflutter_app.so" "${BFA_OUTPUT_DIR}/lib/libflutter_app.so"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src_dir}/lib/libapp.so" "${BFA_OUTPUT_DIR}/lib/libflutter_app.so"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${_src_dir}/data" "${BFA_OUTPUT_DIR}/data"
             COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
             WORKING_DIRECTORY "${BFA_FLUTTER_APP_DIR}"

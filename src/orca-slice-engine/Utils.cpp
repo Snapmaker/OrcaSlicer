@@ -1,5 +1,6 @@
 #include "Utils.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -123,12 +124,23 @@ std::string generate_output_path(
 
     std::string extension = (format == OutputFormat::GCODE_3MF) ? ".gcode.3mf" : ".gcode";
 
+    std::string path;
     if (single_plate) {
         if (output_base.empty()) {
-            return base_name + "-p" + std::to_string(plate_id) + extension;
+            path = base_name + "-p" + std::to_string(plate_id) + extension;
+        } else {
+            path = base_name + extension;
         }
-        return base_name + extension;
     } else {
-        return base_name + ".gcode.3mf";
+        path = base_name + ".gcode.3mf";
     }
+
+    // Prevent multi-process collision: append unique suffix if output file already exists
+    if (boost::filesystem::exists(path)) {
+        auto ts = std::chrono::system_clock::now().time_since_epoch().count();
+        boost::filesystem::path p(path);
+        path = (p.parent_path() / (p.stem().string() + "_" + std::to_string(ts))).string() + p.extension().string();
+    }
+
+    return path;
 }

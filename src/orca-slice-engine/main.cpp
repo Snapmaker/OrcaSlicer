@@ -5,6 +5,7 @@
  * Usage: orca-slice-engine input.3mf [OPTIONS]
  */
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -195,10 +196,17 @@ int main(int argc, char* argv[]) {
             BOOST_LOG_TRIVIAL(info) << "Resources directory validated: " << resources_dir;
     }
 
-    // --- Setup temporary directory ---
-    cfg.temp_dir = boost::filesystem::temp_directory_path().string();
+    // --- Setup temporary directory (process-isolated to avoid multi-process collisions) ---
+    {
+        auto pid = get_current_pid();
+        auto ts  = std::chrono::system_clock::now().time_since_epoch().count();
+        auto unique_dir = boost::filesystem::temp_directory_path()
+            / (std::string("orca_slice_") + std::to_string(pid) + "_" + std::to_string(ts));
+        boost::filesystem::create_directories(unique_dir);
+        cfg.temp_dir = unique_dir.string();
+    }
     set_temporary_dir(cfg.temp_dir);
-    BOOST_LOG_TRIVIAL(debug) << "Temporary directory: " << cfg.temp_dir;
+    BOOST_LOG_TRIVIAL(info) << "Temporary directory: " << cfg.temp_dir;
 
     // --- Run the slicing pipeline ---
     std::vector<std::string> temp_files;
@@ -216,6 +224,10 @@ int main(int argc, char* argv[]) {
 
     // --- Cleanup & exit ---
     temp_guard.cleanup();
+    // Remove the per-process temp subdirectory (std::quick_exit skips destructors)
+    if (!cfg.temp_dir.empty()) {
+        try { boost::filesystem::remove_all(cfg.temp_dir); } catch (...) {}
+    }
 
     int exit_code;
     if (engine.any_error())

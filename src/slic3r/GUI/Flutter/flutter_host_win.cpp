@@ -123,9 +123,9 @@ public:
         const std::string& channelName) override {
 
         FlutterDesktopEngineProperties props = {};
-        // Use nullptr to let Flutter find AOT data relative to the executable
-        props.assets_path = nullptr;
-        props.icu_data_path = nullptr;
+        props.assets_path = L"data\\flutter_assets";
+        props.icu_data_path = L"data\\icudtl.dat";
+        props.aot_library_path = L"flutter_app.dll";
 
         FlutterDesktopEngineRef engine =
             FlutterDesktopEngineCreate(&props);

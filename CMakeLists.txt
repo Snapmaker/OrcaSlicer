@@ -995,8 +995,14 @@ SnapmakerOrcaPre_have_uninst_path:
   StrLen $2 "\${CPACK_NSIS_UNINSTALL_NAME}.exe"
   StrCpy $3 $0 -$2
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
-  ExecWait '"$0" /S _?=$3'
-  IfErrors SnapmakerOrcaPre_uninst_launch_failed SnapmakerOrcaPre_finish
+  ; Quote _? target dir explicitly to avoid argument splitting on spaces.
+  ExecWait '"$0" /S _?="$3"' $1
+  IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
+  IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
+
+SnapmakerOrcaPre_uninst_failed:
+  MessageBox MB_OK|MB_ICONSTOP "Uninstall failed.$\nUninstaller path: $0$\nWorking dir: $3$\nExit code: $1"
+  Abort
 
 SnapmakerOrcaPre_uninst_launch_failed:
   MessageBox MB_OK|MB_ICONSTOP "Failed to start uninstaller process.$\nUninstaller path: $0$\nWorking dir: $3$\n$\nSystem error: the uninstall command could not be executed by Windows (IfErrors set).$\nPossible causes: missing/corrupted uninstaller, access denied, or invalid install directory."

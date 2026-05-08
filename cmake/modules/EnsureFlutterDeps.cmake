@@ -51,7 +51,7 @@ function(ensure_flutter_deps)
                 set(_fw_arch "macos-arm64_x86_64")
             endif()
 
-            set(_fw_src "${_engine_cache}/darwin-x64/FlutterMacOS.xcframework/${_fw_arch}/FlutterMacOS.framework")
+            set(_fw_src "${_engine_cache}/darwin-x64-release/FlutterMacOS.xcframework/${_fw_arch}/FlutterMacOS.framework")
             if(NOT EXISTS "${_fw_src}")
                 message(FATAL_ERROR "FlutterMacOS.framework not found at ${_fw_src}. Run 'flutter precache --macos' first.")
             endif()

@@ -56,7 +56,7 @@ if (APPLE)
         set(_flutter_arch "macos-arm64_x86_64")
     endif()
 
-    set(_flutter_fw_src "${_engine_cache}/darwin-x64/FlutterMacOS.xcframework/${_flutter_arch}/FlutterMacOS.framework")
+    set(_flutter_fw_src "${_engine_cache}/darwin-x64-release/FlutterMacOS.xcframework/${_flutter_arch}/FlutterMacOS.framework")
     set(_flutter_fw_dest "${DESTDIR}/FlutterMacOS.framework")
 
     if(NOT EXISTS "${_flutter_fw_src}")

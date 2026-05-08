@@ -41,12 +41,28 @@ if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)")
                 -DOPENVDB_NODE_MANAGER_H=${SOURCE_DIR}/openvdb/openvdb/tree/NodeManager.h
                 -P ${CMAKE_CURRENT_LIST_DIR}/OpenVDB_fix_template_syntax.cmake
     )
-else ()
-    # Keep original behavior on other platforms.
+elseif(APPLE)
+    # Keep original macOS behavior (BSD sed).
     ExternalProject_Add_Step(dep_OpenVDB fix_template_syntax
         DEPENDEES configure
         DEPENDERS build
         COMMAND bash -c "cd '${SOURCE_DIR}/openvdb/openvdb/tree' && sed -i '' 's|OpT::template eval|OpT::eval|g' NodeManager.h"
+    )
+elseif(UNIX)
+    # Linux/other Unix use GNU/POSIX sed syntax.
+    ExternalProject_Add_Step(dep_OpenVDB fix_template_syntax
+        DEPENDEES configure
+        DEPENDERS build
+        COMMAND bash -c "cd '${SOURCE_DIR}/openvdb/openvdb/tree' && sed -i 's|OpT::template eval|OpT::eval|g' NodeManager.h"
+    )
+else ()
+    # Windows/non-Unix fallback.
+    ExternalProject_Add_Step(dep_OpenVDB fix_template_syntax
+        DEPENDEES configure
+        DEPENDERS build
+        COMMAND ${CMAKE_COMMAND}
+                -DOPENVDB_NODE_MANAGER_H=${SOURCE_DIR}/openvdb/openvdb/tree/NodeManager.h
+                -P ${CMAKE_CURRENT_LIST_DIR}/OpenVDB_fix_template_syntax.cmake
     )
 endif ()
 

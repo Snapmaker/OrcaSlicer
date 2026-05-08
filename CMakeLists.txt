@@ -968,11 +968,11 @@ SnapmakerOrcaPre_prompt:
   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is still running.$\nClose the program, then click Retry to continue, or Cancel to exit the installer." IDRETRY SnapmakerOrcaPre_check_loop
   Abort
 SnapmakerOrcaPre_done:
-  StrCpy $4 "HKLM"
   ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
-  StrCmp $0 "" 0 +3
-  StrCpy $4 "HKCU"
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkcu_uninst SnapmakerOrcaPre_has_uninst
+SnapmakerOrcaPre_read_hkcu_uninst:
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
+SnapmakerOrcaPre_has_uninst:
   StrCmp $0 "" SnapmakerOrcaPre_finish
 
   MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker_Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
@@ -981,23 +981,20 @@ SnapmakerOrcaPre_done:
 SnapmakerOrcaPre_uninst:
   ClearErrors
   StrCpy $2 $0 1 0
-  StrCmp $2 "$\"" 0 +2
+  StrCmp $2 "$\"" SnapmakerOrcaPre_trim_first_quote SnapmakerOrcaPre_check_last_quote
+SnapmakerOrcaPre_trim_first_quote:
   StrCpy $0 $0 "" 1
+SnapmakerOrcaPre_check_last_quote:
   StrCpy $2 $0 1 -1
-  StrCmp $2 "$\"" 0 +2
+  StrCmp $2 "$\"" SnapmakerOrcaPre_trim_last_quote SnapmakerOrcaPre_have_uninst_path
+SnapmakerOrcaPre_trim_last_quote:
   StrCpy $0 $0 -1
-  StrCpy $3 ""
-  StrCmp $4 "HKCU" 0 SnapmakerOrcaPre_read_hklm_loc
-  ReadRegStr $3 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "InstallLocation"
-  Goto SnapmakerOrcaPre_have_loc
-SnapmakerOrcaPre_read_hklm_loc:
-  ReadRegStr $3 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "InstallLocation"
-SnapmakerOrcaPre_have_loc:
-  StrCmp $3 "" 0 +3
-  StrLen $2 "\${CPACK_NSIS_UNINSTALL_NAME}.exe"
-  StrCpy $3 $0 -$2
+SnapmakerOrcaPre_have_uninst_path:
+  ; Derive working dir from uninstaller path directly (same idea as CPack default logic),
+  ; avoid relying on InstallLocation which may be stale or malformed on some machines.
+  GetFullPathName $3 "$0\.."
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
-  ExecWait '"$0" /S _?=$3' $1
+  ExecWait '"$0" /S _?="$3"' $1
   IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
   IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
 

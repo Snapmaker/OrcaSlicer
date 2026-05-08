@@ -46,6 +46,13 @@ echo -n "[9/9] Generating Linux app..."
         mkdir -p package/bin/lib
         cp -f flutter_app/lib/libflutter_app.so package/bin/lib/libflutter_app.so
         cp -Rf flutter_app/data package/bin/data
+        # Also copy Flutter engine library from deps (installed by ensure_flutter_deps)
+        # Use src/lib/ which is the POST_BUILD output dir (single-config) or find it in Multi-Config
+        if [ -f "src/lib/libflutter_linux_gtk.so" ]; then
+            cp -f src/lib/libflutter_linux_gtk.so package/bin/lib/libflutter_linux_gtk.so
+        elif [ -f "src/Release/lib/libflutter_linux_gtk.so" ]; then
+            cp -f src/Release/lib/libflutter_linux_gtk.so package/bin/lib/libflutter_linux_gtk.so
+        fi
         echo "Copied Flutter app artifacts to package"
     else
         echo "Warning: Flutter app artifacts not found at flutter_app/. App will not render Flutter content."
@@ -57,7 +64,7 @@ echo -n "[9/9] Generating Linux app..."
 cat << EOF >@SLIC3R_APP_CMD@
 #!/bin/bash
 DIR=\$(readlink -f "\$0" | xargs dirname)
-export LD_LIBRARY_PATH="\$DIR/bin:\$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="\$DIR/bin:\$DIR/bin/lib:\$LD_LIBRARY_PATH"
 
 # FIXME: OrcaSlicer segfault workarounds
 # 1) OrcaSlicer will segfault on systems where locale info is not as expected (i.e. Holo-ISO arch-based distro)

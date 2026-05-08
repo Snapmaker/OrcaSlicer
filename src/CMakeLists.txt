@@ -387,6 +387,9 @@ else ()
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_BINARY_DIR}/flutter_app/lib/libflutter_app.so"
                 "$<TARGET_FILE_DIR:Snapmaker_Orca>/lib/libflutter_app.so"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so"
+                "$<TARGET_FILE_DIR:Snapmaker_Orca>/lib/libflutter_linux_gtk.so"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_BINARY_DIR}/flutter_app/data"
                 "$<TARGET_FILE_DIR:Snapmaker_Orca>/data"

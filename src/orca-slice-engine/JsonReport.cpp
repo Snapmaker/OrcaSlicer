@@ -160,7 +160,8 @@ void output_slice_statistics(const SliceOutputStats& stats, const std::string& j
                 json << "\n";
             }
             json << "      ],\n";
-            json << "      \"model_thumbnail\": \"" << json_escape(plate.model_thumbnail) << "\"\n";
+            json << "      \"model_thumbnail\": \"" << json_escape(plate.model_thumbnail) << "\",\n";
+            json << "      \"long_retraction_when_cut\": " << (plate.long_retraction_when_cut ? "true" : "false") << "\n";
         }
 
         json << "    }";

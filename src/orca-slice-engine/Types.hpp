@@ -74,6 +74,7 @@ struct SliceOutputStats {
         std::vector<FilamentDetail> filament_details;  // Detailed filament info per extruder
         std::string model_thumbnail;             // Model thumbnail (base64 encoded PNG)
         std::vector<Issue> issues;               // Per-plate issues (errors/warnings/tips)
+        bool long_retraction_when_cut = false;   // Experimental long retraction when cut feature active
     };
 
     bool success = false;

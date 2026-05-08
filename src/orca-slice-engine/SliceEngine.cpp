@@ -60,16 +60,6 @@ bool SliceEngine::run() {
                                              m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
         BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
 
-        // --- Geometry defect detection (once, before any plate processing) ---
-        {
-            auto geom_issues = run_geometry_checks(m_model, -1);
-            for (auto& issue : geom_issues) {
-                if (issue.level == "error")
-                    m_any_error = true;
-                m_stats.issues.push_back(std::move(issue));
-            }
-        }
-
         // Collect plates to process (internal plate_index is 0-based)
         std::vector<int> plates_to_process;
         if (m_cfg.single_plate) {
@@ -165,10 +155,11 @@ bool SliceEngine::load_3mf() {
         m_any_error = true;
         m_stats.error_message = std::string("Failed to load 3MF file: ") + e.what();
         Issue issue;
-        issue.level = "error";
+        issue.level    = "error";
         issue.plate_id = -1;
         issue.z_height = -1.0;
-        issue.message = m_stats.error_message;
+        issue.code     = "LOAD_3MF_ERROR";
+        issue.message  = m_stats.error_message;
         m_stats.issues.push_back(issue);
         return false;
     }
@@ -178,10 +169,11 @@ bool SliceEngine::load_3mf() {
         m_any_error = true;
         m_stats.error_message = "3MF file contains no sliceable model objects";
         Issue issue;
-        issue.level = "error";
+        issue.level    = "error";
         issue.plate_id = -1;
         issue.z_height = -1.0;
-        issue.message = m_stats.error_message;
+        issue.code     = "MODEL_EMPTY";
+        issue.message  = m_stats.error_message;
         m_stats.issues.push_back(issue);
         return false;
     }
@@ -467,10 +459,11 @@ bool SliceEngine::validate_input() {
             m_any_error = true;
             m_stats.error_message = "Requested plate " + std::to_string(m_cfg.plate_id) + " not found in 3MF file";
             Issue issue;
-            issue.level = "error";
+            issue.level    = "error";
             issue.plate_id = -1;
             issue.z_height = -1.0;
-            issue.message = m_stats.error_message;
+            issue.code     = "PLATE_NOT_FOUND";
+            issue.message  = m_stats.error_message;
             m_stats.issues.push_back(issue);
             return false;
         }
@@ -494,6 +487,16 @@ void SliceEngine::process_plate(int plate_id) {
     if (instances_on_plate == 0) {
         BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << (plate_id + 1);
         return;
+    }
+
+    // --- Geometry defect detection (per-plate, with correct plate_id) ---
+    {
+        auto geom_issues = run_geometry_checks(m_model, plate_id);
+        for (auto& issue : geom_issues) {
+            if (issue.level == "error")
+                m_any_error = true;
+            m_stats.issues.push_back(std::move(issue));
+        }
     }
 
     // --- Build volume check ---
@@ -708,7 +711,19 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
                 issue.plate_id = plate_id;
                 issue.object_name = obj->name;
                 issue.z_height = -1.0;
+                issue.code = "BUILD_VOLUME_PARTLY_OUTSIDE";
                 issue.message = "Object \"" + obj->name + "\" is placed on the boundary of or exceeds the build volume";
+                m_stats.issues.push_back(issue);
+            } else if (inst->print_volume_state == ModelInstancePVS_Fully_Outside) {
+                log_plate_message("[Pre-processing]", "WARNING", plate_id,
+                    "Object \"" + obj->name + "\" is completely outside the build volume and will not be printed.");
+                Issue issue;
+                issue.level = "warning";
+                issue.plate_id = plate_id;
+                issue.object_name = obj->name;
+                issue.z_height = -1.0;
+                issue.code = "BUILD_VOLUME_FULLY_OUTSIDE";
+                issue.message = "Object \"" + obj->name + "\" is completely outside the build volume and will not be printed";
                 m_stats.issues.push_back(issue);
             }
         }
@@ -894,10 +909,11 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
     if (print.num_object_instances() == 0) {
         BOOST_LOG_TRIVIAL(warning) << "Plate " << plate_id << " has no printable objects after apply, skipping";
         Issue issue;
-        issue.level = "warning";
+        issue.level    = "warning";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "No printable objects on this plate after apply";
+        issue.code     = "NO_PRINTABLE_OBJECTS";
+        issue.message  = "No printable objects on this plate after apply";
         m_stats.issues.push_back(issue);
         return false;
     }
@@ -913,11 +929,12 @@ bool SliceEngine::run_validation(int plate_id, Print& print) {
         auto [obj_name, opt_hint] = format_exception_context(warning);
         std::cerr << "[WARNING] Plate " << plate_id << ": " << warning.string << obj_name << opt_hint << std::endl;
         Issue issue;
-        issue.level = "warning";
-        issue.plate_id = plate_id;
+        issue.level       = "warning";
+        issue.plate_id    = plate_id;
         issue.object_name = obj_name;
-        issue.z_height = -1.0;
-        issue.message = warning.string + opt_hint;
+        issue.z_height    = -1.0;
+        issue.code        = "PRINT_VALIDATE_WARNING";
+        issue.message     = warning.string + opt_hint;
         m_stats.issues.push_back(issue);
     }
 
@@ -925,11 +942,12 @@ bool SliceEngine::run_validation(int plate_id, Print& print) {
         auto [obj_name, opt_hint] = format_exception_context(err);
         std::cerr << "[ERROR] Plate " << plate_id << ": " << err.string << obj_name << opt_hint << std::endl;
         Issue issue;
-        issue.level = "error";
-        issue.plate_id = plate_id;
+        issue.level       = "error";
+        issue.plate_id    = plate_id;
         issue.object_name = obj_name;
-        issue.z_height = -1.0;
-        issue.message = err.string + opt_hint;
+        issue.z_height    = -1.0;
+        issue.code        = "PRINT_VALIDATE_ERROR";
+        issue.message     = err.string + opt_hint;
         m_stats.issues.push_back(issue);
         m_any_error = true;
         return false;
@@ -965,10 +983,11 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
         for (const auto& ex : exs.errors_) {
             std::cerr << "[ERROR] Plate " << plate_id << ": " << ex.what() << std::endl;
             Issue issue;
-            issue.level = "error";
+            issue.level    = "error";
             issue.plate_id = plate_id;
             issue.z_height = -1.0;
-            issue.message = ex.what();
+            issue.code     = "SLICING_ERROR";
+            issue.message  = ex.what();
             m_stats.issues.push_back(issue);
         }
         m_any_error = true;
@@ -977,10 +996,11 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
     catch (SlicingError& ex) {
         std::cerr << "[ERROR] Plate " << plate_id << ": " << ex.what() << std::endl;
         Issue issue;
-        issue.level = "error";
+        issue.level    = "error";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = ex.what();
+        issue.code     = "SLICING_ERROR";
+        issue.message  = ex.what();
         m_stats.issues.push_back(issue);
         m_any_error = true;
         return false;
@@ -988,10 +1008,11 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
     catch (CanceledException&) {
         std::cerr << "[ERROR] Plate " << plate_id << ": Slicing was cancelled." << std::endl;
         Issue issue;
-        issue.level = "error";
+        issue.level    = "error";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "Slicing was cancelled";
+        issue.code     = "SLICING_CANCELLED";
+        issue.message  = "Slicing was cancelled";
         m_stats.issues.push_back(issue);
         m_any_error = true;
         return false;
@@ -999,10 +1020,11 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
     catch (std::exception& e) {
         std::cerr << "[ERROR] Plate " << plate_id << ": " << e.what() << std::endl;
         Issue issue;
-        issue.level = "error";
+        issue.level    = "error";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = e.what();
+        issue.code     = "SLICING_EXCEPTION";
+        issue.message  = e.what();
         m_stats.issues.push_back(issue);
         m_any_error = true;
         return false;
@@ -1031,6 +1053,24 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
         // Run user-configured post-processing scripts (D4 — desktop parity)
         run_post_process_scripts(result.gcode_path, print.full_print_config());
 
+        // Collect PrintBase warnings (EmptyGcodeLayers, G-code overlap, etc.)
+        for (int step = 0; step < static_cast<int>(PrintStep::psCount); ++step) {
+            auto wstate = print.step_state_with_warnings(static_cast<PrintStep>(step));
+            for (const auto& w : wstate.warnings) {
+                if (!w.current) continue;
+                std::string level = (w.level == PrintStateBase::WarningLevel::CRITICAL) ? "error" : "warning";
+                BOOST_LOG_TRIVIAL(warning) << "Print warning [" << level << "]: " << w.message;
+                Issue issue;
+                issue.level    = level;
+                issue.plate_id = plate_id;
+                issue.z_height = -1.0;
+                issue.code     = "PRINT_WARNING";
+                issue.message  = w.message;
+                result.issues.push_back(issue);
+                m_stats.issues.push_back(issue);
+            }
+        }
+
         const PrintStatistics& ps = print.print_statistics();
         result.total_weight = ps.total_weight;
         result.support_used = print.is_support_used();
@@ -1043,10 +1083,11 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
     catch (std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to export G-code for plate " << plate_id << ": " << e.what();
         Issue issue;
-        issue.level = "error";
+        issue.level    = "error";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = std::string("G-code export failed: ") + e.what();
+        issue.code     = "GCODE_EXPORT_ERROR";
+        issue.message  = std::string("G-code export failed: ") + e.what();
         result.issues.push_back(issue);
         m_stats.issues.push_back(issue);
         m_any_error = true;
@@ -1065,10 +1106,11 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
             "Some toolpaths are outside the printable area.");
         has_postprocess_warning = true;
         Issue issue;
-        issue.level = "warning";
+        issue.level    = "warning";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "Some toolpaths are outside the printable area";
+        issue.code     = "TOOLPATH_OUTSIDE";
+        issue.message  = "Some toolpaths are outside the printable area";
         result.issues.push_back(issue);
     }
 
@@ -1082,11 +1124,12 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
             + "\" at Z=" + std::to_string(cr._height) + "mm.");
         has_postprocess_error = true;
         Issue issue;
-        issue.level = "error";
-        issue.plate_id = plate_id;
+        issue.level       = "error";
+        issue.plate_id    = plate_id;
         issue.object_name = obj1 + " vs " + obj2;
-        issue.z_height = cr._height;
-        issue.message = "Toolpath conflict detected between \"" + obj1 + "\" and \"" + obj2 + "\" at Z=" + std::to_string(cr._height) + "mm";
+        issue.z_height    = cr._height;
+        issue.code        = "TOOLPATH_CONFLICT";
+        issue.message     = "Toolpath conflict detected between \"" + obj1 + "\" and \"" + obj2 + "\" at Z=" + std::to_string(cr._height) + "mm";
         result.issues.push_back(issue);
     }
 
@@ -1098,10 +1141,11 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
             + " is not compatible with bed type \"" + bm.bed_type_name + "\".");
         has_postprocess_warning = true;
         Issue issue;
-        issue.level = "warning";
+        issue.level    = "warning";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "Filament " + std::to_string(bm.extruder_id + 1)
+        issue.code     = "BED_FILAMENT_MISMATCH";
+        issue.message  = "Filament " + std::to_string(bm.extruder_id + 1)
             + " is not compatible with bed type \"" + bm.bed_type_name + "\"";
         result.issues.push_back(issue);
     }
@@ -1112,10 +1156,11 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
             "Timelapse is not supported in spiral vase mode on this printer.");
         has_postprocess_warning = true;
         Issue issue;
-        issue.level = "warning";
+        issue.level    = "warning";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "Timelapse is not supported in spiral vase mode on this printer";
+        issue.code     = "TIMELAPSE_SPIRAL_VASE";
+        issue.message  = "Timelapse is not supported in spiral vase mode on this printer";
         result.issues.push_back(issue);
     }
     if ((result.gcode_result.timelapse_warning_code >> 1) & 1) {
@@ -1123,10 +1168,11 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
             "Timelapse is not supported with by-object print sequence on this printer.");
         has_postprocess_warning = true;
         Issue issue;
-        issue.level = "warning";
+        issue.level    = "warning";
         issue.plate_id = plate_id;
         issue.z_height = -1.0;
-        issue.message = "Timelapse is not supported with by-object print sequence on this printer";
+        issue.code     = "TIMELAPSE_BY_OBJECT";
+        issue.message  = "Timelapse is not supported with by-object print sequence on this printer";
         result.issues.push_back(issue);
     }
 
@@ -1364,6 +1410,7 @@ void SliceEngine::build_statistics() {
             plate_stats.total_cost = result.total_cost;
             plate_stats.support_used = result.support_used;
             plate_stats.toolpath_outside = result.gcode_result.toolpath_outside;
+            plate_stats.long_retraction_when_cut = result.gcode_result.long_retraction_when_cut;
 
             // Calculate model filament
             double total_support_m = 0.0, total_support_g = 0.0;

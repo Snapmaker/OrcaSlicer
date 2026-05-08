@@ -185,14 +185,19 @@ void MixedFilamentDialog::build_ui()
     // Left column: title row + filament rows panel
     auto* left_col = new wxBoxSizer(wxVERTICAL);
     
-    // Create swap button for gradient direction (shown only in gradient mode)
-    m_btn_swap_gradient_dir = new wxButton(this, wxID_ANY, from_u8("\xe2\x86\x95"),
-                                           wxDefaultPosition, wxSize(FromDIP(24), FromDIP(24)));
-    m_btn_swap_gradient_dir->SetToolTip(_L("Swap gradient direction"));
+    // Create swap button (swaps the two filament selections)
+    m_btn_swap_gradient_dir = new ScalableButton(this, wxID_ANY, "reverse_arrow");
+    m_btn_swap_gradient_dir->SetToolTip(_L("Swap filaments"));
     m_btn_swap_gradient_dir->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        m_gradient_direction = 1 - m_gradient_direction;
-        if (m_preview_panel)
-            m_preview_panel->Refresh();
+        if (m_filament_rows.size() < 2) return;
+        std::vector<int> selections;
+        for (int i = 0; i < m_filament_rows.size(); ++i)
+            selections.push_back(get_filament_index((int)i));
+        std::swap(selections[0], selections[1]);
+        m_gradient_direction = 0;
+        rebuild_all_combos_with_selections(selections);
+        update_preview();
+        update_compatibility_warning();
     });
     
     // Compatibility warning banner (hidden by default, shown when incompatible filaments are selected)
@@ -210,12 +215,12 @@ void MixedFilamentDialog::build_ui()
         left_col->Add(m_compat_warning_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
     }
 
-    // Title row for left column: title + swap button + add/remove buttons
+    // Title row for left column: title + add/remove buttons
     auto* title_row = new wxBoxSizer(wxHORIZONTAL);
     m_filament_title = new wxStaticText(this, wxID_ANY, _L("Mixed Filament"));
     title_row->Add(m_filament_title, 0, wxALIGN_CENTER_VERTICAL);
-    title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(8));
     title_row->AddStretchSpacer();
+    title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     title_row->Add(m_btn_remove_filament, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     title_row->Add(m_btn_add_filament, 0, wxALIGN_CENTER_VERTICAL);
     left_col->Add(title_row, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
@@ -249,11 +254,10 @@ void MixedFilamentDialog::build_ui()
                 std::swap(ca, cb);
             wxImage img(sz.GetWidth(), sz.GetHeight());
             unsigned char* data = img.GetData();
-            // Use vertical gradient to represent Z-axis direction
-            // Top of preview = bottom layers, bottom of preview = top layers
+            // Vertical gradient: top = cb-last, bottom = ca-first
+            // (t=1.0 at top→pure cb, t=0 at bottom→pure ca, matching gradient_start/end direction 0)
             for (int y = 0; y < sz.GetHeight(); ++y) {
-                // Calculate gradient parameter t from 0 (top) to 1 (bottom)
-                float t = (sz.GetHeight() > 1) ? float(y) / float(sz.GetHeight() - 1) : 0.5f;
+                float t = (sz.GetHeight() > 1) ? 1.0f - float(y) / float(sz.GetHeight() - 1) : 0.5f;
                 wxColour c = blend_pair_filament_mixer(ca, cb, t);
                 for (int x = 0; x < sz.GetWidth(); ++x) {
                     int idx = (y * sz.GetWidth() + x) * 3;
@@ -897,7 +901,7 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
     if (m_pattern_panel_sizer) m_pattern_panel_sizer->ShowItems(is_cycle_mode);
     if (m_match_panel_sizer)   m_match_panel_sizer->ShowItems(is_match_mode);
 
-    const bool show_gradient_swap = (m_current_mode == MODE_GRADIENT) && (n == 2);
+    const bool show_gradient_swap = is_gradient_mode && (n == 2);
     if (m_btn_swap_gradient_dir)
         m_btn_swap_gradient_dir->Show(show_gradient_swap);
 }

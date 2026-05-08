@@ -72,25 +72,32 @@ function(build_flutter_app)
 
     # ── Windows ──────────────────────────────────────────────────────────
     elseif(WIN32)
-        # Flutter build produces a full MSBuild output. After install:
-        #   build/windows/x64/runner/Release/data/app.so   (AOT)
-        #   build/windows/x64/runner/Release/data/flutter_assets/
-        #   build/windows/x64/runner/Release/data/icudtl.dat
         set(_release_dir "${BFA_FLUTTER_APP_DIR}/build/windows/x64/runner/Release")
-        set(_stamp "${BFA_OUTPUT_DIR}/.flutter_build_windows")
+        set(_stamp "${BFA_OUTPUT_DIR}/flutter_build_windows.stamp")
+        set(_script "${CMAKE_CURRENT_BINARY_DIR}/build_flutter_win.cmake")
+
+        # Write a one-shot script (avoids MSBuild multi-COMMAND chain issues)
+        file(WRITE "${_script}"
+            "execute_process(COMMAND \"${_flutter}\" build windows --release
+                WORKING_DIRECTORY \"${BFA_FLUTTER_APP_DIR}\"
+                RESULT_VARIABLE _rc)\n"
+            "if(NOT _rc EQUAL 0)\n"
+            "  message(FATAL_ERROR \"flutter build failed\")\n"
+            "endif()\n"
+            "file(MAKE_DIRECTORY \"${BFA_OUTPUT_DIR}\")\n"
+            "file(COPY \"${_release_dir}/data/app.so\" DESTINATION \"${BFA_OUTPUT_DIR}\")\n"
+            "file(RENAME \"${BFA_OUTPUT_DIR}/app.so\" \"${BFA_OUTPUT_DIR}/flutter_app.dll\")\n"
+            "file(COPY \"${_release_dir}/data\" DESTINATION \"${BFA_OUTPUT_DIR}\")\n"
+            "file(TOUCH \"${_stamp}\")\n"
+        )
 
         add_custom_command(
             OUTPUT "${_stamp}"
-            COMMAND "${_flutter}" build windows --release
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${BFA_OUTPUT_DIR}"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_release_dir}/data/app.so" "${BFA_OUTPUT_DIR}/flutter_app.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_release_dir}/data" "${BFA_OUTPUT_DIR}/data"
-            COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
-            WORKING_DIRECTORY "${BFA_FLUTTER_APP_DIR}"
-            COMMENT "Building Flutter app (Windows release)"
+            COMMAND ${CMAKE_COMMAND} -P "${_script}"
             DEPENDS
                 "${BFA_FLUTTER_APP_DIR}/pubspec.yaml"
                 "${BFA_FLUTTER_APP_DIR}/lib/main.dart"
+            COMMENT "Building Flutter app (Windows release)"
         )
         add_custom_target(flutter_app ALL DEPENDS "${_stamp}")
         set(FLUTTER_APP_DLL "${BFA_OUTPUT_DIR}/flutter_app.dll" CACHE PATH "Built Flutter app DLL" FORCE)

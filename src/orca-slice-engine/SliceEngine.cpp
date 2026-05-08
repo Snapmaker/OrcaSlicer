@@ -6,6 +6,8 @@
 #include <iostream>
 #include <memory>
 #include <set>
+#include <iterator>
+#include <sstream>
 
 #include <boost/log/trivial.hpp>
 
@@ -262,6 +264,7 @@ void SliceEngine::process_plate(int plate_id) {
     // --- Slicing + Export (with retry for non-fatal exceptions) ---
     PlateSliceResult slice_result;
     bool slice_ok = false;
+    bool wipe_tower_disabled = false;
 
     for (int attempt = 1; attempt <= MAX_RETRIES; ++attempt) {
         if (attempt > 1) {
@@ -277,6 +280,8 @@ void SliceEngine::process_plate(int plate_id) {
 
         // Slicing
         if (!run_slicing(plate_id, print)) {
+            BOOST_LOG_TRIVIAL(warning) << "Slicing failed for plate " << (plate_id + 1)
+                << " on attempt " << attempt;
             continue; // retry
         }
 
@@ -284,6 +289,63 @@ void SliceEngine::process_plate(int plate_id) {
 
         // Export G-code
         if (!export_gcode(plate_id, print, slice_result)) {
+            // Check if this is a wipe tower tool change mismatch.
+            // This can happen on some platforms (CGAL/float differences) with
+            // non-consecutive extruder IDs. Fall back to disabling the wipe tower.
+            bool is_wipe_tower_error = false;
+            for (const auto& iss : slice_result.issues) {
+                if (iss.message.find("append_tcr") != std::string::npos) {
+                    is_wipe_tower_error = true;
+                    break;
+                }
+            }
+
+            if (is_wipe_tower_error && !wipe_tower_disabled) {
+                BOOST_LOG_TRIVIAL(warning) << "Wipe tower tool change mismatch on plate "
+                    << (plate_id + 1) << " — disabling wipe tower and re-slicing";
+                wipe_tower_disabled = true;
+
+                // Clear error issues
+                m_stats.issues.erase(
+                    std::remove_if(m_stats.issues.begin(), m_stats.issues.end(),
+                        [&](const Issue& i) { return i.plate_id == plate_id && i.level == "error"; }),
+                    m_stats.issues.end());
+                m_any_error = false;
+
+                // Save and temporarily disable wipe tower for this plate only
+                bool saved_pt = m_config.option<ConfigOptionBool>("enable_prime_tower")->value;
+                m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
+                print.~Print();
+                new (&print) Print{};
+                print.set_status_callback(default_status_callback);
+                if (!apply_model(plate_id, print)) {
+                    m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(saved_pt));
+                    break;
+                }
+                // Restore now — Print has its own copy of the config after apply
+                m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(saved_pt));
+
+                // Re-assign arrange_order (needed after new Print object)
+                {
+                    int order = 1;
+                    for (ModelObject* obj : m_model.objects)
+                        for (ModelInstance* inst : obj->instances)
+                            inst->arrange_order = order++;
+                }
+
+                // Re-validate
+                if (!run_validation(plate_id, print))
+                    break;
+
+                // Reset result for the re-slice attempt
+                slice_result = PlateSliceResult{};
+
+                // Re-slice with wipe tower disabled
+                continue;
+            }
+
+            BOOST_LOG_TRIVIAL(warning) << "G-code export failed for plate " << (plate_id + 1)
+                << " on attempt " << attempt;
             continue; // retry
         }
 
@@ -448,8 +510,27 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
             }
         }
 
-        BOOST_LOG_TRIVIAL(info) << "Extruder usage: model uses " << used_extruders.size()
-            << " extruder(s), config has " << num_filaments << " filament(s)";
+        // Diagnostic: print each detected extruder and filament info
+        {
+            std::ostringstream oss;
+            for (int eid : used_extruders) oss << eid << " ";
+            BOOST_LOG_TRIVIAL(info) << "Extruder usage: model uses " << used_extruders.size()
+                << " extruder(s) [" << oss.str() << "], config has " << num_filaments
+                << " filament(s), has single_extruder_multi_material: "
+                << (m_config.has("single_extruder_multi_material")
+                    && m_config.option<ConfigOptionBool>("single_extruder_multi_material")->value);
+            auto pcg_it = m_model.plates_custom_gcodes.find(plate_id);
+            if (pcg_it != m_model.plates_custom_gcodes.end()) {
+                int tc_count = 0;
+                for (const auto& item : pcg_it->second.gcodes)
+                    if (item.type == CustomGCode::Type::ToolChange) ++tc_count;
+                BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id
+                    << " has " << pcg_it->second.gcodes.size() << " custom gcode entries ("
+                    << tc_count << " ToolChange)";
+            } else {
+                BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " has no custom gcode entries";
+            }
+        }
 
         if (used_extruders.size() <= 1 && num_filaments > 1) {
             BOOST_LOG_TRIVIAL(info) << "Trimming filament config from " << num_filaments
@@ -489,6 +570,20 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
 
     auto apply_status = print.apply(m_model, m_config);
     BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
+
+    // Diagnostic: show wipe tower state and extruder count after apply
+    {
+        bool has_wt = print.has_wipe_tower();
+        auto extrs = print.extruders();
+        std::ostringstream oss;
+        for (auto e : extrs) oss << e << " ";
+        auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
+        bool enable_pt = m_config.option<ConfigOptionBool>("enable_prime_tower")->value;
+        BOOST_LOG_TRIVIAL(info) << "After apply: has_wipe_tower=" << has_wt
+            << ", enable_prime_tower=" << enable_pt
+            << ", filament_diameter.size=" << (fd ? (int)fd->values.size() : -1)
+            << ", print.extruders=[" << oss.str() << "]";
+    }
 
     // Verify prime tower state after apply
     if (print.has_wipe_tower()) {
@@ -546,6 +641,24 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
 
     try {
         print.process();
+        // Diagnostic: show wipe tower state after successful slicing
+        if (print.has_wipe_tower()) {
+            const auto& tool_ordering = print.get_tool_ordering();
+            auto n_layers = std::distance(tool_ordering.begin(), tool_ordering.end());
+            BOOST_LOG_TRIVIAL(info) << "After process: wipe tower active, "
+                << n_layers << " tool layers";
+            size_t count = 0;
+            for (auto it = tool_ordering.begin(); it != tool_ordering.end() && count < 3; ++it, ++count) {
+                std::ostringstream oss;
+                for (auto e : it->extruders) oss << e << " ";
+                BOOST_LOG_TRIVIAL(info) << "  layer_tools[" << count << "]: extruders=[" << oss.str()
+                    << "], has_wipe_tower=" << it->has_wipe_tower
+                    << ", has_object=" << it->has_object
+                    << ", wipe_tower_partitions=" << it->wipe_tower_partitions;
+            }
+        } else {
+            BOOST_LOG_TRIVIAL(info) << "After process: no wipe tower (expected for single-extruder)";
+        }
     }
     catch (SlicingErrors& exs) {
         for (const auto& ex : exs.errors_) {

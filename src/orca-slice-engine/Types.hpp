@@ -30,6 +30,7 @@ struct Issue {
     double z_height;         // Z-level in mm, -1 if N/A
     std::string code;        // error code (e.g. from SliceWarning), empty if N/A
     std::string message;     // human-readable description
+    std::string suggestion;  // actionable repair suggestion, empty if N/A
 };
 
 // Output statistics structure for JSON export

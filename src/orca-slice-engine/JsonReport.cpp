@@ -58,8 +58,10 @@ void write_issue_json(std::ostringstream& json, const Issue& issue, const std::s
     json << indent << "  \"object_name\": \"" << json_escape(issue.object_name) << "\",\n";
     json << indent << "  \"z_height\": " << issue.z_height << ",\n";
     json << indent << "  \"code\": \"" << json_escape(issue.code) << "\",\n";
-    json << indent << "  \"message\": \"" << json_escape(issue.message) << "\"\n";
-    json << indent << "}";
+    json << indent << "  \"message\": \"" << json_escape(issue.message) << "\"";
+    if (!issue.suggestion.empty())
+        json << ",\n" << indent << "  \"suggestion\": \"" << json_escape(issue.suggestion) << "\"";
+    json << "\n" << indent << "}";
 }
 
 void output_slice_statistics(const SliceOutputStats& stats, const std::string& json_output_path, const std::string& output_file_path) {

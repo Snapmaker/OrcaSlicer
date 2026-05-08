@@ -16,6 +16,7 @@
 
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/GCode/PostProcessor.hpp"
 #include "libslic3r/ProjectTask.hpp"
 #include "libslic3r/BoundingBox.hpp"
 
@@ -502,6 +503,8 @@ void SliceEngine::process_plate(int plate_id) {
     // --- Setup Print object ---
     Print print;
     print.set_status_callback(default_status_callback);
+    print.is_BBL_printer() = (m_presets_available && m_preset_bundle)
+        ? m_preset_bundle->is_bbl_vendor() : false;
 
     // Calculate plate dimensions
     double plate_width = 200.0;
@@ -533,6 +536,17 @@ void SliceEngine::process_plate(int plate_id) {
         for (ModelObject* obj : m_model.objects)
             for (ModelInstance* inst : obj->instances)
                 inst->arrange_order = order++;
+    }
+
+    // --- Set global extruder params & speed table (D5 — desktop parity) ---
+    {
+        int num_extruders = 0;
+        if (m_config.has("filament_diameter")) {
+            auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
+            if (fd) num_extruders = static_cast<int>(fd->values.size());
+        }
+        Model::setExtruderParams(m_config, num_extruders);
+        Model::setPrintSpeedTable(m_config, print.config());
     }
 
     // --- Validation ---
@@ -846,7 +860,16 @@ bool SliceEngine::apply_model(int plate_id, Print& print) {
         }
     }
 
-    auto apply_status = print.apply(m_model, m_config);
+    // Apply per-plate config overrides (curr_bed_type, print_sequence, spiral_mode, etc.)
+    DynamicPrintConfig merged_config = m_config;
+    for (const auto& pd : m_plate_data) {
+        if (pd->plate_index == plate_id && !pd->config.empty()) {
+            merged_config.apply(pd->config);
+            BOOST_LOG_TRIVIAL(info) << "Applied per-plate config overrides for plate " << plate_id;
+            break;
+        }
+    }
+    auto apply_status = print.apply(m_model, merged_config);
     BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
 
     // Diagnostic: show wipe tower state and extruder count after apply
@@ -1000,9 +1023,13 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
     BOOST_LOG_TRIVIAL(info) << "Exporting G-code for plate " << plate_id << "...";
 
     try {
+        GCodeProcessor::s_IsBBLPrinter = print.is_BBL_printer();
         std::string exported = print.export_gcode(gcode_output, &result.gcode_result, nullptr);
         BOOST_LOG_TRIVIAL(info) << "G-code exported to: " << exported;
         result.gcode_path = exported;
+
+        // Run user-configured post-processing scripts (D4 — desktop parity)
+        run_post_process_scripts(result.gcode_path, print.full_print_config());
 
         const PrintStatistics& ps = print.print_statistics();
         result.total_weight = ps.total_weight;

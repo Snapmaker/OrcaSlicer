@@ -23,21 +23,20 @@ class FlutterViewHostWin : public FlutterViewHost {
     MethodCallHandler              m_handler;
     FlutterDesktopMessengerRef     m_messenger = nullptr;
 
-    static void messageCallback(const FlutterDesktopMessage* msg, void* userData) {
+    static void messageCallback(const FlutterDesktopMessage* msg,
+                                 const FlutterDesktopMessageResponseHandle* response_handle,
+                                 void* userData) {
         auto* self = static_cast<FlutterViewHostWin*>(userData);
         if (!self->m_handler || !msg) return;
 
         std::string method = msg->channel ? msg->channel : "";
         std::string args = messageToString(msg->message, msg->message_size);
 
-        // Capture the response handle so we can reply
-        FlutterDesktopMessage responseHandle = *msg;
-
-        Reply reply = [self, responseHandle](const std::string& result) {
-            if (self->m_messenger) {
+        Reply reply = [self, response_handle](const std::string& result) {
+            if (self->m_messenger && response_handle) {
                 FlutterDesktopMessengerSendResponse(
                     self->m_messenger,
-                    &responseHandle,
+                    response_handle,
                     reinterpret_cast<const uint8_t*>(result.data()),
                     result.size());
             }

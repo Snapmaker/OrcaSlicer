@@ -70,17 +70,17 @@ function(build_flutter_app)
 
     # ── Windows ──────────────────────────────────────────────────────────
     elseif(WIN32)
-        set(_src_dir "${BFA_FLUTTER_APP_DIR}/build/windows/x64/runner/Release")
-        set(_stamp   "${BFA_OUTPUT_DIR}/.flutter_build_windows")
+        # AOT library is at build/windows/app.so (see windows/flutter/CMakeLists.txt)
+        set(_aot_src  "${BFA_FLUTTER_APP_DIR}/build/windows/app.so")
+        set(_data_src "${BFA_FLUTTER_APP_DIR}/build/windows/x64/runner/Release/data")
+        set(_stamp    "${BFA_OUTPUT_DIR}/.flutter_build_windows")
 
         add_custom_command(
             OUTPUT "${_stamp}"
             COMMAND "${_flutter}" build windows --release
             COMMAND ${CMAKE_COMMAND} -E make_directory "${BFA_OUTPUT_DIR}"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src_dir}/flutter_app.dll" "${BFA_OUTPUT_DIR}/flutter_app.dll"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src_dir}/flutter_app.exp" "${BFA_OUTPUT_DIR}/flutter_app.exp"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src_dir}/flutter_app.lib" "${BFA_OUTPUT_DIR}/flutter_app.lib"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_src_dir}/data" "${BFA_OUTPUT_DIR}/data"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_aot_src}" "${BFA_OUTPUT_DIR}/flutter_app.dll"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${_data_src}" "${BFA_OUTPUT_DIR}/data"
             COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
             WORKING_DIRECTORY "${BFA_FLUTTER_APP_DIR}"
             COMMENT "Building Flutter app (Windows release)"

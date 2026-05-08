@@ -990,17 +990,13 @@ SnapmakerOrcaPre_check_last_quote:
 SnapmakerOrcaPre_trim_last_quote:
   StrCpy $0 $0 -1
 SnapmakerOrcaPre_have_uninst_path:
-  ; Derive working dir from uninstaller path directly (same idea as CPack default logic),
-  ; avoid relying on InstallLocation which may be stale or malformed on some machines.
-  GetFullPathName $3 "$0\.."
+  ; Keep silent-uninstall behavior aligned with CPack default template:
+  ; remove "\Uninstall.exe" from UninstallString to obtain install dir.
+  StrLen $2 "\${CPACK_NSIS_UNINSTALL_NAME}.exe"
+  StrCpy $3 $0 -$2
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
-  ExecWait '"$0" /S _?="$3"' $1
-  IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
-  IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
-
-SnapmakerOrcaPre_uninst_failed:
-  MessageBox MB_OK|MB_ICONSTOP "Uninstall failed.$\nUninstaller path: $0$\nWorking dir: $3$\nExit code: $1$\n$\nPossible causes: Snapmaker Orca (or a related process) is still running, insufficient permissions, or a damaged previous installation.$\nPlease close all Snapmaker Orca processes and run installer as Administrator."
-  Abort
+  ExecWait '"$0" /S _?=$3'
+  IfErrors SnapmakerOrcaPre_uninst_launch_failed SnapmakerOrcaPre_finish
 
 SnapmakerOrcaPre_uninst_launch_failed:
   MessageBox MB_OK|MB_ICONSTOP "Failed to start uninstaller process.$\nUninstaller path: $0$\nWorking dir: $3$\n$\nSystem error: the uninstall command could not be executed by Windows (IfErrors set).$\nPossible causes: missing/corrupted uninstaller, access denied, or invalid install directory."

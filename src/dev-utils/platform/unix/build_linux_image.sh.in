@@ -40,6 +40,16 @@ echo -n "[9/9] Generating Linux app..."
         echo "Error: @SLIC3R_APP_CMD@ binary not found in any configuration directory"
         exit 1
     fi
+
+    # Copy Flutter app artifacts (built by CMake flutter_app target)
+    if [ -d "flutter_app/lib" ] && [ -d "flutter_app/data" ]; then
+        mkdir -p package/bin/lib
+        cp -f flutter_app/lib/libflutter_app.so package/bin/lib/libflutter_app.so
+        cp -Rf flutter_app/data package/bin/data
+        echo "Copied Flutter app artifacts to package"
+    else
+        echo "Warning: Flutter app artifacts not found at flutter_app/. App will not render Flutter content."
+    fi
     # remove unneeded po from resources
     ## find package/resources/localization -name "*.po" -type f -delete ## FIXME: DD - do we need this?
 

@@ -57,6 +57,8 @@ endif ()
 project(Snapmaker_Orca)
 
 include("version.inc")
+# Upstream OrcaSlicer AppImage templates still reference SoftFever_VERSION.
+set(SoftFever_VERSION "${Snapmaker_VERSION}")
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
@@ -239,6 +241,20 @@ foreach (DIR ${PREFIX_PATH_CHECK})
         message(WARNING "CMAKE_PREFIX_PATH element doesn't exist: ${DIR}")
     endif ()
 endforeach ()
+
+# When configuring from an IDE (without build_linux.sh), dependencies are often
+# already installed under deps/build/destdir/usr/local — pick them up automatically.
+set(_ORCA_BUNDLED_DEPS_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/destdir/usr/local")
+if (EXISTS "${_ORCA_BUNDLED_DEPS_PREFIX}/include/openvdb/version.h")
+    list(FIND CMAKE_PREFIX_PATH "${_ORCA_BUNDLED_DEPS_PREFIX}" _orca_bundled_deps_idx)
+    if (_orca_bundled_deps_idx LESS 0)
+        set(CMAKE_PREFIX_PATH "${_ORCA_BUNDLED_DEPS_PREFIX};${CMAKE_PREFIX_PATH}" CACHE PATH
+            "Where to look for external packages (OpenVDB, OCCT, …); bundled deps prepended when present." FORCE)
+        message(STATUS "Prepended bundled deps install to CMAKE_PREFIX_PATH: ${_ORCA_BUNDLED_DEPS_PREFIX}")
+    endif ()
+endif ()
+unset(_ORCA_BUNDLED_DEPS_PREFIX)
+unset(_orca_bundled_deps_idx)
 
 # Add our own cmake module path.
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules/)
@@ -526,15 +542,13 @@ if(NOT SLIC3R_STATIC)
 endif()
 
 function(slic3r_remap_configs targets from_Cfg to_Cfg)
-    if(MSVC)
-        string(TOUPPER ${from_Cfg} from_CFG)
+    string(TOUPPER ${from_Cfg} from_CFG)
 
-        foreach(tgt ${targets})
-            if(TARGET ${tgt})
-                set_target_properties(${tgt} PROPERTIES MAP_IMPORTED_CONFIG_${from_CFG} ${to_Cfg})
-            endif()
-        endforeach()
-    endif()
+    foreach(tgt ${targets})
+        if(TARGET ${tgt})
+            set_target_properties(${tgt} PROPERTIES MAP_IMPORTED_CONFIG_${from_CFG} ${to_Cfg})
+        endif()
+    endforeach()
 endfunction()
 
 target_include_directories(boost_headeronly SYSTEM INTERFACE ${Boost_INCLUDE_DIRS})
@@ -875,6 +889,9 @@ endfunction()
 
 
 # libslic3r, Snapmaker_Orca GUI and the Snapmaker_Orca executable.
+# src/CMakeLists.txt calls project(); use this for paths to repo-root (e.g. deps/) from there.
+set(SNAPMAKER_ORCA_TOP_SOURCE_DIR "${CMAKE_SOURCE_DIR}" CACHE INTERNAL "Top of Snapmaker_Orca source tree")
+
 add_subdirectory(deps_src)
 add_subdirectory(src)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Snapmaker_Orca_app_gui)

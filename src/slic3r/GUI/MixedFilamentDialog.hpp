@@ -88,7 +88,7 @@ private:
     wxBoxSizer*             m_match_panel_sizer   = nullptr;
     MixedColorMatchPanel*   m_match_panel         = nullptr;
 
-    wxButton*               m_btn_swap_gradient_dir = nullptr;
+    ScalableButton*         m_btn_swap_gradient_dir = nullptr;
     int                     m_gradient_direction   = 0;
 
     double m_tri_wx{1.0/3.0}, m_tri_wy{1.0/3.0}, m_tri_wz{1.0/3.0};

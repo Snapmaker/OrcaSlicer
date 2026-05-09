@@ -993,8 +993,16 @@ SnapmakerOrcaPre_have_uninst_path:
 
   StrLen $2 "Uninstall.exe"
   StrCpy $3 $0 -$2
+  ; $3 ends with "\" (e.g. ...\Snapmaker_Orca\). _?="...\" breaks Windows cmdline parsing
+  ; (\" escapes the closing quote), truncating _?= at the first space — strip trailing backslashes.
+SnapmakerOrcaPre_trim_inst_slash:
+  StrCpy $2 $3 1 -1
+  StrCmp $2 "\" SnapmakerOrcaPre_do_trim_slash SnapmakerOrcaPre_trim_slash_done
+SnapmakerOrcaPre_do_trim_slash:
+  StrCpy $3 $3 -1
+  Goto SnapmakerOrcaPre_trim_inst_slash
+SnapmakerOrcaPre_trim_slash_done:
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
-  ; Quote _? target dir explicitly to avoid argument splitting on spaces.
   ExecWait '"$0" /S _?="$3"' $1
   IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
   IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed

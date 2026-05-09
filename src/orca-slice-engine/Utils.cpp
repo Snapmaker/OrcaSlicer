@@ -95,7 +95,7 @@ void default_status_callback(const Slic3r::PrintBase::SlicingStatus& status) {
 }
 
 std::string format_time_hhmmss(float seconds) {
-    if (seconds < 0) return "00:00:00";
+    if (!std::isfinite(seconds) || seconds < 0) return "00:00:00";
     int total_secs = static_cast<int>(seconds);
     int hours = total_secs / 3600;
     int mins = (total_secs % 3600) / 60;

@@ -1262,6 +1262,13 @@ void SliceEngine::build_statistics() {
             plate_stats.total_time = normal_mode.time;
             plate_stats.prepare_time = normal_mode.prepare_time;
             plate_stats.print_time = normal_mode.time - normal_mode.prepare_time;
+            if (!std::isfinite(plate_stats.print_time)) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "Plate " << plate_id << " print time is non-finite ("
+                    << normal_mode.time << " - " << normal_mode.prepare_time
+                    << "), falling back to 0";
+                plate_stats.print_time = 0.0f;
+            }
 
             plate_stats.total_filament_m = result.total_used_filament;
             plate_stats.total_filament_g = result.total_weight;

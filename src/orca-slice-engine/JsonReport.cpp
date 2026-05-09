@@ -38,6 +38,7 @@ static std::string base64_encode(const unsigned char* input, size_t input_len) {
 
 // Round to 2 decimal places — matches the original std::setprecision(2) output
 static double round2(double v) {
+    if (!std::isfinite(v)) return 0.0;
     return std::round(v * 100.0) / 100.0;
 }
 

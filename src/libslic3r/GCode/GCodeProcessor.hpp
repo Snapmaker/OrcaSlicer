@@ -89,7 +89,7 @@ class Print;
         PrintEstimatedStatistics() { reset(); }
 
         void reset() {
-            for (auto m : modes) {
+            for (auto& m : modes) {
                 m.reset();
             }
             volumes_per_color_change.clear();

@@ -216,22 +216,6 @@ public:
     void load_custom_entries(const std::string &serialized, const std::vector<std::string> &filament_colours);
 
     // ---- Gradient runs (Bambu-style Z gradient) ------------------------
-    // Per (mixed_idx, PrintObject*) list of continuous-layer runs. Each run
-    // is a sorted vector of layer indices over which this mixed row prints
-    // continuously. A break between layers opens a new run.
-    struct GradientRunsForObject {
-        std::vector<std::vector<int>> runs;
-    };
-    void set_gradient_runs(int mixed_idx, const PrintObject* object,
-                           std::vector<std::vector<int>> runs) const;
-    // Locate which run contains layer_index and return (idx_in_run, run_total).
-    // Returns false if no run on this object contains layer_index, or gradient
-    // tracking has not been populated for this row.
-    bool gradient_run_position(int mixed_idx, const PrintObject* object,
-                               int layer_index,
-                               int &out_idx, int &out_total) const;
-    void clear_gradient_runs() const;
-
     // Normalize a manual mixed-pattern string into compact token form.
     // Accepts separators and A/B aliases. Returns empty string if invalid.
     static std::string normalize_manual_pattern(const std::string &pattern);
@@ -365,11 +349,6 @@ private:
     bool                       m_advanced_dithering  = false;
     uint64_t                   m_next_stable_id      = 1;
     MixedFilamentDisplayContext m_display_context;
-
-    // Gradient run tracking: mutable because it's a cache populated during
-    // const operations (ToolOrdering::collect_extruders). The cache maps
-    // mixed_idx -> PrintObject* -> runs of layer indices.
-    mutable std::unordered_map<int, std::unordered_map<const PrintObject*, GradientRunsForObject>> m_gradient_runs;
 };
 
 } // namespace Slic3r

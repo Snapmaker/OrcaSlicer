@@ -600,12 +600,6 @@ static bool parse_row_definition(const std::string &row,
         manual_pattern = joined_pattern.str();
     }
 
-    // Compatibility for early same-layer prototype rows is intentionally
-    // disabled while pointillisme is retired from the mixed-filament path.
-#if 0
-    if (distribution_mode == int(MixedFilament::LayerCycle) && pointillism_all_filaments)
-        distribution_mode = int(MixedFilament::SameLayerPointillisme);
-#endif
     pointillism_all_filaments = false;
     distribution_mode = normalize_distribution_mode_without_pointillism(distribution_mode, gradient_component_ids);
     
@@ -2203,45 +2197,6 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                             << ", appended_auto_rows=" << appended_auto
                             << ", skipped_rows=" << skipped_rows
                             << ", mixed_total=" << m_mixed.size();
-}
-
-void MixedFilamentManager::set_gradient_runs(int mixed_idx, const PrintObject* object,
-                                             std::vector<std::vector<int>> runs) const
-{
-    if (mixed_idx < 0 || object == nullptr) return;
-    GradientRunsForObject g;
-    g.runs = std::move(runs);
-    m_gradient_runs[mixed_idx][object] = std::move(g);
-}
-
-bool MixedFilamentManager::gradient_run_position(int mixed_idx, const PrintObject* object,
-                                                 int layer_index,
-                                                 int &out_idx, int &out_total) const
-{
-    if (mixed_idx < 0 || object == nullptr) return false;
-    auto it_row = m_gradient_runs.find(mixed_idx);
-    if (it_row == m_gradient_runs.end()) return false;
-    auto it_obj = it_row->second.find(object);
-    if (it_obj == it_row->second.end()) return false;
-    for (const auto &run : it_obj->second.runs) {
-        if (run.empty()) continue;
-        const int first = run.front();
-        const int last  = run.back();
-        if (layer_index < first || layer_index > last) continue;
-        // Anchor to the [first, last] span. A layer_index that falls within
-        // the span but isn't precisely listed (e.g. when segmentation collapsed
-        // the painted channel for that layer) still produces a smoothly varying
-        // (idx, total) so the gradient stays continuous along Z.
-        out_idx   = layer_index - first;
-        out_total = last - first + 1;
-        return true;
-    }
-    return false;
-}
-
-void MixedFilamentManager::clear_gradient_runs() const
-{
-    m_gradient_runs.clear();
 }
 
 unsigned int MixedFilamentManager::resolve(unsigned int filament_id,

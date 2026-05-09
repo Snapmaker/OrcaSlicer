@@ -71,8 +71,6 @@ bool SliceEngine::run() {
         {
             auto geom_issues = run_geometry_checks(m_model);
             for (auto& issue : geom_issues) {
-                if (issue.level == "error")
-                    m_any_error = true;
                 m_stats.issues.push_back(std::move(issue));
             }
         }

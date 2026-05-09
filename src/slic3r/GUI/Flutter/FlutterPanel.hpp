@@ -42,6 +42,8 @@ public:
     FlutterViewHost* view() { return m_view.get(); }
     void setHandler(FlutterViewHost::MethodCallHandler handler);
 
+    void onSize(wxSizeEvent& event);
+
 protected:
     std::unique_ptr<FlutterViewHost> m_view;
 };

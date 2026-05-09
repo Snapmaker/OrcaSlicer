@@ -68,6 +68,8 @@ public:
         }
     }
 
+    void resize(int, int) override {}
+
     void embedInto(void* parentView) override {
         FlutterDesktopViewRef view =
             FlutterDesktopViewControllerGetView(m_controller);

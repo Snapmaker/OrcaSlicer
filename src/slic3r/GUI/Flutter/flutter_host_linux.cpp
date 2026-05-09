@@ -2,6 +2,7 @@
 // Uses Flutter Linux desktop embedding GObject API (flutter_linux.h)
 #include <flutter_linux/flutter_linux.h>
 #include "flutter_host.h"
+#include "wx/gtk/private/win_gtk.h"
 #include <cstdlib>
 #include <string>
 #include <cstring>
@@ -69,10 +70,33 @@ public:
         GtkWidget* parent = GTK_WIDGET(parentHandle);
         if (!parent || !m_view) return;
 
-        gtk_widget_set_hexpand(GTK_WIDGET(m_view), TRUE);
-        gtk_widget_set_vexpand(GTK_WIDGET(m_view), TRUE);
-        gtk_container_add(GTK_CONTAINER(parent), GTK_WIDGET(m_view));
-        gtk_widget_show_all(GTK_WIDGET(m_view));
+        // Get parent's current allocation for initial FlView size
+        GtkAllocation alloc;
+        gtk_widget_get_allocation(parent, &alloc);
+        int w = alloc.width > 1 ? alloc.width : 800;
+        int h = alloc.height > 1 ? alloc.height : 600;
+
+        GtkWidget* view_widget = GTK_WIDGET(m_view);
+        wxPizza* pizza = WX_PIZZA(parent);
+        pizza->put(view_widget, 0, 0, w, h);
+
+        gtk_widget_show_all(view_widget);
+        if (gtk_widget_get_realized(parent))
+            gtk_widget_realize(view_widget);
+    }
+
+    void resize(int width, int height) override {
+        if (!m_view) return;
+        GtkWidget* widget = GTK_WIDGET(m_view);
+        GtkWidget* parent = gtk_widget_get_parent(widget);
+        if (!parent || !WX_IS_PIZZA(parent)) return;
+        if (width <= 0 || height <= 0) return;
+
+        wxPizza* pizza = WX_PIZZA(parent);
+        pizza->move(widget, 0, 0, width, height);
+        if (gtk_widget_get_visible(widget)) {
+            pizza->size_allocate_child(widget, 0, 0, width, height);
+        }
     }
 
     void invokeMethod(const std::string& method,
@@ -128,6 +152,19 @@ public:
                 g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
                 g_autofree gchar* aot_path = g_build_filename(exe_dir, "lib", "libflutter_app.so", nullptr);
                 fl_dart_project_set_aot_library_path(project, aot_path);
+            }
+        }
+
+        // Override icudtl.dat path: Flutter defaults to data/icudtl.dat
+        // relative to the executable.
+        {
+            g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+            if (exe_path) {
+                g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+                g_autofree gchar* icu_path = g_build_filename(exe_dir, "data", "icudtl.dat", nullptr);
+                if (g_file_test(icu_path, G_FILE_TEST_EXISTS)) {
+                    fl_dart_project_set_icu_data_path(project, icu_path);
+                }
             }
         }
 

@@ -23,6 +23,8 @@ public:
 
     virtual void embedInto(void* parentView) = 0;
 
+    virtual void resize(int width, int height) = 0;
+
     virtual void invokeMethod(const std::string& method,
                               const std::string& arguments) = 0;
 

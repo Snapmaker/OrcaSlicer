@@ -54,6 +54,8 @@ public:
         [cv addSubview:fv];
     }
 
+    void resize(int, int) override {}
+
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
         if (!channel) return;

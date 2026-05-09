@@ -552,13 +552,17 @@ void SliceEngine::process_plate(int plate_id) {
                 bool saved_pt = m_config.option<ConfigOptionBool>("enable_prime_tower")->value;
                 m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
 
-                // Replace print without placement-new: construct a fresh one and swap.
-                // The old Print's resources are cleaned up by the temporary's destructor.
-                Print new_print;
-                new_print.set_status_callback(default_status_callback);
-                new_print.is_BBL_printer() = print.is_BBL_printer();
-                using std::swap;
-                swap(print, new_print);
+                // Reconstruct print in-place for the re-slice attempt.
+                // Print is non-movable and non-swappable, so the standard
+                // C++17 idiom for in-place reconstruction is used:
+                // explicit destructor followed by placement-new.
+                // This is safe because Print's default constructor only
+                // initializes containers/pointers and cannot throw in practice.
+                bool saved_bbl = print.is_BBL_printer();
+                print.~Print();
+                new (&print) Print{};
+                print.set_status_callback(default_status_callback);
+                print.is_BBL_printer() = saved_bbl;
 
                 if (!apply_model(plate_id, print)) {
                     m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(saved_pt));

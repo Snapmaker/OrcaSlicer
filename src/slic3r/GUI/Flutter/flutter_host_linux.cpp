@@ -32,7 +32,6 @@ class FlutterViewHostLinux : public FlutterViewHost {
         if (data && data_size > 0)
             args = std::string(reinterpret_cast<const char*>(data), data_size);
 
-        // Take a ref on the response handle to use in the reply lambda
         g_object_ref(response_handle);
 
         Reply reply = [self, response_handle](const std::string& result) {
@@ -70,9 +69,8 @@ public:
         GtkWidget* parent = GTK_WIDGET(parentHandle);
         if (!parent || !m_view) return;
 
-        gtk_widget_set_size_request(GTK_WIDGET(m_view),
-                                     gtk_widget_get_allocated_width(parent),
-                                     gtk_widget_get_allocated_height(parent));
+        gtk_widget_set_hexpand(GTK_WIDGET(m_view), TRUE);
+        gtk_widget_set_vexpand(GTK_WIDGET(m_view), TRUE);
         gtk_container_add(GTK_CONTAINER(parent), GTK_WIDGET(m_view));
         gtk_widget_show_all(GTK_WIDGET(m_view));
     }
@@ -120,6 +118,18 @@ public:
 
         g_autoptr(FlDartProject) project = fl_dart_project_new();
         if (!project) return nullptr;
+
+        // Override AOT library name: Flutter defaults to lib/libapp.so,
+        // but our build system names it libflutter_app.so for consistency
+        // with other platforms.
+        {
+            g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+            if (exe_path) {
+                g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+                g_autofree gchar* aot_path = g_build_filename(exe_dir, "lib", "libflutter_app.so", nullptr);
+                fl_dart_project_set_aot_library_path(project, aot_path);
+            }
+        }
 
         FlEngine* engine = fl_engine_new(project);
         if (!engine) return nullptr;

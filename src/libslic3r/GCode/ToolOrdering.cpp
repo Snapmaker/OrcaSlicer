@@ -361,8 +361,6 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
     m_mixed_mgr   = &object.print()->mixed_filament_manager();
     m_num_physical = object.print()->config().filament_diameter.size();
     update_mixed_layer_height_settings();
-    if (m_mixed_mgr)
-        m_mixed_mgr->clear_gradient_runs();
     if (object.layers().empty())
         return;
 
@@ -430,8 +428,6 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
     m_mixed_mgr   = &print.mixed_filament_manager();
     m_num_physical = print.config().filament_diameter.size();
     update_mixed_layer_height_settings();
-    if (m_mixed_mgr)
-        m_mixed_mgr->clear_gradient_runs();
 
     // Initialize the print layers for all objects and all layers.
     coordf_t object_bottom_z = 0.;
@@ -674,16 +670,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         layer_tools.current_object           = &object;
     }
 
-    // Per-mixed-row layer participation, used to derive Bambu-style continuous
-    // gradient runs once we finish walking the object's layers.
-    std::map<int /*mixed_idx*/, std::vector<int> /*layer_indices*/> per_mixed_layers;
-    auto record_mixed_use = [&](unsigned int filament_id_1based, int layer_idx) {
-        if (!m_mixed_mgr || m_num_physical == 0) return;
-        if (!m_mixed_mgr->is_mixed(filament_id_1based, m_num_physical)) return;
-        const int idx = m_mixed_mgr->mixed_index_from_filament_id(filament_id_1based, m_num_physical);
-        if (idx >= 0) per_mixed_layers[idx].push_back(layer_idx);
-    };
-
     // Collect the support extruders.
     for (auto support_layer : object.support_layers()) {
         LayerTools   &layer_tools = this->tools_for_layer(support_layer->print_z);
@@ -752,7 +738,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 
                 if (something_nonoverriddable){
                     const unsigned int configured_wall = (extruder_override == 0) ? region.config().wall_filament.value : extruder_override;
-                    record_mixed_use(configured_wall, layerCount);
                     unsigned int       wall_ext        = resolve_mixed(configured_wall, layerCount, float(layer->print_z), float(layer->height), &object);
                     const unsigned int grouped_id =
                         grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_wall);
@@ -810,15 +795,12 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
             if (something_nonoverriddable || !m_print_config_ptr) {
             	if (extruder_override == 0) {
 	                if (has_solid_infill) {
-	                    record_mixed_use(region.config().solid_infill_filament.value, layerCount);
-	                    layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region) + 1);
+		                    layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region) + 1);
 	                }
 	                if (has_sparse_infill) {
-	                    record_mixed_use(sparse_infill_filament_id_1based(layer_tools, region), layerCount);
-	                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament(region) + 1);
+		                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament(region) + 1);
 	                }
             	} else if (has_solid_infill || has_sparse_infill) {
-            	    record_mixed_use(extruder_override, layerCount);
             		layer_tools.extruders.emplace_back(resolve_mixed(extruder_override,
                                                                       layerCount,
                                                                       float(layer->print_z),
@@ -834,24 +816,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 
     sort_remove_duplicates(firstLayerExtruders);
     const_cast<PrintObject&>(object).object_first_layer_wall_extruders = firstLayerExtruders;
-
-    if (m_mixed_mgr != nullptr) {
-        for (auto &kv : per_mixed_layers) {
-            const int idx = kv.first;
-            if (idx < 0 || size_t(idx) >= m_mixed_mgr->mixed_filaments().size()) continue;
-            const MixedFilament &mf = m_mixed_mgr->mixed_filaments()[size_t(idx)];
-            if (!mf.gradient_enabled || mf.component_a == mf.component_b) continue;
-            auto &v = kv.second;
-            std::sort(v.begin(), v.end());
-            v.erase(std::unique(v.begin(), v.end()), v.end());
-
-            std::vector<int> continuous_run = fill_continuous_layer_range(v);
-            std::vector<std::vector<int>> runs;
-            if (!continuous_run.empty())
-                runs.emplace_back(std::move(continuous_run));
-            m_mixed_mgr->set_gradient_runs(idx, &object, std::move(runs));
-        }
-    }
 
     for (auto& layer : m_layer_tools) {
         if (layer.preserve_extruder_order)

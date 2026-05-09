@@ -1513,36 +1513,6 @@ static std::vector<double> build_local_z_two_pass_heights(double base_height,
     return out;
 }
 
-static std::vector<double> build_local_z_shared_pass_heights(double base_height, double lower_bound, double upper_bound)
-{
-    if (base_height <= EPSILON)
-        return {};
-
-    const double lo = std::max<double>(0.01, lower_bound);
-    const double hi = std::max<double>(lo, upper_bound);
-    if (base_height < 2.0 * lo - EPSILON)
-        return { base_height };
-
-    // In shared (dense multi-zone) mode keep a single pair of pass planes for
-    // the whole nominal layer, anchored to the configured lower / upper bounds.
-    double h_small = lo;
-    double h_large = base_height - h_small;
-    if (h_large > hi + EPSILON) {
-        h_large = hi;
-        h_small = base_height - h_large;
-    }
-    if (h_small < lo - EPSILON || h_small > hi + EPSILON ||
-        h_large < lo - EPSILON || h_large > hi + EPSILON)
-        return build_uniform_local_z_pass_heights(base_height, lo, hi);
-
-    std::vector<double> out { h_small, h_large };
-    if (!fit_pass_heights_to_interval(out, base_height, lo, hi))
-        return build_uniform_local_z_pass_heights(base_height, lo, hi);
-    if (out.size() == 2 && out[0] > out[1])
-        std::swap(out[0], out[1]);
-    return out;
-}
-
 static std::vector<double> build_local_z_pass_heights(double base_height,
                                                       double lower_bound,
                                                       double upper_bound,
@@ -3045,7 +3015,18 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     const bool local_z_direct_multicolor =
         bool_from_full_config(full_cfg, "dithering_local_z_direct_multicolor",
                               print_cfg.dithering_local_z_direct_multicolor.value);
-    if (!local_z_mode) {
+    // Gradient rows always require local-Z sublayer splitting, regardless of
+    // the global dithering_local_z_mode switch. Non-gradient mixed rows only
+    // participate when dithering_local_z_mode is explicitly enabled.
+    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
+    bool has_gradient_row = false;
+    for (const auto &mf : mixed_mgr.mixed_filaments()) {
+        if (mf.gradient_enabled && mf.component_a != mf.component_b) {
+            has_gradient_row = true;
+            break;
+        }
+    }
+    if (!local_z_mode && !has_gradient_row) {
         BOOST_LOG_TRIVIAL(debug) << "Local-Z plan skipped: mode disabled"
                                  << " object=" << object_name;
         return;
@@ -3070,7 +3051,6 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         return;
     }
 
-    const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
     const auto                 &mixed_rows = mixed_mgr.mixed_filaments();
     std::vector<std::vector<unsigned int>> row_direct_component_ids(mixed_rows.size());
     std::vector<std::vector<int>>          row_direct_component_weights(mixed_rows.size());
@@ -3162,11 +3142,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     size_t split_intervals_without_painted_masks  = 0;
     size_t strict_ab_assignments                  = 0;
     size_t alternating_height_intervals           = 0;
-    size_t shared_multi_row_fallback_intervals    = 0;
     constexpr size_t LOCAL_Z_MAX_ISOLATED_ACTIVE_ROWS = 2;
     constexpr size_t LOCAL_Z_MAX_ISOLATED_MASK_COMPONENTS = 24;
     constexpr size_t LOCAL_Z_MAX_ISOLATED_MASK_VERTICES = 1200;
-    constexpr bool   LOCAL_Z_SHARED_FALLBACK_ENABLED = false;
     // Keep local-Z cadence isolated per mixed row so independent painted zones
     // do not influence each other when resolving fallback cadence.
     std::vector<int> row_cadence_index(mixed_rows.size(), 0);
@@ -3251,6 +3229,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         double     dominant_gradient_h_a = 0.0;
         double     dominant_gradient_h_b = 0.0;
         bool       dominant_gradient_valid = false;
+        bool       dominant_is_gradient = false;
         for (size_t channel_idx = 0; channel_idx < segmentation[layer_id].size(); ++channel_idx) {
             const ExPolygons &state_masks = segmentation[layer_id][channel_idx];
             if (state_masks.empty())
@@ -3272,7 +3251,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             append(mixed_masks, state_masks);
 
             const double mixed_area = std::abs(area(state_masks));
-            if (mixed_area > dominant_mixed_area) {
+            double dummy_a = 0.0, dummy_b = 0.0;
+            const bool candidate_is_gradient = effective_gradient_heights_for_row(size_t(mixed_idx), layer_id, interval.base_height, dummy_a, dummy_b);
+            if (mixed_area > dominant_mixed_area && candidate_is_gradient) {
                 dominant_mixed_area = mixed_area;
                 dominant_mixed_idx  = size_t(mixed_idx);
             }
@@ -3315,11 +3296,11 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             const int dominant_mix_b_percent =
                 dominant_pair.valid_pair(num_physical) ? dominant_pair.mix_b_percent : mixed_rows[dominant_mixed_idx].mix_b_percent;
             if (row_uses_direct_multicolor_solver[dominant_mixed_idx] == 0) {
-                if (!effective_gradient_heights_for_row(dominant_mixed_idx, layer_id, interval.base_height,
-                                                       dominant_gradient_h_a, dominant_gradient_h_b)) {
+                dominant_is_gradient = effective_gradient_heights_for_row(dominant_mixed_idx, layer_id, interval.base_height,
+                                                                         dominant_gradient_h_a, dominant_gradient_h_b);
+                if (!dominant_is_gradient)
                     compute_local_z_gradient_component_heights(dominant_mix_b_percent, mixed_lower, mixed_upper,
                                                                dominant_gradient_h_a, dominant_gradient_h_b);
-                }
                 dominant_gradient_valid = true;
             }
         }
@@ -3349,7 +3330,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 continue;
             const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
             if (state_id >= 1 && state_id <= num_physical) {
-                append(fixed_state_masks_by_extruder[state_id - 1], state_masks);
+                if (!dominant_is_gradient)
+                    append(fixed_state_masks_by_extruder[state_id - 1], state_masks);
                 continue;
             }
             if (!mixed_mgr.is_mixed(state_id, num_physical))
@@ -3360,6 +3342,13 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             const size_t row_idx = size_t(mixed_idx);
             if (row_active_this_layer[row_idx] == 0 || !local_z_eligible_mixed_row(mixed_rows[row_idx]))
                 continue;
+            double dummy_a = 0.0, dummy_b = 0.0;
+            const bool row_is_gradient = effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, dummy_a, dummy_b);
+            if (!row_is_gradient && !local_z_mode) {
+                // Non-gradient rows pass through the normal extrusion path when
+                // local-z, non-gradient rows participate in sublayer splitting.
+                continue;
+            }
             row_state_ids[row_idx] = state_id;
             append(row_state_masks[row_idx], state_masks);
         }
@@ -3425,21 +3414,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
 
         std::vector<std::vector<double>> isolated_row_pass_heights(mixed_rows.size());
         bool isolated_multi_row_mode = false;
-        const bool shared_multi_row_fallback =
-            LOCAL_Z_SHARED_FALLBACK_ENABLED &&
-            interval.has_mixed_paint &&
-            preferred_a <= EPSILON &&
-            preferred_b <= EPSILON &&
-            active_mixed_rows > 1 &&
-            (active_mixed_rows > LOCAL_Z_MAX_ISOLATED_ACTIVE_ROWS ||
-             active_row_mask_components > LOCAL_Z_MAX_ISOLATED_MASK_COMPONENTS ||
-             active_row_mask_vertices > LOCAL_Z_MAX_ISOLATED_MASK_VERTICES);
-        if (shared_multi_row_fallback)
-            ++shared_multi_row_fallback_intervals;
         if (interval.has_mixed_paint &&
             preferred_a <= EPSILON &&
             preferred_b <= EPSILON &&
-            !shared_multi_row_fallback &&
             active_mixed_rows > 1) {
             size_t isolated_rows_with_split = 0;
             for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
@@ -3460,9 +3437,12 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     const LocalZActivePair &active_pair = row_active_pairs[row_idx];
                     const int row_mix_b_percent =
                         active_pair.valid_pair(num_physical) ? active_pair.mix_b_percent : mixed_rows[row_idx].mix_b_percent;
-                    if (!effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, row_h_a, row_h_b))
+                    const bool row_is_gradient = effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, row_h_a, row_h_b);
+                    if (!row_is_gradient)
                         compute_local_z_gradient_component_heights(row_mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-                    row_passes = active_pair.uses_layer_cycle_sequence
+                    if (row_is_gradient)
+                        std::swap(row_h_a, row_h_b);
+                    row_passes = (row_is_gradient || active_pair.uses_layer_cycle_sequence)
                         ? build_local_z_two_pass_heights(interval.base_height, mixed_lower, mixed_upper, row_h_a, row_h_b)
                         : build_local_z_alternating_pass_heights(interval.base_height,
                                                                  mixed_lower,
@@ -3489,11 +3469,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             // Local-Z mode should emit an A/B/A/B pattern for mixed regions and
             // derive relative heights from mixed-filament gradient bounds.
             if (preferred_a <= EPSILON && preferred_b <= EPSILON) {
-                if (shared_multi_row_fallback) {
-                    pass_heights = build_local_z_shared_pass_heights(interval.base_height, mixed_lower, mixed_upper);
-                    if (pass_heights.size() > 1)
-                        ++alternating_height_intervals;
-                } else if (dominant_mixed_idx < mixed_rows.size() &&
+                if (dominant_mixed_idx < mixed_rows.size() &&
                            row_uses_direct_multicolor_solver[dominant_mixed_idx] != 0) {
                     pass_heights = build_local_z_direct_multicolor_pass_heights(mixed_rows[dominant_mixed_idx],
                                                                                 row_direct_component_weights[dominant_mixed_idx],
@@ -3504,16 +3480,23 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     if (pass_heights.size() > 1)
                         ++alternating_height_intervals;
                 } else if (dominant_gradient_valid) {
-                    const bool dominant_uses_pair_cycle =
-                        dominant_mixed_idx < mixed_rows.size() && row_active_pairs[dominant_mixed_idx].uses_layer_cycle_sequence;
-                    pass_heights = dominant_uses_pair_cycle
-                        ? build_local_z_two_pass_heights(interval.base_height, mixed_lower, mixed_upper,
-                                                         dominant_gradient_h_a, dominant_gradient_h_b)
-                        : build_local_z_alternating_pass_heights(interval.base_height,
-                                                                 mixed_lower,
-                                                                 mixed_upper,
-                                                                 dominant_gradient_h_a,
-                                                                 dominant_gradient_h_b);
+                    if (dominant_is_gradient) {
+                        // Gradient: fixed 2-sublayer B-first with swapped heights.
+                        pass_heights = build_local_z_two_pass_heights(interval.base_height, mixed_lower, mixed_upper,
+                                                                      dominant_gradient_h_b, dominant_gradient_h_a);
+                    } else {
+                        // Non-gradient (ratio/cycle/match): original alternating logic.
+                        const bool dominant_uses_pair_cycle =
+                            dominant_mixed_idx < mixed_rows.size() && row_active_pairs[dominant_mixed_idx].uses_layer_cycle_sequence;
+                        pass_heights = dominant_uses_pair_cycle
+                            ? build_local_z_two_pass_heights(interval.base_height, mixed_lower, mixed_upper,
+                                                             dominant_gradient_h_a, dominant_gradient_h_b)
+                            : build_local_z_alternating_pass_heights(interval.base_height,
+                                                                     mixed_lower,
+                                                                     mixed_upper,
+                                                                     dominant_gradient_h_a,
+                                                                     dominant_gradient_h_b);
+                    }
                     if (pass_heights.size() > 1)
                         ++alternating_height_intervals;
                 } else {
@@ -3538,7 +3521,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         // Keep auto local-Z 2-pass cadence order stable across layers even if the
         // dominant mixed row changes. Per-row phase assignment still controls
         // which filament gets pass-0 vs pass-1.
-        if (interval.has_mixed_paint &&
+        // Skip for gradient rows, whose pass[0]/pass[1] assignment is intentional.
+        if (!dominant_is_gradient &&
+            interval.has_mixed_paint &&
             preferred_a <= EPSILON &&
             preferred_b <= EPSILON &&
             pass_heights.size() == 2 &&
@@ -3587,12 +3572,12 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     if (!uses_direct_multicolor && valid_pair && preferred_a <= EPSILON && preferred_b <= EPSILON) {
                         double row_h_a = 0.0;
                         double row_h_b = 0.0;
-                        if (!effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, row_h_a, row_h_b))
+                        const bool row_is_gradient = effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, row_h_a, row_h_b);
+                        if (!row_is_gradient)
                             compute_local_z_gradient_component_heights(active_pair.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-                        start_with_a = choose_local_z_start_with_component_a(row_passes,
-                                                                             row_h_a,
-                                                                             row_h_b,
-                                                                             orientation_cadence_index);
+                        start_with_a = row_is_gradient
+                            ? false
+                            : choose_local_z_start_with_component_a(row_passes, row_h_a, row_h_b, orientation_cadence_index);
                     }
 
                     double z_cursor = interval.z_lo;
@@ -3721,6 +3706,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 // Derive per-row orientation against pass heights so each mixed row
                 // maps thicker/thinner subpasses to the intended component.
                 std::vector<uint8_t> start_with_component_a(mixed_rows.size(), uint8_t(1));
+                std::vector<uint8_t> row_is_gradient_vec(mixed_rows.size(), uint8_t(0));
                 std::vector<std::vector<unsigned int>> row_direct_pass_sequences(mixed_rows.size());
                 if (preferred_a <= EPSILON && preferred_b <= EPSILON) {
                     for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
@@ -3744,13 +3730,31 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         const int orientation_cadence_index = active_pair.uses_layer_cycle_sequence
                             ? row_layer_cycle_index[row_idx]
                             : row_cadence_index[row_idx];
-                        if (!effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, row_h_a, row_h_b))
+                        const bool row_is_gradient = effective_gradient_heights_for_row(row_idx, layer_id, interval.base_height, row_h_a, row_h_b);
+                        if (!row_is_gradient)
                             compute_local_z_gradient_component_heights(active_pair.mix_b_percent, mixed_lower, mixed_upper, row_h_a, row_h_b);
-                        start_with_component_a[row_idx] =
-                            choose_local_z_start_with_component_a(pass_heights,
-                                                                  row_h_a,
-                                                                  row_h_b,
-                                                                  orientation_cadence_index) ? uint8_t(1) : uint8_t(0);
+                        row_is_gradient_vec[row_idx] = row_is_gradient ? uint8_t(1) : uint8_t(0);
+                        start_with_component_a[row_idx] = row_is_gradient
+                            ? uint8_t(0)
+                            : (choose_local_z_start_with_component_a(pass_heights, row_h_a, row_h_b, orientation_cadence_index) ? uint8_t(1) : uint8_t(0));
+                    }
+                }
+
+                // Pre-resolve non-gradient rows when gradient is dominant to get a
+                // consistent extruder across all sub-passes (gradient's swapped
+                // pass heights would cause height-weighted resolve to scatter).
+                std::vector<unsigned int> non_gradient_extruder(mixed_rows.size(), 0);
+                if (dominant_is_gradient) {
+                    for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
+                        if (row_active_this_layer[row_idx] == 0 || row_is_gradient_vec[row_idx] != 0)
+                        continue;
+                    const unsigned int state_id = row_state_ids[row_idx];
+                    if (state_id == 0) continue;
+                    non_gradient_extruder[row_idx] = mixed_mgr.resolve(
+                        state_id, num_physical,
+                        int(row_cadence_index[row_idx]),
+                        float(interval.z_hi), float(interval.base_height),
+                        force_height_resolve, &print_object);
                     }
                 }
 
@@ -3758,6 +3762,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 size_t pass_idx = 0;
                 interval.sublayer_height = *std::min_element(pass_heights.begin(), pass_heights.end());
                 std::vector<uint8_t> row_seen_sequence_in_interval(mixed_rows.size(), uint8_t(0));
+                // Track which non-gradient rows have already been assigned to a
+                // pass so they are not duplicated across multiple sub-Z plans.
+                std::vector<uint8_t> non_gradient_row_done(mixed_rows.size(), uint8_t(0));
                 for (const double pass_height_nominal : pass_heights) {
                     if (z_cursor >= interval.z_hi - EPSILON)
                         break;
@@ -3791,6 +3798,10 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                             continue;
                         const LocalZActivePair &active_pair = row_active_pairs[row_idx];
                         const bool uses_direct_multicolor = row_uses_direct_multicolor_solver[row_idx] != 0;
+                        // Non-gradient rows on gradient-dominant layers: assign to
+                        // first pass only (skip A/B alternation on swapped heights).
+                        if (dominant_is_gradient && row_is_gradient_vec[row_idx] == 0 && non_gradient_row_done[row_idx] != 0)
+                            continue;
                         row_seen_in_pass[row_idx] = uint8_t(1);
                         if (!uses_direct_multicolor && active_pair.uses_layer_cycle_sequence)
                             row_seen_sequence_in_interval[row_idx] = uint8_t(1);
@@ -3800,25 +3811,33 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                             if (pass_idx < row_direct_pass_sequences[row_idx].size())
                                 target_extruder = row_direct_pass_sequences[row_idx][pass_idx];
                         } else if (active_pair.valid_pair(num_physical)) {
-                            const bool start_a = start_with_component_a[row_idx] != 0;
-                            const bool even_pass = (pass_idx % 2) == 0;
-                            // Local-Z mode alternates A/B on every subpass.
-                            target_extruder = even_pass
-                                ? (start_a ? active_pair.component_a : active_pair.component_b)
-                                : (start_a ? active_pair.component_b : active_pair.component_a);
-                            ++strict_ab_assignments;
+                            // Non-gradient rows only skip A/B alternation when the
+                            // dominant row is gradient (pass heights are swapped).
+                            const bool use_alternating = row_is_gradient_vec[row_idx] != 0 || !dominant_is_gradient;
+                            if (use_alternating) {
+                                const bool start_a = start_with_component_a[row_idx] != 0;
+                                const bool even_pass = (pass_idx % 2) == 0;
+                                target_extruder = even_pass
+                                    ? (start_a ? active_pair.component_a : active_pair.component_b)
+                                    : (start_a ? active_pair.component_b : active_pair.component_a);
+                                ++strict_ab_assignments;
+                            }
                         }
                         if (target_extruder == 0) {
-                            const int resolve_cadence_index = active_pair.uses_layer_cycle_sequence
-                                ? row_layer_cycle_index[row_idx]
-                                : row_cadence_index[row_idx];
-                            target_extruder = mixed_mgr.resolve(state_id,
-                                                                num_physical,
-                                                                resolve_cadence_index,
-                                                                float(plan.print_z),
+                            if (row_is_gradient_vec[row_idx] == 0 && non_gradient_extruder[row_idx] != 0) {
+                                target_extruder = non_gradient_extruder[row_idx];
+                            } else {
+                                const int resolve_cadence_index = active_pair.uses_layer_cycle_sequence
+                                    ? row_layer_cycle_index[row_idx]
+                                    : row_cadence_index[row_idx];
+                                target_extruder = mixed_mgr.resolve(state_id,
+                                                                    num_physical,
+                                                                    resolve_cadence_index,
+                                                                    float(plan.print_z),
                                                                 float(plan.flow_height),
                                                                 force_height_resolve,
                                                                 &print_object);
+                            }
                         }
                         if (target_extruder == 0 || target_extruder > num_physical) {
                             ++forced_height_resolve_invalid_target;
@@ -3826,6 +3845,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         }
                         append(plan.painted_masks_by_extruder[target_extruder - 1], state_masks);
                         pass_has_painted_masks = true;
+                        if (row_is_gradient_vec[row_idx] == 0)
+                            non_gradient_row_done[row_idx] = uint8_t(1);
                     }
                     const std::vector<ExPolygons> fixed_masks_for_pass =
                         build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
@@ -3858,6 +3879,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     ++pass_idx;
                     for (size_t mixed_idx = 0; mixed_idx < row_seen_in_pass.size(); ++mixed_idx)
                         if (row_seen_in_pass[mixed_idx] != 0 &&
+                            (row_is_gradient_vec[mixed_idx] != 0 || !dominant_is_gradient) &&
                             row_uses_layer_cycle_pair[mixed_idx] == 0 &&
                             row_uses_direct_multicolor_solver[mixed_idx] == 0)
                             ++row_cadence_index[mixed_idx];
@@ -3953,7 +3975,6 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                                      << " base_height=" << interval.base_height
                                      << " split=" << split_interval
                                      << " isolated_multi_row_mode=" << (isolated_multi_row_mode ? 1 : 0)
-                                     << " shared_multi_row_fallback=" << (shared_multi_row_fallback ? 1 : 0)
                                      << " active_mixed_rows=" << active_mixed_rows
                                      << " active_row_mask_components=" << active_row_mask_components
                                      << " active_row_mask_vertices=" << active_row_mask_vertices
@@ -3982,7 +4003,6 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                                    << " split_passes_total=" << split_passes_total
                                    << " split_passes_with_painted_masks=" << split_passes_with_painted_masks
                                    << " alternating_height_intervals=" << alternating_height_intervals
-                                   << " shared_multi_row_fallback_intervals=" << shared_multi_row_fallback_intervals
                                    << " max_isolated_active_rows=" << LOCAL_Z_MAX_ISOLATED_ACTIVE_ROWS
                                    << " max_isolated_mask_components=" << LOCAL_Z_MAX_ISOLATED_MASK_COMPONENTS
                                    << " max_isolated_mask_vertices=" << LOCAL_Z_MAX_ISOLATED_MASK_VERTICES
@@ -4989,9 +5009,6 @@ void PrintObject::slice_volumes()
         std::vector<std::vector<ExPolygons>> mm_segmentation = multi_material_segmentation_by_painting(*this, [print]() { print->throw_if_canceled(); });
         apply_mixed_surface_indentation(*this, mm_segmentation);
         apply_mixed_component_surface_offsets(*this, mm_segmentation);
-        // Same-layer pointillisme is applied in G-code path domain (segment-level assignment),
-        // not by XY state mask splitting, to avoid boolean-induced voids.
-        BOOST_LOG_TRIVIAL(info) << "Same-layer pointillisme uses path-domain G-code segmentation";
         std::vector<std::vector<ExPolygons>> local_z_segmentation =
             local_z_whole_objects_enabled
                 ? local_z_planner_segmentation_with_whole_object_mixed_wall(*this, mm_segmentation)

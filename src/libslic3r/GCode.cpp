@@ -929,208 +929,10 @@ std::string WipeTowerIntegration::prime(GCode& gcodegen)
     return gcode;
 }
 
-std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, bool finish_layer, bool local_z_unplanned,
-                                              double local_z_nominal_layer_z)
+std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, bool finish_layer)
 {
     std::string gcode;
 
-    auto emit_local_z_unplanned_toolchange = [&]() -> std::string {
-        if (extruder_id < 0 || !gcodegen.writer().need_toolchange(extruder_id))
-            return "";
-        if (m_layer_idx < 0 || size_t(m_layer_idx) >= m_local_z_reserve_boxes.size() ||
-            size_t(m_layer_idx) >= m_local_z_reserve_slot_idx.size()) {
-            BOOST_LOG_TRIVIAL(debug) << "Local-Z unplanned toolchange using direct extruder switch"
-                                     << " layer_idx=" << m_layer_idx
-                                     << " extruder_id=" << extruder_id
-                                     << " tool_change_idx=" << m_tool_change_idx;
-            return gcodegen.set_extruder(unsigned(extruder_id),
-                                         gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
-        }
-
-        size_t &slot_idx = m_local_z_reserve_slot_idx[size_t(m_layer_idx)];
-        const auto &layer_slots = m_local_z_reserve_boxes[size_t(m_layer_idx)];
-        if (slot_idx >= layer_slots.size() || layer_slots.empty()) {
-            BOOST_LOG_TRIVIAL(warning) << "Local-Z toolchange reserve exhausted"
-                                       << " layer_idx=" << m_layer_idx
-                                       << " extruder_id=" << extruder_id
-                                       << " reserved_slots=" << layer_slots.size()
-                                       << " consumed_slots=" << slot_idx;
-            return gcodegen.set_extruder(unsigned(extruder_id),
-                                         gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
-        }
-
-        const WipeTower::box_coordinates &slot = layer_slots[slot_idx++];
-        const double current_z = gcodegen.writer().get_position().z();
-        const double tower_z   = local_z_nominal_layer_z >= 0. ? local_z_nominal_layer_z : current_z;
-        const double toolchange_print_z = tower_z - gcodegen.config().z_offset.value;
-
-        if (m_layer_idx >= (int)m_tool_changes.size() || m_tool_changes[m_layer_idx].empty()) {
-            BOOST_LOG_TRIVIAL(debug) << "Local-Z reserve has no matching wipe-tower layer metadata, using direct extruder switch"
-                                     << " layer_idx=" << m_layer_idx
-                                     << " extruder_id=" << extruder_id;
-            return gcodegen.set_extruder(unsigned(extruder_id), toolchange_print_z);
-        }
-
-        const float layer_height = m_tool_changes[m_layer_idx].front().layer_height;
-        if (gcodegen.m_curr_print != nullptr && gcodegen.writer().extruder() != nullptr) {
-            const Print&       print        = *gcodegen.m_curr_print;
-            const PrintConfig& print_config = print.config();
-            const size_t       current_tool = gcodegen.writer().extruder()->id();
-            std::vector<std::vector<float>> wipe_volumes = WipeTower2::extract_wipe_volumes(print_config);
-
-            WipeTower2 local_z_wipe_tower(print_config,
-                                          print.default_region_config(),
-                                          print.get_plate_index(),
-                                          print.get_plate_origin(),
-                                          wipe_volumes,
-                                          current_tool);
-            for (size_t extruder_idx = 0; extruder_idx < print_config.nozzle_diameter.size(); ++extruder_idx)
-                local_z_wipe_tower.set_extruder(extruder_idx, print_config);
-
-            local_z_wipe_tower.set_current_tool(current_tool);
-            local_z_wipe_tower.set_layer(float(toolchange_print_z), layer_height, 0, m_layer_idx == 0, false);
-
-            WipeTower::ToolChangeResult local_z_tcr =
-                local_z_wipe_tower.local_z_tool_change(size_t(extruder_id), slot, float(print_config.prime_volume));
-            BOOST_LOG_TRIVIAL(debug) << "Local-Z toolchange emitted via wipe tower mini-toolchange"
-                                     << " layer_idx=" << m_layer_idx
-                                     << " extruder_id=" << extruder_id
-                                     << " reserve_slot=" << (slot_idx - 1);
-            return gcodegen.is_BBL_Printer() ? append_tcr(gcodegen, local_z_tcr, extruder_id, tower_z) :
-                                               append_tcr2(gcodegen, local_z_tcr, extruder_id, tower_z);
-        }
-
-        const float nozzle_diameter = float(gcodegen.config().nozzle_diameter.get_at(size_t(extruder_id)));
-        const float line_width = nozzle_diameter * 1.25f;
-        const float extra_flow = float(gcodegen.config().wipe_tower_extra_flow.value) / 100.f;
-        const float extra_spacing = float(gcodegen.config().wipe_tower_extra_spacing.value) / 100.f;
-        const float filament_area = float((M_PI / 4.f) * std::pow(gcodegen.config().filament_diameter.get_at(size_t(extruder_id)), 2));
-        const float flow_per_mm =
-            filament_area > 0.f ?
-                (layer_height * (line_width - layer_height * float(1.f - M_PI / 4.f)) / filament_area) * std::max(0.f, extra_flow) :
-                0.f;
-        if (line_width <= 0.f || flow_per_mm <= 0.f)
-            return gcodegen.set_extruder(unsigned(extruder_id), toolchange_print_z);
-
-        const float inset_x = std::min(line_width, std::max(0.f, (slot.ru.x() - slot.ld.x()) * 0.25f));
-        const float inset_y = std::min(line_width * 0.5f, std::max(0.f, (slot.ru.y() - slot.rd.y()) * 0.25f));
-        const float x_min   = slot.ld.x() + inset_x;
-        const float x_max   = slot.rd.x() - inset_x;
-        const float y_min   = slot.ld.y() + inset_y;
-        const float y_max   = slot.lu.y() - inset_y;
-        if (x_max - x_min <= float(EPSILON) || y_max - y_min <= float(EPSILON))
-            return gcodegen.set_extruder(unsigned(extruder_id), toolchange_print_z);
-
-        std::vector<Vec2f> local_path;
-        local_path.reserve(16);
-        local_path.emplace_back(x_min, y_min);
-        local_path.emplace_back(x_max, y_min);
-
-        bool  moving_left = true;
-        float y           = y_min;
-        const float line_spacing = std::max(line_width, line_width * std::max(1.f, extra_spacing));
-        while (y + line_spacing < y_max - float(EPSILON)) {
-            y = std::min(y + line_spacing, y_max);
-            local_path.emplace_back(moving_left ? x_max : x_min, y);
-            local_path.emplace_back(moving_left ? x_min : x_max, y);
-            moving_left = !moving_left;
-        }
-
-        const float alpha = m_wipe_tower_rotation / 180.f * float(M_PI);
-        auto transform_wt_pt = [&alpha, this](const Vec2f& pt) -> Vec2f {
-            return Eigen::Rotation2Df(alpha) * pt + m_wipe_tower_pos;
-        };
-        const Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
-        const Vec2f start_pos = transform_wt_pt(local_path.front());
-        const Vec2f start_machine = start_pos + plate_origin_2d;
-
-        gcodegen.m_next_wipe_x = start_pos.x();
-        gcodegen.m_next_wipe_y = start_pos.y();
-
-        gcode += gcodegen.writer().unlift();
-
-        if (gcodegen.writer().extruder() != nullptr) {
-            auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
-            if (type == ZHopType::zhtAuto)
-                type = ZHopType::zhtSpiral;
-            if (gcodegen.m_config.z_hop_when_prime.get_at(gcodegen.m_writer.extruder()->id()))
-                gcode += gcodegen.retract(false, false, gcodegen.to_lift_type(type));
-        }
-
-        gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_machine), erMixed,
-                                    "Travel to Local-Z wipe tower reserve");
-        gcode += gcodegen.unretract();
-
-        if (!is_approx(tower_z, current_z)) {
-            gcode += gcodegen.writer().retract();
-            gcode += gcodegen.writer().travel_to_z(tower_z, "Travel to Local-Z tower layer");
-            gcode += gcodegen.writer().unretract();
-        }
-
-        gcode += gcodegen.set_extruder(unsigned(extruder_id), toolchange_print_z);
-        gcode += gcodegen.writer().travel_to_z(tower_z, "Force restore Local-Z tower Z", true);
-        {
-            Vec3d restored_position{gcodegen.writer().get_position()};
-            restored_position.z() = tower_z;
-            gcodegen.writer().set_position(restored_position);
-        }
-        gcode += gcodegen.unretract();
-        gcode += gcodegen.writer().travel_to_xy(start_machine.cast<double>(), "Return to Local-Z wipe tower reserve");
-
-        gcode += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Height) + float_to_string_decimal_point(layer_height, 3) + "\n";
-        gcode += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) + ExtrusionEntity::role_to_string(erWipeTower) + "\n";
-        gcode += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Width) + float_to_string_decimal_point(line_width, 3) + "\n";
-
-        double feedrate = std::max(1.0, double(gcodegen.config().wipe_tower_max_purge_speed.value)) * 60.0;
-        if (m_layer_idx == 0)
-            feedrate = std::min(feedrate, std::max(1.0, double(gcodegen.config().initial_layer_speed.value)) * 60.0);
-        gcode += gcodegen.writer().set_speed(feedrate, "Local-Z wipe tower reserve");
-
-        for (size_t point_idx = 1; point_idx < local_path.size(); ++point_idx) {
-            const Vec2f machine_pt = transform_wt_pt(local_path[point_idx]) + plate_origin_2d;
-            const double length = (local_path[point_idx] - local_path[point_idx - 1]).norm();
-            if (length <= EPSILON)
-                continue;
-            gcode += gcodegen.writer().extrude_to_xy(machine_pt.cast<double>(), flow_per_mm * float(length),
-                                                     point_idx == 1 ? "Local-Z tower purge" : std::string());
-        }
-
-        const Vec2f end_machine = transform_wt_pt(local_path.back()) + plate_origin_2d;
-        gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, end_machine));
-        gcodegen.m_wipe.reset_path();
-        for (size_t point_idx = local_path.size(); point_idx-- > 0;) {
-            const Vec2f machine_pt = transform_wt_pt(local_path[point_idx]) + plate_origin_2d;
-            gcodegen.m_wipe.path.points.emplace_back(wipe_tower_point_to_object_point(gcodegen, machine_pt));
-        }
-
-        if (!is_approx(tower_z, current_z)) {
-            const Extruder *active_extruder = gcodegen.writer().extruder();
-            const bool can_wipe = active_extruder != nullptr &&
-                                  gcodegen.config().wipe.get_at(active_extruder->id()) &&
-                                  gcodegen.m_wipe.has_path() &&
-                                  scale_(gcodegen.config().wipe_distance.get_at(active_extruder->id())) > SCALED_EPSILON;
-            if (can_wipe) {
-                Wipe::RetractionValues wipe_retractions = gcodegen.m_wipe.calculateWipeRetractionLengths(gcodegen, false);
-                gcode += gcodegen.writer().retract(true, wipe_retractions.retractLengthBeforeWipe);
-                gcode += gcodegen.m_wipe.wipe(gcodegen, wipe_retractions.retractLengthDuringWipe, false, false);
-            }
-            gcode += gcodegen.writer().retract();
-            gcodegen.m_wipe.reset_path();
-            gcode += gcodegen.writer().travel_to_z(current_z, "Travel back to Local-Z pass");
-            gcode += gcodegen.writer().unretract();
-        }
-
-        gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-        BOOST_LOG_TRIVIAL(debug) << "Local-Z toolchange emitted on wipe tower reserve"
-                                 << " layer_idx=" << m_layer_idx
-                                 << " extruder_id=" << extruder_id
-                                 << " reserve_slot=" << (slot_idx - 1);
-        return gcode;
-    };
-
-    if (local_z_unplanned)
-        return emit_local_z_unplanned_toolchange();
 
     assert(m_layer_idx >= 0);
     if (m_layer_idx >= (int) m_tool_changes.size())
@@ -5645,17 +5447,7 @@ LayerResult GCode::process_layer(const Print& print,
 
                     if (has_wipe_tower && m_writer.need_toolchange(local_extruder_id))
                         local_z_phase_b_changed_extruder = true;
-                    if (has_wipe_tower && m_wipe_tower) {
-                        gcode += m_wipe_tower->tool_change(*this, int(local_extruder_id), false, true, print_z + m_config.z_offset.value);
-                        // Local-Z phase-b uses the wipe tower outside the normal per-layer
-                        // extruder loop, so mirror the usual toolchange bookkeeping here.
-                        // This forces the next object path to refresh WIDTH/HEIGHT tags
-                        // after prime tower G-code, keeping the preview in sync with the
-                        // actual local-Z pass height.
-                        m_last_processor_extrusion_role = erWipeTower;
-                    } else {
-                        gcode += this->set_extruder(local_extruder_id, pass_plan.print_z);
-                    }
+                    gcode += this->set_extruder(local_extruder_id, pass_plan.print_z);
                     if (std::abs(m_writer.get_position().z() - pass_z) > EPSILON) {
                         BOOST_LOG_TRIVIAL(warning) << "Local-Z pass z restore"
                                                    << " print_z=" << print_z
@@ -5719,13 +5511,7 @@ LayerResult GCode::process_layer(const Print& print,
                                          << " print_z=" << print_z
                                          << " restore_extruder=" << local_z_phase_b_start_extruder;
                 gcode += "; local-z phase-b restore pre-pass extruder for wipe tower\n";
-                if (m_wipe_tower) {
-                    gcode += m_wipe_tower->tool_change(*this, local_z_phase_b_start_extruder, false, true,
-                                                       print_z + m_config.z_offset.value);
-                    m_last_processor_extrusion_role = erWipeTower;
-                } else {
-                    gcode += this->set_extruder(static_cast<unsigned int>(local_z_phase_b_start_extruder), print_z);
-                }
+                gcode += this->set_extruder(static_cast<unsigned int>(local_z_phase_b_start_extruder), print_z);
             } else if (local_z_phase_b_start_extruder < 0) {
                 BOOST_LOG_TRIVIAL(warning) << "Local-Z phase-b cannot restore pre-pass extruder (undefined writer state)"
                                            << " print_z=" << print_z;

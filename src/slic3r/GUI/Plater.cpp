@@ -5637,10 +5637,6 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         }
         if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
-        if (r.gradient_enabled) {
-            if (auto* opt_lz = wxGetApp().preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
-                opt_lz->value = true;
-        }
         update_color_mix_panel();
         m_scrolled_sizer->Layout();
     });
@@ -5909,10 +5905,6 @@ void Sidebar::update_color_mix_panel()
                 mfs2[i].gradient_end               = r.gradient_end;
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();
-                if (r.gradient_enabled) {
-                    if (auto* opt_lz = wxGetApp().preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
-                        opt_lz->value = true;
-                }
                 wxTheApp->CallAfter([this]() {
                     update_color_mix_panel();
                     m_scrolled_sizer->Layout();

@@ -16,7 +16,10 @@
 #include <boost/nowide/args.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/log/utility/setup/console.hpp>
+#include <boost/log/utility/setup/file.hpp>
 #include <boost/log/utility/setup/common_attributes.hpp>
+#include <boost/log/expressions.hpp>
+#include <boost/log/support/date_time.hpp>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
@@ -41,6 +44,12 @@ EngineConfig parse_args(int argc, char* argv[]) {
         else if (arg == "-v" || arg == "--verbose") {
             continue;
         }
+        else if (arg == "--log") {
+            continue;
+        }
+        else if (arg == "--log-file" && i + 1 < argc) {
+            ++i;
+        }
         else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
             cfg.output_base = argv[++i];
         }
@@ -48,9 +57,9 @@ EngineConfig parse_args(int argc, char* argv[]) {
             // Skip the parameter values to avoid being regarded as input files
             ++i;
         }
-        else if ((arg == "-j" || arg == "--json") && i + 1 < argc) {
-            // Skip the parameter values to avoid being regarded as input files
-            ++i;
+        else if (arg == "-j" || arg == "--json") {
+            if (i + 1 < argc && argv[i+1][0] != '-')
+                ++i;
         }
         else if ((arg == "-p" || arg == "--plate") && i + 1 < argc) {
             std::string plate_arg = argv[++i];
@@ -122,16 +131,28 @@ int main(int argc, char* argv[]) {
     // Extract post-engine flags (these are consumed separately)
     std::string resources_dir;
     std::string json_output_path;
+    bool json_enabled = false;
+    bool log_enabled = false;
+    std::string log_file_path;
     bool verbose = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-v" || arg == "--verbose")
             verbose = true;
+        else if (arg == "--log")
+            log_enabled = true;
+        else if (arg == "--log-file" && i + 1 < argc) {
+            log_enabled = true;
+            log_file_path = argv[++i];
+        }
         else if ((arg == "-r" || arg == "--resources") && i + 1 < argc)
             resources_dir = argv[++i];
-        else if ((arg == "-j" || arg == "--json") && i + 1 < argc)
-            json_output_path = argv[++i];
+        else if (arg == "-j" || arg == "--json") {
+            json_enabled = true;
+            if (i + 1 < argc && argv[i+1][0] != '-')
+                json_output_path = argv[++i];
+        }
     }
 
     // Validate input file
@@ -151,9 +172,40 @@ int main(int argc, char* argv[]) {
     if (!cfg.single_plate)
         cfg.format = OutputFormat::GCODE_3MF;
 
+    // --- Pre-compute expected output path (used for auto-derived log/json paths) ---
+    std::string expected_output;
+    if (log_enabled && log_file_path.empty()) {
+        expected_output = generate_output_path(
+            cfg.input_file, cfg.output_base, cfg.plate_id, cfg.format, cfg.single_plate);
+    }
+
     // --- Setup logging ---
     boost::log::add_console_log(std::cout, boost::log::keywords::format = "[%Severity%] %Message%");
     boost::log::add_common_attributes();
+
+    // Set up file logging if enabled
+    if (log_enabled) {
+        namespace expr = boost::log::expressions;
+        if (log_file_path.empty()) {
+            boost::filesystem::path out(expected_output);
+            log_file_path = (out.parent_path() / out.stem().stem()).string() + ".log";
+        }
+        // Ensure parent directory exists
+        {
+            boost::filesystem::path log_parent = boost::filesystem::path(log_file_path).parent_path();
+            if (!log_parent.empty() && !boost::filesystem::exists(log_parent))
+                boost::filesystem::create_directories(log_parent);
+        }
+        boost::log::add_file_log(
+            boost::log::keywords::file_name = log_file_path,
+            boost::log::keywords::auto_flush = true,
+            boost::log::keywords::format = (
+                expr::stream
+                    << "[" << expr::format_date_time<boost::posix_time::ptime>("TimeStamp", "%Y-%m-%d %H:%M:%S")
+                    << "] [" << boost::log::trivial::severity << "] " << expr::smessage
+            )
+        );
+    }
 
     if (verbose)
         boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::trace);

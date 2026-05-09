@@ -62,6 +62,7 @@ endif()
 target_link_libraries(orca-slice-engine
     libslic3r          # Core slicing library (pulls all necessary deps)
     cereal::cereal     # Serialization
+    nlohmann_json      # JSON formatting
     boost_libs         # Boost filesystem, log, etc.
     TBB::tbb           # Parallel processing
     TBB::tbbmalloc     # TBB memory allocator

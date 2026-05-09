@@ -9,21 +9,16 @@
 
 namespace {
 
-// Helper: build a defect Issue for a given volume
+// Helper: build a defect Issue for a given volume (delegates to factories in Types.hpp)
 Issue make_issue(const std::string& level, int plate_id,
                  const std::string& object_name, const std::string& code,
                  const std::string& message,
                  const std::string& suggestion = "")
 {
-    Issue issue;
-    issue.level       = level;
-    issue.plate_id    = plate_id;
-    issue.object_name = object_name;
-    issue.z_height    = -1.0;
-    issue.code        = code;
-    issue.message     = message;
-    issue.suggestion  = suggestion;
-    return issue;
+    if (level == "error")
+        return make_error(plate_id, code, message, object_name, suggestion);
+    else
+        return make_warning(plate_id, code, message, object_name, suggestion);
 }
 
 void check_non_manifold(const Slic3r::ModelVolume& volume,

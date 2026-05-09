@@ -31,8 +31,18 @@
 
 namespace {
 
-EngineConfig parse_args(int argc, char* argv[]) {
-    EngineConfig cfg;
+struct CliArgs {
+    EngineConfig engine_cfg;
+    std::string  resources_dir;
+    std::string  json_output_path;
+    bool         json_enabled = false;
+    bool         log_enabled  = false;
+    std::string  log_file_path;
+    bool         verbose      = false;
+};
+
+CliArgs parse_args(int argc, char* argv[]) {
+    CliArgs args;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -42,33 +52,34 @@ EngineConfig parse_args(int argc, char* argv[]) {
             std::exit(EXIT_OK);
         }
         else if (arg == "-v" || arg == "--verbose") {
-            continue;
+            args.verbose = true;
         }
         else if (arg == "--log") {
-            continue;
+            args.log_enabled = true;
         }
         else if (arg == "--log-file" && i + 1 < argc) {
-            ++i;
+            args.log_enabled  = true;
+            args.log_file_path = argv[++i];
         }
         else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
-            cfg.output_base = argv[++i];
+            args.engine_cfg.output_base = argv[++i];
         }
         else if ((arg == "-r" || arg == "--resources") && i + 1 < argc) {
-            // Skip the parameter values to avoid being regarded as input files
-            ++i;
+            args.resources_dir = argv[++i];
         }
         else if (arg == "-j" || arg == "--json") {
+            args.json_enabled = true;
             if (i + 1 < argc && argv[i+1][0] != '-')
-                ++i;
+                args.json_output_path = argv[++i];
         }
         else if ((arg == "-p" || arg == "--plate") && i + 1 < argc) {
             std::string plate_arg = argv[++i];
             if (plate_arg == "all" || plate_arg == "0") {
-                cfg.plate_id = 0;
+                args.engine_cfg.plate_id = 0;
             } else {
                 try {
-                    cfg.plate_id = std::stoi(plate_arg);
-                    if (cfg.plate_id < 1) {
+                    args.engine_cfg.plate_id = std::stoi(plate_arg);
+                    if (args.engine_cfg.plate_id < 1) {
                         std::cerr << "Error: Plate ID must be 1 or greater (or 'all')." << std::endl;
                         std::exit(EXIT_INVALID_ARGS);
                     }
@@ -79,14 +90,14 @@ EngineConfig parse_args(int argc, char* argv[]) {
             }
         }
         else if ((arg == "-d" || arg == "--data-dir") && i + 1 < argc) {
-            cfg.data_dir = argv[++i];
+            args.engine_cfg.data_dir = argv[++i];
         }
         else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
             std::string fmt = argv[++i];
             if (fmt == "gcode") {
-                cfg.format = OutputFormat::GCODE;
+                args.engine_cfg.format = OutputFormat::GCODE;
             } else if (fmt == "gcode.3mf") {
-                cfg.format = OutputFormat::GCODE_3MF;
+                args.engine_cfg.format = OutputFormat::GCODE_3MF;
             } else {
                 std::cerr << "Error: Unknown format: " << fmt << " (use 'gcode' or 'gcode.3mf')" << std::endl;
                 std::exit(EXIT_INVALID_ARGS);
@@ -94,8 +105,8 @@ EngineConfig parse_args(int argc, char* argv[]) {
         }
         // Only parameters that are not recognized as options/option values are considered input files
         else if (arg[0] != '-') {
-            if (cfg.input_file.empty()) {
-                cfg.input_file = arg;
+            if (args.engine_cfg.input_file.empty()) {
+                args.engine_cfg.input_file = arg;
             } else {
                 std::cerr << "Error: Multiple input files specified." << std::endl;
                 std::exit(EXIT_INVALID_ARGS);
@@ -109,13 +120,13 @@ EngineConfig parse_args(int argc, char* argv[]) {
     }
 
     // Validate that an input file was provided
-    if (cfg.input_file.empty()) {
+    if (args.engine_cfg.input_file.empty()) {
         std::cerr << "Error: No input file specified." << std::endl;
         print_usage(argv[0]);
         std::exit(EXIT_INVALID_ARGS);
     }
 
-    return cfg;
+    return args;
 }
 
 } // namespace
@@ -125,35 +136,15 @@ int main(int argc, char* argv[]) {
 
     boost::nowide::args a(argc, argv);
 
-    // --- Parse CLI ---
-    EngineConfig cfg = parse_args(argc, argv);
-
-    // Extract post-engine flags (these are consumed separately)
-    std::string resources_dir;
-    std::string json_output_path;
-    bool json_enabled = false;
-    bool log_enabled = false;
-    std::string log_file_path;
-    bool verbose = false;
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "-v" || arg == "--verbose")
-            verbose = true;
-        else if (arg == "--log")
-            log_enabled = true;
-        else if (arg == "--log-file" && i + 1 < argc) {
-            log_enabled = true;
-            log_file_path = argv[++i];
-        }
-        else if ((arg == "-r" || arg == "--resources") && i + 1 < argc)
-            resources_dir = argv[++i];
-        else if (arg == "-j" || arg == "--json") {
-            json_enabled = true;
-            if (i + 1 < argc && argv[i+1][0] != '-')
-                json_output_path = argv[++i];
-        }
-    }
+    // --- Parse CLI (single pass) ---
+    CliArgs cli = parse_args(argc, argv);
+    EngineConfig& cfg = cli.engine_cfg;
+    std::string& resources_dir = cli.resources_dir;
+    std::string& json_output_path = cli.json_output_path;
+    bool json_enabled = cli.json_enabled;
+    bool log_enabled   = cli.log_enabled;
+    std::string& log_file_path = cli.log_file_path;
+    bool verbose       = cli.verbose;
 
     // Validate input file
     if (cfg.input_file.empty()) {

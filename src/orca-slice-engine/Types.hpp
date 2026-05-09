@@ -33,6 +33,19 @@ struct Issue {
     std::string suggestion;  // actionable repair suggestion, empty if N/A
 };
 
+// Factory functions — set sensible defaults (z_height=-1, correct level)
+inline Issue make_error(int plate_id, const std::string& code, const std::string& message,
+                        const std::string& object_name = "", const std::string& suggestion = "") {
+    return Issue{"error", plate_id, object_name, -1.0, code, message, suggestion};
+}
+inline Issue make_warning(int plate_id, const std::string& code, const std::string& message,
+                          const std::string& object_name = "", const std::string& suggestion = "") {
+    return Issue{"warning", plate_id, object_name, -1.0, code, message, suggestion};
+}
+inline Issue make_tip(int plate_id, const std::string& code, const std::string& message) {
+    return Issue{"tip", plate_id, "", -1.0, code, message, ""};
+}
+
 // Output statistics structure for JSON export
 struct SliceOutputStats {
     // Filament detail for each extruder

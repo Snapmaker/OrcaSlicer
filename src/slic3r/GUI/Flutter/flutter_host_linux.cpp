@@ -131,15 +131,16 @@ public:
             }
         }
 
-        FlEngine* engine = fl_engine_new(project);
-        if (!engine) return nullptr;
+        // fl_view_new() creates an implicit FlView that automatically
+        // starts the engine in realize_cb. fl_view_new_for_engine() is
+        // only for secondary views on an already-running engine.
+        FlView* view = fl_view_new(project);
+        if (!view) return nullptr;
 
-        FlView* view = fl_view_new_for_engine(engine);
-        if (!view) {
-            g_object_unref(engine);
-            return nullptr;
-        }
-
+        FlEngine* engine = fl_view_get_engine(view);
+        // fl_view_get_engine() returns a borrowed pointer; the destructor
+        // calls g_clear_object so we must add our own reference.
+        g_object_ref(engine);
         FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
 
         auto* host = new FlutterViewHostLinux(view, engine, messenger, channelName);

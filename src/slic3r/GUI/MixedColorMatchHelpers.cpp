@@ -7,7 +7,11 @@
 #include "PresetBundle.hpp"
 #include <algorithm>
 #include <atomic>
+#include <fstream>
+#include <mutex>
 #include <boost/log/trivial.hpp>
+#include "nlohmann/json.hpp"
+#include "libslic3r/Utils.hpp"
 
 namespace Slic3r { namespace GUI {
 wxColour parse_mixed_color(const std::string& value)
@@ -658,24 +662,125 @@ wxColour blend_sequence_filament_mixer(const std::vector<wxColour>& palette, con
 // ---------------------------------------------------------------------------
 // Material compatibility
 // ---------------------------------------------------------------------------
-static const std::unordered_map<std::string, int>& filament_compatibility_group_map()
+
+enum class FilamentCategory : uint8_t {
+    PLA, PETG, TPU, PET, ABS, ASA, PC, PA, SUPPORT,
+    UNKNOWN
+};
+
+static constexpr const char* k_category_names[] = {
+    "PLA", "PETG", "TPU", "PET", "ABS", "ASA", "PC", "PA", "SUPPORT"
+};
+static constexpr size_t k_category_count = sizeof(k_category_names) / sizeof(k_category_names[0]);
+// Matrix dimension covers all valid categories + UNKNOWN sentinel
+static constexpr size_t k_compat_dim = (size_t)FilamentCategory::UNKNOWN + 1;
+
+static FilamentCategory filament_category_from_name(const std::string& name)
 {
-    static const std::unordered_map<std::string, int> m = {
-        {"PLA", 1}, {"PLA-AERO", 1}, {"PLA-CF", 1},
-        {"ABS", 2}, {"ABS-GF", 2},
-        {"ASA", 3}, {"ASA-Aero", 3},
-        {"PETG", 4}, {"PETG-CF", 4}, {"PETG-CF10", 4}, {"PETG-GF", 4},
-        {"TPU", 5}, {"FLEX", 5}, {"EVA", 5}, {"SBS", 5},
-        {"PCTG", 6},
-        {"HIPS", 7},
-        {"BVOH", 8}, {"PVA", 8}, {"PVB", 8},
-        {"PA", 9}, {"PA-CF", 9}, {"PA-GF", 9}, {"PA6-CF", 9}, {"PA11-CF", 9},
-        {"PC", 10}, {"PC-CF", 10},
-        {"PP", 11}, {"PP-CF", 11}, {"PP-GF", 11},
-        {"PE", 12}, {"PE-CF", 12},
-        {"PET-CF", 13},
-        {"PHA", 14},
-        {"PPS", 15}, {"PPS-CF", 15}, {"PPA", 15}, {"PPA-CF", 15}, {"PPA-GF", 15},
+    for (size_t i = 0; i < k_category_count; ++i) {
+        if (name == k_category_names[i])
+            return static_cast<FilamentCategory>(i);
+    }
+    return FilamentCategory::UNKNOWN;
+}
+
+// 2D compatibility matrix. Dimension is tied to the enum so adding a category
+// to FilamentCategory automatically grows the table.
+static std::vector<std::vector<bool>> s_compat;
+static bool                           s_compat_loaded = false;
+static std::mutex                     s_compat_mutex;
+
+static void load_filament_compatibility()
+{
+    if (s_compat_loaded) return;
+    std::lock_guard<std::mutex> lock(s_compat_mutex);
+    if (s_compat_loaded) return;
+
+    // Default: each category compatible only with itself
+    s_compat.assign(k_compat_dim, std::vector<bool>(k_compat_dim, false));
+    for (size_t i = 0; i < k_category_count; ++i)
+        s_compat[i][i] = true;
+
+    try {
+        // Prefer user data dir (where PresetUpdater deploys updates), fall back to bundled resources
+        const boost::filesystem::path user_path = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR
+                                                    / PresetBundle::SM_BUNDLE / "filament"
+                                                    / "filament_compatibility.json").make_preferred();
+        const boost::filesystem::path rsrc_path = (boost::filesystem::path(Slic3r::resources_dir()) / "profiles"
+                                                    / PresetBundle::SM_BUNDLE / "filament"
+                                                    / "filament_compatibility.json").make_preferred();
+        const std::string path = (boost::filesystem::exists(user_path) ? user_path : rsrc_path).string();
+
+        std::ifstream ifs(path);
+        if (!ifs.is_open()) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to open filament compatibility config: " << path;
+            return;
+        }
+        nlohmann::json j;
+        ifs >> j;
+
+        if (!j.contains("compatibility")) {
+            BOOST_LOG_TRIVIAL(error) << "Missing 'compatibility' key in " << path;
+            return;
+        }
+
+        for (auto& [cat_a_str, partner_list] : j["compatibility"].items()) {
+            FilamentCategory cat_a = filament_category_from_name(cat_a_str);
+            if (cat_a == FilamentCategory::UNKNOWN) {
+                BOOST_LOG_TRIVIAL(warning) << "Unknown category '" << cat_a_str << "' in compatibility config";
+                continue;
+            }
+
+            if (!partner_list.is_array()) {
+                BOOST_LOG_TRIVIAL(warning) << "Expected array for category '" << cat_a_str << "'";
+                continue;
+            }
+
+            for (auto& cat_b_val : partner_list) {
+                const std::string cat_b_str = cat_b_val.get<std::string>();
+                FilamentCategory   cat_b     = filament_category_from_name(cat_b_str);
+                if (cat_b == FilamentCategory::UNKNOWN) {
+                    BOOST_LOG_TRIVIAL(warning) << "Unknown category '" << cat_b_str << "' in compatibility config";
+                    continue;
+                }
+                s_compat[(size_t)cat_a][(size_t)cat_b] = true;
+                s_compat[(size_t)cat_b][(size_t)cat_a] = true;
+            }
+        }
+        s_compat_loaded = true;
+        BOOST_LOG_TRIVIAL(info) << "Loaded filament compatibility matrix from " << path;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to parse filament compatibility config: " << e.what();
+    }
+}
+
+static bool is_category_compatible(FilamentCategory a, FilamentCategory b)
+{
+    return s_compat[(size_t)a][(size_t)b];
+}
+
+// Hardcoded filament_type → category. New filament types should be added here.
+static const std::unordered_map<std::string, FilamentCategory>& filament_type_category_map()
+{
+    static const std::unordered_map<std::string, FilamentCategory> m = {
+        // PLA family — from classification table
+        {"PLA", FilamentCategory::PLA}, {"PLA-CF", FilamentCategory::PLA},
+        // ABS
+        {"ABS", FilamentCategory::ABS},
+        // ASA
+        {"ASA", FilamentCategory::ASA},
+        // PETG family — from classification table
+        {"PETG", FilamentCategory::PETG}, {"PETG-CF", FilamentCategory::PETG}, {"PCTG", FilamentCategory::PETG},
+        // TPU
+        {"TPU", FilamentCategory::TPU},
+        // PET — from compatibility matrix
+        {"PET", FilamentCategory::PET},
+        // PA
+        {"PA", FilamentCategory::PA}, {"PA-CF", FilamentCategory::PA},
+        // PC
+        {"PC", FilamentCategory::PC},
+        // Support materials — from classification table
+        {"BVOH", FilamentCategory::SUPPORT}, {"PVA", FilamentCategory::SUPPORT},
     };
     return m;
 }
@@ -683,46 +788,28 @@ static const std::unordered_map<std::string, int>& filament_compatibility_group_
 static std::string normalize_filament_type(const std::string& type)
 {
     std::string normalized = type;
-    // Trim leading/trailing whitespace
     size_t start = normalized.find_first_not_of(" \t\r\n");
-    size_t end = normalized.find_last_not_of(" \t\r\n");
-    if (start != std::string::npos && end != std::string::npos) {
+    size_t end   = normalized.find_last_not_of(" \t\r\n");
+    if (start != std::string::npos && end != std::string::npos)
         normalized = normalized.substr(start, end - start + 1);
-    }
-    // Convert to uppercase
     std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
     return normalized;
 }
 
-int get_filament_compatibility_group(const std::string& filament_type)
+static FilamentCategory get_filament_category(const std::string& filament_type)
 {
-    if (filament_type.empty()) {
-        BOOST_LOG_TRIVIAL(warning) << "Empty filament type in compatibility check";
-        return -1;
-    }
-
-    const auto& m = filament_compatibility_group_map();
-    auto it = m.find(filament_type);
+    const std::string normalized = normalize_filament_type(filament_type);
+    const auto&       m          = filament_type_category_map();
+    auto              it         = m.find(normalized);
     if (it != m.end()) return it->second;
-    std::string normalized = normalize_filament_type(filament_type);
-    it = m.find(normalized);
-    if (it != m.end()) return it->second;
-
-    // Assign stable unique group IDs to unknown types (no hash collision risk)
-    static std::unordered_map<std::string, int> unknown_groups;
-    static std::atomic<int> next_unknown_group{100};
-    auto uit = unknown_groups.find(normalized);
-    if (uit != unknown_groups.end()) return uit->second;
-    int group = next_unknown_group.fetch_add(1);
-    unknown_groups[normalized] = group;
-    BOOST_LOG_TRIVIAL(info) << "Unknown filament type '" << filament_type
-                            << "' assigned to compatibility group " << group;
-    return group;
+    return FilamentCategory::UNKNOWN;
 }
 
 bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
 {
     if (filament_ids.size() <= 1) return true;
+
+    load_filament_compatibility();
 
     PresetBundle* preset_bundle = wxGetApp().preset_bundle;
     if (!preset_bundle) {
@@ -731,58 +818,48 @@ bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
     }
 
     const std::vector<std::string>& filament_presets = preset_bundle->filament_presets;
-    
-    int common_group = -1;
-    std::string first_type_name;
-    
+
+    std::vector<FilamentCategory> cats;
+    cats.reserve(filament_ids.size());
+
     for (unsigned int id : filament_ids) {
-        if (id >= filament_presets.size()) {
-            BOOST_LOG_TRIVIAL(warning) << "Filament ID " << id << " out of range (max: " 
-                                       << filament_presets.size() - 1 << ")";
-            continue;
-        }
-        
+        if (id >= filament_presets.size()) continue;
+
         const Preset* preset = preset_bundle->filaments.find_preset(filament_presets[id]);
-        if (!preset) {
-            BOOST_LOG_TRIVIAL(warning) << "Preset not found for filament ID " << id;
-            continue;
-        }
-        
+        if (!preset) continue;
+
         auto* type_opt = dynamic_cast<const ConfigOptionStrings*>(preset->config.option("filament_type"));
-        if (!type_opt || type_opt->values.empty()) {
-            BOOST_LOG_TRIVIAL(warning) << "Filament type not found for preset '" 
-                                       << preset->name << "'";
-            continue;
-        }
-        
-        const std::string& type_name = type_opt->values[0];
-        int group = get_filament_compatibility_group(type_name);
-        
-        if (group < 0) {
-            BOOST_LOG_TRIVIAL(warning) << "Invalid compatibility group for filament ID " << id;
-            continue;
-        }
-        
-        if (common_group < 0) {
-            common_group = group;
-            first_type_name = type_name;
-            BOOST_LOG_TRIVIAL(debug) << "Reference filament type: '" << type_name 
-                                     << "' (group " << group << ")";
-        }
-        else if (common_group != group) {
-            BOOST_LOG_TRIVIAL(info) << "Incompatible filament types detected: '" 
-                                    << first_type_name << "' (group " << common_group 
-                                    << ") vs '" << type_name << "' (group " << group << ")";
+        if (!type_opt || type_opt->values.empty()) continue;
+
+        FilamentCategory cat = get_filament_category(type_opt->values[0]);
+
+        if (cat == FilamentCategory::UNKNOWN) {
+            BOOST_LOG_TRIVIAL(info) << "Filament type '" << type_opt->values[0]
+                                    << "' not in compatibility table, treating as incompatible";
             return false;
         }
+
+        cats.push_back(cat);
     }
-    
-    if (common_group < 0) {
-        BOOST_LOG_TRIVIAL(warning) << "No valid filament types found in compatibility check";
+
+    if (cats.size() <= 1) return true;
+
+    // All same known category → trivially compatible
+    if (std::all_of(cats.begin() + 1, cats.end(), [&](FilamentCategory c) { return c == cats[0]; }))
         return true;
+
+    for (size_t i = 0; i < cats.size(); ++i) {
+        for (size_t j = i + 1; j < cats.size(); ++j) {
+            if (!is_category_compatible(cats[i], cats[j])) {
+                BOOST_LOG_TRIVIAL(info) << "Incompatible filament categories: '"
+                                        << k_category_names[(size_t)cats[i]]
+                                        << "' vs '"
+                                        << k_category_names[(size_t)cats[j]] << "'";
+                return false;
+            }
+        }
     }
-    
-    BOOST_LOG_TRIVIAL(debug) << "All filaments compatible (group " << common_group << ")";
+
     return true;
 }
 

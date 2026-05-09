@@ -3514,11 +3514,11 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
 		this->project_config.option<ConfigOptionFloats>("flush_volumes_matrix")->values = new_matrix;
     }
 
-    // Keep mixed (virtual) combinations in sync with physical filament deletion.
-    // Mixed entries containing the deleted physical filament are removed, while
-    // remaining component IDs are shifted.
-    if (deleting_filament)
+    std::string post_delete_mixed_defs;
+    if (deleting_filament) {
         this->mixed_filaments.remove_physical_filament(unsigned(to_delete_filament_id + 1));
+        post_delete_mixed_defs = this->mixed_filaments.serialize_custom_entries();
+    }
 
     // Keep project colours aligned to physical filaments, then regenerate mixed
     // (virtual) entries from the physical set only.
@@ -3591,7 +3591,9 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
             upper_bound = std::max(lower_bound, upper_bound);
 
             this->mixed_filaments.clear_custom_entries();
-            this->mixed_filaments.load_custom_entries(get_mixed_string("mixed_filament_definitions"), color_opt->values);
+            this->mixed_filaments.load_custom_entries(
+                deleting_filament ? post_delete_mixed_defs : get_mixed_string("mixed_filament_definitions"),
+                color_opt->values);
             this->mixed_filaments.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
 
             const std::string serialized = this->mixed_filaments.serialize_custom_entries();

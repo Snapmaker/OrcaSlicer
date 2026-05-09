@@ -7,6 +7,7 @@
 #include <wx/statline.h>
 #include <wx/dcbuffer.h>
 
+#include <set>
 #include <vector>
 #include <string>
 
@@ -15,6 +16,7 @@ class ScalableButton;
 class RadioGroup;
 class Button;
 class ComboBox;
+class StaticBox;
 
 namespace Slic3r { namespace GUI {
 
@@ -53,36 +55,46 @@ private:
     static constexpr int MODE_MATCH    = 2;
     static constexpr int MODE_GRADIENT = 3;
 
-    RadioGroup*             m_mode_radio          = nullptr;
-    wxStaticText*           m_filament_title      = nullptr;
+    // Segmented mode buttons
+    class StaticBox*        m_mode_btn_container    = nullptr;
+    std::vector<Button*>    m_mode_buttons;
+    int                     m_mode_btn_selected     = MODE_RATIO;
     ScalableButton*         m_btn_add_filament    = nullptr;
     ScalableButton*         m_btn_remove_filament = nullptr;
+    wxStaticText*           m_filament_card_title  = nullptr;
     wxPanel*                m_filament_rows_panel = nullptr;
     wxBoxSizer*             m_filament_rows_sizer = nullptr;
     wxPanel*                m_preview_panel       = nullptr;
-    wxStaticText*           m_preview_label       = nullptr;
+    wxPanel*                m_preview_blend_panel = nullptr;
     MixedGradientSelector*  m_gradient_selector   = nullptr;
-    wxStaticText*           m_ratio_label_a       = nullptr;
-    wxStaticText*           m_ratio_label_b       = nullptr;
-    wxBoxSizer*             m_ratio_label_sizer   = nullptr;
-    wxBoxSizer*             m_gradient_bar_sizer  = nullptr;
+    wxPanel*                m_legend_panel         = nullptr;
+    wxBoxSizer*             m_legend_sizer         = nullptr;
+    std::vector<wxStaticText*> m_legend_labels;
     wxPanel*                m_tri_picker          = nullptr;
-    wxBoxSizer*             m_tri_picker_sizer    = nullptr;
     wxPanel*                m_strip_panel         = nullptr;
-    wxPanel*                m_tri_strip_panel     = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
-    wxScrolledWindow*       m_swatch_grid_panel   = nullptr;
-    wxStaticLine*           m_line_below_mid      = nullptr;
-    wxStaticLine*           m_line_above_swatch   = nullptr;
-    wxStaticLine*           m_line_below_swatch   = nullptr;
-    wxStaticText*           m_recommended_label   = nullptr;
+    wxPanel*                m_swatch_grid_panel   = nullptr;
     wxPanel*                m_compat_warning_panel  = nullptr;
     wxStaticText*           m_compat_warning_text   = nullptr;
     Button*                 m_btn_cancel          = nullptr;
     Button*                 m_btn_confirm         = nullptr;
     wxTextCtrl*             m_pattern_ctrl        = nullptr;
-    wxBoxSizer*             m_pattern_panel_sizer = nullptr;
-    std::vector<wxButton*>  m_pattern_quick_buttons;
+    std::vector<class MixedFilamentBadge*>  m_pattern_quick_buttons;
+
+    // Card containers (StaticBox for rounded-corner cards)
+    class StaticBox*        m_filament_card         = nullptr;
+    wxBoxSizer*             m_filament_card_sizer   = nullptr;
+    class StaticBox*        m_ratio_card            = nullptr;
+    wxBoxSizer*             m_ratio_card_sizer      = nullptr;
+    class StaticBox*        m_cycle_card            = nullptr;
+    wxBoxSizer*             m_cycle_card_sizer      = nullptr;
+    class StaticBox*        m_swatch_card           = nullptr;
+    wxBoxSizer*             m_swatch_card_sizer     = nullptr;
+    wxScrolledWindow*       m_scrolled_content      = nullptr;
+    wxPanel*                m_cycle_blend_panel     = nullptr;
+    wxPanel*                m_cycle_legend_panel    = nullptr;
+    wxSizer*                m_cycle_legend_sizer    = nullptr;
+    std::vector<wxStaticText*> m_cycle_legend_labels;
 
     // Match mode
     wxBoxSizer*             m_match_panel_sizer   = nullptr;
@@ -94,18 +106,23 @@ private:
     double m_tri_wx{1.0/3.0}, m_tri_wy{1.0/3.0}, m_tri_wz{1.0/3.0};
     bool   m_tri_dragging{false};
 
-    void build_tri_picker();
+    void build_tri_picker(wxWindow* parent = nullptr);
+    void set_combo_combined_icon(class ComboBox* cb, int filament_idx);
+    void rebuild_legend();
+    void rebuild_cycle_legend();
+    void validate_cycle_pattern();
     void update_ratio_or_tri_visibility();
-    void rebuild_all_combos();  // Rebuild all combo box options without recreating controls
-    void rebuild_all_combos_with_selections(const std::vector<int>& selections);  // Rebuild with specified selections
-
-    // Helper: get actual filament index from combo box selection
-    int get_filament_index(int row_idx) const;
+    // Combo box helpers
+    void populate_combo(ComboBox* cb, const std::set<int>& exclude_ids, int select_id,
+                        std::vector<int>& out_filament_indices);
+    void refresh_all_combos();
+    void rebuild_all_combos_with_selections(const std::vector<int>& selections);
+    int  get_filament_index(int row_idx) const;
 
     struct FilamentRow {
-        wxPanel*  swatch = nullptr;
-        ComboBox* combo  = nullptr;
-        std::vector<int> filament_indices;  // Maps combo box index to actual filament index
+        wxPanel*         swatch           = nullptr;
+        ComboBox*        combo            = nullptr;
+        std::vector<int> filament_indices; // combo index → actual filament index
     };
     std::vector<FilamentRow> m_filament_rows;
 

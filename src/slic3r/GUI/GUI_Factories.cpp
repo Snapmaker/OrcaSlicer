@@ -1551,9 +1551,37 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
     const int icon_width = lround(2 * em);
     const int icon_height = lround(2 * em);
     
+    // Determine the source physical filament ID (if active_filament_menu_id is a physical filament)
+    unsigned int source_physical_1based = 0;
+    if (active_filament_menu_id >= 0 && active_filament_menu_id < (int)num_physical) {
+        source_physical_1based = (unsigned int)(active_filament_menu_id + 1);
+    }
+    
+    // Get indices of mixed filaments that depend on the source physical filament
+    std::vector<size_t> dependent_mixed_indices;
+    if (source_physical_1based > 0) {
+        dependent_mixed_indices = mixed_mgr.mixed_filaments_using_physical(source_physical_1based);
+    }
+    
     size_t visible_idx = 0;
+    size_t running_idx = 0;  // counts all non-deleted entries for virtual ID calculation
     for (size_t j = 0; j < mfs.size(); ++j) {
-        if (mfs[j].deleted) continue;
+        if (mfs[j].deleted || !mfs[j].enabled) continue;
+
+        // Calculate virtual ID for this mixed filament based on all non-deleted entries
+        size_t mixed_virtual_id = num_physical + running_idx;
+        running_idx++;
+
+        // Skip active mixed filament (consistent with physical filaments)
+        if (mixed_virtual_id == (size_t)active_filament_menu_id) {
+            continue;
+        }
+
+        // Skip mixed filaments that depend on the source physical filament
+        // This prevents merging a physical filament into a mixed filament that uses it as a component
+        if (std::find(dependent_mixed_indices.begin(), dependent_mixed_indices.end(), j) != dependent_mixed_indices.end()) {
+            continue;
+        }
         
         const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
         wxString item_name = wxString::Format(_L("Mixed Filament %d"), virtual_id);
@@ -1562,13 +1590,10 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
         std::string color_str = mfs[j].display_color.empty() ? "#808080" : mfs[j].display_color;
         wxBitmap* mixed_bmp = get_extruder_color_icon(color_str, std::to_string(virtual_id), icon_width, icon_height);
         
-        size_t captured_visible_idx = visible_idx;
+        size_t captured_target = mixed_virtual_id;
         append_menu_item(
-            sub_menu, wxID_ANY, item_name, "", [captured_visible_idx, num_physical](wxCommandEvent&) {
-                // Target is mixed filament with visible_idx
-                // Virtual ID (0-based) = num_physical + visible_idx
-                size_t target_virtual_id = num_physical + captured_visible_idx;
-                plater()->sidebar().change_filament(-2, target_virtual_id);
+            sub_menu, wxID_ANY, item_name, "", [captured_target](wxCommandEvent&) {
+                plater()->sidebar().change_filament(-2, captured_target);
             }, *mixed_bmp, menu,
             []() { return true; }, m_parent);
         

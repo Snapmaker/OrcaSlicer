@@ -16,6 +16,7 @@
 #include "ElephantFootCompensation.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
+#include "MixedFilament.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "Print.hpp"
 #include "SVG.hpp"
@@ -1599,19 +1600,21 @@ static std::vector<unsigned int> decode_manual_pattern_sequence(const MixedFilam
     std::vector<unsigned int> sequence;
     if (mf.manual_pattern.empty())
         return sequence;
-    sequence.reserve(mf.manual_pattern.size());
 
-    for (const char token : mf.manual_pattern) {
-        unsigned int extruder_id = 0;
-        if (token == '1')
-            extruder_id = mf.component_a;
-        else if (token == '2')
-            extruder_id = mf.component_b;
-        else if (token >= '3' && token <= '9')
-            extruder_id = unsigned(token - '0');
+    const std::string flattened = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+    if (flattened.empty())
+        return sequence;
 
-        if (extruder_id >= 1 && extruder_id <= num_physical)
-            sequence.emplace_back(extruder_id);
+    const std::vector<std::string> group_strs = MixedFilamentManager::split_pattern_groups(flattened);
+    for (const std::string &group : group_strs) {
+        const std::vector<std::string> tokens =
+            MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
+        for (const std::string &token : tokens) {
+            const unsigned int extruder_id =
+                MixedFilamentManager::physical_filament_from_token(token, mf, num_physical);
+            if (extruder_id >= 1 && extruder_id <= num_physical)
+                sequence.emplace_back(extruder_id);
+        }
     }
     return sequence;
 }

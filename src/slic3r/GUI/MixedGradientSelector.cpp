@@ -25,7 +25,7 @@ wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, 
 wxRect MixedGradientSelector::gradient_rect() const
 {
     const int margin_x = FromDIP(2);
-    const int margin_y = FromDIP(1);
+    const int margin_y = FromDIP(2);
     const wxSize sz = GetClientSize();
     return wxRect(margin_x, margin_y,
                   std::max(1, sz.GetWidth()  - margin_x * 2),
@@ -126,9 +126,12 @@ void MixedGradientSelector::on_paint(wxPaintEvent &)
         }
     }
 
-    dc.SetPen(wxPen(is_dark ? wxColour(100,100,106) : wxColour(170,170,170), 1));
+    // Outer border (Figma: #E7E8EA, solid, 1px, on full panel)
+    const wxSize sz = GetClientSize();
+    const wxColour border_color = is_dark ? wxColour(80, 80, 86) : wxColour(0xE7, 0xE8, 0xEA);
+    dc.SetPen(wxPen(border_color, 1));
     dc.SetBrush(*wxTRANSPARENT_BRUSH);
-    dc.DrawRectangle(rect);
+    dc.DrawRectangle(0, 0, sz.GetWidth(), sz.GetHeight());
 
     if (m_multi_mode) {
         dc.SetTextForeground(is_dark ? wxColour(236,236,236) : wxColour(30,30,30));
@@ -139,12 +142,24 @@ void MixedGradientSelector::on_paint(wxPaintEvent &)
         return;
     }
 
-    int marker_x = rect.GetLeft() + (rect.GetWidth() * m_value + 50) / 100;
-    marker_x = std::clamp(marker_x, rect.GetLeft(), rect.GetRight());
-    dc.SetPen(wxPen(wxColour(255,255,255), 3));
-    dc.DrawLine(marker_x, rect.GetTop(), marker_x, rect.GetBottom());
-    dc.SetPen(wxPen(wxColour(33,33,33), 1));
-    dc.DrawLine(marker_x, rect.GetTop(), marker_x, rect.GetBottom());
+    // Thumb marker: white bar with shadow, full panel height (Figma: 5x24, shadow)
+    int thumb_center = rect.GetLeft() + (rect.GetWidth() * m_value + 50) / 100;
+    thumb_center = std::clamp(thumb_center, rect.GetLeft() + FromDIP(2), rect.GetRight() - FromDIP(2));
+    const int thumb_w = FromDIP(5);
+    const int thumb_half = thumb_w / 2;
+
+    // Shadow layers (simulating Figma box-shadow)
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.SetBrush(wxBrush(is_dark ? wxColour(60, 60, 60) : wxColour(220, 220, 220)));
+    dc.DrawRectangle(thumb_center - thumb_half - FromDIP(1), 0,
+                     thumb_w + FromDIP(2), sz.GetHeight());
+    dc.SetBrush(wxBrush(is_dark ? wxColour(80, 80, 80) : wxColour(200, 200, 200)));
+    dc.DrawRectangle(thumb_center - thumb_half + FromDIP(1), FromDIP(1),
+                     thumb_w, sz.GetHeight() - FromDIP(1));
+
+    // White thumb
+    dc.SetBrush(*wxWHITE_BRUSH);
+    dc.DrawRectangle(thumb_center - thumb_half, 0, thumb_w, sz.GetHeight());
 }
 
 void MixedGradientSelector::on_left_down(wxMouseEvent &evt)

@@ -7,6 +7,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/regex.hpp>
+#include <curl/curl.h>
 
 namespace Slic3r {
 namespace GUI {
@@ -64,11 +65,32 @@ void open_folder(const std::string& path)
 
 std::string filename_from_url(const std::string& url)
 {
-	// TODO: can it be done with curl?
-	size_t slash = url.find_last_of("/");
-	if (slash == std::string::npos && slash != url.size() - 1)
-		return {};
-	return url.substr(slash + 1, url.size() - slash + 1);
+    std::string result = "";
+    CURLU* h = curl_url();
+    if (h) {
+        if (curl_url_set(h, CURLUPART_URL, url.c_str(), 0) == CURLUE_OK) {
+            char* path = nullptr;
+            if (curl_url_get(h, CURLUPART_PATH, &path, 0) == CURLUE_OK) {
+                std::string p(path);
+                curl_free(path);
+                size_t slash = p.find_last_of('/');
+                if (slash != std::string::npos)
+                    result = p.substr(slash + 1);
+            }
+        }
+        curl_url_cleanup(h);
+    }
+    // fallback: strip query string manually if curl URL parsing failed
+    if (result.empty()) {
+        size_t slash = url.find_last_of('/');
+        if (slash != std::string::npos) {
+            result       = url.substr(slash + 1);
+            size_t query = result.find('?');
+            if (query != std::string::npos)
+                result = result.substr(0, query);
+        }
+    }
+    return result;
 }
 }
 
@@ -144,7 +166,7 @@ void Downloader::start_download(const std::string& full_url)
 
     // Orca: Replace PS workaround for "mysterious slash" with a more dynamic approach
     // Windows seems to have fixed the issue and this provides backwards compatability for those it still affects
-	boost::regex re(R"(^(Snapmaker_Orca|prusaslicer|bambustudio|cura):\/\/open[\/]?\?file=)", boost::regbase::icase);
+    boost::regex  re(R"(^(snapmaker-orca|Snapmaker_Orca|prusaslicer|bambustudio|cura):\/\/open[\/]?\?file=)", boost::regbase::icase);
 	boost::regex re2(R"(^(bambustudioopen):\/\/)", boost::regex::icase);
     boost::smatch results;
 

@@ -81,10 +81,22 @@ Semver get_min_version_from_json(std::string file_path)
 Semver get_version_from_json(std::string file_path)
 {
     try {
+        if (!boost::filesystem::exists(file_path)) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": file not found: " << file_path;
+            return Semver();
+        }
         boost::nowide::ifstream ifs(file_path);
+        if (!ifs.good()) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": cannot open: " << file_path;
+            return Semver();
+        }
         json j;
         ifs >> j;
-        std::string version_str = j.at(BBL_JSON_KEY_VERSION);
+        if (j.is_null() || !j.is_object() || !j.contains(BBL_JSON_KEY_VERSION)) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": missing version key in " << file_path;
+            return Semver();
+        }
+        std::string version_str = j.at(BBL_JSON_KEY_VERSION).get<std::string>();
 
         auto config_version = Semver::parse(version_str);
         if (! config_version) {
@@ -93,10 +105,13 @@ Semver get_version_from_json(std::string file_path)
             return *config_version;
         }
     }
-    catch(nlohmann::detail::parse_error &err) {
+    catch (const nlohmann::detail::parse_error &err) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file_path<<" got a nlohmann::detail::parse_error, reason = " << err.what();
+        return Semver();       
+    }
+    catch (const std::exception &err) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": " << file_path << " — " << err.what();
         return Semver();
-        //throw ConfigurationError(format("Failed loading configuration file \"%1%\": %2%", file_path, err.what()));
     }
 }
 
@@ -876,7 +891,10 @@ static std::vector<std::string> s_Preset_filament_options {
     "filament_flow_ratio", "filament_density", "filament_cost", "filament_minimal_purge_on_wipe_tower",
     "nozzle_temperature", "nozzle_temperature_initial_layer",
     // BBS
-    "cool_plate_temp", "textured_cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp", "cool_plate_temp_initial_layer", "textured_cool_plate_temp_initial_layer", "eng_plate_temp_initial_layer", "hot_plate_temp_initial_layer", "textured_plate_temp_initial_layer", "supertack_plate_temp_initial_layer", "supertack_plate_temp",
+    "cool_plate_temp", "textured_cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp",
+    "cool_plate_temp_initial_layer", "textured_cool_plate_temp_initial_layer", "eng_plate_temp_initial_layer",
+    "hot_plate_temp_initial_layer", "textured_plate_temp_initial_layer", "supertack_plate_temp_initial_layer", "supertack_plate_temp",
+    "graphic_effect_plate_temp", "graphic_effect_plate_temp_initial_layer",
     // "bed_type",
     //BBS:temperature_vitrification
     "temperature_vitrification", "reduce_fan_stop_start_freq","dont_slow_down_outer_wall", "slow_down_for_layer_cooling", "fan_min_speed",
@@ -2640,6 +2658,19 @@ std::vector<std::string> PresetCollection::diameters_of_selected_printer()
     std::set<std::string> diameters;
     auto printer_model = m_edited_preset.config.opt_string("printer_model");
     for (auto &preset : m_presets) {
+        if (preset.is_visible && preset.config.opt_string("printer_model") == printer_model)
+            diameters.insert(preset.config.opt_string("printer_variant"));
+    }
+    return std::vector<std::string>{diameters.begin(), diameters.end()};
+}
+
+std::vector<std::string> PresetCollection::diameters_for_same_printer_model()
+{
+    std::set<std::string> diameters;
+    const std::string     printer_model = m_edited_preset.config.opt_string("printer_model");
+    for (auto &preset : m_presets) {
+        if (!preset.is_system)
+            continue;
         if (preset.config.opt_string("printer_model") == printer_model)
             diameters.insert(preset.config.opt_string("printer_variant"));
     }
@@ -2865,13 +2896,28 @@ bool PresetCollection::select_preset_by_name(const std::string &name_w_suffix, b
         // Preset found by its name and it is visible.
         idx = it - m_presets.begin();
     else {
-        // Find the first visible preset.
-        for (size_t i = m_default_suppressed ? m_num_default_presets : 0; i < m_presets.size(); ++ i)
-            if (m_presets[i].is_visible) {
-                idx = i;
-                break;
+        bool found = false;
+        //Only U1 cancel current preset and select the other avalibale preset to show and not switch the other machine 
+        if (m_type == Preset::Type::TYPE_PRINTER && it != m_presets.end() && it->name == name && !it->is_visible) {
+            std::string printer_model = it->config.opt_string("printer_model");
+            if (!printer_model.empty()) {
+                for (size_t i = m_default_suppressed ? m_num_default_presets : 0; i < m_presets.size(); ++i) {
+                    if (m_presets[i].is_visible && m_presets[i].config.opt_string("printer_model") == printer_model) {
+                        idx = i;
+                        found = true;
+                        break;
+                    }
+                }
             }
-        // If the first visible preset was not found, return the 0th element, which is the default preset.
+        }
+        if (!found) {
+            // Find the first visible preset.
+            for (size_t i = m_default_suppressed ? m_num_default_presets : 0; i < m_presets.size(); ++ i)
+                if (m_presets[i].is_visible) {
+                    idx = i;
+                    break;
+                }
+        }
     }
 
     // 2) Select the new preset.

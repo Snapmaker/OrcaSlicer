@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <numeric>
 #include <vector>
+#include <set>
 #include <string>
 #include <regex>
 #include <future>
@@ -63,6 +64,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/FilamentHotBedNozzleRules.hpp"
 
 // For stl export
 #include "libslic3r/CSGMesh/ModelToCSGMesh.hpp"
@@ -126,6 +128,7 @@
 #include "Widgets/Label.hpp"
 #include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/RadioGroup.hpp"
+#include "Widgets/DialogButtons.hpp"
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/Button.hpp"
 
@@ -210,6 +213,69 @@ wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
 #define PRINTER_PANEL_SIZE_SMALL (wxSize(FromDIP(98), FromDIP(68)))
 #define PRINTER_PANEL_SIZE_WIDEN (wxSize(FromDIP(136), FromDIP(68)))
 #define PRINTER_PANEL_SIZE (wxSize(FromDIP(98), FromDIP(98)))
+
+// Nozzle diameter selection when multiple diameters are reported (e.g. U1 sync).
+// diameters_raw: list from device (may have duplicates or fewer than 4). Dedup and full-list logic inside.
+namespace {
+class NozzleDiameterSelectDialog : public DPIDialog
+{
+    RadioGroup* m_radio = nullptr;
+    std::vector<std::string> m_diameters;
+
+public:
+    NozzleDiameterSelectDialog(wxWindow* parent, const wxString& message, const wxString& caption,
+                               const std::vector<std::string>& diameters_raw)
+        : DPIDialog(parent, wxID_ANY, caption, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+    {
+        static const std::vector<std::string> full_list = {"0.2", "0.4", "0.6", "0.8"};
+        std::set<std::string> returned_set(diameters_raw.begin(), diameters_raw.end());
+        std::vector<bool> item_enabled(full_list.size(), true);
+        bool any_enabled = false;
+        for (size_t i = 0; i < full_list.size(); ++i) {
+            bool in = (returned_set.count(full_list[i]) > 0);
+            item_enabled[i] = in;
+            if (in) any_enabled = true;
+        }
+        if (!any_enabled)
+            item_enabled.assign(full_list.size(), true);
+        m_diameters = full_list;
+
+        SetBackgroundColour(*wxWHITE);
+        wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
+        wxStaticText* msg = new wxStaticText(this, wxID_ANY, message);
+        msg->Wrap(FromDIP(400));
+        sizer->Add(msg, 0, wxALL, FromDIP(10));
+        std::vector<wxString> labels;
+        for (const auto& d : m_diameters)
+            labels.push_back(_L("Nozzle") + ": " + from_u8(d) + "mm");
+        m_radio = new RadioGroup(this, labels, wxHORIZONTAL, 2);
+        for (size_t i = 0; i < item_enabled.size(); ++i)
+            if (!item_enabled[i])
+                m_radio->SetItemEnabled((int)i, false);
+        int first = 0;
+        for (; first < (int)item_enabled.size(); ++first)
+            if (item_enabled[first]) break;
+        if (first >= (int)item_enabled.size()) first = 0;
+        m_radio->SetSelection(first, false);
+        sizer->Add(m_radio, 0, wxALL, FromDIP(10));
+        auto* btns = new DialogButtons(this, {"OK", "Cancel"});
+        btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+        btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+        sizer->Add(btns, 0, wxEXPAND);
+        SetSizer(sizer);
+        Layout();
+        Fit();
+        Centre(wxBOTH);
+        wxGetApp().UpdateDlgDarkUI(this);
+    }
+    int GetSelection() const { return m_radio ? m_radio->GetSelection() : -1; }
+    std::string GetSelectedDiameter() const {
+        int idx = GetSelection();
+        return (idx >= 0 && idx < (int)m_diameters.size()) ? m_diameters[idx] : std::string();
+    }
+    void on_dpi_changed(const wxRect& suggested_rect) override {}
+};
+} // namespace
 
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
 {
@@ -645,6 +711,7 @@ struct Sidebar::priv
     // BBS printer config
     StaticBox* m_panel_printer_title = nullptr;
     ScalableButton* m_printer_icon = nullptr;
+    ScalableButton* m_printerinfo_syncbtn = nullptr;
     ScalableButton* m_printer_setting = nullptr;
     wxStaticText* m_text_printer_settings = nullptr;
     wxPanel* m_panel_printer_content = nullptr;
@@ -933,6 +1000,19 @@ struct DynamicFilamentList1Based : DynamicFilamentList
 static DynamicFilamentList dynamic_filament_list;
 static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
+static wxString nozzle_type_key_to_label(const std::string& key)
+{
+    if (key == "hardened_steel")
+        return _L("Hardened Steel");
+    if (key == "stainless_steel")
+        return _L("Stainless Steel");
+    if (key == "brass")
+        return _L("Brass");
+    if (key == "undefine")
+        return _L("Unknown");
+    return wxString::FromUTF8(key);
+}
+
 Sidebar::Sidebar(Plater *parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
 {
@@ -988,17 +1068,151 @@ Sidebar::Sidebar(Plater *parent)
         p->m_printer_icon = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "printer");
         p->m_text_printer_settings = new Label(p->m_panel_printer_title, _L("Printer"), LB_PROPAGATE_MOUSE_EVENT);
 
-        p->m_printer_icon->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
-            //auto wizard_t = new ConfigWizard(wxGetApp().mainframe);
-            //wizard_t->run(ConfigWizard::RR_USER, ConfigWizard::SP_CUSTOM);
+        // Use ams_fila_sync icon (sync_nozzle_info.svg does not exist in resources)
+        p->m_printerinfo_syncbtn = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "nozzle_sync");
+        p->m_printerinfo_syncbtn->SetCursor(wxCURSOR_HAND);
+        p->m_printerinfo_syncbtn->SetToolTip(_L("Synchronize nozzle information"));
+        p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
+            bool hasConnectDevice = false;
+            auto devices = wxGetApp().app_config->get_devices();
+            for (const auto& device : devices) {
+                if (device.connected)
+                    hasConnectDevice = true;
+            }
+
+            if (!hasConnectDevice)
+            {
+                // showdialog tips no connect device
+                wxTheApp->CallAfter([this]() {
+                    MessageDialog dlg(wxGetApp().mainframe,
+                                      _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
+                                      _L("Note"), wxOK);
+                    dlg.ShowModal();
+                    });                
+                return;        
+            }
+
+            std::string                machine_type = "";
+            std::vector<std::string>   nozzle_diameters;
+            std::string                device_name = "";
+            std::shared_ptr<PrintHost> host = nullptr;
+            wxGetApp().get_connect_host(host);
+            const bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+
+            const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
+            if (!sync_nozzle_slots.empty()) {
+                nozzle_diameters.clear();
+                for (const auto& slot : sync_nozzle_slots) {
+                    std::string nd = slot.nozzle_info;
+                    boost::algorithm::trim(nd);
+                    if (nd.size() > 2 && boost::iends_with(nd, "mm")) {
+                        nd.resize(nd.size() - 2);
+                        boost::algorithm::trim(nd);
+                    }
+                    if (!nd.empty())
+                        nozzle_diameters.push_back(nd);
+                }
+            }
+            if (got_machine_info && machine_type == "Snapmaker U1")
+            {
+                if (nozzle_diameters.size() <= 0)
+                {
+                    wxTheApp->CallAfter([this]() {
+                        MessageDialog dlgEx(wxGetApp().mainframe,
+                                            _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
+                                            _L("Note"), wxOK);
+                        dlgEx.ShowModal();
+                    });    
+
+                    return;
+                }
+
+                bool res = false;
+                std::string headNozzleSize = nozzle_diameters[0];
+                for (int i = 1; i < nozzle_diameters.size(); i++)
+                {
+                    if (headNozzleSize != nozzle_diameters[i])
+                    {
+                        res = true;
+                        break;
+                    }
+                }
+
+                if (res)
+                {
+                    std::vector<std::string> diameters_raw = nozzle_diameters;
+                    //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
+                    wxTheApp->CallAfter([this, diameters_raw]() {
+                        NozzleDiameterSelectDialog dlg(
+                            wxGetApp().mainframe,
+                            _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
+                            _L("Set Nozzle Diameter"),
+                            diameters_raw);
+                        if (dlg.ShowModal() == wxID_OK) {
+                            std::string sel = dlg.GetSelectedDiameter();
+                            if (!sel.empty()) {
+                                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, sel);
+                                if (preset) {
+                                    preset->is_visible = true;
+
+                                    auto diameter = sel;
+                                    auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+                                    if (preset == nullptr) {
+                                        BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+                                        return;
+                                    }
+                                    preset->is_visible = true; // force visible
+
+                                    for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
+                                        p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+                                    }
+
+                                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                                    wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+                                }
+                            }
+                        }
+                    });
+                    return;
+                }
+                else {
+                    // All tool heads report the same diameter: apply it without opening the picker.
+                    std::string diameter = headNozzleSize;
+                    boost::algorithm::trim(diameter);
+                    if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
+                        diameter.resize(diameter.size() - 2);
+                        boost::algorithm::trim(diameter);
+                    }
+                    wxTheApp->CallAfter([this, diameter]() {
+                        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+                        if (preset == nullptr) {
+                            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
+                            return;
+                        }
+                        preset->is_visible = true;
+
+                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
+                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+
+                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+
+                        wxTheApp->CallAfter([this]() {
+                            MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
+                                                 _L("Note"), wxOK);
+                            dlg_Ex.ShowModal();
+                        });
+                    });
+                }
+            }
+            
             });
-
-
+        
         p->m_printer_setting = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "settings");
+        p->m_printer_setting->SetToolTip(_L("settings"));
         p->m_printer_setting->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-            // p->editing_filament = -1;
-            // wxGetApp().params_dialog()->Popup();
-            // wxGetApp().get_tab(Preset::TYPE_FILAMENT)->restore_last_select_item();
             wxGetApp().run_wizard(ConfigWizard::RR_USER, ConfigWizard::SP_PRINTERS);
             });
 
@@ -1007,18 +1221,14 @@ Sidebar::Sidebar(Plater *parent)
         h_sizer_title->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
         h_sizer_title->Add(p->m_text_printer_settings, 0, wxALIGN_CENTER);
         h_sizer_title->AddStretchSpacer();
+        h_sizer_title->Add(p->m_printerinfo_syncbtn, 0, wxALIGN_CENTER);
+        h_sizer_title->wxSizer::AddSpacer(FromDIP(10));
         h_sizer_title->Add(p->m_printer_setting, 0, wxALIGN_CENTER);
         h_sizer_title->AddSpacer(FromDIP(SidebarProps::TitlebarMargin()));
         h_sizer_title->SetMinSize(-1, 3 * em);
 
         p->m_panel_printer_title->SetSizer(h_sizer_title);
         p->m_panel_printer_title->Layout();
-
-        // 1.2 Add spliters around title bar
-        // add spliter 1
-        //auto spliter_1 = new ::StaticLine(p->scrolled);
-        //spliter_1->SetBackgroundColour("#A6A9AA");
-        //scrolled_sizer->Add(spliter_1, 0, wxEXPAND);
 
         // add printer title
         scrolled_sizer->Add(p->m_panel_printer_title, 0, wxEXPAND | wxALL, 0);
@@ -1139,9 +1349,10 @@ Sidebar::Sidebar(Plater *parent)
         m_bed_type_list = new ComboBox(p->panel_printer_preset, wxID_ANY, wxString(""), wxDefaultPosition, {-1, FromDIP(30)}, 0, nullptr, wxCB_READONLY);
         const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
         if (bed_type_def && bed_type_def->enum_keys_map) {
-            for (auto item : bed_type_def->enum_labels) {
+            for (const auto& item : bed_type_def->enum_labels)
                 m_bed_type_list->AppendString(_L(item));
-            }
+            for (const auto& v : bed_type_def->enum_values)
+                m_bed_type_combo_enum_values.push_back(v);
         }
 
         // 添加链接事件等
@@ -1645,51 +1856,34 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     bool use_new_connection = appconfig->get("use_new_connect") == "true";
 
-    // 隐藏所有按钮（使用 combo 内部的按钮）
+    auto printer_config     = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto printer_model_opt  = printer_config.option<ConfigOptionString>("printer_model");
+    bool is_snapmaker_u1    = false;
+    if (printer_model_opt) {
+        std::string printer_model = printer_model_opt->value;
+        is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+    }
+
     p->combo_printer->set_show_machine_connecting_button(false);
     p->combo_printer->set_show_connection_button(false);
 
     if (preset_bundle.use_bbl_network()) {
-        //only show connection button for not-BBL printer
-        // connection_btn->Hide(); // 已在上面隐藏
-        //only show sync-ams button for BBL printer
         ams_btn->Show();
-        //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
-        // connection_btn->Hide(); // 已在上面隐藏
         ams_btn->Hide();
         auto print_btn_type = MainFrame::PrintSelectType::eExportGcode;
 
         const auto& edit_preset = preset_bundle.printers.get_edited_preset();
 
-        std::string local_name = "";
-        if (edit_preset.is_system) {
-            local_name = edit_preset.name;
-        } else {
-            const auto& base_preset = preset_bundle.printers.get_preset_base(edit_preset);
-            if (base_preset)
-                local_name = base_preset->name;
-            else
-                local_name = "";
-        }
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-        local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
-
-        // Snapmaker U1
-        std::string test_preset_name = "Snapmaker U1 0.4 nozzle";
-        bool        is_test          = (test_preset_name == local_name);
-
-
         static bool is_sm_page = false;
 
-        if (!use_new_connection && !is_test && reload_printer_view) {
+        if (!use_new_connection && !is_snapmaker_u1 && reload_printer_view) {
 
             p->combo_printer->set_show_connection_button(true);
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
             wxString apikey;
             if (url.empty()) {
-                // url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
                 std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
                 url                  = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
             }
@@ -1703,8 +1897,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    // 加载二代机页面
-                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) + "/web/flutter_web/index.html?path=3");
+                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/web/flutter_web/index.html?path=3");
                 }
             }
             
@@ -1717,41 +1910,34 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                              MainFrame::PrintSelectType::eSendGcode;
             p_mainframe->set_print_button_to_default(print_btn_type);
 
-            auto devices = wxGetApp().app_config->get_devices();
-            std::string preset_name = "";
-            for (const auto& device : devices) {
-                if (device.connected) {
-                    preset_name = device.preset_name;
-                    break;
+            if (is_snapmaker_u1) {
+
+                auto        devices     = wxGetApp().app_config->get_devices();
+                bool hasOnlineMachine = false;
+                for (const auto& device : devices) {
+                    if (device.connected) {
+                        hasOnlineMachine = true;
+                        break;
+                    }
                 }
-            }
 
-            if (preset_name != "") {
-                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), '('), preset_name.end());
-                preset_name.erase(std::remove(preset_name.begin(), preset_name.end(), ')'), preset_name.end());
-
-                if (local_name == preset_name) {
+                if(hasOnlineMachine)
                     p->combo_printer->set_show_machine_connecting_button(true);
-                }
-            }
-            else {
-                // 未连接机器
-                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(PAGE_HTTP_PORT) +
+    
+                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
                 if (!is_sm_page && reload_printer_view) {
-                    wxGetApp().mainframe->load_printer_url(real_url); // 到时全部加载本地交互页面
+                    wxGetApp().mainframe->load_printer_url(real_url); 
                     is_sm_page = true;
-                }
-                    
+                }                   
             }
 
-            if (!p->combo_printer->get_show_machine_connecting_button() && !is_test) {
+            if (!p->combo_printer->get_show_machine_connecting_button() && !is_snapmaker_u1) {
                 p->combo_printer->set_show_connection_button(true);
             }
         }
-
     }
 
     if (cfg.opt_bool("pellet_modded_printer")) {
@@ -1764,9 +1950,46 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     show_SEMM_buttons(/*cfg.opt_bool("single_extruder_multi_material")*/true);
 
-    //p->m_staticText_filament_settings->Update();
+    bool support_multi_bed_types = cfg.opt_bool("support_multi_bed_types");
+    const ConfigOptionDef* bed_type_def = print_config_def.get("curr_bed_type");
+    const t_config_enum_values* keys_map = bed_type_def ? bed_type_def->enum_keys_map : nullptr;
 
-    if (is_bbl_vendor || cfg.opt_bool("support_multi_bed_types")) {
+    m_bed_type_list->Clear();
+    m_bed_type_combo_enum_values.clear();
+    if (bed_type_def && keys_map) {
+        if (is_snapmaker_u1 && !support_multi_bed_types) {
+            for (const auto& item : bed_type_def->enum_labels_u1)
+                m_bed_type_list->AppendString(_L(item));
+            for (const auto& v : bed_type_def->enum_values_u1)
+                m_bed_type_combo_enum_values.push_back(v);
+        } else if (is_snapmaker_u1 && support_multi_bed_types) {
+            for (const auto& item : bed_type_def->enum_labels_ex)
+                m_bed_type_list->AppendString(_L(item));
+            for (const auto& v : bed_type_def->enum_values_ex)
+                m_bed_type_combo_enum_values.push_back(v);
+        } else {
+            for (const auto& item : bed_type_def->enum_labels)
+                m_bed_type_list->AppendString(_L(item));
+            for (const auto& v : bed_type_def->enum_values)
+                m_bed_type_combo_enum_values.push_back(v);
+        }
+    }
+
+    auto get_key_for_bed_type = [keys_map](BedType bt) -> std::string {
+        if (!keys_map) return {};
+        for (const auto& item : *keys_map)
+            if ((BedType)item.second == bt) return item.first;
+        return {};
+    };
+    auto get_selection_index = [&]() -> int {
+        BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+        std::string key = get_key_for_bed_type(curr);
+        for (size_t i = 0; i < m_bed_type_combo_enum_values.size(); ++i)
+            if (m_bed_type_combo_enum_values[i] == key) return (int)i;
+        return 0;
+    };
+
+    if (is_bbl_vendor || support_multi_bed_types || is_snapmaker_u1) {
         m_bed_type_list->Enable();
         // Orca: don't update bed type if loading project
         if (!p->plater->is_loading_project()) {
@@ -1792,32 +2015,35 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             }
             
             // Orca: Update proj_config directly to avoid callback context issues
+            if (is_snapmaker_u1 && !support_multi_bed_types) {
+                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP) {
+                    bed_type_to_use = btPTE;
+                    wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
+                    wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
+                }
+            }
+
             wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type_to_use));
-            
-            // Orca: Update UI without triggering callback to avoid unintended side effects
-            // The callback should only be triggered by user manual changes, not by preset switching
-            m_bed_type_list->SetSelection((int)bed_type_to_use - 1);
+            int sel_idx = get_selection_index();
+            m_bed_type_list->SetSelection(sel_idx);
+        } else {
+            if (is_snapmaker_u1 && !support_multi_bed_types) {
+                BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+                if (curr != btPTE && curr != btPEI && curr != btGESP) {
+                    wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
+                    m_bed_type_list->SetSelection(0);
+                } else
+                    m_bed_type_list->SetSelection(get_selection_index());
+            } else
+                m_bed_type_list->SetSelection(get_selection_index());
         }
     } else {
-        // Orca: 不支持多床型时，从配置读取默认床型
         BedType default_bed_type = preset_bundle.printers.get_edited_preset().get_default_bed_type(&preset_bundle);
-        
-        // Orca: 即使不支持多床型，也需要保存床型到 project_config，确保数据一致性
         wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(default_bed_type));
-        
-        // Orca: combobox don't have the btDefault option, so we need to -1
-        // Orca: use Select instead of SelectAndNotify to avoid overwriting printer settings when switching printers
-        m_bed_type_list->Select((int)default_bed_type - 1);
+        m_bed_type_list->SetSelection(get_selection_index());
         m_bed_type_list->Disable();
     }
 
-    // Update the print choosers to only contain the compatible presets, update the dirty flags.
-    //BBS
-
-    // Update the printer choosers, update the dirty flags.
-    //p->combo_printer->update();
-    // Update the filament choosers to only contain the compatible presets, update the color preview,
-    // update the dirty flags.
     if (print_tech == ptFFF) {
         for (PlaterPresetComboBox* cb : p->combos_filament)
             cb->update();
@@ -1828,9 +2054,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         update_printer_thumbnail();
     }
         
-
-    // Orca:: show device tab based on vendor type
-    
     p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !use_new_connection);
     p_mainframe->m_tabpanel->SetSelection(p_mainframe->m_tabpanel->GetSelection());
 }
@@ -1892,6 +2115,25 @@ void Sidebar::update_presets(Preset::Type preset_type)
     case Preset::TYPE_PRINTER:
     {
         // update_nozzle_settings();
+        auto machineName = wxGetApp().preset_bundle->printers.get_selected_preset_name();
+
+        auto printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        auto        printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+        if (printer_model_opt)
+        {
+            std::string printer_model   = printer_model_opt->value;
+            bool        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+
+            if (is_snapmaker_u1)
+            {
+                p->m_printerinfo_syncbtn->Show();
+            } 
+            else 
+            {
+                p->m_printerinfo_syncbtn->Hide();
+            }
+        }
+
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
 
@@ -1922,6 +2164,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": exit.");
+
 }
 
 //BBS
@@ -1973,6 +2216,7 @@ void Sidebar::msw_rescale()
     p->m_panel_filament_title->GetSizer()
         ->SetMinSize(-1, 3 * wxGetApp().em_unit());
     p->m_printer_icon->msw_rescale();
+    p->m_printerinfo_syncbtn->msw_rescale();
     p->m_printer_setting->msw_rescale();
     p->m_filament_icon->msw_rescale();
     p->m_bpButton_add_filament->msw_rescale();
@@ -2044,6 +2288,7 @@ void Sidebar::sys_color_changed()
     //for (wxWindow* btn : std::vector<wxWindow*>{ p->btn_reslice, p->btn_export_gcode })
     //    wxGetApp().UpdateDarkUI(btn, true);
     p->m_printer_icon->msw_rescale();
+    p->m_printerinfo_syncbtn->msw_rescale();
     p->m_printer_setting->msw_rescale();
     p->m_filament_icon->msw_rescale();
     p->m_bpButton_add_filament->msw_rescale();
@@ -2518,39 +2763,72 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                                                 nullptr, wxCB_READONLY);
         
 
-        if (!wxGetApp().preset_bundle->printers.get_edited_preset().is_system) {
-            auto diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
-            diameter_combo->AppendString(diameter);
-            diameter_combo->Enable(false);
-        } else {
-            auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
-            if (diameters.size() < 2) {
-                diameter_combo->Enable(false);
-
-            }
-            for (auto& diameter : diameters) {
-                wxString str = diameter + "mm";
-                diameter_combo->AppendString(str);
-            }
+        // Visible presets for this printer_model (system + user). Imported multi-nozzle variants are
+        // usually non-system; diameters_for_same_printer_model() only counted system and kept the combo disabled.
+        auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
+        for (auto& diameter : diameters) {
+            diameter_combo->AppendString(wxString(diameter) + "mm");
         }
-        
-        
+        if (diameter_combo->GetCount() == 0) {
+            const auto *pv = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant");
+            if (pv)
+                diameter_combo->AppendString(wxString(pv->value) + "mm");
+        }
+        if (diameters.size() < 2) {
+            diameter_combo->Enable(false);
+        }
+
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
+
+            //auto* pNotice = p->plater->get_notification_manager();
+            //if (pNotice)
+            //{
+            //    pNotice->close_notification_of_type(NotificationType::CustomNotification);
+            //    pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+            //    pNotice->set_slicing_progress_hidden();            
+            //}
+
+            auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+            if (printer_model_opt) {
+                std::string printer_model   = printer_model_opt->value;
+                bool        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+
+                if (is_snapmaker_u1)
+                {
+                    //check the config has flags to tips switch nozzle and all nozzle will be changed to the same type
+                    auto  notShow = wxGetApp().app_config->get("app", "sync_diameter_flags");
+                    if (notShow != "true")
+                    {
+                        RichMessageDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe),
+                                              _L("Note: Changing this will sync all other nozzles to the same diameter."),
+                                              _L("Set Nozzle Diameter"), 
+                                               wxOK);
+                        dlg.ShowCheckBox(_L("Don't show this again"), false);
+                        auto res = dlg.ShowModal();
+                        bool isCheckBox = dlg.IsCheckBoxChecked();
+
+                        if (wxID_OK == res)
+                            wxGetApp().app_config->set("app", "sync_diameter_flags", isCheckBox);     
+                    }
+                }
+            }
+
             auto diameter = diameter_combo->GetValue().substr(0, 3);
             auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
             if (preset == nullptr) {
-                MessageDialog dlg(nullptr, _L(""), _L(""));
-                dlg.ShowModal();
-                return false;
+                BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+                return;
             }
             preset->is_visible = true; // force visible
             
             for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                // 当前原则上不支持两个头使用不同的喷嘴型号
+                //set all nozzle use the diameter
                 p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
             }
 
-            return wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+            wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+            // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
         });
         
         auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
@@ -2566,28 +2844,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         // 删除Flow相关控件
 
-        // Add edit button
-        ScalableButton* edit_btn = new ScalableButton(nozzle_panel, wxID_ANY, "edit");
-        if (is_dark) {
-            edit_btn->SetBackgroundColour(wxColour(45, 45, 49));
-        }
-        else {
-            edit_btn->SetBackgroundColour(wxColour(255, 255, 255));
-        }
-
-        
-        edit_btn->SetToolTip(_L("Click to edit nozzle settings"));
-
-        edit_btn->Bind(wxEVT_BUTTON, [this, i, new_nozzle_count](wxCommandEvent&) {
-            p->editing_filament = -1;
-            wxGetApp().params_dialog()->Show();
-            wxGetApp().get_tab(Preset::TYPE_PRINTER)->activate_option("", "Extruder " + std::to_string(i + 1));
-        });
-
-        p->m_nozzle_edit_btns.push_back(edit_btn);
-
         tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
-        tab_sizer->Add(edit_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10)); // 添加右边距
 
         nozzle_panel->SetSizer(tab_sizer);
 
@@ -3101,6 +3358,11 @@ struct Plater::priv
     std::chrono::steady_clock::time_point m_slice_start_time;
     bool                                  m_slice_timing_active = false;
 
+    // Last filament rule mismatch flags (for CustomNotification debouncing).
+    bool m_prev_filament_nozzle_rule_mismatch{ false };
+    bool m_prev_filament_gesp_bed_rule_mismatch{ false };
+    bool m_prev_filament_pei_bed_rule_mismatch{ false };
+
     static const std::regex pattern_bundle;
     static const std::regex pattern_3mf;
     static const std::regex pattern_zip_amf;
@@ -3289,6 +3551,7 @@ struct Plater::priv
     }
 
     void process_validation_warning(StringObjectException const &warning) const;
+    void notify_filament_compatibility_after_apply();
 
     bool background_processing_enabled() const {
 #ifdef SUPPORT_BACKGROUND_PROCESSING
@@ -6100,6 +6363,61 @@ void Plater::priv::process_validation_warning(StringObjectException const &warni
     }
 }
 
+void Plater::priv::notify_filament_compatibility_after_apply()
+{
+    if (printer_technology != ptFFF)
+        return;
+    if (q->only_gcode_mode())
+        return;
+
+    Slic3r::Print *print = background_process.fff_print();
+    if (print == nullptr)
+        return;
+
+    Slic3r::NozzleFilamentRuleMismatch nozzle_mismatch;
+    bool                               isGraphicMatch(false), isPeiBedMatchNotPla(false), isPeiBedMatchTpu(false);
+
+    print->filament_rule_mismatch_flags(nozzle_mismatch, isGraphicMatch, isPeiBedMatchNotPla, isPeiBedMatchTpu,
+                                        wxGetApp().preset_bundle);
+
+    wxString filamentMismatchNozzleWarning;
+    if (nozzle_mismatch.has_mismatch) {
+        const wxString currentNozzle = wxString::FromUTF8(nozzle_mismatch.nozzle_diameter_mm);
+        const wxString nozzleType    = nozzle_type_key_to_label(nozzle_mismatch.nozzle_type_key);
+        const wxString filamentdata =
+            nozzle_mismatch.filament_preset_name.empty() ? _L("(unknown)")
+                                                         : wxString::FromUTF8(nozzle_mismatch.filament_preset_name);
+        filamentMismatchNozzleWarning =
+            wxString::Format(_L("Note: Using a %s mm %s nozzle for %s is not recommended."), currentNozzle, nozzleType, filamentdata);
+    }
+    wxString filamentMismatchPeiBedMsgNotPla  = wxString(_L("Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."));
+    wxString filamentMismatchPeiBedMsgTpu     = wxString(_L("Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."));
+    wxString filamentMismatchGraphicBedMsg = wxString(_L("Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."));
+   
+    if (isPeiBedMatchTpu && isPeiBedMatchNotPla)
+        isPeiBedMatchNotPla = false;
+
+    if (isGraphicMatch || isPeiBedMatchNotPla)
+    {
+        notification_manager->close_notification_of_type(NotificationType::CustomNotification);
+
+        if (isGraphicMatch)
+            notification_manager->push_notification(into_u8(filamentMismatchGraphicBedMsg), 0);
+        if (isPeiBedMatchNotPla)
+            notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgNotPla), 0);
+        notification_manager->set_slicing_progress_hidden();
+    }
+
+    if (nozzle_mismatch.has_mismatch)
+        notification_manager->push_notification(into_u8(filamentMismatchNozzleWarning), 0);
+
+    if (isPeiBedMatchTpu)
+    {            
+        notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgTpu), 0);
+    }
+
+}
+
 
 // Update background processing thread from the current config and Model.
 // Returns a bitmask of UpdateBackgroundProcessReturnState.
@@ -6124,6 +6442,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         this->preview->update_gcode_result(partplate_list.get_current_slice_result());
     }
     Print::ApplyStatus invalidated = background_process.apply(this->model, wxGetApp().preset_bundle->full_config());
+    notify_filament_compatibility_after_apply();
 
     if ((invalidated == Print::APPLY_STATUS_CHANGED) || (invalidated == Print::APPLY_STATUS_INVALIDATED))
         // BBS: add only gcode mode
@@ -7364,6 +7683,14 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
 // BBS
 void Plater::priv::on_combobox_select(wxCommandEvent &evt)
 {
+    //auto* pNotice = q->get_notification_manager();
+    //if(pNotice)
+    //{
+    //    pNotice->close_notification_of_type(NotificationType::PlaterWarning);    
+    //    pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
+    //    pNotice->set_slicing_progress_hidden();
+    //}
+
     PlaterPresetComboBox* preset_combo_box = dynamic_cast<PlaterPresetComboBox*>(evt.GetEventObject());
     if (preset_combo_box) {
         this->on_select_preset(evt);
@@ -7383,7 +7710,10 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
 {
     ComboBox* combo = static_cast<ComboBox*>(evt.GetEventObject());
     int selection = combo->GetSelection();
-    std::string bed_type_name = print_config_def.get("curr_bed_type")->enum_values[selection];
+    const std::vector<std::string>& combo_values = sidebar->get_bed_type_combo_enum_values();
+    std::string bed_type_name = (combo_values.size() > (size_t)selection)
+        ? combo_values[selection]
+        : print_config_def.get("curr_bed_type")->enum_values[selection];
 
     PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
     DynamicPrintConfig& proj_config = wxGetApp().preset_bundle->project_config;
@@ -13751,19 +14081,17 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     // Snapmaker U1
     const auto preset = wxGetApp().preset_bundle->printers.get_edited_preset();
-    std::string local_name = "";
-    if (preset.is_system) {
-        local_name = preset.name;
-    } else {
-        const auto& base_preset = wxGetApp().preset_bundle->printers.get_preset_base(preset);
-        local_name              = base_preset->name;
+    auto       printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto       printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
+    bool       is_snapmaker_u1   = false;
+    if (printer_model_opt) {
+        std::string printer_model = printer_model_opt->value;
+        is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
-    local_name.erase(std::remove(local_name.begin(), local_name.end(), '('), local_name.end());
-    local_name.erase(std::remove(local_name.begin(), local_name.end(), ')'), local_name.end());
 
-    if (wxGetApp().app_config->get("use_new_connect") == "true" || local_name == "Snapmaker U1 0.4 nozzle") {
-        // 先不创建job，直接创建上传 / 上传下载对话框
-        // 获取默认文件名
+    if (wxGetApp().app_config->get("use_new_connect") == "true" || is_snapmaker_u1) {
+        // firstly upload and open upload download dialog,
+        // get default name       
         // Obtain default output path
         fs::path default_output_file;
         try {
@@ -13786,12 +14114,12 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             default_output_file.replace_extension("3mf");
         }
 
-        // 获取文件路径
+        // get file path
         auto file_path = get_partplate_list().get_curr_plate()->get_tmp_gcode_path();
         upload_job.upload_data.source_path = file_path;
         upload_job.upload_data.upload_path = default_output_file;
 
-        // 选择上传 or 打印
+        // upload or print
         // Repetier specific: Query the server for the list of file groups.
         wxArrayString groups;
 
@@ -13804,7 +14132,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
                                 config->get_bool("open_device_tab_post_upload"));
         dlg.init();
         if (dlg.ShowModal() == wxID_CANCEL) {
-            // 如果用户取消操作，直接返回
             return;
         }
         config->set_bool("open_device_tab_post_upload", dlg.switch_to_device_tab());
@@ -14896,6 +15223,7 @@ void Plater::apply_background_progress()
     bool result_valid = part_plate->is_slice_result_valid();
     //always apply the current plate's print
     Print::ApplyStatus invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+    p->notify_filament_compatibility_after_apply();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, after apply, invalidated= %3%, previous result_valid %4% ") % __LINE__ % plate_index % invalidated % result_valid;
     if (invalidated & PrintBase::APPLY_STATUS_INVALIDATED)
@@ -14935,6 +15263,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
 
         //always apply the current plate's print
         invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+        p->notify_filament_compatibility_after_apply();
         bool model_fits, validate_err;
 
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, after apply, invalidated= %3%, previous result_valid %4% ")%__LINE__ %plate_index  %invalidated %result_valid;
@@ -15131,7 +15460,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
     int plate_index = evt.GetInt();
     PlateSettingsDialog dlg(this, _L("Plate Settings"), evt.GetString() == "only_layer_sequence");
     PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-    dlg.sync_bed_type(curr_plate->get_bed_type());
+    dlg.sync_bed_type(curr_plate->get_bed_type(true));
 
     auto curr_print_seq = curr_plate->get_print_seq();
     if (curr_print_seq != PrintSequence::ByDefault) {
@@ -15157,7 +15486,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
 
     dlg.Bind(EVT_SET_BED_TYPE_CONFIRM, [this, plate_index, &dlg](wxCommandEvent& e) {
         PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-        BedType old_bed_type = curr_plate->get_bed_type();
+        BedType old_bed_type = curr_plate->get_bed_type(true);
         auto bt_sel = BedType(dlg.get_bed_type_choice());
         if (old_bed_type != bt_sel) {
             curr_plate->set_bed_type(bt_sel);
@@ -15241,6 +15570,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
             part_plate->get_print(&print, &gcode_result, NULL);
             //always apply the current plate's print
             invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+            p->notify_filament_compatibility_after_apply();
             bool model_fits, validate_err;
             validate_current_plate(model_fits, validate_err);
 

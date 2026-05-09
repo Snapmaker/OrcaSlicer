@@ -1,11 +1,9 @@
 #  Changelog
 
-## 2026-03-11
+## 2026-04-29
 
-### Features
-- Feature: 
-  * Added a new model entry
-  * Support more official consumables
-  * Add new types of consumables color editing
 ### Bugfix
-  * Fixed the issue where devices would automatically disconnect when connected over Lan network
+  *   - Fixed an issue where the filaments and nozzles mapping fails when printing directly from the built-in model library.
+
+### 问题修复
+  *   - 修复从内置模型库直接打印时出现耗材与喷嘴映射失效问题。

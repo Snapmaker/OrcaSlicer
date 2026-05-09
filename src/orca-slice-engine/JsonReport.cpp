@@ -1,6 +1,7 @@
 #include "JsonReport.hpp"
 #include "Utils.hpp"
 
+#include <cmath>
 #include <fstream>
 #include <iostream>
 
@@ -33,6 +34,11 @@ static std::string base64_encode(const unsigned char* input, size_t input_len) {
     while (result.size() % 4)
         result.push_back('=');
     return result;
+}
+
+// Round to 2 decimal places — matches the original std::setprecision(2) output
+static double round2(double v) {
+    return std::round(v * 100.0) / 100.0;
 }
 
 static ordered_json issue_to_json(const Issue& issue) {
@@ -80,7 +86,7 @@ void output_slice_statistics(const SliceOutputStats& stats,
             ordered_json fj;
             fj["type"]   = a.type;
             fj["color"]  = a.color;
-            fj["used_g"] = a.used_g;
+            fj["used_g"] = round2(a.used_g);
             total_filaments.push_back(std::move(fj));
         }
     }
@@ -89,9 +95,9 @@ void output_slice_statistics(const SliceOutputStats& stats,
 
     ordered_json print_info;
     print_info["output_file"]          = stats.success ? output_file_path : "";
-    print_info["print_time_seconds"]   = total_print_time;
+    print_info["print_time_seconds"]   = round2(total_print_time);
     print_info["print_time_formatted"] = format_time_hhmmss(static_cast<float>(total_print_time));
-    print_info["total_weight_g"]       = total_weight;
+    print_info["total_weight_g"]       = round2(total_weight);
     print_info["plate_count"]          = static_cast<int>(stats.plates.size());
     print_info["filaments"]            = total_filaments;
     root["print_info_total"] = std::move(print_info);
@@ -117,9 +123,9 @@ void output_slice_statistics(const SliceOutputStats& stats,
         }
 
         if (plate.success) {
-            pj["print_time_seconds"]   = plate.print_time;
+            pj["print_time_seconds"]   = round2(plate.print_time);
             pj["print_time_formatted"] = format_time_hhmmss(plate.print_time);
-            pj["total_weight_g"]       = plate.total_filament_g;
+            pj["total_weight_g"]       = round2(plate.total_filament_g);
 
             ordered_json fils = ordered_json::array();
             for (const auto& detail : plate.filament_details) {
@@ -127,7 +133,7 @@ void output_slice_statistics(const SliceOutputStats& stats,
                 fdj["filament_id"] = detail.filament_id;
                 fdj["type"]        = detail.type;
                 fdj["color"]       = detail.color;
-                fdj["used_g"]      = detail.used_g;
+                fdj["used_g"]      = round2(detail.used_g);
                 fils.push_back(std::move(fdj));
             }
             pj["filaments"]              = std::move(fils);

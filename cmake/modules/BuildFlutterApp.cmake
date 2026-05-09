@@ -83,8 +83,11 @@ function(build_flutter_app)
         set(_script "${CMAKE_CURRENT_BINARY_DIR}/build_flutter_win.cmake")
 
         # Write a one-shot script (avoids MSBuild multi-COMMAND chain issues)
+        # On Windows we must invoke .bat files via cmd /c explicitly,
+        # because cmake -P execute_process may not recognise batch files
+        # in all CI environments.
         file(WRITE "${_script}"
-            "execute_process(COMMAND \"${_flutter}\" build windows --release
+            "execute_process(COMMAND cmd /c \"${_flutter}\" build windows --release
                 WORKING_DIRECTORY \"${BFA_FLUTTER_APP_DIR}\"
                 RESULT_VARIABLE _rc
                 OUTPUT_VARIABLE _out

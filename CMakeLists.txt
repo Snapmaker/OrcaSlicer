@@ -990,9 +990,8 @@ SnapmakerOrcaPre_check_last_quote:
 SnapmakerOrcaPre_trim_last_quote:
   StrCpy $0 $0 -1
 SnapmakerOrcaPre_have_uninst_path:
-  ; Keep silent-uninstall behavior aligned with CPack default template:
-  ; remove "\Uninstall.exe" from UninstallString to obtain install dir.
-  StrLen $2 "\${CPACK_NSIS_UNINSTALL_NAME}.exe"
+
+  StrLen $2 "Uninstall.exe"
   StrCpy $3 $0 -$2
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
   ; Quote _? target dir explicitly to avoid argument splitting on spaces.

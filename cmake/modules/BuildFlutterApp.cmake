@@ -84,9 +84,9 @@ function(build_flutter_app)
                 OUTPUT_VARIABLE _out
                 ERROR_VARIABLE _err)\n"
             "if(NOT _rc EQUAL 0)\n"
-            "  message(STATUS \"stdout: ${_out}\")\n"
-            "  message(STATUS \"stderr: ${_err}\")\n"
-            "  message(FATAL_ERROR \"flutter build failed (exit code ${_rc})\")\n"
+            "  message(STATUS \"stdout: \${_out}\")\n"
+            "  message(STATUS \"stderr: \${_err}\")\n"
+            "  message(FATAL_ERROR \"flutter build failed (exit code \${_rc})\")\n"
             "endif()\n"
             "file(MAKE_DIRECTORY \"${BFA_OUTPUT_DIR}\")\n"
             "file(COPY \"${_release_dir}/data/app.so\" DESTINATION \"${BFA_OUTPUT_DIR}\")\n"

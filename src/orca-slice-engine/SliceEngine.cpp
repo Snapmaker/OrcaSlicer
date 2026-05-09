@@ -56,6 +56,16 @@ bool SliceEngine::run() {
 
     if (load_ok && validate_ok) {
         try {
+        // --- Geometry defect detection (once for entire model, before per-plate loop) ---
+        {
+            auto geom_issues = run_geometry_checks(m_model);
+            for (auto& issue : geom_issues) {
+                if (issue.level == "error")
+                    m_any_error = true;
+                m_stats.issues.push_back(std::move(issue));
+            }
+        }
+
         m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
                                              m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
         BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
@@ -487,16 +497,6 @@ void SliceEngine::process_plate(int plate_id) {
     if (instances_on_plate == 0) {
         BOOST_LOG_TRIVIAL(warning) << "Skipping empty plate " << (plate_id + 1);
         return;
-    }
-
-    // --- Geometry defect detection (per-plate, with correct plate_id) ---
-    {
-        auto geom_issues = run_geometry_checks(m_model, plate_id);
-        for (auto& issue : geom_issues) {
-            if (issue.level == "error")
-                m_any_error = true;
-            m_stats.issues.push_back(std::move(issue));
-        }
     }
 
     // --- Build volume check ---

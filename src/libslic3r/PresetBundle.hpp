@@ -280,13 +280,80 @@ public:
         m_last_filament_id_remap.assign(total_filaments + 1, 0);
         for (size_t i = 0; i <= total_filaments; ++i) {
             if (i == from_id + 1) {
-                m_last_filament_id_remap[i] = (unsigned int)(to_id + 1);  // Remap source to target
+                // When from_id < to_id, the target also shifts down by 1 after
+                // source removal, so its new 1-based ID is `to_id` (not to_id+1).
+                if (from_id < to_id)
+                    m_last_filament_id_remap[i] = (unsigned int)(to_id);
+                else
+                    m_last_filament_id_remap[i] = (unsigned int)(to_id + 1);
             } else if (i > from_id + 1) {
                 m_last_filament_id_remap[i] = (unsigned int)(i - 1);  // Shift down IDs after deleted one
             } else {
                 m_last_filament_id_remap[i] = (unsigned int)i;  // Keep unchanged
             }
         }
+    }
+    
+    // Build custom remap for physical to mixed filament merge operations
+    // This accounts for virtual ID changes when a physical filament is deleted
+    // AND accounts for mixed filaments that depend on the physical filament being deleted
+    // num_physical: number of physical filaments before deletion
+    void build_merge_filament_remap(size_t from_id, size_t to_id, size_t total_filaments, size_t num_physical)
+    {
+        m_last_filament_id_remap.assign(total_filaments + 1, 0);
+        
+        // First, identify which mixed filaments will be deleted (those that depend on from_id)
+        std::set<size_t> deleted_mixed_indices;
+        unsigned int from_1based = (unsigned int)(from_id + 1);
+
+        std::vector<size_t> dependent = mixed_filaments.mixed_filaments_using_physical(from_1based);
+        size_t visible = 0;
+        const auto& mfs_ref = mixed_filaments.mixed_filaments();
+        for (size_t k = 0; k < mfs_ref.size(); ++k) {
+            if (!mfs_ref[k].enabled || mfs_ref[k].deleted) continue;
+            if (std::find(dependent.begin(), dependent.end(), k) != dependent.end())
+                deleted_mixed_indices.insert(num_physical + visible);
+            ++visible;
+        }
+        
+        for (size_t i = 0; i <= total_filaments; ++i) {
+            if (i == from_id + 1) {
+                // Source physical filament maps to target mixed filament
+                // The target's new virtual ID after deletion: new_num_physical + target_mixed_idx
+                size_t target_old_virtual_id = to_id;  // 0-based
+                size_t target_old_mixed_idx = target_old_virtual_id - num_physical;
+                size_t new_num_physical = num_physical - 1;
+                size_t target_new_virtual_id = new_num_physical + target_old_mixed_idx;
+                m_last_filament_id_remap[i] = (unsigned int)(target_new_virtual_id + 1);  // Convert to 1-based
+            } else if (i > from_id + 1 && i <= num_physical) {
+                // Subsequent physical filaments shift down by 1
+                m_last_filament_id_remap[i] = (unsigned int)(i - 1);
+            } else if (i > num_physical) {
+                // Mixed filament indices will change (because num_physical decreases)
+                size_t old_virtual_id = i - 1;
+                size_t old_mixed_idx = old_virtual_id - num_physical;
+                
+                // Check if this mixed filament will be deleted
+                if (deleted_mixed_indices.find(old_virtual_id) != deleted_mixed_indices.end()) {
+                    // This mixed filament will be deleted, map to 0 (invalid)
+                    m_last_filament_id_remap[i] = 0;
+                } else {
+                    // This mixed filament will be kept, calculate its new virtual ID
+                    size_t new_num_physical = num_physical - 1;
+                    size_t new_virtual_id = new_num_physical + old_mixed_idx;
+                    m_last_filament_id_remap[i] = (unsigned int)(new_virtual_id + 1);  // Convert to 1-based
+                }
+            } else {
+                // Physical filaments before source remain unchanged
+                m_last_filament_id_remap[i] = (unsigned int)i;
+            }
+        }
+    }
+    
+    // Set custom remap table directly
+    void set_filament_id_remap(const std::vector<unsigned int>& remap)
+    {
+        m_last_filament_id_remap = remap;
     }
     
     std::vector<unsigned int> consume_last_filament_id_remap()

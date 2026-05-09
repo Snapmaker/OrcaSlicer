@@ -1,3 +1,4 @@
+#include "MixedFilament.hpp"
 #include "Model.hpp"
 #include "Print.hpp"
 
@@ -1165,16 +1166,20 @@ static void append_mixed_component_extruders(const MixedFilamentManager &mixed_m
         append_unique_painted_extruder(painting_extruders, unsigned(token - '0'), num_physical_extruders);
     }
 
-    for (char token : mixed_row->manual_pattern) {
-        unsigned int extruder_id = 0;
-        if (token == '1')
-            extruder_id = mixed_row->component_a;
-        else if (token == '2')
-            extruder_id = mixed_row->component_b;
-        else if (token >= '3' && token <= '9')
-            extruder_id = unsigned(token - '0');
-
-        append_unique_painted_extruder(painting_extruders, extruder_id, num_physical_extruders);
+    {
+        const std::string flattened = MixedFilamentManager::normalize_manual_pattern(mixed_row->manual_pattern);
+        if (!flattened.empty()) {
+            const std::vector<std::string> group_strs = MixedFilamentManager::split_pattern_groups(flattened);
+            for (const std::string &group : group_strs) {
+                const std::vector<std::string> tokens =
+                    MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical_extruders);
+                for (const std::string &token : tokens) {
+                    const unsigned int extruder_id =
+                        MixedFilamentManager::physical_filament_from_token(token, *mixed_row, num_physical_extruders);
+                    append_unique_painted_extruder(painting_extruders, extruder_id, num_physical_extruders);
+                }
+            }
+        }
     }
 }
 

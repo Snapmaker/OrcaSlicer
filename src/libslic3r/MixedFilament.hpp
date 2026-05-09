@@ -45,9 +45,11 @@ struct MixedFilament
     // Blend percentage of component B in [0..100].
     int mix_b_percent = 50;
 
-    // Optional manual pattern for this mixed filament. Tokens:
-    // '1' => component_a, '2' => component_b, '3'..'9' => direct physical
-    // filament IDs (1-based). Example: "11112222" => AAAABBBB repeating.
+    // Optional manual pattern for this mixed filament.
+    // Legacy format (no '/'): each '1'-'9' char is a token.
+    //   '1'=>component_a, '2'=>component_b, '3'-'9'=>direct physical IDs.
+    // Modern format (with '/'): '/' separates tokens, multi-digit IDs supported.
+    //   e.g. "1/10/2/11/12". Comma separates per-perimeter groups.
     std::string manual_pattern;
 
     // Optional explicit gradient multi-color component list, encoded as
@@ -197,6 +199,10 @@ public:
     // Remove all custom rows, keep auto-generated ones.
     void clear_custom_entries();
 
+    // Clean up deleted mixed filaments from memory.
+    // This should be called after serializing to remove deleted entries that are no longer needed.
+    void cleanup_deleted_entries();
+
     // Recompute cadence ratios from gradient settings.
     // gradient_mode: 0 = Layer cycle weighted, 1 = Height weighted.
     void apply_gradient_settings(int   gradient_mode,
@@ -230,6 +236,19 @@ public:
     // Accepts separators and A/B aliases. Returns empty string if invalid.
     static std::string normalize_manual_pattern(const std::string &pattern);
     static int         mix_percent_from_manual_pattern(const std::string &pattern);
+
+    // Tokenize a single pattern group (no commas) into token strings.
+    // Handles both legacy (1-char-per-token) and modern (/ delimited) formats.
+    // With lenient fallback: segments that are not valid filament IDs are
+    // exploded into individual digit tokens.
+    static std::vector<std::string> split_pattern_group_to_tokens(const std::string &group, size_t num_physical);
+
+    // Map a string token to a physical extruder ID.
+    // "1" => component_a, "2" => component_b, "3"+ => direct physical ID.
+    static unsigned int physical_filament_from_token(const std::string &token, const MixedFilament &mf, size_t num_physical);
+
+    // Split a normalized pattern string by comma into group strings.
+    static std::vector<std::string> split_pattern_groups(const std::string &pattern);
 
     // ---- Queries --------------------------------------------------------
 
@@ -292,6 +311,11 @@ public:
         const std::vector<std::pair<std::string, int>> &color_percents);
 
     const MixedFilament *mixed_filament_from_id(unsigned int filament_id, size_t num_physical) const;
+
+    // Get all mixed filament indices that depend on a specific physical filament (1-based ID).
+    // Returns a vector of indices into m_mixed for mixed filaments that use the physical filament
+    // as a component (either component_a, component_b, or in gradient_component_ids).
+    std::vector<size_t> mixed_filaments_using_physical(unsigned int physical_filament_1based) const;
 
     // Compute a display colour by blending two colours with FilamentMixer.
     static std::string blend_color(const std::string &color_a,

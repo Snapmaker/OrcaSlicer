@@ -321,6 +321,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/MixedColorMatchHelpers.cpp
     GUI/MixedFilamentColorMapPanel.hpp
     GUI/MixedFilamentColorMapPanel.cpp
+    GUI/MixedFilamentBadge.cpp
+    GUI/MixedFilamentBadge.hpp
     GUI/ObjColorDialog.cpp
     GUI/ObjColorDialog.hpp
     GUI/ObjectDataViewModel.cpp

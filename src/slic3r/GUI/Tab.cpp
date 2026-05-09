@@ -1887,7 +1887,8 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     }
 
     const bool refresh_mixed_filament_panel =
-        m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled";
+        (m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled") ||
+        (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_type");
 
     // Keep Mixed Filaments global settings in sync with project_config. In
     // full_fff_config(), project_config is applied last and would otherwise
@@ -1920,8 +1921,10 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         m_active_page->update_visibility(m_mode, true);
     m_page_view->GetParent()->Layout();
 
-    if (refresh_mixed_filament_panel && wxGetApp().plater() != nullptr)
+    if (refresh_mixed_filament_panel && wxGetApp().plater() != nullptr) {
         wxGetApp().sidebar().update_mixed_filament_panel(false);
+        wxGetApp().sidebar().update_color_mix_panel();
+    }
 }
 
 void Tab::show_timelapse_warning_dialog() {

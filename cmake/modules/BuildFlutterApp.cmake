@@ -45,7 +45,13 @@ function(build_flutter_app)
         message(FATAL_ERROR "Flutter SDK not found. Install Flutter or set FLUTTER_HOME.")
     endif()
 
-    set(_flutter "${_flutter_sdk}/bin/flutter")
+    if(_flutter_exe)
+        set(_flutter "${_flutter_exe}")
+    elseif(WIN32)
+        set(_flutter "${_flutter_sdk}/bin/flutter.bat")
+    else()
+        set(_flutter "${_flutter_sdk}/bin/flutter")
+    endif()
     message(STATUS "Flutter SDK: ${_flutter_sdk}")
 
     # ── macOS ────────────────────────────────────────────────────────────

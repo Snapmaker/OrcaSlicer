@@ -22,10 +22,17 @@ public:
                      const std::string& args,
                      FlutterViewHost::Reply reply) {
             auto it = map.find(method);
-            if (it != map.end())
-                it->second(args, reply);
-            else
+            if (it != map.end()) {
+                try {
+                    it->second(args, reply);
+                } catch (const std::exception& e) {
+                    reply(std::string("Error: ") + e.what());
+                } catch (...) {
+                    reply("Error: unknown");
+                }
+            } else {
                 reply("");
+            }
         };
     }
 

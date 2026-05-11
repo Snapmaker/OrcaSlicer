@@ -124,7 +124,21 @@ class FlutterViewHostWin : public FlutterViewHost {
             }
         };
 
-        self->m_handler(method, args, reply);
+        try {
+            self->m_handler(method, args, reply);
+        } catch (const std::exception& e) {
+            if (messenger && msg->response_handle) {
+                auto encoded = encodeSuccess(std::string("EXCEPTION: ") + e.what());
+                FlutterDesktopMessengerSendResponse(
+                    messenger, msg->response_handle, encoded.data(), encoded.size());
+            }
+        } catch (...) {
+            if (messenger && msg->response_handle) {
+                auto encoded = encodeSuccess(std::string("EXCEPTION: unknown"));
+                FlutterDesktopMessengerSendResponse(
+                    messenger, msg->response_handle, encoded.data(), encoded.size());
+            }
+        }
     }
 
 public:

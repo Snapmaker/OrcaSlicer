@@ -11,9 +11,14 @@
 
 static std::string flValueToString(FlValue* v) {
     if (!v) return "";
-    if (fl_value_get_type(v) == FL_VALUE_TYPE_STRING)
-        return fl_value_get_string(v);
-    return "";
+    switch (fl_value_get_type(v)) {
+        case FL_VALUE_TYPE_STRING: return fl_value_get_string(v);
+        case FL_VALUE_TYPE_INT:    return std::to_string(fl_value_get_int(v));
+        case FL_VALUE_TYPE_FLOAT:  return std::to_string(fl_value_get_float(v));
+        case FL_VALUE_TYPE_BOOL:   return fl_value_get_bool(v) ? "true" : "false";
+        case FL_VALUE_TYPE_NULL:   return "";
+        default:                   return "";
+    }
 }
 
 // ── FlutterViewHostLinux ──────────────────────────────────────────────
@@ -46,7 +51,17 @@ class FlutterViewHostLinux : public FlutterViewHost {
             g_object_unref(method_call);
         };
 
-        self->m_handler(method ? method : "", args, reply);
+        try {
+            self->m_handler(method ? method : "", args, reply);
+        } catch (const std::exception& e) {
+            g_autoptr(GError) error = nullptr;
+            fl_method_call_respond_error(method_call, "EXCEPTION", e.what(), nullptr, &error);
+            g_object_unref(method_call);
+        } catch (...) {
+            g_autoptr(GError) error = nullptr;
+            fl_method_call_respond_error(method_call, "EXCEPTION", "unknown error", nullptr, &error);
+            g_object_unref(method_call);
+        }
     }
 
 public:
@@ -86,6 +101,7 @@ public:
         gtk_widget_show_all(view_widget);
         if (gtk_widget_get_realized(parent))
             gtk_widget_realize(view_widget);
+        gtk_widget_grab_focus(view_widget);
     }
 
     void resize(int width, int height) override {

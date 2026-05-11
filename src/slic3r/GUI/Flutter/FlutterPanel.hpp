@@ -38,7 +38,8 @@ public:
     FlutterPanel(wxWindow* parent);
     bool startView(FlutterEngineHost* engine,
                    const std::string& entrypoint,
-                   const std::string& channelName);
+                   const std::string& channelName,
+                   FlutterViewHost::MethodCallHandler handler = {});
     FlutterViewHost* view() { return m_view.get(); }
     void setHandler(FlutterViewHost::MethodCallHandler handler);
 

@@ -286,11 +286,16 @@ if (WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_BINARY_DIR}/flutter_app/data"
             "$<TARGET_FILE_DIR:Snapmaker_Orca_app_gui>/data"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_PREFIX_PATH}/bin/icudtl.dat"
-            "$<TARGET_FILE_DIR:Snapmaker_Orca_app_gui>/data/icudtl.dat"
         COMMENT "Copying Flutter app artifacts to output"
     )
+    # ICU data — optional, removed in newer Flutter SDKs (3.38+)
+    if(EXISTS "${CMAKE_PREFIX_PATH}/bin/icudtl.dat")
+        add_custom_command(TARGET COPY_DLLS POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_PREFIX_PATH}/bin/icudtl.dat"
+                "$<TARGET_FILE_DIR:Snapmaker_Orca_app_gui>/data/icudtl.dat"
+        )
+    endif()
 
 else ()
     if (APPLE AND NOT CMAKE_MACOSX_BUNDLE)
@@ -423,7 +428,9 @@ if (WIN32)
     # Flutter app install
     install(FILES "${CMAKE_BINARY_DIR}/flutter_app/flutter_app.dll" DESTINATION ".")
     install(DIRECTORY "${CMAKE_BINARY_DIR}/flutter_app/data/" DESTINATION "./data")
-    install(FILES "${CMAKE_PREFIX_PATH}/bin/icudtl.dat" DESTINATION "./data")
+    if(EXISTS "${CMAKE_PREFIX_PATH}/bin/icudtl.dat")
+        install(FILES "${CMAKE_PREFIX_PATH}/bin/icudtl.dat" DESTINATION "./data")
+    endif()
 else ()
     install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
     # Flutter app install

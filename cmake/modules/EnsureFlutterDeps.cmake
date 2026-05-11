@@ -89,8 +89,10 @@ function(ensure_flutter_deps)
                 file(COPY "${_engine_cache}/windows-x64-release/flutter_engine.dll"
                      DESTINATION "${CMAKE_PREFIX_PATH}/bin/")
             endif()
-            file(COPY "${_engine_cache}/windows-x64-release/icudtl.dat"
-                 DESTINATION "${CMAKE_PREFIX_PATH}/bin/")
+            if(EXISTS "${_engine_cache}/windows-x64-release/icudtl.dat")
+                file(COPY "${_engine_cache}/windows-x64-release/icudtl.dat"
+                     DESTINATION "${CMAKE_PREFIX_PATH}/bin/")
+            endif()
         endif()
 
     # ── Linux ────────────────────────────────────────────────────────────

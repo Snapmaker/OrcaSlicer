@@ -1200,10 +1200,6 @@ void MainFrame::init_tabpanel() {
     m_tabpanel->AddPage(m_flutter_test_panel, _L("Flutter Test"), std::string("tab_home_active"), std::string("tab_home_active"), false);
 
     CallAfter([this] {
-        if (!m_flutter_test_panel->startView(m_flutter_engine, "homeMain", "snapmaker/home")) {
-            BOOST_LOG_TRIVIAL(error) << "[Flutter] startView failed";
-            return;
-        }
         Dispatcher d;
         d.on("getVersion", [](auto, auto reply) {
             reply("orca-test-1.0");
@@ -1214,7 +1210,10 @@ void MainFrame::init_tabpanel() {
         .on("incrementCounter", [](auto args, auto reply) {
             reply(std::to_string(std::stoi(args) + 1));
         });
-        m_flutter_test_panel->setHandler(d.handler());
+        if (!m_flutter_test_panel->startView(m_flutter_engine, "homeMain", "snapmaker/home", d.handler())) {
+            BOOST_LOG_TRIVIAL(error) << "[Flutter] startView failed";
+            return;
+        }
         BOOST_LOG_TRIVIAL(info) << "[Flutter] Test panel started";
     });
 

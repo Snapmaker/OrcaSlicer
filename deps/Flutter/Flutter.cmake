@@ -102,9 +102,6 @@ elseif (WIN32)
         # Embedder DLL (at root, not in cpp_client_wrapper)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_dll}" "${DESTDIR}/bin/flutter_windows.dll"
-        # ICU data
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
         COMMENT "Copying Flutter Windows engine → ${DESTDIR}"
     )
     # cpp_client_wrapper headers — optional, removed from engine cache in Flutter 3.38+
@@ -119,6 +116,13 @@ elseif (WIN32)
         add_custom_command(TARGET dep_Flutter POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${_flutter_engine_dll}" "${DESTDIR}/bin/flutter_engine.dll"
+        )
+    endif()
+    # ICU data — optional, removed in newer Flutter SDKs (3.38+)
+    if(EXISTS "${_flutter_icudtl}")
+        add_custom_command(TARGET dep_Flutter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
         )
     endif()
     message(STATUS "Flutter deps (Windows): engine from ${FLUTTER_SDK_PATH}")

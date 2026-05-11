@@ -9,9 +9,11 @@ FlutterPanel::FlutterPanel(wxWindow* parent)
 
 bool FlutterPanel::startView(FlutterEngineHost* engine,
                               const std::string& entrypoint,
-                              const std::string& channelName) {
+                              const std::string& channelName,
+                              FlutterViewHost::MethodCallHandler handler) {
     m_view = engine->createView(entrypoint, channelName);
     if (!m_view) return false;
+    if (handler) m_view->setMethodCallHandler(std::move(handler));
     m_view->embedInto(GetHandle());
     return true;
 }

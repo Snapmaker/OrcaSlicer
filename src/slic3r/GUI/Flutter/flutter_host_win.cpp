@@ -1,17 +1,92 @@
 // Windows implementation: FlutterEngineHost + FlutterViewHost
 // Uses Flutter Windows desktop embedding C API (flutter_windows.h)
+// Manually implements StandardMethodCodec encode/decode to match Dart's MethodChannel.
 #include <windows.h>
 #include <flutter_windows.h>
 #include "flutter_host.h"
 #include <string>
 #include <vector>
 #include <cstring>
+#include <cstdint>
 
-// ── Helpers ───────────────────────────────────────────────────────────
+// ── StandardMethodCodec helpers ────────────────────────────────────────
 
-static std::string messageToString(const uint8_t* data, size_t size) {
-    if (!data || size == 0) return "";
-    return std::string(reinterpret_cast<const char*>(data), size);
+// Encodes an unsigned integer as a 7-bit varint.
+static void writeVarint(std::vector<uint8_t>& buf, uint32_t value) {
+    while (value >= 0x80) {
+        buf.push_back((value & 0x7F) | 0x80);
+        value >>= 7;
+    }
+    buf.push_back(value & 0x7F);
+}
+
+// Reads a 7-bit varint from data; returns {value, bytes_consumed}.
+static std::pair<uint32_t, size_t> readVarint(const uint8_t* data, size_t size) {
+    uint32_t value = 0;
+    size_t shift = 0;
+    size_t pos = 0;
+    while (pos < size) {
+        uint8_t byte = data[pos++];
+        value |= (byte & 0x7F) << shift;
+        if (!(byte & 0x80)) break;
+        shift += 7;
+    }
+    return {value, pos};
+}
+
+// Encodes a string as: [0x07, varint(len), bytes].
+static void writeString(std::vector<uint8_t>& buf, const std::string& s) {
+    buf.push_back(0x07);
+    writeVarint(buf, static_cast<uint32_t>(s.size()));
+    buf.insert(buf.end(), s.begin(), s.end());
+}
+
+// Decodes a string value from data at offset. On success sets *out and returns
+// bytes consumed (including type byte). On failure returns 0.
+static size_t readString(const uint8_t* data, size_t size, std::string* out) {
+    if (size < 2 || data[0] != 0x07) return 0;
+    auto [len, vpos] = readVarint(data + 1, size - 1);
+    size_t start = 1 + vpos;
+    if (start + len > size) return 0;
+    out->assign(reinterpret_cast<const char*>(data + start), len);
+    return start + len;
+}
+
+// Builds a success envelope: [0x00, encoded_result].
+static std::vector<uint8_t> encodeSuccess(const std::string& result) {
+    std::vector<uint8_t> buf;
+    buf.push_back(0x00); // success
+    writeString(buf, result);
+    return buf;
+}
+
+// Builds a method-call message: [0x01, method_string, args_string].
+static std::vector<uint8_t> encodeMethodCall(const std::string& method,
+                                             const std::string& args) {
+    std::vector<uint8_t> buf;
+    buf.push_back(0x01); // method call
+    writeString(buf, method);
+    writeString(buf, args);
+    return buf;
+}
+
+// Decodes a method-call message. Returns {method_name, args}.
+static std::pair<std::string, std::string>
+    decodeMethodCall(const uint8_t* data, size_t size) {
+    if (!data || size < 3 || data[0] != 0x01) return {"", ""};
+    size_t off = 1;
+    std::string method, args;
+    size_t n = readString(data + off, size - off, &method);
+    if (!n) return {"", ""};
+    off += n;
+    n = readString(data + off, size - off, &args);
+    if (!n && data[off] == 0x00) {
+        // Null args — skip the null byte
+        off += 1;
+    } else if (n) {
+        off += n;
+    }
+    return {method, args};
 }
 
 // ── FlutterViewHostWin ─────────────────────────────────────────────────
@@ -19,26 +94,33 @@ static std::string messageToString(const uint8_t* data, size_t size) {
 class FlutterViewHostWin : public FlutterViewHost {
     FlutterDesktopViewControllerRef m_controller = nullptr;
     FlutterDesktopEngineRef        m_engine = nullptr;
+    FlutterDesktopMessengerRef     m_messenger = nullptr;
     std::string                    m_channel;
     MethodCallHandler              m_handler;
-    FlutterDesktopMessengerRef     m_messenger = nullptr;
 
     static void messageCallback(FlutterDesktopMessengerRef messenger,
                                  const FlutterDesktopMessage* msg,
                                  void* userData) {
         auto* self = static_cast<FlutterViewHostWin*>(userData);
-        if (!self->m_handler || !msg) return;
+        if (!msg) return;
 
-        std::string method = msg->channel ? msg->channel : "";
-        std::string args = messageToString(msg->message, msg->message_size);
+        auto [method, args] = decodeMethodCall(msg->message, msg->message_size);
 
-        Reply reply = [messenger, response_handle = msg->response_handle](const std::string& result) {
-            if (messenger && response_handle) {
+        if (!self->m_handler) {
+            // No handler yet — respond "not implemented" (empty bytes)
+            if (messenger && msg->response_handle) {
                 FlutterDesktopMessengerSendResponse(
-                    messenger,
-                    response_handle,
-                    reinterpret_cast<const uint8_t*>(result.data()),
-                    result.size());
+                    messenger, msg->response_handle, nullptr, 0);
+            }
+            return;
+        }
+
+        Reply reply = [messenger, response_handle = msg->response_handle]
+                      (const std::string& result) {
+            if (messenger && response_handle) {
+                auto encoded = encodeSuccess(result);
+                FlutterDesktopMessengerSendResponse(
+                    messenger, response_handle, encoded.data(), encoded.size());
             }
         };
 
@@ -66,6 +148,8 @@ public:
         if (m_controller) {
             FlutterDesktopViewControllerDestroy(m_controller);
         }
+        // m_engine is owned by m_controller; destroying the controller
+        // also destroys the engine on Windows.
     }
 
     void resize(int width, int height) override {
@@ -104,10 +188,10 @@ public:
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
         if (!m_messenger) return;
+        auto encoded = encodeMethodCall(method, arguments);
         FlutterDesktopMessengerSend(
             m_messenger, m_channel.c_str(),
-            reinterpret_cast<const uint8_t*>(arguments.data()),
-            arguments.size());
+            encoded.data(), encoded.size());
     }
 
     void setMethodCallHandler(MethodCallHandler h) override {
@@ -124,8 +208,6 @@ public:
     ~FlutterEngineHostWin() override { stop(); }
 
     bool start() override {
-        // On Windows, the engine is created per-view (not one shared engine).
-        // This is a no-op at the process level.
         m_started = true;
         return true;
     }
@@ -153,7 +235,6 @@ public:
             return nullptr;
         }
 
-        // Create view controller bound to this engine
         FlutterDesktopViewControllerRef controller =
             FlutterDesktopViewControllerCreate(800, 600, engine);
         if (!controller) {

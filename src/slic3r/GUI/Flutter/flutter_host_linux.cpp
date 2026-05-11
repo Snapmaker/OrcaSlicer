@@ -7,61 +7,65 @@
 #include <string>
 #include <cstring>
 
+// ── Helpers ───────────────────────────────────────────────────────────
+
+static std::string flValueToString(FlValue* v) {
+    if (!v) return "";
+    if (fl_value_get_type(v) == FL_VALUE_TYPE_STRING)
+        return fl_value_get_string(v);
+    return "";
+}
+
 // ── FlutterViewHostLinux ──────────────────────────────────────────────
 
 class FlutterViewHostLinux : public FlutterViewHost {
     FlView*            m_view = nullptr;
     FlEngine*          m_engine = nullptr;
-    FlBinaryMessenger* m_messenger = nullptr;
-    std::string        m_channel;
+    FlMethodChannel*   m_channel = nullptr;
     MethodCallHandler  m_handler;
 
-    static void messageHandler(FlBinaryMessenger* messenger,
-                               const gchar* channel,
-                               GBytes* message,
-                               FlBinaryMessengerResponseHandle* response_handle,
-                               gpointer user_data) {
+    static void methodCallHandler(FlMethodChannel* /*channel*/,
+                                  FlMethodCall* method_call,
+                                  gpointer user_data) {
         auto* self = static_cast<FlutterViewHostLinux*>(user_data);
-        if (!self->m_handler) return;
+        if (!self->m_handler) {
+            fl_method_call_respond_not_implemented(method_call, nullptr);
+            return;
+        }
 
-        gsize data_size = 0;
-        const guint8* data = message
-            ? static_cast<const guint8*>(g_bytes_get_data(message, &data_size))
-            : nullptr;
+        const gchar* method = fl_method_call_get_name(method_call);
+        FlValue* args_fl = fl_method_call_get_args(method_call);
+        std::string args = flValueToString(args_fl);
 
-        std::string args;
-        if (data && data_size > 0)
-            args = std::string(reinterpret_cast<const char*>(data), data_size);
+        g_object_ref(method_call);
 
-        g_object_ref(response_handle);
-
-        Reply reply = [self, response_handle](const std::string& result) {
-            g_autoptr(GBytes) bytes = g_bytes_new(result.data(), result.size());
+        Reply reply = [method_call](const std::string& result) {
             g_autoptr(GError) error = nullptr;
-            fl_binary_messenger_send_response(
-                self->m_messenger, response_handle, bytes, &error);
-            g_object_unref(response_handle);
+            g_autoptr(FlValue) val = fl_value_new_string(result.c_str());
+            fl_method_call_respond_success(method_call, val, &error);
+            g_object_unref(method_call);
         };
 
-        self->m_handler(channel ? channel : "", args, reply);
+        self->m_handler(method ? method : "", args, reply);
     }
 
 public:
     FlutterViewHostLinux(FlView* view, FlEngine* engine,
                          FlBinaryMessenger* messenger,
                          const std::string& channelName)
-        : m_view(view), m_engine(engine),
-          m_messenger(messenger), m_channel(channelName) {
+        : m_view(view), m_engine(engine) {
 
-        fl_binary_messenger_set_message_handler_on_channel(
-            m_messenger, m_channel.c_str(), messageHandler, this, nullptr);
+        g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+        m_channel = fl_method_channel_new(
+            messenger, channelName.c_str(), FL_METHOD_CODEC(codec));
+        fl_method_channel_set_method_call_handler(
+            m_channel, methodCallHandler, this, nullptr);
     }
 
     ~FlutterViewHostLinux() override {
-        if (m_messenger) {
-            fl_binary_messenger_set_message_handler_on_channel(
-                m_messenger, m_channel.c_str(), nullptr, nullptr, nullptr);
-        }
+        fl_method_channel_set_method_call_handler(
+            m_channel, nullptr, nullptr, nullptr);
+        g_clear_object(&m_channel);
         g_clear_object(&m_view);
         g_clear_object(&m_engine);
     }
@@ -70,7 +74,6 @@ public:
         GtkWidget* parent = GTK_WIDGET(parentHandle);
         if (!parent || !m_view) return;
 
-        // Get parent's current allocation for initial FlView size
         GtkAllocation alloc;
         gtk_widget_get_allocation(parent, &alloc);
         int w = alloc.width > 1 ? alloc.width : 800;
@@ -101,12 +104,10 @@ public:
 
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
-        if (!m_messenger) return;
-
-        g_autoptr(GBytes) message = g_bytes_new(arguments.data(),
-                                                 arguments.size());
-        fl_binary_messenger_send_on_channel(
-            m_messenger, m_channel.c_str(), message,
+        if (!m_channel) return;
+        g_autoptr(FlValue) args = fl_value_new_string(arguments.c_str());
+        fl_method_channel_invoke_method(
+            m_channel, method.c_str(), args,
             nullptr, nullptr, nullptr);
     }
 
@@ -136,16 +137,13 @@ public:
         const std::string& entrypoint,
         const std::string& channelName) override {
 
-        // Use software rendering to avoid GLX BadAccess conflict with
-        // the main application's OpenGL context on X11.
         setenv("FLUTTER_LINUX_RENDERER", "software", 1);
 
         g_autoptr(FlDartProject) project = fl_dart_project_new();
         if (!project) return nullptr;
 
         // Override AOT library name: Flutter defaults to lib/libapp.so,
-        // but our build system names it libflutter_app.so for consistency
-        // with other platforms.
+        // but our build system names it libflutter_app.so.
         {
             g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
             if (exe_path) {
@@ -155,8 +153,7 @@ public:
             }
         }
 
-        // Override icudtl.dat path: Flutter defaults to data/icudtl.dat
-        // relative to the executable.
+        // Override icudtl.dat path when present.
         {
             g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
             if (exe_path) {
@@ -168,15 +165,10 @@ public:
             }
         }
 
-        // fl_view_new() creates an implicit FlView that automatically
-        // starts the engine in realize_cb. fl_view_new_for_engine() is
-        // only for secondary views on an already-running engine.
         FlView* view = fl_view_new(project);
         if (!view) return nullptr;
 
         FlEngine* engine = fl_view_get_engine(view);
-        // fl_view_get_engine() returns a borrowed pointer; the destructor
-        // calls g_clear_object so we must add our own reference.
         g_object_ref(engine);
         FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
 

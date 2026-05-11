@@ -143,11 +143,15 @@ elseif (UNIX AND NOT APPLE)
         # Shared libs
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_so}" "${DESTDIR}/lib/libflutter_linux_gtk.so"
-        # ICU data
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
         COMMENT "Copying Flutter Linux engine → ${DESTDIR}"
     )
+    # ICU data — optional, removed in newer Flutter SDKs (3.38+)
+    if(EXISTS "${_flutter_icudtl}")
+        add_custom_command(TARGET dep_Flutter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
+        )
+    endif()
     # libflutter_engine.so — optional, removed in newer Flutter SDKs (3.38+)
     if(EXISTS "${_flutter_engine_so}")
         add_custom_command(TARGET dep_Flutter POST_BUILD

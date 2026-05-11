@@ -68,7 +68,17 @@ public:
         }
     }
 
-    void resize(int, int) override {}
+    void resize(int width, int height) override {
+        if (!m_controller) return;
+        FlutterDesktopViewRef view =
+            FlutterDesktopViewControllerGetView(m_controller);
+        HWND hwnd = FlutterDesktopViewGetHWND(view);
+        if (!hwnd) return;
+        if (width <= 0 || height <= 0) return;
+        SetWindowPos(hwnd, nullptr,
+                     0, 0, width, height,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 
     void embedInto(void* parentView) override {
         FlutterDesktopViewRef view =
@@ -82,8 +92,12 @@ public:
 
         RECT rect;
         GetClientRect(parentHwnd, &rect);
+        int w = rect.right - rect.left;
+        int h = rect.bottom - rect.top;
+        if (w <= 1) w = 800;
+        if (h <= 1) h = 600;
         SetWindowPos(childHwnd, nullptr,
-                     0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                     0, 0, w, h,
                      SWP_NOZORDER | SWP_SHOWWINDOW);
     }
 

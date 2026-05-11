@@ -2,7 +2,7 @@
 
 FlutterPanel::FlutterPanel(wxWindow* parent)
     : wxWindow(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-               wxFULL_REPAINT_ON_RESIZE) {
+               wxFULL_REPAINT_ON_RESIZE | wxCLIP_CHILDREN) {
     SetBackgroundColour(*wxBLACK);
     Bind(wxEVT_SIZE, &FlutterPanel::onSize, this);
 }

@@ -826,30 +826,12 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     std::string system_file_path = m_native_path ? file_path : utf8_to_filesystem_encoding(file_path);
 
     std::ifstream file(system_file_path, std::ios::binary);
+    if (!file && m_native_path) {
+        // Native path failed; retry with UTF-8 → filesystem encoding conversion
+        system_file_path = utf8_to_filesystem_encoding(file_path);
+        file.open(system_file_path, std::ios::binary);
+    }
     if (!file) {
-        // Fallback: if the native path didn't work, try the raw UTF-8 path
-        if (m_native_path) {
-            std::ifstream file2(file_path, std::ios::binary);
-            if (file2.is_open()) {
-                // Use the UTF-8 path instead
-                std::ostringstream fileStream;
-                fileStream << file2.rdbuf();
-                std::string fileContent    = fileStream.str();
-                size_t      content_length = fileContent.size();
-                std::string content_type   = "application/octet-stream";
-                if (ends_with(file_path, ".gcode") || ends_with(file_path, ".gcode.zip"))
-                    content_type = "application/octet-stream";
-
-                ssOut << "HTTP/1.1 200 OK\r\n";
-                ssOut << "Content-Type: " << content_type << "\r\n";
-                ssOut << "Content-Length: " << content_length << "\r\n";
-                ssOut << "Content-Disposition: attachment\r\n";
-                ssOut << "Access-Control-Allow-Origin: *\r\n";
-                ssOut << "\r\n";
-                ssOut.write(fileContent.c_str(), content_length);
-                return;
-            }
-        }
         ResponseNotFound notFoundResponse;
         notFoundResponse.write_response(ssOut);
         return;

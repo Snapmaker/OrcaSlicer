@@ -402,9 +402,10 @@ static std::string calc_sha256_base64(const std::string& file_path)
     SHA256_CTX ctx;
     SHA256_Init(&ctx);
 
-    char buf[64 * 1024];
-    while (ifs.read(buf, sizeof(buf)) || ifs.gcount() > 0) {
-        SHA256_Update(&ctx, buf, ifs.gcount());
+    static constexpr size_t kChunkSize = 64 * 1024;
+    std::string             buf(kChunkSize, 0);
+    while (ifs.read(buf.data(), buf.size()) || ifs.gcount() > 0) {
+        SHA256_Update(&ctx, buf.data(), ifs.gcount());
     }
 
     unsigned char digest[SHA256_DIGEST_LENGTH];

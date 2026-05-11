@@ -805,6 +805,9 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
             // This prevents Print::has_wipe_tower() from returning true due to
             // filament_diameter.size() > 1, which is the root cause of the
             // "append_tcr was asked to do a toolchange it didn't expect" error.
+            // flush_volumes_matrix (N*N flat vector) and wiping_volumes_extruders
+            // must also be trimmed to keep the config internally consistent:
+            // a 5*5 matrix with only 1 extruder would mismatch sqrt(size) later.
             static const std::vector<const char*> trim_keys = {
                 "filament_diameter",
                 "filament_density",
@@ -814,6 +817,8 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
                 "filament_is_support",
                 "filament_settings_id",
                 "nozzle_diameter",
+                "flush_volumes_matrix",
+                "wiping_volumes_extruders",
             };
             for (const char* key : trim_keys) {
                 auto* opt = merged_config.option(key, true);

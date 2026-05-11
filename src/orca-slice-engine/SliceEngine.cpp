@@ -472,10 +472,10 @@ void SliceEngine::process_plate(int plate_id) {
         }
     }
 
-    setup_print_origin(plate_id, plate_width, plate_depth);
+    Vec3d origin = setup_print_origin(plate_id, plate_width, plate_depth);
 
     // --- Apply model ---
-    if (!apply_model(plate_id, print))
+    if (!apply_model(plate_id, print, origin))
         return;
 
     // --- Assign arrange_order ---
@@ -562,7 +562,7 @@ void SliceEngine::process_plate(int plate_id) {
                 print.set_status_callback(default_status_callback);
                 print.is_BBL_printer() = saved_bbl;
 
-                if (!apply_model(plate_id, print)) {
+                if (!apply_model(plate_id, print, origin)) {
                     m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(saved_pt));
                     break;
                 }
@@ -688,19 +688,32 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
     return true;
 }
 
-void SliceEngine::setup_print_origin(int plate_id, double plate_width, double plate_depth) {
-    BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " origin: (0, 0, 0)"
-        << " (cloud slicing, independent per-plate)";
-    BOOST_LOG_TRIVIAL(info) << "Plate dimensions: " << plate_width << " x " << plate_depth;
+Vec3d SliceEngine::setup_print_origin(int plate_id, double plate_width, double plate_depth) {
+    // Compute plate origin using the same grid layout formula as the desktop GUI
+    // (PartPlate::update_plate_layout_arrange). Each plate occupies a cell in a
+    // row-major grid with LOGICAL_PART_PLATE_GAP spacing between plates.
+    int total_plates = static_cast<int>(m_plate_data.size());
+    int cols = compute_column_count(total_plates);
+    int row = plate_id / cols;
+    int col = plate_id % cols;
+
+    double origin_x = col * (plate_width  * (1.0 + LOGICAL_PART_PLATE_GAP));
+    double origin_y = -row * (plate_depth * (1.0 + LOGICAL_PART_PLATE_GAP));
+
+    Vec3d origin(origin_x, origin_y, 0.0);
+    BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " origin: (" << origin_x << ", " << origin_y
+        << ") grid[" << row << "," << col << "] / " << total_plates << " plate(s)"
+        << ", dimensions: " << plate_width << " x " << plate_depth;
+    return origin;
 }
 
-bool SliceEngine::apply_model(int plate_id, Print& print) {
+bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
     // plate_index from m_plate_data is already 0-based (import does -1 conversion)
     print.set_plate_index(plate_id);
 
-    // Cloud slicing: each plate is sliced independently at origin.
-    // Plate origin offsets are only meaningful for GUI multi-plate layout display.
-    print.set_plate_origin(Vec3d(0, 0, 0));
+    // Use the grid-layout-computed origin so object positions in gcode match
+    // the desktop output (PartPlate::update_plate_layout_arrange).
+    print.set_plate_origin(origin);
 
     // Guard against wipe tower / tool change mismatch.
     // If the model uses fewer extruders than filaments configured in the 3MF,

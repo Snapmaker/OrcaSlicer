@@ -73,7 +73,7 @@ if (APPLE)
 # ── Windows ─────────────────────────────────────────────────────────────
 
 elseif (WIN32)
-    set(_flutter_engine_dir "${_engine_cache}/windows-x64")
+    set(_flutter_engine_dir "${_engine_cache}/windows-x64-release")
     set(_flutter_client "${_flutter_engine_dir}/cpp_client_wrapper")
 
     set(_flutter_headers "${_flutter_client}/include/flutter")
@@ -124,7 +124,7 @@ elseif (WIN32)
 # ── Linux ───────────────────────────────────────────────────────────────
 
 elseif (UNIX AND NOT APPLE)
-    set(_flutter_engine_dir "${_engine_cache}/linux-x64")
+    set(_flutter_engine_dir "${_engine_cache}/linux-x64-release")
     set(_flutter_hdr_dir "${_flutter_engine_dir}/flutter_linux")
     set(_flutter_so "${_flutter_engine_dir}/libflutter_linux_gtk.so")
     set(_flutter_engine_so "${_flutter_engine_dir}/libflutter_engine.so")

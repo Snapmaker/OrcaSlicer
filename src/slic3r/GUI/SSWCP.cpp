@@ -22,6 +22,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/asio/ip/host_name.hpp>
+#include "slic3r/Utils/Http.hpp"
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include "NetworkTestDialog.hpp"
@@ -698,6 +699,9 @@ void SSWCP_Instance::sw_GetActiveFile()
                     self->m_res_data["file_path"] = wxString(zipname).ToUTF8();
                     SSWCP::m_file_size_mutex.lock();
                     self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
+                    std::string url_zip_path = std::string(wxString(zipname).ToUTF8());
+                    std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
+                    self->m_res_data["url"] = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_zip_path);
                     SSWCP::m_file_size_mutex.unlock();
 
                     // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
@@ -721,11 +725,14 @@ void SSWCP_Instance::sw_GetActiveFile()
             
         } else {
             m_res_data["file_name"] = file_name;
+            std::string url_path = file_path;
+            std::replace(url_path.begin(), url_path.end(), '\\', '/');
             m_res_data["file_path"] = file_path;
             m_res_data["origin_size"] = boost::filesystem::file_size(file_path);
 
             // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
             m_res_data["checksum"] = calc_sha256_base64(file_path);
+            m_res_data["url"]      = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_path);
 
             send_to_js();
             finish_job();

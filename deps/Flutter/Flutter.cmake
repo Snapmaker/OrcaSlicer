@@ -74,22 +74,17 @@ if (APPLE)
 
 elseif (WIN32)
     set(_flutter_engine_dir "${_engine_cache}/windows-x64-release")
-    set(_flutter_client "${_flutter_engine_dir}/cpp_client_wrapper")
-
-    set(_flutter_headers "${_flutter_client}/include/flutter")
+    set(_flutter_client_hdrs "${_flutter_engine_dir}/cpp_client_wrapper/include/flutter")
     set(_flutter_dll "${_flutter_engine_dir}/flutter_windows.dll")
     set(_flutter_lib "${_flutter_engine_dir}/flutter_windows.dll.lib")
     set(_flutter_engine_dll "${_flutter_engine_dir}/flutter_engine.dll")
     set(_flutter_icudtl "${_flutter_engine_dir}/icudtl.dat")
 
-    if(NOT EXISTS "${_flutter_headers}")
-        message(FATAL_ERROR "Flutter Windows artifacts not found at ${_flutter_headers}. Run 'flutter precache --windows' first.")
+    if(NOT EXISTS "${_flutter_engine_dir}/flutter_windows.h")
+        message(FATAL_ERROR "Flutter Windows engine not found at ${_flutter_engine_dir}. Run 'flutter precache --windows' first.")
     endif()
 
     add_custom_target(dep_Flutter ALL
-        # C++ wrapper headers (flutter_engine.h, flutter_view_controller.h, …)
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${_flutter_headers}" "${DESTDIR}/include/flutter"
         # C API headers at engine root (flutter_windows.h, flutter_export.h, …)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${_flutter_engine_dir}/flutter_windows.h" "${DESTDIR}/include/flutter/flutter_windows.h"
@@ -112,6 +107,13 @@ elseif (WIN32)
             "${_flutter_icudtl}" "${DESTDIR}/bin/icudtl.dat"
         COMMENT "Copying Flutter Windows engine → ${DESTDIR}"
     )
+    # cpp_client_wrapper headers — optional, removed from engine cache in Flutter 3.38+
+    if(EXISTS "${_flutter_client_hdrs}")
+        add_custom_command(TARGET dep_Flutter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${_flutter_client_hdrs}" "${DESTDIR}/include/flutter"
+        )
+    endif()
     # flutter_engine.dll — optional, removed in newer Flutter SDKs (3.38+)
     if(EXISTS "${_flutter_engine_dll}")
         add_custom_command(TARGET dep_Flutter POST_BUILD

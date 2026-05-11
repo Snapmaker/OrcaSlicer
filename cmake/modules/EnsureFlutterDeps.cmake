@@ -67,19 +67,22 @@ function(ensure_flutter_deps)
                 message(FATAL_ERROR "Flutter SDK not found and Flutter Windows headers not in deps. Install Flutter or build deps first.")
             endif()
 
-            set(_hdr_src "${_engine_cache}/windows-x64-release/cpp_client_wrapper/include/flutter")
             set(_dll_src "${_engine_cache}/windows-x64-release/flutter_windows.dll")
             set(_lib_src "${_engine_cache}/windows-x64-release/flutter_windows.dll.lib")
 
-            if(NOT EXISTS "${_hdr_src}")
-                message(FATAL_ERROR "Flutter Windows artifacts not found at ${_hdr_src}. Run 'flutter precache --windows' first.")
+            if(NOT EXISTS "${_engine_cache}/windows-x64-release/flutter_windows.dll")
+                message(FATAL_ERROR "Flutter Windows engine not found at ${_engine_cache}/windows-x64-release. Run 'flutter precache --windows' first.")
             endif()
 
             message(STATUS "Populating Flutter Windows engine from Flutter SDK → deps")
-            file(COPY "${_hdr_src}" DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
             # C API headers at engine root (flutter_windows.h, etc.)
             file(GLOB _flutter_root_hdrs "${_engine_cache}/windows-x64-release/*.h")
             file(COPY ${_flutter_root_hdrs} DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
+            # cpp_client_wrapper headers — optional, removed in Flutter 3.38+
+            if(EXISTS "${_engine_cache}/windows-x64-release/cpp_client_wrapper/include/flutter")
+                file(COPY "${_engine_cache}/windows-x64-release/cpp_client_wrapper/include/flutter"
+                     DESTINATION "${CMAKE_PREFIX_PATH}/include/flutter")
+            endif()
             file(COPY "${_dll_src}" DESTINATION "${CMAKE_PREFIX_PATH}/bin/")
             file(COPY "${_lib_src}" DESTINATION "${CMAKE_PREFIX_PATH}/lib/")
             if(EXISTS "${_engine_cache}/windows-x64-release/flutter_engine.dll")

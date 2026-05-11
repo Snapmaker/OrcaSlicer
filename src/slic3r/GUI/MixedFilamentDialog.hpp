@@ -90,6 +90,8 @@ private:
     wxBoxSizer*             m_cycle_card_sizer      = nullptr;
     class StaticBox*        m_swatch_card           = nullptr;
     wxBoxSizer*             m_swatch_card_sizer     = nullptr;
+    class StaticBox*        m_gradient_effect_card   = nullptr;
+    wxBoxSizer*             m_gradient_effect_card_sizer = nullptr;
     wxScrolledWindow*       m_scrolled_content      = nullptr;
     wxPanel*                m_cycle_blend_panel     = nullptr;
     wxPanel*                m_cycle_legend_panel    = nullptr;

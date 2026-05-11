@@ -3,6 +3,7 @@
 #include "GUI_Utils.hpp"
 
 #include <wx/wx.h>
+#include <wx/clrpicker.h>
 #include <wx/gauge.h>
 #include <wx/wrapsizer.h>
 #include <wx/scrolwin.h>
@@ -60,6 +61,7 @@ private:
 
     ColorMapPanel        *m_color_map            = nullptr;
     wxTextCtrl           *m_hex_input            = nullptr;
+    wxColourPickerCtrl   *m_classic_picker       = nullptr;
     wxSlider             *m_range_slider         = nullptr;
     wxStaticText         *m_range_value          = nullptr;
     // Target color row (left column, bottom)

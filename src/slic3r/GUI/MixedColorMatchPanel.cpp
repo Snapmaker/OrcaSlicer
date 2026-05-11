@@ -208,6 +208,10 @@ MixedColorMatchPanel::MixedColorMatchPanel(wxWindow *parent,
         wxDefaultPosition, wxSize(FromDIP(80), -1), wxTE_PROCESS_ENTER);
     m_hex_input->SetToolTip(_L("Enter a hex color like #00FF88."));
     target_row->Add(m_hex_input, 0, wxALIGN_CENTER_VERTICAL);
+    target_row->AddSpacer(FromDIP(6));
+    m_classic_picker = new wxColourPickerCtrl(this, wxID_ANY, safe_initial);
+    m_classic_picker->SetToolTip(_L("Classic color picker."));
+    target_row->Add(m_classic_picker, 0, wxALIGN_CENTER_VERTICAL);
     left_col->Add(target_row, 0, wxEXPAND);
 
     top_row->Add(left_col, 1, wxEXPAND | wxRIGHT, M * 2);
@@ -294,6 +298,13 @@ MixedColorMatchPanel::MixedColorMatchPanel(wxWindow *parent,
         m_hex_input->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent &evt) {
             apply_hex_input(false);
             evt.Skip();
+        });
+    }
+    if (m_classic_picker) {
+        m_classic_picker->Bind(wxEVT_COLOURPICKER_CHANGED, [this](wxColourPickerEvent& evt) {
+            if (m_syncing_inputs)
+                return;
+            apply_requested_target(evt.GetColour());
         });
     }
     if (m_range_slider) {
@@ -408,6 +419,8 @@ void MixedColorMatchPanel::sync_inputs_to_requested()
     m_syncing_inputs = true;
     if (m_hex_input)
         m_hex_input->ChangeValue(normalize_color_match_hex(m_requested_target.GetAsString(wxC2S_HTML_SYNTAX)));
+    if (m_classic_picker)
+        m_classic_picker->SetColour(m_requested_target);
     m_syncing_inputs = false;
 }
 

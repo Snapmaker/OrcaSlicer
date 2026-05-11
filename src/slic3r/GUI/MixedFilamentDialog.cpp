@@ -26,7 +26,7 @@
 namespace Slic3r { namespace GUI {
 
 static constexpr int SWATCH_SIZE  = 16;
-static constexpr int PREVIEW_SIZE = 80;
+static constexpr int PREVIEW_SIZE = 140;
 static constexpr int STRIP_HEIGHT = 24;
 
 // ---------------------------------------------------------------------------
@@ -257,9 +257,11 @@ void MixedFilamentDialog::build_ui()
         m_filament_card_title->SetBackgroundColour(wxColour("#FFFFFF"));
         card_title_row->Add(m_filament_card_title, 0, wxALIGN_CENTER_VERTICAL);
 
-        // Create swap button (swaps the two filament selections)
+        card_title_row->AddStretchSpacer();
+
         m_btn_swap_gradient_dir = new ScalableButton(m_filament_card, wxID_ANY, "reverse_arrow");
         m_btn_swap_gradient_dir->SetToolTip(_L("Swap filaments"));
+        m_btn_swap_gradient_dir->SetMinSize(wxSize(FromDIP(24), FromDIP(24)));
         m_btn_swap_gradient_dir->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             if (m_filament_rows.size() < 2) return;
             std::vector<int> selections;
@@ -271,9 +273,7 @@ void MixedFilamentDialog::build_ui()
             update_preview();
             update_compatibility_warning();
         });
-        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(8));
-
-        card_title_row->AddStretchSpacer();
+        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
 
         // Remove filament button
         m_btn_remove_filament = new ScalableButton(m_filament_card, wxID_ANY, "delete_filament");
@@ -425,42 +425,65 @@ void MixedFilamentDialog::build_ui()
         scroll_sizer->Add(m_ratio_card, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
     }
 
-    // ---- Gradient mode preview panel (separate, shown in gradient mode) ----
-    m_preview_panel = new wxPanel(m_scrolled_content, wxID_ANY, wxDefaultPosition,
-                                  wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
-    m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
-    m_preview_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
-    m_preview_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
-        wxAutoBufferedPaintDC dc(m_preview_panel);
-        if (m_current_mode == MODE_GRADIENT && m_filament_rows.size() >= 2) {
-            wxSize sz = m_preview_panel->GetClientSize();
-            int ia = std::max(0, std::min(get_filament_index(0), (int)m_filament_colours.size()-1));
-            int ib = std::max(0, std::min(get_filament_index(1), (int)m_filament_colours.size()-1));
-            wxColour ca = parse_mixed_color(m_filament_colours[ia]);
-            wxColour cb = parse_mixed_color(m_filament_colours[ib]);
-            if (m_gradient_direction != 0)
-                std::swap(ca, cb);
-            wxImage img(sz.GetWidth(), sz.GetHeight());
-            unsigned char* data = img.GetData();
-            // Vertical gradient: top = cb-last, bottom = ca-first
-            // (t=1.0 at top→pure cb, t=0 at bottom→pure ca, matching gradient_start/end direction 0)
-            for (int y = 0; y < sz.GetHeight(); ++y) {
-                float t = (sz.GetHeight() > 1) ? 1.0f - float(y) / float(sz.GetHeight() - 1) : 0.5f;
-                wxColour c = blend_pair_filament_mixer(ca, cb, t);
-                for (int x = 0; x < sz.GetWidth(); ++x) {
-                    int idx = (y * sz.GetWidth() + x) * 3;
-                    data[idx]   = c.Red();
-                    data[idx+1] = c.Green();
-                    data[idx+2] = c.Blue();
+    // ======== Gradient Effect Card: 混色效果 (shown in gradient mode) ========
+    {
+        m_gradient_effect_card = new StaticBox(m_scrolled_content, wxID_ANY, wxDefaultPosition,
+                                                wxDefaultSize, wxBORDER_NONE);
+        m_gradient_effect_card->SetCornerRadius(FromDIP(4));
+        m_gradient_effect_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_gradient_effect_card->SetBackgroundColor(
+            StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
+        m_gradient_effect_card->SetBorderWidth(FromDIP(1));
+        m_gradient_effect_card->SetBorderColorNormal(wxColour("#F0F0F0"));
+        m_gradient_effect_card_sizer = new wxBoxSizer(wxVERTICAL);
+
+        // Title: 混色效果 (Figma: 14px Medium, left-aligned, 16px top/left/right padding)
+        auto* effect_title = new wxStaticText(m_gradient_effect_card, wxID_ANY, _L("Mix Effect"));
+        effect_title->SetFont(Label::Head_14);
+        effect_title->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_gradient_effect_card_sizer->Add(effect_title, 0, wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
+
+        // Gradient preview panel (Figma: 140×140px, left-aligned, 8px below title)
+        m_preview_panel = new wxPanel(m_gradient_effect_card, wxID_ANY, wxDefaultPosition,
+                                      wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
+        m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
+        m_preview_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
+        m_preview_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_preview_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+            wxAutoBufferedPaintDC dc(m_preview_panel);
+            if (m_current_mode == MODE_GRADIENT && m_filament_rows.size() >= 2) {
+                wxSize sz = m_preview_panel->GetClientSize();
+                int ia = std::max(0, std::min(get_filament_index(0), (int)m_filament_colours.size()-1));
+                int ib = std::max(0, std::min(get_filament_index(1), (int)m_filament_colours.size()-1));
+                wxColour ca = parse_mixed_color(m_filament_colours[ia]);
+                wxColour cb = parse_mixed_color(m_filament_colours[ib]);
+                if (m_gradient_direction != 0)
+                    std::swap(ca, cb);
+                wxImage img(sz.GetWidth(), sz.GetHeight());
+                unsigned char* data = img.GetData();
+                // Vertical gradient: top = cb-last, bottom = ca-first
+                // (t=1.0 at top→pure cb, t=0 at bottom→pure ca, matching gradient_start/end direction 0)
+                for (int y = 0; y < sz.GetHeight(); ++y) {
+                    float t = (sz.GetHeight() > 1) ? 1.0f - float(y) / float(sz.GetHeight() - 1) : 0.5f;
+                    wxColour c = blend_pair_filament_mixer(ca, cb, t);
+                    for (int x = 0; x < sz.GetWidth(); ++x) {
+                        int idx = (y * sz.GetWidth() + x) * 3;
+                        data[idx]   = c.Red();
+                        data[idx+1] = c.Green();
+                        data[idx+2] = c.Blue();
+                    }
                 }
+                dc.DrawBitmap(wxBitmap(img), 0, 0, false);
+            } else {
+                dc.SetBackground(wxBrush(parse_mixed_color(compute_preview_color())));
+                dc.Clear();
             }
-            dc.DrawBitmap(wxBitmap(img), 0, 0, false);
-        } else {
-            dc.SetBackground(wxBrush(parse_mixed_color(compute_preview_color())));
-            dc.Clear();
-        }
-    });
-    scroll_sizer->Add(m_preview_panel, 0, wxALIGN_CENTER | wxALL, M);
+        });
+        m_gradient_effect_card_sizer->Add(m_preview_panel, 0, wxALIGN_LEFT | wxLEFT | wxBOTTOM, FromDIP(16));
+
+        m_gradient_effect_card->SetSizer(m_gradient_effect_card_sizer);
+        scroll_sizer->Add(m_gradient_effect_card, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
+    }
 
     // ---- Match mode panel ----
     {
@@ -1272,9 +1295,9 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
     // Show/hide gradient bar vs tri-picker within card
     if (m_gradient_selector) m_gradient_selector->Show(show_slider);
     if (m_tri_picker)        m_tri_picker->Show(show_tri);
-    // Gradient preview panel (shown in gradient mode)
-    if (m_preview_panel)
-        m_preview_panel->Show(is_gradient_mode && !is_match_mode);
+    // Gradient effect card (shown in gradient mode)
+    if (m_gradient_effect_card)
+        m_gradient_effect_card->Show(is_gradient_mode && !is_match_mode);
 
     // Cycle card
     if (m_cycle_card) m_cycle_card->Show(is_cycle_mode);
@@ -1675,6 +1698,33 @@ void MixedFilamentDialog::build_swatch_grid()
                 }
             }
         }
+    } else if (m_current_mode == MODE_GRADIENT) {
+        // Gradient mode: A→B and B→A direction pairs per filament pair.
+        for (int i = 0; i < n; ++i) {
+            for (int j = i + 1; j < n; ++j) {
+                // 50:50 blend is symmetric — compute once, reuse for both directions.
+                const wxColour blended = parse_mixed_color(
+                    MixedFilamentManager::blend_color(m_filament_colours[i], m_filament_colours[j], 50, 50));
+
+                // Direction A→B: Fi → Fj
+                Candidate c_ab;
+                c_ab.color   = blended;
+                c_ab.tooltip = wxString::Format("F%d → F%d", i + 1, j + 1);
+                c_ab.rows[0] = i; c_ab.rows[1] = j;
+                c_ab.n_rows  = 2;
+                c_ab.b_pct   = 50;
+                candidates.push_back(c_ab);
+
+                // Direction B→A: Fj → Fi
+                Candidate c_ba;
+                c_ba.color   = blended;
+                c_ba.tooltip = wxString::Format("F%d → F%d", j + 1, i + 1);
+                c_ba.rows[0] = j; c_ba.rows[1] = i;
+                c_ba.n_rows  = 2;
+                c_ba.b_pct   = 50;
+                candidates.push_back(c_ba);
+            }
+        }
     } else {
         for (int i = 0; i < n; ++i) {
             for (int j = i + 1; j < n; ++j) {
@@ -1746,6 +1796,10 @@ void MixedFilamentDialog::build_swatch_grid()
             if (cand.n_rows == 2 && m_current_mode == MODE_RATIO && m_gradient_selector) {
                 m_gradient_selector->set_value(cand.b_pct);
                 rebuild_legend();
+            } else if (cand.n_rows == 2 && m_current_mode == MODE_GRADIENT) {
+                // Direction is encoded in rows[] ordering; reset to 0 so
+                // the gradient draws component_a (rows[0]) → component_b (rows[1]).
+                m_gradient_direction = 0;
             } else if (cand.n_rows == 3) {
                 m_tri_wx = cand.wx;
                 m_tri_wy = cand.wy;

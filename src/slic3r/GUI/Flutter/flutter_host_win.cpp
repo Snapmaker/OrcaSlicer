@@ -70,6 +70,50 @@ static std::vector<uint8_t> encodeMethodCall(const std::string& method,
     return buf;
 }
 
+// Decodes one StandardMessageCodec value, converts to string. Returns bytes consumed.
+static size_t decodeValue(const uint8_t* data, size_t size, std::string* out) {
+    if (size < 1) return 0;
+    switch (data[0]) {
+        case 0x00: // null
+            *out = "";
+            return 1;
+        case 0x01: // true
+            *out = "true";
+            return 1;
+        case 0x02: // false
+            *out = "false";
+            return 1;
+        case 0x03: { // int32 (4 bytes)
+            if (size < 5) return 0;
+            int32_t val = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
+            *out = std::to_string(val);
+            return 5;
+        }
+        case 0x04: { // int64 (8 bytes)
+            if (size < 9) return 0;
+            int64_t val = 0;
+            for (int i = 0; i < 8; ++i)
+                val |= static_cast<int64_t>(data[1 + i]) << (i * 8);
+            *out = std::to_string(val);
+            return 9;
+        }
+        case 0x06: { // float64 (8 bytes, IEEE 754)
+            if (size < 9) return 0;
+            uint64_t bits = 0;
+            for (int i = 0; i < 8; ++i)
+                bits |= static_cast<uint64_t>(data[1 + i]) << (i * 8);
+            double dbl;
+            std::memcpy(&dbl, &bits, sizeof(dbl));
+            *out = std::to_string(dbl);
+            return 9;
+        }
+        case 0x07: // string
+            return readString(data, size, out);
+        default:
+            return 0;
+    }
+}
+
 // Decodes a method-call message. Returns {method_name, args}.
 static std::pair<std::string, std::string>
     decodeMethodCall(const uint8_t* data, size_t size) {
@@ -79,13 +123,7 @@ static std::pair<std::string, std::string>
     size_t n = readString(data + off, size - off, &method);
     if (!n) return {"", ""};
     off += n;
-    n = readString(data + off, size - off, &args);
-    if (!n && data[off] == 0x00) {
-        // Null args — skip the null byte
-        off += 1;
-    } else if (n) {
-        off += n;
-    }
+    decodeValue(data + off, size - off, &args);
     return {method, args};
 }
 

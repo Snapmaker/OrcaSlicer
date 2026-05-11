@@ -1003,7 +1003,10 @@ SnapmakerOrcaPre_do_trim_slash:
   Goto SnapmakerOrcaPre_trim_inst_slash
 SnapmakerOrcaPre_trim_slash_done:
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
-  ExecWait '"$0" /S _?="$3"' $1
+  ; Same as CMake CPack NSIS.template.in and NSIS maintainer guidance: use _?=$DIR with NO
+  ; extra quotes around the directory. _?="C:\Program Files\..." breaks parsing (log shows
+  ; _?="C:\Program Fil...) and causes uninstall failure. See NSIS forums t-212468.
+  ExecWait '"$0" /S _?=$3' $1
   IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
   IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
 

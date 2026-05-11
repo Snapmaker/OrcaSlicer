@@ -30,6 +30,7 @@ static std::pair<uint32_t, size_t> readVarint(const uint8_t* data, size_t size) 
         value |= (byte & 0x7F) << shift;
         if (!(byte & 0x80)) break;
         shift += 7;
+        if (shift >= 32) return {0, 0};
     }
     return {value, pos};
 }
@@ -85,15 +86,21 @@ static size_t decodeValue(const uint8_t* data, size_t size, std::string* out) {
             return 1;
         case 0x03: { // int32 (4 bytes)
             if (size < 5) return 0;
-            int32_t val = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
+            uint32_t bits = data[1] | (static_cast<uint32_t>(data[2]) << 8)
+                          | (static_cast<uint32_t>(data[3]) << 16)
+                          | (static_cast<uint32_t>(data[4]) << 24);
+            int32_t val;
+            std::memcpy(&val, &bits, sizeof(val));
             *out = std::to_string(val);
             return 5;
         }
         case 0x04: { // int64 (8 bytes)
             if (size < 9) return 0;
-            int64_t val = 0;
+            uint64_t bits = 0;
             for (int i = 0; i < 8; ++i)
-                val |= static_cast<int64_t>(data[1 + i]) << (i * 8);
+                bits |= static_cast<uint64_t>(data[1 + i]) << (i * 8);
+            int64_t val;
+            std::memcpy(&val, &bits, sizeof(val));
             *out = std::to_string(val);
             return 9;
         }
@@ -153,8 +160,12 @@ class FlutterViewHostWin : public FlutterViewHost {
             return;
         }
 
-        Reply reply = [messenger, response_handle = msg->response_handle]
+        auto replied = std::make_shared<bool>(false);
+
+        Reply reply = [messenger, response_handle = msg->response_handle, replied]
                       (const std::string& result) {
+            if (*replied) return;
+            *replied = true;
             if (messenger && response_handle) {
                 auto encoded = encodeSuccess(result);
                 FlutterDesktopMessengerSendResponse(
@@ -165,16 +176,22 @@ class FlutterViewHostWin : public FlutterViewHost {
         try {
             self->m_handler(method, args, reply);
         } catch (const std::exception& e) {
-            if (messenger && msg->response_handle) {
-                auto encoded = encodeSuccess(std::string("EXCEPTION: ") + e.what());
-                FlutterDesktopMessengerSendResponse(
-                    messenger, msg->response_handle, encoded.data(), encoded.size());
+            if (!*replied) {
+                *replied = true;
+                if (messenger && msg->response_handle) {
+                    auto encoded = encodeSuccess(std::string("EXCEPTION: ") + e.what());
+                    FlutterDesktopMessengerSendResponse(
+                        messenger, msg->response_handle, encoded.data(), encoded.size());
+                }
             }
         } catch (...) {
-            if (messenger && msg->response_handle) {
-                auto encoded = encodeSuccess(std::string("EXCEPTION: unknown"));
-                FlutterDesktopMessengerSendResponse(
-                    messenger, msg->response_handle, encoded.data(), encoded.size());
+            if (!*replied) {
+                *replied = true;
+                if (messenger && msg->response_handle) {
+                    auto encoded = encodeSuccess(std::string("EXCEPTION: unknown"));
+                    FlutterDesktopMessengerSendResponse(
+                        messenger, msg->response_handle, encoded.data(), encoded.size());
+                }
             }
         }
     }

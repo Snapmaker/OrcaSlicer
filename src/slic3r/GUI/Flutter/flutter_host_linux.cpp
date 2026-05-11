@@ -81,8 +81,8 @@ public:
         fl_method_channel_set_method_call_handler(
             m_channel, nullptr, nullptr, nullptr);
         g_clear_object(&m_channel);
-        g_clear_object(&m_view);
         g_clear_object(&m_engine);
+        g_clear_object(&m_view);
     }
 
     void embedInto(void* parentHandle) override {
@@ -93,6 +93,8 @@ public:
         gtk_widget_get_allocation(parent, &alloc);
         int w = alloc.width > 1 ? alloc.width : 800;
         int h = alloc.height > 1 ? alloc.height : 600;
+
+        if (!WX_IS_PIZZA(parent)) return;
 
         GtkWidget* view_widget = GTK_WIDGET(m_view);
         wxPizza* pizza = WX_PIZZA(parent);

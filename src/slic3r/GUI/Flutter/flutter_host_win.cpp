@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstring>
 #include <cstdint>
+#include <cerrno>
 
 // ── StandardMethodCodec helpers ────────────────────────────────────────
 
@@ -57,9 +58,10 @@ static size_t readString(const uint8_t* data, size_t size, std::string* out) {
 // that Dart's typed invokeMethod<T> receives the correct wire type.
 static void writeValue(std::vector<uint8_t>& buf, const std::string& s) {
     if (!s.empty()) {
+        errno = 0;
         char* end = nullptr;
         long long val = std::strtoll(s.c_str(), &end, 10);
-        if (end && *end == '\0') {
+        if (end && *end == '\0' && errno != ERANGE) {
             if (val >= INT32_MIN && val <= INT32_MAX) {
                 buf.push_back(0x03); // int32
                 int32_t v32 = static_cast<int32_t>(val);

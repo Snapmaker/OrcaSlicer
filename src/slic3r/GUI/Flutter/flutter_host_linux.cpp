@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <string>
 #include <cstring>
+#include <cerrno>
+#include <climits>
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -54,9 +56,10 @@ class FlutterViewHostLinux : public FlutterViewHost {
 
             // Auto-detect integer strings so Dart invokeMethod<int> works
             if (!result.empty()) {
+                errno = 0;
                 char* end = nullptr;
                 long long n = std::strtoll(result.c_str(), &end, 10);
-                if (end && *end == '\0' && n >= INT_MIN && n <= INT_MAX)
+                if (end && *end == '\0' && errno != ERANGE && n >= INT_MIN && n <= INT_MAX)
                     val = fl_value_new_int(static_cast<int>(n));
             }
             if (!val) val = fl_value_new_string(result.c_str());
@@ -67,9 +70,6 @@ class FlutterViewHostLinux : public FlutterViewHost {
 
         try {
             self->m_handler(method ? method : "", args, reply);
-            if (!*replied) {
-                g_object_unref(method_call);
-            }
         } catch (const std::exception& e) {
             if (!*replied) {
                 *replied = true;
@@ -158,7 +158,16 @@ public:
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
         if (!m_channel) return;
-        g_autoptr(FlValue) args = fl_value_new_string(arguments.c_str());
+        g_autoptr(FlValue) args = nullptr;
+        // Auto-detect integer args so Dart handlers receive the correct type
+        if (!arguments.empty()) {
+            errno = 0;
+            char* end = nullptr;
+            long long n = std::strtoll(arguments.c_str(), &end, 10);
+            if (end && *end == '\0' && errno != ERANGE && n >= INT_MIN && n <= INT_MAX)
+                args = fl_value_new_int(static_cast<int>(n));
+        }
+        if (!args) args = fl_value_new_string(arguments.c_str());
         fl_method_channel_invoke_method(
             m_channel, method.c_str(), args,
             nullptr, nullptr, nullptr);

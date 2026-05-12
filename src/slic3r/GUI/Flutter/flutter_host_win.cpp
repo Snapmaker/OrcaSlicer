@@ -53,21 +53,54 @@ static size_t readString(const uint8_t* data, size_t size, std::string* out) {
     return start + len;
 }
 
+// Writes a StandardMessageCodec value, auto-detecting int vs string so
+// that Dart's typed invokeMethod<T> receives the correct wire type.
+static void writeValue(std::vector<uint8_t>& buf, const std::string& s) {
+    if (!s.empty()) {
+        char* end = nullptr;
+        long long val = std::strtoll(s.c_str(), &end, 10);
+        if (end && *end == '\0') {
+            if (val >= INT32_MIN && val <= INT32_MAX) {
+                buf.push_back(0x03); // int32
+                int32_t v32 = static_cast<int32_t>(val);
+                uint32_t bits;
+                std::memcpy(&bits, &v32, sizeof(bits));
+                buf.push_back(bits & 0xFF);
+                buf.push_back((bits >> 8) & 0xFF);
+                buf.push_back((bits >> 16) & 0xFF);
+                buf.push_back((bits >> 24) & 0xFF);
+                return;
+            }
+            buf.push_back(0x04); // int64
+            int64_t v64 = val;
+            uint64_t bits;
+            std::memcpy(&bits, &v64, sizeof(bits));
+            for (int i = 0; i < 8; ++i)
+                buf.push_back((bits >> (i * 8)) & 0xFF);
+            return;
+        }
+    }
+    // fall through: encode as string
+    buf.push_back(0x07);
+    writeVarint(buf, static_cast<uint32_t>(s.size()));
+    buf.insert(buf.end(), s.begin(), s.end());
+}
+
 // Builds a success envelope: [0x00, encoded_result].
 static std::vector<uint8_t> encodeSuccess(const std::string& result) {
     std::vector<uint8_t> buf;
     buf.push_back(0x00); // success
-    writeString(buf, result);
+    writeValue(buf, result);
     return buf;
 }
 
-// Builds a method-call message: [0x01, method_string, args_string].
+// Builds a method-call message: [0x01, method_string, args_value].
 static std::vector<uint8_t> encodeMethodCall(const std::string& method,
                                              const std::string& args) {
     std::vector<uint8_t> buf;
     buf.push_back(0x01); // method call
     writeString(buf, method);
-    writeString(buf, args);
+    writeValue(buf, args);
     return buf;
 }
 
@@ -130,7 +163,7 @@ static std::pair<std::string, std::string>
     size_t n = readString(data + off, size - off, &method);
     if (!n) return {"", ""};
     off += n;
-    decodeValue(data + off, size - off, &args);
+    if (!decodeValue(data + off, size - off, &args)) return {"", ""};
     return {method, args};
 }
 
@@ -252,6 +285,7 @@ public:
         SetWindowPos(childHwnd, nullptr,
                      0, 0, w, h,
                      SWP_NOZORDER | SWP_SHOWWINDOW);
+        ::SetFocus(childHwnd);
     }
 
     void invokeMethod(const std::string& method,

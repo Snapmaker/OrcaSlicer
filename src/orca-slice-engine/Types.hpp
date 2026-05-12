@@ -86,7 +86,7 @@ struct SliceOutputStats {
         std::vector<double> nozzle_diameters;    // Nozzle diameter for each extruder
         int plate_count;                         // Total number of plates
         std::vector<FilamentDetail> filament_details;  // Detailed filament info per extruder
-        std::string model_thumbnail;             // Model thumbnail (base64 encoded PNG)
+        std::string model_thumbnail;             // Model thumbnail path within gcode.3mf (Metadata/plate_N.png)
         std::vector<Issue> issues;               // Per-plate issues (errors/warnings/tips)
         bool long_retraction_when_cut = false;   // Experimental long retraction when cut feature active
     };

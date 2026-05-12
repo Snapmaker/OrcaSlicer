@@ -1372,7 +1372,13 @@ void SliceEngine::build_statistics() {
                 plate_stats.filament_details.push_back(detail);
             }
 
-            plate_stats.model_thumbnail = "";
+            // Look up the thumbnail path from plate data
+            for (const auto* pd : m_plate_data) {
+                if (pd->plate_index == plate_id && !pd->thumbnail_file.empty()) {
+                    plate_stats.model_thumbnail = "Metadata/plate_" + std::to_string(plate_id + 1) + ".png";
+                    break;
+                }
+            }
         } else {
             plate_stats.plate_count = static_cast<int>(m_plate_data.size());
         }

@@ -830,11 +830,7 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                                                                 const Vec2f&                       translation,
                                                                 float                              angle) const
 {
-    Vec2f extruder_offset;
-    if (m_single_extruder_multi_material)
-        extruder_offset = m_extruder_offsets[0].cast<float>();
-    else
-        extruder_offset = m_extruder_offsets[tcr.initial_tool].cast<float>();
+    Vec2f extruder_offset = extruder_offset_at(tcr.initial_tool).cast<float>();
 
     std::istringstream gcode_str(tcr.gcode);
     std::string        gcode_out;
@@ -894,10 +890,10 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
         if (line == "[change_filament_gcode]") {
             // BBS
             if (!m_single_extruder_multi_material) {
-                extruder_offset = m_extruder_offsets[tcr.new_tool].cast<float>();
+                extruder_offset = extruder_offset_at(tcr.new_tool).cast<float>();
 
                 // If the extruder offset changed, add an extra move so everything is continuous
-                if (extruder_offset != m_extruder_offsets[tcr.initial_tool].cast<float>()) {
+                if (extruder_offset != extruder_offset_at(tcr.initial_tool).cast<float>()) {
                     std::ostringstream oss;
                     oss << std::fixed << std::setprecision(3) << "G1 X" << transformed_pos.x() - extruder_offset.x() << " Y"
                         << transformed_pos.y() - extruder_offset.y() << "\n";
@@ -907,6 +903,19 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
         }
     }
     return gcode_out;
+}
+
+Vec2d WipeTowerIntegration::extruder_offset_at(size_t extruder_id) const
+{
+    if (m_single_extruder_multi_material) {
+        return m_extruder_offsets[0];
+    } else {
+        // If the extruder_id is out of range, we return the offset of the first extruder. 
+        if (extruder_id >= m_extruder_offsets.size())
+            return m_extruder_offsets[0];
+        else
+            return m_extruder_offsets[extruder_id];
+    }
 }
 
 std::string WipeTowerIntegration::prime(GCode& gcodegen)

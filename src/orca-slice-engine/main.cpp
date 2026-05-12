@@ -92,6 +92,22 @@ CliArgs parse_args(int argc, char* argv[]) {
         else if ((arg == "-d" || arg == "--data-dir") && i + 1 < argc) {
             args.engine_cfg.data_dir = argv[++i];
         }
+        else if ((arg == "-t" || arg == "--timeout") && i + 1 < argc) {
+            try {
+                args.engine_cfg.timeout_seconds = std::stoi(argv[++i]);
+                if (args.engine_cfg.timeout_seconds < 0)
+                    args.engine_cfg.timeout_seconds = 0;
+            } catch (...) {
+                std::cerr << "Error: Invalid timeout value." << std::endl;
+                std::exit(EXIT_INVALID_ARGS);
+            }
+        }
+        else if (arg == "--cancel-file" && i + 1 < argc) {
+            args.engine_cfg.cancel_file = argv[++i];
+        }
+        else if (arg == "--allow-custom-presets") {
+            args.engine_cfg.enforce_official_presets = false;
+        }
         else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
             std::string fmt = argv[++i];
             if (fmt == "gcode") {
@@ -145,13 +161,6 @@ int main(int argc, char* argv[]) {
     bool log_enabled   = cli.log_enabled;
     std::string& log_file_path = cli.log_file_path;
     bool verbose       = cli.verbose;
-
-    // Validate input file
-    if (cfg.input_file.empty()) {
-        std::cerr << "Error: No input file specified." << std::endl;
-        print_usage(argv[0]);
-        return EXIT_INVALID_ARGS;
-    }
 
     if (!boost::filesystem::exists(cfg.input_file)) {
         std::cerr << "Error: Input file not found: " << cfg.input_file << std::endl;
@@ -266,19 +275,12 @@ int main(int argc, char* argv[]) {
     output_slice_statistics(engine.stats(), json_output_path, engine.output_path());
 
     // --- Cleanup & exit ---
-    temp_guard.cleanup();
-    // Remove the per-process temp subdirectory (std::quick_exit skips destructors)
+    // Remove the per-process temp subdirectory
     if (!cfg.temp_dir.empty()) {
         try { boost::filesystem::remove_all(cfg.temp_dir); } catch (...) {}
     }
 
-    int exit_code;
-    if (engine.any_error())
-        exit_code = EXIT_VALIDATION_ERROR;
-    else if (engine.any_postprocess_warning())
-        exit_code = EXIT_POSTPROCESS_WARNING;
-    else
-        exit_code = EXIT_OK;
-
-    std::quick_exit(exit_code);
+    int exit_code = engine.exit_code();
+    BOOST_LOG_TRIVIAL(info) << "Exiting with code " << exit_code;
+    return exit_code;
 }

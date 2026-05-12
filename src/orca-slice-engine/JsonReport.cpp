@@ -8,6 +8,7 @@
 #include <boost/log/trivial.hpp>
 #include <nlohmann/json.hpp>
 
+#include "libslic3r/libslic3r.h"
 #include "Types.hpp"
 
 using ordered_json = nlohmann::ordered_json;
@@ -93,6 +94,7 @@ void output_slice_statistics(const SliceOutputStats& stats,
     }
 
     root["success"] = stats.success;
+    root["engine_version"] = SLIC3R_VERSION;
 
     ordered_json print_info;
     print_info["output_file"]          = stats.success ? output_file_path : "";

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <vector>
@@ -23,6 +24,9 @@ struct EngineConfig {
     bool single_plate = false;
     std::string temp_dir;          // temp directory for intermediate gcode files
     std::string data_dir;          // --data-dir, custom system presets path (empty = auto)
+    int timeout_seconds = 0;       // 0 = no timeout; cloud service sets based on file size
+    std::string cancel_file;       // watchdog file path for external cancellation
+    bool enforce_official_presets = true;  // P0-2: replace user config with official presets
 };
 
 // Intermediate result for a single plate during the pipeline
@@ -53,12 +57,18 @@ public:
     bool any_error() const { return m_any_error; }
     bool any_postprocess_warning() const { return m_any_postprocess_warning; }
 
+    // Returns the most specific exit code based on what failed.
+    // Precedence: validation > slicing > export > load > postprocess_warning > ok.
+    int exit_code() const;
+    void set_error_type(int code);
+
 private:
     // --- Pipeline stages ---
     bool load_3mf();
     void validate_config();
     void load_system_presets();
     void validate_presets();
+    void apply_official_presets();
     bool validate_input();
     void process_plate(int plate_id);
     void package_output();
@@ -78,10 +88,13 @@ private:
     EngineConfig m_cfg;
     std::string m_output_path;
     SliceOutputStats m_stats;
+    std::chrono::steady_clock::time_point m_timeout_deadline;
+    bool m_has_timeout = false;
     std::vector<std::string>& m_temp_files;
     std::map<int, PlateSliceResult> m_plate_results;
     bool m_any_error = false;
     bool m_any_postprocess_warning = false;
+    int m_error_type = EXIT_OK;  // most severe exit code encountered
 
     // Loaded data
     Slic3r::Model m_model;

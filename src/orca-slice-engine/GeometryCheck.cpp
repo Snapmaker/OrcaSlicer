@@ -43,7 +43,7 @@ void check_non_manifold(const Slic3r::ModelVolume& volume,
     }
 }
 
-void check_degenerate_faces(Slic3r::ModelVolume& volume,
+void check_degenerate_faces(const Slic3r::ModelVolume& volume,
                             const std::string& obj_name, int plate_id,
                             std::vector<Issue>& out)
 {

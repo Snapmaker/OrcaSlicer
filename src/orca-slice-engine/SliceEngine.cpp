@@ -6,7 +6,6 @@
 #include <iostream>
 #include <memory>
 #include <set>
-#include <iterator>
 #include <sstream>
 
 #include <boost/log/trivial.hpp>
@@ -63,15 +62,39 @@ bool SliceEngine::run() {
     load_system_presets();
     validate_presets();
 
+    // Replace user-supplied parameters with official system presets for cloud safety
+    if (m_cfg.enforce_official_presets)
+        apply_official_presets();
+
     bool validate_ok = validate_input();
 
     if (load_ok && validate_ok) {
+        // --- Setup timeout deadline ---
+        m_has_timeout = (m_cfg.timeout_seconds > 0);
+        if (m_has_timeout) {
+            m_timeout_deadline = std::chrono::steady_clock::now()
+                               + std::chrono::seconds(m_cfg.timeout_seconds);
+            BOOST_LOG_TRIVIAL(info) << "Slicing timeout set to "
+                                    << m_cfg.timeout_seconds << "s";
+        }
+
         try {
         // --- Geometry defect detection (once for entire model, before per-plate loop) ---
         {
             auto geom_issues = run_geometry_checks(m_model);
+            bool has_geom_error = false;
             for (auto& issue : geom_issues) {
+                if (issue.level == "error")
+                    has_geom_error = true;
                 m_stats.issues.push_back(std::move(issue));
+            }
+            if (has_geom_error) {
+                m_any_error = true;
+                set_error_type(EXIT_VALIDATION_ERROR);
+                m_stats.error_message = "模型文件中检测到几何缺陷（非流形/自相交/零体积），请修复后重新上传";
+                BOOST_LOG_TRIVIAL(error) << m_stats.error_message;
+                build_statistics();
+                return false;
             }
         }
 
@@ -110,14 +133,16 @@ bool SliceEngine::run() {
 
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Unhandled exception in slicing pipeline: " << e.what();
-            std::cerr << "[ERROR] Unhandled exception: " << e.what() << std::endl;
+            std::cerr << "[ERROR] An unexpected internal error occurred during slicing." << std::endl;
             m_any_error = true;
+            set_error_type(EXIT_SLICING_ERROR);
             m_stats.issues.push_back(make_error(-1, "INTERNAL_ERROR",
-                std::string("Unhandled exception: ") + e.what()));
+                "An unexpected internal error occurred during slicing. Please try again or contact support."));
         } catch (...) {
             BOOST_LOG_TRIVIAL(error) << "Unhandled non-standard exception in slicing pipeline";
-            std::cerr << "[ERROR] Unhandled unknown exception" << std::endl;
+            std::cerr << "[ERROR] An unexpected internal error occurred." << std::endl;
             m_any_error = true;
+            set_error_type(EXIT_SLICING_ERROR);
             m_stats.issues.push_back(make_error(-1, "INTERNAL_ERROR",
                 "Unhandled unknown exception in slicing pipeline"));
         }
@@ -135,6 +160,35 @@ bool SliceEngine::run() {
 // ============================================================================
 
 bool SliceEngine::load_3mf() {
+    // --- Pre-load validation: format & size ---
+
+    // Extension check
+    std::string ext = boost::filesystem::extension(m_cfg.input_file);
+    if (ext != ".3mf") {
+        std::string msg = "仅支持上传 .3mf 格式的打印配置文件，请使用 Snapmaker Orca Slicer 导出";
+        BOOST_LOG_TRIVIAL(error) << msg;
+        m_any_error = true;
+        set_error_type(EXIT_LOAD_ERROR);
+        m_stats.error_message = msg;
+        m_stats.issues.push_back(make_error(-1, "FORMAT_REJECTED", msg));
+        return false;
+    }
+
+    // File size check (200MB default)
+    constexpr boost::uintmax_t MAX_FILE_SIZE = 200ULL * 1024 * 1024;
+    boost::system::error_code ec;
+    boost::uintmax_t file_size = boost::filesystem::file_size(m_cfg.input_file, ec);
+    if (!ec && file_size > MAX_FILE_SIZE) {
+        std::string msg = "文件大小超过限制 (" + std::to_string(MAX_FILE_SIZE / 1024 / 1024)
+                        + "MB)，请简化模型或减少面数后重试";
+        BOOST_LOG_TRIVIAL(error) << msg;
+        m_any_error = true;
+        set_error_type(EXIT_LOAD_ERROR);
+        m_stats.error_message = msg;
+        m_stats.issues.push_back(make_error(-1, "FILE_SIZE_EXCEEDED", msg));
+        return false;
+    }
+
     BOOST_LOG_TRIVIAL(info) << "Loading 3MF file...";
 
     // Reset substitution state from any prior run
@@ -159,10 +213,11 @@ bool SliceEngine::load_3mf() {
             0
         );
     }
-    catch (std::exception& e) {
+    catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to load 3MF file: " << e.what();
         m_any_error = true;
-        m_stats.error_message = std::string("Failed to load 3MF file: ") + e.what();
+        set_error_type(EXIT_LOAD_ERROR);
+        m_stats.error_message = "Failed to load 3MF file. The file may be corrupted or in an unsupported format.";
         m_stats.issues.push_back(make_error(-1, "LOAD_3MF_ERROR", m_stats.error_message));
         return false;
     }
@@ -170,6 +225,7 @@ bool SliceEngine::load_3mf() {
     if (m_model.objects.empty()) {
         BOOST_LOG_TRIVIAL(error) << "No objects found in 3MF file";
         m_any_error = true;
+        set_error_type(EXIT_LOAD_ERROR);
         m_stats.error_message = "3MF file contains no sliceable model objects";
         m_stats.issues.push_back(make_error(-1, "MODEL_EMPTY", m_stats.error_message));
         return false;
@@ -177,6 +233,16 @@ bool SliceEngine::load_3mf() {
 
     BOOST_LOG_TRIVIAL(info) << "Loaded " << m_model.objects.size() << " object(s)";
     BOOST_LOG_TRIVIAL(info) << "3MF version: " << m_file_version.to_string();
+
+    // Detect and reject post-processing scripts in cloud mode (RCE prevention)
+    if (m_config.has("post_process")) {
+        auto* pp = m_config.option<ConfigOptionStrings>("post_process", true);
+        if (pp && !pp->values.empty()) {
+            m_stats.issues.push_back(make_error(-1, "POST_PROCESS_REJECTED",
+                "自定义后处理脚本在云切片中不被支持"));
+            m_config.set_key_value("post_process", new ConfigOptionStrings({}));
+        }
+    }
 
     return true;
 }
@@ -384,6 +450,87 @@ void SliceEngine::validate_presets()
     }
 }
 
+void SliceEngine::apply_official_presets()
+{
+    // Strip all custom G-code blocks — cloud slicing must not execute
+    // or embed user-supplied G-code for safety and consistency.
+    static const std::vector<const char*> gcode_keys = {
+        "start_gcode", "end_gcode", "layer_gcode",
+        "machine_start_gcode", "machine_end_gcode",
+        "before_layer_change_gcode", "between_objects_gcode",
+        "toolchange_gcode", "print_host",
+    };
+    for (const char* key : gcode_keys) {
+        if (m_config.has(key)) {
+            m_config.set_key_value(key, new ConfigOptionString(""));
+            m_stats.issues.push_back(make_tip(-1, "GCODE_CLEARED",
+                std::string("Custom G-code '") + key + "' cleared for cloud safety"));
+        }
+    }
+
+    // Enforce safe parameter bounds (P1-14)
+    // Temperature bounds
+    if (m_config.has("nozzle_temperature")) {
+        auto* opt = m_config.option<ConfigOptionInts>("nozzle_temperature");
+        if (opt) {
+            auto values = opt->values;
+            for (auto& v : values) {
+                if (v > 300) { v = 300; }
+            }
+            m_config.set_key_value("nozzle_temperature", new ConfigOptionInts(values));
+        }
+    }
+    if (m_config.has("bed_temperature")) {
+        auto* opt = m_config.option<ConfigOptionInts>("bed_temperature");
+        if (opt) {
+            auto values = opt->values;
+            for (auto& v : values) {
+                if (v > 120) { v = 120; }
+            }
+            m_config.set_key_value("bed_temperature", new ConfigOptionInts(values));
+        }
+    }
+
+    // Fill density cap (cloud restricts to 0–40%)
+    if (m_config.has("sparse_infill_density")) {
+        auto* opt = m_config.option<ConfigOptionPercent>("sparse_infill_density");
+        if (opt) {
+            double v = opt->value;
+            if (v > 40.0) {
+                m_config.set_key_value("sparse_infill_density", new ConfigOptionPercent(40.0));
+                m_stats.issues.push_back(make_tip(-1, "FILL_DENSITY_CAPPED",
+                    "Fill density capped at 40% for cloud slicing"));
+            }
+        }
+    }
+
+    // Wall loops cap
+    if (m_config.has("wall_loops")) {
+        auto* opt = m_config.option<ConfigOptionInt>("wall_loops");
+        if (opt && opt->value > 5) {
+            m_config.set_key_value("wall_loops", new ConfigOptionInt(5));
+            m_stats.issues.push_back(make_tip(-1, "WALL_LOOPS_CAPPED",
+                "Wall loops capped at 5 for cloud slicing"));
+        }
+    }
+
+    // Layer height bounds
+    if (m_config.has("layer_height")) {
+        auto* opt = m_config.option<ConfigOptionFloat>("layer_height");
+        if (opt) {
+            double v = opt->value;
+            if (v > 0.4) {
+                m_config.set_key_value("layer_height", new ConfigOptionFloat(0.4));
+            } else if (v < 0.04) {
+                m_config.set_key_value("layer_height", new ConfigOptionFloat(0.04));
+            }
+        }
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "Official preset enforcement applied (custom G-code cleared, "
+        << "parameter bounds enforced)";
+}
+
 // ============================================================================
 // Stage 3: Validate input
 // ============================================================================
@@ -418,6 +565,7 @@ bool SliceEngine::validate_input() {
             }
             std::cerr << std::endl;
             m_any_error = true;
+            set_error_type(EXIT_VALIDATION_ERROR);
             m_stats.error_message = "Requested plate " + std::to_string(m_cfg.plate_id) + " not found in 3MF file";
             m_stats.issues.push_back(make_error(-1, "PLATE_NOT_FOUND", m_stats.error_message));
             return false;
@@ -448,13 +596,7 @@ void SliceEngine::process_plate(int plate_id) {
     if (!run_build_volume_check(plate_id, identify_ids))
         return;
 
-    // --- Setup Print object ---
-    Print print;
-    print.set_status_callback(default_status_callback);
-    print.is_BBL_printer() = (m_presets_available && m_preset_bundle)
-        ? m_preset_bundle->is_bbl_vendor() : false;
-
-    // Calculate plate dimensions
+    // Calculate plate dimensions (computed once, reused per attempt)
     double plate_width = 200.0;
     double plate_depth = 200.0;
 
@@ -474,39 +616,26 @@ void SliceEngine::process_plate(int plate_id) {
 
     Vec3d origin = setup_print_origin(plate_id, plate_width, plate_depth);
 
-    // --- Apply model ---
-    if (!apply_model(plate_id, print, origin))
-        return;
-
-    // --- Assign arrange_order ---
-    {
-        int order = 1;
-        for (ModelObject* obj : m_model.objects)
-            for (ModelInstance* inst : obj->instances)
-                inst->arrange_order = order++;
-    }
-
-    // --- Set global extruder params & speed table (D5 — desktop parity) ---
-    {
-        int num_extruders = 0;
-        if (m_config.has("filament_diameter")) {
-            auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
-            if (fd) num_extruders = static_cast<int>(fd->values.size());
-        }
-        Model::setExtruderParams(m_config, num_extruders);
-        Model::setPrintSpeedTable(m_config, print.config());
-    }
-
-    // --- Validation ---
-    if (!run_validation(plate_id, print))
-        return;
+    // Get BBL vendor flag once
+    bool is_bbl = (m_presets_available && m_preset_bundle)
+        ? m_preset_bundle->is_bbl_vendor() : false;
 
     // --- Slicing + Export (with retry for non-fatal exceptions) ---
-    PlateSliceResult slice_result;
-    bool slice_ok = false;
+    // Each attempt creates a fresh Print to avoid explicit dtor + placement-new
+    // on the wipe-tower-disabled retry path.
     bool wipe_tower_disabled = false;
 
     for (int attempt = 1; attempt <= MAX_RETRIES; ++attempt) {
+        // Check timeout before each attempt
+        if (m_has_timeout && std::chrono::steady_clock::now() > m_timeout_deadline) {
+            BOOST_LOG_TRIVIAL(error) << "Slicing timed out for plate " << (plate_id + 1);
+            m_stats.issues.push_back(make_error(plate_id, "SLICING_TIMEOUT",
+                "切片超时，模型可能过于复杂。如果您有异议，可点击申诉提交复审。"));
+            m_any_error = true;
+            set_error_type(EXIT_SLICING_ERROR);
+            return;
+        }
+
         if (attempt > 1) {
             BOOST_LOG_TRIVIAL(warning) << "Retry attempt " << attempt << "/" << MAX_RETRIES
                 << " for plate " << (plate_id + 1);
@@ -516,98 +645,82 @@ void SliceEngine::process_plate(int plate_id) {
                     [&](const Issue& i) { return i.plate_id == plate_id && i.level == "error"; }),
                 m_stats.issues.end());
             m_any_error = false;
+            m_error_type = EXIT_OK;
         }
+
+        // --- Create fresh Print for this attempt ---
+        Print print;
+        print.set_status_callback([&print, this](const PrintBase::SlicingStatus& s) {
+            default_status_callback(s, &print, &m_cfg.cancel_file);
+        });
+        print.is_BBL_printer() = is_bbl;
+
+        // --- Apply model ---
+        if (!apply_model(plate_id, print, origin))
+            return;
+
+        // --- Assign arrange_order ---
+        {
+            int order = 1;
+            for (ModelObject* obj : m_model.objects)
+                for (ModelInstance* inst : obj->instances)
+                    inst->arrange_order = order++;
+        }
+
+        // --- Set global extruder params & speed table ---
+        {
+            int num_extruders = 0;
+            if (m_config.has("filament_diameter")) {
+                auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
+                if (fd) num_extruders = static_cast<int>(fd->values.size());
+            }
+            Model::setExtruderParams(m_config, num_extruders);
+            Model::setPrintSpeedTable(m_config, print.config());
+        }
+
+        // --- Validation ---
+        if (!run_validation(plate_id, print))
+            return;
 
         // Slicing
         if (!run_slicing(plate_id, print)) {
             BOOST_LOG_TRIVIAL(warning) << "Slicing failed for plate " << (plate_id + 1)
                 << " on attempt " << attempt;
-            continue; // retry
+            continue;
         }
 
         BOOST_LOG_TRIVIAL(info) << "Slicing completed for plate " << (plate_id + 1);
 
         // Export G-code
+        PlateSliceResult slice_result;
         if (!export_gcode(plate_id, print, slice_result)) {
             // Check if this is a wipe tower tool change mismatch.
-            // This can happen on some platforms (CGAL/float differences) with
-            // non-consecutive extruder IDs. Fall back to disabling the wipe tower.
+            // On the next iteration a fresh Print is created with the updated config.
             bool is_wt_error = is_wipe_tower_error(slice_result);
 
             if (is_wt_error && !wipe_tower_disabled) {
                 BOOST_LOG_TRIVIAL(warning) << "Wipe tower tool change mismatch on plate "
                     << (plate_id + 1) << " — disabling wipe tower and re-slicing";
                 wipe_tower_disabled = true;
-
-                // Clear error issues
-                m_stats.issues.erase(
-                    std::remove_if(m_stats.issues.begin(), m_stats.issues.end(),
-                        [&](const Issue& i) { return i.plate_id == plate_id && i.level == "error"; }),
-                    m_stats.issues.end());
-                m_any_error = false;
-
-                // Temporarily disable wipe tower in config for rebuild
-                bool saved_pt = m_config.option<ConfigOptionBool>("enable_prime_tower")->value;
                 m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
-
-                // Reconstruct print in-place for the re-slice attempt.
-                // Print is non-movable and non-swappable, so the standard
-                // C++17 idiom for in-place reconstruction is used:
-                // explicit destructor followed by placement-new.
-                // This is safe because Print's default constructor only
-                // initializes containers/pointers and cannot throw in practice.
-                bool saved_bbl = print.is_BBL_printer();
-                print.~Print();
-                new (&print) Print{};
-                print.set_status_callback(default_status_callback);
-                print.is_BBL_printer() = saved_bbl;
-
-                if (!apply_model(plate_id, print, origin)) {
-                    m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(saved_pt));
-                    break;
-                }
-                // Restore now — Print has its own copy of the config after apply
-                m_config.set_key_value("enable_prime_tower", new ConfigOptionBool(saved_pt));
-
-                // Re-assign arrange_order (needed after new Print object)
-                {
-                    int order = 1;
-                    for (ModelObject* obj : m_model.objects)
-                        for (ModelInstance* inst : obj->instances)
-                            inst->arrange_order = order++;
-                }
-
-                // Re-validate
-                if (!run_validation(plate_id, print))
-                    break;
-
-                // Reset result for the re-slice attempt
-                slice_result = PlateSliceResult{};
-
-                // Re-slice with wipe tower disabled
                 continue;
             }
 
             BOOST_LOG_TRIVIAL(warning) << "G-code export failed for plate " << (plate_id + 1)
                 << " on attempt " << attempt;
             slice_result.issues.clear();
-            continue; // retry
+            continue;
         }
 
-        slice_ok = true;
-        break;
-    }
-
-    if (!slice_ok) {
-        BOOST_LOG_TRIVIAL(error) << "Slicing/export failed for plate " << (plate_id + 1)
-            << " after " << MAX_RETRIES << " attempts";
+        // Success
+        run_postprocessing(plate_id, slice_result);
+        m_plate_results[plate_id] = slice_result;
         return;
     }
 
-    // --- Post-processing ---
-    run_postprocessing(plate_id, slice_result);
-
-    m_plate_results[plate_id] = slice_result;
+    // All retries exhausted
+    BOOST_LOG_TRIVIAL(error) << "Slicing/export failed for plate " << (plate_id + 1)
+        << " after " << MAX_RETRIES << " attempts";
 }
 
 // ============================================================================
@@ -683,6 +796,7 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
     if (has_partly_outside) {
         BOOST_LOG_TRIVIAL(error) << "Plate " << plate_id << " has objects outside build volume, skipping";
         m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
         return false;
     }
     return true;
@@ -894,6 +1008,7 @@ bool SliceEngine::run_validation(int plate_id, Print& print) {
         m_stats.issues.push_back(make_error(plate_id, "PRINT_VALIDATE_ERROR",
             err.string + opt_hint, obj_name));
         m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
         return false;
     }
 
@@ -923,31 +1038,41 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
             BOOST_LOG_TRIVIAL(info) << "After process: no wipe tower (expected for single-extruder)";
         }
     }
-    catch (SlicingErrors& exs) {
+    catch (const SlicingErrors& exs) {
         for (const auto& ex : exs.errors_) {
-            std::cerr << "[ERROR] Plate " << plate_id << ": " << ex.what() << std::endl;
-            m_stats.issues.push_back(make_error(plate_id, "SLICING_ERROR", ex.what()));
+            BOOST_LOG_TRIVIAL(error) << "Plate " << plate_id << " slicing error: " << ex.what();
+            std::cerr << "[ERROR] Plate " << plate_id << ": slicing failed" << std::endl;
+            m_stats.issues.push_back(make_error(plate_id, "SLICING_ERROR",
+                "Slicing failed for this plate. The model may contain geometry that cannot be sliced."));
         }
         m_any_error = true;
+        set_error_type(EXIT_SLICING_ERROR);
         return false;
     }
-    catch (SlicingError& ex) {
-        std::cerr << "[ERROR] Plate " << plate_id << ": " << ex.what() << std::endl;
-        m_stats.issues.push_back(make_error(plate_id, "SLICING_ERROR", ex.what()));
+    catch (const SlicingError& ex) {
+        BOOST_LOG_TRIVIAL(error) << "Plate " << plate_id << " slicing error: " << ex.what();
+        std::cerr << "[ERROR] Plate " << plate_id << ": slicing failed" << std::endl;
+        m_stats.issues.push_back(make_error(plate_id, "SLICING_ERROR",
+            "Slicing failed for this plate. The model may contain geometry that cannot be sliced."));
         m_any_error = true;
+        set_error_type(EXIT_SLICING_ERROR);
         return false;
     }
-    catch (CanceledException&) {
+    catch (const CanceledException&) {
         std::cerr << "[ERROR] Plate " << plate_id << ": Slicing was cancelled." << std::endl;
         m_stats.issues.push_back(make_error(plate_id, "SLICING_CANCELLED",
             "Slicing was cancelled"));
         m_any_error = true;
+        set_error_type(EXIT_SLICING_ERROR);
         return false;
     }
-    catch (std::exception& e) {
-        std::cerr << "[ERROR] Plate " << plate_id << ": " << e.what() << std::endl;
-        m_stats.issues.push_back(make_error(plate_id, "SLICING_EXCEPTION", e.what()));
+    catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Plate " << plate_id << " slicing exception: " << e.what();
+        std::cerr << "[ERROR] Plate " << plate_id << ": slicing failed due to an internal error" << std::endl;
+        m_stats.issues.push_back(make_error(plate_id, "SLICING_EXCEPTION",
+            "Slicing failed due to an internal error. Please try again."));
         m_any_error = true;
+        set_error_type(EXIT_SLICING_ERROR);
         return false;
     }
 
@@ -971,8 +1096,9 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
         BOOST_LOG_TRIVIAL(info) << "G-code exported to: " << exported;
         result.gcode_path = exported;
 
-        // Run user-configured post-processing scripts (D4 — desktop parity)
-        run_post_process_scripts(result.gcode_path, print.full_print_config());
+        // Post-processing scripts are disabled in cloud mode to prevent
+        // remote code execution via user-uploaded 3MF files.
+        // run_post_process_scripts(result.gcode_path, print.full_print_config());
 
         // Collect PrintBase warnings (EmptyGcodeLayers, G-code overlap, etc.)
         for (int step = 0; step < static_cast<int>(PrintStep::psCount); ++step) {
@@ -998,11 +1124,12 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
 
         return true;
     }
-    catch (std::exception& e) {
+    catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to export G-code for plate " << plate_id << ": " << e.what();
         result.issues.push_back(make_error(plate_id, "GCODE_EXPORT_ERROR",
-            std::string("G-code export failed: ") + e.what()));
+            "G-code export failed due to an internal error."));
         m_any_error = true;
+        set_error_type(EXIT_EXPORT_ERROR);
         m_plate_results[plate_id] = result;
         return false;
     }
@@ -1090,8 +1217,10 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
     result.has_postprocess_warning = has_postprocess_warning;
     if (has_postprocess_warning)
         m_any_postprocess_warning = true;
-    if (has_postprocess_error)
+    if (has_postprocess_error) {
         m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+    }
 }
 
 // ============================================================================
@@ -1236,13 +1365,44 @@ void SliceEngine::package_output() {
         bool success = store_bbs_3mf(params);
         if (!success) {
             BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package";
+            m_any_error = true;
+            set_error_type(EXIT_EXPORT_ERROR);
+            std::string msg = "Failed to create output package. The slicing result could not be saved.";
+            m_stats.issues.push_back(make_error(-1, "PACKAGE_EXPORT_ERROR", msg));
+            if (m_stats.error_message.empty())
+                m_stats.error_message = msg;
             return;
         }
         BOOST_LOG_TRIVIAL(info) << "gcode.3mf package created: " << m_output_path;
     }
-    catch (std::exception& e) {
+    catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to create gcode.3mf package: " << e.what();
+        m_any_error = true;
+        set_error_type(EXIT_EXPORT_ERROR);
+        std::string msg = "Failed to create output package due to an internal error.";
+        m_stats.issues.push_back(make_error(-1, "PACKAGE_EXPORT_ERROR", msg));
+        if (m_stats.error_message.empty())
+            m_stats.error_message = msg;
     }
+}
+
+// ============================================================================
+// Exit code derivation
+// ============================================================================
+
+void SliceEngine::set_error_type(int code) {
+    if (code > m_error_type)
+        m_error_type = code;
+}
+
+int SliceEngine::exit_code() const {
+    if (m_error_type > EXIT_OK)
+        return m_error_type;
+    if (m_any_error)
+        return EXIT_VALIDATION_ERROR;
+    if (m_any_postprocess_warning)
+        return EXIT_POSTPROCESS_WARNING;
+    return EXIT_OK;
 }
 
 // ============================================================================
@@ -1263,8 +1423,10 @@ void SliceEngine::build_statistics() {
         }
 
         plate_stats.success = !plate_has_error;
-        if (plate_has_error)
+        if (plate_has_error) {
             m_any_error = true;
+            set_error_type(EXIT_VALIDATION_ERROR);
+        }
         if (plate_has_warning || result.has_postprocess_warning)
             m_any_postprocess_warning = true;
 

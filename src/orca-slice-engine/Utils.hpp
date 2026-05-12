@@ -20,8 +20,13 @@ std::pair<std::string, std::string> format_exception_context(const Slic3r::Strin
 // Print CLI usage information
 void print_usage(const char* program_name);
 
-// Simple progress callback for cloud environment
-void default_status_callback(const Slic3r::PrintBase::SlicingStatus& status);
+// Simple progress callback for cloud environment.
+// When print and cancel_file are provided, the callback periodically checks
+// for the existence of cancel_file and triggers print->cancel() if found.
+void default_status_callback(
+    const Slic3r::PrintBase::SlicingStatus& status,
+    Slic3r::PrintBase* print = nullptr,
+    const std::string* cancel_file = nullptr);
 
 // Format time in seconds as HH:MM:SS
 std::string format_time_hhmmss(float seconds);

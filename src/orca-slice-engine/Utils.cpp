@@ -55,6 +55,10 @@ void print_usage(const char* program_name) {
     std::cout << "  -d, --data-dir <dir>   System presets directory (default: <resources>/profiles)" << std::endl;
     std::cout << "  -j, --json [file]      Output slice statistics as JSON to specified file" << std::endl;
     std::cout << "                         If not specified, JSON is auto-saved next to the output" << std::endl;
+    std::cout << "  -t, --timeout <sec>    Slicing timeout in seconds (0 = no limit)" << std::endl;
+    std::cout << "  --cancel-file <file>   Watchdog file for external cancellation" << std::endl;
+    std::cout << "                         If the file is created, slicing is cancelled" << std::endl;
+    std::cout << "  --allow-custom-presets Disable official preset enforcement (dev only)" << std::endl;
     std::cout << "  --log                  Enable log file output (auto-saved next to the output)" << std::endl;
     std::cout << "  --log-file <file>      Specify log file path (implies --log)" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;
@@ -64,10 +68,10 @@ void print_usage(const char* program_name) {
     std::cout << "  0  Success" << std::endl;
     std::cout << "  1  Invalid arguments" << std::endl;
     std::cout << "  2  Input file not found" << std::endl;
-    std::cout << "  3  3MF load error" << std::endl;
-    std::cout << "  4  Slicing error" << std::endl;
+    std::cout << "  3  3MF load / format validation error" << std::endl;
+    std::cout << "  4  Slicing error (incl. timeout)" << std::endl;
     std::cout << "  5  G-code export error" << std::endl;
-    std::cout << "  6  Pre-processing validation error (e.g. collision, invalid config)" << std::endl;
+    std::cout << "  6  Pre-processing validation error (collision, invalid config, geometry defects)" << std::endl;
     std::cout << "  7  Post-processing warning (toolpath outside print volume)" << std::endl;
     std::cout << std::endl;
     std::cout << "Output:" << std::endl;
@@ -86,7 +90,20 @@ void print_usage(const char* program_name) {
     std::cout << "  " << program_name << " model.3mf -j stats.json          # Output statistics to stats.json" << std::endl;
 }
 
-void default_status_callback(const Slic3r::PrintBase::SlicingStatus& status) {
+void default_status_callback(
+    const Slic3r::PrintBase::SlicingStatus& status,
+    Slic3r::PrintBase* print,
+    const std::string* cancel_file)
+{
+    // Check for external cancellation via watchdog file
+    if (print && cancel_file && !cancel_file->empty()) {
+        if (boost::filesystem::exists(*cancel_file)) {
+            print->cancel();
+            std::cout << "[Status] Cancellation requested via " << *cancel_file << std::endl;
+            return;
+        }
+    }
+
     if (status.percent >= 0) {
         std::cout << "[Progress] " << status.percent << "% - " << status.text << std::endl;
     } else {

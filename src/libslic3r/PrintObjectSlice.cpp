@@ -1993,6 +1993,15 @@ static std::vector<LocalZActivePair> build_local_z_pair_cycle_for_row(const Mixe
         pair_weights.emplace_back(std::max(1, gradient_weights[1] + gradient_weights[2]));
     }
 
+    if (!mf.gradient_enabled && gradient_ids.size() == 3) {
+        const int w1 = gradient_weights[0];
+        const int w2 = gradient_weights[1];
+        const int w3 = gradient_weights[2];
+        pair_weights[0] = std::max(1, w1 + w2 - w3);
+        pair_weights[1] = std::max(1, w1 + w3 - w2);
+        pair_weights[2] = std::max(1, w2 + w3 - w1);
+    }
+
     if (pair_options.size() < 2 || pair_options.size() != pair_weights.size())
         return {};
 
@@ -2991,6 +3000,32 @@ static std::vector<ExPolygons> build_local_z_transition_fixed_masks_for_pass(
     return pass_masks_by_extruder;
 }
 
+static bool append_fixed_masks_for_pass(
+    std::vector<ExPolygons>          &plan_fixed_masks_by_extruder,
+    const std::vector<ExPolygons>    &fixed_state_masks_by_extruder,
+    const std::vector<ExPolygons>    &prev_fixed_state_masks_by_extruder,
+    const std::vector<ExPolygons>    &next_fixed_state_masks_by_extruder,
+    const size_t                      pass_idx,
+    const size_t                      num_passes)
+{
+    const std::vector<ExPolygons> fixed_masks_for_pass =
+        build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
+                                                      prev_fixed_state_masks_by_extruder,
+                                                      next_fixed_state_masks_by_extruder,
+                                                      pass_idx,
+                                                      num_passes);
+    bool appended = false;
+    for (size_t extruder_idx = 0; extruder_idx < fixed_masks_for_pass.size() &&
+                                 extruder_idx < plan_fixed_masks_by_extruder.size();
+         ++extruder_idx) {
+        if (fixed_masks_for_pass[extruder_idx].empty())
+            continue;
+        append(plan_fixed_masks_by_extruder[extruder_idx], fixed_masks_for_pass[extruder_idx]);
+        appended = true;
+    }
+    return appended;
+}
+
 template<typename ThrowOnCancel>
 static void build_local_z_plan(PrintObject &print_object, const std::vector<std::vector<ExPolygons>> &segmentation, ThrowOnCancel throw_on_cancel)
 {
@@ -3251,9 +3286,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
             append(mixed_masks, state_masks);
 
             const double mixed_area = std::abs(area(state_masks));
-            double dummy_a = 0.0, dummy_b = 0.0;
-            const bool candidate_is_gradient = effective_gradient_heights_for_row(size_t(mixed_idx), layer_id, interval.base_height, dummy_a, dummy_b);
-            if (mixed_area > dominant_mixed_area && candidate_is_gradient) {
+            if (mixed_area > dominant_mixed_area) {
                 dominant_mixed_area = mixed_area;
                 dominant_mixed_idx  = size_t(mixed_idx);
             }
@@ -3371,7 +3404,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 append(fixed_state_masks_union, state_masks);
         if (fixed_state_masks_union.size() > 1)
             fixed_state_masks_union = union_ex(fixed_state_masks_union);
-        if (interval.has_mixed_paint && !fixed_state_masks_union.empty()) {
+        if (interval.has_mixed_paint && local_z_whole_objects && !fixed_state_masks_union.empty()) {
             if (!base_masks.empty()) {
                 base_masks = diff_ex(base_masks, fixed_state_masks_union);
                 if (!base_masks.empty()) {
@@ -3665,20 +3698,15 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         isolated_plans[idx].pass_index = idx;
                         min_flow_height = std::min(min_flow_height, isolated_plans[idx].flow_height);
                         max_flow_height = std::max(max_flow_height, isolated_plans[idx].flow_height);
-                        const std::vector<ExPolygons> fixed_masks_for_pass =
-                            build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
-                                                                          prev_fixed_state_masks_by_extruder,
-                                                                          next_fixed_state_masks_by_extruder,
-                                                                          idx,
-                                                                          isolated_plans.size());
                         bool plan_has_fixed_masks = false;
-                        for (size_t extruder_idx = 0; extruder_idx < fixed_masks_for_pass.size() &&
-                                                     extruder_idx < isolated_plans[idx].fixed_painted_masks_by_extruder.size();
-                             ++extruder_idx) {
-                            if (fixed_masks_for_pass[extruder_idx].empty())
-                                continue;
-                            append(isolated_plans[idx].fixed_painted_masks_by_extruder[extruder_idx], fixed_masks_for_pass[extruder_idx]);
-                            plan_has_fixed_masks = true;
+                        if (local_z_whole_objects) {
+                            plan_has_fixed_masks = append_fixed_masks_for_pass(
+                                isolated_plans[idx].fixed_painted_masks_by_extruder,
+                                fixed_state_masks_by_extruder,
+                                prev_fixed_state_masks_by_extruder,
+                                next_fixed_state_masks_by_extruder,
+                                idx,
+                                isolated_plans.size());
                         }
                         for (ExPolygons &masks : isolated_plans[idx].painted_masks_by_extruder)
                             if (masks.size() > 1)
@@ -3848,17 +3876,15 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                         if (row_is_gradient_vec[row_idx] == 0)
                             non_gradient_row_done[row_idx] = uint8_t(1);
                     }
-                    const std::vector<ExPolygons> fixed_masks_for_pass =
-                        build_local_z_transition_fixed_masks_for_pass(fixed_state_masks_by_extruder,
-                                                                      prev_fixed_state_masks_by_extruder,
-                                                                      next_fixed_state_masks_by_extruder,
-                                                                      pass_idx,
-                                                                      pass_heights.size());
-                    for (size_t extruder_idx = 0; extruder_idx < fixed_masks_for_pass.size(); ++extruder_idx)
-                        if (!fixed_masks_for_pass[extruder_idx].empty()) {
-                            append(plan.fixed_painted_masks_by_extruder[extruder_idx], fixed_masks_for_pass[extruder_idx]);
-                            pass_has_painted_masks = true;
-                        }
+                    if (local_z_whole_objects) {
+                        pass_has_painted_masks |= append_fixed_masks_for_pass(
+                            plan.fixed_painted_masks_by_extruder,
+                            fixed_state_masks_by_extruder,
+                            prev_fixed_state_masks_by_extruder,
+                            next_fixed_state_masks_by_extruder,
+                            pass_idx,
+                            pass_heights.size());
+                    }
                     for (ExPolygons &masks : plan.painted_masks_by_extruder)
                         if (masks.size() > 1)
                             masks = union_ex(masks);

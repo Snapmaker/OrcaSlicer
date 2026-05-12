@@ -388,8 +388,11 @@ std::string make_wcp_download_url(const std::string& file_path)
     auto& server = wxGetApp().m_page_http_server;
     std::string b64 = base64_encode(file_path.data(), file_path.size());
     for (auto& c : b64) {
-        if (c == '+') c = '-';
-        else if (c == '/') c = '_';
+        if (c == '+') {
+            c = '-';
+        } else if (c == '/') {
+            c = '_';
+        }
     }
     return std::string(LOCALHOST_URL) + std::to_string(server.get_port()) + WCP_DOWNLOAD_PREFIX + b64;
 }
@@ -398,7 +401,9 @@ std::string make_wcp_download_url(const std::string& file_path)
 static std::string calc_sha256_base64(const std::string& file_path)
 {
     std::ifstream ifs(file_path, std::ios::binary);
-    if (!ifs.is_open()) return "";
+    if (!ifs.is_open()) {
+        return "";
+    }
 
     SHA256_CTX ctx;
     SHA256_Init(&ctx);
@@ -826,12 +831,15 @@ void SSWCP_Instance::sw_GetFileStream() {
 
         if (isZip) {
             std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
-            if (m_work_thread.joinable())
+            if (m_work_thread.joinable()) {
                 m_work_thread.join();
+            }
 
             m_work_thread = std::thread([file_path, file_name, weak_self]() {
                 auto self = weak_self.lock();
-                if (!self) return;
+                if (!self) {
+                    return;
+                }
 
                 try {
                     std::string zipname = generate_zip_path(file_path, file_name);
@@ -842,7 +850,9 @@ void SSWCP_Instance::sw_GetFileStream() {
                     if (name_index == std::string::npos || path_index == std::string::npos) {
                         wxGetApp().CallAfter([weak_self]() {
                             auto self = weak_self.lock();
-                            if (self) self->handle_general_fail();
+                            if (self) {
+                                self->handle_general_fail();
+                            }
                         });
                         return;
                     }
@@ -853,7 +863,9 @@ void SSWCP_Instance::sw_GetFileStream() {
 
                     wxGetApp().CallAfter([weak_self, zipname, zip_file_name, file_size, sha256_base64]() {
                         auto self = weak_self.lock();
-                        if (!self) return;
+                        if (!self) {
+                            return;
+                        }
 
                         self->m_res_data["file_name"]   = zip_file_name;
                         self->m_res_data["file_url"]    = make_wcp_download_url(zipname);
@@ -868,19 +880,24 @@ void SSWCP_Instance::sw_GetFileStream() {
                 } catch (std::exception&) {
                     wxGetApp().CallAfter([weak_self]() {
                         auto self = weak_self.lock();
-                        if (self) self->handle_general_fail();
+                        if (self) {
+                            self->handle_general_fail();
+                        }
                     });
                 }
             });
         } else {
             std::string download_url = make_wcp_download_url(file_path);
             std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
-            if (m_work_thread.joinable())
+            if (m_work_thread.joinable()) {
                 m_work_thread.join();
+            }
 
             m_work_thread = std::thread([file_path, file_name, download_url, weak_self]() {
                 auto self = weak_self.lock();
-                if (!self) return;
+                if (!self) {
+                    return;
+                }
 
                 try {
                     long long file_size = boost::filesystem::file_size(file_path);
@@ -889,7 +906,9 @@ void SSWCP_Instance::sw_GetFileStream() {
 
                     wxGetApp().CallAfter([weak_self, download_url, file_name, file_size, sha256_base64]() {
                         auto self = weak_self.lock();
-                        if (!self) return;
+                        if (!self) {
+                            return;
+                        }
 
                         self->m_res_data["file_name"]   = file_name;
                         self->m_res_data["file_url"]    = download_url;
@@ -903,7 +922,9 @@ void SSWCP_Instance::sw_GetFileStream() {
                 } catch (std::exception&) {
                     wxGetApp().CallAfter([weak_self]() {
                         auto self = weak_self.lock();
-                        if (self) self->handle_general_fail();
+                        if (self) {
+                            self->handle_general_fail();
+                        }
                     });
                 }
             });

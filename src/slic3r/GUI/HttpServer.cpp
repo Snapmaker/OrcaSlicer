@@ -752,8 +752,11 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
         // Decode URL-safe base64-encoded path: revert '-'→'+', '_'→'/', then pad
         auto b64 = std::string(trimmed_url.substr(strlen(WCP_DOWNLOAD_PREFIX)).ToStdString(wxConvUTF8));
         for (auto& c : b64) {
-            if (c == '-') c = '+';
-            else if (c == '_') c = '/';
+            if (c == '-') {
+                c = '+';
+            } else if (c == '_') {
+                c = '/';
+            }
         }
         // Pad to multiple of 4 for base64 decode
         while (b64.size() % 4 != 0) b64 += '=';
@@ -821,15 +824,13 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
 
 void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
 {
-    // Convert UTF-8 path to filesystem encoding (auto-adapts for Windows UTF-8 mode).
-    // If m_native_path is true, the path is already in system encoding (e.g., from base64 decode).
-    std::string system_file_path = m_native_path ? file_path : utf8_to_filesystem_encoding(file_path);
-
+    // Try UTF-8 → filesystem encoding conversion first.
+    // On UTF-8 systems this is a no-op; on non-UTF-8 Windows it converts to system encoding (e.g. GBK).
+    std::string system_file_path = utf8_to_filesystem_encoding(file_path);
     std::ifstream file(system_file_path, std::ios::binary);
-    if (!file && m_native_path) {
-        // Native path failed; retry with UTF-8 → filesystem encoding conversion
-        system_file_path = utf8_to_filesystem_encoding(file_path);
-        file.open(system_file_path, std::ios::binary);
+    if (!file) {
+        // Fallback: try the raw path (handles paths already in system encoding, e.g. from base64 decode)
+        file.open(file_path, std::ios::binary);
     }
     if (!file) {
         ResponseNotFound notFoundResponse;

@@ -137,4 +137,76 @@ wxColour MixedFilamentBadge::interpolate_color(const std::vector<wxColour>& colo
     return wxColour(r, g, b);
 }
 
+// ---------------------------------------------------------------------------
+// Free function — shared between badge and merge menus
+// ---------------------------------------------------------------------------
+
+wxBitmap create_mixed_filament_menu_bitmap(const MixedFilament&               mf,
+                                           const MixedFilamentDisplayContext& ctx,
+                                           int  width, int  height,
+                                           const wxString& label)
+{
+    wxBitmap bmp(width, height);
+    wxMemoryDC dc;
+    dc.SelectObject(bmp);
+
+    const bool use_small_font = std::min(width, height) < 20;
+    dc.SetFont(use_small_font ? ::Label::Body_8 : ::Label::Body_12);
+
+    const std::string ncm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+    const bool is_gradient = mf.gradient_enabled
+                          && mf.component_a != mf.component_b
+                          && ncm.empty()
+                          && mf.gradient_component_ids.size() < 3;
+
+    bool very_light = false;
+
+    if (is_gradient) {
+        auto get_c = [&](unsigned fid) -> wxColour {
+            if (fid == 0 || fid > ctx.physical_colors.size())
+                return wxColour("#26A69A");
+            return parse_mixed_color(ctx.physical_colors[fid - 1]);
+        };
+        const wxColour ca = get_c(mf.component_a);
+        const wxColour cb = get_c(mf.component_b);
+        const bool a_to_b = mf.gradient_start >= mf.gradient_end;
+        const wxColour c0 = a_to_b ? ca : cb;
+        const wxColour c1 = a_to_b ? cb : ca;
+
+        for (int y = height - 1; y >= 0; --y) {
+            double pos = double(height - 1 - y) / double(std::max(1, height - 1));
+            int r = int(c0.Red()   * (1.0 - pos) + c1.Red()   * pos);
+            int g = int(c0.Green() * (1.0 - pos) + c1.Green() * pos);
+            int b = int(c0.Blue()  * (1.0 - pos) + c1.Blue()  * pos);
+            dc.SetPen(wxPen(wxColour(r, g, b)));
+            dc.DrawLine(0, y, width, y);
+        }
+
+        very_light = (c0.Red() > 224 && c0.Green() > 224 && c0.Blue() > 224)
+                  && (c1.Red() > 224 && c1.Green() > 224 && c1.Blue() > 224);
+
+        double avg_lum = (c0.GetLuminance() + c1.GetLuminance()) * 0.5;
+        dc.SetTextForeground(avg_lum < 0.51 ? *wxWHITE : *wxBLACK);
+    } else {
+        const wxColour clr = parse_mixed_color(mf.display_color.empty() ? "#808080" : mf.display_color);
+        dc.SetBackground(wxBrush(clr));
+        dc.Clear();
+        dc.SetBrush(wxBrush(clr));
+        very_light = (clr.Red() > 224 && clr.Green() > 224 && clr.Blue() > 224);
+        dc.SetTextForeground(clr.GetLuminance() < 0.51 ? *wxWHITE : *wxBLACK);
+    }
+
+    // Grey border for very light colours — matches MixedFilamentBadge::on_paint
+    if (very_light) {
+        dc.SetPen(*wxGREY_PEN);
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawRectangle(0, 0, width, height);
+    }
+
+    wxSize txt_sz = dc.GetTextExtent(label);
+    dc.DrawText(label, (width - txt_sz.x) / 2, (height - txt_sz.y) / 2);
+    dc.SelectObject(wxNullBitmap);
+    return bmp;
+}
+
 }} // namespace Slic3r::GUI

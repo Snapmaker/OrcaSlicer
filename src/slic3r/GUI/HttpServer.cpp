@@ -759,7 +759,9 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
             }
         }
         // Pad to multiple of 4 for base64 decode
-        while (b64.size() % 4 != 0) b64 += '=';
+        while (b64.size() % 4 != 0) {
+            b64 += '=';
+        }
         std::string decoded;
         decoded.resize(boost::beast::detail::base64::decoded_size(b64.size()));
         auto result = boost::beast::detail::base64::decode(decoded.data(), b64.data(), b64.size());

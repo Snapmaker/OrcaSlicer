@@ -1106,14 +1106,12 @@ void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::v
     if (m_view_type == EViewType::Tool && !gcode_result.extruder_colors.empty()) {
         // update tool colors from config stored in the gcode
         decode_colors(gcode_result.extruder_colors, m_tools.m_tool_colors);
-        m_tools.m_tool_visibles = std::vector<bool>(m_tools.m_tool_colors.size());
-        for (auto item: m_tools.m_tool_visibles) item = true;
+        m_tools.m_tool_visibles.assign(m_tools.m_tool_colors.size(), true);
     }
     else {
         // update tool colors
         decode_colors(str_tool_colors, m_tools.m_tool_colors);
-        m_tools.m_tool_visibles = std::vector<bool>(m_tools.m_tool_colors.size());
-        for (auto item : m_tools.m_tool_visibles) item = true;
+        m_tools.m_tool_visibles.assign(m_tools.m_tool_colors.size(), true);
     }
 
     for (int i = 0; i < m_tools.m_tool_colors.size(); i++) {

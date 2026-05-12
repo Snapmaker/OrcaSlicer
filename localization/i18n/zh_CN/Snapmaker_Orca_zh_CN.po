@@ -14391,6 +14391,12 @@ msgstr "连接到通过打印主机连接的打印机失败。"
 msgid "Mismatched type of print host: %s"
 msgstr "打印主机的类型不匹配：%s"
 
+msgid "Mixed Color (Experimental)"
+msgstr "混色(实验)"
+
+msgid "Mixed Color Layer Thinner"
+msgstr "混色层高细化"
+
 msgid "Connection to AstroBox is working correctly."
 msgstr "与 AstroBox 的连接正常。"
 

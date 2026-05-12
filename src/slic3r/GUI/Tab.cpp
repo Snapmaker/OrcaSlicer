@@ -2609,7 +2609,10 @@ void TabPrint::build()
         optgroup->append_single_option_line("interlocking_depth", "multimaterial_settings_advanced#interlocking-depth");
         optgroup->append_single_option_line("interlocking_boundary_avoidance", "multimaterial_settings_advanced#interlocking-boundary-avoidance");
 
-page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
+        optgroup = page->new_optgroup(L("Mixed Color (Experimental)"), L"param_mixed_color");
+        optgroup->append_single_option_line("dithering_local_z_mode");
+
+    page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");
 optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops");
         optgroup->append_single_option_line("skirt_type", "others_settings_skirt#type");
@@ -2639,25 +2642,6 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
         optgroup->append_single_option_line("spiral_finishing_flow_ratio", "others_settings_special_mode#spiral-finishing-flow-ratio");
 
         optgroup->append_single_option_line("timelapse_type", "others_settings_special_mode#timelapse");
-
-        // Use default (no icon) here to avoid runtime bitmap load failures.
-        optgroup = page->new_optgroup(L("Mixed Filaments"));
-        // Height-weighted cadence is no longer exposed in the Others tab.
-        // optgroup->append_single_option_line("mixed_filament_gradient_mode");
-        optgroup->append_single_option_line("mixed_filament_height_lower_bound");
-        optgroup->append_single_option_line("mixed_filament_height_upper_bound");
-        optgroup->append_single_option_line("mixed_filament_advanced_dithering");
-        // Pointillisme controls are retired; keep config keys for compatibility only.
-        // optgroup->append_single_option_line("mixed_filament_pointillism_pixel_size");
-        // optgroup->append_single_option_line("mixed_filament_pointillism_line_gap");
-        optgroup->append_single_option_line("mixed_filament_component_bias_enabled");
-        optgroup->append_single_option_line("mixed_filament_surface_indentation");
-        optgroup->append_single_option_line("mixed_filament_region_collapse");
-        optgroup->append_single_option_line("dithering_z_step_size");
-        optgroup->append_single_option_line("dithering_local_z_mode");
-        optgroup->append_single_option_line("dithering_local_z_whole_objects");
-        optgroup->append_single_option_line("dithering_local_z_direct_multicolor");
-        optgroup->append_single_option_line("dithering_step_painted_zones_only");
 
         optgroup = page->new_optgroup(L("Fuzzy Skin"), L"fuzzy_skin");
         optgroup->append_single_option_line("fuzzy_skin", "others_settings_fuzzy_skin");

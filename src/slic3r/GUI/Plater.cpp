@@ -6543,18 +6543,15 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (p->m_btn_add_color)
         p->m_btn_add_color->Enable(num_physical >= 2);
 
-    if (num_physical < 2) {
-        p->m_panel_mixed_filaments_title->Hide();
-        p->m_panel_mixed_filaments_content->Hide();
-        Layout();
-        refresh_model_canvas_colors();
-        update_color_mix_panel();
-        return;
-    }
+    // Mixed Filaments panel is hidden
+    p->m_panel_mixed_filaments_title->Hide();
+    p->m_panel_mixed_filaments_content->Hide();
+    Layout();
+    refresh_model_canvas_colors();
+    update_color_mix_panel();
+    return;
 
-    // Show the panels
-    p->m_panel_mixed_filaments_title->Show();
-    p->m_panel_mixed_filaments_content->Show();
+#if 0 // Mixed Filaments panel UI — hidden, preserved for potential future re-enablement
     
     // Reset the max size in case it was collapsed
     p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});
@@ -7115,6 +7112,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     Layout();
     refresh_model_canvas_colors();
     update_color_mix_panel();
+#endif // Mixed Filaments panel UI
 }
 
 std::vector<unsigned int> Sidebar::get_ui_ordered_filament_ids() const

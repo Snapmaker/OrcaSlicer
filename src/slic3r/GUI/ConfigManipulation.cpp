@@ -780,6 +780,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("wipe_tower_rib_width", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwRib);
     toggle_line("wipe_tower_fillet_wall", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwRib);
     
+    toggle_field("prime_tower_width", have_prime_tower && wipe_tower_wall_type != WipeTowerWallType::wtwRib);
 
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && !is_BBL_Printer);
 

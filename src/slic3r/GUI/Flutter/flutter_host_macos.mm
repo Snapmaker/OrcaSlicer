@@ -56,6 +56,11 @@ public:
 
     void resize(int, int) override {}
 
+    void focus() override {
+        if (controller.view.window)
+            [controller.view.window makeFirstResponder:controller.view];
+    }
+
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
         if (!channel) return;

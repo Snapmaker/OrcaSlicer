@@ -111,6 +111,7 @@ private:
     void build_tri_picker(wxWindow* parent = nullptr);
     void set_combo_combined_icon(class ComboBox* cb, int filament_idx);
     void rebuild_legend();
+    void update_legend_text();
     void rebuild_cycle_legend();
     void validate_cycle_pattern();
     void update_ratio_or_tri_visibility();

@@ -676,6 +676,7 @@ public:
 #endif
 
     void reset_gcode_toolpaths();
+    void post_slice_state_change_update();
     void reset_last_loaded_gcode() { m_last_loaded_gcode = ""; }
 
     const Mouse3DController& get_mouse3d_controller() const;

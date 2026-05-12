@@ -23,6 +23,7 @@
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/Utils/FixModelByWin10.hpp"
 #include "ParamsPanel.hpp"
+#include "MixedFilamentBadge.hpp"
 #include "MsgDialog.hpp"
 #include "wx/utils.h"
 
@@ -1586,15 +1587,22 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
         const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
         wxString item_name = wxString::Format(_L("Mixed Filament %d"), virtual_id);
         
-        // Create a colored bitmap for the mixed filament
-        std::string color_str = mfs[j].display_color.empty() ? "#808080" : mfs[j].display_color;
-        wxBitmap* mixed_bmp = get_extruder_color_icon(color_str, std::to_string(virtual_id), icon_width, icon_height);
-        
+        // Create a colored bitmap for the mixed filament — gradient filaments get a gradient icon
+        MixedFilamentDisplayContext menu_ctx;
+        {
+            auto* co2 = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+            menu_ctx.physical_colors = co2 ? co2->values : std::vector<std::string>{};
+            menu_ctx.num_physical = num_physical;
+        }
+        wxBitmap mixed_bmp = create_mixed_filament_menu_bitmap(
+            mfs[j], menu_ctx, icon_width, icon_height,
+            wxString::Format("%d", virtual_id));
+
         size_t captured_target = mixed_virtual_id;
         append_menu_item(
             sub_menu, wxID_ANY, item_name, "", [captured_target](wxCommandEvent&) {
                 plater()->sidebar().change_filament(-2, captured_target);
-            }, *mixed_bmp, menu,
+            }, mixed_bmp, menu,
             []() { return true; }, m_parent);
         
         visible_idx++;

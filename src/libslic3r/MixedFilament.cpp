@@ -1,5 +1,6 @@
 #include "MixedFilament.hpp"
 #include "filament_mixer.h"
+#include "libSlic3r.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1760,6 +1761,8 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
 {
     const size_t n = filament_colours.size();
     if (n < 2)
+        return;
+    if (total_filaments(n) >= MAXIMUM_FILAMENT_NUMBER)
         return;
 
     component_a = std::max<unsigned int>(1, std::min<unsigned int>(component_a, unsigned(n)));

@@ -30,4 +30,11 @@ private:
     wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 };
 
+// Create a menu/dropdown bitmap for a mixed filament.
+// Matches MixedFilamentBadge drawing style (font, border, gradient direction).
+wxBitmap create_mixed_filament_menu_bitmap(const MixedFilament&               mf,
+                                           const MixedFilamentDisplayContext& ctx,
+                                           int  width, int  height,
+                                           const wxString& label);
+
 }} // namespace Slic3r::GUI

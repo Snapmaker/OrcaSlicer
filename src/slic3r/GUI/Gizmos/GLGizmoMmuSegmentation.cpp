@@ -579,12 +579,14 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
             float fill_h = fill_max.y - fill_min.y;
 
             // Per-scanline gradient fill (pos=0 bottom, pos=1 top)
-            for (int y_i = 0; y_i < int(std::round(fill_h)); ++y_i) {
-                double pos = 1.0 - double(y_i) / double(fill_h);
-                ImU32 c = interpolate_ImU32(bottom_col, top_col, pos);
-                draw_list->AddRectFilled(
-                    ImVec2(fill_min.x, fill_min.y + float(y_i)),
-                    ImVec2(fill_max.x, fill_min.y + float(y_i + 1)), c);
+            if (fill_h > 0.0f) {
+                for (int y_i = 0; y_i < int(std::round(fill_h)); ++y_i) {
+                    double pos = 1.0 - double(y_i) / double(fill_h);
+                    ImU32 c = interpolate_ImU32(bottom_col, top_col, pos);
+                    draw_list->AddRectFilled(
+                        ImVec2(fill_min.x, fill_min.y + float(y_i)),
+                        ImVec2(fill_max.x, fill_min.y + float(y_i + 1)), c);
+                }
             }
 
             // Very-light gradient border

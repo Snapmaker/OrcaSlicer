@@ -38,7 +38,7 @@ MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
                                      const std::vector<std::string>& filament_colours)
     : DPIDialog(parent, wxID_ANY, _L("Add Color Mix"),
                 wxDefaultPosition, wxDefaultSize,
-                wxDEFAULT_DIALOG_STYLE)
+                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
     , m_filament_colours(filament_colours)
 {
     m_result.component_a   = 1;
@@ -52,7 +52,7 @@ MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
                                      const Slic3r::MixedFilament& existing)
     : DPIDialog(parent, wxID_ANY, _L("Edit Color Mix"),
                 wxDefaultPosition, wxDefaultSize,
-                wxDEFAULT_DIALOG_STYLE)
+                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
     , m_filament_colours(filament_colours)
     , m_result(existing)
 {
@@ -288,7 +288,7 @@ void MixedFilamentDialog::build_ui()
                 m_tri_wx = 1.0/3.0; m_tri_wy = 1.0/3.0; m_tri_wz = 1.0/3.0;
             }
             resize_gradient_ids(new_count);
-            wxTheApp->CallAfter([this]() {
+            CallAfter([this]() {
                 rebuild_filament_rows();
                 update_compatibility_warning();
                 Layout(); Fit();
@@ -302,7 +302,7 @@ void MixedFilamentDialog::build_ui()
         m_btn_add_filament->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             sync_rows_to_result();
             resize_gradient_ids((int)m_filament_rows.size() + 1);
-            wxTheApp->CallAfter([this]() {
+            CallAfter([this]() {
                 rebuild_filament_rows();
                 update_compatibility_warning();
                 Layout(); Fit();
@@ -535,11 +535,7 @@ void MixedFilamentDialog::build_ui()
                 badge->Bind(wxEVT_BUTTON, [this, fid](wxCommandEvent&) {
                     if (m_pattern_ctrl) {
                         if (fid + 1 >= 10) {
-                            wxString cur = m_pattern_ctrl->GetValue();
-                            if (!cur.empty() && cur.Last() == '/')
-                                m_pattern_ctrl->AppendText(wxString::Format("%d/", fid + 1));
-                            else
-                                m_pattern_ctrl->AppendText(wxString::Format("/%d/", fid + 1));
+                            m_pattern_ctrl->AppendText(wxString::Format("[%d]", fid + 1));
                         } else {
                             m_pattern_ctrl->AppendText(wxString::Format("%d", fid + 1));
                         }
@@ -576,11 +572,10 @@ void MixedFilamentDialog::build_ui()
             m_pattern_ctrl->SetMargins(FromDIP(8), FromDIP(8));
             wrapper_sizer->Add(m_pattern_ctrl, 1, wxEXPAND | wxALL, FromDIP(1));
             input_wrapper->SetSizer(wrapper_sizer);
-            m_pattern_ctrl->SetToolTip(_L("Repeating layer pattern. Use 1/2 or A/B for the two filaments, "
-                                          "3+ for direct physical filament IDs. "
-                                          "Use /12/ for multi-digit IDs. "
+            m_pattern_ctrl->SetToolTip(_L("Repeating layer pattern. Digits 1-9 for filament IDs 1-9. "
+                                          "Use [N] for IDs >= 10 (e.g. [12]). "
                                           "Comma-separated groups set per-perimeter patterns, e.g. 12,21. "
-                                          "Examples: 1122, 1/10/2/11, 12,21."));
+                                          "Examples: 1122, 1[10]2[11], 12,21."));
             m_pattern_ctrl->SetMaxLength(512);
 
             m_pattern_ctrl->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent& event) {
@@ -737,7 +732,8 @@ void MixedFilamentDialog::build_ui()
     }
 
     SetSizer(top_sizer);
-    SetClientSize(wxSize(FromDIP(380), FromDIP(728)));
+    SetMinClientSize(wxSize(FromDIP(380), -1));
+    SetMaxClientSize(wxSize(-1, FromDIP(900)));
 
     rebuild_filament_rows();
     update_compatibility_warning();
@@ -1386,7 +1382,8 @@ void MixedFilamentDialog::resize_gradient_ids(int target_count)
                 break;
             }
         }
-        ids += char('1' + new_filament);
+        if (new_filament >= 0 && new_filament <= 8)
+            ids += char('1' + new_filament);
     }
     ids.resize((size_t)extra);
     m_result.gradient_component_ids = ids;
@@ -1402,7 +1399,8 @@ void MixedFilamentDialog::sync_rows_to_result()
     std::string ids;
     for (int i = 2; i < (int)m_filament_rows.size(); ++i) {
         int s = get_filament_index(i);
-        ids += char('1' + std::max(0, s));
+        if (s >= 0 && s <= 8)
+            ids += char('1' + s);
     }
     m_result.gradient_component_ids = ids;
 }
@@ -1531,7 +1529,7 @@ void MixedFilamentDialog::draw_strip(wxDC& dc, wxPanel* panel)
             const bool b_major = pct_b >= pct_a;
             const int major = b_major ? pct_b : pct_a;
             const int minor = b_major ? pct_a : pct_b;
-            const int layers = std::max(1, (int)std::lround((double)major / (double)std::max(1, minor)));
+            const int layers = std::min(std::max(1, (int)std::lround((double)major / (double)std::max(1, minor))), 20);
             ratio_a = b_major ? 1 : layers;
             ratio_b = b_major ? layers : 1;
             const int g = std::gcd(ratio_a, ratio_b);
@@ -1858,6 +1856,10 @@ void MixedFilamentDialog::build_swatch_grid()
 void MixedFilamentDialog::on_mode_changed(int mode_index)
 {
     sync_rows_to_result();
+    if (m_current_mode == MODE_CYCLE && m_pattern_ctrl) {
+        const std::string raw = into_u8(m_pattern_ctrl->GetValue());
+        m_result.manual_pattern = MixedFilamentManager::normalize_manual_pattern(raw);
+    }
     m_current_mode = mode_index;
     int max_f = max_filaments_for_mode(mode_index);
     if ((int)m_filament_rows.size() > max_f)
@@ -1879,6 +1881,7 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
     update_preview();
     update_compatibility_warning();
     Layout();
+    if (IsShown()) Fit();
 }
 
 void MixedFilamentDialog::update_gradient_selector_colors()
@@ -1977,8 +1980,7 @@ void MixedFilamentDialog::validate_cycle_pattern()
     std::string filtered;
     filtered.reserve(raw.size());
     for (char c : raw) {
-        if (c == '/' || c == ',' ||
-            c == 'a' || c == 'A' || c == 'b' || c == 'B' ||
+        if (c == ',' || c == '[' || c == ']' ||
             (c >= '0' && c <= '9')) {
             filtered.push_back(c);
         }
@@ -2035,7 +2037,8 @@ void MixedFilamentDialog::collect_result()
                 std::string all_ids;
                 for (int i = 0; i < 3; ++i) {
                     int s = get_filament_index(i);
-                    all_ids += char('1' + std::max(0, s));
+                    if (s >= 0 && s <= 8)
+                        all_ids += char('1' + s);
                 }
                 m_result.gradient_component_ids = all_ids;
             }
@@ -2057,7 +2060,7 @@ void MixedFilamentDialog::collect_result()
                 const bool b_is_major = pct_b >= pct_a;
                 const int major_pct   = b_is_major ? pct_b : pct_a;
                 const int minor_pct   = b_is_major ? pct_a : pct_b;
-                const int major_layers = std::max(1, int(std::lround(double(major_pct) / double(std::max(1, minor_pct)))));
+                const int major_layers = std::min(std::max(1, int(std::lround(double(major_pct) / double(std::max(1, minor_pct))))), 20);
                 ratio_a = b_is_major ? 1 : major_layers;
                 ratio_b = b_is_major ? major_layers : 1;
             }

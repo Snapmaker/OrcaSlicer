@@ -163,7 +163,7 @@ public:
             // Unparent the FlView first so gtk_widget_destroy on the
             // event box doesn't cascade-destroy the FlView.
             gtk_container_remove(GTK_CONTAINER(m_event_box), view_widget);
-            pizza->remove(m_event_box);
+            gtk_container_remove(GTK_CONTAINER(pizza), m_event_box);
             m_event_box = nullptr;
         }
 

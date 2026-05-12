@@ -107,12 +107,11 @@ static std::vector<uint8_t> encodeError(const std::string& code,
     return buf;
 }
 
-// Builds a method-call message: [0x01, method_string, args_value].
+// Builds a method-call message: [method_value, args_value].
 static std::vector<uint8_t> encodeMethodCall(const std::string& method,
                                              const std::string& args) {
     std::vector<uint8_t> buf;
-    buf.push_back(0x01); // method call
-    writeString(buf, method);
+    writeValue(buf, method);
     writeValue(buf, args);
     return buf;
 }
@@ -170,10 +169,10 @@ static size_t decodeValue(const uint8_t* data, size_t size, std::string* out) {
 // Decodes a method-call message. Returns {method_name, args}.
 static std::pair<std::string, std::string>
     decodeMethodCall(const uint8_t* data, size_t size) {
-    if (!data || size < 3 || data[0] != 0x01) return {"", ""};
-    size_t off = 1;
+    if (!data || size < 1) return {"", ""};
+    size_t off = 0;
     std::string method, args;
-    size_t n = readString(data + off, size - off, &method);
+    size_t n = decodeValue(data + off, size - off, &method);
     if (!n) return {"", ""};
     off += n;
     if (!decodeValue(data + off, size - off, &args)) return {"", ""};
@@ -297,6 +296,10 @@ public:
         if (!childHwnd || !parentHwnd) return;
 
         SetParent(childHwnd, parentHwnd);
+
+        LONG style = GetWindowLong(childHwnd, GWL_STYLE);
+        style = (style & ~WS_POPUP) | WS_CHILD;
+        SetWindowLong(childHwnd, GWL_STYLE, style);
 
         RECT rect;
         GetClientRect(parentHwnd, &rect);

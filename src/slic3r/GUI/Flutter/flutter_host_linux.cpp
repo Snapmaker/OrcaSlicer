@@ -7,7 +7,6 @@
 #include <string>
 #include <cstring>
 #include <cerrno>
-#include <climits>
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -29,6 +28,7 @@ class FlutterViewHostLinux : public FlutterViewHost {
     FlView*            m_view = nullptr;
     FlEngine*          m_engine = nullptr;
     FlMethodChannel*   m_channel = nullptr;
+    GtkWidget*         m_event_box = nullptr;
     MethodCallHandler  m_handler;
 
     static void methodCallHandler(FlMethodChannel* /*channel*/,
@@ -59,8 +59,8 @@ class FlutterViewHostLinux : public FlutterViewHost {
                 errno = 0;
                 char* end = nullptr;
                 long long n = std::strtoll(result.c_str(), &end, 10);
-                if (end && *end == '\0' && errno != ERANGE && n >= INT_MIN && n <= INT_MAX)
-                    val = fl_value_new_int(static_cast<int>(n));
+                if (end && *end == '\0' && errno != ERANGE)
+                    val = fl_value_new_int(static_cast<int64_t>(n));
             }
             if (!val) val = fl_value_new_string(result.c_str());
 
@@ -85,6 +85,14 @@ class FlutterViewHostLinux : public FlutterViewHost {
                 g_object_unref(method_call);
             }
         }
+        // Release ref if handler stored the reply for later but
+        // never called it and never threw. Contract: a handler
+        // that doesn't throw must call reply() before returning.
+        if (!*replied) {
+            *replied = true;
+            fl_method_call_respond_not_implemented(method_call, nullptr);
+            g_object_unref(method_call);
+        }
     }
 
 public:
@@ -92,12 +100,25 @@ public:
                          FlBinaryMessenger* messenger,
                          const std::string& channelName)
         : m_view(view), m_engine(engine) {
+        // fl_view_new returns a floating ref; sink it so we own a
+        // regular reference regardless of whether embedInto is called.
+        if (m_view) {
+            g_object_ref_sink(m_view);
+            g_object_add_weak_pointer(G_OBJECT(m_view),
+                                      reinterpret_cast<gpointer*>(&m_view));
+        }
 
         g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
         m_channel = fl_method_channel_new(
             messenger, channelName.c_str(), FL_METHOD_CODEC(codec));
-        fl_method_channel_set_method_call_handler(
-            m_channel, methodCallHandler, this, nullptr);
+        if (m_channel) {
+            fl_method_channel_set_method_call_handler(
+                m_channel, methodCallHandler, this, nullptr);
+        }
+
+        // Take engine ref last; if anything above threw, the
+        // destructor won't run but nothing has ref'd engine yet.
+        if (m_engine) g_object_ref(m_engine);
     }
 
     ~FlutterViewHostLinux() override {
@@ -105,7 +126,16 @@ public:
             m_channel, nullptr, nullptr, nullptr);
         g_clear_object(&m_channel);
         g_clear_object(&m_engine);
-        g_clear_object(&m_view);
+        if (m_view) {
+            g_object_remove_weak_pointer(G_OBJECT(m_view),
+                                         reinterpret_cast<gpointer*>(&m_view));
+            g_clear_object(&m_view);
+        }
+        if (m_event_box) {
+            g_object_remove_weak_pointer(G_OBJECT(m_event_box),
+                                         reinterpret_cast<gpointer*>(&m_event_box));
+            // Don't unref — the pizza owns the event box.
+        }
     }
 
     void embedInto(void* parentHandle) override {
@@ -121,38 +151,49 @@ public:
 
         GtkWidget* view_widget = GTK_WIDGET(m_view);
 
+        wxPizza* pizza = WX_PIZZA(parent);
+
+        // If we already have an event box from a previous embed, remove
+        // it from the pizza to avoid accumulating orphaned widgets.
+        if (m_event_box) {
+            // Remove weak pointer so a deferred finalization of the
+            // old event box doesn't NULL out the new m_event_box.
+            g_object_remove_weak_pointer(G_OBJECT(m_event_box),
+                                         reinterpret_cast<gpointer*>(&m_event_box));
+            // Unparent the FlView first so gtk_widget_destroy on the
+            // event box doesn't cascade-destroy the FlView.
+            gtk_container_remove(GTK_CONTAINER(m_event_box), view_widget);
+            pizza->remove(m_event_box);
+            m_event_box = nullptr;
+        }
+
         // Wrap in GtkEventBox so the FlView participates in GTK's focus chain.
         // GtkFixed (wxPizza's parent class) does not propagate focus to children.
-        GtkWidget* event_box = gtk_event_box_new();
-        gtk_container_add(GTK_CONTAINER(event_box), view_widget);
-        gtk_widget_set_can_focus(event_box, TRUE);
+        m_event_box = gtk_event_box_new();
+        g_object_add_weak_pointer(G_OBJECT(m_event_box),
+                                  reinterpret_cast<gpointer*>(&m_event_box));
+        gtk_container_add(GTK_CONTAINER(m_event_box), view_widget);
+        gtk_widget_set_can_focus(m_event_box, TRUE);
         gtk_widget_set_can_focus(view_widget, TRUE);
 
-        wxPizza* pizza = WX_PIZZA(parent);
-        pizza->put(event_box, 0, 0, w, h);
+        pizza->put(m_event_box, 0, 0, w, h);
 
-        gtk_widget_show_all(event_box);
+        gtk_widget_show_all(m_event_box);
         if (gtk_widget_get_realized(parent))
             gtk_widget_realize(view_widget);
         gtk_widget_grab_focus(view_widget);
     }
 
     void resize(int width, int height) override {
-        if (!m_view) return;
+        if (!m_view || !m_event_box) return;
         GtkWidget* widget = GTK_WIDGET(m_view);
-        // m_view is inside a GtkEventBox inside the pizza — walk up to pizza
-        GtkWidget* eb = gtk_widget_get_parent(widget);
-        if (!eb || !GTK_IS_EVENT_BOX(eb)) return;
-        GtkWidget* parent = gtk_widget_get_parent(eb);
+        GtkWidget* parent = gtk_widget_get_parent(m_event_box);
         if (!parent || !WX_IS_PIZZA(parent)) return;
         if (width <= 0 || height <= 0) return;
 
         wxPizza* pizza = WX_PIZZA(parent);
-        pizza->move(eb, 0, 0, width, height);
+        pizza->size_allocate_child(m_event_box, 0, 0, width, height);
         gtk_widget_set_size_request(widget, width, height);
-        if (gtk_widget_get_visible(eb)) {
-            pizza->size_allocate_child(eb, 0, 0, width, height);
-        }
     }
 
     void invokeMethod(const std::string& method,
@@ -164,8 +205,8 @@ public:
             errno = 0;
             char* end = nullptr;
             long long n = std::strtoll(arguments.c_str(), &end, 10);
-            if (end && *end == '\0' && errno != ERANGE && n >= INT_MIN && n <= INT_MAX)
-                args = fl_value_new_int(static_cast<int>(n));
+            if (end && *end == '\0' && errno != ERANGE)
+                args = fl_value_new_int(static_cast<int64_t>(n));
         }
         if (!args) args = fl_value_new_string(arguments.c_str());
         fl_method_channel_invoke_method(
@@ -227,15 +268,22 @@ public:
             }
         }
 
+        // fl_view_new doesn't support custom entrypoints — always runs main().
+        // The entrypoint parameter is ignored on Linux.
+        (void)entrypoint;
         FlView* view = fl_view_new(project);
         if (!view) return nullptr;
 
         FlEngine* engine = fl_view_get_engine(view);
-        g_object_ref(engine);
         FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
 
-        auto* host = new FlutterViewHostLinux(view, engine, messenger, channelName);
-        return std::unique_ptr<FlutterViewHost>(host);
+        try {
+            auto* host = new FlutterViewHostLinux(view, engine, messenger, channelName);
+            return std::unique_ptr<FlutterViewHost>(host);
+        } catch (...) {
+            g_object_unref(view);
+            return nullptr;
+        }
     }
 };
 

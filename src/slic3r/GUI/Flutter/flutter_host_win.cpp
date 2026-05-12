@@ -28,10 +28,10 @@ static std::pair<uint32_t, size_t> readVarint(const uint8_t* data, size_t size) 
     size_t pos = 0;
     while (pos < size) {
         uint8_t byte = data[pos++];
-        value |= (byte & 0x7F) << shift;
+        value |= static_cast<uint32_t>(byte & 0x7F) << shift;
         if (!(byte & 0x80)) break;
         shift += 7;
-        if (shift >= 32) return {0, 0};
+        if (shift >= 32) return {0, pos};
     }
     return {value, pos};
 }
@@ -93,6 +93,17 @@ static std::vector<uint8_t> encodeSuccess(const std::string& result) {
     std::vector<uint8_t> buf;
     buf.push_back(0x00); // success
     writeValue(buf, result);
+    return buf;
+}
+
+// Builds an error envelope: [0x01, error_code, error_message, null].
+static std::vector<uint8_t> encodeError(const std::string& code,
+                                         const std::string& message) {
+    std::vector<uint8_t> buf;
+    buf.push_back(0x01); // error
+    writeString(buf, code);
+    writeString(buf, message);
+    buf.push_back(0x00); // null details
     return buf;
 }
 
@@ -214,7 +225,7 @@ class FlutterViewHostWin : public FlutterViewHost {
             if (!*replied) {
                 *replied = true;
                 if (messenger && msg->response_handle) {
-                    auto encoded = encodeSuccess(std::string("EXCEPTION: ") + e.what());
+                    auto encoded = encodeError("EXCEPTION", e.what());
                     FlutterDesktopMessengerSendResponse(
                         messenger, msg->response_handle, encoded.data(), encoded.size());
                 }
@@ -223,10 +234,19 @@ class FlutterViewHostWin : public FlutterViewHost {
             if (!*replied) {
                 *replied = true;
                 if (messenger && msg->response_handle) {
-                    auto encoded = encodeSuccess(std::string("EXCEPTION: unknown"));
+                    auto encoded = encodeError("EXCEPTION", "unknown error");
                     FlutterDesktopMessengerSendResponse(
                         messenger, msg->response_handle, encoded.data(), encoded.size());
                 }
+            }
+        }
+        // If handler stored the reply for later but never called it and
+        // never threw, respond so the Dart future doesn't hang.
+        if (!*replied) {
+            *replied = true;
+            if (messenger && msg->response_handle) {
+                FlutterDesktopMessengerSendResponse(
+                    messenger, msg->response_handle, nullptr, 0);
             }
         }
     }
@@ -325,10 +345,25 @@ public:
         const std::string& entrypoint,
         const std::string& channelName) override {
 
+        // Resolve paths relative to the executable, not the CWD.
+        wchar_t exe_path[MAX_PATH];
+        DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+        std::wstring exe_dir;
+        if (len > 0 && len < MAX_PATH) {
+            std::wstring full(exe_path, len);
+            auto pos = full.rfind(L'\\');
+            if (pos != std::wstring::npos)
+                exe_dir = full.substr(0, pos);
+        }
+
+        std::wstring assets = exe_dir + L"\\data\\flutter_assets";
+        std::wstring icu = exe_dir + L"\\data\\icudtl.dat";
+        std::wstring aot = exe_dir + L"\\flutter_app.dll";
+
         FlutterDesktopEngineProperties props = {};
-        props.assets_path = L"data\\flutter_assets";
-        props.icu_data_path = L"data\\icudtl.dat";
-        props.aot_library_path = L"flutter_app.dll";
+        props.assets_path = assets.c_str();
+        props.icu_data_path = icu.c_str();
+        props.aot_library_path = aot.c_str();
 
         FlutterDesktopEngineRef engine =
             FlutterDesktopEngineCreate(&props);

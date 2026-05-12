@@ -51,6 +51,7 @@ public:
     void setHandler(FlutterViewHost::MethodCallHandler handler);
 
     void onSize(wxSizeEvent& event);
+    void onSetFocus(wxFocusEvent& event);
 
 protected:
     std::unique_ptr<FlutterViewHost> m_view;

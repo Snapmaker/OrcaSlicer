@@ -322,6 +322,13 @@ public:
             encoded.data(), encoded.size());
     }
 
+    void focus() override {
+        FlutterDesktopViewRef view =
+            FlutterDesktopViewControllerGetView(m_controller);
+        HWND hwnd = FlutterDesktopViewGetHWND(view);
+        if (hwnd) ::SetFocus(hwnd);
+    }
+
     void setMethodCallHandler(MethodCallHandler h) override {
         m_handler = std::move(h);
     }

@@ -29,6 +29,8 @@ public:
                               const std::string& arguments) = 0;
 
     virtual void setMethodCallHandler(MethodCallHandler handler) = 0;
+
+    virtual void focus() = 0;
 };
 
 // ── Engine layer (one per process, creates views) ──────────────────────

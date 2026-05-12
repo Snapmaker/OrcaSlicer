@@ -5,6 +5,7 @@ FlutterPanel::FlutterPanel(wxWindow* parent)
                wxFULL_REPAINT_ON_RESIZE | wxCLIP_CHILDREN) {
     SetBackgroundColour(*wxBLACK);
     Bind(wxEVT_SIZE, &FlutterPanel::onSize, this);
+    Bind(wxEVT_SET_FOCUS, &FlutterPanel::onSetFocus, this);
 }
 
 bool FlutterPanel::startView(FlutterEngineHost* engine,
@@ -20,6 +21,11 @@ bool FlutterPanel::startView(FlutterEngineHost* engine,
 
 void FlutterPanel::setHandler(FlutterViewHost::MethodCallHandler handler) {
     if (m_view) m_view->setMethodCallHandler(std::move(handler));
+}
+
+void FlutterPanel::onSetFocus(wxFocusEvent& event) {
+    if (m_view) m_view->focus();
+    event.Skip();
 }
 
 void FlutterPanel::onSize(wxSizeEvent& event) {

@@ -214,6 +214,10 @@ public:
             nullptr, nullptr, nullptr);
     }
 
+    void focus() override {
+        if (m_view) gtk_widget_grab_focus(GTK_WIDGET(m_view));
+    }
+
     void setMethodCallHandler(MethodCallHandler h) override {
         m_handler = std::move(h);
     }

@@ -1032,6 +1032,10 @@ void GUI_App::post_init()
             mainframe->refresh_plugin_tips();
         });
 
+    CallAfter([this] {
+            sm_restore_login_from_config();
+        });
+
     // update hms info
     CallAfter([this] {
             if (hms_query)
@@ -4034,6 +4038,71 @@ void GUI_App::sm_request_user_logout()
     } catch (std::exception&) {
         ;
     }
+    sm_clear_login_from_config();
+}
+
+void GUI_App::sm_save_login_to_config()
+{
+    app_config->set("sm_login", "token", m_login_userinfo.get_user_token());
+    app_config->set("sm_login", "user_id", m_login_userinfo.get_user_id());
+    app_config->set("sm_login", "user_name", m_login_userinfo.get_user_name());
+    app_config->set("sm_login", "user_account", m_login_userinfo.get_user_account());
+    app_config->set("sm_login", "user_icon_url", m_login_userinfo.get_user_icon_url());
+}
+
+void GUI_App::sm_clear_login_from_config()
+{
+    app_config->set("sm_login", "token", "");
+    app_config->set("sm_login", "user_id", "");
+    app_config->set("sm_login", "user_name", "");
+    app_config->set("sm_login", "user_account", "");
+    app_config->set("sm_login", "user_icon_url", "");
+}
+
+void GUI_App::sm_restore_login_from_config()
+{
+    std::string token = app_config->get("sm_login", "token");
+    if (token.empty())
+        return;
+
+    auto region = app_config->get_country_code();
+    std::string user_info_url;
+    if (region.find("CN") == std::string::npos)
+        user_info_url = "https://id.snapmaker.com/api/common/accounts/current";
+    else
+        user_info_url = "https://api.snapmaker.cn/api/common/accounts/current";
+
+    auto http = Http::get(user_info_url);
+    http.header("Authorization", token);
+    http.on_complete([this, token](std::string body, unsigned status) {
+            if (status != 200) {
+                CallAfter([this]() { sm_clear_login_from_config(); });
+                return;
+            }
+            try {
+                json response = json::parse(body);
+                if (response.count("data")) {
+                    json data = response["data"];
+                    if (data.count("id"))
+                        m_login_userinfo.set_user_id(std::to_string(data["id"].get<int>()));
+                    if (data.count("nickname"))
+                        m_login_userinfo.set_user_name(data["nickname"].get<std::string>());
+                    if (data.count("icon"))
+                        m_login_userinfo.set_user_icon_url(data["icon"].get<std::string>());
+                    if (data.count("account"))
+                        m_login_userinfo.set_user_account(data["account"].get<std::string>());
+                }
+                m_login_userinfo.set_user_token(token);
+                m_login_userinfo.set_user_login(true);
+                sm_save_login_to_config();
+            } catch (std::exception &) {
+                CallAfter([this]() { sm_clear_login_from_config(); });
+            }
+        })
+        .on_error([this](std::string, std::string, unsigned) {
+            CallAfter([this]() { sm_clear_login_from_config(); });
+        })
+        .perform_sync();
 }
 
 //BBS

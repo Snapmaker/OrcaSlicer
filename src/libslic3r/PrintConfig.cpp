@@ -5725,6 +5725,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("prime_tower_force_full_height", coBool);
+    def->label = L("Force full height");
+    def->tooltip = L("Extend the prime tower to the full height of the tallest model, even when upper layers use a single filament. "
+                     "This prevents idle-nozzle oozing during single-extruder top layers.");
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("flush_volumes_vector", coFloats);
     // BBS: remove _L()
     def->label = ("Purging volumes - load/unload volumes");

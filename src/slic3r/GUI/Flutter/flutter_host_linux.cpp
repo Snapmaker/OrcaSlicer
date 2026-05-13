@@ -186,14 +186,23 @@ public:
 
     void resize(int width, int height) override {
         if (!m_view || !m_event_box) return;
-        GtkWidget* widget = GTK_WIDGET(m_view);
         GtkWidget* parent = gtk_widget_get_parent(m_event_box);
         if (!parent || !WX_IS_PIZZA(parent)) return;
         if (width <= 0 || height <= 0) return;
 
         wxPizza* pizza = WX_PIZZA(parent);
+
+        // Update stored wxPizzaChild dimensions so that future GTK
+        // layout cycles (pizza_size_allocate) read the correct size.
+        pizza->move(m_event_box, 0, 0, width, height);
+
+        // Allocate GTK screen space to the event_box.
         pizza->size_allocate_child(m_event_box, 0, 0, width, height);
-        gtk_widget_set_size_request(widget, width, height);
+
+        // Set size request on event_box so GtkFixed sees the child's
+        // desired size (FlView is inside the event_box).
+        gtk_widget_set_size_request(m_event_box, width, height);
+        gtk_widget_set_size_request(GTK_WIDGET(m_view), width, height);
     }
 
     void invokeMethod(const std::string& method,

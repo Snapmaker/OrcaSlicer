@@ -310,10 +310,6 @@ public:
 
         SetParent(childHwnd, parentHwnd);
 
-        LONG style = GetWindowLong(childHwnd, GWL_STYLE);
-        style = (style & ~WS_POPUP) | WS_CHILD;
-        SetWindowLong(childHwnd, GWL_STYLE, style);
-
         RECT rect;
         GetClientRect(parentHwnd, &rect);
         int w = rect.right - rect.left;
@@ -322,8 +318,7 @@ public:
         if (h <= 1) h = 600;
         SetWindowPos(childHwnd, nullptr,
                      0, 0, w, h,
-                     SWP_NOZORDER | SWP_SHOWWINDOW);
-        ::SetFocus(childHwnd);
+                     SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
     void invokeMethod(const std::string& method,

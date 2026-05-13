@@ -51,8 +51,20 @@ public:
     void setHandler(FlutterViewHost::MethodCallHandler handler);
 
     void onSize(wxSizeEvent& event);
+    void onShow(wxShowEvent& event);
     void onSetFocus(wxFocusEvent& event);
+
+    // Override SetFocus to transfer keyboard focus to the Flutter child
+    // HWND immediately, rather than relying on the CallAfter deferral in
+    // onSetFocus (which races with wxWidgets' internal focus bookkeeping).
+    // Keeping onSetFocus + CallAfter as a fallback for non-SetFocus paths
+    // (keyboard navigation, WM_SETFOCUS from the OS).
+    virtual void SetFocus() override;
+
+    // Attempt deferred embed if it hasn't happened yet.
+    void tryEmbed();
 
 protected:
     std::unique_ptr<FlutterViewHost> m_view;
+    bool m_embedded = false;   // true after the first successful embedInto
 };

@@ -297,7 +297,7 @@ public:
         if (width <= 0 || height <= 0) return;
         SetWindowPos(hwnd, nullptr,
                      0, 0, width, height,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     void embedInto(void* parentView) override {
@@ -318,7 +318,7 @@ public:
         if (h <= 1) h = 600;
         SetWindowPos(childHwnd, nullptr,
                      0, 0, w, h,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
 
     void invokeMethod(const std::string& method,
@@ -336,6 +336,14 @@ public:
         HWND hwnd = FlutterDesktopViewGetHWND(view);
         if (hwnd) ::SetFocus(hwnd);
     }
+
+#ifdef __WXMSW__
+    void* nativeHandle() const override {
+        FlutterDesktopViewRef view =
+            FlutterDesktopViewControllerGetView(m_controller);
+        return (void*)FlutterDesktopViewGetHWND(view);
+    }
+#endif
 
     void setMethodCallHandler(MethodCallHandler h) override {
         m_handler = std::move(h);

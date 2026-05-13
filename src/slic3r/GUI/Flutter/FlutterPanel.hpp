@@ -67,4 +67,9 @@ public:
 protected:
     std::unique_ptr<FlutterViewHost> m_view;
     bool m_embedded = false;   // true after the first successful embedInto
+
+#ifdef __WXMSW__
+    virtual WXHWND MSWGetFocusHWND() const override;
+    virtual bool ContainsHWND(WXHWND hWnd) const override;
+#endif
 };

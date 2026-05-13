@@ -68,16 +68,16 @@ void FlutterPanel::onSetFocus(wxFocusEvent& event) {
 }
 
 void FlutterPanel::SetFocus() {
-    // Maintain wxWidgets' internal focus bookkeeping so that
-    // wxWindow::FindFocus() still works and keyboard navigation (Tab)
-    // is not broken.
+#ifdef __WXMSW__
+    // MSWGetFocusHWND() override returns the Flutter child HWND, so
+    // wxWindow::SetFocus() calls ::SetFocus(childHwnd) directly.  No
+    // two-step focus dance needed — eliminates the race where notebook
+    // or mouse-click handling could reclaim focus from child to panel.
     wxWindow::SetFocus();
-    // Immediately transfer the real Win32/GTK keyboard focus down to
-    // the embedded Flutter HWND.  This avoids the race inherent in the
-    // CallAfter approach (onSetFocus) where an intervening wx idle-cycle
-    // can reclaim focus back to the wrapper window, leaving the Flutter
-    // child without keyboard input.
+#else
+    wxWindow::SetFocus();
     if (m_view) m_view->focus();
+#endif
 }
 
 void FlutterPanel::onSize(wxSizeEvent& event) {
@@ -92,3 +92,23 @@ void FlutterPanel::onSize(wxSizeEvent& event) {
     }
     event.Skip();
 }
+
+#ifdef __WXMSW__
+WXHWND FlutterPanel::MSWGetFocusHWND() const {
+    if (m_view) {
+        void* childHwnd = m_view->nativeHandle();
+        if (childHwnd)
+            return (WXHWND)childHwnd;
+    }
+    return GetHWND();
+}
+
+bool FlutterPanel::ContainsHWND(WXHWND hWnd) const {
+    if (m_view) {
+        void* childHwnd = m_view->nativeHandle();
+        if (childHwnd && hWnd == (WXHWND)childHwnd)
+            return true;
+    }
+    return false;
+}
+#endif

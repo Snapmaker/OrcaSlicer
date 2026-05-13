@@ -31,6 +31,10 @@ public:
     virtual void setMethodCallHandler(MethodCallHandler handler) = 0;
 
     virtual void focus() = 0;
+
+#ifdef __WXMSW__
+    virtual void* nativeHandle() const { return nullptr; }
+#endif
 };
 
 // ── Engine layer (one per process, creates views) ──────────────────────

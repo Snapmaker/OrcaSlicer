@@ -5999,12 +5999,12 @@ void Sidebar::update_color_mix_panel()
                     menu_ctx.physical_colors = co2 ? co2->values : std::vector<std::string>{};
                     menu_ctx.num_physical = num_physical;
                 }
-                wxBitmap mixed_bmp = create_mixed_filament_menu_bitmap(
+                wxBitmap* mixed_bmp = create_mixed_filament_menu_bitmap(
                     mfs_for_menu[j], menu_ctx, icon_width, icon_height,
                     wxString::Format("%d", target_virtual_id));
 
                 wxMenuItem* item = new wxMenuItem(merge_submenu, target_id, target_label);
-                item->SetBitmap(mixed_bmp);
+                item->SetBitmap(*mixed_bmp);
                 merge_submenu->Append(item);
                 
                 merge_submenu->Bind(wxEVT_MENU, [this, visible_idx, target_visible_idx, num_physical](wxCommandEvent&) {
@@ -21457,8 +21457,8 @@ void Plater::post_slice_state_change_update()
     p->partplate_list.invalid_all_slice_result();
     reset_gcode_toolpaths();
     wxGetApp().mainframe->update_slice_print_status(MainFrame::SlicePrintEventType::eEventSliceUpdate, true, false);
-    wxGetApp().CallAfter([]() {
-        GLCanvas3D* canvas = wxGetApp().plater()->get_current_canvas3D();
+    CallAfter([this]() {
+        GLCanvas3D* canvas = get_current_canvas3D();
         if (canvas) {
             canvas->set_as_dirty();
             canvas->request_extra_frame();

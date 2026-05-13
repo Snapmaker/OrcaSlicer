@@ -9,6 +9,7 @@
 #include <wx/bitmap.h>
 
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -76,5 +77,19 @@ wxColour                    blend_sequence_filament_mixer(const std::vector<wxCo
 
 bool is_filament_compatible(const std::vector<unsigned int>& filament_ids);
 bool is_filament_compatible(const MixedFilament& mf);
+// Returns std::nullopt if all compatible (or insufficient data),
+// otherwise the 1-based filament IDs of the first incompatible pair.
+std::optional<std::pair<unsigned int, unsigned int>> find_incompatible_filament_pair(const std::vector<unsigned int>& filament_ids);
+
+// Result of parsing a normalized cycle-mode manual pattern.
+struct CyclePatternParseResult {
+    std::string              invalid_token; // first token that failed strtoul
+    unsigned int             invalid_id = 0; // first out-of-range 1-based ID (0 = none)
+    std::vector<unsigned int> ids;           // valid 1-based filament IDs in parse order
+    int                      total_tokens = 0;
+};
+
+// One-shot parse of a normalized cycle pattern: split→token→strtoul→validate.
+CyclePatternParseResult parse_cycle_pattern(const std::string& normalized_pattern, int num_physical);
 
 }} // namespace Slic3r::GUI

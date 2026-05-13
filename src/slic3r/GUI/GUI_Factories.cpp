@@ -1594,7 +1594,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
             menu_ctx.physical_colors = co2 ? co2->values : std::vector<std::string>{};
             menu_ctx.num_physical = num_physical;
         }
-        wxBitmap mixed_bmp = create_mixed_filament_menu_bitmap(
+        wxBitmap* mixed_bmp = create_mixed_filament_menu_bitmap(
             mfs[j], menu_ctx, icon_width, icon_height,
             wxString::Format("%d", virtual_id));
 
@@ -1602,7 +1602,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
         append_menu_item(
             sub_menu, wxID_ANY, item_name, "", [captured_target](wxCommandEvent&) {
                 plater()->sidebar().change_filament(-2, captured_target);
-            }, mixed_bmp, menu,
+            }, *mixed_bmp, menu,
             []() { return true; }, m_parent);
         
         visible_idx++;

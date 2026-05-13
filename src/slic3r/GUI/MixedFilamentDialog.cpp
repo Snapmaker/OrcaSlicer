@@ -225,6 +225,10 @@ void MixedFilamentDialog::build_ui()
         m_compat_warning_panel->SetBackgroundColour(wxColour("#FDE8E8"));
         m_compat_warning_panel->Hide();
         auto* warn_sizer = new wxBoxSizer(wxHORIZONTAL);
+        ScalableBitmap error_bmp(m_compat_warning_panel, "error_icon_red_exclamation", 14);
+        auto* error_icon = new wxStaticBitmap(m_compat_warning_panel, wxID_ANY, error_bmp.bmp());
+        warn_sizer->Add(error_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+        warn_sizer->AddSpacer(FromDIP(4));
         m_compat_warning_text = new wxStaticText(m_compat_warning_panel, wxID_ANY, wxEmptyString);
         m_compat_warning_text->SetForegroundColour(wxColour("#D32F2F"));
         m_compat_warning_text->Wrap(FromDIP(400));
@@ -539,9 +543,7 @@ void MixedFilamentDialog::build_ui()
                         } else {
                             m_pattern_ctrl->AppendText(wxString::Format("%d", fid + 1));
                         }
-                        if (m_cycle_strip_panel)  m_cycle_strip_panel->Refresh();
-                        if (m_cycle_blend_panel)  m_cycle_blend_panel->Refresh();
-                        if (m_cycle_legend_panel) rebuild_cycle_legend();
+                        validate_cycle_pattern();
                     }
                 });
                 btn_row->Add(badge, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
@@ -572,10 +574,7 @@ void MixedFilamentDialog::build_ui()
             m_pattern_ctrl->SetMargins(FromDIP(8), FromDIP(8));
             wrapper_sizer->Add(m_pattern_ctrl, 1, wxEXPAND | wxALL, FromDIP(1));
             input_wrapper->SetSizer(wrapper_sizer);
-            m_pattern_ctrl->SetToolTip(_L("Repeating layer pattern. Digits 1-9 for filament IDs 1-9. "
-                                          "Use [N] for IDs >= 10 (e.g. [12]). "
-                                          "Comma-separated groups set per-perimeter patterns, e.g. 12,21. "
-                                          "Examples: 1122, 1[10]2[11], 12,21."));
+            m_pattern_ctrl->SetToolTip(_L("Allowed Input: Only digits, square brackets ([ and ]), and commas (,)."));
             m_pattern_ctrl->SetMaxLength(512);
 
             m_pattern_ctrl->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent& event) {
@@ -745,6 +744,7 @@ void MixedFilamentDialog::build_ui()
         if (m_preview_panel) m_preview_panel->Refresh();
         if (m_preview_blend_panel) m_preview_blend_panel->Refresh();
         if (m_strip_panel)   m_strip_panel->Refresh();
+        update_compatibility_warning();
     });
     m_btn_cancel->Bind(wxEVT_BUTTON,  [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
     m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
@@ -1300,6 +1300,7 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         if (m_tri_dragging) {
             m_tri_dragging = false;
             if (m_tri_picker->HasCapture()) m_tri_picker->ReleaseMouse();
+            update_compatibility_warning();
         }
     });
     m_tri_picker->Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
@@ -1412,16 +1413,145 @@ void MixedFilamentDialog::update_compatibility_warning()
 
     sync_rows_to_result();
 
-    if (!is_filament_compatible(m_result)) {
-        m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+    // Collect all filament IDs referenced by the current mix
+    std::vector<unsigned int> fids;
+
+    if (m_current_mode == MODE_CYCLE && m_pattern_ctrl) {
+        const std::string raw = into_u8(m_pattern_ctrl->GetValue());
+        const std::string norm = MixedFilamentManager::normalize_manual_pattern(raw);
+        auto parsed = parse_cycle_pattern(norm, (int)m_filament_colours.size());
+        for (unsigned int id : parsed.ids) {
+            unsigned int idx = id - 1;
+            if (std::find(fids.begin(), fids.end(), idx) == fids.end())
+                fids.push_back(idx);
+        }
+    } else {
+        // Other modes: component_a, component_b, and gradient_component_ids
+        if (m_result.component_a >= 1) fids.push_back(m_result.component_a - 1);
+        if (m_result.component_b >= 1) fids.push_back(m_result.component_b - 1);
+        if (!m_result.gradient_component_ids.empty()) {
+            for (char c : m_result.gradient_component_ids) {
+                int idx = c - '1';
+                if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
+            }
+        }
+    }
+
+    if (!is_filament_compatible(fids)) {
+        if (auto pair = find_incompatible_filament_pair(fids)) {
+            m_compat_warning_text->SetLabel(
+                wxString::Format(_L("Filament %d and Filament %d are incompatible and cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
+        } else {
+            m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+        }
         m_compat_warning_text->Wrap(FromDIP(360));
         m_compat_warning_panel->Show();
         m_btn_confirm->Disable();
+    } else if (check_low_ratio_warning()) {
+        // advisory warning shown, confirm stays enabled
     } else {
         m_compat_warning_panel->Hide();
         m_btn_confirm->Enable();
     }
     Layout();
+}
+
+void MixedFilamentDialog::display_warning(const wxString& msg)
+{
+    if (!m_compat_warning_panel || !m_compat_warning_text)
+        return;
+    m_compat_warning_text->SetLabel(msg);
+    m_compat_warning_text->Wrap(FromDIP(360));
+    m_compat_warning_panel->Show();
+    Layout();
+}
+
+void MixedFilamentDialog::set_error(const wxString& msg)
+{
+    display_warning(msg);
+    if (m_btn_confirm) m_btn_confirm->Disable();
+}
+
+bool MixedFilamentDialog::check_low_ratio_warning()
+{
+    static constexpr double LOW_RATIO_THRESHOLD = 0.25;
+
+    if (m_filament_rows.empty() || m_filament_colours.empty())
+        return false;
+
+    const int num_physical = (int)m_filament_colours.size();
+    std::vector<double> ratios(num_physical, 0.0);
+    double total = 0.0;
+
+    switch (m_current_mode) {
+    case MODE_RATIO:
+        if (m_filament_rows.size() == 2 && m_gradient_selector) {
+            int val = m_gradient_selector->value();
+            int ia = get_filament_index(0);
+            int ib = get_filament_index(1);
+            if (ia < num_physical) { ratios[ia] = (100.0 - val) / 100.0; total += ratios[ia]; }
+            if (ib < num_physical) { ratios[ib] = val / 100.0;        total += ratios[ib]; }
+        } else if (m_filament_rows.size() == 3) {
+            for (int i = 0; i < 3; ++i) {
+                int idx = get_filament_index(i);
+                if (idx < num_physical) {
+                    double w = (i == 0) ? m_tri_wx : (i == 1) ? m_tri_wy : m_tri_wz;
+                    ratios[idx] = w;
+                    total += w;
+                }
+            }
+        }
+        break;
+    case MODE_GRADIENT:
+        if (m_filament_rows.size() >= 2) {
+            int ia = get_filament_index(0);
+            int ib = get_filament_index(1);
+            if (ia < num_physical) { ratios[ia] = 0.5; total += 0.5; }
+            if (ib < num_physical) { ratios[ib] = 0.5; total += 0.5; }
+        }
+        break;
+    case MODE_MATCH:
+        if (m_match_panel) {
+            auto recipe = m_match_panel->selected_recipe();
+            if (recipe.valid) {
+                std::vector<int> weights = expand_color_match_recipe_weights(recipe, num_physical);
+                for (int i = 0; i < num_physical; ++i) {
+                    double w = weights[i] / 100.0;
+                    if (w > 0.0) {
+                        ratios[i] = w;
+                        total += w;
+                    }
+                }
+            }
+        }
+        break;
+    case MODE_CYCLE:
+        if (m_pattern_ctrl) {
+            const std::string raw = into_u8(m_pattern_ctrl->GetValue());
+            const std::string normalized = MixedFilamentManager::normalize_manual_pattern(raw);
+            auto parsed = parse_cycle_pattern(normalized, num_physical);
+            for (unsigned int id : parsed.ids) {
+                ratios[id - 1] += 1.0;
+                total += 1.0;
+            }
+        }
+        break;
+    }
+
+    if (total <= 0.0)
+        return false;
+
+    // Check for any filament below threshold
+    for (int i = 0; i < num_physical; ++i) {
+        double ratio = ratios[i] / total;
+        if (ratio > 0.0 && ratio < LOW_RATIO_THRESHOLD) {
+            display_warning(
+                wxString::Format(_L("Filament %d makes up less than 25%% of the mix, which may affect the blending result."), i + 1));
+            return true;
+        }
+    }
+
+    return false;
 }
 
 std::string MixedFilamentDialog::compute_preview_color()
@@ -1977,16 +2107,56 @@ void MixedFilamentDialog::validate_cycle_pattern()
 
     const std::string raw = into_u8(m_pattern_ctrl->GetValue());
 
+    bool has_invalid_chars = false;
     std::string filtered;
     filtered.reserve(raw.size());
     for (char c : raw) {
         if (c == ',' || c == '[' || c == ']' ||
             (c >= '0' && c <= '9')) {
             filtered.push_back(c);
+        } else {
+            has_invalid_chars = true;
         }
     }
 
+    const bool has_leading_trailing_comma = !raw.empty() && (raw.front() == ',' || raw.back() == ',');
+
     const std::string normalized = MixedFilamentManager::normalize_manual_pattern(filtered);
+    const bool is_malformed = !filtered.empty() && normalized.empty();
+
+    if (has_leading_trailing_comma) {
+        set_error(_L("Leading or trailing commas are not allowed."));
+        return;
+    }
+
+    if (has_invalid_chars) {
+        set_error(_L("Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."));
+        return;
+    }
+
+    if (is_malformed) {
+        set_error(_L("Unrecognized pattern format. Please check the pattern syntax."));
+        return;
+    }
+
+    // Validate that all directly-referenced physical filament IDs exist.
+    // H4: only validate when there are at least 2 physical filaments and a non-empty pattern.
+    const int num_physical = (int)m_filament_colours.size();
+    if (num_physical >= 2 && !normalized.empty()) {
+        auto parsed = parse_cycle_pattern(normalized, num_physical);
+        if (parsed.invalid_id != 0) {
+            set_error(
+                wxString::Format(_L("Unrecognized filament #%d. Please correct the input."), (int)parsed.invalid_id));
+            return;
+        }
+        if (!parsed.invalid_token.empty()) {
+            set_error(_L("Invalid token in pattern. Please check the pattern syntax."));
+            return;
+        }
+    }
+
+    update_compatibility_warning();
+
     const std::string final_text = normalized.empty() ? "12" : normalized;
 
     if (m_cycle_card) m_cycle_card->Freeze();
@@ -2079,6 +2249,16 @@ void MixedFilamentDialog::collect_result()
         m_result.manual_pattern = norm.empty() ? "12" : norm;
         m_result.gradient_component_ids.clear();
         m_result.gradient_component_weights.clear();
+
+        auto parsed = parse_cycle_pattern(m_result.manual_pattern, (int)m_filament_colours.size());
+        unsigned int first = 0, second = 0;
+        for (unsigned int id : parsed.ids) {
+            if (first == 0) first = id;
+            else if (second == 0 && id != first) second = id;
+            if (first != 0 && second != 0) break;
+        }
+        m_result.component_a = first  != 0 ? first  : 1;
+        m_result.component_b = second != 0 ? second : m_result.component_a;
         break;
     }
     case MODE_MATCH: {

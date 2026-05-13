@@ -37,6 +37,10 @@
 
 #include "miniz/miniz.h"
 #include "slic3r/Utils/MQTT.hpp"
+#include "slic3r/Utils/Http.hpp"
+#include "libslic3r/Utils.hpp"
+#include <boost/filesystem/operations.hpp>
+#include <openssl/sha.h>
 
 namespace pt = boost::property_tree;
 
@@ -377,6 +381,45 @@ bool read_existing_zip(const std::string& zip_path, std::vector<char>& out_data)
     return true;
 }
 
+// Build a download URL served by the local HTTP server, bypassing the 512MB postMessage limit.
+// The file path is URL-safe base64-encoded to avoid issues with special characters (# \ : etc.).
+std::string make_wcp_download_url(const std::string& file_path)
+{
+    auto& server = wxGetApp().m_page_http_server;
+    std::string b64 = base64_encode(file_path.data(), file_path.size());
+    for (auto& c : b64) {
+        if (c == '+') {
+            c = '-';
+        } else if (c == '/') {
+            c = '_';
+        }
+    }
+    return std::string(LOCALHOST_URL) + std::to_string(server.get_port()) + WCP_DOWNLOAD_PREFIX + b64;
+}
+
+// Compute SHA-256 digest → standard Base64, matching Flutter's base64Encode(sha256.convert(bytes).bytes)
+static std::string calc_sha256_base64(const std::string& file_path)
+{
+    std::ifstream ifs(file_path, std::ios::binary);
+    if (!ifs.is_open()) {
+        return "";
+    }
+
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+
+    static constexpr size_t kChunkSize = 64 * 1024;
+    std::string             buf(kChunkSize, 0);
+    while (ifs.read(buf.data(), buf.size()) || ifs.gcount() > 0) {
+        SHA256_Update(&ctx, buf.data(), ifs.gcount());
+    }
+
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256_Final(digest, &ctx);
+
+    return base64_encode((const char*) digest, SHA256_DIGEST_LENGTH);
+}
+
 // 主逻辑函数
 json get_or_create_zip_json(const std::string& name1,   // 原文件路径（如 "1.gcode"）
                             const std::string& name2,   // 目标 ZIP 文件名（如 "target.gcode"）
@@ -665,7 +708,10 @@ void SSWCP_Instance::sw_GetActiveFile()
                     std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
                     self->m_res_data["url"] = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_zip_path);
                     SSWCP::m_file_size_mutex.unlock();
-                    
+
+                    // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+                    self->m_res_data["checksum"] = calc_sha256_base64(file_path);
+
                     wxGetApp().CallAfter([weak_self]() {
                         if (weak_self.lock()) {
                             weak_self.lock()->send_to_js();
@@ -687,7 +733,12 @@ void SSWCP_Instance::sw_GetActiveFile()
             std::string url_path = file_path;
             std::replace(url_path.begin(), url_path.end(), '\\', '/');
             m_res_data["file_path"] = file_path;
+            m_res_data["origin_size"] = boost::filesystem::file_size(file_path);
+
+            // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+            m_res_data["checksum"] = calc_sha256_base64(file_path);
             m_res_data["url"]      = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_path);
+
             send_to_js();
             finish_job();
         }
@@ -766,78 +817,100 @@ void SSWCP_Instance::sw_Log()
 
 void SSWCP_Instance::sw_GetFileStream() {
     try {
+        std::string file_path = SSWCP::get_active_filename();
+        std::string file_name = SSWCP::get_display_filename();
+        if (file_path == "" || file_name == "") {
+            handle_general_fail();
+            return;
+        }
+
         bool isZip = false;
         if (m_param_data.count("is_zip")) {
             isZip = m_param_data["is_zip"].get<bool>();
-        } 
-        std::string file_path = SSWCP::get_active_filename();
+        }
 
-        std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
         if (isZip) {
-            auto oriname    = SSWCP::get_active_filename();
-            auto targetname = SSWCP::get_display_filename();
-
             std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
-            if (m_work_thread.joinable())
+            if (m_work_thread.joinable()) {
                 m_work_thread.join();
-            m_work_thread                           = std::thread([oriname, targetname, weak_self]() {
-                auto self = weak_self.lock();
-                if (self) {
-                    std::string zipname = generate_zip_path(oriname, targetname);
-                    json        res     = get_or_create_zip_json(oriname, targetname, zipname);
-                    wxGetApp().CallAfter([weak_self, res]() {
-                        auto self = weak_self.lock();
-                        if (self) {
-                            self->m_res_data["name"]    = res["zip_name"];
-                            self->m_res_data["content"] = res["zip_data"];
+            }
 
-                            self->send_to_js();
-                            self->finish_job();
-                        }
-                    });
+            m_work_thread = std::thread([file_path, file_name, weak_self]() {
+                auto self = weak_self.lock();
+                if (!self) {
+                    return;
                 }
-            });
-        } else {
-            if (m_work_thread.joinable())
-                m_work_thread.join();
-            m_work_thread = std::thread([file_path, weak_self]() {
-                auto self = weak_self.lock();
-                if (self) {
-                    // 1. 读取原文件内容
-                    std::ifstream file(file_path, std::ios::binary);
-                    if (!file.is_open()) {
-                        self->handle_general_fail();
-                        return;
-                    }
-                    // 获取文件大小
-                    file.seekg(0, std::ios::end);
-                    std::streamsize file_size = file.tellg();
-                    file.seekg(0, std::ios::beg);
 
-                    // 预分配 std::string 空间
-                    std::string content;
-                    content.resize(file_size);
+                std::string zipname = generate_zip_path(file_path, file_name);
+                get_or_create_zip_json(file_path, file_name, zipname);
 
-                    // 一次性读取整个文件
-                    if (!file.read(&content[0], file_size)) {
-                        std::cerr << "读取文件失败" << std::endl;
-                        self->handle_general_fail();
-                        return;
-                    }
-
-                    self->m_res_data["content"] = wxString(content).ToUTF8();
-
+                size_t name_index = file_name.find_last_of(".");
+                size_t path_index = file_path.find_last_of(".");
+                if (name_index == std::string::npos || path_index == std::string::npos) {
                     wxGetApp().CallAfter([weak_self]() {
                         auto self = weak_self.lock();
                         if (self) {
-                            self->send_to_js();
-                            self->finish_job();
+                            self->handle_general_fail();
                         }
                     });
+                    return;
                 }
+
+                std::string zip_file_name = file_name.substr(0, name_index) + ".zip";
+                long long   file_size     = boost::filesystem::file_size(file_path);
+                std::string sha256_base64 = calc_sha256_base64(file_path);
+
+                wxGetApp().CallAfter([weak_self, zipname, zip_file_name, file_size, sha256_base64]() {
+                    auto self = weak_self.lock();
+                    if (!self) {
+                        return;
+                    }
+
+                    self->m_res_data["file_name"]   = zip_file_name;
+                    self->m_res_data["file_url"]    = make_wcp_download_url(zipname);
+                    self->m_res_data["origin_size"] = file_size;
+
+                    // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+                    self->m_res_data["checksum"]    = sha256_base64;
+
+                    self->send_to_js();
+                    self->finish_job();
+                });
+            });
+        } else {
+            std::string download_url = make_wcp_download_url(file_path);
+            std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+            if (m_work_thread.joinable()) {
+                m_work_thread.join();
+            }
+
+            m_work_thread = std::thread([file_path, file_name, download_url, weak_self]() {
+                auto self = weak_self.lock();
+                if (!self) {
+                    return;
+                }
+
+                long long file_size = boost::filesystem::file_size(file_path);
+
+                std::string sha256_base64 = calc_sha256_base64(file_path);
+
+                wxGetApp().CallAfter([weak_self, download_url, file_name, file_size, sha256_base64]() {
+                    auto self = weak_self.lock();
+                    if (!self) {
+                        return;
+                    }
+
+                    self->m_res_data["file_name"]   = file_name;
+                    self->m_res_data["file_url"]    = download_url;
+                    self->m_res_data["origin_size"] = file_size;
+                    // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+                    self->m_res_data["checksum"]    = sha256_base64;
+
+                    self->send_to_js();
+                    self->finish_job();
+                });
             });
         }
-        
     }
     catch (std::exception& e) {
         handle_general_fail();

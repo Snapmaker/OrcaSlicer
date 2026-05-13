@@ -1665,6 +1665,10 @@ WipeTower::ToolChangeResult WipeTower2::local_z_tool_change(size_t new_tool,
     if (m_current_tool < m_used_filament_length.size())
         m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
 
+    // toolchange_Change already updated m_current_tool, but be explicit
+    // so construct_tcr returns the correct new_tool for the caller.
+    m_current_tool = new_tool;
+
     WipeTower::ToolChangeResult result = construct_tcr(writer, false, old_tool, false);
     result.purge_volume                = wipe_volume;
     return result;

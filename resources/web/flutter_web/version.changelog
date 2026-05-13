@@ -1,9 +1,9 @@
-#  Changelog
-
-## 2026-04-29
-
+ #  Changelog
+ 
+## 2026-04-16
+ 
 ### Bugfix
-  *   - Fixed an issue where the filaments and nozzles mapping fails when printing directly from the built-in model library.
+  * Fixed an issue on the "Print Preprocessing" page: when more than 4 preset filaments were available, users could not select the excess filaments to match with the mounted filaments on the device. 
 
 ### 问题修复
-  *   - 修复从内置模型库直接打印时出现耗材与喷嘴映射失效问题。
+  * 修复了预设耗材超过 4 个时，超过部分无法在 "打印预处理页" 选择设备挂载耗材的问题

@@ -2272,8 +2272,8 @@ void WipeTower2::save_on_last_wipe()
         if (m_layer_info->tool_changes.size() == 0) // we have no way to save anything on an empty layer
             continue;
 
-        // Which toolchange will finish_layer extrusions be subtracted from?
-        int idx = first_toolchange_to_nonsoluble(m_layer_info->tool_changes);
+        const WipeTowerInfo* next_layer_info = (m_layer_info + 1 < m_plan.end()) ? &*(m_layer_info + 1) : nullptr;
+        int idx = select_wall_extruder_idx(m_layer_info->tool_changes, next_layer_info);
 
         if (idx == -1) {
             // In this case, finish_layer will be called at the very beginning.
@@ -2308,12 +2308,118 @@ void WipeTower2::save_on_last_wipe()
 // ot -1 if there is no such toolchange.
 int WipeTower2::first_toolchange_to_nonsoluble(const std::vector<WipeTowerInfo::ToolChange>& tool_changes) const
 {
-    // 使用 wipe_tower_filament 配置来决定哪个挤出机用于 wipe tower
     for (size_t idx = 0; idx < tool_changes.size(); ++idx) {
         if (!m_filpar[tool_changes[idx].new_tool].is_soluble)
             return idx;
     }
     return -1;
+}
+
+int WipeTower2::select_wall_extruder_idx(
+        const std::vector<WipeTowerInfo::ToolChange>& tool_changes,
+        const WipeTowerInfo* next_layer_info) const
+{
+    // Returns the toolchange index after which finish_layer() (wall) should be called.
+    //   idx >= 0 : wall drawn after tool_changes[idx], using tool_changes[idx].new_tool
+    //   idx == -1: wall drawn before all toolchanges, using m_current_tool (old_tool)
+    //
+    // Candidates are built from old_tool (m_current_tool, represented as idx=-1) and
+    // each tool_changes[i].new_tool (represented as idx=i). Only non-soluble tools qualify.
+
+    struct Candidate {
+        int    idx;
+        size_t tool;
+    };
+
+    std::vector<Candidate> candidates;
+    if (!m_filpar[m_current_tool].is_soluble)
+        candidates.push_back({-1, m_current_tool});
+    for (size_t i = 0; i < tool_changes.size(); ++i) {
+        if (!m_filpar[tool_changes[i].new_tool].is_soluble)
+            candidates.push_back({int(i), tool_changes[i].new_tool});
+    }
+
+    // DEBUG: log candidates
+    BOOST_LOG_TRIVIAL(debug) << "WipeTower2::select_wall_extruder_idx: m_current_tool=" << m_current_tool
+        << " (" << m_filpar[m_current_tool].material << ")"
+        << ", m_last_wall_extruder=" << m_last_wall_extruder
+        << (m_last_wall_extruder >= 0 ? " (" + m_filpar[m_last_wall_extruder].material + ")" : "")
+        << ", tool_changes=[";
+    for (size_t i = 0; i < tool_changes.size(); ++i)
+        BOOST_LOG_TRIVIAL(debug) << "  tc[" << i << "]: " << tool_changes[i].old_tool << "->" << tool_changes[i].new_tool
+            << " (" << m_filpar[tool_changes[i].new_tool].material << ")";
+    BOOST_LOG_TRIVIAL(debug) << "], candidates=[";
+    for (const auto& c : candidates)
+        BOOST_LOG_TRIVIAL(debug) << "  {idx=" << c.idx << ", tool=" << c.tool << " (" << m_filpar[c.tool].material << ")}";
+    BOOST_LOG_TRIVIAL(debug) << "]";
+
+    if (candidates.empty()) {
+        BOOST_LOG_TRIVIAL(debug) << "  => no candidates, returning -1";
+        return -1;
+    }
+
+    // Priority 1: material continuity — same material as previous layer's wall.
+    // Prefer exact same extruder, then same material from a different extruder.
+    if (m_last_wall_extruder >= 0) {
+        const std::string& last_material = m_filpar[m_last_wall_extruder].material;
+        int best = -2;
+        for (const auto& c : candidates) {
+            if (m_filpar[c.tool].material != last_material)
+                continue;
+            if (c.tool == size_t(m_last_wall_extruder)) {
+                BOOST_LOG_TRIVIAL(debug) << "  => Priority 1 (exact extruder match): idx=" << c.idx << ", tool=" << c.tool;
+                return c.idx;
+            }
+            if (best == -2)
+                best = c.idx;
+        }
+        if (best != -2) {
+            BOOST_LOG_TRIVIAL(debug) << "  => Priority 1 (same material): idx=" << best;
+            return best;
+        }
+        BOOST_LOG_TRIVIAL(debug) << "  Priority 1 miss: no candidate with material \"" << last_material << "\"";
+    }
+
+    // Priority 2: material also used in next layer — reduces material switch on next layer's wall.
+    // Prefer exact same extruder, then same material from a different extruder.
+    if (next_layer_info && !next_layer_info->tool_changes.empty()) {
+        std::vector<std::string> next_materials;
+        std::vector<size_t>      next_extruders;
+        next_materials.push_back(m_filpar[next_layer_info->tool_changes.front().old_tool].material);
+        next_extruders.push_back(next_layer_info->tool_changes.front().old_tool);
+        for (const auto& tc : next_layer_info->tool_changes) {
+            next_materials.push_back(m_filpar[tc.new_tool].material);
+            next_extruders.push_back(tc.new_tool);
+        }
+
+        int best = -2;
+        for (const auto& c : candidates) {
+            const std::string& mat = m_filpar[c.tool].material;
+            if (std::find(next_materials.begin(), next_materials.end(), mat) == next_materials.end())
+                continue;
+            if (std::find(next_extruders.begin(), next_extruders.end(), c.tool) != next_extruders.end()) {
+                BOOST_LOG_TRIVIAL(debug) << "  => Priority 2 (exact extruder in next layer): idx=" << c.idx << ", tool=" << c.tool;
+                return c.idx;
+            }
+            if (best == -2)
+                best = c.idx;
+        }
+        if (best != -2) {
+            BOOST_LOG_TRIVIAL(debug) << "  => Priority 2 (material in next layer): idx=" << best;
+            return best;
+        }
+        BOOST_LOG_TRIVIAL(debug) << "  Priority 2 miss";
+    }
+
+    // Priority 3: fallback — first non-soluble toolchange (original behavior).
+    // If no toolchange qualifies, use old_tool (idx=-1).
+    int fallback = first_toolchange_to_nonsoluble(tool_changes);
+    if (fallback >= 0) {
+        BOOST_LOG_TRIVIAL(debug) << "  => Priority 3 (first non-soluble tc): idx=" << fallback;
+        return fallback;
+    }
+    BOOST_LOG_TRIVIAL(debug) << "  => Priority 3 (fallback old_tool): idx=" << candidates.front().idx;
+    return candidates.front().idx;
 }
 
 static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first, WipeTower::ToolChangeResult& second)
@@ -2374,8 +2480,10 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
     m_used_filament_length_until_layer.emplace_back(0.f, m_used_filament_length);
 
     m_old_temperature = -1; // reset last temperature written in the gcode
+    m_last_wall_extruder = -1;
 
-    for (const WipeTower2::WipeTowerInfo& layer : m_plan) {
+    for (int layer_idx = 0; layer_idx < int(m_plan.size()); ++layer_idx) {
+        const WipeTower2::WipeTowerInfo& layer = m_plan[layer_idx];
         std::vector<WipeTower::ToolChangeResult> layer_result;
         set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
         m_internal_rotation += 180.f;
@@ -2383,7 +2491,14 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
         if (m_layer_info->depth < m_wipe_tower_depth - m_perimeter_width)
             m_y_shift = (m_wipe_tower_depth - m_layer_info->depth - m_perimeter_width) / 2.f;
 
-        int                         idx = first_toolchange_to_nonsoluble(layer.tool_changes);
+        const WipeTowerInfo* next_layer_info = (layer_idx + 1 < int(m_plan.size())) ? &m_plan[layer_idx + 1] : nullptr;
+        BOOST_LOG_TRIVIAL(debug) << "WipeTower2::generate layer " << layer_idx << " z=" << layer.z
+            << " m_current_tool=" << m_current_tool;
+        int                         idx = select_wall_extruder_idx(layer.tool_changes, next_layer_info);
+        size_t              old_tool_at_layer_start = m_current_tool;
+        BOOST_LOG_TRIVIAL(debug) << "WipeTower2::generate layer " << layer_idx << " => wall idx=" << idx
+            << " wall_tool=" << (idx >= 0 ? int(layer.tool_changes[idx].new_tool) : int(old_tool_at_layer_start))
+            << " (" << m_filpar[idx >= 0 ? layer.tool_changes[idx].new_tool : old_tool_at_layer_start].material << ")";
         WipeTower::ToolChangeResult finish_layer_tcr;
 
         if (idx == -1) {
@@ -2409,6 +2524,11 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
             } else
                 layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
         }
+
+        if (idx >= 0)
+            m_last_wall_extruder = int(layer.tool_changes[idx].new_tool);
+        else if (!m_filpar[old_tool_at_layer_start].is_soluble)
+            m_last_wall_extruder = int(old_tool_at_layer_start);
 
         result.emplace_back(std::move(layer_result));
 

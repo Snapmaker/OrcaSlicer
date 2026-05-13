@@ -52,8 +52,11 @@ else ()
 
     set(_cross_compile_arg "")
     if (CMAKE_CROSSCOMPILING)
-        # TOOLCHAIN_PREFIX should be defined in the toolchain file
-        set(_cross_compile_arg --host=${TOOLCHAIN_PREFIX})
+        if (DEFINED TOOLCHAIN_PREFIX AND NOT "${TOOLCHAIN_PREFIX}" STREQUAL "")
+            set(_cross_compile_arg --host=${TOOLCHAIN_PREFIX})
+        elseif (APPLE AND DEFINED _mpfr_host_arch AND NOT "${_mpfr_host_arch}" STREQUAL "")
+            set(_cross_compile_arg --host=${_mpfr_host_arch}-apple-darwin)
+        endif ()
     endif ()
 
     ExternalProject_Add(dep_MPFR
@@ -61,8 +64,10 @@ else ()
         URL_HASH SHA256=9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/MPFR
         BUILD_IN_SOURCE ON
-        CONFIGURE_COMMAND test -f configure || autoreconf -f -i || true &&
-                          env "CFLAGS=${_mpfr_ccflags}" "CXXFLAGS=${_mpfr_ccflags}" ./configure ${_cross_compile_arg} --prefix=${DESTDIR} --enable-shared=no --enable-static=yes --with-gmp=${DESTDIR} ${_mpfr_build_tgt}
+        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
+                          CFLAGS=${_mpfr_ccflags}
+                          CXXFLAGS=${_mpfr_ccflags}
+                          ./configure ${_cross_compile_arg} --prefix=${DESTDIR} --enable-shared=no --enable-static=yes --with-gmp=${DESTDIR} ${_mpfr_build_tgt}
         BUILD_COMMAND make -j
         INSTALL_COMMAND make install
         DEPENDS dep_GMP

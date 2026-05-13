@@ -5650,6 +5650,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
         wxGetApp().plater()->post_slice_state_change_update();
+        wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
         update_color_mix_panel();
         m_scrolled_sizer->Layout();
     });
@@ -5670,6 +5671,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
         wxGetApp().plater()->post_slice_state_change_update();
+        wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
         update_color_mix_panel();
         m_scrolled_sizer->Layout();
     });
@@ -5774,7 +5776,7 @@ void Sidebar::update_color_mix_panel()
 
         wxString lbl;
         if (!normalized_pattern_cm.empty())
-            lbl = _L("Pattern");
+            lbl = wxString(summarize_cycle_pattern_text(normalized_pattern_cm, mf, int(num_physical)));
         else if (mf.gradient_component_ids.size() >= 3) {
             // parse weights
             const size_t n = mf.gradient_component_ids.size();
@@ -5889,6 +5891,7 @@ void Sidebar::update_color_mix_panel()
             if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
             wxGetApp().plater()->post_slice_state_change_update();
+            wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
             wxTheApp->CallAfter([this]() {
                 update_color_mix_panel();
                 m_scrolled_sizer->Layout();
@@ -5930,6 +5933,7 @@ void Sidebar::update_color_mix_panel()
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();
                 wxGetApp().plater()->post_slice_state_change_update();
+                wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
                 wxTheApp->CallAfter([this]() {
                     update_color_mix_panel();
                     m_scrolled_sizer->Layout();
@@ -6029,6 +6033,7 @@ void Sidebar::update_color_mix_panel()
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr2.serialize_custom_entries();
                 wxGetApp().plater()->post_slice_state_change_update();
+                wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
                 wxTheApp->CallAfter([this]() {
                     update_color_mix_panel();
                     m_scrolled_sizer->Layout();

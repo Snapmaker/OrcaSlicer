@@ -1449,6 +1449,12 @@ void MixedFilamentDialog::update_compatibility_warning()
         m_btn_confirm->Disable();
     } else if (check_low_ratio_warning()) {
         // advisory warning shown, confirm stays enabled
+    } else if (m_current_mode == MODE_CYCLE && fids.size() == 1) {
+        display_warning(_L("Participating filaments have the same color and cannot produce different colors. Please select filaments with different colors for mixing."));
+        if (m_btn_confirm) m_btn_confirm->Enable();
+    } else if (m_current_mode == MODE_CYCLE && fids.size() > 4) {
+        display_warning(_L("Too many filaments participating in color mixing may affect the blending result. Please use with caution."));
+        if (m_btn_confirm) m_btn_confirm->Enable();
     } else {
         m_compat_warning_panel->Hide();
         m_btn_confirm->Enable();
@@ -1526,17 +1532,7 @@ bool MixedFilamentDialog::check_low_ratio_warning()
         }
         break;
     case MODE_CYCLE:
-        if (m_pattern_ctrl) {
-            const std::string raw = into_u8(m_pattern_ctrl->GetValue());
-            const std::string normalized = MixedFilamentManager::normalize_manual_pattern(raw);
-            auto parsed = parse_cycle_pattern(normalized, num_physical);
-            for (unsigned int id : parsed.ids) {
-                if (id < 1 || id > (unsigned)num_physical) continue;
-                ratios[id - 1] += 1.0;
-                total += 1.0;
-            }
-        }
-        break;
+        return false;
     }
 
     if (total <= 0.0)
@@ -1660,11 +1656,15 @@ void MixedFilamentDialog::draw_strip(wxDC& dc, wxPanel* panel)
             const bool b_major = pct_b >= pct_a;
             const int major = b_major ? pct_b : pct_a;
             const int minor = b_major ? pct_a : pct_b;
-            const int layers = std::min(std::max(1, (int)std::lround((double)major / (double)std::max(1, minor))), 20);
-            ratio_a = b_major ? 1 : layers;
-            ratio_b = b_major ? layers : 1;
-            const int g = std::gcd(ratio_a, ratio_b);
-            if (g > 1) { ratio_a /= g; ratio_b /= g; }
+            const int g = std::gcd(major, minor);
+            ratio_a = b_major ? (minor / g) : (major / g);
+            ratio_b = b_major ? (major / g) : (minor / g);
+            // Cap total stripes to 20 for visual clarity in preview
+            if (ratio_a + ratio_b > 20) {
+                const double scale = 20.0 / (ratio_a + ratio_b);
+                ratio_a = std::max(1, (int)std::round(ratio_a * scale));
+                ratio_b = std::max(1, (int)std::round(ratio_b * scale));
+            }
         }
         const int cycle = std::max(1, ratio_a + ratio_b);
         for (int pos = 0; pos < cycle; ++pos) {
@@ -2231,13 +2231,9 @@ void MixedFilamentDialog::collect_result()
                 const bool b_is_major = pct_b >= pct_a;
                 const int major_pct   = b_is_major ? pct_b : pct_a;
                 const int minor_pct   = b_is_major ? pct_a : pct_b;
-                const int major_layers = std::min(std::max(1, int(std::lround(double(major_pct) / double(std::max(1, minor_pct))))), 20);
-                ratio_a = b_is_major ? 1 : major_layers;
-                ratio_b = b_is_major ? major_layers : 1;
-            }
-            if (ratio_a > 0 && ratio_b > 0) {
-                const int g = std::gcd(ratio_a, ratio_b);
-                if (g > 1) { ratio_a /= g; ratio_b /= g; }
+                const int g = std::gcd(major_pct, minor_pct);
+                ratio_a = b_is_major ? (minor_pct / g) : (major_pct / g);
+                ratio_b = b_is_major ? (major_pct / g) : (minor_pct / g);
             }
             m_result.ratio_a = std::max(0, ratio_a);
             m_result.ratio_b = std::max(0, ratio_b);

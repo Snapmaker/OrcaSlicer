@@ -1297,6 +1297,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     , m_rib_width(config.wipe_tower_rib_width)
     , m_extra_rib_length(config.wipe_tower_extra_rib_length)
     , m_wall_type((int) config.wipe_tower_wall_type)
+    , m_build_mode((int) config.wipe_tower_build_mode)
 {
     // Read absolute value of first layer speed, if given as percentage,
     // it is taken over following default. Speeds from config are not
@@ -1329,8 +1330,9 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
 
     // Calculate where the priming lines should be - very naive test not detecting parallelograms etc.
     const std::vector<Vec2d>& bed_points = config.printable_area.values;
-    BoundingBoxf              bb(bed_points);
-    m_bed_width = float(bb.size().x());
+    BoundingBoxf bb(bed_points);
+    m_bed_width  = float(bb.size().x());
+    m_bed_height = float(bb.size().y());
     m_bed_shape = (bed_points.size() == 4 ? RectangularBed : CircularBed);
 
     if (m_bed_shape == CircularBed) {
@@ -1543,7 +1545,23 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
         // Otherwise we are going to Unload only. And m_layer_info would be invalid.
     }
 
-    WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width / 2.f, m_perimeter_width / 2.f), m_wipe_tower_width - m_perimeter_width,
+    // BBS: issue #173 - side-by-side mode: place each tool in its own X column
+    float cleaning_box_x     = m_perimeter_width / 2.f;
+    float cleaning_box_width = m_wipe_tower_width - m_perimeter_width;
+    const float saved_depth_traversed = m_depth_traversed;
+    if (m_build_mode == 1 /*wtbmSideBySide*/ && !m_filpar.empty() && tool != (unsigned int)(-1)) {
+        const size_t num_cols  = m_filpar.size();
+        const float  col_inner = (m_wipe_tower_width - (float(num_cols) + 1.f) * m_perimeter_width) / float(num_cols);
+        const size_t col_idx   = std::min(tool, (unsigned int)(num_cols - 1));
+        cleaning_box_x         = m_perimeter_width / 2.f + float(col_idx) * (col_inner + m_perimeter_width);
+        cleaning_box_width     = col_inner;
+        // Override m_depth_traversed with this column's accumulated depth so that toolchange
+        // subfunctions (Unload/Load/Wipe) compute correct Y positions within the column.
+        if (col_idx < m_per_tool_depth_traversed.size())
+            m_depth_traversed = m_per_tool_depth_traversed[col_idx];
+    }
+
+    WipeTower::box_coordinates cleaning_box(Vec2f(cleaning_box_x, m_perimeter_width / 2.f), cleaning_box_width,
                                             (tool != (unsigned int) (-1) ? wipe_area + m_depth_traversed - 0.5f * m_perimeter_width :
                                                                            m_wipe_tower_depth - m_perimeter_width));
 
@@ -1593,7 +1611,14 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material, m_filpar[m_current_tool].temperature,
                           m_filpar[m_current_tool].temperature);
 
-    m_depth_traversed += wipe_area;
+    // BBS: issue #173 - in side-by-side mode restore global depth and update per-tool counter
+    if (m_build_mode == 1 /*wtbmSideBySide*/ && tool != (unsigned int)(-1) && !m_per_tool_depth_traversed.empty()) {
+        const size_t col_idx = std::min(tool, (unsigned int)(m_per_tool_depth_traversed.size() - 1));
+        m_per_tool_depth_traversed[col_idx] += wipe_area;
+        m_depth_traversed = saved_depth_traversed; // restore global depth (unused in side-by-side)
+    } else {
+        m_depth_traversed += wipe_area;
+    }
 
     if (m_set_extruder_trimpot)
         writer.set_extruder_trimpot(550); // Reset the extruder current to a normal value.
@@ -2244,12 +2269,39 @@ void WipeTower2::plan_toolchange(float z_par, float layer_height_par, unsigned i
 
 void WipeTower2::plan_tower()
 {
-    // Calculate m_wipe_tower_depth (maximum depth for all the layers) and propagate depths downwards
+    m_wipe_tower_height = m_plan.empty() ? 0.f : m_plan.back().z;
+    m_current_height    = 0.f;
+
+    // BBS: issue #173 - side-by-side mode: each tool has its own column
+    if (m_build_mode == 1 /*wtbmSideBySide*/ && !m_filpar.empty()) {
+        const size_t num_tools = m_filpar.size();
+        // Initialise per-tool structures
+        m_per_tool_depth_traversed.assign(num_tools, 0.f);
+        std::vector<float> per_tool_max_depth(num_tools, 0.f);
+
+        // Find the maximum required_depth per tool across all layers
+        for (const auto& layer : m_plan) {
+            for (const auto& tc : layer.tool_changes)
+                if (tc.new_tool < num_tools)
+                    per_tool_max_depth[tc.new_tool] = std::max(per_tool_max_depth[tc.new_tool], tc.required_depth);
+        }
+
+        // Global tower depth = max of all per-tool depths (columns are parallel, not stacked)
+        m_wipe_tower_depth = 0.f;
+        for (float d : per_tool_max_depth)
+            m_wipe_tower_depth = std::max(m_wipe_tower_depth, d + m_perimeter_width);
+
+        // Set each layer's depth to the global tower depth so borders/brim are correct
+        for (auto& layer : m_plan)
+            layer.depth = m_wipe_tower_depth;
+
+        return;
+    }
+
+    // Original layer-by-layer logic
     m_wipe_tower_depth = 0.f;
     for (auto& layer : m_plan)
         layer.depth = 0.f;
-    m_wipe_tower_height = m_plan.empty() ? 0.f : m_plan.back().z;
-    m_current_height    = 0.f;
 
     for (int layer_index = int(m_plan.size()) - 1; layer_index >= 0; --layer_index) {
         float this_layer_depth    = std::max(m_plan[layer_index].depth, m_plan[layer_index].toolchanges_depth());
@@ -2521,6 +2573,27 @@ Polygon WipeTower2::generate_support_cone_wall(
     double r      = std::tan(Geometry::deg2rad(m_wipe_tower_cone_angle / 2.f)) * (m_wipe_tower_height - z);
     Vec2f  center = (wt_box.lu + wt_box.rd) / 2.;
     double w      = wt_box.lu.y() - wt_box.ld.y();
+
+    // BBS: clamp cone radius to bed boundary to prevent out-of-range toolhead movements
+    // (issue #121: stabilization cone exceeds bed bounds for small beds like Snapmaker A250).
+    if (r > 0.0) {
+        Vec2f abs_center = m_wipe_tower_pos + center;
+        float max_r_bed  = 0.f;
+        if (m_bed_shape == CircularBed) {
+            Vec2f bed_center     = m_bed_bottom_left + Vec2f(m_bed_width / 2.f, m_bed_height / 2.f);
+            float dist_to_edge   = m_bed_width / 2.f - (abs_center - bed_center).norm();
+            max_r_bed            = std::max(0.f, dist_to_edge);
+        } else {
+            float max_r_x = std::min(abs_center.x() - m_bed_bottom_left.x(),
+                                     m_bed_bottom_left.x() + m_bed_width - abs_center.x()) * float(support_scale);
+            float max_r_y = std::min(abs_center.y() - m_bed_bottom_left.y(),
+                                     m_bed_bottom_left.y() + m_bed_height - abs_center.y());
+            max_r_bed = std::min(max_r_x, max_r_y);
+        }
+        if (max_r_bed > 0.f && r > double(max_r_bed))
+            r = double(max_r_bed);
+    }
+
     enum Type { Arc, Corner, ArcStart, ArcEnd };
 
     // First generate vector of annotated point which form the boundary.

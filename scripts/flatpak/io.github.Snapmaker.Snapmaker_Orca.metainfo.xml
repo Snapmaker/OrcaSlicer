@@ -43,6 +43,11 @@
                 <p>Version 2.3.2 release with improvements and bug fixes.</p>
             </description>
         </release>
+	    <release version="2.2.4" date="2026-03-17">
+	        <url>https://github.com/Snapmaker/OrcaSlicer/releases/tag/v2.2.4</url>
+	    </release>
+	    <release version="2.0.0-951fc8e" date="2024-01-30"> <url>https://github.com/SoftFever/OrcaSlicer/commit/951fc8e98a0d5ca0ccb254315646ce7889a44836</url>
+        </release>
     </releases>
 </component>
 

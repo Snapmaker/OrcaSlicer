@@ -323,8 +323,7 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 
     if (!first_layer_tool_order.empty()) {
         this->reorder_extruders(first_layer_tool_order);
-    }
-    else {
+    } else {
         this->reorder_extruders(first_extruder);
     }
 

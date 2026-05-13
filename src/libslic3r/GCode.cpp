@@ -257,7 +257,13 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen)
 
     unsigned int extruder_id        = gcodegen.writer().extruder()->id();
     const auto&  filament_idle_temp = gcodegen.config().idle_temperature;
-    if (filament_idle_temp.get_at(extruder_id) == 0) {
+
+    // BBS: issue #143 — completely turn off the idle extruder heater when requested.
+    if (gcodegen.config().turn_off_idle_hotend.value) {
+        gcode += gcodegen.writer().set_temperature(0, false, extruder_id);
+        gcode.pop_back();
+        gcode += " ;turn off idle hotend\n";
+    } else if (filament_idle_temp.get_at(extruder_id) == 0) {
         // There is no idle temperature defined in filament settings.
         // Use the delta value from print config.
         if (gcodegen.config().standby_temperature_delta.value != 0) {
@@ -2585,15 +2591,18 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                     m_enable_cooling_markers = false; // we're not filtering these moves through CoolingBuffer
                     m_avoid_crossing_perimeters.use_external_mp_once();
                     // BBS. change tool before moving to origin point.
+                    // BBS: fix IDEX by-object toolhead collision (issue #136).
+                    // Retract before lifting so the nozzle never drags at print height.
+                    // Then lift to m_max_layer_z, then switch extruder (safe height),
+                    // then travel to the origin position.
+                    file.write(this->retract());
+                    file.write(m_writer.travel_to_z(m_max_layer_z));
                     if (m_writer.need_toolchange(initial_extruder_id)) {
                         const PrintObjectConfig& object_config              = object.config();
                         coordf_t                 initial_layer_print_height = print.config().initial_layer_print_height.value;
                         file.write(this->set_extruder(initial_extruder_id, initial_layer_print_height, true));
                         prime_extruder = true;
-                    } else {
-                        file.write(this->retract());
                     }
-                    file.write(m_writer.travel_to_z(m_max_layer_z));
                     file.write(this->travel_to(Point(0, 0), erNone, "move to origin position for next object"));
                     m_enable_cooling_markers = true;
                     // Disable motion planner when traveling to first object point.

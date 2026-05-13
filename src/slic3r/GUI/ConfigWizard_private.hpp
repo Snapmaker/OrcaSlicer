@@ -566,7 +566,7 @@ struct ConfigWizard::priv
 //    PageFilesAssociation* page_files_association = nullptr;
 //#endif // _WIN32
     //PageVendors      *page_vendors = nullptr;
-    //Pages3rdparty     pages_3rdparty;
+    Pages3rdparty     pages_3rdparty;
 
     // Custom setup pages
     PageFirmware     *page_firmware = nullptr;

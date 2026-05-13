@@ -32,8 +32,9 @@ Snapmaker_Orca_add_cmake_project(OpenVDB
 )
 
 ExternalProject_Get_Property(dep_OpenVDB SOURCE_DIR)
-if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)")
-    # Apply syntax fix only on macOS arm64.
+# Clang (Apple/Xcode) rejects OpT::template eval(...) without template args
+# (-Wmissing-template-arg-list-after-template-kw). Same OpenVDB sources on all macOS arch.
+if (APPLE)
     ExternalProject_Add_Step(dep_OpenVDB fix_template_syntax
         DEPENDEES configure
         DEPENDERS build

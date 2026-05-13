@@ -32,7 +32,7 @@ void check_non_manifold(const Slic3r::ModelVolume& volume,
         char pct_buf[16];
         snprintf(pct_buf, sizeof(pct_buf), "%.1f", pct);
         out.push_back(make_issue(
-            "error", plate_id, obj_name, "GEOM_NON_MANIFOLD",
+            "warning", plate_id, obj_name, "GEOM_NON_MANIFOLD",
             "Non-manifold mesh: " + std::to_string(open_edges) +
                 " open edge(s) out of " + std::to_string(total_edges) +
                 " total edges (" + pct_buf + "%). "
@@ -96,7 +96,7 @@ bool check_self_intersect(const Slic3r::ModelVolume& volume,
             << obj_name << "\" — skipping";
     } else if (self_intersects) {
         out.push_back(make_issue(
-            "error", plate_id, obj_name, "GEOM_SELF_INTERSECT",
+            "warning", plate_id, obj_name, "GEOM_SELF_INTERSECT",
             "Self-intersecting mesh: faces penetrate each other. "
             "This will cause incorrect slicing results.",
             "Repair with Netfabb (autodesk.com/netfabb) or Blender 3D Print Toolbox. "
@@ -109,7 +109,7 @@ bool check_self_intersect(const Slic3r::ModelVolume& volume,
     try {
         if (Slic3r::MeshBoolean::cgal::does_self_intersect(volume.mesh())) {
             out.push_back(make_issue(
-                "error", plate_id, obj_name, "GEOM_SELF_INTERSECT",
+                "warning", plate_id, obj_name, "GEOM_SELF_INTERSECT",
                 "Self-intersecting mesh: faces penetrate each other. "
                 "This will cause incorrect slicing results.",
                 "Repair with Netfabb (autodesk.com/netfabb) or Blender 3D Print Toolbox. "
@@ -170,7 +170,7 @@ void check_empty(const Slic3r::ModelVolume& volume,
 {
     if (volume.mesh().its.indices.empty()) {
         out.push_back(make_issue(
-            "error", plate_id, obj_name, "GEOM_EMPTY",
+            "warning", plate_id, obj_name, "GEOM_EMPTY",
             "Empty mesh: no triangles in model volume. "
             "The object has no geometry and cannot be sliced.",
             "Remove the empty object from the project. "
@@ -187,7 +187,7 @@ void check_zero_volume(const Slic3r::ModelVolume& volume,
     // Threshold matching Model::removed_objects_with_zero_volume (1e-10)
     if (!volume.mesh().its.indices.empty() && std::abs(vol) < 1e-10) {
         out.push_back(make_issue(
-            "error", plate_id, obj_name, "GEOM_ZERO_VOLUME",
+            "warning", plate_id, obj_name, "GEOM_ZERO_VOLUME",
             "Zero-volume mesh: the computed volume (" +
                 std::to_string(vol) + " mm³) is effectively zero. "
                 "This object cannot produce any extrusion.",

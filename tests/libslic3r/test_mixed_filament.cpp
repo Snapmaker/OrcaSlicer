@@ -152,7 +152,7 @@ TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[M
     REQUIRE(mgr.mixed_filaments().size() == 1);
 
     MixedFilament &row = mgr.mixed_filaments().front();
-    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("1/1/1/1/1/1/1/2, 1/1/1/2/1/1/1/1");
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("11111112,11121111");
     REQUIRE(row.manual_pattern == "11111112,11121111");
 
     const std::string serialized = mgr.serialize_custom_entries();

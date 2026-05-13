@@ -215,16 +215,15 @@ public:
     std::string serialize_custom_entries();
     void load_custom_entries(const std::string &serialized, const std::vector<std::string> &filament_colours);
 
-    // ---- Gradient runs (Bambu-style Z gradient) ------------------------
-    // Normalize a manual mixed-pattern string into compact token form.
-    // Accepts separators and A/B aliases. Returns empty string if invalid.
+    // ---- Pattern string functions -------------------------------------------
+    // Normalize a manual mixed-pattern string into canonical form.
+    // Format: digits 1-9 for IDs 1-9, [N] for IDs >= 10, comma for group separator.
+    // Returns empty string if invalid.
     static std::string normalize_manual_pattern(const std::string &pattern);
     static int         mix_percent_from_manual_pattern(const std::string &pattern);
 
     // Tokenize a single pattern group (no commas) into token strings.
-    // Handles both legacy (1-char-per-token) and modern (/ delimited) formats.
-    // With lenient fallback: segments that are not valid filament IDs are
-    // exploded into individual digit tokens.
+    // Handles single-digit and bracket ([N]) tokens.
     static std::vector<std::string> split_pattern_group_to_tokens(const std::string &group, size_t num_physical);
 
     // Map a string token to a physical extruder ID.
@@ -350,6 +349,16 @@ private:
     uint64_t                   m_next_stable_id      = 1;
     MixedFilamentDisplayContext m_display_context;
 };
+
+// Returns true when the mixed filament represents a simple two-color gradient
+// that can be rendered as a vertical color ramp (no manual pattern, exactly 2 components).
+inline bool is_simple_gradient(const MixedFilament& mf)
+{
+    return mf.gradient_enabled
+        && mf.component_a != mf.component_b
+        && MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty()
+        && mf.gradient_component_ids.size() < 3;
+}
 
 } // namespace Slic3r
 

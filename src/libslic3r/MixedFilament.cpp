@@ -1,5 +1,6 @@
 #include "MixedFilament.hpp"
 #include "filament_mixer.h"
+#include "libslic3r.h"
 
 #include <algorithm>
 #include <atomic>
@@ -619,29 +620,6 @@ static bool parse_row_definition(const std::string &row,
     return true;
 }
 
-static bool is_pattern_separator_legacy(char c)
-{
-    return std::isspace(static_cast<unsigned char>(c)) || c == '/' || c == '-' || c == '_' || c == '|' || c == ':' || c == ';' || c == ',';
-}
-
-static bool decode_pattern_step(char c, char &out)
-{
-    if (c >= '1' && c <= '9') {
-        out = c;
-        return true;
-    }
-    switch (std::tolower(static_cast<unsigned char>(c))) {
-    case 'a':
-        out = '1';
-        return true;
-    case 'b':
-        out = '2';
-        return true;
-    default:
-        return false;
-    }
-}
-
 static std::vector<std::string> split_manual_pattern_groups(const std::string &pattern)
 {
     std::vector<std::string> groups;
@@ -683,54 +661,26 @@ static std::vector<std::string> tokenize_pattern_group(const std::string &group)
     if (group.empty())
         return tokens;
 
-    if (group.find('/') == std::string::npos) {
-        for (char c : group) {
-            if (c >= '1' && c <= '9')
-                tokens.emplace_back(1, c);
-        }
-        return tokens;
-    }
-
-    std::string seg;
-    for (char c : group) {
-        if (c == '/') {
-            if (!seg.empty()) {
-                tokens.emplace_back(std::move(seg));
-                seg.clear();
+    for (size_t i = 0; i < group.size(); ++i) {
+        char c = group[i];
+        if (c >= '1' && c <= '9') {
+            tokens.emplace_back(1, c);
+        } else if (c == '[') {
+            size_t j = i + 1;
+            while (j < group.size() && group[j] >= '0' && group[j] <= '9')
+                ++j;
+            if (j > i + 1 && j < group.size() && group[j] == ']') {
+                tokens.emplace_back(group.substr(i + 1, j - i - 1));
+                i = j;
             }
-        } else if (c >= '0' && c <= '9') {
-            seg.push_back(c);
         }
     }
-    if (!seg.empty())
-        tokens.emplace_back(std::move(seg));
     return tokens;
 }
 
-// Tokenization with lenient fallback for modern (/ separated) patterns.
-// If a segment is a valid filament ID (1..num_physical) it stays as one token;
-// otherwise each digit becomes a separate token.
-std::vector<std::string> MixedFilamentManager::split_pattern_group_to_tokens(const std::string &group, size_t num_physical)
+std::vector<std::string> MixedFilamentManager::split_pattern_group_to_tokens(const std::string &group, size_t /*num_physical*/)
 {
-    std::vector<std::string> tokens = tokenize_pattern_group(group);
-    if (group.find('/') == std::string::npos)
-        return tokens; // legacy: no lenient fallback needed
-
-    std::vector<std::string> result;
-    result.reserve(tokens.size());
-    for (std::string &token : tokens) {
-        char *end = nullptr;
-        unsigned long id = std::strtoul(token.c_str(), &end, 10);
-        if (end && *end == '\0' && id >= 1 && id <= num_physical) {
-            result.emplace_back(std::move(token));
-        } else {
-            for (char d : token) {
-                if (d >= '1' && d <= '9')
-                    result.emplace_back(1, d);
-            }
-        }
-    }
-    return result;
+    return tokenize_pattern_group(group);
 }
 
 unsigned int MixedFilamentManager::physical_filament_from_token(const std::string &token, const MixedFilament &mf, size_t num_physical)
@@ -1761,6 +1711,8 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     const size_t n = filament_colours.size();
     if (n < 2)
         return;
+    if (total_filaments(n) >= MAXIMUM_FILAMENT_NUMBER)
+        return;
 
     component_a = std::max<unsigned int>(1, std::min<unsigned int>(component_a, unsigned(n)));
     component_b = std::max<unsigned int>(1, std::min<unsigned int>(component_b, unsigned(n)));
@@ -1805,117 +1757,55 @@ void MixedFilamentManager::cleanup_deleted_entries()
 std::string MixedFilamentManager::normalize_manual_pattern(const std::string &pattern)
 {
     if (pattern.empty())
-        return std::string();
-
-    const bool has_slash = pattern.find('/') != std::string::npos;
-
-    if (!has_slash) {
-        // Legacy mode: each '1'-'9' (or A/B) is one token, separators stripped.
-        std::string normalized;
-        normalized.reserve(pattern.size());
-        bool current_group_has_steps = false;
-        for (char c : pattern) {
-            char step = '\0';
-            if (decode_pattern_step(c, step)) {
-                normalized.push_back(step);
-                current_group_has_steps = true;
-                continue;
-            }
-            if (c == ',') {
-                if (!current_group_has_steps)
-                    return std::string();
-                normalized.push_back(',');
-                current_group_has_steps = false;
-                continue;
-            }
-            if (is_pattern_separator_legacy(c))
-                continue;
-            return std::string();
-        }
-        if (!normalized.empty() && normalized.back() == ',')
-            return std::string();
-        return normalized;
-    }
-
-    // Modern mode: '/' is the token delimiter, ',' separates groups.
-    // Split by comma first to process groups independently.
-    std::vector<std::string> raw_groups;
-    std::string current;
-    for (char c : pattern) {
-        if (c == ',') {
-            raw_groups.emplace_back(std::move(current));
-            current.clear();
-        } else if (c == '/' || (c >= '0' && c <= '9') ||
-                   std::tolower(static_cast<unsigned char>(c)) == 'a' ||
-                   std::tolower(static_cast<unsigned char>(c)) == 'b') {
-            current.push_back(c);
-        }
-        // Other legacy separators are silently skipped.
-    }
-    raw_groups.emplace_back(std::move(current));
+        return {};
 
     std::string normalized;
-    for (size_t gi = 0; gi < raw_groups.size(); ++gi) {
-        std::string &raw = raw_groups[gi];
+    normalized.reserve(pattern.size());
+    bool group_has_content = false;
 
-        // Strip leading/trailing '/'
-        size_t start = 0;
-        while (start < raw.size() && raw[start] == '/') ++start;
-        size_t end = raw.size();
-        while (end > start && raw[end - 1] == '/') --end;
-
-        std::string group_content = raw.substr(start, end - start);
-        if (group_content.empty())
-            return std::string(); // empty group
-
-        // Double '/' inside content is invalid
-        if (group_content.find("//") != std::string::npos)
-            return std::string();
-
-        // Split by '/' to get segments
-        std::vector<std::string> segments;
-        std::string seg;
-        for (char c : group_content) {
-            if (c == '/') {
-                if (seg.empty())
-                    return std::string(); // empty segment (double /)
-                segments.emplace_back(std::move(seg));
-                seg.clear();
-            } else {
-                seg.push_back(c);
-            }
-        }
-        if (!seg.empty())
-            segments.emplace_back(std::move(seg));
-        if (segments.empty())
-            return std::string();
-
-        // Normalize each segment
-        for (std::string &s : segments) {
-            // Map A/B to 1/2
-            if (s.size() == 1) {
-                char lower = std::tolower(static_cast<unsigned char>(s[0]));
-                if (lower == 'a') s = "1";
-                else if (lower == 'b') s = "2";
-            }
-            // Validate all digits
-            for (char c : s) {
-                if (c < '0' || c > '9')
-                    return std::string();
-            }
-            // Reject "0" as a token
-            if (s.size() == 1 && s[0] == '0')
-                return std::string();
-        }
-
-        if (gi > 0)
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        char c = pattern[i];
+        if (c >= '1' && c <= '9') {
+            normalized.push_back(c);
+            group_has_content = true;
+        } else if (c == ',') {
+            if (!group_has_content)
+                return {};
             normalized.push_back(',');
-        for (size_t si = 0; si < segments.size(); ++si) {
-            if (si > 0)
-                normalized.push_back('/');
-            normalized += segments[si];
+            group_has_content = false;
+        } else if (c == '[') {
+            size_t j = i + 1;
+            while (j < pattern.size() && pattern[j] >= '0' && pattern[j] <= '9')
+                ++j;
+            if (j == i + 1 || j >= pattern.size() || pattern[j] != ']')
+                return {};
+
+            std::string num_str = pattern.substr(i + 1, j - i - 1);
+            if (num_str.size() > 2)
+                return {};
+            if (num_str.size() > 1 && num_str[0] == '0')
+                return {};
+            if (num_str == "0")
+                return {};
+
+            if (num_str.size() == 1) {
+                normalized.push_back(num_str[0]);
+            } else {
+                normalized.push_back('[');
+                normalized.append(num_str);
+                normalized.push_back(']');
+            }
+            group_has_content = true;
+            i = j;
+        } else if (c == ']' || c == '0') {
+            return {};
+        } else {
+            return {};
         }
     }
+
+    if (!group_has_content)
+        return {};
 
     return normalized;
 }

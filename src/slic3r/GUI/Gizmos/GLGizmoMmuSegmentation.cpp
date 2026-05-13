@@ -512,17 +512,12 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         const ImVec2 button_size(max_filament_label_size.x + m_imgui->scaled(0.5f), 0.f);
 
         // --- Gradient eligibility check ---
-        bool is_gradient = false;
         const MixedFilament* mf_data = nullptr;
         if (const auto* pb = wxGetApp().preset_bundle) {
             size_t num_phys = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
             mf_data = pb->mixed_filaments.mixed_filament_from_id(actual_filament_id, num_phys);
         }
-        if (mf_data && mf_data->gradient_enabled
-            && mf_data->component_a != mf_data->component_b
-            && MixedFilamentManager::normalize_manual_pattern(mf_data->manual_pattern).empty()
-            && mf_data->gradient_component_ids.size() < 3)
-            is_gradient = true;
+        const bool is_gradient = mf_data && is_simple_gradient(*mf_data);
 
         float button_offset = start_pos_x;
         if (extruder_idx % max_filament_items_per_line != 0) {

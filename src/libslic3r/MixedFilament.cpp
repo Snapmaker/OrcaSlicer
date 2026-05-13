@@ -1,6 +1,6 @@
 #include "MixedFilament.hpp"
 #include "filament_mixer.h"
-#include "libSlic3r.h"
+#include "libslic3r.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1781,6 +1781,8 @@ std::string MixedFilamentManager::normalize_manual_pattern(const std::string &pa
                 return {};
 
             std::string num_str = pattern.substr(i + 1, j - i - 1);
+            if (num_str.size() > 2)
+                return {};
             if (num_str.size() > 1 && num_str[0] == '0')
                 return {};
             if (num_str == "0")

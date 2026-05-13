@@ -1531,6 +1531,7 @@ bool MixedFilamentDialog::check_low_ratio_warning()
             const std::string normalized = MixedFilamentManager::normalize_manual_pattern(raw);
             auto parsed = parse_cycle_pattern(normalized, num_physical);
             for (unsigned int id : parsed.ids) {
+                if (id < 1 || id > (unsigned)num_physical) continue;
                 ratios[id - 1] += 1.0;
                 total += 1.0;
             }

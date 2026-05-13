@@ -81,6 +81,20 @@ static void writeValue(std::vector<uint8_t>& buf, const std::string& s) {
                 buf.push_back((bits >> (i * 8)) & 0xFF);
             return;
         }
+            {
+                errno = 0;
+                char* fend = nullptr;
+                double dval = std::strtod(s.c_str(), &fend);
+                if (fend && *fend == '\0' && errno != ERANGE) {
+                    buf.push_back(0x06); // float64
+                    uint64_t bits;
+                    std::memcpy(&bits, &dval, sizeof(bits));
+                    for (int i = 0; i < 8; ++i)
+                        buf.push_back((bits >> (i * 8)) & 0xFF);
+                    return;
+                }
+            }
+        }
     }
     // fall through: encode as string
     buf.push_back(0x07);
@@ -365,6 +379,7 @@ public:
             if (pos != std::wstring::npos)
                 exe_dir = full.substr(0, pos);
         }
+        if (exe_dir.empty()) return nullptr;
 
         std::wstring assets = exe_dir + L"\\data\\flutter_assets";
         std::wstring icu = exe_dir + L"\\data\\icudtl.dat";

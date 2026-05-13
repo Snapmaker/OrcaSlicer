@@ -4,7 +4,6 @@
 #include "flutter_host.h"
 #include <string>
 #include <cstdlib>
-#include <vector>
 
 // Shared helpers
 static id decodeArg(const std::string& s) {
@@ -89,9 +88,10 @@ public:
 
 class FlutterEngineHostMacOS : public FlutterEngineHost {
     FlutterDartProject* project = nil;
-    std::vector<FlutterEngine*> engines;
+    NSMutableArray<FlutterEngine*>* engines;
 
 public:
+    FlutterEngineHostMacOS() : engines([[NSMutableArray alloc] init]) {}
     ~FlutterEngineHostMacOS() override { stop(); }
 
     bool start() override {
@@ -100,8 +100,8 @@ public:
     }
 
     void stop() override {
-        for (auto* e : engines) [e shutDownEngine];
-        engines.clear();
+        for (FlutterEngine* e in engines) [e shutDownEngine];
+        [engines removeAllObjects];
         project = nil;
     }
 
@@ -122,7 +122,7 @@ public:
         }
 
         auto* view = new FlutterViewHostMacOS(engine, channelName);
-        engines.push_back(engine);
+        [engines addObject:engine];
         return std::unique_ptr<FlutterViewHost>(view);
     }
 };

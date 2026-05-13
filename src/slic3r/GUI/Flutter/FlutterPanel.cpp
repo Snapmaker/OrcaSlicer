@@ -16,6 +16,9 @@ bool FlutterPanel::startView(FlutterEngineHost* engine,
     if (!m_view) return false;
     if (handler) m_view->setMethodCallHandler(std::move(handler));
     m_view->embedInto(GetHandle());
+    wxSize sz = GetClientSize();
+    if (sz.GetWidth() > 1 && sz.GetHeight() > 1)
+        m_view->resize(sz.GetWidth(), sz.GetHeight());
     return true;
 }
 
@@ -24,7 +27,11 @@ void FlutterPanel::setHandler(FlutterViewHost::MethodCallHandler handler) {
 }
 
 void FlutterPanel::onSetFocus(wxFocusEvent& event) {
-    if (m_view) m_view->focus();
+    // Defer via CallAfter: on Windows, calling ::SetFocus during
+    // WM_SETFOCUS processing is silently ignored by the OS.
+    CallAfter([this] {
+        if (m_view) m_view->focus();
+    });
     event.Skip();
 }
 

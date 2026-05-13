@@ -232,6 +232,7 @@ public:
     ~FlutterEngineHostLinux() override { stop(); }
 
     bool start() override {
+        setenv("FLUTTER_LINUX_RENDERER", "software", 1);
         m_started = true;
         return true;
     }
@@ -243,8 +244,6 @@ public:
     std::unique_ptr<FlutterViewHost> createView(
         const std::string& entrypoint,
         const std::string& channelName) override {
-
-        setenv("FLUTTER_LINUX_RENDERER", "software", 1);
 
         g_autoptr(FlDartProject) project = fl_dart_project_new();
         if (!project) return nullptr;

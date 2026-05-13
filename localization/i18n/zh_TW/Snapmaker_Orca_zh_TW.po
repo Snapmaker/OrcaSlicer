@@ -16740,6 +16740,12 @@ msgstr "經由列印主機連接的列印設備連接失敗。"
 msgid "Mismatched type of print host: %s"
 msgstr "列印主機類型不符：%s"
 
+msgid "Mixed Color (Experimental)"
+msgstr "混色(實驗)"
+
+msgid "Mixed Color Layer Thinner"
+msgstr "混色層高細化"
+
 msgid "Connection to AstroBox is working correctly."
 msgstr "與 AstroBox 的連接工作正常。"
 

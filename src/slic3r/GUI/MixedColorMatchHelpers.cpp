@@ -759,6 +759,39 @@ static bool is_category_compatible(FilamentCategory a, FilamentCategory b)
     return s_compat[(size_t)a][(size_t)b];
 }
 
+struct ResolvedFilamentCategory {
+    unsigned int     filament_id;
+    FilamentCategory category;
+};
+
+static FilamentCategory get_filament_category(const std::string& filament_type);
+
+// Resolves a set of 0-based filament IDs into their (id, category) pairs.
+// Skips IDs that cannot be resolved (out of range, missing preset, missing type).
+// Caller must have called load_filament_compatibility() first.
+static std::vector<ResolvedFilamentCategory> resolve_filament_categories(
+    const std::vector<unsigned int>& filament_ids,
+    PresetBundle*                    preset_bundle)
+{
+    std::vector<ResolvedFilamentCategory> result;
+    if (!preset_bundle) return result;
+
+    const auto& filament_presets = preset_bundle->filament_presets;
+    result.reserve(filament_ids.size());
+
+    for (unsigned int id : filament_ids) {
+        if (id >= filament_presets.size()) continue;
+        const Preset* preset = preset_bundle->filaments.find_preset(filament_presets[id]);
+        if (!preset) continue;
+        auto* type_opt = dynamic_cast<const ConfigOptionStrings*>(preset->config.option("filament_type"));
+        if (!type_opt || type_opt->values.empty()) continue;
+
+        FilamentCategory cat = get_filament_category(type_opt->values[0]);
+        result.push_back({id, cat});
+    }
+    return result;
+}
+
 // Hardcoded filament_type → category. New filament types should be added here.
 static const std::unordered_map<std::string, FilamentCategory>& filament_type_category_map()
 {
@@ -817,44 +850,29 @@ bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
         return false;
     }
 
-    const std::vector<std::string>& filament_presets = preset_bundle->filament_presets;
+    auto resolved = resolve_filament_categories(filament_ids, preset_bundle);
 
-    std::vector<FilamentCategory> cats;
-    cats.reserve(filament_ids.size());
-
-    for (unsigned int id : filament_ids) {
-        if (id >= filament_presets.size()) continue;
-
-        const Preset* preset = preset_bundle->filaments.find_preset(filament_presets[id]);
-        if (!preset) continue;
-
-        auto* type_opt = dynamic_cast<const ConfigOptionStrings*>(preset->config.option("filament_type"));
-        if (!type_opt || type_opt->values.empty()) continue;
-
-        FilamentCategory cat = get_filament_category(type_opt->values[0]);
-
-        if (cat == FilamentCategory::UNKNOWN) {
-            BOOST_LOG_TRIVIAL(info) << "Filament type '" << type_opt->values[0]
-                                    << "' not in compatibility table, treating as incompatible";
+    for (const auto& r : resolved) {
+        if (r.category == FilamentCategory::UNKNOWN) {
+            BOOST_LOG_TRIVIAL(info) << "Filament type at index " << r.filament_id
+                                    << " not in compatibility table, treating as incompatible";
             return false;
         }
-
-        cats.push_back(cat);
     }
 
-    if (cats.size() <= 1) return true;
+    if (resolved.size() <= 1) return true;
 
-    // All same known category → trivially compatible
-    if (std::all_of(cats.begin() + 1, cats.end(), [&](FilamentCategory c) { return c == cats[0]; }))
+    if (std::all_of(resolved.begin() + 1, resolved.end(),
+                    [&](const ResolvedFilamentCategory& r) { return r.category == resolved[0].category; }))
         return true;
 
-    for (size_t i = 0; i < cats.size(); ++i) {
-        for (size_t j = i + 1; j < cats.size(); ++j) {
-            if (!is_category_compatible(cats[i], cats[j])) {
+    for (size_t i = 0; i < resolved.size(); ++i) {
+        for (size_t j = i + 1; j < resolved.size(); ++j) {
+            if (!is_category_compatible(resolved[i].category, resolved[j].category)) {
                 BOOST_LOG_TRIVIAL(info) << "Incompatible filament categories: '"
-                                        << k_category_names[(size_t)cats[i]]
+                                        << k_category_names[(size_t)resolved[i].category]
                                         << "' vs '"
-                                        << k_category_names[(size_t)cats[j]] << "'";
+                                        << k_category_names[(size_t)resolved[j].category] << "'";
                 return false;
             }
         }
@@ -874,7 +892,94 @@ bool is_filament_compatible(const MixedFilament& mf)
             if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
         }
     }
+    if (!mf.manual_pattern.empty()) {
+        const std::string norm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+        if (!norm.empty()) {
+            PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+            const size_t num_physical = preset_bundle ? preset_bundle->filament_presets.size() : 16;
+            const auto groups = MixedFilamentManager::split_pattern_groups(norm);
+            for (const auto& group : groups) {
+                const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
+                for (const auto& token : tokens) {
+                    const unsigned int eid = MixedFilamentManager::physical_filament_from_token(token, mf, num_physical);
+                    if (eid >= 1 && eid <= num_physical)
+                        fids.push_back(eid - 1);
+                }
+            }
+        }
+    }
     return is_filament_compatible(fids);
+}
+
+std::optional<std::pair<unsigned int, unsigned int>> find_incompatible_filament_pair(const std::vector<unsigned int>& filament_ids)
+{
+    if (filament_ids.size() <= 1) return std::nullopt;
+
+    load_filament_compatibility();
+
+    PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+    if (!preset_bundle) {
+        BOOST_LOG_TRIVIAL(error) << "PresetBundle is null in filament incompatibility search";
+        return std::nullopt;
+    }
+
+    auto resolved = resolve_filament_categories(filament_ids, preset_bundle);
+
+    // Treat UNKNOWN filament types as incompatible, consistent with is_filament_compatible().
+    for (const auto& r : resolved) {
+        if (r.category == FilamentCategory::UNKNOWN) {
+            BOOST_LOG_TRIVIAL(info) << "Filament type at index " << r.filament_id
+                                    << " not in compatibility table, treating as incompatible";
+            // Return this UNKNOWN paired with the first other resolved filament.
+            for (const auto& other : resolved) {
+                if (other.filament_id != r.filament_id)
+                    return std::make_pair(r.filament_id + 1, other.filament_id + 1);
+            }
+        }
+    }
+
+    if (resolved.size() <= 1) return std::nullopt;
+
+    if (std::all_of(resolved.begin() + 1, resolved.end(),
+                    [&](const ResolvedFilamentCategory& r) { return r.category == resolved[0].category; }))
+        return std::nullopt;
+
+    for (size_t i = 0; i < resolved.size(); ++i) {
+        for (size_t j = i + 1; j < resolved.size(); ++j) {
+            if (!is_category_compatible(resolved[i].category, resolved[j].category))
+                return std::make_pair(
+                    resolved[i].filament_id + 1,
+                    resolved[j].filament_id + 1);
+        }
+    }
+
+    return std::nullopt;
+}
+
+CyclePatternParseResult parse_cycle_pattern(const std::string& normalized_pattern, int num_physical)
+{
+    CyclePatternParseResult result;
+    if (normalized_pattern.empty() || num_physical <= 0) return result;
+
+    const auto groups = MixedFilamentManager::split_pattern_groups(normalized_pattern);
+    for (const auto& group : groups) {
+        const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
+        for (const auto& token : tokens) {
+            ++result.total_tokens;
+            char* end = nullptr;
+            unsigned long id = std::strtoul(token.c_str(), &end, 10);
+            if (!end || *end != '\0') {
+                if (result.invalid_token.empty()) result.invalid_token = token;
+                continue;
+            }
+            if (id < 1 || id > (unsigned long)num_physical) {
+                if (result.invalid_id == 0) result.invalid_id = (unsigned int)id;
+                continue;
+            }
+            result.ids.push_back((unsigned int)id);
+        }
+    }
+    return result;
 }
 
 }} // namespace Slic3r::GUI

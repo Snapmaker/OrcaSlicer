@@ -44,6 +44,9 @@ private:
     void sync_rows_to_result();
     void resize_gradient_ids(int target_count);
     void update_compatibility_warning();
+    bool check_low_ratio_warning();
+    void display_warning(const wxString& msg);
+    void set_error(const wxString& msg);
     std::string compute_preview_color();
     wxBitmap make_color_bitmap(const wxColour& c, int size);
     int max_filaments_for_mode(int mode_index) const;

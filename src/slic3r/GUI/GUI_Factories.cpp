@@ -1518,6 +1518,9 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
             nullptr, []() { return plater()->sidebar().combos_filament().size() > 1; }, m_parent);
     }
 
+    if (wxGetApp().preset_bundle == nullptr)
+        return;
+
     const int item_id = menu->FindItem(_L("Merge with"));
     if (item_id != wxNOT_FOUND)
         menu->Destroy(item_id);

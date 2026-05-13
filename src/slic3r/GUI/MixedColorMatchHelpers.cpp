@@ -982,4 +982,69 @@ CyclePatternParseResult parse_cycle_pattern(const std::string& normalized_patter
     return result;
 }
 
+std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
+                                         const MixedFilament& entry,
+                                         int num_physical)
+{
+    if (normalized_pattern.empty() || num_physical <= 0)
+        return {};
+
+    const auto groups = MixedFilamentManager::split_pattern_groups(normalized_pattern);
+    if (groups.empty())
+        return {};
+
+    std::map<unsigned int, int> counts;
+    int                         total = 0;
+    for (const auto& group : groups) {
+        const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
+        for (const auto& token : tokens) {
+            unsigned int eid = MixedFilamentManager::physical_filament_from_token(token, entry, num_physical);
+            if (eid >= 1 && eid <= (unsigned)num_physical) {
+                counts[eid]++;
+                total++;
+            }
+        }
+    }
+
+    if (total <= 0 || counts.empty())
+        return {};
+
+    std::vector<std::pair<unsigned int, int>> sorted(counts.begin(), counts.end());
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    // Compute floor percentages; distribute remainder via largest remainders.
+    std::vector<int> pcts(sorted.size());
+    int              sum_pct = 0;
+    for (size_t i = 0; i < sorted.size(); ++i) {
+        pcts[i]  = int((static_cast<long long>(sorted[i].second) * 100) / total);
+        sum_pct += pcts[i];
+    }
+
+    if (sum_pct < 100) {
+        // Remainder indexed by original position, value = count * 100 % total
+        std::vector<std::pair<size_t, int>> rem;
+        rem.reserve(sorted.size());
+        for (size_t i = 0; i < sorted.size(); ++i)
+            rem.emplace_back(i, int((static_cast<long long>(sorted[i].second) * 100) % total));
+        // Sort descending by remainder, then by original index for stability
+        std::sort(rem.begin(), rem.end(), [](const auto& a, const auto& b) {
+            if (a.second != b.second) return a.second > b.second;
+            return a.first < b.first;
+        });
+        for (int extra = 100 - sum_pct; extra > 0; --extra) {
+            pcts[rem.front().first]++;
+            rem.erase(rem.begin());
+        }
+    }
+
+    std::ostringstream out;
+    for (size_t i = 0; i < sorted.size(); ++i) {
+        if (i > 0)
+            out << '+';
+        out << 'F' << sorted[i].first << ' ' << pcts[i] << '%';
+    }
+    return out.str();
+}
+
 }} // namespace Slic3r::GUI

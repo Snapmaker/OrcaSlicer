@@ -841,50 +841,41 @@ void SSWCP_Instance::sw_GetFileStream() {
                     return;
                 }
 
-                try {
-                    std::string zipname = generate_zip_path(file_path, file_name);
-                    get_or_create_zip_json(file_path, file_name, zipname);
+                std::string zipname = generate_zip_path(file_path, file_name);
+                get_or_create_zip_json(file_path, file_name, zipname);
 
-                    size_t name_index = file_name.find_last_of(".");
-                    size_t path_index = file_path.find_last_of(".");
-                    if (name_index == std::string::npos || path_index == std::string::npos) {
-                        wxGetApp().CallAfter([weak_self]() {
-                            auto self = weak_self.lock();
-                            if (self) {
-                                self->handle_general_fail();
-                            }
-                        });
-                        return;
-                    }
-
-                    std::string zip_file_name = file_name.substr(0, name_index) + ".zip";
-                    long long   file_size     = boost::filesystem::file_size(file_path);
-                    std::string sha256_base64 = calc_sha256_base64(file_path);
-
-                    wxGetApp().CallAfter([weak_self, zipname, zip_file_name, file_size, sha256_base64]() {
-                        auto self = weak_self.lock();
-                        if (!self) {
-                            return;
-                        }
-
-                        self->m_res_data["file_name"]   = zip_file_name;
-                        self->m_res_data["file_url"]    = make_wcp_download_url(zipname);
-                        self->m_res_data["origin_size"] = file_size;
-
-                        // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
-                        self->m_res_data["checksum"]    = sha256_base64;
-
-                        self->send_to_js();
-                        self->finish_job();
-                    });
-                } catch (std::exception&) {
+                size_t name_index = file_name.find_last_of(".");
+                size_t path_index = file_path.find_last_of(".");
+                if (name_index == std::string::npos || path_index == std::string::npos) {
                     wxGetApp().CallAfter([weak_self]() {
                         auto self = weak_self.lock();
                         if (self) {
                             self->handle_general_fail();
                         }
                     });
+                    return;
                 }
+
+                std::string zip_file_name = file_name.substr(0, name_index) + ".zip";
+                long long   file_size     = boost::filesystem::file_size(file_path);
+                std::string sha256_base64 = calc_sha256_base64(file_path);
+
+                wxGetApp().CallAfter([weak_self, zipname, zip_file_name, file_size, sha256_base64]() {
+                    auto self = weak_self.lock();
+                    if (!self) {
+                        return;
+                    }
+
+                    self->m_res_data["file_name"]   = zip_file_name;
+                    self->m_res_data["file_url"]    = make_wcp_download_url(zipname);
+                    self->m_res_data["origin_size"] = file_size;
+
+                    // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+                    self->m_res_data["checksum"]    = sha256_base64;
+
+                    self->send_to_js();
+                    self->finish_job();
+                });
             });
         } else {
             std::string download_url = make_wcp_download_url(file_path);
@@ -899,34 +890,25 @@ void SSWCP_Instance::sw_GetFileStream() {
                     return;
                 }
 
-                try {
-                    long long file_size = boost::filesystem::file_size(file_path);
+                long long file_size = boost::filesystem::file_size(file_path);
 
-                    std::string sha256_base64 = calc_sha256_base64(file_path);
+                std::string sha256_base64 = calc_sha256_base64(file_path);
 
-                    wxGetApp().CallAfter([weak_self, download_url, file_name, file_size, sha256_base64]() {
-                        auto self = weak_self.lock();
-                        if (!self) {
-                            return;
-                        }
+                wxGetApp().CallAfter([weak_self, download_url, file_name, file_size, sha256_base64]() {
+                    auto self = weak_self.lock();
+                    if (!self) {
+                        return;
+                    }
 
-                        self->m_res_data["file_name"]   = file_name;
-                        self->m_res_data["file_url"]    = download_url;
-                        self->m_res_data["origin_size"] = file_size;
-                        // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
-                        self->m_res_data["checksum"]    = sha256_base64;
+                    self->m_res_data["file_name"]   = file_name;
+                    self->m_res_data["file_url"]    = download_url;
+                    self->m_res_data["origin_size"] = file_size;
+                    // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+                    self->m_res_data["checksum"]    = sha256_base64;
 
-                        self->send_to_js();
-                        self->finish_job();
-                    });
-                } catch (std::exception&) {
-                    wxGetApp().CallAfter([weak_self]() {
-                        auto self = weak_self.lock();
-                        if (self) {
-                            self->handle_general_fail();
-                        }
-                    });
-                }
+                    self->send_to_js();
+                    self->finish_job();
+                });
             });
         }
     }

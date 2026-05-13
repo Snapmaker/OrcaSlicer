@@ -826,13 +826,15 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
 
 void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
 {
-    // Try UTF-8 → filesystem encoding conversion first.
-    // On UTF-8 systems this is a no-op; on non-UTF-8 Windows it converts to system encoding (e.g. GBK).
-    std::string system_file_path = utf8_to_filesystem_encoding(file_path);
-    std::ifstream file(system_file_path, std::ios::binary);
-    if (!file) {
-        // Fallback: try the raw path (handles paths already in system encoding, e.g. from base64 decode)
+    std::ifstream file;
+    if (m_native_path) {
         file.open(file_path, std::ios::binary);
+    } else {
+        std::string system_file_path = utf8_to_filesystem_encoding(file_path);
+        file.open(system_file_path, std::ios::binary);
+        if (!file) {
+            file.open(file_path, std::ios::binary);
+        }
     }
     if (!file) {
         ResponseNotFound notFoundResponse;

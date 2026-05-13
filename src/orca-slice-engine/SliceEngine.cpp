@@ -468,67 +468,130 @@ void SliceEngine::apply_official_presets()
         }
     }
 
-    // Enforce safe parameter bounds (P1-14)
-    // Temperature bounds
-    if (m_config.has("nozzle_temperature")) {
-        auto* opt = m_config.option<ConfigOptionInts>("nozzle_temperature");
-        if (opt) {
-            auto values = opt->values;
-            for (auto& v : values) {
-                if (v > 300) { v = 300; }
-            }
-            m_config.set_key_value("nozzle_temperature", new ConfigOptionInts(values));
-        }
-    }
-    if (m_config.has("bed_temperature")) {
-        auto* opt = m_config.option<ConfigOptionInts>("bed_temperature");
-        if (opt) {
-            auto values = opt->values;
-            for (auto& v : values) {
-                if (v > 120) { v = 120; }
-            }
-            m_config.set_key_value("bed_temperature", new ConfigOptionInts(values));
-        }
-    }
+    // Diagnostic: log all parameters that differ from desktop defaults
+    {
+        std::ostringstream diag;
+        diag << "=== Post-apply_official_presets diagnostic ===";
 
-    // Fill density cap (cloud restricts to 0–40%)
-    if (m_config.has("sparse_infill_density")) {
-        auto* opt = m_config.option<ConfigOptionPercent>("sparse_infill_density");
-        if (opt) {
-            double v = opt->value;
-            if (v > 40.0) {
-                m_config.set_key_value("sparse_infill_density", new ConfigOptionPercent(40.0));
-                m_stats.issues.push_back(make_tip(-1, "FILL_DENSITY_CAPPED",
-                    "Fill density capped at 40% for cloud slicing"));
+        // Key parameters affecting print time / filament usage
+        auto log_float = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionFloat*>(m_config.option(key));
+                if (o) diag << " " << key << "=" << o->value;
+            }
+        };
+        auto log_ints = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionInts*>(m_config.option(key));
+                if (o) {
+                    diag << " " << key << "=[";
+                    for (size_t i = 0; i < o->values.size(); ++i) {
+                        if (i) diag << ",";
+                        diag << o->values[i];
+                    }
+                    diag << "]";
+                }
+            }
+        };
+        auto log_percent = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionPercent*>(m_config.option(key));
+                if (o) diag << " " << key << "=" << o->value;
+            }
+        };
+        auto log_int = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionInt*>(m_config.option(key));
+                if (o) diag << " " << key << "=" << o->value;
+            }
+        };
+        auto log_bool = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionBool*>(m_config.option(key));
+                if (o) diag << " " << key << "=" << (o->value ? "true" : "false");
+            }
+        };
+        auto log_floats = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionFloats*>(m_config.option(key));
+                if (o) {
+                    diag << " " << key << "=[";
+                    for (size_t i = 0; i < o->values.size(); ++i) {
+                        if (i) diag << ",";
+                        diag << o->values[i];
+                    }
+                    diag << "]";
+                }
+            }
+        };
+        auto log_string = [&](const char* key) {
+            if (m_config.has(key)) {
+                auto* o = dynamic_cast<ConfigOptionString*>(m_config.option(key));
+                if (o && !o->value.empty())
+                    diag << " " << key << "=\"" << o->value << "\"";
+            }
+        };
+
+        // G-code blocks (empty = cleared)
+        for (const char* k : gcode_keys)
+            log_string(k);
+
+        // Temperature
+        log_ints("nozzle_temperature");
+        log_ints("bed_temperature");
+
+        // Fill / wall
+        log_percent("sparse_infill_density");
+        log_int("wall_loops");
+
+        // Layer
+        log_float("layer_height");
+
+        // Speed / acceleration / jerk (affect print time)
+        log_float("outer_wall_speed");
+        log_float("inner_wall_speed");
+        log_float("sparse_infill_speed");
+        log_float("internal_solid_infill_speed");
+        log_float("top_surface_speed");
+        log_float("travel_speed");
+        log_float("default_acceleration");
+        log_float("travel_acceleration");
+        log_float("default_jerk");
+
+        // Wipe tower / flush volumes (affect filament usage)
+        log_bool("enable_prime_tower");
+        log_floats("flush_volumes_matrix");
+        log_floats("wiping_volumes_extruders");
+        log_float("prime_tower_width");
+        log_float("prime_volume");
+
+        // Z hop (spiral lift)
+        if (m_config.has("z_hop_types")) {
+            auto* o = m_config.option<ConfigOptionEnumsGeneric>("z_hop_types");
+            if (o) {
+                diag << " z_hop_types=[";
+                for (size_t i = 0; i < o->values.size(); ++i) {
+                    if (i) diag << ",";
+                    diag << o->values[i];
+                }
+                diag << "]";
             }
         }
-    }
 
-    // Wall loops cap
-    if (m_config.has("wall_loops")) {
-        auto* opt = m_config.option<ConfigOptionInt>("wall_loops");
-        if (opt && opt->value > 5) {
-            m_config.set_key_value("wall_loops", new ConfigOptionInt(5));
-            m_stats.issues.push_back(make_tip(-1, "WALL_LOOPS_CAPPED",
-                "Wall loops capped at 5 for cloud slicing"));
+        // Print sequence
+        if (m_config.has("print_sequence")) {
+            auto* o = m_config.option<ConfigOptionEnum<PrintSequence> >("print_sequence");
+            if (o) diag << " print_sequence=" << static_cast<int>(o->value);
         }
-    }
 
-    // Layer height bounds
-    if (m_config.has("layer_height")) {
-        auto* opt = m_config.option<ConfigOptionFloat>("layer_height");
-        if (opt) {
-            double v = opt->value;
-            if (v > 0.4) {
-                m_config.set_key_value("layer_height", new ConfigOptionFloat(0.4));
-            } else if (v < 0.04) {
-                m_config.set_key_value("layer_height", new ConfigOptionFloat(0.04));
-            }
-        }
-    }
+        // Extruder clearance
+        log_float("extruder_clearance_radius");
+        log_float("extruder_clearance_height_to_lid");
+        log_float("extruder_clearance_height_to_rod");
 
-    BOOST_LOG_TRIVIAL(info) << "Official preset enforcement applied (custom G-code cleared, "
-        << "parameter bounds enforced)";
+        diag << " ===";
+        BOOST_LOG_TRIVIAL(info) << diag.str();
+    }
 }
 
 // ============================================================================

@@ -39,6 +39,8 @@
 class Notebook;
 class wxBookCtrlBase;
 class wxProgressDialog;
+class FlutterPanel;
+class FlutterEngineHost;
 
 namespace Slic3r {
 
@@ -215,6 +217,7 @@ public:
         tpCalibration   = 6,
         tpAuxiliary     = 7,
         toDebugTool     = 8,
+        tpFlutterTest   = 9,
     };
 
     //BBS: add slice&&print status update logic
@@ -378,6 +381,9 @@ public:
     CalibrationPanel*     m_calibration{ nullptr };
     WebViewPanel*         m_webview { nullptr };
     PrinterWebView*       m_printer_view{nullptr};
+    // Flutter test
+    FlutterPanel*          m_flutter_test_panel{nullptr};
+    FlutterEngineHost*     m_flutter_engine{nullptr};
     wxLogWindow*          m_log_window { nullptr };
     // BBS
     //wxBookCtrlBase*       m_tabpanel { nullptr };

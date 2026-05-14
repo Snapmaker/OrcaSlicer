@@ -175,7 +175,12 @@ else()
 endif()
 
 # Append OPENVDB_ROOT or $ENV{OPENVDB_ROOT} if set (prioritize the direct cmake var)
-set(_OPENVDB_ROOT_SEARCH_DIR "")
+set(_OPENVDB_ROOT_SEARCH_DIRS "")
+if (OPENVDB_ROOT)
+    list(APPEND _OPENVDB_ROOT_SEARCH_DIRS "${OPENVDB_ROOT}")
+elseif (DEFINED ENV{OPENVDB_ROOT} AND NOT "$ENV{OPENVDB_ROOT}" STREQUAL "")
+    list(APPEND _OPENVDB_ROOT_SEARCH_DIRS "$ENV{OPENVDB_ROOT}")
+endif ()
 
 # Additionally try and use pkconfig to find OpenVDB
 
@@ -189,7 +194,7 @@ pkg_check_modules(PC_OpenVDB QUIET OpenVDB)
 set(_OPENVDB_INCLUDE_SEARCH_DIRS "")
 list(APPEND _OPENVDB_INCLUDE_SEARCH_DIRS
   ${OPENVDB_INCLUDEDIR}
-  ${_OPENVDB_ROOT_SEARCH_DIR}
+  ${_OPENVDB_ROOT_SEARCH_DIRS}
   ${PC_OpenVDB_INCLUDE_DIRS}
   ${SYSTEM_LIBRARY_PATHS}
 )
@@ -217,7 +222,7 @@ set(_OPENVDB_LIBRARYDIR_SEARCH_DIRS "")
 
 list(APPEND _OPENVDB_LIBRARYDIR_SEARCH_DIRS
   ${OPENVDB_LIBRARYDIR}
-  ${_OPENVDB_ROOT_SEARCH_DIR}
+  ${_OPENVDB_ROOT_SEARCH_DIRS}
   ${PC_OpenVDB_LIBRARY_DIRS}
   ${SYSTEM_LIBRARY_PATHS}
 )
@@ -382,15 +387,27 @@ set(_EXCLUDE_SYSTEM_PREREQUISITES 1)
 set(_RECURSE_PREREQUISITES 0)
 set(_OPENVDB_PREREQUISITE_LIST)
 
-if(NOT OPENVDB_USE_STATIC_LIBS)
-get_prerequisites(${OpenVDB_openvdb_LIBRARY}
-  _OPENVDB_PREREQUISITE_LIST
-  ${_EXCLUDE_SYSTEM_PREREQUISITES}
-  ${_RECURSE_PREREQUISITES}
-  ""
-  "${SYSTEM_LIBRARY_PATHS}"
-)
+# get_prerequisites() uses ldd/otool on the resolved file. Static archives (.a) are not
+# dynamic executables and make ldd fail with "not a dynamic executable".
+set(_OPENVDB_RUN_GET_PREREQUISITES FALSE)
+if(NOT OPENVDB_USE_STATIC_LIBS AND OpenVDB_openvdb_LIBRARY)
+  if(UNIX AND NOT OpenVDB_openvdb_LIBRARY MATCHES "\\.a$")
+    set(_OPENVDB_RUN_GET_PREREQUISITES TRUE)
+  elseif(WIN32 AND OpenVDB_openvdb_LIBRARY MATCHES "\\.[Dd][Ll][Ll]$")
+    set(_OPENVDB_RUN_GET_PREREQUISITES TRUE)
+  endif()
 endif()
+
+if(_OPENVDB_RUN_GET_PREREQUISITES)
+  get_prerequisites(${OpenVDB_openvdb_LIBRARY}
+    _OPENVDB_PREREQUISITE_LIST
+    ${_EXCLUDE_SYSTEM_PREREQUISITES}
+    ${_RECURSE_PREREQUISITES}
+    ""
+    "${SYSTEM_LIBRARY_PATHS}"
+  )
+endif()
+unset(_OPENVDB_RUN_GET_PREREQUISITES)
 
 unset(_EXCLUDE_SYSTEM_PREREQUISITES)
 unset(_RECURSE_PREREQUISITES)
@@ -425,6 +442,13 @@ foreach(PREREQUISITE ${_OPENVDB_PREREQUISITE_LIST})
     set(OpenVDB_USES_ILM ON)
   endif()
 endforeach()
+
+# No prerequisite scan for static libopenvdb.a; Snapmaker/Orca deps build OpenVDB with Blosc.
+if(UNIX AND OpenVDB_openvdb_LIBRARY MATCHES "\\.a$" AND OpenVDB_FOUND)
+  if(NOT DEFINED USE_BLOSC OR USE_BLOSC)
+    set(OpenVDB_USES_BLOSC ON)
+  endif()
+endif()
 
 unset(_OPENVDB_PREREQUISITE_LIST)
 unset(_HAS_DEP)

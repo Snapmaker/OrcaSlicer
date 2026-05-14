@@ -380,14 +380,8 @@ if (NOT MSVC AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMP
         add_compile_options(-Wno-deprecated-declarations)
     endif()
 
-    # Upstream LLVM exposes -Wenum-constexpr-conversion; AppleClang's version does not track
-    # LLVM feature availability. Gate on actual flag support to avoid -Wunknown-warning-option.
-    if("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-        include(CheckCXXCompilerFlag)
-        check_cxx_compiler_flag(-Wno-error=enum-constexpr-conversion SLIC3R_CXX_SUPPORTS_WNO_ERROR_ENUM_CONSTEXPR_CONVERSION)
-        if(SLIC3R_CXX_SUPPORTS_WNO_ERROR_ENUM_CONSTEXPR_CONVERSION)
-            add_compile_options(-Wno-error=enum-constexpr-conversion)
-        endif()
+    if((${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "AppleClang") AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 15)
+        add_compile_options(-Wno-error=enum-constexpr-conversion)
     endif()
 
     #GCC generates loads of -Wunknown-pragmas when compiling igl. The fix is not easy due to a bug in gcc, see

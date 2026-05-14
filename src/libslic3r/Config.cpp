@@ -1599,6 +1599,9 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
             parse_options = false;
             continue;
         }
+        // Handled only in GUI instance_check (InstanceCheck.cpp), not as PrintConfig keys.
+        if (token == "--single-instance" || token == "--no-single-instance")
+            continue;
         // Remove leading dashes (one or two).
         token.erase(token.begin(), token.begin() + (boost::starts_with(token, "--") ? 2 : 1));
         // Read value when supplied in the --key=value form.

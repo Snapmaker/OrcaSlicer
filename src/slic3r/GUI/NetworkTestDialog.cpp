@@ -28,6 +28,9 @@ wxDEFINE_EVENT(EVT_UPDATE_RESULT, wxCommandEvent);
 
 static wxString NA_STR = _L("N/A");
 
+// Searchable tag for network test log entries in file logs.
+#define NETWORK_TEST_LOG_TAG "[NetworkTest]"
+
 NetworkTestDialog::NetworkTestDialog(wxWindow* parent, wxWindowID id, const wxString& title, const wxPoint& pos, const wxSize& size, long style)
     : DPIDialog(parent,wxID_ANY,from_u8((boost::format(_utf8(L("Network Test")))).str()),wxDefaultPosition,
             wxSize(1000, 700),
@@ -369,6 +372,8 @@ wxString NetworkTestDialog::get_dns_info()
 
 void NetworkTestDialog::start_all_job()
 {
+	log_section_header(_L("Network test started"));
+
 	start_test_github_thread();
 	start_test_bing_thread();
 	start_test_lan_mqtt_thread();
@@ -399,10 +404,7 @@ void NetworkTestDialog::start_all_job_sequence()
 	m_sequence_job = new boost::thread([weak_this = weak_this, device_ip] {
 		auto self = weak_this.lock();
 		if (!self) return;
-		self->update_status(-1, "========================================");
-		self->update_status(-1, "Start sequence test (single-thread mode)");
-		self->update_status(-1, "========================================");
-		self->update_status(-1, "");
+		self->log_section_header("Start sequence test (single-thread mode)");
 
         self->start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
         if (self->m_closing.load()) return;
@@ -440,10 +442,7 @@ void NetworkTestDialog::start_all_job_sequence()
 		self->start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
 		if (self->m_closing.load()) return;
 
-		self->update_status(-1, "");
-		self->update_status(-1, "========================================");
-		self->update_status(-1, "Sequence test completed");
-		self->update_status(-1, "========================================");
+		self->log_section_header("Sequence test completed");
 	});
 }
 
@@ -1186,8 +1185,22 @@ void NetworkTestDialog::on_dpi_changed(const wxRect &suggested_rect)
     ;
 }
 
+void NetworkTestDialog::log_section_header(const wxString& title)
+{
+	static const wxString sep("========================================");
+	update_status(-1, wxEmptyString);
+	update_status(-1, sep);
+	update_status(-1, title);
+	update_status(-1, sep);
+	update_status(-1, wxEmptyString);
+}
+
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
+	// Sync to file log with a searchable tag so users can find
+	// network test results in the log file using "[NetworkTest]".
+	BOOST_LOG_TRIVIAL(warning) << NETWORK_TEST_LOG_TAG " " << into_u8(info);
+
 	// Early exit if dialog is closing - don't access any members
 	if (m_closing.load()) return;
 

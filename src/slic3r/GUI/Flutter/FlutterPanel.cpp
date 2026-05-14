@@ -106,7 +106,7 @@ void FlutterPanel::onSize(wxSizeEvent& event) {
 // walk for messages targeted at the Flutter child HWND, letting the
 // main loop's native ::TranslateMessage + ::DispatchMessage deliver
 // both WM_KEYDOWN and WM_CHAR to the Flutter child in order.
-bool FlutterPanel::MSWShouldPreProcessMessage(WXMSG* msg) const {
+bool FlutterPanel::MSWShouldPreProcessMessage(WXMSG* msg) {
     if (m_view) {
         HWND child = (HWND)m_view->nativeHandle();
         if (child && msg->hwnd == child)

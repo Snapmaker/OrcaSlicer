@@ -76,6 +76,6 @@ protected:
 #ifdef __WXMSW__
     virtual WXHWND MSWGetFocusHWND() const override;
     virtual bool ContainsHWND(WXHWND hWnd) const override;
-    virtual bool MSWShouldPreProcessMessage(WXMSG* msg) const override;
+    bool MSWShouldPreProcessMessage(WXMSG* msg) override;
 #endif
 };

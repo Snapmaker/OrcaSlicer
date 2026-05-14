@@ -2353,12 +2353,7 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 #endif
 
     if (m_wall_type == int(WipeTowerWallType::wtwRib)) {
-        float max_depth = 0.f;
-        for (const auto& current_plan : m_plan) {
-            max_depth = std::max(max_depth, current_plan.depth);
-        }
-
-        float square_width = align_ceil(std::sqrt(max_depth * m_wipe_tower_width), m_perimeter_width);
+        float square_width = align_ceil(std::sqrt(m_wipe_tower_depth * m_wipe_tower_width), m_perimeter_width);
         m_wipe_tower_width = square_width;
 
         int planSize = static_cast<int>(m_plan.size());

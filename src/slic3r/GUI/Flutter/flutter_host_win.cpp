@@ -308,22 +308,9 @@ public:
 
         if (!childHwnd || !parentHwnd) return;
 
-        // Per MSDN: clear WS_POPUP and set WS_CHILD BEFORE SetParent.
-        // The earlier fix removed this, but doing it after SetParent was
-        // what broke Flutter's WM_CHAR pipeline — WM_STYLECHANGED after
-        // reparenting confuses the Flutter engine.  Done before SetParent
-        // the engine hasn't attached its text input yet, so it's safe.
-        LONG_PTR style = GetWindowLongPtr(childHwnd, GWL_STYLE);
-        style = (style & ~WS_POPUP) | WS_CHILD | WS_CLIPSIBLINGS | WS_TABSTOP;
-        SetWindowLongPtr(childHwnd, GWL_STYLE, style);
-
-        // Remove WS_EX_APPWINDOW / add WS_EX_NOPARENTNOTIFY so Windows
-        // treats this as a proper child control.
-        LONG_PTR exStyle = GetWindowLongPtr(childHwnd, GWL_EXSTYLE);
-        exStyle &= ~WS_EX_APPWINDOW;
-        exStyle |= WS_EX_NOPARENTNOTIFY;
-        SetWindowLongPtr(childHwnd, GWL_EXSTYLE, exStyle);
-
+        // The Flutter engine creates the view as WS_CHILD already (see
+        // FlutterWindow::InitializeChild in flutter_window.cc).  No style
+        // manipulation needed — just change the parent.
         SetParent(childHwnd, parentHwnd);
 
         RECT rect;

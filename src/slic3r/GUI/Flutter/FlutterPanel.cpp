@@ -94,6 +94,25 @@ void FlutterPanel::onSize(wxSizeEvent& event) {
 }
 
 #ifdef __WXMSW__
+WXLRESULT FlutterPanel::MSWWindowProc(WXUINT msg, WXWPARAM wParam, WXLPARAM lParam) {
+    if (m_view) {
+        HWND child = (HWND)m_view->nativeHandle();
+        if (child && (msg == WM_KEYDOWN || msg == WM_KEYUP ||
+                      msg == WM_CHAR || msg == WM_DEADCHAR ||
+                      msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
+                      msg == WM_SYSCHAR || msg == WM_SYSDEADCHAR)) {
+            // Forward keyboard messages directly to the Flutter child HWND.
+            // TranslateMessage generates WM_CHAR for the HWND returned by
+            // GetFocus(), which may briefly be the panel HWND rather than
+            // the Flutter child.  Forwarding ensures the Flutter engine's
+            // KeyboardManager always sees the WM_CHAR it expects after
+            // each WM_KEYDOWN.
+            return ::SendMessage(child, msg, wParam, lParam);
+        }
+    }
+    return wxWindow::MSWWindowProc(msg, wParam, lParam);
+}
+
 WXHWND FlutterPanel::MSWGetFocusHWND() const {
     if (m_view) {
         void* childHwnd = m_view->nativeHandle();

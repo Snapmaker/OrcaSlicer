@@ -1587,7 +1587,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
             continue;
         }
         
-        const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
+        const int virtual_id = static_cast<int>(mixed_virtual_id) + 1;
         wxString item_name = wxString::Format(_L("Mixed Filament %d"), virtual_id);
         
         // Create a colored bitmap for the mixed filament — gradient filaments get a gradient icon

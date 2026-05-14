@@ -242,6 +242,12 @@ void MixedFilamentDialog::build_ui()
                                                wxVSCROLL | wxBORDER_NONE);
     m_scrolled_content->SetBackgroundColour(wxColour("#F8F7F7"));
     m_scrolled_content->SetScrollRate(0, FromDIP(8));
+    // Prevent wxScrolledWindow from auto-scrolling to focused children.
+    // Without this, clicking a partially-visible widget first scrolls it
+    // into view instead of handling the click, requiring a second click.
+    m_scrolled_content->Bind(wxEVT_CHILD_FOCUS, [](wxChildFocusEvent&) {
+        // Do not evt.Skip() — that would invoke the default handler which scrolls.
+    });
     auto* scroll_sizer = new wxBoxSizer(wxVERTICAL);
 
     // ======== Card A: Filament Selection ========
@@ -731,8 +737,8 @@ void MixedFilamentDialog::build_ui()
     }
 
     SetSizer(top_sizer);
-    SetMinClientSize(wxSize(FromDIP(380), -1));
-    SetMaxClientSize(wxSize(-1, FromDIP(900)));
+    SetMinClientSize(wxSize(FromDIP(380), FromDIP(626)));
+    SetMaxClientSize(wxSize(FromDIP(380), FromDIP(626)));
 
     rebuild_filament_rows();
     update_compatibility_warning();
@@ -1567,16 +1573,14 @@ std::string MixedFilamentDialog::compute_preview_color()
         const std::string raw = into_u8(m_pattern_ctrl->GetValue());
         const std::string normalized = MixedFilamentManager::normalize_manual_pattern(raw);
         if (!normalized.empty()) {
-            // Get component_a and component_b (1-based extruder IDs)
-            const unsigned int component_a = (unsigned int)(get_filament_index(0) + 1);
-            const unsigned int component_b = (unsigned int)((m_filament_rows.size() > 1 ? get_filament_index(1) : 0) + 1);
             const size_t num_physical = m_filament_colours.size();
 
-            // Decode pattern tokens to extruder IDs
+            // In cycle mode, tokens "1"/"2" map directly to physical filaments 1/2,
+            // and tokens "3".."9" map directly to physical filaments 3..9.
             std::vector<unsigned int> sequence;
             MixedFilament dummy_mf;
-            dummy_mf.component_a = component_a;
-            dummy_mf.component_b = component_b;
+            dummy_mf.component_a = 1;
+            dummy_mf.component_b = 2;
             const std::vector<std::string> group_strs = MixedFilamentManager::split_pattern_groups(normalized);
             for (const std::string &group : group_strs) {
                 const std::vector<std::string> tokens =
@@ -1695,13 +1699,12 @@ void MixedFilamentDialog::draw_strip(wxDC& dc, wxPanel* panel)
         // Decode pattern using the same logic as MixedFilamentManager
         const std::string raw = into_u8(m_pattern_ctrl->GetValue());
         const std::string normalized = MixedFilamentManager::normalize_manual_pattern(raw);
-        const unsigned int component_a = (unsigned int)(get_filament_index(0) + 1);
-        const unsigned int component_b = (unsigned int)((m_filament_rows.size() > 1 ? get_filament_index(1) : 0) + 1);
         const size_t num_physical = m_filament_colours.size();
 
+        // In cycle mode, tokens "1"/"2" map directly to physical filaments 1/2.
         MixedFilament dummy_mf;
-        dummy_mf.component_a = component_a;
-        dummy_mf.component_b = component_b;
+        dummy_mf.component_a = 1;
+        dummy_mf.component_b = 2;
         const std::vector<std::string> group_strs = MixedFilamentManager::split_pattern_groups(normalized);
         for (const std::string &group : group_strs) {
             const std::vector<std::string> tokens =
@@ -2010,6 +2013,8 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
     rebuild_filament_rows();
     update_ratio_or_tri_visibility();
     update_preview();
+    if (mode_index == MODE_CYCLE)
+        validate_cycle_pattern();
     update_compatibility_warning();
     Layout();
     if (IsShown()) Fit();
@@ -2246,16 +2251,9 @@ void MixedFilamentDialog::collect_result()
         m_result.manual_pattern = norm.empty() ? "12" : norm;
         m_result.gradient_component_ids.clear();
         m_result.gradient_component_weights.clear();
-
-        auto parsed = parse_cycle_pattern(m_result.manual_pattern, (int)m_filament_colours.size());
-        unsigned int first = 0, second = 0;
-        for (unsigned int id : parsed.ids) {
-            if (first == 0) first = id;
-            else if (second == 0 && id != first) second = id;
-            if (first != 0 && second != 0) break;
-        }
-        m_result.component_a = first  != 0 ? first  : 1;
-        m_result.component_b = second != 0 ? second : m_result.component_a;
+        // In cycle mode, tokens "1"/"2" map directly to physical filaments 1/2.
+        m_result.component_a = 1;
+        m_result.component_b = 2;
         break;
     }
     case MODE_MATCH: {

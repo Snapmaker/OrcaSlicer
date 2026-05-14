@@ -345,8 +345,10 @@ endif()
 set(FREETYPE_PKG "")
 if(NOT FREETYPE_FOUND)
     include(FREETYPE/FREETYPE.cmake)
-    set(FREETYPE_PKG "dep_FREETYPE") 
+    set(FREETYPE_PKG "dep_FREETYPE")
 endif()
+
+include(Flutter/Flutter.cmake)
 
 execute_process(
     COMMAND ${GIT_EXECUTABLE} rev-parse --is-inside-work-tree
@@ -386,6 +388,8 @@ set(_dep_list
     ${EXPAT_PKG}
     dep_libnoise
     )
+
+list(APPEND _dep_list dep_Flutter)
 
 if (MSVC)
     # Experimental

@@ -40,3 +40,7 @@ resources/profiles/user/default
 *.code-workspace
 deps_src/build/
 .claude/
+flutter_app/.dart_tool/
+flutter_app/build/
+flutter_app/.idea/
+resources/flutter_assets/

@@ -45,6 +45,36 @@ jobs:
       - uses: lukka/get-cmake@latest
         with:
           cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
+
+      - name: Install Flutter SDK (macOS)
+        if: inputs.os == 'macos-14'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Precache Flutter desktop artifacts (macOS)
+        if: inputs.os == 'macos-14'
+        run: flutter precache --macos
+
+      - name: Install Flutter SDK (Windows)
+        if: inputs.os == 'windows-latest'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Precache Flutter desktop artifacts (Windows)
+        if: inputs.os == 'windows-latest'
+        run: flutter precache --windows
+
+      - name: Install Flutter SDK (Linux)
+        if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Precache Flutter desktop artifacts (Linux)
+        if: inputs.os == 'ubuntu-20.04' || inputs.os == 'ubuntu-24.04'
+        run: flutter precache --linux
           
       - name: Get the version and date on Ubuntu and macOS
         if: inputs.os != 'windows-latest'

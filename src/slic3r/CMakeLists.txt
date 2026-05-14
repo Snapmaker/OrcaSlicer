@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 project(libslic3r_gui)
 
 include(PrecompiledHeader)
+include(EnsureFlutterDeps)
 
 set(SLIC3R_GUI_SOURCES
     Config/Snapshot.cpp
@@ -111,6 +112,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/Field.hpp
     GUI/FileArchiveDialog.cpp
     GUI/FileArchiveDialog.hpp
+    GUI/Flutter/FlutterPanel.cpp
+    GUI/Flutter/FlutterPanel.hpp
+    GUI/Flutter/flutter_host.h
     GUI/format.hpp
     GUI/GCodeViewer.cpp
     GUI/GCodeViewer.hpp
@@ -612,6 +616,7 @@ if (WIN32)
             GUI/dark_mode/UAHMenuBar.hpp
             GUI/dark_mode.hpp
             GUI/dark_mode.cpp
+            GUI/Flutter/flutter_host_win.cpp
         )
 endif ()
 
@@ -627,6 +632,7 @@ if (APPLE)
             GUI/GUI_UtilsMac.mm
             GUI/wxMediaCtrl2.mm
             GUI/wxMediaCtrl2.h
+            GUI/Flutter/flutter_host_macos.mm
         )
     FIND_LIBRARY(DISKARBITRATION_LIBRARY DiskArbitration)
 else ()
@@ -639,6 +645,7 @@ endif ()
 if (UNIX AND NOT APPLE)
     list(APPEND SLIC3R_GUI_SOURCES
         GUI/Printer/gstbambusrc.c
+        GUI/Flutter/flutter_host_linux.cpp
     )
 endif ()
 
@@ -669,6 +676,11 @@ target_include_directories(libslic3r_gui PRIVATE ${PAHO_MQTT_C_PATH}/src)
 if (WIN32)
     target_include_directories(libslic3r_gui SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/WebView2/include)
     target_link_libraries(libslic3r_gui Advapi32)
+
+    # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
+    ensure_flutter_deps()
+    target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/include/flutter")
+    target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/flutter_windows.dll.lib")
 endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SLIC3R_GUI_SOURCES})
@@ -693,8 +705,22 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         ${WAYLAND_CLIENT_LIBRARIES}
         ${CURL_LIBRARIES}
     )
+
+    # Flutter — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
+    ensure_flutter_deps()
+    target_include_directories(libslic3r_gui PRIVATE
+        "${CMAKE_PREFIX_PATH}/include/flutter")
+    target_link_libraries(libslic3r_gui "${CMAKE_PREFIX_PATH}/lib/libflutter_linux_gtk.so")
 elseif (APPLE)
     target_link_libraries(libslic3r_gui ${DISKARBITRATION_LIBRARY} "-framework Security")
+
+    # Flutter framework — from deps (CMAKE_PREFIX_PATH), auto-populated from SDK if missing
+    ensure_flutter_deps()
+    target_include_directories(libslic3r_gui PRIVATE "${CMAKE_PREFIX_PATH}/FlutterMacOS.framework/Headers")
+    target_compile_options(libslic3r_gui PRIVATE "-F${CMAKE_PREFIX_PATH}")
+    set_source_files_properties(
+        GUI/Flutter/flutter_host_macos.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc")
 endif()
 
 if (SLIC3R_STATIC)

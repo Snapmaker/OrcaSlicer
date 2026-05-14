@@ -824,6 +824,16 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
          DESTINATION ${_out_dir})
 
+    # Copy Flutter engine runtime DLLs (staged by EnsureFlutterDeps.cmake)
+    if(EXISTS "${CMAKE_PREFIX_PATH}/bin/flutter_windows.dll")
+        file(COPY "${CMAKE_PREFIX_PATH}/bin/flutter_windows.dll"
+             DESTINATION ${_out_dir})
+        if(EXISTS "${CMAKE_PREFIX_PATH}/bin/flutter_engine.dll")
+            file(COPY "${CMAKE_PREFIX_PATH}/bin/flutter_engine.dll"
+                 DESTINATION ${_out_dir})
+        endif()
+    endif()
+
     # Build the DLL list in a local variable first
     set(_dll_list
         ${_out_dir}/libgmp-10.dll
@@ -858,9 +868,24 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         ${_out_dir}/TKXSBase.dll
 
         ${_out_dir}/freetype.dll
+
+        ${_out_dir}/flutter_windows.dll
     )
 
     # Add Sentry DLLs to the list if Sentry is enabled
+    if (SLIC3R_SENTRY)
+        list(APPEND _dll_list
+            ${_out_dir}/sentry.dll
+            ${_out_dir}/crashpad_handler.exe
+        )
+    endif()
+
+    # Add Flutter engine core DLL if it exists (separate file in some SDK versions)
+    if(EXISTS "${CMAKE_PREFIX_PATH}/bin/flutter_engine.dll")
+        list(APPEND _dll_list
+            ${_out_dir}/flutter_engine.dll
+        )
+    endif()
     if (SLIC3R_SENTRY)
         list(APPEND _dll_list
             ${_out_dir}/sentry.dll
@@ -873,6 +898,10 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
 
 endfunction()
 
+
+# Build Flutter app from source (flutter build per platform)
+include(BuildFlutterApp)
+build_flutter_app()
 
 # libslic3r, Snapmaker_Orca GUI and the Snapmaker_Orca executable.
 add_subdirectory(deps_src)

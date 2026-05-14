@@ -61,6 +61,11 @@ public:
     // (keyboard navigation, WM_SETFOCUS from the OS).
     virtual void SetFocus() override;
 
+    // Panel is a transparent wrapper; only the Flutter child accepts focus.
+    // Prevents wxWidgets from reclaiming focus via mouse-click auto-focus
+    // (MSWWindowProc calls SetFocus on WM_LBUTTONDOWN for IsFocusable windows).
+    bool AcceptsFocus() const override { return false; }
+
     // Attempt deferred embed if it hasn't happened yet.
     void tryEmbed();
 

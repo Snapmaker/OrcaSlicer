@@ -94,23 +94,25 @@ void FlutterPanel::onSize(wxSizeEvent& event) {
 }
 
 #ifdef __WXMSW__
-WXLRESULT FlutterPanel::MSWWindowProc(WXUINT msg, WXWPARAM wParam, WXLPARAM lParam) {
+// wxWidgets' PreProcessMessage walks the parent chain from msg.hwnd up
+// through WS_CHILD parents, finds this FlutterPanel, and calls
+// MSWTranslateMessage on it.  The base MSWTranslateMessage calls
+// ::TranslateMessage (which generates WM_CHAR and posts it) and returns
+// true — consuming WM_KEYDOWN before Flutter's WndProc ever sees it.
+// The orphaned WM_CHAR then arrives at the Flutter child but its
+// KeyboardManager has no pending key-down to pair it with.
+//
+// Returning false here skips the entire PreProcessMessage parent-chain
+// walk for messages targeted at the Flutter child HWND, letting the
+// main loop's native ::TranslateMessage + ::DispatchMessage deliver
+// both WM_KEYDOWN and WM_CHAR to the Flutter child in order.
+bool FlutterPanel::MSWShouldPreProcessMessage(WXMSG* msg) const {
     if (m_view) {
         HWND child = (HWND)m_view->nativeHandle();
-        if (child && (msg == WM_KEYDOWN || msg == WM_KEYUP ||
-                      msg == WM_CHAR || msg == WM_DEADCHAR ||
-                      msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
-                      msg == WM_SYSCHAR || msg == WM_SYSDEADCHAR)) {
-            // Forward keyboard messages directly to the Flutter child HWND.
-            // TranslateMessage generates WM_CHAR for the HWND returned by
-            // GetFocus(), which may briefly be the panel HWND rather than
-            // the Flutter child.  Forwarding ensures the Flutter engine's
-            // KeyboardManager always sees the WM_CHAR it expects after
-            // each WM_KEYDOWN.
-            return ::SendMessage(child, msg, wParam, lParam);
-        }
+        if (child && msg->hwnd == child)
+            return false;
     }
-    return wxWindow::MSWWindowProc(msg, wParam, lParam);
+    return wxWindow::MSWShouldPreProcessMessage(msg);
 }
 
 WXHWND FlutterPanel::MSWGetFocusHWND() const {

@@ -1564,7 +1564,6 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
                                 " -> " + m_filpar[tool].material + "\n")
                         .c_str())
             .append(";--------------------\n");
-        writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_Start) + "\n");
     }
 
     writer.speed_override_backup();
@@ -1579,6 +1578,7 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
 
     // Ram the hot material out of the melt zone, retract the filament into the cooling tubes and let it cool.
     if (tool != (unsigned int) -1) { // This is not the last change.
+        writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_Start) + "\n");
         auto new_tool_temp = is_first_layer() ? m_filpar[tool].first_layer_temperature : m_filpar[tool].temperature;
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material,
                           (is_first_layer() ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature),
@@ -1987,6 +1987,8 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
         .set_initial_tool(m_current_tool)
         .set_y_shift(m_y_shift - (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f));
 
+    writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_Start) + "\n");
+
     // Slow down on the 1st layer.
     // If spare layers are excluded -> if 1 or less toolchange has been done, it must be still the first layer, too. So slow down.
     bool  first_layer   = is_first_layer() || (m_num_tool_changes <= 1 && m_no_sparse_layers);
@@ -2143,6 +2145,8 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
     int i = poly.closest_point_index(Point::new_scale(writer.x(), writer.y()));
     writer.add_wipe_point(writer.pos());
     writer.add_wipe_point(unscale(poly.points[i == 0 ? int(poly.points.size()) - 1 : i - 1]).cast<float>());
+
+    writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");
 
     // Ask our writer about how much material was consumed.
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
@@ -2370,11 +2374,11 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
         plan_tower(); // need Re-calculate depth
     }
 
-    m_rib_length = std::max({m_rib_length, sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width)});
+    float diagonal = sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width);
+    m_rib_length   = std::max({m_rib_length, diagonal});
     m_rib_length += m_extra_rib_length;
-    m_rib_length = std::max(0.f, m_rib_length);
-    m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) /
-                                             2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
+    m_rib_length = std::max(diagonal, m_rib_length);
+    m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) / 2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
 
     m_layer_info     = m_plan.begin();
     m_current_height = 0.f;

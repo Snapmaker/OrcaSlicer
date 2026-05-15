@@ -366,7 +366,7 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 
 void flush_logs()
 {
-	if (g_log_sink) 
+	if (g_log_sink)
 		g_log_sink->flush();
 
 	return;

@@ -789,10 +789,11 @@ void MixedFilamentDialog::build_ui()
         }
 
         m_match_gradient_selector->Bind(wxEVT_SLIDER, [this](wxCommandEvent&) {
-            // Sync tri weights to slider for strip preview
+            // Sync tri weights to slider for strip preview + legend
             int val = std::clamp(m_match_gradient_selector->value(), m_match_min_pct, 100 - m_match_min_pct);
             m_match_tri_wx = (100 - val) / 100.0;
             m_match_tri_wy = val / 100.0;
+            m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy};
             update_match_legend_labels();
             if (m_match_strip_panel)   m_match_strip_panel->Refresh();
             if (m_match_blend_panel)   m_match_blend_panel->Refresh();
@@ -1191,8 +1192,6 @@ void MixedFilamentDialog::build_ui()
     m_scrolled_content->FitInside();
     m_scrolled_content->Scroll(0, 0);
 
-    if (m_current_mode == MODE_MATCH && m_match_panel)
-        m_match_panel->begin_initial_recipe_load();
 }
 
 // ---------------------------------------------------------------------------
@@ -1465,14 +1464,9 @@ void MixedFilamentDialog::rebuild_match_legend()
 
     int num_physical = (int)m_filament_colours.size();
     std::vector<int> weights;
-    int nf = (int)m_match_tri_indices.size();
-    if (nf == 2 && m_match_gradient_selector && m_match_gradient_selector->IsShown()) {
-        int val = std::clamp(m_match_gradient_selector->value(), m_match_min_pct, 100 - m_match_min_pct);
-        weights = {100 - val, val};
-    } else {
-        for (double w : m_match_tri_weights)
-            weights.push_back((int)(w * 100 + 0.5));
-    }
+    // Always use tri_weights (same source as compute_preview_color / draw_strip)
+    for (double w : m_match_tri_weights)
+        weights.push_back((int)(w * 100 + 0.5));
 
     int total = 0;
     for (int w : weights) total += w;
@@ -1505,15 +1499,14 @@ void MixedFilamentDialog::update_match_legend_labels()
 {
     if (m_match_legend_labels.empty() || m_match_tri_indices.empty()) return;
 
-    int num_physical = (int)m_filament_colours.size();
     std::vector<int> weights;
     int nf = (int)m_match_tri_indices.size();
-    if (nf == 2 && m_match_gradient_selector && m_match_gradient_selector->IsShown()) {
-        int val = std::clamp(m_match_gradient_selector->value(), m_match_min_pct, 100 - m_match_min_pct);
-        weights = {100 - val, val};
-    } else if (nf >= 3) {
+    if (nf >= 3) {
         weights = {(int)(m_match_tri_wx * 100 + 0.5), (int)(m_match_tri_wy * 100 + 0.5),
                    (int)(m_match_tri_wz * 100 + 0.5)};
+    } else {
+        for (double w : m_match_tri_weights)
+            weights.push_back((int)(w * 100 + 0.5));
     }
 
     int total = 0;

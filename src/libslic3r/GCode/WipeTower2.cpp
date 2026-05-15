@@ -2353,7 +2353,7 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 #endif
 
     if (m_wall_type == int(WipeTowerWallType::wtwRib)) {
-        float square_width = align_ceil(std::sqrt(m_wipe_tower_depth * m_wipe_tower_width), m_perimeter_width);
+        float square_width = align_ceil(std::sqrt(std::fabs(m_wipe_tower_depth * m_wipe_tower_width)), m_perimeter_width);
         m_wipe_tower_width = square_width;
 
         int planSize = static_cast<int>(m_plan.size());
@@ -2482,6 +2482,11 @@ Polygon WipeTower2::generate_rib_polygon(const WipeTower::box_coordinates& wt_bo
 WipeTower2::WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, int new_tool, float layer_height, float wipe_volume)
 {
     float width = m_wipe_tower_width - 3 * m_perimeter_width;
+    if(std::fabs(width) < EPSILON)
+    {
+        assert(false);
+        return WipeTowerInfo::ToolChange(old_tool, new_tool);
+    }
     float volume = 0.25f * std::accumulate(m_filpar[old_tool].ramming_speed.begin(), m_filpar[old_tool].ramming_speed.end(), 0.f);
     float line_width = m_perimeter_width * m_filpar[old_tool].ramming_line_width_multiplicator;
     float length_to_extrude = volume_to_length(volume, line_width, layer_height);

@@ -423,10 +423,11 @@ void MixedFilamentDialog::build_ui()
 
         auto* hex_wrapper = new wxPanel(m_match_input_card, wxID_ANY, wxDefaultPosition,
                                          wxSize(FromDIP(109), FromDIP(24)));
+        m_match_hex_wrapper = hex_wrapper;
         hex_wrapper->SetBackgroundColour(wxColour("#FFFFFF"));
         hex_wrapper->SetMinSize(wxSize(FromDIP(109), FromDIP(24)));
         hex_wrapper->SetBackgroundStyle(wxBG_STYLE_PAINT);
-        hex_wrapper->Bind(wxEVT_PAINT, [](wxPaintEvent& evt) {
+        hex_wrapper->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
             wxWindow* w = dynamic_cast<wxWindow*>(evt.GetEventObject());
             if (!w) return;
             wxPaintDC dc(w);
@@ -435,7 +436,7 @@ void MixedFilamentDialog::build_ui()
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.DrawRectangle(0, 0, sz.x, sz.y);
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
-            dc.SetPen(wxPen(wxColour("#009688"), 1));
+            dc.SetPen(wxPen(m_match_hex_error ? wxColour("#FF0000") : wxColour("#009688"), 1));
             dc.DrawRectangle(0, 0, sz.x, sz.y);
         });
         auto* hex_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -468,8 +469,26 @@ void MixedFilamentDialog::build_ui()
             val.Trim(true).Trim(false);
             wxColour parsed;
             if (try_parse_color_match_hex(val, parsed)) {
+                m_match_hex_error = false;
+                if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+                if (m_compat_warning_panel) m_compat_warning_panel->Hide();
+                if (m_btn_confirm) m_btn_confirm->Enable();
+                Layout();
                 if (m_match_target_picker) { m_match_target_picker->SetBackgroundColour(parsed); m_match_target_picker->Refresh(); }
                 if (m_match_panel) m_match_panel->set_target_color(parsed);
+            } else {
+                m_match_hex_error = true;
+                if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+                set_error(_L("Please enter a valid 6-digit hex color value."));
+            }
+        });
+        m_match_hex_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
+            if (m_match_hex_error) {
+                m_match_hex_error = false;
+                if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+                if (m_compat_warning_panel) m_compat_warning_panel->Hide();
+                if (m_btn_confirm) m_btn_confirm->Enable();
+                Layout();
             }
         });
         hex_sizer->Add(m_match_hex_input, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(9));

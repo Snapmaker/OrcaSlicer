@@ -125,6 +125,8 @@ private:
     wxWrapSizer*            m_match_badges_sizer    = nullptr;
     wxPanel*                m_match_target_picker   = nullptr;
     wxTextCtrl*             m_match_hex_input       = nullptr;
+    wxPanel*                m_match_hex_wrapper     = nullptr;
+    bool                    m_match_hex_error       = false;
     wxPanel*                m_match_target_swatch   = nullptr;
 
     // Range slider row (inside ratio card, match-mode only)

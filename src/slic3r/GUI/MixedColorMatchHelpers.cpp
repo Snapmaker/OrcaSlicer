@@ -181,7 +181,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
     for (const std::string& hex : physical_colors)
         palette.emplace_back(parse_mixed_color(hex));
 
-    constexpr size_t                k_max_presets = 48;
+    constexpr size_t                k_max_presets = 9999;  // effectively unlimited
     std::unordered_set<std::string> seen_colors;
     auto                            add_candidate = [&presets, &seen_colors](MixedColorMatchRecipeResult candidate) {
         if (!candidate.valid)
@@ -216,6 +216,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
         }
     }
 
+#if 0 // 四色预设：暂不启用
     const size_t quad_limit = std::min<size_t>(palette.size(), 5);
     for (size_t first_idx = 0; first_idx + 3 < quad_limit && presets.size() < k_max_presets; ++first_idx) {
         for (size_t second_idx = first_idx + 1; second_idx + 2 < quad_limit && presets.size() < k_max_presets; ++second_idx) {
@@ -229,6 +230,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
             }
         }
     }
+#endif
 
     return presets;
 }
@@ -330,6 +332,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
         }
     }
 
+#if 0 // 四色配方搜索：暂不启用
     if (candidate_pool.size() < 4)
         return best;
 
@@ -355,6 +358,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
             }
         }
     }
+#endif
 
     return best;
 }

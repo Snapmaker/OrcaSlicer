@@ -44,6 +44,10 @@ MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virt
     SetMinSize(parent->FromDIP(wxSize(badge_size, badge_size)));
     SetMaxSize(parent->FromDIP(wxSize(badge_size, badge_size)));
     Bind(wxEVT_PAINT, &MixedFilamentBadge::on_paint, this);
+    // Prevent wxButton from entering pressed/focused state that overrides custom paint
+    Bind(wxEVT_SET_FOCUS, [](wxFocusEvent&) {});
+    Bind(wxEVT_KILL_FOCUS, [](wxFocusEvent&) {});
+    SetCanFocus(false);
 
     SetFont(badge_size >= 20 ? Label::Body_12 : Label::Body_8);
 

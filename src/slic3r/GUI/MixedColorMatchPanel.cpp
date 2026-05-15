@@ -339,6 +339,27 @@ void MixedColorMatchPanel::begin_initial_recipe_load()
     request_recipe_match(m_requested_target, false, _L("Calculating closest supported mix..."));
 }
 
+void MixedColorMatchPanel::set_target_color(const wxColour &target)
+{
+    if (!target.IsOk()) return;
+    m_requested_target = target;
+    sync_inputs_to_requested();
+    request_recipe_match(target, true, _L("Calculating closest supported mix..."));
+}
+
+void MixedColorMatchPanel::set_min_component_percent(int pct)
+{
+    pct = std::clamp(pct, 0, 50);
+    if (pct == m_min_component_percent) return;
+    m_min_component_percent = pct;
+    if (m_range_slider) m_range_slider->SetValue(pct);
+    update_range_label();
+    if (m_color_map)
+        m_color_map->set_min_component_percent(m_min_component_percent);
+    rebuild_presets_ui();
+    request_recipe_match(m_requested_target, true, _L("Matching closest supported mix..."));
+}
+
 void MixedColorMatchPanel::sync_recipe_preview(MixedColorMatchRecipeResult &recipe, const wxColour *requested)
 {
     if (!recipe.valid)

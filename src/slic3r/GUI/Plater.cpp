@@ -6618,7 +6618,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     p->m_panel_mixed_filaments_content->Hide();
     Layout();
     refresh_model_canvas_colors();
-    wxTheApp->CallAfter([this]() { update_color_mix_panel(); });
+    wxWeakRef<Sidebar> weakSelf(this);
+    wxTheApp->CallAfter([weakSelf]() {
+        if (weakSelf) weakSelf->update_color_mix_panel();
+    });
     return;
 
 #if 0 // Mixed Filaments panel UI — hidden, preserved for potential future re-enablement

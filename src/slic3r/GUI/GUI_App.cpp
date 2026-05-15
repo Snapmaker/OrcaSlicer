@@ -767,7 +767,7 @@ static void register_win32_device_notification_event()
 // Windows 11 build number threshold: build >= 22000 = Windows 11
 constexpr int kWindows11BuildNumber = 22000;
 
-static void log_version_info()
+void GUI_App::log_version_info()
 {
     BOOST_LOG_TRIVIAL(warning) << "========================================";
     BOOST_LOG_TRIVIAL(warning) << "Snapmaker Orca Version Information";
@@ -810,11 +810,13 @@ static void log_version_info()
     BOOST_LOG_TRIVIAL(warning) << "[Version] OS: " << os_desc;
 
     BOOST_LOG_TRIVIAL(warning) << "========================================";
+
+    flush_logs();
 }
 
 static void generic_exception_handle()
 {
-    log_version_info();
+    GUI_App::log_version_info();
     // Note: Some wxWidgets APIs use wxLogError() to report errors, eg. wxImage
     // - see https://docs.wxwidgets.org/3.1/classwx_image.html#aa249e657259fe6518d68a5208b9043d0
     //
@@ -1942,7 +1944,7 @@ GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
 
-    log_version_info();
+    GUI_App::log_version_info();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy app_config");
@@ -2421,7 +2423,7 @@ bool GUI_App::on_init_inner()
 #endif
 
     BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current Snapmaker_Orca Version %1%")%Snapmaker_VERSION;
-    log_version_info();
+    GUI_App::log_version_info();
 
 #if defined(__WINDOWS__)
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");

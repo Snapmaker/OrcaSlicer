@@ -4009,6 +4009,9 @@ void MainFrame::export_logs()
 
     wxString zip_path = dlg.GetPath();
 
+    // Write version info and flush to log file before zipping
+    GUI_App::log_version_info();
+
     // 4. Create ZIP file and add all logs
     try {
         Zipper zipper(into_u8(zip_path), Zipper::TIGHT_COMPRESSION);

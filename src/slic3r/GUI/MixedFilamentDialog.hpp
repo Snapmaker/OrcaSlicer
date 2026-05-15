@@ -6,6 +6,8 @@
 #include <wx/wx.h>
 #include <wx/statline.h>
 #include <wx/dcbuffer.h>
+#include <wx/wrapsizer.h>
+#include <wx/clrpicker.h>
 
 #include <set>
 #include <vector>
@@ -23,6 +25,7 @@ namespace Slic3r { namespace GUI {
 // Forward declarations (only pointers are stored)
 class MixedGradientSelector;
 class MixedColorMatchPanel;
+class MatchRangeSlider;
 
 class MixedFilamentDialog : public DPIDialog
 {
@@ -105,17 +108,52 @@ private:
     wxBoxSizer*             m_match_panel_sizer   = nullptr;
     MixedColorMatchPanel*   m_match_panel         = nullptr;
 
+    // Match mode's own Mix Ratio card (separate from ratio card)
+    class StaticBox*        m_match_ratio_card       = nullptr;
+    wxBoxSizer*             m_match_ratio_card_sizer = nullptr;
+    MixedGradientSelector*  m_match_gradient_selector = nullptr;
+    wxPanel*                m_match_tri_picker       = nullptr;
+    wxPanel*                m_match_legend_panel     = nullptr;
+    wxBoxSizer*             m_match_legend_sizer     = nullptr;
+    std::vector<wxStaticText*> m_match_legend_labels;
+    wxPanel*                m_match_strip_panel      = nullptr;
+    wxPanel*                m_match_blend_panel      = nullptr;
+
+    // Card 1 (Match mode: filament badges + target color)
+    class StaticBox*        m_match_input_card      = nullptr;
+    wxPanel*                m_match_badges_panel    = nullptr;
+    wxWrapSizer*            m_match_badges_sizer    = nullptr;
+    wxPanel*                m_match_target_picker   = nullptr;
+    wxTextCtrl*             m_match_hex_input       = nullptr;
+    wxPanel*                m_match_hex_wrapper     = nullptr;
+    bool                    m_match_hex_error       = false;
+    wxPanel*                m_match_target_swatch   = nullptr;
+
+    // Range slider row (inside ratio card, match-mode only)
+    wxPanel*                m_match_range_row       = nullptr;
+    MatchRangeSlider*       m_match_range_slider    = nullptr;
+    wxStaticText*           m_match_range_value     = nullptr;
+    int                     m_match_min_pct         = 15;
+
     ScalableButton*         m_btn_swap_gradient_dir = nullptr;
     int                     m_gradient_direction   = 0;
 
     double m_tri_wx{1.0/3.0}, m_tri_wy{1.0/3.0}, m_tri_wz{1.0/3.0};
     bool   m_tri_dragging{false};
 
+    // Match-specific tri-picker state (fully independent from ratio)
+    std::vector<int>    m_match_tri_indices;
+    std::vector<double> m_match_tri_weights;
+    bool                m_match_tri_dragging{false};
+    double m_match_tri_wx{1.0/3.0}, m_match_tri_wy{1.0/3.0}, m_match_tri_wz{1.0/3.0};
+
     void build_tri_picker(wxWindow* parent = nullptr);
+    void build_match_tri_picker(wxWindow* parent);
     void set_combo_combined_icon(class ComboBox* cb, int filament_idx);
     void rebuild_legend();
     void update_legend_text();
-    void rebuild_cycle_legend();
+    void rebuild_match_legend();
+    void update_match_legend_labels();    void rebuild_cycle_legend();
     void validate_cycle_pattern();
     void update_ratio_or_tri_visibility();
     // Combo box helpers

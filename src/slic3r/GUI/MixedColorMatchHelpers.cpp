@@ -169,6 +169,19 @@ wxBitmap make_color_match_swatch_bitmap(const wxColour& color, const wxSize& siz
     return bmp;
 }
 
+static std::vector<std::vector<bool>> build_compatibility_matrix(size_t n)
+{
+    std::vector<std::vector<bool>> m(n, std::vector<bool>(n, false));
+    for (size_t i = 0; i < n; ++i) {
+        m[i][i] = true;
+        for (size_t j = i + 1; j < n; ++j) {
+            bool ok = is_filament_compatible(std::vector<unsigned int>{(unsigned int)i, (unsigned int)j});
+            m[i][j] = m[j][i] = ok;
+        }
+    }
+    return m;
+}
+
 std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::vector<std::string>& physical_colors,
                                                                    int                             min_component_percent)
 {
@@ -181,7 +194,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
     for (const std::string& hex : physical_colors)
         palette.emplace_back(parse_mixed_color(hex));
 
-    constexpr size_t                k_max_presets = 48;
+    constexpr size_t                k_max_presets = 9999;  // effectively unlimited
     std::unordered_set<std::string> seen_colors;
     auto                            add_candidate = [&presets, &seen_colors](MixedColorMatchRecipeResult candidate) {
         if (!candidate.valid)
@@ -193,8 +206,10 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
     };
 
     // Only generate 50:50 ratio for two-color combinations
+    auto compat = build_compatibility_matrix(palette.size());
     for (size_t left_idx = 0; left_idx < palette.size() && presets.size() < k_max_presets; ++left_idx) {
         for (size_t right_idx = left_idx + 1; right_idx < palette.size() && presets.size() < k_max_presets; ++right_idx) {
+            if (!compat[left_idx][right_idx]) continue;
             add_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), 50,
                                                            min_component_percent));
         }
@@ -205,6 +220,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
     for (size_t first_idx = 0; first_idx + 2 < triple_limit && presets.size() < k_max_presets; ++first_idx) {
         for (size_t second_idx = first_idx + 1; second_idx + 1 < triple_limit && presets.size() < k_max_presets; ++second_idx) {
             for (size_t third_idx = second_idx + 1; third_idx < triple_limit && presets.size() < k_max_presets; ++third_idx) {
+                if (!compat[first_idx][second_idx] || !compat[second_idx][third_idx] || !compat[first_idx][third_idx]) continue;
                 const std::vector<unsigned int> ids = {unsigned(first_idx + 1), unsigned(second_idx + 1), unsigned(third_idx + 1)};
                 add_candidate(build_multi_color_match_candidate(palette, ids, equal_triple_weights, min_component_percent));
                 for (size_t dominant_idx = 0; dominant_idx < ids.size() && presets.size() < k_max_presets; ++dominant_idx) {
@@ -216,6 +232,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
         }
     }
 
+#if 0 // 四色预设：暂不启用
     const size_t quad_limit = std::min<size_t>(palette.size(), 5);
     for (size_t first_idx = 0; first_idx + 3 < quad_limit && presets.size() < k_max_presets; ++first_idx) {
         for (size_t second_idx = first_idx + 1; second_idx + 2 < quad_limit && presets.size() < k_max_presets; ++second_idx) {
@@ -229,6 +246,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
             }
         }
     }
+#endif
 
     return presets;
 }
@@ -266,8 +284,11 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     const int loop_min_weight      = std::max(1, std::clamp(min_component_percent, 0, 50));
     const int loop_max_pair_weight = 100 - loop_min_weight;
 
+    auto compat = build_compatibility_matrix(palette.size());
+
     for (size_t left_idx = 0; left_idx < palette.size(); ++left_idx) {
         for (size_t right_idx = left_idx + 1; right_idx < palette.size(); ++right_idx) {
+            if (!compat[left_idx][right_idx]) continue;
             for (int mix_b_percent = loop_min_weight; mix_b_percent <= loop_max_pair_weight; ++mix_b_percent)
                 consider_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent,
                                                                     min_component_percent));
@@ -318,6 +339,10 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                 const std::vector<unsigned int> ids = {triple_pool[first_idx], triple_pool[second_idx], triple_pool[third_idx]};
                 if (std::any_of(ids.begin(), ids.end(), [](unsigned int filament_id) { return filament_id == 0 || filament_id > 9; }))
                     continue;
+                {
+                    size_t i0 = triple_pool[first_idx] - 1, i1 = triple_pool[second_idx] - 1, i2 = triple_pool[third_idx] - 1;
+                    if (!compat[i0][i1] || !compat[i1][i2] || !compat[i0][i2]) continue;
+                }
 
                 for (int weight_a = loop_min_weight; weight_a <= 100 - 2 * loop_min_weight; ++weight_a) {
                     for (int weight_b = loop_min_weight; weight_a + weight_b <= 100 - loop_min_weight; ++weight_b) {
@@ -330,6 +355,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
         }
     }
 
+#if 0 // 四色配方搜索：暂不启用
     if (candidate_pool.size() < 4)
         return best;
 
@@ -355,6 +381,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
             }
         }
     }
+#endif
 
     return best;
 }

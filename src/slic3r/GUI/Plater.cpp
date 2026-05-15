@@ -5647,6 +5647,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
             mfs.back().gradient_enabled            = r.gradient_enabled;
             mfs.back().gradient_start              = r.gradient_start;
             mfs.back().gradient_end                = r.gradient_end;
+            mfs.back().display_color             = r.display_color;
             mfs.back().custom                  = true;
         }
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -5813,8 +5814,9 @@ void Sidebar::update_color_mix_panel()
             const int pct_b = std::clamp(mf.mix_b_percent, 0, 100);
             const int pct_a = 100 - pct_b;
             lbl = wxString::Format("F%u %d%%+F%u %d%%", mf.component_a, pct_a, mf.component_b, pct_b);
-            for (char c : mf.gradient_component_ids)
-                lbl += wxString::Format("+F%d", int(c - '0'));
+            if (mf.distribution_mode != int(MixedFilament::Simple))
+                for (char c : mf.gradient_component_ids)
+                    lbl += wxString::Format("+F%d", int(c - '0'));
         }
         
         bool has_error = !is_filament_compatible(mf);
@@ -5896,6 +5898,7 @@ void Sidebar::update_color_mix_panel()
             mfs2[i].gradient_enabled           = r.gradient_enabled;
             mfs2[i].gradient_start             = r.gradient_start;
             mfs2[i].gradient_end               = r.gradient_end;
+            mfs2[i].display_color               = r.display_color;
             if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
             wxGetApp().plater()->post_slice_state_change_update();
@@ -6615,7 +6618,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     p->m_panel_mixed_filaments_content->Hide();
     Layout();
     refresh_model_canvas_colors();
-    update_color_mix_panel();
+    wxWeakRef<Sidebar> weakSelf(this);
+    wxTheApp->CallAfter([weakSelf]() {
+        if (weakSelf) weakSelf->update_color_mix_panel();
+    });
     return;
 
 #if 0 // Mixed Filaments panel UI — hidden, preserved for potential future re-enablement

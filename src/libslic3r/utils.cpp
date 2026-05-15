@@ -366,8 +366,32 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 
 void flush_logs()
 {
-	if (g_log_sink)
+	if (g_log_sink) {
 		g_log_sink->flush();
+
+#ifdef _WIN32
+		// On Windows, std::ofstream::flush() writes data to the OS cache but
+		// does not update the file's directory-entry size metadata. Subsequent
+		// reads via std::ifstream may see a truncated file. FlushFileBuffers
+		// forces the file metadata (including size) to be committed to disk.
+		auto backend = g_log_sink->locked_backend();
+		auto file_path = backend->get_current_file_name();
+		if (!file_path.empty()) {
+			HANDLE hFile = CreateFileW(
+				file_path.native().c_str(),
+				GENERIC_WRITE,
+				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				NULL,
+				OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL,
+				NULL);
+			if (hFile != INVALID_HANDLE_VALUE) {
+				FlushFileBuffers(hFile);
+				CloseHandle(hFile);
+			}
+		}
+#endif
+	}
 
 	return;
 }

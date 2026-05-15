@@ -677,6 +677,10 @@ void MixedFilamentDialog::build_ui()
                 wxAutoBufferedPaintDC dc(m_preview_blend_panel);
                 dc.SetBackground(wxBrush(parse_mixed_color(compute_preview_color())));
                 dc.Clear();
+                wxSize sz = m_preview_blend_panel->GetClientSize();
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+                dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+                dc.DrawRectangle(0, 0, sz.x, sz.y);
             });
             right_col->Add(m_preview_blend_panel, 1, wxEXPAND);
             dual_preview_row->Add(right_col, 1, wxEXPAND);
@@ -800,6 +804,10 @@ void MixedFilamentDialog::build_ui()
                 wxAutoBufferedPaintDC dc(m_match_blend_panel);
                 dc.SetBackground(wxBrush(parse_mixed_color(compute_preview_color())));
                 dc.Clear();
+                wxSize sz = m_match_blend_panel->GetClientSize();
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+                dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+                dc.DrawRectangle(0, 0, sz.x, sz.y);
             });
             right_col->Add(m_match_blend_panel, 0, wxEXPAND);
             dual_preview_row->Add(right_col, 0, wxEXPAND);
@@ -875,6 +883,10 @@ void MixedFilamentDialog::build_ui()
                 dc.SetBackground(wxBrush(parse_mixed_color(compute_preview_color())));
                 dc.Clear();
             }
+            wxSize sz = m_preview_panel->GetClientSize();
+            dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+            dc.DrawRectangle(0, 0, sz.x, sz.y);
         });
         m_gradient_effect_card_sizer->Add(m_preview_panel, 0, wxALIGN_LEFT | wxLEFT | wxBOTTOM, FromDIP(16));
 
@@ -1023,6 +1035,10 @@ void MixedFilamentDialog::build_ui()
                 wxAutoBufferedPaintDC dc(m_cycle_blend_panel);
                 dc.SetBackground(wxBrush(parse_mixed_color(compute_preview_color())));
                 dc.Clear();
+                wxSize sz = m_cycle_blend_panel->GetClientSize();
+                dc.SetBrush(*wxTRANSPARENT_BRUSH);
+                dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+                dc.DrawRectangle(0, 0, sz.x, sz.y);
             });
             right_col->Add(m_cycle_blend_panel, 1, wxEXPAND);
             dual_preview_row->Add(right_col, 1, wxEXPAND);

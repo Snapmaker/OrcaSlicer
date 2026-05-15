@@ -180,6 +180,7 @@ private:
     float  m_ramming_width_ratio     = 2.0;
 	bool   m_semm               = true; // Are we using a single extruder multimaterial printer?
 	bool   m_enable_filament_ramming = true;
+	bool   m_enable_timelapse_print = false;
 	bool   m_is_mk4mmu3         = false;
 	std::string m_printer_model;    // Printer model name (e.g., "Snapmaker U1")
     Vec2f  m_wipe_tower_pos; 			// Left front corner of the wipe tower in mm.

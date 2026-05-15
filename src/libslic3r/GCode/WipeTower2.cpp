@@ -1296,6 +1296,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     , m_used_fillet(config.wipe_tower_fillet_wall)
     , m_rib_width(config.wipe_tower_rib_width)
     , m_extra_rib_length(config.wipe_tower_extra_rib_length)
+    , m_enable_timelapse_print(config.timelapse_type.value == TimelapseType::tlSmooth)
     , m_wall_type((int) config.wipe_tower_wall_type)
 {
     // Read absolute value of first layer speed, if given as percentage,
@@ -2251,8 +2252,19 @@ void WipeTower2::plan_tower()
     m_wipe_tower_height = m_plan.empty() ? 0.f : m_plan.back().z;
     m_current_height    = 0.f;
 
+    // When smooth timelapse is enabled, ensure a minimum depth so the wipe tower
+    // has visible structure at every layer for the toolhead to park.
+    float min_timelapse_depth = 0.f;
+    if (m_enable_timelapse_print && !m_plan.empty()) {
+        auto cone_base = get_wipe_tower_cone_base(m_wipe_tower_width, m_wipe_tower_height, 0.f, m_wipe_tower_cone_angle);
+        min_timelapse_depth = float(std::max(cone_base.first, cone_base.second));
+        min_timelapse_depth = std::max(min_timelapse_depth, 5.f * m_perimeter_width);
+    }
+
     for (int layer_index = int(m_plan.size()) - 1; layer_index >= 0; --layer_index) {
         float this_layer_depth    = std::max(m_plan[layer_index].depth, m_plan[layer_index].toolchanges_depth());
+        if (m_enable_timelapse_print && this_layer_depth < WT_EPSILON)
+            this_layer_depth = min_timelapse_depth;
         m_plan[layer_index].depth = this_layer_depth;
 
         if (this_layer_depth > m_wipe_tower_depth - m_perimeter_width)
@@ -2262,6 +2274,15 @@ void WipeTower2::plan_tower()
             if (m_plan[i].depth - this_layer_depth < 2 * m_perimeter_width)
                 m_plan[i].depth = this_layer_depth;
         }
+    }
+
+    // Make all layers the same depth for consistent wipe tower shape during timelapse
+    if (m_enable_timelapse_print && !m_plan.empty()) {
+        float max_depth = m_plan[0].depth;
+        for (int i = int(m_plan.size()) - 1; i >= 0; i--) {
+            m_plan[i].depth = max_depth;
+        }
+        m_wipe_tower_depth = max_depth + m_perimeter_width;
     }
 }
 

@@ -3973,8 +3973,6 @@ void MainFrame::show_sync_dialog()
 
 void MainFrame::export_logs()
 {
-    GUI_App::log_version_info();
-
     // 1. Get log folder path
     auto log_folder = boost::filesystem::path(data_dir()) / "log";
 
@@ -4005,6 +4003,9 @@ void MainFrame::export_logs()
         return;
 
     wxString zip_path = dlg.GetPath();
+
+    // Write version info and flush to log file before zipping
+    GUI_App::log_version_info();
 
     // 4. Create ZIP file and add all logs
     try {

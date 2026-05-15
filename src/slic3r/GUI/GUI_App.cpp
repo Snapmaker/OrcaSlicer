@@ -810,6 +810,8 @@ void GUI_App::log_version_info()
     BOOST_LOG_TRIVIAL(warning) << "[Version] OS: " << os_desc;
 
     BOOST_LOG_TRIVIAL(warning) << "========================================";
+
+    flush_logs();
 }
 
 static void generic_exception_handle()

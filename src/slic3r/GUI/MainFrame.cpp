@@ -3973,6 +3973,8 @@ void MainFrame::show_sync_dialog()
 
 void MainFrame::export_logs()
 {
+    GUI_App::log_version_info();
+
     // 1. Get log folder path
     auto log_folder = boost::filesystem::path(data_dir()) / "log";
 

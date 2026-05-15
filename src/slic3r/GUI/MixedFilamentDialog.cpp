@@ -2089,8 +2089,24 @@ void MixedFilamentDialog::update_compatibility_warning()
                 m_btn_confirm->Enable();
             }
         } else {
-            m_compat_warning_panel->Hide();
-            m_btn_confirm->Enable();
+            // Check compatibility of currently selected filaments (default tri-picker selection)
+            std::vector<unsigned int> fids;
+            for (int idx : m_match_tri_indices)
+                fids.push_back((unsigned int)idx);
+            if (!fids.empty() && !is_filament_compatible(fids)) {
+                if (auto pair = find_incompatible_filament_pair(fids)) {
+                    m_compat_warning_text->SetLabel(
+                        wxString::Format(_L("Filament %d and Filament %d are incompatible and cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
+                } else {
+                    m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+                }
+                m_compat_warning_text->Wrap(FromDIP(360));
+                m_compat_warning_panel->Show();
+                m_btn_confirm->Disable();
+            } else {
+                m_compat_warning_panel->Hide();
+                m_btn_confirm->Enable();
+            }
         }
         Layout();
         return;

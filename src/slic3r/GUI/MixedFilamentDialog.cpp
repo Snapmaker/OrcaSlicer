@@ -2722,6 +2722,7 @@ void MixedFilamentDialog::build_swatch_grid()
                 if (m_match_tri_picker)  m_match_tri_picker->Refresh();
                 if (m_match_strip_panel) m_match_strip_panel->Refresh();
                 if (m_match_blend_panel) m_match_blend_panel->Refresh();
+                update_compatibility_warning();
                 return;
             }
             std::vector<int> selections;
@@ -2759,6 +2760,7 @@ void MixedFilamentDialog::build_swatch_grid()
                 rebuild_legend();
             }
             update_preview();
+            update_compatibility_warning();
         });
 
         grid->Add(badge, 0, wxALIGN_CENTER);

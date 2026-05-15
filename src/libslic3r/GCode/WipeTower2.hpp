@@ -162,6 +162,8 @@ public:
         float               retract_speed;
     };
 
+    const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
+
 private:
 	enum wipe_shape // A fill-in direction
 	{
@@ -212,6 +214,7 @@ private:
     float  m_rib_length                   = 0;
 
     bool   m_enable_arc_fitting           = false;
+    std::map<float, Polylines> m_outer_wall; // for wipe tower out wall and brim
 
 	// G-code generator parameters.
     float           m_cooling_tube_retraction   = 0.f;

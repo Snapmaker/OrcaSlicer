@@ -2932,6 +2932,7 @@ void Print::_make_wipe_tower()
                                                   m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
                                                   config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
                                                   {scale_(origin.x()), scale_(origin.y())});
+        m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     }
 }
 

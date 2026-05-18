@@ -25,6 +25,7 @@ struct EngineConfig {
     std::string temp_dir;          // temp directory for intermediate gcode files
     std::string data_dir;          // --data-dir, custom system presets path (empty = auto)
     int timeout_seconds = 0;       // 0 = no timeout; cloud service sets based on file size
+    int max_size_mb = 200;         // 0 = no limit; max input file size in megabytes
     std::string cancel_file;       // watchdog file path for external cancellation
     bool enforce_official_presets = true;  // P0-2: replace user config with official presets
 };

@@ -106,6 +106,16 @@ CliArgs parse_args(int argc, char* argv[]) {
                 std::exit(EXIT_INVALID_ARGS);
             }
         }
+        else if ((arg == "--max-size") && i + 1 < argc) {
+            try {
+                int val = std::stoi(argv[++i]);
+                args.engine_cfg.max_size_mb = (val < 0) ? 0 : val;
+            } catch (...) {
+                std::cerr << "Error: Invalid max-size value." << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
+                std::exit(EXIT_INVALID_ARGS);
+            }
+        }
         else if (arg == "--cancel-file" && i + 1 < argc) {
             args.engine_cfg.cancel_file = argv[++i];
         }
@@ -224,6 +234,12 @@ int main(int argc, char* argv[]) {
     BOOST_LOG_TRIVIAL(info) << "Input file: " << cfg.input_file;
     BOOST_LOG_TRIVIAL(info) << "Plate: " << (cfg.single_plate ? std::to_string(cfg.plate_id) : "all");
     BOOST_LOG_TRIVIAL(info) << "Format: " << (cfg.format == OutputFormat::GCODE_3MF ? "gcode.3mf" : "gcode");
+    if (cfg.timeout_seconds > 0)
+        BOOST_LOG_TRIVIAL(info) << "Timeout: " << cfg.timeout_seconds << "s";
+    if (cfg.max_size_mb > 0)
+        BOOST_LOG_TRIVIAL(info) << "Max file size: " << cfg.max_size_mb << " MB";
+    else
+        BOOST_LOG_TRIVIAL(info) << "Max file size: unlimited";
 
     // --- Setup resources directory ---
     if (!resources_dir.empty()) {

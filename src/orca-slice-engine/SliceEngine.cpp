@@ -174,19 +174,21 @@ bool SliceEngine::load_3mf() {
         return false;
     }
 
-    // File size check (200MB default)
-    constexpr boost::uintmax_t MAX_FILE_SIZE = 200ULL * 1024 * 1024;
-    boost::system::error_code ec;
-    boost::uintmax_t file_size = boost::filesystem::file_size(m_cfg.input_file, ec);
-    if (!ec && file_size > MAX_FILE_SIZE) {
-        std::string msg = "文件大小超过限制 (" + std::to_string(MAX_FILE_SIZE / 1024 / 1024)
-                        + "MB)，请简化模型或减少面数后重试";
-        BOOST_LOG_TRIVIAL(error) << msg;
-        m_any_error = true;
-        set_error_type(EXIT_LOAD_ERROR);
-        m_stats.error_message = msg;
-        m_stats.issues.push_back(make_error(-1, "FILE_SIZE_EXCEEDED", msg));
-        return false;
+    // File size check (configurable via --max-size, default 200MB, 0 = no limit)
+    if (m_cfg.max_size_mb > 0) {
+        boost::uintmax_t max_file_size = static_cast<boost::uintmax_t>(m_cfg.max_size_mb) * 1024ULL * 1024ULL;
+        boost::system::error_code ec;
+        boost::uintmax_t file_size = boost::filesystem::file_size(m_cfg.input_file, ec);
+        if (!ec && file_size > max_file_size) {
+            std::string msg = "文件大小超过限制 (" + std::to_string(m_cfg.max_size_mb)
+                            + "MB)，请简化模型或减少面数后重试";
+            BOOST_LOG_TRIVIAL(error) << msg;
+            m_any_error = true;
+            set_error_type(EXIT_LOAD_ERROR);
+            m_stats.error_message = msg;
+            m_stats.issues.push_back(make_error(-1, "FILE_SIZE_EXCEEDED", msg));
+            return false;
+        }
     }
 
     BOOST_LOG_TRIVIAL(info) << "Loading 3MF file...";

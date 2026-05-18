@@ -435,6 +435,13 @@ void MixedFilamentDialog::build_ui()
                     if (m_match_hex_input)
                         m_match_hex_input->ChangeValue(c.GetAsString(wxC2S_HTML_SYNTAX).Mid(1));
                     if (m_match_panel) m_match_panel->set_target_color(c);
+                    if (m_match_hex_error) {
+                        m_match_hex_error = false;
+                        if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+                        if (m_error_panel) m_error_panel->Hide();
+                        if (m_btn_confirm) m_btn_confirm->Enable();
+                        Layout();
+                    }
                 }
             }
         });

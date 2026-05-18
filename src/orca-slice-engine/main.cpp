@@ -49,6 +49,7 @@ CliArgs parse_args(int argc, char* argv[]) {
 
         if (arg == "-h" || arg == "--help") {
             print_usage(argv[0]);
+            BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_OK;
             std::exit(EXIT_OK);
         }
         else if (arg == "-v" || arg == "--verbose") {
@@ -81,10 +82,12 @@ CliArgs parse_args(int argc, char* argv[]) {
                     args.engine_cfg.plate_id = std::stoi(plate_arg);
                     if (args.engine_cfg.plate_id < 1) {
                         std::cerr << "Error: Plate ID must be 1 or greater (or 'all')." << std::endl;
+                        BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
                         std::exit(EXIT_INVALID_ARGS);
                     }
                 } catch (...) {
                     std::cerr << "Error: Invalid plate ID: " << plate_arg << std::endl;
+                    BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
                     std::exit(EXIT_INVALID_ARGS);
                 }
             }
@@ -99,6 +102,7 @@ CliArgs parse_args(int argc, char* argv[]) {
                     args.engine_cfg.timeout_seconds = 0;
             } catch (...) {
                 std::cerr << "Error: Invalid timeout value." << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
                 std::exit(EXIT_INVALID_ARGS);
             }
         }
@@ -116,6 +120,7 @@ CliArgs parse_args(int argc, char* argv[]) {
                 args.engine_cfg.format = OutputFormat::GCODE_3MF;
             } else {
                 std::cerr << "Error: Unknown format: " << fmt << " (use 'gcode' or 'gcode.3mf')" << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
                 std::exit(EXIT_INVALID_ARGS);
             }
         }
@@ -125,12 +130,14 @@ CliArgs parse_args(int argc, char* argv[]) {
                 args.engine_cfg.input_file = arg;
             } else {
                 std::cerr << "Error: Multiple input files specified." << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
                 std::exit(EXIT_INVALID_ARGS);
             }
         }
         else {
             std::cerr << "Error: Unknown option: " << arg << std::endl;
             print_usage(argv[0]);
+            BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
             std::exit(EXIT_INVALID_ARGS);
         }
     }
@@ -139,6 +146,7 @@ CliArgs parse_args(int argc, char* argv[]) {
     if (args.engine_cfg.input_file.empty()) {
         std::cerr << "Error: No input file specified." << std::endl;
         print_usage(argv[0]);
+        BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_INVALID_ARGS;
         std::exit(EXIT_INVALID_ARGS);
     }
 
@@ -152,6 +160,11 @@ int main(int argc, char* argv[]) {
 
     boost::nowide::args a(argc, argv);
 
+    // --- Setup console logging early so exit codes are always printed ---
+    boost::log::add_console_log(std::cout, boost::log::keywords::format = "[%Severity%] %Message%");
+    boost::log::add_common_attributes();
+    boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::info);
+
     // --- Parse CLI (single pass) ---
     CliArgs cli = parse_args(argc, argv);
     EngineConfig& cfg = cli.engine_cfg;
@@ -164,6 +177,7 @@ int main(int argc, char* argv[]) {
 
     if (!boost::filesystem::exists(cfg.input_file)) {
         std::cerr << "Error: Input file not found: " << cfg.input_file << std::endl;
+        BOOST_LOG_TRIVIAL(info) << "Exiting with code " << EXIT_FILE_NOT_FOUND;
         return EXIT_FILE_NOT_FOUND;
     }
 
@@ -179,18 +193,13 @@ int main(int argc, char* argv[]) {
             cfg.input_file, cfg.output_base, cfg.plate_id, cfg.format, cfg.single_plate);
     }
 
-    // --- Setup logging ---
-    boost::log::add_console_log(std::cout, boost::log::keywords::format = "[%Severity%] %Message%");
-    boost::log::add_common_attributes();
-
-    // Set up file logging if enabled
+    // --- Setup file logging if enabled ---
     if (log_enabled) {
         namespace expr = boost::log::expressions;
         if (log_file_path.empty()) {
             boost::filesystem::path out(expected_output);
             log_file_path = (out.parent_path() / out.stem().stem()).string() + ".log";
         }
-        // Ensure parent directory exists
         {
             boost::filesystem::path log_parent = boost::filesystem::path(log_file_path).parent_path();
             if (!log_parent.empty() && !boost::filesystem::exists(log_parent))
@@ -207,10 +216,9 @@ int main(int argc, char* argv[]) {
         );
     }
 
+    // Apply verbose filter override after parsing (console may already be set up)
     if (verbose)
         boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::trace);
-    else
-        boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::info);
 
     BOOST_LOG_TRIVIAL(info) << "OrcaSlicer Cloud Engine v" << SLIC3R_VERSION;
     BOOST_LOG_TRIVIAL(info) << "Input file: " << cfg.input_file;

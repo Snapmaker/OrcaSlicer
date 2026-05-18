@@ -911,30 +911,61 @@ bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
 bool is_filament_compatible(const MixedFilament& mf)
 {
     std::vector<unsigned int> fids;
-    if (mf.component_a >= 1) fids.push_back(mf.component_a - 1);
-    if (mf.component_b >= 1) fids.push_back(mf.component_b - 1);
-    if (!mf.gradient_component_ids.empty()) {
-        for (char c : mf.gradient_component_ids) {
-            int idx = c - '1';
-            if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
-        }
-    }
+
     if (!mf.manual_pattern.empty()) {
+        // Cycle / pattern mode: the pattern tokens encode all participating
+        // filaments. component_a / component_b are not added separately —
+        // in cycle mode they are hardcoded to 1 and 2 and would introduce
+        // phantom filaments into the compatibility check.
         const std::string norm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
-        if (!norm.empty()) {
-            PresetBundle* preset_bundle = wxGetApp().preset_bundle;
-            const size_t num_physical = preset_bundle ? preset_bundle->filament_presets.size() : 16;
-            const auto groups = MixedFilamentManager::split_pattern_groups(norm);
-            for (const auto& group : groups) {
-                const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
-                for (const auto& token : tokens) {
-                    const unsigned int eid = MixedFilamentManager::physical_filament_from_token(token, mf, num_physical);
-                    if (eid >= 1 && eid <= num_physical)
-                        fids.push_back(eid - 1);
-                }
+        if (norm.empty()) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "Mixed filament compatibility: manual_pattern '"
+                << mf.manual_pattern << "' normalized to empty, malformed pattern";
+            return false;
+        }
+
+        PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+        if (!preset_bundle || preset_bundle->filament_presets.empty()) {
+            BOOST_LOG_TRIVIAL(error)
+                << "Mixed filament compatibility: PresetBundle is "
+                << (preset_bundle ? "empty (no filament presets)" : "null")
+                << ", cannot resolve pattern '" << mf.manual_pattern << "'";
+            return false;
+        }
+
+        const size_t num_physical = preset_bundle->filament_presets.size();
+        const auto groups = MixedFilamentManager::split_pattern_groups(norm);
+        for (const auto& group : groups) {
+            const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
+            for (const auto& token : tokens) {
+                const unsigned int eid = MixedFilamentManager::physical_filament_from_token(token, mf, num_physical);
+                if (eid >= 1 && eid <= num_physical)
+                    fids.push_back(eid - 1);
+            }
+        }
+    } else {
+        if (mf.component_a >= 1) fids.push_back(mf.component_a - 1);
+        if (mf.component_b >= 1) fids.push_back(mf.component_b - 1);
+        if (!mf.gradient_component_ids.empty()) {
+            for (char c : mf.gradient_component_ids) {
+                int idx = c - '1';
+                if (idx >= 0 && idx <= 8) fids.push_back(static_cast<unsigned int>(idx));
             }
         }
     }
+
+    if (fids.empty()) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "Mixed filament compatibility: no valid filament IDs extracted"
+            << " (component_a=" << mf.component_a
+            << ", component_b=" << mf.component_b
+            << ", manual_pattern='" << mf.manual_pattern
+            << "', gradient_component_ids='" << mf.gradient_component_ids << "')"
+            << " — treating as incompatible";
+        return false;
+    }
+
     return is_filament_compatible(fids);
 }
 

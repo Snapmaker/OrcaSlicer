@@ -48,7 +48,7 @@ public:
 
     void set_value(int value_percent)
     {
-        m_value = std::clamp(value_percent, MIN_RATIO_PERCENT, MAX_RATIO_PERCENT);
+        m_value = std::clamp(value_percent, m_min_percent, m_max_percent);
         Refresh();
     }
 
@@ -70,6 +70,14 @@ public:
         Refresh();
     }
 
+    void set_min_max(int min_pct, int max_pct)
+    {
+        m_min_percent = std::max(0, min_pct);
+        m_max_percent = std::min(100, max_pct);
+        m_value = std::clamp(m_value, m_min_percent, m_max_percent);
+        Refresh();
+    }
+
 private:
     wxRect gradient_rect() const;
     int    value_from_x(int x) const;
@@ -88,6 +96,8 @@ private:
     std::vector<int>      m_multi_weights;
     int                   m_value         {50};
     bool                  m_dragging      {false};
+    int                   m_min_percent   {MIN_RATIO_PERCENT};
+    int                   m_max_percent   {MAX_RATIO_PERCENT};
 };
 
 }} // namespace Slic3r::GUI

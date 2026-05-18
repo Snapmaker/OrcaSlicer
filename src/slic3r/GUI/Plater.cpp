@@ -3219,11 +3219,13 @@ void Sidebar::on_filaments_change(size_t num_filaments)
     }
 
     Layout();
-    wxTheApp->CallAfter([this]() {
-        if (p->m_scrolled_filaments) {
-            int vh = p->m_scrolled_filaments->GetVirtualSize().y;
-            int ch = p->m_scrolled_filaments->GetClientSize().y;
-            p->m_scrolled_filaments->Scroll(0, std::max(0, vh - ch));
+    wxWeakRef<Sidebar> weak_this(this);
+    wxTheApp->CallAfter([weak_this]() {
+        Sidebar* sidebar = weak_this.get();
+        if (sidebar && sidebar->p && sidebar->p->m_scrolled_filaments) {
+            int vh = sidebar->p->m_scrolled_filaments->GetVirtualSize().y;
+            int ch = sidebar->p->m_scrolled_filaments->GetClientSize().y;
+            sidebar->p->m_scrolled_filaments->Scroll(0, std::max(0, vh - ch));
         }
     });
     p->m_panel_filament_title->Refresh();
@@ -5645,11 +5647,13 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
             mfs.back().gradient_enabled            = r.gradient_enabled;
             mfs.back().gradient_start              = r.gradient_start;
             mfs.back().gradient_end                = r.gradient_end;
+            mfs.back().display_color             = r.display_color;
             mfs.back().custom                  = true;
         }
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
         wxGetApp().plater()->post_slice_state_change_update();
+        wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
         update_color_mix_panel();
         m_scrolled_sizer->Layout();
     });
@@ -5670,6 +5674,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
         wxGetApp().plater()->post_slice_state_change_update();
+        wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
         update_color_mix_panel();
         m_scrolled_sizer->Layout();
     });
@@ -5740,11 +5745,13 @@ void Sidebar::update_color_mix_panel()
     if (!any_visible) {
         p->m_scrolled_color_mix->Hide();
         p->m_btn_del_color_mix->Hide();
+        p->m_btn_add_color_mix->SetBitmap_("icon_add_circle");
         m_scrolled_sizer->Layout();
         return;
     }
     p->m_scrolled_color_mix->Show();
     p->m_btn_del_color_mix->Show();
+    p->m_btn_add_color_mix->SetBitmap_("add_filament");
 
     // 2-column grid matching the physical filament panel layout
     auto* grid_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -5774,7 +5781,7 @@ void Sidebar::update_color_mix_panel()
 
         wxString lbl;
         if (!normalized_pattern_cm.empty())
-            lbl = _L("Pattern");
+            lbl = wxString(summarize_cycle_pattern_text(normalized_pattern_cm, mf, int(num_physical)));
         else if (mf.gradient_component_ids.size() >= 3) {
             // parse weights
             const size_t n = mf.gradient_component_ids.size();
@@ -5807,8 +5814,9 @@ void Sidebar::update_color_mix_panel()
             const int pct_b = std::clamp(mf.mix_b_percent, 0, 100);
             const int pct_a = 100 - pct_b;
             lbl = wxString::Format("F%u %d%%+F%u %d%%", mf.component_a, pct_a, mf.component_b, pct_b);
-            for (char c : mf.gradient_component_ids)
-                lbl += wxString::Format("+F%d", int(c - '0'));
+            if (mf.distribution_mode != int(MixedFilament::Simple))
+                for (char c : mf.gradient_component_ids)
+                    lbl += wxString::Format("+F%d", int(c - '0'));
         }
         
         bool has_error = !is_filament_compatible(mf);
@@ -5831,20 +5839,24 @@ void Sidebar::update_color_mix_panel()
         name_btn->SetBackgroundColour(*wxWHITE);
         name_btn->SetForegroundColour(wxColour(50, 50, 50));
         name_btn->SetCursor(wxCursor(wxCURSOR_HAND));
+        name_btn->SetMinSize(wxSize(0, -1)); // allow sizer to shrink below text width
 
         int name_flags = wxEXPAND | (has_error ? (wxTOP | wxBOTTOM | wxRIGHT) : wxALL);
-        name_sizer->Add(name_btn, 1, name_flags, FromDIP(4));
+        name_sizer->Add(name_btn, 1, name_flags, FromDIP(8));
         name_panel->SetSizer(name_sizer);
-        name_panel->SetMinSize(wxSize(-1, FromDIP(30)));
-        name_panel->SetMaxSize(wxSize(-1, FromDIP(30)));
+        name_panel->SetMinSize(wxSize(name_panel->FromDIP(100), name_panel->FromDIP(30)));
+        name_panel->SetMaxSize(wxSize(-1, name_panel->FromDIP(30)));
 
         // Use wxControl::Ellipsize on resize to match combo truncation behavior
-        name_panel->Bind(wxEVT_SIZE, [lbl, name_btn](wxSizeEvent& evt) {
-            wxClientDC dc(name_btn);
-            dc.SetFont(name_btn->GetFont());
+        name_panel->Bind(wxEVT_SIZE, [lbl, name_btn, name_panel](wxSizeEvent& evt) {
+            name_panel->Layout(); // force sizer layout so name_btn has its current size
             int avail = name_btn->GetSize().x;
-            wxString ellipsized = wxControl::Ellipsize(lbl, dc, wxELLIPSIZE_END, avail);
-            name_btn->SetLabel(ellipsized);
+            if (avail > 0) {
+                wxClientDC dc(name_btn);
+                dc.SetFont(name_btn->GetFont());
+                wxString ellipsized = wxControl::Ellipsize(lbl, dc, wxELLIPSIZE_END, avail);
+                name_btn->SetLabel(ellipsized);
+            }
             evt.Skip();
         });
 
@@ -5886,12 +5898,18 @@ void Sidebar::update_color_mix_panel()
             mfs2[i].gradient_enabled           = r.gradient_enabled;
             mfs2[i].gradient_start             = r.gradient_start;
             mfs2[i].gradient_end               = r.gradient_end;
+            mfs2[i].display_color               = r.display_color;
             if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
             wxGetApp().plater()->post_slice_state_change_update();
-            wxTheApp->CallAfter([this]() {
-                update_color_mix_panel();
-                m_scrolled_sizer->Layout();
+            wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
+            wxWeakRef<Sidebar> weak_this(this);
+            wxTheApp->CallAfter([weak_this]() {
+                Sidebar* sidebar = weak_this.get();
+                if (sidebar) {
+                    sidebar->update_color_mix_panel();
+                    sidebar->m_scrolled_sizer->Layout();
+                }
             });
         });
 
@@ -5930,9 +5948,14 @@ void Sidebar::update_color_mix_panel()
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();
                 wxGetApp().plater()->post_slice_state_change_update();
-                wxTheApp->CallAfter([this]() {
-                    update_color_mix_panel();
-                    m_scrolled_sizer->Layout();
+                wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
+                wxWeakRef<Sidebar> weak_this(this);
+                wxTheApp->CallAfter([weak_this]() {
+                    Sidebar* sidebar = weak_this.get();
+                    if (sidebar) {
+                        sidebar->update_color_mix_panel();
+                        sidebar->m_scrolled_sizer->Layout();
+                    }
                 });
             }, edit_id);
 
@@ -6029,9 +6052,14 @@ void Sidebar::update_color_mix_panel()
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr2.serialize_custom_entries();
                 wxGetApp().plater()->post_slice_state_change_update();
-                wxTheApp->CallAfter([this]() {
-                    update_color_mix_panel();
-                    m_scrolled_sizer->Layout();
+                wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
+                wxWeakRef<Sidebar> weak_this(this);
+                wxTheApp->CallAfter([weak_this]() {
+                    Sidebar* sidebar = weak_this.get();
+                    if (sidebar) {
+                        sidebar->update_color_mix_panel();
+                        sidebar->m_scrolled_sizer->Layout();
+                    }
                 });
             }, del_id);
             
@@ -6075,11 +6103,13 @@ void Sidebar::update_color_mix_panel()
     p->m_scrolled_color_mix->SetMaxSize({-1, desired_h});
     
     m_scrolled_sizer->Layout();
-    wxTheApp->CallAfter([this]() {
-        if (p->m_scrolled_color_mix) {
-            int vh = p->m_scrolled_color_mix->GetVirtualSize().y;
-            int ch = p->m_scrolled_color_mix->GetClientSize().y;
-            p->m_scrolled_color_mix->Scroll(0, std::max(0, vh - ch));
+    wxWeakRef<Sidebar> weak_this(this);
+    wxTheApp->CallAfter([weak_this]() {
+        Sidebar* sidebar = weak_this.get();
+        if (sidebar && sidebar->p && sidebar->p->m_scrolled_color_mix) {
+            int vh = sidebar->p->m_scrolled_color_mix->GetVirtualSize().y;
+            int ch = sidebar->p->m_scrolled_color_mix->GetClientSize().y;
+            sidebar->p->m_scrolled_color_mix->Scroll(0, std::max(0, vh - ch));
         }
     });
     p->m_panel_color_mix_content->Refresh();
@@ -6588,7 +6618,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     p->m_panel_mixed_filaments_content->Hide();
     Layout();
     refresh_model_canvas_colors();
-    update_color_mix_panel();
+    wxWeakRef<Sidebar> weakSelf(this);
+    wxTheApp->CallAfter([weakSelf]() {
+        if (weakSelf) weakSelf->update_color_mix_panel();
+    });
     return;
 
 #if 0 // Mixed Filaments panel UI — hidden, preserved for potential future re-enablement
@@ -7261,11 +7294,13 @@ void Sidebar::on_filaments_delete(size_t filament_id)
     }
 
     Layout();
-    wxTheApp->CallAfter([this]() {
-        if (p->m_scrolled_filaments) {
-            int vh = p->m_scrolled_filaments->GetVirtualSize().y;
-            int ch = p->m_scrolled_filaments->GetClientSize().y;
-            p->m_scrolled_filaments->Scroll(0, std::max(0, vh - ch));
+    wxWeakRef<Sidebar> weak_this(this);
+    wxTheApp->CallAfter([weak_this]() {
+        Sidebar* sidebar = weak_this.get();
+        if (sidebar && sidebar->p && sidebar->p->m_scrolled_filaments) {
+            int vh = sidebar->p->m_scrolled_filaments->GetVirtualSize().y;
+            int ch = sidebar->p->m_scrolled_filaments->GetClientSize().y;
+            sidebar->p->m_scrolled_filaments->Scroll(0, std::max(0, vh - ch));
         }
     });
     p->m_panel_filament_title->Refresh();
@@ -7334,7 +7369,7 @@ void Sidebar::change_filament(size_t from_id, size_t to_id)
                    "Merging will remove this physical filament and may invalidate the mixed filament. Continue?"),
                 _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
             int ret = dlg.ShowModal();
-            if (ret != wxOK)
+            if (ret != wxID_OK)
                 return;
         }
     }
@@ -7369,7 +7404,7 @@ void Sidebar::change_filament(size_t from_id, size_t to_id)
 
             MessageDialog dlg(wxGetApp().plater(), msg, _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
             int ret = dlg.ShowModal();
-            if (ret != wxOK)
+            if (ret != wxID_OK)
                 return;
         }
     }
@@ -7512,7 +7547,7 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
 
             MessageDialog dlg(wxGetApp().plater(), msg, _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
             int ret = dlg.ShowModal();
-            if (ret != wxOK)
+            if (ret != wxID_OK)
                 return;
         }
     }

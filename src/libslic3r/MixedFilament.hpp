@@ -350,6 +350,16 @@ private:
     MixedFilamentDisplayContext m_display_context;
 };
 
+// Returns true when the mixed filament represents a simple two-color gradient
+// that can be rendered as a vertical color ramp (no manual pattern, exactly 2 components).
+inline bool is_simple_gradient(const MixedFilament& mf)
+{
+    return mf.gradient_enabled
+        && mf.component_a != mf.component_b
+        && MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty()
+        && mf.gradient_component_ids.size() < 3;
+}
+
 } // namespace Slic3r
 
 #endif /* slic3r_MixedFilament_hpp_ */

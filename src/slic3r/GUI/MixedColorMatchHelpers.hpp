@@ -92,4 +92,10 @@ struct CyclePatternParseResult {
 // One-shot parse of a normalized cycle pattern: split→token→strtoul→validate.
 CyclePatternParseResult parse_cycle_pattern(const std::string& normalized_pattern, int num_physical);
 
+// Parse a normalized cycle pattern and produce a human-readable percentage summary.
+// Format: "F1 60%+F2 40%". Returns empty string on invalid input.
+std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
+                                         const MixedFilament& entry,
+                                         int num_physical);
+
 }} // namespace Slic3r::GUI

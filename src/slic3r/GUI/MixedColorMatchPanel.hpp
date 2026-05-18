@@ -30,6 +30,10 @@ public:
     // Start the initial async recipe search (call after the panel is shown).
     void begin_initial_recipe_load();
 
+    // Set target color from external UI and trigger recipe search.
+    void set_target_color(const wxColour &target);
+    void set_min_component_percent(int pct);
+
     MixedColorMatchRecipeResult selected_recipe() const { return m_selected_recipe; }
     bool                        has_valid_recipe()  const { return m_selected_recipe.valid && !m_recipe_loading; }
 

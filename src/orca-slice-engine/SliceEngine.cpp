@@ -657,11 +657,8 @@ void SliceEngine::process_plate(int plate_id) {
         return;
     }
 
-    // --- Build volume check ---
-    if (!run_build_volume_check(plate_id, identify_ids))
-        return;
-
-    // Calculate plate dimensions (computed once, reused per attempt)
+    // Calculate plate dimensions and origin (done before build-volume check
+    // so the check can translate instances into plate-local coordinates).
     double plate_width = 200.0;
     double plate_depth = 200.0;
 
@@ -680,6 +677,10 @@ void SliceEngine::process_plate(int plate_id) {
     }
 
     Vec3d origin = setup_print_origin(plate_id, plate_width, plate_depth);
+
+    // --- Build volume check (uses plate-local coordinates) ---
+    if (!run_build_volume_check(plate_id, identify_ids, origin))
+        return;
 
     // Get BBL vendor flag once
     bool is_bbl = (m_presets_available && m_preset_bundle)
@@ -814,7 +815,7 @@ int SliceEngine::filter_instances(int plate_id, std::set<int>& identify_ids) {
     return count;
 }
 
-bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& identify_ids) {
+bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& identify_ids, const Vec3d& origin) {
     if (!(m_config.has("printable_area") && m_config.has("printable_height")))
         return true;
 
@@ -823,13 +824,36 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
     if (!printable_area_opt || printable_area_opt->values.empty() || printable_height <= 0)
         return true;
 
+    // Translate build-volume check into this plate's local coordinate system.
+    // Instances on different plates have grid-layout offsets in global space;
+    // subtracting the plate origin gives their local position within the plate.
     BuildVolume build_volume(printable_area_opt->values, printable_height);
+
+    // Temporarily shift on-plate instances into plate-local coordinates for the check,
+    // then restore them afterwards.
+    std::vector<std::pair<ModelInstance*, Vec3d>> shifted;
+    for (ModelObject* obj : m_model.objects) {
+        for (ModelInstance* inst : obj->instances) {
+            if (!inst->printable) continue;
+            int lid = static_cast<int>(inst->loaded_id);
+            if (identify_ids.find(lid) != identify_ids.end()) {
+                Vec3d global_offset = inst->get_offset();
+                Vec3d local_offset = global_offset - origin;
+                shifted.emplace_back(inst, global_offset);
+                inst->set_offset(local_offset);
+            }
+        }
+    }
+
     m_model.update_print_volume_state(build_volume);
 
     bool has_partly_outside = false;
     for (ModelObject* obj : m_model.objects) {
         for (ModelInstance* inst : obj->instances) {
             if (!inst->printable) continue;
+            int lid = static_cast<int>(inst->loaded_id);
+            if (identify_ids.find(lid) == identify_ids.end()) continue;
+
             if (inst->print_volume_state == ModelInstancePVS_Partly_Outside) {
                 log_plate_message("[Pre-processing]", "ERROR", plate_id,
                     "Object \"" + obj->name + "\" is placed on the boundary of or exceeds the build volume.");
@@ -854,7 +878,6 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
             auto* zht_opt = m_config.option<ConfigOptionEnumsGeneric>("z_hop_types");
             if (zht_opt) {
                 for (int v : zht_opt->values) {
-                    // zhtSpiral or zhtAuto (which forces SpiralLift on layer change)
                     if (v == static_cast<int>(ZHopType::zhtSpiral) ||
                         v == static_cast<int>(ZHopType::zhtAuto)) {
                         spiral_lift_active = true;
@@ -871,7 +894,10 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
                 if (!obj->printable) continue;
                 for (size_t idx = 0; idx < obj->instances.size(); ++idx) {
                     ModelInstance* inst = obj->instances[idx];
-                    if (!inst->printable || inst->print_volume_state != ModelInstancePVS_Inside) continue;
+                    if (!inst->printable) continue;
+                    int lid = static_cast<int>(inst->loaded_id);
+                    if (identify_ids.find(lid) == identify_ids.end()) continue;
+                    if (inst->print_volume_state != ModelInstancePVS_Inside) continue;
                     BoundingBoxf3 bb = obj->instance_bounding_box(idx);
                     double dist_left   = std::abs(bb.min.x() - bed_bb.min.x());
                     double dist_right  = std::abs(bed_bb.max.x() - bb.max.x());
@@ -895,14 +921,18 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
         }
     }
 
-    // Restore printable state — update_print_volume_state may have changed
-    // print_volume_state for on-plate instances (e.g. marked them Fully_Outside
-    // because grid-layout positions are far from build-volume origin).
+    // Restore global offsets for on-plate instances and update printable state
+    for (auto& [inst, global_offset] : shifted) {
+        inst->set_offset(global_offset);
+    }
+    // Mark off-plate instances as not printable for this plate
     for (ModelObject* obj : m_model.objects) {
         for (ModelInstance* inst : obj->instances) {
-            bool on_plate = (identify_ids.find(static_cast<int>(inst->loaded_id)) != identify_ids.end());
+            int lid = static_cast<int>(inst->loaded_id);
+            bool on_plate = (identify_ids.find(lid) != identify_ids.end());
             inst->printable = on_plate;
-            inst->print_volume_state = on_plate ? ModelInstancePVS_Inside : ModelInstancePVS_Fully_Outside;
+            if (on_plate)
+                inst->print_volume_state = ModelInstancePVS_Inside;
         }
     }
 

@@ -121,6 +121,14 @@ CliArgs parse_args(int argc, char* argv[]) {
         }
         else if (arg == "--allow-custom-presets") {
             args.engine_cfg.enforce_official_presets = false;
+            args.engine_cfg.substitute_filaments    = false;
+            args.engine_cfg.clear_custom_gcode      = false;
+        }
+        else if (arg == "--no-filament-substitution") {
+            args.engine_cfg.substitute_filaments = false;
+        }
+        else if (arg == "--keep-custom-gcode") {
+            args.engine_cfg.clear_custom_gcode = false;
         }
         else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
             std::string fmt = argv[++i];
@@ -240,6 +248,8 @@ int main(int argc, char* argv[]) {
         BOOST_LOG_TRIVIAL(info) << "Max file size: " << cfg.max_size_mb << " MB";
     else
         BOOST_LOG_TRIVIAL(info) << "Max file size: unlimited";
+    BOOST_LOG_TRIVIAL(info) << "Filament substitution: " << (cfg.substitute_filaments ? "on" : "off");
+    BOOST_LOG_TRIVIAL(info) << "Clear custom G-code: " << (cfg.clear_custom_gcode ? "on" : "off");
 
     // --- Setup resources directory ---
     if (!resources_dir.empty()) {

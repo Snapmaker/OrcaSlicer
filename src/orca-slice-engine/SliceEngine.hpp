@@ -28,6 +28,8 @@ struct EngineConfig {
     int max_size_mb = 200;         // 0 = no limit; max input file size in megabytes
     std::string cancel_file;       // watchdog file path for external cancellation
     bool enforce_official_presets = true;  // P0-2: replace user config with official presets
+    bool substitute_filaments = true;     // whether to check & substitute filament with official parent
+    bool clear_custom_gcode = true;       // whether to strip custom G-code blocks for cloud safety
 };
 
 // Intermediate result for a single plate during the pipeline

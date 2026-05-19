@@ -62,12 +62,16 @@ bool SliceEngine::run() {
     load_system_presets();
     validate_presets();
 
-    // Replace user-supplied parameters with official system presets for cloud safety
-    if (m_cfg.enforce_official_presets) {
+    // Filament official compliance check & substitution
+    if (m_cfg.substitute_filaments) {
         if (!validate_filament_official()) {
             build_statistics();
             return false;
         }
+    }
+
+    // Strip custom G-code blocks for cloud safety
+    if (m_cfg.clear_custom_gcode) {
         apply_official_presets();
     }
 

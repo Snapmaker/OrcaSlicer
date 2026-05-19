@@ -1,0 +1,47 @@
+#!/bin/bash
+# Test: verify OrcaSlicer handles port 13619 being occupied
+# Usage: ./scripts/test_port_fallback/test_port_fallback_mac.sh [path/to/Snapmaker Orca.app]
+
+set -e
+
+APP="${1:-build/arm64/Snapmaker_Orca/Snapmaker Orca.app}"
+
+echo "=== Port 13619 Occupancy Test ==="
+echo ""
+
+# 1. Check port 13619 status before test
+echo "[1/4] Checking port 13619..."
+if lsof -i :13619 &>/dev/null; then
+    echo "  WARNING: port 13619 is already in use:"
+    lsof -i :13619 | head -5
+else
+    echo "  OK: port 13619 is free"
+fi
+
+# 2. Occupy port 13619
+echo "[2/4] Occupying port 13619 with a dummy listener..."
+nc -l 13619 &
+NC_PID=$!
+sleep 0.5
+
+if ! kill -0 $NC_PID 2>/dev/null; then
+    echo "  ERROR: failed to occupy port 13619"
+    exit 1
+fi
+echo "  OK: port 13619 held by nc (PID $NC_PID)"
+
+# 3. Launch OrcaSlicer
+echo "[3/4] Launching OrcaSlicer..."
+open "$APP"
+echo "  App launched. Check OrcaSlicer logs for:"
+echo "    'Original port 13619 is in use, switching to port 13620'"
+echo "    (or similar port number)"
+
+# 4. Wait for user to test, then cleanup
+echo ""
+echo "[4/4] Press Enter after testing to release port 13619 and cleanup..."
+read -r
+
+kill $NC_PID 2>/dev/null || true
+echo "  Port 13619 released."
+echo "=== Test complete ==="

@@ -70,6 +70,8 @@ private:
     void load_system_presets();
     void validate_presets();
     void apply_official_presets();
+    bool validate_filament_official();
+    bool validate_printer_model();
     bool validate_input();
     void process_plate(int plate_id);
     void package_output();

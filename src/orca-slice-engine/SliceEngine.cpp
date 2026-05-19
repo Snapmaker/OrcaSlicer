@@ -63,8 +63,19 @@ bool SliceEngine::run() {
     validate_presets();
 
     // Replace user-supplied parameters with official system presets for cloud safety
-    if (m_cfg.enforce_official_presets)
+    if (m_cfg.enforce_official_presets) {
+        if (!validate_filament_official()) {
+            build_statistics();
+            return false;
+        }
         apply_official_presets();
+    }
+
+    // Block slicing if printer model is not Snapmaker U1
+    if (!validate_printer_model()) {
+        build_statistics();
+        return false;
+    }
 
     bool validate_ok = validate_input();
 
@@ -163,7 +174,7 @@ bool SliceEngine::load_3mf() {
     // --- Pre-load validation: format & size ---
 
     // Extension check
-    std::string ext = boost::filesystem::extension(m_cfg.input_file);
+    std::string ext = boost::filesystem::path(m_cfg.input_file).extension().string();
     if (ext != ".3mf") {
         std::string msg = "仅支持上传 .3mf 格式的打印配置文件，请使用 Snapmaker Orca Slicer 导出";
         BOOST_LOG_TRIVIAL(error) << msg;
@@ -450,6 +461,222 @@ void SliceEngine::validate_presets()
         BOOST_LOG_TRIVIAL(warning)
             << "Preset validation error: " << e.what();
     }
+}
+
+bool SliceEngine::validate_filament_official()
+{
+    // Skip if system presets are not available (no reference for comparison)
+    if (!m_presets_available || !m_preset_bundle)
+        return true;
+
+    if (!m_config.has("filament_settings_id"))
+        return true;
+
+    auto* filament_ids = m_config.option<ConfigOptionStrings>("filament_settings_id", true);
+    if (!filament_ids || filament_ids->values.empty())
+        return true;
+
+    int num_filaments = static_cast<int>(filament_ids->values.size());
+    bool any_error = false;
+
+    // Lambda: substitute per-filament config values for extruder `ext_idx`
+    // with the official parent preset's values.
+    auto substitute_filament_params = [&](int ext_idx, const Preset& official_parent,
+                                           const std::string& original_name) {
+        const std::string& parent_name = official_parent.name;
+        BOOST_LOG_TRIVIAL(info) << "Substituting filament " << (ext_idx + 1)
+                                << " (\"" << original_name << "\") with official parent \""
+                                << parent_name << "\"";
+
+        // Update filament_settings_id to point to the official ancestor
+        filament_ids->values[ext_idx] = parent_name;
+
+        // Copy per-extruder array values from the official parent's config
+        for (auto it = official_parent.config.cbegin(); it != official_parent.config.cend(); ++it) {
+            const auto& key = it->first;
+            const auto& opt = it->second;
+            auto* target = m_config.option(key, true);
+            if (!target) continue;
+
+            size_t target_size = 0;
+            if (auto* dst = dynamic_cast<ConfigOptionFloats*>(target)) {
+                target_size = dst->values.size();
+                if (auto* src = dynamic_cast<const ConfigOptionFloats*>(opt.get())) {
+                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                        dst->values[ext_idx] = src->values[0];
+                }
+            } else if (auto* dst = dynamic_cast<ConfigOptionPercents*>(target)) {
+                target_size = dst->values.size();
+                if (auto* src = dynamic_cast<const ConfigOptionPercents*>(opt.get())) {
+                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                        dst->values[ext_idx] = src->values[0];
+                }
+            } else if (auto* dst = dynamic_cast<ConfigOptionInts*>(target)) {
+                target_size = dst->values.size();
+                if (auto* src = dynamic_cast<const ConfigOptionInts*>(opt.get())) {
+                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                        dst->values[ext_idx] = src->values[0];
+                }
+            } else if (auto* dst = dynamic_cast<ConfigOptionStrings*>(target)) {
+                target_size = dst->values.size();
+                if (auto* src = dynamic_cast<const ConfigOptionStrings*>(opt.get())) {
+                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                        dst->values[ext_idx] = src->values[0];
+                }
+            } else if (auto* dst = dynamic_cast<ConfigOptionBools*>(target)) {
+                target_size = dst->values.size();
+                if (auto* src = dynamic_cast<const ConfigOptionBools*>(opt.get())) {
+                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                        dst->values[ext_idx] = src->values[0];
+                }
+            }
+            // Skip single-value types (ConfigOptionFloat, ConfigOptionString, etc.)
+        }
+
+        m_stats.issues.push_back(make_warning(-1, "FILAMENT_SUBSTITUTED",
+            std::string("Filament \"") + original_name
+            + "\" substituted with official preset \"" + parent_name + "\""));
+    };
+
+    // Lambda: check whether a system preset is "official" (Snapmaker or OrcaFilamentLibrary)
+    auto is_official_preset = [](const Preset& p) -> bool {
+        if (p.vendor && p.vendor->name == PresetBundle::SM_BUNDLE)
+            return true;
+        if (p.m_from_orca_filament_lib)
+            return true;
+        return false;
+    };
+
+    // Look up a preset name: system presets first, then project embedded
+    auto find_in_system = [this](const std::string& name) -> Preset* {
+        auto* p = m_preset_bundle->filaments.find_preset(name, false);
+        if (p && p->name == name) return p;
+        return nullptr;
+    };
+
+    auto find_in_project = [this](const std::string& name) -> Preset* {
+        for (auto* pp : m_project_presets) {
+            if (pp && pp->name == name && pp->type == Preset::TYPE_FILAMENT)
+                return pp;
+        }
+        return nullptr;
+    };
+
+    for (int i = 0; i < num_filaments; ++i) {
+        const std::string& name = filament_ids->values[i];
+
+        // Case 1: Direct system preset match
+        if (Preset* sys = find_in_system(name)) {
+            if (is_official_preset(*sys)) {
+                continue; // OK
+            }
+            std::string msg = "Filament \"" + name + "\" belongs to unsupported vendor";
+            BOOST_LOG_TRIVIAL(error) << msg;
+            m_stats.issues.push_back(make_error(-1, "FILAMENT_UNSUPPORTED_VENDOR", msg));
+            any_error = true;
+            continue;
+        }
+
+        // Case 2: Not a direct system match — walk the inheritance chain
+        Preset* current = find_in_project(name);
+        if (!current) {
+            std::string msg = "Filament \"" + name + "\" is not a recognized preset";
+            BOOST_LOG_TRIVIAL(error) << msg;
+            m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN", msg));
+            any_error = true;
+            continue;
+        }
+
+        bool resolved = false;
+        std::set<std::string> visited;
+        while (current && !resolved) {
+            std::string inherits_name = current->inherits();
+            if (inherits_name.empty()) {
+                std::string msg = "Filament \"" + name
+                    + "\" is not derived from any Snapmaker or Generic filament";
+                BOOST_LOG_TRIVIAL(error) << msg;
+                m_stats.issues.push_back(make_error(-1, "FILAMENT_NO_OFFICIAL_ANCESTOR", msg));
+                any_error = true;
+                resolved = true;
+                break;
+            }
+
+            if (!visited.insert(inherits_name).second) {
+                std::string msg = "Circular inheritance detected in filament \"" + name + "\"";
+                BOOST_LOG_TRIVIAL(error) << msg;
+                m_stats.issues.push_back(make_error(-1, "FILAMENT_CIRCULAR_INHERITS", msg));
+                any_error = true;
+                resolved = true;
+                break;
+            }
+
+            // Try system presets first
+            if (Preset* parent = find_in_system(inherits_name)) {
+                if (is_official_preset(*parent)) {
+                    substitute_filament_params(i, *parent, name);
+                    resolved = true;
+                } else {
+                    std::string vendor_name = parent->vendor ? parent->vendor->name : "unknown";
+                    std::string msg = "Filament \"" + name + "\" derives from unsupported vendor \""
+                                    + vendor_name + "\" via \"" + inherits_name + "\"";
+                    BOOST_LOG_TRIVIAL(error) << msg;
+                    m_stats.issues.push_back(make_error(-1, "FILAMENT_UNSUPPORTED_VENDOR", msg));
+                    any_error = true;
+                    resolved = true;
+                }
+            } else {
+                // Not in system — try project embedded, then continue walking
+                Preset* project_parent = find_in_project(inherits_name);
+                if (project_parent) {
+                    current = project_parent;
+                } else {
+                    std::string msg = "Filament \"" + name + "\" inherits from unknown preset \""
+                                    + inherits_name + "\"";
+                    BOOST_LOG_TRIVIAL(error) << msg;
+                    m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN_ANCESTOR", msg));
+                    any_error = true;
+                    resolved = true;
+                }
+            }
+        }
+    }
+
+    if (any_error) {
+        m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+    }
+
+    return !any_error;
+}
+
+bool SliceEngine::validate_printer_model()
+{
+    const std::string ALLOWED_PRINTER_MODEL = "Snapmaker U1";
+
+    if (!m_config.has("printer_model")) {
+        std::string msg = "打印机型号缺失，仅支持 Snapmaker U1 机型";
+        BOOST_LOG_TRIVIAL(error) << msg;
+        m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+        m_stats.error_message = msg;
+        m_stats.issues.push_back(make_error(-1, "PRINTER_MODEL_MISSING", msg));
+        return false;
+    }
+
+    std::string printer_model = m_config.opt_string("printer_model");
+    if (printer_model != ALLOWED_PRINTER_MODEL) {
+        std::string msg = "不支持的打印机型号: \"" + printer_model
+                        + "\"，仅支持 Snapmaker U1 机型";
+        BOOST_LOG_TRIVIAL(error) << msg;
+        m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+        m_stats.error_message = msg;
+        m_stats.issues.push_back(make_error(-1, "PRINTER_MODEL_UNSUPPORTED", msg));
+        return false;
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "Printer model validation passed: " << printer_model;
+    return true;
 }
 
 void SliceEngine::apply_official_presets()

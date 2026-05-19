@@ -79,6 +79,7 @@ public:
         const Vec3d                                                  plate_origin,
         const std::vector<WipeTower::ToolChangeResult>              &priming,
         const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes,
+        const std::vector<std::vector<WipeTower::ToolChangeResult>> &local_z_tool_changes,
         const std::vector<std::vector<WipeTower::box_coordinates>>  &local_z_reserve_boxes,
         const WipeTower::ToolChangeResult                           &final_purge) :
         m_left(/*float(print_config.wipe_tower_x.value)*/ 0.f),
@@ -88,10 +89,12 @@ public:
         m_extruder_offsets(print_config.extruder_offset.values),
         m_priming(priming),
         m_tool_changes(tool_changes),
+        m_local_z_tool_changes(local_z_tool_changes),
         m_local_z_reserve_boxes(local_z_reserve_boxes),
         m_final_purge(final_purge),
         m_layer_idx(-1),
         m_tool_change_idx(0),
+        m_local_z_tool_change_idx(local_z_tool_changes.size(), 0),
         m_local_z_reserve_slot_idx(local_z_reserve_boxes.size(), 0),
         m_plate_origin(plate_origin),
         m_single_extruder_multi_material(print_config.single_extruder_multi_material),
@@ -103,13 +106,14 @@ public:
     void next_layer() {
         ++ m_layer_idx;
         m_tool_change_idx = 0;
+        if (m_layer_idx >= 0 && size_t(m_layer_idx) < m_local_z_tool_change_idx.size())
+            m_local_z_tool_change_idx[size_t(m_layer_idx)] = 0;
         if (m_layer_idx >= 0 && size_t(m_layer_idx) < m_local_z_reserve_slot_idx.size())
             m_local_z_reserve_slot_idx[size_t(m_layer_idx)] = 0;
     }
     std::string tool_change(GCode &gcodegen, int extruder_id, bool finish_layer,
                             bool local_z_unplanned = false,
-                            double local_z_nominal_layer_z = -1.,
-                            bool *was_wipe_tower_purge = nullptr);
+                            double local_z_nominal_layer_z = -1.);
     bool is_empty_wipe_tower_gcode(GCode &gcodegen, int extruder_id, bool finish_layer);
     std::string finalize(GCode &gcodegen);
     std::vector<float> used_filament_length() const;
@@ -126,15 +130,6 @@ private:
 
     // Postprocesses gcode: rotates and moves G1 extrusions and returns result
     std::string post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const;
-    std::string emit_local_z_unplanned_toolchange(GCode &gcodegen, int extruder_id, double local_z_nominal_layer_z, bool *was_wipe_tower_purge = nullptr);
-    std::string emit_local_z_toolchange_via_wipe_tower(GCode &gcodegen, int extruder_id,
-                                                        double toolchange_print_z, double tower_z,
-                                                        float layer_height, const WipeTower::box_coordinates &slot,
-                                                        size_t slot_idx, bool *was_wipe_tower_purge);
-    std::string emit_local_z_toolchange_manual_purge(GCode &gcodegen, int extruder_id,
-                                                      double toolchange_print_z, double tower_z,
-                                                      float layer_height, const WipeTower::box_coordinates &slot,
-                                                      size_t slot_idx, bool *was_wipe_tower_purge);
     // Left / right edges of the wipe tower, for the planning of wipe moves.
     const float                                                  m_left;
     const float                                                  m_right;
@@ -145,11 +140,13 @@ private:
     // Reference to cached values at the Printer class.
     const std::vector<WipeTower::ToolChangeResult>              &m_priming;
     const std::vector<std::vector<WipeTower::ToolChangeResult>> &m_tool_changes;
+    const std::vector<std::vector<WipeTower::ToolChangeResult>> &m_local_z_tool_changes;
     const std::vector<std::vector<WipeTower::box_coordinates>>  &m_local_z_reserve_boxes;
     const WipeTower::ToolChangeResult                           &m_final_purge;
     // Current layer index.
     int                                                          m_layer_idx;
     int                                                          m_tool_change_idx;
+    std::vector<size_t>                                          m_local_z_tool_change_idx;
     std::vector<size_t>                                          m_local_z_reserve_slot_idx;
     double                                                       m_last_wipe_tower_print_z = 0.f;
 
@@ -158,8 +155,6 @@ private:
     bool                                                         m_single_extruder_multi_material;
     bool                                                         m_enable_timelapse_print;
     bool                                                         m_is_first_print;
-    std::vector<std::vector<float>>                              m_cached_wipe_volumes;
-    bool                                                         m_wipe_volumes_cached = false;
 };
 
 class ColorPrintColors

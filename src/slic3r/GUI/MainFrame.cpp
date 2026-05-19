@@ -3915,22 +3915,27 @@ void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::strin
     if (res != wxID_OK)
         return;
 
-    if (completeFilePath.empty()) {
-        auto downloadPath = wxGetApp().app_config->get("download_path");
-        completeFilePath  = downloadPath + "/" + releaFileName;
+    // DownloadManager may save under a uniquified name (e.g. a(1).3mf); use the path returned by the dialog.
+    std::string path_to_open = dlg.get_file_path();
+    if (path_to_open.empty()) {
+        if (completeFilePath.empty()) {
+            auto downloadPath = wxGetApp().app_config->get("download_path");
+            completeFilePath  = downloadPath + "/" + releaFileName;
+        }
+        path_to_open = completeFilePath;
     }
-    if (!boost::filesystem::exists(completeFilePath)) 
+    if (!boost::filesystem::exists(path_to_open))
     {
-        BOOST_LOG_TRIVIAL(warning) << boost::format("the file '%1%' not exists") % completeFilePath;
+        BOOST_LOG_TRIVIAL(warning) << boost::format("the file '%1%' not exists") % path_to_open;
         return;
     }
 
     // Auto-open project if it's a .3mf file
-    boost::filesystem::path path(completeFilePath);
+    boost::filesystem::path path(path_to_open);
     std::string             extension = boost::algorithm::to_lower_copy(path.extension().string());
     if (extension == ".3mf") {
-        BOOST_LOG_TRIVIAL(info) << boost::format("GenericDownloadDialog: Auto-opening project file '%1%'") % completeFilePath;
-        wxString wx_file_path = wxString::FromUTF8(completeFilePath.c_str());
+        BOOST_LOG_TRIVIAL(info) << boost::format("GenericDownloadDialog: Auto-opening project file '%1%'") % path_to_open;
+        wxString wx_file_path = wxString::FromUTF8(path_to_open.c_str());
         if (wxGetApp().can_load_project() && wxGetApp().mainframe && wxGetApp().mainframe->plater()) {
             wxGetApp().mainframe->plater()->load_project(wx_file_path);
         }

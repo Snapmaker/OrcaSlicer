@@ -1490,6 +1490,10 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, DynamicPrintConfig& full_config) const
 {
     std::vector<int> plate_extruders;
+    BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli begin"
+                             << " plate=" << m_plate_index
+                             << " obj_to_instance_count=" << obj_to_instance_set.size()
+                             << " consider_custom_gcode=" << conside_custom_gcode;
 
     // if 3mf file
     int glb_support_intf_extr = full_config.opt_int("support_interface_filament");
@@ -1510,7 +1514,27 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
         if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
         {
             ModelObject* object = m_model->objects[obj_id];
+            if (object == nullptr) {
+                BOOST_LOG_TRIVIAL(error) << "PartPlate::get_extruders_under_cli encountered null model object"
+                                         << " plate=" << m_plate_index
+                                         << " obj_id=" << obj_id;
+                continue;
+            }
+            if (instance_id < 0 || instance_id >= object->instances.size()) {
+                BOOST_LOG_TRIVIAL(error) << "PartPlate::get_extruders_under_cli encountered invalid instance index"
+                                         << " plate=" << m_plate_index
+                                         << " obj_id=" << obj_id
+                                         << " instance_id=" << instance_id
+                                         << " instance_count=" << object->instances.size();
+                continue;
+            }
             ModelInstance* instance = object->instances[instance_id];
+            BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli object"
+                                     << " plate=" << m_plate_index
+                                     << " obj_id=" << obj_id
+                                     << " instance_id=" << instance_id
+                                     << " volume_count=" << object->volumes.size()
+                                     << " printable=" << instance->printable;
 
             if (!instance->printable)
                 continue;
@@ -1584,25 +1608,22 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
     }
 
     if (conside_custom_gcode) {
-        //BBS
-        int nums_extruders = 0;
-        if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(full_config.option("filament_colour"))) {
-            nums_extruders = color_option->values.size();
-            size_t total_filaments = size_t(nums_extruders);
-            if (wxGetApp().preset_bundle != nullptr)
-                total_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(total_filaments);
-            if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
-                for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-                    if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(total_filaments))
-                        plate_extruders.push_back(item.extruder);
-                }
-            }
-        }
+        BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli skipping custom gcode scan in CLI path"
+                                 << " plate=" << m_plate_index;
     }
 
     std::sort(plate_extruders.begin(), plate_extruders.end());
     auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
     plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+    std::ostringstream extruders_list;
+    for (size_t i = 0; i < plate_extruders.size(); ++i) {
+        if (i != 0)
+            extruders_list << ",";
+        extruders_list << plate_extruders[i];
+    }
+    BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli result"
+                             << " plate=" << m_plate_index
+                             << " extruders=[" << extruders_list.str() << "]";
     return plate_extruders;
 }
 

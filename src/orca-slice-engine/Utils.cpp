@@ -56,9 +56,14 @@ void print_usage(const char* program_name) {
     std::cout << "  -j, --json [file]      Output slice statistics as JSON to specified file" << std::endl;
     std::cout << "                         If not specified, JSON is auto-saved next to the output" << std::endl;
     std::cout << "  -t, --timeout <sec>    Slicing timeout in seconds (0 = no limit)" << std::endl;
+    std::cout << "  --max-size <mb>        Max input file size in MB (default: 200, 0 = no limit)" << std::endl;
     std::cout << "  --cancel-file <file>   Watchdog file for external cancellation" << std::endl;
     std::cout << "                         If the file is created, slicing is cancelled" << std::endl;
-    std::cout << "  --allow-custom-presets Disable official preset enforcement (dev only)" << std::endl;
+    std::cout << "  --allow-custom-presets        Disable all enforcement (filament + G-code)" << std::endl;
+    std::cout << "  --no-filament-substitution    Skip filament official compliance check" << std::endl;
+    std::cout << "                                (default: check & substitute)" << std::endl;
+    std::cout << "  --keep-custom-gcode           Keep custom G-code blocks unchanged" << std::endl;
+    std::cout << "                                (default: clear all custom G-code)" << std::endl;
     std::cout << "  --log                  Enable log file output (auto-saved next to the output)" << std::endl;
     std::cout << "  --log-file <file>      Specify log file path (implies --log)" << std::endl;
     std::cout << "  -v, --verbose          Enable verbose logging" << std::endl;

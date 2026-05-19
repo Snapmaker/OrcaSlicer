@@ -3201,6 +3201,9 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             std::vector<double> filament_used_g(filament_density.size(), 0);
             double              total_weight = 0;
             for (const auto& pr : result.print_statistics.total_volumes_per_extruder) {
+                if (pr.first >= filament_density.size()) {
+                    continue;
+                }
                 filament_used_g[pr.first] = filament_density[pr.first] * pr.second * 0.001;
                 total_weight += filament_used_g[pr.first];
             }
@@ -3208,7 +3211,29 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             response["filament_weight"] = filament_used_g;
             response["filament_weight_total"] = total_weight;
         }
-        
+
+        // filament used mm (length)
+        if (config.has("filament_diameter")) {
+            auto filament_diameter_opt = config.option<ConfigOptionFloats>("filament_diameter");
+            if (!filament_diameter_opt) {
+                handle_general_fail();
+                return;
+            }
+            auto filament_diameter = filament_diameter_opt->values;
+
+            std::vector<double> filament_used_mm(filament_diameter.size(), 0);
+            for (const auto& pr : result.print_statistics.total_volumes_per_extruder) {
+                if (pr.first >= filament_diameter.size()) {
+                    continue;
+                }
+                auto diameter = static_cast<double>(filament_diameter[pr.first]);
+                if (diameter > 0) {
+                    filament_used_mm[pr.first] = pr.second / (M_PI * (diameter * 0.5) * (diameter * 0.5));
+                }
+            }
+            response["filament_used_mm"] = filament_used_mm;
+        }
+
         // filament extruder
         auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
         if (!filament_extruder_map.empty()) {

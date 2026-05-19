@@ -47,7 +47,7 @@ private:
     void sync_rows_to_result();
     void resize_gradient_ids(int target_count);
     void update_compatibility_warning();
-    bool check_low_ratio_warning();
+    wxString get_low_ratio_warning_msg();
     void display_warning(const wxString& msg);
     void set_error(const wxString& msg);
     std::string compute_preview_color();
@@ -80,8 +80,10 @@ private:
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
     wxPanel*                m_swatch_grid_panel   = nullptr;
-    wxPanel*                m_compat_warning_panel  = nullptr;
-    wxStaticText*           m_compat_warning_text   = nullptr;
+    wxPanel*                m_error_panel           = nullptr;
+    wxStaticText*           m_error_text            = nullptr;
+    wxPanel*                m_warning_panel         = nullptr;
+    wxStaticText*           m_warning_text          = nullptr;
     Button*                 m_btn_cancel          = nullptr;
     Button*                 m_btn_confirm         = nullptr;
     wxTextCtrl*             m_pattern_ctrl        = nullptr;

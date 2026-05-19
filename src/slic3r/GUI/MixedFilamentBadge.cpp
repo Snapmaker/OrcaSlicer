@@ -84,12 +84,17 @@ void MixedFilamentBadge::on_paint(wxPaintEvent&)
     wxRect rect = GetClientRect();
 
     if (m_is_gradient && m_gradient_colors.size() >= 2) {
+        // Fill background with first gradient color to prevent black-edge artifacts.
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(m_gradient_colors[0]));
+        dc.DrawRectangle(rect);
+
         // Draw gradient from bottom to top
         for (int y = rect.GetBottom(); y >= rect.GetTop(); --y) {
             double pos = double(rect.GetBottom() - y) / double(rect.GetHeight());
             wxColour color = interpolate_color(m_gradient_colors, pos);
             dc.SetPen(wxPen(color));
-            dc.DrawLine(rect.GetLeft(), y, rect.GetRight(), y);
+            dc.DrawLine(rect.GetLeft(), y, rect.GetLeft() + rect.GetWidth(), y);
         }
 
         // Draw grey border only if BOTH endpoint colors are very light (R/G/B all > 224)
@@ -182,6 +187,11 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
 
     if (params.mode == ColorBlockParams::Gradient && params.gradient_colors.size() >= 2) {
         const auto& stops = params.gradient_colors;
+        // Fill background to prevent black-edge artifacts on partial paints.
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(stops[0]));
+        dc.DrawRectangle(0, 0, params.width, params.height);
+
         for (int y = params.height - 1; y >= 0; --y) {
             double pos = double(params.height - 1 - y) / double(std::max(1, params.height - 1));
             wxColour col = interpolate_color(stops, pos);

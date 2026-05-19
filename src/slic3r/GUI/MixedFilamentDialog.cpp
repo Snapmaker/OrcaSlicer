@@ -319,23 +319,42 @@ void MixedFilamentDialog::build_ui()
 
     // Add/remove & swap buttons are created inside Card A (see filament card block below)
 
-    // Compatibility warning banner
+    // Error banner (red, blocks confirm)
     {
-        m_compat_warning_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
-                                              wxDefaultSize, wxBORDER_NONE | wxTAB_TRAVERSAL);
-        m_compat_warning_panel->SetBackgroundColour(wxColour("#FDE8E8"));
-        m_compat_warning_panel->Hide();
+        m_error_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                                     wxDefaultSize, wxBORDER_NONE | wxTAB_TRAVERSAL);
+        m_error_panel->SetBackgroundColour(wxColour("#FDE8E8"));
+        m_error_panel->Hide();
+        auto* err_sizer = new wxBoxSizer(wxHORIZONTAL);
+        ScalableBitmap error_bmp(m_error_panel, "error_icon_red_exclamation", 14);
+        auto* error_icon = new wxStaticBitmap(m_error_panel, wxID_ANY, error_bmp.bmp());
+        err_sizer->Add(error_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+        err_sizer->AddSpacer(FromDIP(4));
+        m_error_text = new wxStaticText(m_error_panel, wxID_ANY, wxEmptyString);
+        m_error_text->SetForegroundColour(wxColour("#D32F2F"));
+        m_error_text->Wrap(FromDIP(360));
+        err_sizer->Add(m_error_text, 1, wxALL, FromDIP(8));
+        m_error_panel->SetSizer(err_sizer);
+        top_sizer->Add(m_error_panel, 0, wxEXPAND);
+    }
+
+    // Warning banner (orange, advisory, confirm stays enabled)
+    {
+        m_warning_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                                       wxDefaultSize, wxBORDER_NONE | wxTAB_TRAVERSAL);
+        m_warning_panel->SetBackgroundColour(wxColour("#FFF3EB"));
+        m_warning_panel->Hide();
         auto* warn_sizer = new wxBoxSizer(wxHORIZONTAL);
-        ScalableBitmap error_bmp(m_compat_warning_panel, "error_icon_red_exclamation", 14);
-        auto* error_icon = new wxStaticBitmap(m_compat_warning_panel, wxID_ANY, error_bmp.bmp());
-        warn_sizer->Add(error_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+        ScalableBitmap warn_bmp(m_warning_panel, "icon_warning_triangle", 14);
+        auto* warn_icon = new wxStaticBitmap(m_warning_panel, wxID_ANY, warn_bmp.bmp());
+        warn_sizer->Add(warn_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         warn_sizer->AddSpacer(FromDIP(4));
-        m_compat_warning_text = new wxStaticText(m_compat_warning_panel, wxID_ANY, wxEmptyString);
-        m_compat_warning_text->SetForegroundColour(wxColour("#D32F2F"));
-        m_compat_warning_text->Wrap(FromDIP(400));
-        warn_sizer->Add(m_compat_warning_text, 1, wxALL, FromDIP(8));
-        m_compat_warning_panel->SetSizer(warn_sizer);
-        top_sizer->Add(m_compat_warning_panel, 0, wxEXPAND);
+        m_warning_text = new wxStaticText(m_warning_panel, wxID_ANY, wxEmptyString);
+        m_warning_text->SetForegroundColour(wxColour("#FF842D"));
+        m_warning_text->Wrap(FromDIP(360));
+        warn_sizer->Add(m_warning_text, 1, wxALL, FromDIP(8));
+        m_warning_panel->SetSizer(warn_sizer);
+        top_sizer->Add(m_warning_panel, 0, wxEXPAND);
     }
     // ---- Scrolled content area ----
     m_scrolled_content = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
@@ -416,6 +435,13 @@ void MixedFilamentDialog::build_ui()
                     if (m_match_hex_input)
                         m_match_hex_input->ChangeValue(c.GetAsString(wxC2S_HTML_SYNTAX).Mid(1));
                     if (m_match_panel) m_match_panel->set_target_color(c);
+                    if (m_match_hex_error) {
+                        m_match_hex_error = false;
+                        if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+                        if (m_error_panel) m_error_panel->Hide();
+                        if (m_btn_confirm) m_btn_confirm->Enable();
+                        Layout();
+                    }
                 }
             }
         });
@@ -471,7 +497,7 @@ void MixedFilamentDialog::build_ui()
             if (try_parse_color_match_hex(val, parsed)) {
                 m_match_hex_error = false;
                 if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                if (m_compat_warning_panel) m_compat_warning_panel->Hide();
+                if (m_error_panel) m_error_panel->Hide();
                 if (m_btn_confirm) m_btn_confirm->Enable();
                 Layout();
                 if (m_match_target_picker) { m_match_target_picker->SetBackgroundColour(parsed); m_match_target_picker->Refresh(); }
@@ -486,7 +512,7 @@ void MixedFilamentDialog::build_ui()
             if (m_match_hex_error) {
                 m_match_hex_error = false;
                 if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                if (m_compat_warning_panel) m_compat_warning_panel->Hide();
+                if (m_error_panel) m_error_panel->Hide();
                 if (m_btn_confirm) m_btn_confirm->Enable();
                 Layout();
             }
@@ -1215,8 +1241,10 @@ void MixedFilamentDialog::build_ui()
 
     m_btn_cancel->Bind(wxEVT_BUTTON,  [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
     m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        if (m_current_mode == MODE_CYCLE)
+        if (m_current_mode == MODE_CYCLE) {
             validate_cycle_pattern();
+            if (!m_btn_confirm->IsEnabled()) return;
+        }
         collect_result();
         EndModal(wxID_OK);
     });
@@ -2085,7 +2113,7 @@ void MixedFilamentDialog::sync_rows_to_result()
 
 void MixedFilamentDialog::update_compatibility_warning()
 {
-    if (!m_compat_warning_panel || !m_compat_warning_text || !m_btn_confirm)
+    if (!m_error_panel || !m_error_text || !m_warning_panel || !m_warning_text || !m_btn_confirm)
         return;
 
     if (m_current_mode == MODE_MATCH) {
@@ -2096,12 +2124,13 @@ void MixedFilamentDialog::update_compatibility_warning()
             mf.component_b = recipe.component_b;
             mf.gradient_component_ids = recipe.gradient_component_ids;
             if (!is_filament_compatible(mf)) {
-                m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
-                m_compat_warning_text->Wrap(FromDIP(360));
-                m_compat_warning_panel->Show();
+                m_error_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+                m_error_text->Wrap(FromDIP(360));
+                m_error_panel->Show();
                 m_btn_confirm->Disable();
             } else {
-                m_compat_warning_panel->Hide();
+                m_error_panel->Hide();
+                m_warning_panel->Hide();
                 m_btn_confirm->Enable();
             }
         } else {
@@ -2111,16 +2140,17 @@ void MixedFilamentDialog::update_compatibility_warning()
                 fids.push_back((unsigned int)idx);
             if (!fids.empty() && !is_filament_compatible(fids)) {
                 if (auto pair = find_incompatible_filament_pair(fids)) {
-                    m_compat_warning_text->SetLabel(
+                    m_error_text->SetLabel(
                         wxString::Format(_L("Filament %d and Filament %d are incompatible and cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
                 } else {
-                    m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+                    m_error_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
                 }
-                m_compat_warning_text->Wrap(FromDIP(360));
-                m_compat_warning_panel->Show();
+                m_error_text->Wrap(FromDIP(360));
+                m_error_panel->Show();
                 m_btn_confirm->Disable();
             } else {
-                m_compat_warning_panel->Hide();
+                m_error_panel->Hide();
+                m_warning_panel->Hide();
                 m_btn_confirm->Enable();
             }
         }
@@ -2149,23 +2179,25 @@ void MixedFilamentDialog::update_compatibility_warning()
         if (!m_result.gradient_component_ids.empty()) {
             for (char c : m_result.gradient_component_ids) {
                 int idx = c - '1';
-                if (idx >= 0) fids.push_back(static_cast<unsigned int>(idx));
+                if (idx >= 0 && idx <= 8) fids.push_back(static_cast<unsigned int>(idx));
             }
         }
     }
 
     if (!is_filament_compatible(fids)) {
+        m_warning_panel->Hide();
         if (auto pair = find_incompatible_filament_pair(fids)) {
-            m_compat_warning_text->SetLabel(
+            m_error_text->SetLabel(
                 wxString::Format(_L("Filament %d and Filament %d are incompatible and cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
         } else {
-            m_compat_warning_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+            m_error_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
         }
-        m_compat_warning_text->Wrap(FromDIP(360));
-        m_compat_warning_panel->Show();
+        m_error_text->Wrap(FromDIP(360));
+        m_error_panel->Show();
         m_btn_confirm->Disable();
-    } else if (check_low_ratio_warning()) {
-        // advisory warning shown, confirm stays enabled
+    } else if (wxString low_msg = get_low_ratio_warning_msg(); !low_msg.empty()) {
+        display_warning(low_msg);
+        if (m_btn_confirm) m_btn_confirm->Enable();
     } else if (m_current_mode == MODE_CYCLE && fids.size() == 1) {
         display_warning(_L("Participating filaments have the same color and cannot produce different colors. Please select filaments with different colors for mixing."));
         if (m_btn_confirm) m_btn_confirm->Enable();
@@ -2173,7 +2205,8 @@ void MixedFilamentDialog::update_compatibility_warning()
         display_warning(_L("Too many filaments participating in color mixing may affect the blending result. Please use with caution."));
         if (m_btn_confirm) m_btn_confirm->Enable();
     } else {
-        m_compat_warning_panel->Hide();
+        m_error_panel->Hide();
+        m_warning_panel->Hide();
         m_btn_confirm->Enable();
     }
     Layout();
@@ -2181,26 +2214,33 @@ void MixedFilamentDialog::update_compatibility_warning()
 
 void MixedFilamentDialog::display_warning(const wxString& msg)
 {
-    if (!m_compat_warning_panel || !m_compat_warning_text)
+    if (!m_warning_panel || !m_warning_text || !m_error_panel)
         return;
-    m_compat_warning_text->SetLabel(msg);
-    m_compat_warning_text->Wrap(FromDIP(360));
-    m_compat_warning_panel->Show();
+    m_error_panel->Hide();
+    m_warning_text->SetLabel(msg);
+    m_warning_text->Wrap(FromDIP(360));
+    m_warning_panel->Show();
     Layout();
 }
 
 void MixedFilamentDialog::set_error(const wxString& msg)
 {
-    display_warning(msg);
+    if (!m_error_panel || !m_error_text || !m_warning_panel)
+        return;
+    m_warning_panel->Hide();
+    m_error_text->SetLabel(msg);
+    m_error_text->Wrap(FromDIP(360));
+    m_error_panel->Show();
     if (m_btn_confirm) m_btn_confirm->Disable();
+    Layout();
 }
 
-bool MixedFilamentDialog::check_low_ratio_warning()
+wxString MixedFilamentDialog::get_low_ratio_warning_msg()
 {
     static constexpr double LOW_RATIO_THRESHOLD = 0.25;
 
     if (m_filament_rows.empty() || m_filament_colours.empty())
-        return false;
+        return wxEmptyString;
 
     const int num_physical = (int)m_filament_colours.size();
     std::vector<double> ratios(num_physical, 0.0);
@@ -2249,23 +2289,21 @@ bool MixedFilamentDialog::check_low_ratio_warning()
         }
         break;
     case MODE_CYCLE:
-        return false;
+        return wxEmptyString;
     }
 
     if (total <= 0.0)
-        return false;
+        return wxEmptyString;
 
-    // Check for any filament below threshold
     for (int i = 0; i < num_physical; ++i) {
         double ratio = ratios[i] / total;
         if (ratio > 0.0 && ratio < LOW_RATIO_THRESHOLD) {
-            display_warning(
-                wxString::Format(_L("Filament %d makes up less than 25%% of the mix, which may affect the blending result."), i + 1));
-            return true;
+            return wxString::Format(
+                _L("Filament %d makes up less than %d%% of the mix, which may affect the blending result."), i + 1, int(LOW_RATIO_THRESHOLD * 100));
         }
     }
 
-    return false;
+    return wxEmptyString;
 }
 
 std::string MixedFilamentDialog::compute_preview_color()
@@ -2875,9 +2913,15 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
     rebuild_filament_rows();
     update_ratio_or_tri_visibility();
     update_preview();
-    if (mode_index == MODE_CYCLE)
-        validate_cycle_pattern();
-    update_compatibility_warning();
+    // Clear any stale banners before re-evaluating for the new mode
+    if (m_error_panel && m_warning_panel && m_btn_confirm) {
+        m_error_panel->Hide();
+        m_warning_panel->Hide();
+        if (mode_index == MODE_CYCLE)
+            validate_cycle_pattern();
+        else
+            update_compatibility_warning();
+    }
     Layout();
     if (IsShown()) Fit();
 }

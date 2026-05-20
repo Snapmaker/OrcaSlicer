@@ -31,6 +31,7 @@
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <clocale>
 #include <regex>
 #include <thread>
 #include <string_view>
@@ -769,6 +770,40 @@ constexpr int kWindows11BuildNumber = 22000;
 
 void GUI_App::log_version_info()
 {
+    // Cache OS description on first call so that subsequent calls from background
+    // threads (e.g. generic_exception_handle -> OnExceptionInMainLoop) do not
+    // invoke wxWidgets APIs, which are not thread-safe on Linux.
+    static std::string s_cached_os_desc;
+    static std::once_flag s_os_flag;
+    std::call_once(s_os_flag, []() {
+        std::string os_desc{};
+#if defined(__LINUX__) || defined(__linux__)
+        wxLinuxDistributionInfo distro = wxGetLinuxDistributionInfo();
+        if (!distro.Id.empty()) {
+            os_desc = distro.Id.ToStdString();
+            if (!distro.Release.empty())
+                os_desc += " " + distro.Release.ToStdString();
+        }
+#endif
+        if (os_desc.empty()) {
+            os_desc = wxGetOsDescription().ToStdString();
+        }
+
+#if defined(_WIN32)
+        // Append Windows version numbers (major.minor.build) for all Windows versions.
+        // Also correct "Windows 10" → "Windows 11" for builds >= 22000.
+        int major = 0, minor = 0, micro = 0;
+        wxGetOsVersion(&major, &minor, &micro);
+        if (micro >= kWindows11BuildNumber) {
+            size_t pos = os_desc.find("Windows 10");
+            if (pos != std::string::npos)
+                os_desc.replace(pos, 10, "Windows 11");
+        }
+        os_desc += " (" + std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(micro) + ")";
+#endif
+        s_cached_os_desc = os_desc;
+    });
+
     BOOST_LOG_TRIVIAL(warning) << "========================================";
     BOOST_LOG_TRIVIAL(warning) << "Snapmaker Orca Version Information";
     BOOST_LOG_TRIVIAL(warning) << "========================================";
@@ -782,32 +817,7 @@ void GUI_App::log_version_info()
     std::string profile_ver = common::get_profile_version();
     BOOST_LOG_TRIVIAL(warning) << "[Version] Profile: " << (profile_ver.empty() ? "N/A" : profile_ver);
 
-    std::string os_desc{};
-#if defined(__LINUX__) || defined(__linux__)
-    wxLinuxDistributionInfo distro = wxGetLinuxDistributionInfo();
-    if (!distro.Id.empty()) {
-        os_desc = distro.Id.ToStdString();
-        if (!distro.Release.empty())
-            os_desc += " " + distro.Release.ToStdString();
-    }
-#endif
-    if (os_desc.empty()) {
-        os_desc = wxGetOsDescription().ToStdString();
-    }
-
-#if defined(_WIN32)
-    // Append Windows version numbers (major.minor.build) for all Windows versions.
-    // Also correct "Windows 10" → "Windows 11" for builds >= 22000.
-    int major = 0, minor = 0, micro = 0;
-    wxGetOsVersion(&major, &minor, &micro);
-    if (micro >= kWindows11BuildNumber) {
-        size_t pos = os_desc.find("Windows 10");
-        if (pos != std::string::npos)
-            os_desc.replace(pos, 10, "Windows 11");
-    }
-    os_desc += " (" + std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(micro) + ")";
-#endif
-    BOOST_LOG_TRIVIAL(warning) << "[Version] OS: " << os_desc;
+    BOOST_LOG_TRIVIAL(warning) << "[Version] OS: " << s_cached_os_desc;
 
     BOOST_LOG_TRIVIAL(warning) << "========================================";
 
@@ -2363,6 +2373,13 @@ class wxBoostLog : public wxLog
 
 bool GUI_App::on_init_inner()
 {
+#if defined(__linux__) || defined(__LINUX__)
+    // Set the C library locale from environment variables so that character
+    // encoding conversions work correctly for non-ASCII text (e.g. Chinese).
+    // This must be done early before any wxWidgets locale-sensitive operations.
+    std::setlocale(LC_ALL, "");
+#endif
+
     wxLog::SetActiveTarget(new wxBoostLog());
 #if BBL_RELEASE_TO_PUBLIC
     wxLog::SetLogLevel(wxLOG_Message);

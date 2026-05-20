@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <locale>
+#include <mutex>
 #include <ctime>
 #include <cstdarg>
 #include <stdio.h>
@@ -366,6 +367,8 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 
 void flush_logs()
 {
+	static std::mutex s_flush_mutex;
+	std::lock_guard<std::mutex> lock(s_flush_mutex);
 	if (g_log_sink)
 		g_log_sink->flush();
 

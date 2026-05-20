@@ -372,6 +372,9 @@ wxString NetworkTestDialog::get_dns_info()
 
 void NetworkTestDialog::start_all_job()
 {
+	if (m_all_testing.exchange(true))
+		return;
+
 	log_section_header(_L("Network test started"));
 
 	start_test_github_thread();
@@ -380,6 +383,8 @@ void NetworkTestDialog::start_all_job()
 	start_test_cloud_mqtt_thread();
 	start_test_login_api_thread();
 	start_test_upload_api_thread();
+
+	m_all_testing.store(false);
 }
 
 void NetworkTestDialog::start_all_job_sequence()

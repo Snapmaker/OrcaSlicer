@@ -4366,7 +4366,10 @@ BoundingBoxf3 PrintInstance::get_bounding_box() {
 
 Polygon PrintInstance::get_convex_hull_2d() {
     Polygon poly = print_object->model_object()->convex_hull_2d(model_instance->get_matrix());
-    poly.douglas_peucker(0.1);
+    // Change the distance threshold of the Douglas-Peucker algorithm to 0.5 millimeter and reduce the number of points
+    poly.douglas_peucker(scale_(0.5));
+    // Round coordinates to 0.1mm grid to limit decimal places
+    poly.round_to_grid(scale_(0.1));
     return poly;
 }
 

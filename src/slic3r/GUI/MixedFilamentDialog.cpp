@@ -132,7 +132,7 @@ private:
 
 MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
                                      const std::vector<std::string>& filament_colours)
-    : DPIDialog(parent, wxID_ANY, _L("Add Color Mix"),
+    : DPIDialog(parent, wxID_ANY, _L("Add Mix"),
                 wxDefaultPosition, wxDefaultSize,
                 wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
     , m_filament_colours(filament_colours)
@@ -146,7 +146,7 @@ MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
 MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
                                      const std::vector<std::string>& filament_colours,
                                      const Slic3r::MixedFilament& existing)
-    : DPIDialog(parent, wxID_ANY, _L("Edit Color Mix"),
+    : DPIDialog(parent, wxID_ANY, _L("Edit Mix"),
                 wxDefaultPosition, wxDefaultSize,
                 wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
     , m_filament_colours(filament_colours)
@@ -507,7 +507,7 @@ void MixedFilamentDialog::build_ui()
             } else {
                 m_match_hex_error = true;
                 if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                set_error(_L("Please enter a valid 6-digit hex color value."));
+                set_error(_L("Please enter a valid 6-digit Hex value."));
             }
         });
         m_match_hex_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
@@ -628,7 +628,7 @@ void MixedFilamentDialog::build_ui()
         m_ratio_card_sizer = new wxBoxSizer(wxVERTICAL);
 
         // Title
-        auto* ratio_title = new wxStaticText(m_ratio_card, wxID_ANY, _L("Mix Ratio"));
+        auto* ratio_title = new wxStaticText(m_ratio_card, wxID_ANY, _L("Mixing Ratio"));
         ratio_title->SetFont(Label::Body_14);
         ratio_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         ratio_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -696,7 +696,7 @@ void MixedFilamentDialog::build_ui()
 
             // Right: blend result label + blend color panel
             auto* right_col = new wxBoxSizer(wxVERTICAL);
-            auto* blend_lbl = new wxStaticText(m_ratio_card, wxID_ANY, _L("Blended Color"));
+            auto* blend_lbl = new wxStaticText(m_ratio_card, wxID_ANY, _L("Mix Effect"));
             blend_lbl->SetFont(Label::Body_12);
             blend_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
             blend_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -739,7 +739,7 @@ void MixedFilamentDialog::build_ui()
         m_match_ratio_card_sizer = new wxBoxSizer(wxVERTICAL);
 
         // Title: 混合比例 (Figma: 14px Medium)
-        auto* match_title = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Mix Ratio"));
+        auto* match_title = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Mixing Ratio"));
         match_title->SetFont(Label::Body_14);
         match_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         match_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -771,7 +771,7 @@ void MixedFilamentDialog::build_ui()
             m_match_range_row = new wxPanel(m_match_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
             m_match_range_row->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             auto* range_sizer = new wxBoxSizer(wxHORIZONTAL);
-            auto* range_label = new wxStaticText(m_match_range_row, wxID_ANY, _L("Min mix ratio"));
+            auto* range_label = new wxStaticText(m_match_range_row, wxID_ANY, _L("Min Mix Ratio"));
             range_label->SetFont(Label::Body_14);
             range_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             range_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -827,7 +827,7 @@ void MixedFilamentDialog::build_ui()
             dual_preview_row->Add(left_col, 0, wxEXPAND | wxRIGHT, FromDIP(8));
 
             auto* right_col = new wxBoxSizer(wxVERTICAL);
-            auto* blend_lbl = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Blended Color"));
+            auto* blend_lbl = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Mix Effect"));
             blend_lbl->SetFont(Label::Body_12);
             blend_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
             blend_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -1065,7 +1065,7 @@ void MixedFilamentDialog::build_ui()
 
             // Right: blend effect label + blend color panel
             auto* right_col = new wxBoxSizer(wxVERTICAL);
-            auto* blend_lbl = new wxStaticText(m_cycle_card, wxID_ANY, _L("Blended Color"));
+            auto* blend_lbl = new wxStaticText(m_cycle_card, wxID_ANY, _L("Mix Effect"));
             blend_lbl->SetFont(Label::Body_12);
             blend_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
             blend_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -1115,7 +1115,7 @@ void MixedFilamentDialog::build_ui()
         m_swatch_card->SetBorderColorNormal(wxColour("#F0F0F0"));
         m_swatch_card_sizer = new wxBoxSizer(wxVERTICAL);
 
-        auto* swatch_title = new wxStaticText(m_swatch_card, wxID_ANY, _L("Recommended"));
+        auto* swatch_title = new wxStaticText(m_swatch_card, wxID_ANY, _L("Mixing Recommendations"));
         swatch_title->SetFont(Label::Body_14);
         swatch_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         swatch_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -1160,7 +1160,7 @@ void MixedFilamentDialog::build_ui()
         m_btn_cancel->SetBackgroundColorNormal(wxColour("#FFFFFF"));
         m_btn_cancel->SetTextColorNormal(wxColour("#242424"));
 
-        m_btn_confirm = new Button(btn_panel, _L("Confirm"));
+        m_btn_confirm = new Button(btn_panel, _L("OK"));
         m_btn_confirm->SetMinSize(wxSize(-1, FromDIP(38)));
         m_btn_confirm->SetCornerRadius(FromDIP(4));
         m_btn_confirm->SetBorderWidth(0);
@@ -2153,7 +2153,7 @@ void MixedFilamentDialog::update_compatibility_warning()
             mf.component_b = recipe.component_b;
             mf.gradient_component_ids = recipe.gradient_component_ids;
             if (!is_filament_compatible(mf)) {
-                m_error_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+                m_error_text->SetLabel(_L("Different filament types cannot be mixed. Please correct the settings."));
                 m_error_text->Wrap(FromDIP(360));
                 m_error_panel->Show();
                 m_btn_confirm->Disable();
@@ -2170,9 +2170,9 @@ void MixedFilamentDialog::update_compatibility_warning()
             if (!fids.empty() && !is_filament_compatible(fids)) {
                 if (auto pair = find_incompatible_filament_pair(fids)) {
                     m_error_text->SetLabel(
-                        wxString::Format(_L("Filament %d and Filament %d are incompatible and cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
+                        wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
                 } else {
-                    m_error_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+                    m_error_text->SetLabel(_L("Different filament types cannot be mixed. Please correct the settings."));
                 }
                 m_error_text->Wrap(FromDIP(360));
                 m_error_panel->Show();
@@ -2217,9 +2217,9 @@ void MixedFilamentDialog::update_compatibility_warning()
         m_warning_panel->Hide();
         if (auto pair = find_incompatible_filament_pair(fids)) {
             m_error_text->SetLabel(
-                wxString::Format(_L("Filament %d and Filament %d are incompatible and cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
+                wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
         } else {
-            m_error_text->SetLabel(_L("Incompatible filament types cannot be mixed. Please correct the selection."));
+            m_error_text->SetLabel(_L("Different filament types cannot be mixed. Please correct the settings."));
         }
         m_error_text->Wrap(FromDIP(360));
         m_error_panel->Show();
@@ -2228,10 +2228,10 @@ void MixedFilamentDialog::update_compatibility_warning()
         display_warning(low_msg);
         if (m_btn_confirm) m_btn_confirm->Enable();
     } else if (m_current_mode == MODE_CYCLE && fids.size() == 1) {
-        display_warning(_L("Participating filaments have the same color and cannot produce different colors. Please select filaments with different colors for mixing."));
+        display_warning(_L("Same filament colors cannot produce new colors. Please select different colors for mixing."));
         if (m_btn_confirm) m_btn_confirm->Enable();
     } else if (m_current_mode == MODE_CYCLE && fids.size() > 4) {
-        display_warning(_L("Too many filaments participating in color mixing may affect the blending result. Please use with caution."));
+        display_warning(_L("Excessive filaments in the mix may affect the result. Please use with caution."));
         if (m_btn_confirm) m_btn_confirm->Enable();
     } else {
         m_error_panel->Hide();
@@ -2328,7 +2328,7 @@ wxString MixedFilamentDialog::get_low_ratio_warning_msg()
         double ratio = ratios[i] / total;
         if (ratio > 0.0 && ratio < LOW_RATIO_THRESHOLD) {
             return wxString::Format(
-                _L("Filament %d makes up less than %d%% of the mix, which may affect the blending result."), i + 1, int(LOW_RATIO_THRESHOLD * 100));
+                _L("Filament %d ratio too low. Mix may be affected."), i + 1);
         }
     }
 
@@ -3118,7 +3118,7 @@ void MixedFilamentDialog::validate_cycle_pattern()
         auto parsed = parse_cycle_pattern(normalized, num_physical);
         if (parsed.invalid_id != 0) {
             set_error(
-                wxString::Format(_L("Unrecognized filament #%d. Please correct the input."), (int)parsed.invalid_id));
+                wxString::Format(_L("Filament %d not recognized. Please re-enter."), (int)parsed.invalid_id));
             return;
         }
         if (!parsed.invalid_token.empty()) {

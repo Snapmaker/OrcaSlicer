@@ -1928,6 +1928,9 @@ void SliceEngine::build_statistics() {
                 SliceOutputStats::FilamentDetail detail;
                 detail.filament_id = extruder_id;
                 detail.used_g = used_g;
+                detail.used_m = plate_stats.filament_used_m.count(extruder_id)
+                                     ? plate_stats.filament_used_m.at(extruder_id)
+                                     : 0.0;
 
                 if (ftypes && extruder_id < static_cast<int>(ftypes->values.size()))
                     detail.type = ftypes->values[extruder_id];

@@ -54,6 +54,7 @@ struct SliceOutputStats {
         std::string type;         // Filament type (e.g., "PLA", "ABS")
         std::string color;        // Filament color (e.g., "#FF0000")
         double used_g;            // Used weight in grams
+        double used_m;            // Used length in meters
     };
 
     // Per-plate statistics

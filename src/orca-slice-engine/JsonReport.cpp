@@ -68,7 +68,7 @@ void output_slice_statistics(const SliceOutputStats& stats,
     std::vector<ordered_json> total_filaments;
     {
         // Deduplicate by (type, color), summing used_g across plates
-        struct AggFilament { std::string type; std::string color; double used_g = 0; };
+        struct AggFilament { std::string type; std::string color; double used_g = 0; double used_m = 0; };
         std::vector<AggFilament> agg;
         for (const auto& plate : stats.plates) {
             if (plate.success) {
@@ -77,10 +77,11 @@ void output_slice_statistics(const SliceOutputStats& stats,
                 for (const auto& detail : plate.filament_details) {
                     auto it = std::find_if(agg.begin(), agg.end(),
                         [&](const AggFilament& a) { return a.type == detail.type && a.color == detail.color; });
-                    if (it != agg.end())
+                    if (it != agg.end()) {
                         it->used_g += detail.used_g;
-                    else
-                        agg.push_back({detail.type, detail.color, detail.used_g});
+                        it->used_m += detail.used_m;
+                    } else
+                        agg.push_back({detail.type, detail.color, detail.used_g, detail.used_m});
                 }
             }
         }
@@ -88,7 +89,8 @@ void output_slice_statistics(const SliceOutputStats& stats,
             ordered_json fj;
             fj["type"]   = a.type;
             fj["color"]  = a.color;
-            fj["used_g"] = round2(a.used_g);
+            fj["used_g"]  = round2(a.used_g);
+            fj["used_mm"] = round2(a.used_m * 1000.0);
             total_filaments.push_back(std::move(fj));
         }
     }
@@ -137,6 +139,7 @@ void output_slice_statistics(const SliceOutputStats& stats,
                 fdj["type"]        = detail.type;
                 fdj["color"]       = detail.color;
                 fdj["used_g"]      = round2(detail.used_g);
+                fdj["used_mm"]     = round2(detail.used_m * 1000.0);
                 fils.push_back(std::move(fdj));
             }
             pj["filaments"]              = std::move(fils);

@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.13)
 
+# Allow building with CMake newer than 3.28 without failing on dependency cmake
+# config files that use cmake_policy(VERSION ...3.28) range syntax
+set(CMAKE_POLICY_VERSION_MINIMUM 3.28)
+
 # Verify that your CMake version is exactly 3.31.x series or lower on windows
 if ( ((MSVC) OR (WIN32)) AND (${CMAKE_VERSION} VERSION_GREATER_EQUAL "4.0") )
     message(FATAL_ERROR "Only cmake versions between 3.13.x and 3.31.x is supported on windows. Detected version: ${CMAKE_VERSION}")

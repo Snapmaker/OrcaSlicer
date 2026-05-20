@@ -14,7 +14,7 @@
 using ordered_json = nlohmann::ordered_json;
 
 // Keep base64_encode — nlohmann doesn't provide base64
-static const char BASE64_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static constexpr char BASE64_CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static std::string base64_encode(const unsigned char* input, size_t input_len) {
     std::string result;

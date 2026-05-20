@@ -7,14 +7,14 @@
 #include <boost/filesystem.hpp>
 
 // Exit codes
-static const int EXIT_OK = 0;
-static const int EXIT_INVALID_ARGS = 1;
-static const int EXIT_FILE_NOT_FOUND = 2;
-static const int EXIT_LOAD_ERROR = 3;
-static const int EXIT_SLICING_ERROR = 4;
-static const int EXIT_EXPORT_ERROR = 5;
-static const int EXIT_VALIDATION_ERROR = 6;
-static const int EXIT_POSTPROCESS_WARNING = 7;
+constexpr int EXIT_OK = 0;
+constexpr int EXIT_INVALID_ARGS = 1;
+constexpr int EXIT_FILE_NOT_FOUND = 2;
+constexpr int EXIT_LOAD_ERROR = 3;
+constexpr int EXIT_SLICING_ERROR = 4;
+constexpr int EXIT_EXPORT_ERROR = 5;
+constexpr int EXIT_VALIDATION_ERROR = 6;
+constexpr int EXIT_POSTPROCESS_WARNING = 7;
 
 // Output format enum
 enum class OutputFormat {

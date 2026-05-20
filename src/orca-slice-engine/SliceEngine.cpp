@@ -26,10 +26,10 @@ using namespace Slic3r;
 namespace {
 
 // Bed3D::Axes::DefaultTipRadius, used in plate size calculation
-const double BED_AXES_TIP_RADIUS = 1.25;
+constexpr double BED_AXES_TIP_RADIUS = 1.25;
 
 // 1/5, same as GUI's LOGICAL_PART_PLATE_GAP
-const double LOGICAL_PART_PLATE_GAP = 0.2;
+constexpr double LOGICAL_PART_PLATE_GAP = 0.2;
 
 // Check if a plate result indicates a wipe tower tool change mismatch.
 // CGAL/float differences on some platforms cause non-consecutive extruder
@@ -687,7 +687,7 @@ void SliceEngine::apply_official_presets()
 {
     // Strip all custom G-code blocks — cloud slicing must not execute
     // or embed user-supplied G-code for safety and consistency.
-    static const std::vector<const char*> gcode_keys = {
+    constexpr const char* gcode_keys[] = {
         "start_gcode", "end_gcode", "layer_gcode",
         "machine_start_gcode", "machine_end_gcode",
         "before_layer_change_gcode", "between_objects_gcode",
@@ -1296,7 +1296,7 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
             // flush_volumes_matrix (N*N flat vector) and wiping_volumes_extruders
             // must also be trimmed to keep the config internally consistent:
             // a 5*5 matrix with only 1 extruder would mismatch sqrt(size) later.
-            static const std::vector<const char*> trim_keys = {
+            constexpr const char* trim_keys[] = {
                 "filament_diameter",
                 "filament_density",
                 "filament_cost",

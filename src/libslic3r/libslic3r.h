@@ -65,7 +65,7 @@ static constexpr double LARGE_BED_THRESHOLD = 2147;
 static constexpr size_t MAXIMUM_EXTRUDER_NUMBER = 64;
 
 // Combined upper limit for physical + mixed filaments.
-static constexpr size_t MAXIMUM_FILAMENT_NUMBER = 32;
+static constexpr size_t MAXIMUM_FILAMENT_NUMBER = 64;
 
 // Orca: maximum line width is 5 times the nozzle diameter
 static constexpr float MAX_LINE_WIDTH_MULTIPLIER = 5;

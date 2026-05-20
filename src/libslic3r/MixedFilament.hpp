@@ -316,6 +316,13 @@ public:
                                       float component_b_surface_offset,
                                       float reference_width_mm = 0.4f);
 
+    // Exposed for unit testing — pure logic helpers.
+    static int         safe_mod(int x, int m);
+    static void        normalize_ratio_pair(int &a, int &b);
+    static float       canonical_signed_bias_value(float component_a_surface_offset, float component_b_surface_offset);
+    static std::string format_surface_offset_token(float value);
+    static double      mixed_filament_reference_nozzle_mm(unsigned int component_a, unsigned int component_b, const std::vector<double> &nozzle_diameters);
+
     // ---- Accessors ------------------------------------------------------
 
     const std::vector<MixedFilament> &mixed_filaments() const { return m_mixed; }

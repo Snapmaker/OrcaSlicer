@@ -42,9 +42,9 @@ public:
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
         , m_value(value), m_min(minVal), m_max(maxVal)
     {
-        SetInitialSize(wxSize(FromDIP(100), FromDIP(22)));
+        SetInitialSize(wxSize(FromDIP(110), FromDIP(22)));
         SetBackgroundStyle(wxBG_STYLE_PAINT);
-        SetBackgroundColour(wxColour("#FFFFFF"));
+        SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         Bind(wxEVT_PAINT, &MatchRangeSlider::on_paint, this);
         Bind(wxEVT_LEFT_DOWN, &MatchRangeSlider::on_left_down, this);
         Bind(wxEVT_LEFT_UP, &MatchRangeSlider::on_left_up, this);
@@ -76,7 +76,7 @@ private:
         wxAutoBufferedPaintDC dc(this);
         wxSize sz = GetClientSize();
         // Erase entire background to prevent ghosting
-        dc.SetBrush(wxBrush(wxColour("#FFFFFF")));
+        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour("#FFFFFF"))));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRectangle(0, 0, sz.x, sz.y);
 
@@ -86,21 +86,21 @@ private:
         int track_x = FromDIP(5);
         int track_w = std::max(4, sz.x - thumb_d);
 
-        dc.SetBrush(wxBrush(wxColour("#EBEBEB")));
-        dc.DrawRoundedRectangle(track_x, track_y, track_w, track_h, FromDIP(8));
+        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour("#EBEBEB"))));
+        dc.DrawRoundedRectangle(track_x, track_y, track_w, track_h, FromDIP(2));
 
         float frac = (float)(m_value - m_min) / (float)std::max(1, m_max - m_min);
         int active_w = std::max(0, (int)(track_w * frac));
         if (active_w > 0) {
-            dc.SetBrush(wxBrush(wxColour("#009688")));
-            dc.DrawRoundedRectangle(track_x, track_y, active_w, track_h, FromDIP(8));
+            dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour("#009688"))));
+            dc.DrawRoundedRectangle(track_x, track_y, active_w, track_h, FromDIP(2));
         }
 
         int thumb_x = track_x + active_w - thumb_d / 2;
         thumb_x = std::clamp(thumb_x, track_x - thumb_d/2, track_x + track_w - thumb_d/2);
         int thumb_y = (sz.y - thumb_d) / 2;
-        dc.SetBrush(wxBrush(wxColour("#FFFFFF")));
-        dc.SetPen(wxPen(wxColour("#009688"), FromDIP(1)));
+        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour("#FFFFFF"))));
+        dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#009688")), FromDIP(1)));
         dc.DrawEllipse(thumb_x, thumb_y, thumb_d, thumb_d);
     }
 
@@ -243,18 +243,17 @@ int MixedFilamentDialog::max_filaments_for_mode(int mode) const
 void MixedFilamentDialog::build_ui()
 {
     m_mode_btn_selected = m_current_mode;
-    SetBackgroundColour(wxColour("#F8F7F7"));
+    SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F8F7F7")));
 
     auto* top_sizer = new wxBoxSizer(wxVERTICAL);
     const int M = FromDIP(8);
-    const int H_GAP = FromDIP(20);
     const int V_GAP = FromDIP(16);
 
     // ---- Segmented mode buttons (Figma: white 380×60 panel, inner #F8F7F7 segment bg, tabs 80×28, 4px gap) ----
     {
         // Outer white panel (#FFFFFF bg, bottom border #F0F0F0, px=20 py=12)
         auto* mode_outer = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        mode_outer->SetBackgroundColour(wxColour("#FFFFFF"));
+        mode_outer->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         auto* mode_outer_sizer = new wxBoxSizer(wxVERTICAL);
 
         // Inner segment container (#F8F7F7 bg, 36px height, 4px radius)
@@ -271,7 +270,7 @@ void MixedFilamentDialog::build_ui()
         auto seg_bg  = StateColor();
         auto seg_fg  = StateColor(std::pair(wxColour("#4A4A4A"), (int)StateColor::Normal));
         auto sel_bg  = StateColor(std::pair(wxColour("#009688"), (int)StateColor::Normal));
-        auto sel_fg  = StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal));
+        auto sel_fg  = StateColor(std::pair(wxColour("#FEFEFE"), (int)StateColor::Normal));
 
         for (int i = 0; i < 4; ++i) {
             auto* btn = new Button(m_mode_btn_container, mode_names[i]);
@@ -311,7 +310,7 @@ void MixedFilamentDialog::build_ui()
 
         // Bottom divider (Figma: #F0F0F0, 1px)
         auto* mode_divider = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-        mode_divider->SetBackgroundColour(wxColour("#F0F0F0"));
+        mode_divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
 
         top_sizer->Add(mode_outer, 0, wxEXPAND);
         top_sizer->Add(mode_divider, 0, wxEXPAND);
@@ -323,7 +322,7 @@ void MixedFilamentDialog::build_ui()
     {
         m_error_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
                                      wxDefaultSize, wxBORDER_NONE | wxTAB_TRAVERSAL);
-        m_error_panel->SetBackgroundColour(wxColour("#FDE8E8"));
+        m_error_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FDE8E8")));
         m_error_panel->Hide();
         auto* err_sizer = new wxBoxSizer(wxHORIZONTAL);
         ScalableBitmap error_bmp(m_error_panel, "error_icon_red_exclamation", 14);
@@ -331,7 +330,7 @@ void MixedFilamentDialog::build_ui()
         err_sizer->Add(error_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         err_sizer->AddSpacer(FromDIP(4));
         m_error_text = new wxStaticText(m_error_panel, wxID_ANY, wxEmptyString);
-        m_error_text->SetForegroundColour(wxColour("#D32F2F"));
+        m_error_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#D32F2F")));
         m_error_text->Wrap(FromDIP(360));
         err_sizer->Add(m_error_text, 1, wxALL, FromDIP(8));
         m_error_panel->SetSizer(err_sizer);
@@ -342,7 +341,7 @@ void MixedFilamentDialog::build_ui()
     {
         m_warning_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
                                        wxDefaultSize, wxBORDER_NONE | wxTAB_TRAVERSAL);
-        m_warning_panel->SetBackgroundColour(wxColour("#FFF3EB"));
+        m_warning_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFF3EB")));
         m_warning_panel->Hide();
         auto* warn_sizer = new wxBoxSizer(wxHORIZONTAL);
         ScalableBitmap warn_bmp(m_warning_panel, "icon_warning_triangle", 14);
@@ -350,7 +349,7 @@ void MixedFilamentDialog::build_ui()
         warn_sizer->Add(warn_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         warn_sizer->AddSpacer(FromDIP(4));
         m_warning_text = new wxStaticText(m_warning_panel, wxID_ANY, wxEmptyString);
-        m_warning_text->SetForegroundColour(wxColour("#FF842D"));
+        m_warning_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF842D")));
         m_warning_text->Wrap(FromDIP(360));
         warn_sizer->Add(m_warning_text, 1, wxALL, FromDIP(8));
         m_warning_panel->SetSizer(warn_sizer);
@@ -360,7 +359,7 @@ void MixedFilamentDialog::build_ui()
     m_scrolled_content = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
                                                wxSize(FromDIP(380), FromDIP(400)),
                                                wxVSCROLL | wxBORDER_NONE);
-    m_scrolled_content->SetBackgroundColour(wxColour("#F8F7F7"));
+    m_scrolled_content->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F8F7F7")));
     m_scrolled_content->SetScrollRate(0, FromDIP(8));
     // Prevent wxScrolledWindow from auto-scrolling to focused children.
     // Without this, clicking a partially-visible widget first scrolls it
@@ -369,6 +368,7 @@ void MixedFilamentDialog::build_ui()
         // Do not evt.Skip() — that would invoke the default handler which scrolls.
     });
     auto* scroll_sizer = new wxBoxSizer(wxVERTICAL);
+    scroll_sizer->AddSpacer(FromDIP(16));
 
     // ======== Card 1: Match Input (match mode: filament badges + target color) ========
     {
@@ -376,6 +376,7 @@ void MixedFilamentDialog::build_ui()
                                            wxDefaultSize, wxBORDER_NONE);
         m_match_input_card->SetCornerRadius(FromDIP(4));
         m_match_input_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_match_input_card->SetMaxSize(wxSize(FromDIP(325), -1));
         m_match_input_card->SetBackgroundColor(
             StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
         m_match_input_card->SetBorderWidth(FromDIP(1));
@@ -383,14 +384,15 @@ void MixedFilamentDialog::build_ui()
         auto* card1_sizer = new wxBoxSizer(wxVERTICAL);
 
         auto* filament_label = new wxStaticText(m_match_input_card, wxID_ANY, _L("Filaments:"));
-        filament_label->SetFont(Label::Head_14);
-        filament_label->SetBackgroundColour(wxColour("#FFFFFF"));
+        filament_label->SetFont(Label::Body_14);
+        filament_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        filament_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         card1_sizer->Add(filament_label, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
         card1_sizer->AddSpacer(FromDIP(12));
 
         m_match_badges_panel = new wxPanel(m_match_input_card, wxID_ANY, wxDefaultPosition,
                                            wxDefaultSize, wxBORDER_NONE);
-        m_match_badges_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_match_badges_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_match_badges_sizer = new wxWrapSizer(wxHORIZONTAL);
         MixedFilamentDisplayContext ctx;
         ctx.num_physical = m_filament_colours.size();
@@ -402,16 +404,16 @@ void MixedFilamentDialog::build_ui()
             auto* badge = new MixedFilamentBadge(m_match_badges_panel, wxID_ANY, fid + 1,
                                                   mf, ctx, true, 20);
             badge->SetCanFocus(false);
-            m_match_badges_sizer->Add(badge, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
+            m_match_badges_sizer->Add(badge, 0, wxRIGHT | wxBOTTOM, FromDIP(12));
         }
         m_match_badges_panel->SetSizer(m_match_badges_sizer);
         card1_sizer->Add(m_match_badges_panel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
-        card1_sizer->AddSpacer(FromDIP(12));
 
         // Target Color label
         auto* target_label = new wxStaticText(m_match_input_card, wxID_ANY, _L("Target Color:"));
-        target_label->SetFont(Label::Head_14);
-        target_label->SetBackgroundColour(wxColour("#FFFFFF"));
+        target_label->SetFont(Label::Body_14);
+        target_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        target_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         card1_sizer->Add(target_label, 0, wxLEFT | wxRIGHT, FromDIP(16));
         card1_sizer->AddSpacer(FromDIP(12));
 
@@ -450,7 +452,7 @@ void MixedFilamentDialog::build_ui()
         auto* hex_wrapper = new wxPanel(m_match_input_card, wxID_ANY, wxDefaultPosition,
                                          wxSize(FromDIP(109), FromDIP(24)));
         m_match_hex_wrapper = hex_wrapper;
-        hex_wrapper->SetBackgroundColour(wxColour("#FFFFFF"));
+        hex_wrapper->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         hex_wrapper->SetMinSize(wxSize(FromDIP(109), FromDIP(24)));
         hex_wrapper->SetBackgroundStyle(wxBG_STYLE_PAINT);
         hex_wrapper->Bind(wxEVT_PAINT, [this](wxPaintEvent& evt) {
@@ -458,26 +460,26 @@ void MixedFilamentDialog::build_ui()
             if (!w) return;
             wxPaintDC dc(w);
             wxSize sz = w->GetClientSize();
-            dc.SetBrush(wxBrush(wxColour("#FFFFFF")));
+            dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour("#FFFFFF"))));
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.DrawRectangle(0, 0, sz.x, sz.y);
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
-            dc.SetPen(wxPen(m_match_hex_error ? wxColour("#FF0000") : wxColour("#009688"), 1));
+            dc.SetPen(wxPen(m_match_hex_error ? StateColor::darkModeColorFor(wxColour("#FF0000")) : StateColor::darkModeColorFor(wxColour("#009688")), 1));
             dc.DrawRectangle(0, 0, sz.x, sz.y);
         });
         auto* hex_sizer = new wxBoxSizer(wxHORIZONTAL);
 
         auto* hex_label = new wxStaticText(hex_wrapper, wxID_ANY, "Hex:");
         hex_label->SetFont(Label::Body_12);
-        hex_label->SetForegroundColour(wxColour("#8F8F8F"));
-        hex_label->SetBackgroundColour(wxColour("#FFFFFF"));
+        hex_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+        hex_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         hex_sizer->Add(hex_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(9));
         hex_sizer->AddSpacer(FromDIP(4));
 
         auto* hash_label = new wxStaticText(hex_wrapper, wxID_ANY, "#");
         hash_label->SetFont(Label::Body_12);
-        hash_label->SetForegroundColour(wxColour("#8F8F8F"));
-        hash_label->SetBackgroundColour(wxColour("#FFFFFF"));
+        hash_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+        hash_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         hex_sizer->Add(hash_label, 0, wxALIGN_CENTER_VERTICAL);
         hex_sizer->AddSpacer(FromDIP(2));
 
@@ -486,8 +488,8 @@ void MixedFilamentDialog::build_ui()
                                            wxDefaultPosition, wxSize(FromDIP(52), -1),
                                            wxTE_PROCESS_ENTER | wxBORDER_NONE);
         m_match_hex_input->SetFont(Label::Body_12);
-        m_match_hex_input->SetForegroundColour(wxColour("#242424"));
-        m_match_hex_input->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_match_hex_input->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        m_match_hex_input->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_match_hex_input->SetMaxLength(6);
         // Prevent wxEVT_TEXT_ENTER from propagating to dialog default button
         m_match_hex_input->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent&) {
@@ -524,9 +526,8 @@ void MixedFilamentDialog::build_ui()
         card1_sizer->Add(target_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
 
         m_match_input_card->SetSizer(card1_sizer);
-        scroll_sizer->Add(m_match_input_card, 0, wxEXPAND | wxTOP | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+        scroll_sizer->Add(m_match_input_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
-
     // ======== Card A: Filament Selection ========
     {
         m_filament_card = new StaticBox(m_scrolled_content, wxID_ANY, wxDefaultPosition,
@@ -543,8 +544,9 @@ void MixedFilamentDialog::build_ui()
         // Title row with add/remove/swap buttons
         auto* card_title_row = new wxBoxSizer(wxHORIZONTAL);
         m_filament_card_title = new wxStaticText(m_filament_card, wxID_ANY, _L("Filament Selection"));
-        m_filament_card_title->SetFont(Label::Head_14);
-        m_filament_card_title->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_filament_card_title->SetFont(Label::Body_14);
+        m_filament_card_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        m_filament_card_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         card_title_row->Add(m_filament_card_title, 0, wxALIGN_CENTER_VERTICAL);
 
         card_title_row->AddStretchSpacer();
@@ -563,7 +565,7 @@ void MixedFilamentDialog::build_ui()
             update_preview();
             update_compatibility_warning();
         });
-        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL);
 
         // Remove filament button
         m_btn_remove_filament = new ScalableButton(m_filament_card, wxID_ANY, "icon_minus");
@@ -602,14 +604,14 @@ void MixedFilamentDialog::build_ui()
 
         // Filament rows panel
         m_filament_rows_panel = new wxPanel(m_filament_card);
-        m_filament_rows_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_filament_rows_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_filament_rows_sizer = new wxBoxSizer(wxVERTICAL);
         m_filament_rows_panel->SetSizer(m_filament_rows_sizer);
         m_filament_card_sizer->Add(m_filament_rows_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
 
         m_filament_card->SetSizer(m_filament_card_sizer);
         m_filament_card->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) { this->SetFocus(); evt.Skip(); });
-        scroll_sizer->Add(m_filament_card, 0, wxEXPAND | wxTOP | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
+        scroll_sizer->Add(m_filament_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     // ======== Card B: Mix Ratio (Ratio mode) ========
@@ -618,6 +620,7 @@ void MixedFilamentDialog::build_ui()
                                       wxDefaultSize, wxBORDER_NONE);
         m_ratio_card->SetCornerRadius(FromDIP(4));
         m_ratio_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_ratio_card->SetMaxSize(wxSize(FromDIP(325), -1));
         m_ratio_card->SetBackgroundColor(
             StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
         m_ratio_card->SetBorderWidth(FromDIP(1));
@@ -626,9 +629,10 @@ void MixedFilamentDialog::build_ui()
 
         // Title
         auto* ratio_title = new wxStaticText(m_ratio_card, wxID_ANY, _L("Mixing Ratio"));
-        ratio_title->SetFont(Label::Head_14);
-        ratio_title->SetBackgroundColour(wxColour("#FFFFFF"));
-        m_ratio_card_sizer->Add(ratio_title, 0, wxALL, FromDIP(16));
+        ratio_title->SetFont(Label::Body_14);
+        ratio_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        ratio_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        m_ratio_card_sizer->Add(ratio_title, 0, wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
 
         // Compute initial values
         int initial_val = m_result.mix_b_percent;
@@ -640,17 +644,19 @@ void MixedFilamentDialog::build_ui()
             : col_a;
 
         // ---- Gradient bar (2-color) ----
+        m_ratio_gradient_spacer = m_ratio_card_sizer->AddSpacer(FromDIP(16));
         m_gradient_selector = new MixedGradientSelector(m_ratio_card, col_a, col_b, initial_val);
         m_ratio_card_sizer->Add(m_gradient_selector, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
 
         // ---- Tri picker (3-color) ----
+        m_ratio_tri_spacer = m_ratio_card_sizer->AddSpacer(FromDIP(12));
         build_tri_picker(m_ratio_card);
-        m_ratio_card_sizer->Add(m_tri_picker, 0, wxALIGN_LEFT | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+        m_ratio_card_sizer->Add(m_tri_picker, 0, wxALIGN_LEFT | wxLEFT | wxRIGHT, FromDIP(16));
 
         // ---- Legend panel (dynamic swatches + percentage labels) ----
         m_ratio_card_sizer->AddSpacer(FromDIP(6));
         m_legend_panel = new wxPanel(m_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-        m_legend_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_legend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_legend_sizer = new wxBoxSizer(wxHORIZONTAL);
         m_legend_panel->SetSizer(m_legend_sizer);
         m_ratio_card_sizer->Add(m_legend_panel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
@@ -659,7 +665,7 @@ void MixedFilamentDialog::build_ui()
         {
             m_ratio_card_sizer->AddSpacer(FromDIP(6));
             auto* divider = new wxPanel(m_ratio_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-            divider->SetBackgroundColour(wxColour("#F3F4F6"));
+            divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
             m_ratio_card_sizer->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
             m_ratio_card_sizer->AddSpacer(FromDIP(6));
         }
@@ -667,7 +673,7 @@ void MixedFilamentDialog::build_ui()
         // ---- Strip preview panel ----
         m_strip_panel = new wxPanel(m_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
         m_strip_panel->SetMinSize(wxSize(FromDIP(140), FromDIP(128)));
-        m_strip_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_strip_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_strip_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
         m_strip_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
             wxAutoBufferedPaintDC dc(m_strip_panel);
@@ -682,8 +688,8 @@ void MixedFilamentDialog::build_ui()
             auto* left_col = new wxBoxSizer(wxVERTICAL);
             auto* preview_lbl = new wxStaticText(m_ratio_card, wxID_ANY, _L("Preview"));
             preview_lbl->SetFont(Label::Body_12);
-            preview_lbl->SetForegroundColour(wxColour("#8F8F8F"));
-            preview_lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+            preview_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+            preview_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             left_col->Add(preview_lbl, 0, wxALIGN_LEFT | wxBOTTOM, FromDIP(4));
             left_col->Add(m_strip_panel, 1, wxEXPAND);
             dual_preview_row->Add(left_col, 1, wxEXPAND | wxRIGHT, FromDIP(8));
@@ -692,12 +698,12 @@ void MixedFilamentDialog::build_ui()
             auto* right_col = new wxBoxSizer(wxVERTICAL);
             auto* blend_lbl = new wxStaticText(m_ratio_card, wxID_ANY, _L("Mix Effect"));
             blend_lbl->SetFont(Label::Body_12);
-            blend_lbl->SetForegroundColour(wxColour("#8F8F8F"));
-            blend_lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+            blend_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+            blend_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             right_col->Add(blend_lbl, 0, wxALIGN_LEFT | wxBOTTOM, FromDIP(4));
             m_preview_blend_panel = new wxPanel(m_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
             m_preview_blend_panel->SetMinSize(wxSize(FromDIP(140), FromDIP(128)));
-            m_preview_blend_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_preview_blend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             m_preview_blend_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
             m_preview_blend_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
                 wxAutoBufferedPaintDC dc(m_preview_blend_panel);
@@ -705,7 +711,7 @@ void MixedFilamentDialog::build_ui()
                 dc.Clear();
                 wxSize sz = m_preview_blend_panel->GetClientSize();
                 dc.SetBrush(*wxTRANSPARENT_BRUSH);
-                dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+                dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour(180, 180, 180)), 1));
                 dc.DrawRectangle(0, 0, sz.x, sz.y);
             });
             right_col->Add(m_preview_blend_panel, 1, wxEXPAND);
@@ -716,7 +722,7 @@ void MixedFilamentDialog::build_ui()
 
         m_ratio_card->SetSizer(m_ratio_card_sizer);
         m_ratio_card->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) { this->SetFocus(); evt.Skip(); });
-        scroll_sizer->Add(m_ratio_card, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
+        scroll_sizer->Add(m_ratio_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     // ======== Match Mix Ratio Card (match mode's own card) ========
@@ -725,6 +731,7 @@ void MixedFilamentDialog::build_ui()
                                            wxDefaultSize, wxBORDER_NONE);
         m_match_ratio_card->SetCornerRadius(FromDIP(4));
         m_match_ratio_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_match_ratio_card->SetMaxSize(wxSize(FromDIP(325), -1));
         m_match_ratio_card->SetBackgroundColor(
             StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
         m_match_ratio_card->SetBorderWidth(FromDIP(1));
@@ -733,8 +740,9 @@ void MixedFilamentDialog::build_ui()
 
         // Title: 混合比例 (Figma: 14px Medium)
         auto* match_title = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Mixing Ratio"));
-        match_title->SetFont(Label::Head_14);
-        match_title->SetBackgroundColour(wxColour("#FFFFFF"));
+        match_title->SetFont(Label::Body_14);
+        match_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        match_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_match_ratio_card_sizer->Add(match_title, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
         wxColour def_ca = (!m_filament_colours.empty())
@@ -743,15 +751,17 @@ void MixedFilamentDialog::build_ui()
             ? parse_mixed_color(m_filament_colours[1]) : def_ca;
         m_match_gradient_selector = new MixedGradientSelector(m_match_ratio_card, def_ca, def_cb, 50);
         m_match_gradient_selector->set_min_max(m_match_min_pct, 100 - m_match_min_pct);
+        m_match_gradient_spacer = m_match_ratio_card_sizer->AddSpacer(FromDIP(16));
         m_match_ratio_card_sizer->Add(m_match_gradient_selector, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
 
+        m_match_tri_spacer = m_match_ratio_card_sizer->AddSpacer(FromDIP(12));
         build_match_tri_picker(m_match_ratio_card);
         m_match_ratio_card_sizer->Add(m_match_tri_picker, 0, wxALIGN_LEFT | wxLEFT | wxRIGHT, FromDIP(16));
 
         // Legend panel (gap-[6px] below tri-picker per Figma)
         m_match_ratio_card_sizer->AddSpacer(FromDIP(6));
         m_match_legend_panel = new wxPanel(m_match_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-        m_match_legend_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_match_legend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_match_legend_sizer = new wxBoxSizer(wxHORIZONTAL);
         m_match_legend_panel->SetSizer(m_match_legend_sizer);
         m_match_ratio_card_sizer->Add(m_match_legend_panel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
@@ -759,20 +769,20 @@ void MixedFilamentDialog::build_ui()
         // Range slider row: 最低混色比例
         {
             m_match_range_row = new wxPanel(m_match_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-            m_match_range_row->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_match_range_row->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             auto* range_sizer = new wxBoxSizer(wxHORIZONTAL);
             auto* range_label = new wxStaticText(m_match_range_row, wxID_ANY, _L("Min Mix Ratio"));
-            range_label->SetFont(Label::Body_12);
-            range_label->SetForegroundColour(wxColour("#8F8F8F"));
-            range_label->SetBackgroundColour(wxColour("#FFFFFF"));
+            range_label->SetFont(Label::Body_14);
+            range_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+            range_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             range_sizer->Add(range_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
             m_match_range_slider = new MatchRangeSlider(m_match_range_row, m_match_min_pct, 0, 50);
             range_sizer->Add(m_match_range_slider, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
             m_match_range_value = new wxStaticText(m_match_range_row, wxID_ANY,
                                                     wxString::Format("%d%%", m_match_min_pct));
             m_match_range_value->SetFont(Label::Body_12);
-            m_match_range_value->SetForegroundColour(wxColour("#8F8F8F"));
-            m_match_range_value->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_match_range_value->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+            m_match_range_value->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             range_sizer->Add(m_match_range_value, 0, wxALIGN_CENTER_VERTICAL);
             range_sizer->AddStretchSpacer();
             m_match_range_slider->Bind(wxEVT_SLIDER, [this](wxCommandEvent&) {
@@ -788,9 +798,9 @@ void MixedFilamentDialog::build_ui()
 
         // Divider
         {
-            m_match_ratio_card_sizer->AddSpacer(FromDIP(6));
+            m_match_ratio_card_sizer->AddSpacer(FromDIP(16));
             auto* divider = new wxPanel(m_match_ratio_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-            divider->SetBackgroundColour(wxColour("#F3F4F6"));
+            divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
             m_match_ratio_card_sizer->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
             m_match_ratio_card_sizer->AddSpacer(FromDIP(6));
         }
@@ -798,7 +808,7 @@ void MixedFilamentDialog::build_ui()
         // Preview section
         m_match_strip_panel = new wxPanel(m_match_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
         m_match_strip_panel->SetMinSize(wxSize(FromDIP(140), FromDIP(128)));
-        m_match_strip_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_match_strip_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_match_strip_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
         m_match_strip_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
             wxAutoBufferedPaintDC dc(m_match_strip_panel);
@@ -810,8 +820,8 @@ void MixedFilamentDialog::build_ui()
             auto* left_col = new wxBoxSizer(wxVERTICAL);
             auto* preview_lbl = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Preview"));
             preview_lbl->SetFont(Label::Body_12);
-            preview_lbl->SetForegroundColour(wxColour("#8F8F8F"));
-            preview_lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+            preview_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+            preview_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             left_col->Add(preview_lbl, 0, wxALIGN_LEFT | wxBOTTOM, FromDIP(4));
             left_col->Add(m_match_strip_panel, 0, wxEXPAND);
             dual_preview_row->Add(left_col, 0, wxEXPAND | wxRIGHT, FromDIP(8));
@@ -819,12 +829,12 @@ void MixedFilamentDialog::build_ui()
             auto* right_col = new wxBoxSizer(wxVERTICAL);
             auto* blend_lbl = new wxStaticText(m_match_ratio_card, wxID_ANY, _L("Mix Effect"));
             blend_lbl->SetFont(Label::Body_12);
-            blend_lbl->SetForegroundColour(wxColour("#8F8F8F"));
-            blend_lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+            blend_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+            blend_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             right_col->Add(blend_lbl, 0, wxALIGN_LEFT | wxBOTTOM, FromDIP(4));
             m_match_blend_panel = new wxPanel(m_match_ratio_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
             m_match_blend_panel->SetMinSize(wxSize(FromDIP(140), FromDIP(128)));
-            m_match_blend_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_match_blend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             m_match_blend_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
             m_match_blend_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
                 wxAutoBufferedPaintDC dc(m_match_blend_panel);
@@ -832,7 +842,7 @@ void MixedFilamentDialog::build_ui()
                 dc.Clear();
                 wxSize sz = m_match_blend_panel->GetClientSize();
                 dc.SetBrush(*wxTRANSPARENT_BRUSH);
-                dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+                dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour(180, 180, 180)), 1));
                 dc.DrawRectangle(0, 0, sz.x, sz.y);
             });
             right_col->Add(m_match_blend_panel, 0, wxEXPAND);
@@ -853,7 +863,7 @@ void MixedFilamentDialog::build_ui()
         });
 
         m_match_ratio_card->SetSizer(m_match_ratio_card_sizer);
-        scroll_sizer->Add(m_match_ratio_card, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
+        scroll_sizer->Add(m_match_ratio_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     // ======== Gradient Effect Card: 混色效果 (shown in gradient mode) ========
@@ -862,24 +872,27 @@ void MixedFilamentDialog::build_ui()
                                                 wxDefaultSize, wxBORDER_NONE);
         m_gradient_effect_card->SetCornerRadius(FromDIP(4));
         m_gradient_effect_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_gradient_effect_card->SetMaxSize(wxSize(FromDIP(325), -1));
         m_gradient_effect_card->SetBackgroundColor(
             StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
         m_gradient_effect_card->SetBorderWidth(FromDIP(1));
         m_gradient_effect_card->SetBorderColorNormal(wxColour("#F0F0F0"));
         m_gradient_effect_card_sizer = new wxBoxSizer(wxVERTICAL);
 
-        // Title: 混色效果 (Figma: 14px Medium, left-aligned, 16px top/left/right padding)
+        // Mix Effect title (same font as Blended Color)
         auto* effect_title = new wxStaticText(m_gradient_effect_card, wxID_ANY, _L("Mix Effect"));
-        effect_title->SetFont(Label::Head_14);
-        effect_title->SetBackgroundColour(wxColour("#FFFFFF"));
+        effect_title->SetFont(Label::Body_12);
+        effect_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        effect_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_gradient_effect_card_sizer->Add(effect_title, 0, wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
+        m_gradient_effect_card_sizer->AddSpacer(FromDIP(8));
 
-        // Gradient preview panel (Figma: 140×140px, left-aligned, 8px below title)
+        // Gradient preview panel
         m_preview_panel = new wxPanel(m_gradient_effect_card, wxID_ANY, wxDefaultPosition,
                                       wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
         m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
         m_preview_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
-        m_preview_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_preview_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_preview_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
             wxAutoBufferedPaintDC dc(m_preview_panel);
             if (m_current_mode == MODE_GRADIENT && m_filament_rows.size() >= 2) {
@@ -911,14 +924,14 @@ void MixedFilamentDialog::build_ui()
             }
             wxSize sz = m_preview_panel->GetClientSize();
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
-            dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+            dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour(180, 180, 180)), 1));
             dc.DrawRectangle(0, 0, sz.x, sz.y);
         });
-        m_gradient_effect_card_sizer->Add(m_preview_panel, 0, wxALIGN_LEFT | wxLEFT | wxBOTTOM, FromDIP(16));
+        m_gradient_effect_card_sizer->Add(m_preview_panel, 0, wxALIGN_LEFT | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
 
         m_gradient_effect_card->SetSizer(m_gradient_effect_card_sizer);
         m_gradient_effect_card->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) { this->SetFocus(); evt.Skip(); });
-        scroll_sizer->Add(m_gradient_effect_card, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
+        scroll_sizer->Add(m_gradient_effect_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     // ---- Match mode panel ----
@@ -926,7 +939,7 @@ void MixedFilamentDialog::build_ui()
         m_match_panel_sizer = new wxBoxSizer(wxVERTICAL);
         wxColour initial = (m_current_mode == MODE_MATCH && !m_result.display_color.empty())
             ? parse_mixed_color(m_result.display_color)
-            : wxColour("#26A69A");
+            : StateColor::darkModeColorFor(wxColour("#26A69A"));
         m_match_panel = new MixedColorMatchPanel(m_scrolled_content, m_filament_colours, initial);
         m_match_panel_sizer->Add(m_match_panel, 0, wxEXPAND | wxALL, M);
         scroll_sizer->Add(m_match_panel_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
@@ -938,6 +951,7 @@ void MixedFilamentDialog::build_ui()
                                       wxDefaultSize, wxBORDER_NONE);
         m_cycle_card->SetCornerRadius(FromDIP(4));
         m_cycle_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_cycle_card->SetMaxSize(wxSize(FromDIP(325), -1));
         m_cycle_card->SetBackgroundColor(
             StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
         m_cycle_card->SetBorderWidth(FromDIP(1));
@@ -946,8 +960,9 @@ void MixedFilamentDialog::build_ui()
 
         // Title
         auto* cycle_title = new wxStaticText(m_cycle_card, wxID_ANY, _L("Pattern"));
-        cycle_title->SetFont(Label::Head_14);
-        cycle_title->SetBackgroundColour(wxColour("#FFFFFF"));
+        cycle_title->SetFont(Label::Body_14);
+        cycle_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        cycle_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_cycle_card_sizer->Add(cycle_title, 0, wxALL, FromDIP(16));
 
         // Filament quick buttons (20×20 badges, wrapping)
@@ -977,7 +992,8 @@ void MixedFilamentDialog::build_ui()
                 btn_row->Add(badge, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
                 m_pattern_quick_buttons.push_back(badge);
             }
-            m_cycle_card_sizer->Add(btn_row, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+            m_cycle_card_sizer->Add(btn_row, 0, wxLEFT | wxRIGHT, FromDIP(16));
+            m_cycle_card_sizer->AddSpacer(FromDIP(12));
         }
 
         // Pattern input (Figma: 293×30, #F0F0F0 1px border)
@@ -995,12 +1011,14 @@ void MixedFilamentDialog::build_ui()
             auto* wrapper_sizer = new wxBoxSizer(wxHORIZONTAL);
             m_pattern_ctrl = new wxTextCtrl(input_wrapper, wxID_ANY,
                                             from_u8(init_pattern.empty() ? "12" : init_pattern),
-                                            wxDefaultPosition, wxSize(FromDIP(293), FromDIP(30)),
+                                            wxDefaultPosition, wxDefaultSize,
                                             wxTE_PROCESS_ENTER | wxBORDER_NONE);
             m_pattern_ctrl->SetFont(Label::Body_14);
-            m_pattern_ctrl->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_pattern_ctrl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+            m_pattern_ctrl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             m_pattern_ctrl->SetMargins(FromDIP(8), FromDIP(8));
-            wrapper_sizer->Add(m_pattern_ctrl, 1, wxEXPAND | wxALL, FromDIP(1));
+            input_wrapper->SetMinSize(wxSize(FromDIP(293), FromDIP(30)));
+            wrapper_sizer->Add(m_pattern_ctrl, 1, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, FromDIP(1));
             input_wrapper->SetSizer(wrapper_sizer);
             m_pattern_ctrl->SetToolTip(_L("Allowed Input: Only digits, square brackets ([ and ]), and commas (,)."));
             m_pattern_ctrl->SetMaxLength(512);
@@ -1018,7 +1036,7 @@ void MixedFilamentDialog::build_ui()
         // Divider
         {
             auto* divider = new wxPanel(m_cycle_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-            divider->SetBackgroundColour(wxColour("#F3F4F6"));
+            divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
             m_cycle_card_sizer->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, M);
         }
 
@@ -1030,13 +1048,13 @@ void MixedFilamentDialog::build_ui()
             auto* left_col = new wxBoxSizer(wxVERTICAL);
             auto* preview_lbl = new wxStaticText(m_cycle_card, wxID_ANY, _L("Preview"));
             preview_lbl->SetFont(Label::Body_12);
-            preview_lbl->SetForegroundColour(wxColour("#8F8F8F"));
-            preview_lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+            preview_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+            preview_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             left_col->Add(preview_lbl, 0, wxALIGN_LEFT | wxBOTTOM, FromDIP(4));
 
             m_cycle_strip_panel = new wxPanel(m_cycle_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
             m_cycle_strip_panel->SetMinSize(wxSize(FromDIP(140), FromDIP(140)));
-            m_cycle_strip_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_cycle_strip_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             m_cycle_strip_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
             m_cycle_strip_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
                 wxAutoBufferedPaintDC dc(m_cycle_strip_panel);
@@ -1049,13 +1067,13 @@ void MixedFilamentDialog::build_ui()
             auto* right_col = new wxBoxSizer(wxVERTICAL);
             auto* blend_lbl = new wxStaticText(m_cycle_card, wxID_ANY, _L("Mix Effect"));
             blend_lbl->SetFont(Label::Body_12);
-            blend_lbl->SetForegroundColour(wxColour("#8F8F8F"));
-            blend_lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+            blend_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+            blend_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             right_col->Add(blend_lbl, 0, wxALIGN_LEFT | wxBOTTOM, FromDIP(4));
 
             m_cycle_blend_panel = new wxPanel(m_cycle_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
             m_cycle_blend_panel->SetMinSize(wxSize(FromDIP(140), FromDIP(140)));
-            m_cycle_blend_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+            m_cycle_blend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             m_cycle_blend_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
             m_cycle_blend_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
                 wxAutoBufferedPaintDC dc(m_cycle_blend_panel);
@@ -1063,7 +1081,7 @@ void MixedFilamentDialog::build_ui()
                 dc.Clear();
                 wxSize sz = m_cycle_blend_panel->GetClientSize();
                 dc.SetBrush(*wxTRANSPARENT_BRUSH);
-                dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+                dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour(180, 180, 180)), 1));
                 dc.DrawRectangle(0, 0, sz.x, sz.y);
             });
             right_col->Add(m_cycle_blend_panel, 1, wxEXPAND);
@@ -1074,14 +1092,14 @@ void MixedFilamentDialog::build_ui()
 
         // Legend panel (dynamic swatches + percentage labels)
         m_cycle_legend_panel = new wxPanel(m_cycle_card, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-        m_cycle_legend_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_cycle_legend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_cycle_legend_sizer = new wxFlexGridSizer(5, FromDIP(12), FromDIP(6));
         m_cycle_legend_panel->SetSizer(m_cycle_legend_sizer);
         m_cycle_card_sizer->Add(m_cycle_legend_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
 
         m_cycle_card->SetSizer(m_cycle_card_sizer);
         m_cycle_card->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) { this->SetFocus(); evt.Skip(); });
-        scroll_sizer->Add(m_cycle_card, 0, wxEXPAND | wxTOP | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+        scroll_sizer->Add(m_cycle_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     // ======== Card C: Recommended Swatches ========
@@ -1090,6 +1108,7 @@ void MixedFilamentDialog::build_ui()
                                        wxDefaultSize, wxBORDER_NONE);
         m_swatch_card->SetCornerRadius(FromDIP(4));
         m_swatch_card->SetMinSize(wxSize(FromDIP(325), -1));
+        m_swatch_card->SetMaxSize(wxSize(FromDIP(325), -1));
         m_swatch_card->SetBackgroundColor(
             StateColor(std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
         m_swatch_card->SetBorderWidth(FromDIP(1));
@@ -1097,19 +1116,20 @@ void MixedFilamentDialog::build_ui()
         m_swatch_card_sizer = new wxBoxSizer(wxVERTICAL);
 
         auto* swatch_title = new wxStaticText(m_swatch_card, wxID_ANY, _L("Mixing Recommendations"));
-        swatch_title->SetFont(Label::Head_14);
-        swatch_title->SetBackgroundColour(wxColour("#FFFFFF"));
+        swatch_title->SetFont(Label::Body_14);
+        swatch_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        swatch_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_swatch_card_sizer->Add(swatch_title, 0, wxALL, FromDIP(16));
 
         m_swatch_grid_panel = new wxPanel(m_swatch_card, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize);
-        m_swatch_grid_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        m_swatch_grid_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         build_swatch_grid();
         m_swatch_card_sizer->Add(m_swatch_grid_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
 
         m_swatch_card->SetSizer(m_swatch_card_sizer);
         m_swatch_card->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) { this->SetFocus(); evt.Skip(); });
-        scroll_sizer->Add(m_swatch_card, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, H_GAP);
+        scroll_sizer->Add(m_swatch_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     m_scrolled_content->SetSizer(scroll_sizer);
@@ -1118,13 +1138,13 @@ void MixedFilamentDialog::build_ui()
     // ---- Bottom button panel: white bg + #F0F0F0 top border, padding 13/12/20 ----
     {
         auto* btn_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        btn_panel->SetBackgroundColour(wxColour("#FFFFFF"));
+        btn_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
 
         auto* panel_sizer = new wxBoxSizer(wxVERTICAL);
 
         // #F0F0F0 top border (1px)
         auto* top_line = new wxPanel(btn_panel, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-        top_line->SetBackgroundColour(wxColour("#F0F0F0"));
+        top_line->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
         panel_sizer->Add(top_line, 0, wxEXPAND);
 
         // 13px top padding - 1px line = 12px remaining top padding
@@ -1149,7 +1169,7 @@ void MixedFilamentDialog::build_ui()
             std::pair(wxColour("#019687"), (int)StateColor::Normal)));
         m_btn_confirm->SetTextColor(StateColor(
             std::pair(wxColour("#6B6A6A"), (int)StateColor::Disabled),
-            std::pair(wxColour("#FFFFFF"), (int)StateColor::Normal)));
+            std::pair(wxColour("#FEFEFE"), (int)StateColor::Normal)));
 
         btn_sizer->Add(m_btn_cancel,  1, wxRIGHT, FromDIP(8));
         btn_sizer->Add(m_btn_confirm, 1);
@@ -1163,8 +1183,8 @@ void MixedFilamentDialog::build_ui()
     }
 
     SetSizer(top_sizer);
-    SetMinClientSize(wxSize(FromDIP(380), FromDIP(626)));
-    SetMaxClientSize(wxSize(FromDIP(380), FromDIP(626)));
+    SetMinClientSize(wxSize(FromDIP(380), FromDIP(666)));
+    SetMaxClientSize(wxSize(FromDIP(380), FromDIP(666)));
 
     // Initialize match state before rebuild (avoids gradient/tri flicker)
     on_mode_changed(m_current_mode);
@@ -1504,7 +1524,8 @@ void MixedFilamentDialog::rebuild_legend()
 
         auto* lbl = new wxStaticText(m_legend_panel, wxID_ANY, wxString::Format("%d%%", weights[i]));
         lbl->SetFont(Label::Body_12);
-        lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+        lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         pair->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
         m_legend_labels.push_back(lbl);
 
@@ -1550,7 +1571,8 @@ void MixedFilamentDialog::rebuild_match_legend()
         int pct = (i < weights.size()) ? weights[i] : 0;
         auto* lbl = new wxStaticText(m_match_legend_panel, wxID_ANY, wxString::Format("%d%%", pct));
         lbl->SetFont(Label::Body_12);
-        lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+        lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         pair->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
         m_match_legend_labels.push_back(lbl);
         m_match_legend_sizer->Add(pair, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
@@ -1652,6 +1674,8 @@ void MixedFilamentDialog::rebuild_filament_rows()
         auto* row_lbl = new wxStaticText(m_filament_rows_panel, wxID_ANY,
                                          wxString::Format(_L("Filament %d"), i + 1),
                                          wxDefaultPosition, wxSize(FromDIP(48), -1));
+        row_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        row_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         row->Add(row_lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
 
         // Note: sw (color swatch panel) is kept for internal state tracking but hidden
@@ -1706,7 +1730,7 @@ void MixedFilamentDialog::rebuild_filament_rows()
 
         row->Add(cb, 1, wxEXPAND);
 
-        m_filament_rows_sizer->Add(row, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
+        m_filament_rows_sizer->Add(row, 0, wxEXPAND | (i < count - 1 ? wxBOTTOM : 0), FromDIP(12));
     }
 
     m_filament_rows_panel->Layout();
@@ -1780,8 +1804,8 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         const int img_h = sz.GetHeight();
         wxImage img(img_w, img_h);
         
-        // Fill with background color
-        const wxColour bg = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+        // Fill with background color matching card
+        const wxColour bg = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
         img.SetRGB(wxRect(0, 0, img_w, img_h), bg.Red(), bg.Green(), bg.Blue());
         unsigned char* data = img.GetData();
 
@@ -1795,7 +1819,7 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
                 constexpr double EPSILON = 0.001;
                 if (w0 < -EPSILON || w1 < -EPSILON || w2 < -EPSILON) continue;
                 if (px < 0 || px >= img_w || py < 0 || py >= img_h) continue;
-                
+
                 const int idx = (py * img_w + px) * 3;
                 data[idx]     = (unsigned char)std::clamp((int)(c0.Red()   * w0 + c1.Red()   * w1 + c2.Red()   * w2), 0, 255);
                 data[idx + 1] = (unsigned char)std::clamp((int)(c0.Green() * w0 + c1.Green() * w1 + c2.Green() * w2), 0, 255);
@@ -1828,7 +1852,7 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         double hx = m_tri_wx*v0.x + m_tri_wy*v1.x + m_tri_wz*v2.x;
         double hy = m_tri_wx*v0.y + m_tri_wy*v1.y + m_tri_wz*v2.y;
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.SetPen(wxPen(wxColour("#FFFFFF"), 1));
+        dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#FFFFFF")), 1));
         dc.DrawCircle((int)hx, (int)hy, FromDIP(5));
 
     });
@@ -1843,15 +1867,16 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         if (!m_tri_dragging) return;
         TriPt clamped = tri_clamp_pt(p, v0, v1, v2);
         tri_bary(clamped, v0, v1, v2, m_tri_wx, m_tri_wy, m_tri_wz);
-        // Clamp each weight to be at least 10% and at most 90%
+        // Clamp each weight to be at least 10% and at most 90%, iterate to renormalize
         constexpr double MIN_WEIGHT = 0.10;
         constexpr double MAX_WEIGHT = 0.90;
-        m_tri_wx = std::clamp(m_tri_wx, MIN_WEIGHT, MAX_WEIGHT);
-        m_tri_wy = std::clamp(m_tri_wy, MIN_WEIGHT, MAX_WEIGHT);
-        m_tri_wz = std::clamp(m_tri_wz, MIN_WEIGHT, MAX_WEIGHT);
-        // Renormalize after clamping
-        double sum = m_tri_wx + m_tri_wy + m_tri_wz;
-        if (sum > 0) { m_tri_wx /= sum; m_tri_wy /= sum; m_tri_wz /= sum; }
+        for (int i = 0; i < 4; ++i) {
+            m_tri_wx = std::clamp(m_tri_wx, MIN_WEIGHT, MAX_WEIGHT);
+            m_tri_wy = std::clamp(m_tri_wy, MIN_WEIGHT, MAX_WEIGHT);
+            m_tri_wz = std::clamp(m_tri_wz, MIN_WEIGHT, MAX_WEIGHT);
+            double sum = m_tri_wx + m_tri_wy + m_tri_wz;
+            if (sum > 0) { m_tri_wx /= sum; m_tri_wy /= sum; m_tri_wz /= sum; }
+        }
         update_preview();
         m_tri_picker->Refresh();
     };
@@ -1910,7 +1935,7 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
 
         const int img_w = sz.GetWidth(), img_h = sz.GetHeight();
         wxImage img(img_w, img_h);
-        const wxColour bg = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+        const wxColour bg = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
         img.SetRGB(wxRect(0, 0, img_w, img_h), bg.Red(), bg.Green(), bg.Blue());
         unsigned char* data = img.GetData();
 
@@ -1951,7 +1976,7 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
         double hx = m_match_tri_wx*v0.x + m_match_tri_wy*v1.x + m_match_tri_wz*v2.x;
         double hy = m_match_tri_wx*v0.y + m_match_tri_wy*v1.y + m_match_tri_wz*v2.y;
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
-        dc.SetPen(wxPen(wxColour("#FFFFFF"), 1));
+        dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#FFFFFF")), 1));
         dc.DrawCircle((int)hx, (int)hy, FromDIP(5));
     });
 
@@ -2013,8 +2038,10 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
         m_ratio_card->Show(show_ratio_card);
     }
     // Show/hide gradient bar vs tri-picker within card
-    if (m_gradient_selector) m_gradient_selector->Show(show_slider);
-    if (m_tri_picker)        m_tri_picker->Show(show_tri);
+    if (m_ratio_gradient_spacer) m_ratio_gradient_spacer->Show(show_slider);
+    if (m_gradient_selector)     m_gradient_selector->Show(show_slider);
+    if (m_ratio_tri_spacer)      m_ratio_tri_spacer->Show(show_tri);
+    if (m_tri_picker)            m_tri_picker->Show(show_tri);
     // Gradient effect card (shown in gradient mode)
     if (m_gradient_effect_card)
         m_gradient_effect_card->Show(is_gradient_mode && !is_match_mode);
@@ -2025,7 +2052,9 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
         int n_tri = (int)m_match_tri_indices.size();
         bool match_show_slider = (n_tri == 2);
         bool match_show_tri    = (n_tri >= 3);
+        if (m_match_gradient_spacer)   m_match_gradient_spacer->Show(match_show_slider);
         if (m_match_gradient_selector) m_match_gradient_selector->Show(match_show_slider);
+        if (m_match_tri_spacer)        m_match_tri_spacer->Show(match_show_tri);
         if (m_match_tri_picker)        m_match_tri_picker->Show(match_show_tri);
     }
 
@@ -2556,7 +2585,7 @@ void MixedFilamentDialog::draw_strip(wxDC& dc, wxPanel* panel)
     }
 
     dc.SetBrush(*wxTRANSPARENT_BRUSH);
-    dc.SetPen(wxPen(wxColour(180, 180, 180), 1));
+    dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour(180, 180, 180)), 1));
     dc.DrawRectangle(0, 0, sz.x, sz.y);
 }
 
@@ -2973,10 +3002,40 @@ void MixedFilamentDialog::rebuild_cycle_legend()
                 for (unsigned int eid : sequence) counts[eid]++;
 
                 const int total = (int)sequence.size();
-                for (const auto& [eid, cnt] : counts) {
+
+                // Compute floor percentages first, then distribute remainder via largest remainders
+                // to guarantee sum=100. This matches summarize_cycle_pattern_text in Plater.
+                std::vector<std::pair<unsigned int, int>> sorted_cnts(counts.begin(), counts.end());
+                std::sort(sorted_cnts.begin(), sorted_cnts.end(),
+                          [](const auto& a, const auto& b) { return a.first < b.first; });
+
+                std::vector<int> pcts(sorted_cnts.size());
+                int sum_pct = 0;
+                for (size_t i = 0; i < sorted_cnts.size(); ++i) {
+                    pcts[i] = int((static_cast<long long>(sorted_cnts[i].second) * 100) / total);
+                    sum_pct += pcts[i];
+                }
+
+                if (sum_pct < 100) {
+                    std::vector<std::pair<size_t, int>> rem;
+                    rem.reserve(sorted_cnts.size());
+                    for (size_t i = 0; i < sorted_cnts.size(); ++i)
+                        rem.emplace_back(i, int((static_cast<long long>(sorted_cnts[i].second) * 100) % total));
+                    std::sort(rem.begin(), rem.end(), [](const auto& a, const auto& b) {
+                        if (a.second != b.second) return a.second > b.second;
+                        return a.first < b.first;
+                    });
+                    for (int extra = 100 - sum_pct; extra > 0; --extra) {
+                        pcts[rem.front().first]++;
+                        rem.erase(rem.begin());
+                    }
+                }
+
+                for (size_t i = 0; i < sorted_cnts.size(); ++i) {
+                    unsigned int eid = sorted_cnts[i].first;
+                    int pct         = pcts[i];
                     int idx = (int)eid - 1;
                     if (idx < 0 || idx >= num_physical) continue;
-                    int pct = (cnt * 100 + total / 2) / total;
 
                         // Badge + label pair
                         auto* pair = new wxBoxSizer(wxHORIZONTAL);
@@ -2992,7 +3051,8 @@ void MixedFilamentDialog::rebuild_cycle_legend()
 
                         auto* lbl = new wxStaticText(m_cycle_legend_panel, wxID_ANY, wxString::Format("%d%%", pct));
                         lbl->SetFont(Label::Body_12);
-                        lbl->SetBackgroundColour(wxColour("#FFFFFF"));
+                        lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+                        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
                         pair->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
                         m_cycle_legend_labels.push_back(lbl);
 

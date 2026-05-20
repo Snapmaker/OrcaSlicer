@@ -1,6 +1,6 @@
 #pragma once
 
-#include <wx/button.h>
+#include <wx/panel.h>
 #include <wx/dcclient.h>
 #include <wx/bitmap.h>
 
@@ -33,7 +33,7 @@ wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 // Key format:  "solid:#RRGGBB:hH:wW:label"  or  "grad:#RRGGBB:#RRGGBBBT:hH:wW:label"
 wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
 
-class MixedFilamentBadge : public wxButton
+class MixedFilamentBadge : public wxPanel
 {
 public:
     MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id,
@@ -45,9 +45,11 @@ private:
     wxColour m_solid_color;
     bool m_is_gradient = false;
     bool m_show_number = true;
+    wxString m_label;
     std::vector<wxColour> m_gradient_colors;
 
     void on_paint(wxPaintEvent&);
+    void on_left_up(wxMouseEvent&);
 };
 
 // Create a menu/dropdown bitmap for a mixed filament.

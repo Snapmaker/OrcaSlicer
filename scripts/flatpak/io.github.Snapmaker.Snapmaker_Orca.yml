@@ -68,6 +68,7 @@ modules:
     buildsystem: simple
     build-commands:
       - |
+        export CMAKE_POLICY_VERSION_MINIMUM=3.5
         mkdir builddir && cd builddir
         cmake ../ -GNinja \
           -DwxBUILD_PRECOMP=ON \
@@ -97,7 +98,8 @@ modules:
           -DBUILD_SHARED_LIBS:BOOL=ON \
           -DCMAKE_INSTALL_PREFIX:STRING=/app \
           -DCMAKE_PREFIX_PATH=/app \
-          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         cmake --build . --target install -j$FLATPAK_BUILDER_N_JOBS
     sources:
       - type: git
@@ -116,6 +118,7 @@ modules:
     build-commands:
       # start build
       - |
+        export CMAKE_POLICY_VERSION_MINIMUM=3.5
         mkdir -p deps/build_flatpak && cd deps/build_flatpak
         cmake ../ \
           -DDEP_WX_GTK3=ON \
@@ -123,7 +126,8 @@ modules:
           -DCMAKE_PREFIX_PATH=/app \
           -DDESTDIR=/app \
           -DFLATPAK=ON \
-          -DCMAKE_INSTALL_PREFIX=/app
+          -DCMAKE_INSTALL_PREFIX=/app \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         cmake --build . --parallel
         rm -rf /run/build/orca_deps/external-packages
     
@@ -255,6 +259,7 @@ modules:
     buildsystem: simple
     build-commands:
       - |
+        export CMAKE_POLICY_VERSION_MINIMUM=3.5
         mkdir -p build_flatpak
         CXXFLAGS=-std=gnu++20 cmake . -B build_flatpak \
           -DSLIC3R_PCH=OFF \
@@ -267,7 +272,8 @@ modules:
           -DFLATPAK=ON \
           -DBBL_RELEASE_TO_PUBLIC=1 \
           -DCMAKE_PREFIX_PATH=/app \
-          -DCMAKE_INSTALL_PREFIX=/app
+          -DCMAKE_INSTALL_PREFIX=/app \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         CXXFLAGS=-std=gnu++20 cmake --build build_flatpak --target Snapmaker_Orca -j$FLATPAK_BUILDER_N_JOBS
         ./scripts/run_gettext.sh
         CXXFLAGS=-std=gnu++20 cmake --build build_flatpak --target install -j$FLATPAK_BUILDER_N_JOBS

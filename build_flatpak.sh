@@ -18,7 +18,14 @@ ARCH=$(uname -m)
 BUILD_DIR="build_flatpak"
 CLEANUP=false
 INSTALL_RUNTIME=false
-JOBS=$(nproc)
+# Parallel jobs: default all cores (fast but memory-heavy). Override with -j N, env
+# ORCA_FLATPAK_JOBS=N, or --low-memory to reduce OOM risk (signal 9 during compile).
+if [[ -n "${ORCA_FLATPAK_JOBS:-}" ]] && [[ "${ORCA_FLATPAK_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+    JOBS="${ORCA_FLATPAK_JOBS}"
+else
+    JOBS=$(nproc)
+fi
+LOW_MEMORY=false
 FORCE_CLEAN=false
 ENABLE_CCACHE=false
 CACHE_DIR=".flatpak-builder"
@@ -32,7 +39,8 @@ show_help() {
     echo "Options:"
     echo "  -a, --arch ARCH        Target architecture (x86_64, aarch64) [default: $ARCH]"
     echo "  -d, --build-dir DIR    Build directory [default: $BUILD_DIR]"
-    echo "  -j, --jobs JOBS        Number of parallel build jobs for flatpak-builder and modules [default: $JOBS]"
+    echo "  -j, --jobs JOBS        Number of parallel build jobs for flatpak-builder and modules [default: nproc or ORCA_FLATPAK_JOBS]"
+    echo "  --low-memory           Cap jobs at 4 to lower RAM peak (reduces risk of OOM / signal 9); use with -j for stricter cap"
     echo "  -c, --cleanup          Clean build directory before building"
     echo "  -f, --force-clean      Force clean build (disables caching)"
     echo "  --ccache               Enable ccache for faster rebuilds (requires ccache in SDK)"
@@ -46,6 +54,10 @@ show_help() {
     echo "  $0 --ccache -j 8       # Use ccache and 8 parallel jobs for faster builds"
     echo "  $0 -a x86_64 -c       # Build for x86_64 and cleanup first"
     echo "  $0 -i -j 16 --ccache  # Install runtime, build with 16 jobs and ccache"
+    echo "  $0 --low-memory       # Safer on machines with limited RAM (see ORCA_FLATPAK_JOBS in script header)"
+    echo ""
+    echo "Memory: large C++ modules need much RAM per job. If the build dies with \"signal 9\","
+    echo "lower -j (e.g. -j 2), use --low-memory, add swap, or export ORCA_FLATPAK_JOBS=2"
 }
 
 # Parse command line arguments
@@ -62,6 +74,10 @@ while [[ $# -gt 0 ]]; do
         -j|--jobs)
             JOBS="$2"
             shift 2
+            ;;
+        --low-memory)
+            LOW_MEMORY=true
+            shift
             ;;
         -c|--cleanup)
             CLEANUP=true
@@ -105,6 +121,15 @@ fi
 if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
     echo -e "${RED}Error: Jobs must be a positive integer, got '$JOBS'${NC}"
     exit 1
+fi
+
+# Lower parallel compile/link load to reduce peak RAM (OOM killer -> signal 9).
+if [[ "$LOW_MEMORY" == true ]]; then
+    _NPROC=$(nproc)
+    _CAP=4
+    if (( JOBS > _CAP )); then JOBS=$_CAP; fi
+    if (( JOBS > _NPROC )); then JOBS=$_NPROC; fi
+    echo -e "${YELLOW}Low memory mode: parallel jobs capped to ${JOBS}${NC}"
 fi
 
 echo -e "${BLUE}Snapmaker_Orca Flatpak Build Script${NC}"

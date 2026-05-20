@@ -244,8 +244,10 @@ endforeach ()
 
 # When configuring from an IDE (without build_linux.sh), dependencies are often
 # already installed under deps/build/destdir/usr/local — pick them up automatically.
+# Flatpak passes -DFLATPAK=ON and copies the whole source tree; host destdir must not
+# be prepended or it can shadow /app and break find_package (e.g. Boost iostreams -> zstd).
 set(_ORCA_BUNDLED_DEPS_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/destdir/usr/local")
-if (EXISTS "${_ORCA_BUNDLED_DEPS_PREFIX}/include/openvdb/version.h")
+if (EXISTS "${_ORCA_BUNDLED_DEPS_PREFIX}/include/openvdb/version.h" AND NOT FLATPAK)
     list(FIND CMAKE_PREFIX_PATH "${_ORCA_BUNDLED_DEPS_PREFIX}" _orca_bundled_deps_idx)
     if (_orca_bundled_deps_idx LESS 0)
         set(CMAKE_PREFIX_PATH "${_ORCA_BUNDLED_DEPS_PREFIX};${CMAKE_PREFIX_PATH}" CACHE PATH

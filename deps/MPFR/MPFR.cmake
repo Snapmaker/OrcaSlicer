@@ -20,7 +20,7 @@ else ()
 
     # Use same flags as GMP for consistency
     set(_mpfr_ccflags "-O2 -DNDEBUG -fPIC -DPIC -Wall -Wmissing-prototypes -Wpointer-arith -pedantic -fomit-frame-pointer -fno-common")
-    set(_mpfr_build_tgt "")
+    set(_mpfr_build_tgt "${CMAKE_SYSTEM_PROCESSOR}")
 
     if (APPLE)
         if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm")
@@ -64,10 +64,7 @@ else ()
         URL_HASH SHA256=9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/MPFR
         BUILD_IN_SOURCE ON
-        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
-                          CFLAGS=${_mpfr_ccflags}
-                          CXXFLAGS=${_mpfr_ccflags}
-                          ./configure ${_cross_compile_arg} --prefix=${DESTDIR} --enable-shared=no --enable-static=yes --with-gmp=${DESTDIR} ${_mpfr_build_tgt}
+        CONFIGURE_COMMAND bash -c "autoreconf -f -i && env \"CFLAGS=${_mpfr_ccflags}\" \"CXXFLAGS=${_mpfr_ccflags}\" ./configure ${_cross_compile_arg} --prefix=${DESTDIR} --enable-shared=no --enable-static=yes --with-gmp=${DESTDIR} ${_mpfr_build_tgt}"
         BUILD_COMMAND make -j
         INSTALL_COMMAND make install
         DEPENDS dep_GMP

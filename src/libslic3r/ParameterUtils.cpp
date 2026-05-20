@@ -1,5 +1,6 @@
 #include "ParameterUtils.hpp"
 #include <cassert>
+#include <cstddef>
 
 namespace Slic3r {
 

@@ -20,7 +20,7 @@
 # therefore, unfortunatelly, the installation cannot be copied/moved elsewhere without re-installing wxWidgets.
 #
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.2)
 if (APPLE)
     # Require macOS 12.0+ (Monterey) as minimum version
     # All deps must use the same deployment target for consistent behavior

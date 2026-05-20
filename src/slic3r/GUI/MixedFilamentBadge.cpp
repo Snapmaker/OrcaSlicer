@@ -34,20 +34,17 @@ MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virt
                                        const MixedFilament& mf,
                                        const MixedFilamentDisplayContext& display_context,
                                        bool show_number, int badge_size)
-    : wxButton(parent, id, wxString::Format("%d", virtual_id),
-               wxDefaultPosition, wxSize(badge_size, badge_size),
-               wxBU_EXACTFIT | wxBORDER_NONE)
+    : wxPanel(parent, id, wxDefaultPosition, wxSize(badge_size, badge_size), wxBORDER_NONE)
     , m_show_number(show_number)
+    , m_label(wxString::Format("%d", virtual_id))
 {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
     SetSize(parent->FromDIP(wxSize(badge_size, badge_size)));
     SetMinSize(parent->FromDIP(wxSize(badge_size, badge_size)));
     SetMaxSize(parent->FromDIP(wxSize(badge_size, badge_size)));
     Bind(wxEVT_PAINT, &MixedFilamentBadge::on_paint, this);
-    // Prevent wxButton from entering pressed/focused state that overrides custom paint
-    Bind(wxEVT_SET_FOCUS, [](wxFocusEvent&) {});
-    Bind(wxEVT_KILL_FOCUS, [](wxFocusEvent&) {});
-    SetCanFocus(false);
+    Bind(wxEVT_LEFT_UP, &MixedFilamentBadge::on_left_up, this);
+    SetCursor(wxCursor(wxCURSOR_ARROW));
 
     SetFont(badge_size >= 20 ? Label::Body_12 : Label::Body_8);
 
@@ -123,7 +120,7 @@ void MixedFilamentBadge::on_paint(wxPaintEvent&)
 
     // Draw text — compute color using same luminance rule as constructor
     if (m_show_number) {
-        wxString label = GetLabel();
+        wxString label = m_label;
         wxFont font = GetFont();
         dc.SetFont(font);
 
@@ -137,11 +134,15 @@ void MixedFilamentBadge::on_paint(wxPaintEvent&)
         }
         dc.SetTextForeground(text_lum < 0.51 ? *wxWHITE : *wxBLACK);
 
-        wxSize text_size = dc.GetTextExtent(label);
-        int x = (rect.GetWidth() - text_size.GetWidth()) / 2;
-        int y = (rect.GetHeight() - text_size.GetHeight()) / 2;
-        dc.DrawText(label, rect.GetLeft() + x, rect.GetTop() + y);
+        dc.DrawLabel(label, rect, wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL);
     }
+}
+
+void MixedFilamentBadge::on_left_up(wxMouseEvent&)
+{
+    wxCommandEvent evt(wxEVT_BUTTON, GetId());
+    evt.SetEventObject(this);
+    ProcessWindowEvent(evt);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +227,7 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
         dc.DrawRectangle(0, 0, params.width, params.height);
     }
 
-    wxSize txt_sz = dc.GetTextExtent(params.label);
-    dc.DrawText(params.label, (params.width - txt_sz.x) / 2, (params.height - txt_sz.y) / 2);
+    dc.DrawLabel(params.label, wxRect(0, 0, params.width, params.height), wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL);
     dc.SelectObject(wxNullBitmap);
 
     return cache.insert(key, bmp);

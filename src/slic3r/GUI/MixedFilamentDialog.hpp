@@ -77,6 +77,8 @@ private:
     wxBoxSizer*             m_legend_sizer         = nullptr;
     std::vector<wxStaticText*> m_legend_labels;
     wxPanel*                m_tri_picker          = nullptr;
+    wxSizerItem*            m_ratio_gradient_spacer = nullptr;
+    wxSizerItem*            m_ratio_tri_spacer      = nullptr;
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
     wxPanel*                m_swatch_grid_panel   = nullptr;
@@ -115,6 +117,8 @@ private:
     wxBoxSizer*             m_match_ratio_card_sizer = nullptr;
     MixedGradientSelector*  m_match_gradient_selector = nullptr;
     wxPanel*                m_match_tri_picker       = nullptr;
+    wxSizerItem*            m_match_gradient_spacer   = nullptr;
+    wxSizerItem*            m_match_tri_spacer        = nullptr;
     wxPanel*                m_match_legend_panel     = nullptr;
     wxBoxSizer*             m_match_legend_sizer     = nullptr;
     std::vector<wxStaticText*> m_match_legend_labels;

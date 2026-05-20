@@ -15,6 +15,35 @@
 
 namespace Slic3r { namespace GUI {
 
+// ---- CIELAB color space types ----
+
+struct CIELab {
+    double L, a, b;
+};
+
+// ---- Pre-computed blend lookup table (stores CIELab results) ----
+
+class BlendLUT {
+public:
+    BlendLUT() : m_n(0) {}
+    explicit BlendLUT(size_t n);
+
+    size_t size() const { return m_n; }
+    bool   empty() const { return m_n < 2; }
+
+    // Pre: a < b (callers always iterate a < b; polynomial mixing is not symmetric)
+    const CIELab& get(size_t a, size_t b, int percent) const {
+        assert(a < b);
+        return m_pair[a][b - a][percent];
+    }
+
+private:
+    size_t m_n;
+    // m_pair[a][b-a][percent] for b >= a; symmetric access via get()
+    std::vector<std::vector<std::vector<CIELab>>> m_pair;
+    friend BlendLUT build_blend_lut(const std::vector<wxColour>& palette);
+};
+
 struct MixedColorMatchRecipeResult
 {
     bool         cancelled     = false;
@@ -46,13 +75,24 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(
 
 double color_delta_e00(const wxColour &lhs, const wxColour &rhs);
 
+CIELab sRGB_to_CIELab(const wxColour& c);
+
+double  delta_e_lab(const CIELab& a, const CIELab& b);
+
+BlendLUT build_blend_lut(const std::vector<wxColour>& palette);
+
+/// Multi-color blend via sequential polynomial pigment mixing in
+/// filament-ID-ascending order, then sRGB→CIELab.
+CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
+                                    const std::vector<unsigned int>& ids,
+                                    const std::vector<int>& weights);
+
 MixedColorMatchRecipeResult build_best_color_match_recipe(
     const std::vector<std::string> &physical_colors,
     const wxColour                 &target_color,
     int                             min_component_percent = 0);
 
 // ---- display context helpers ----
-
 MixedFilamentDisplayContext build_mixed_filament_display_context(
     const std::vector<std::string> &physical_colors);
 

@@ -1165,7 +1165,7 @@ public:
         root->Add(m_presets_host, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
 
         m_error_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
-        m_error_label->SetForegroundColour(wxColour(196, 67, 63));
+        m_error_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#D32F2F")));
         root->Add(m_error_label, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
 
         if (wxSizer* button_sizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL))
@@ -3161,6 +3161,19 @@ void Sidebar::on_filaments_change(size_t num_filaments)
         update_ui_from_settings();
         update_dynamic_filament_list();
         update_mixed_filament_panel(sync_manager);
+
+        // Recalc scrolled filament window height (max 3 rows, matches color mix)
+        if (p->m_scrolled_filaments && p->m_panel_scrolled_filament_content) {
+            p->m_panel_scrolled_filament_content->Layout();
+            const wxSize content_best = p->m_panel_scrolled_filament_content->GetBestSize();
+            const int row_count = ((int)num_filaments + 1) / 2; // 2-column grid
+            const int desired_h = row_count > 3
+                ? (content_best.GetHeight() * 3) / std::max(1, row_count)
+                : content_best.GetHeight();
+            p->m_scrolled_filaments->SetMinSize({-1, desired_h});
+            p->m_scrolled_filaments->SetMaxSize({-1, desired_h});
+        }
+        Layout();
         return;
     }
 
@@ -5588,7 +5601,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
 
     auto* h_title = new wxBoxSizer(wxHORIZONTAL);
     auto* white_left_c = new wxPanel(p->m_panel_color_mix_title, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(SidebarProps::ContentMargin()), -1));
-    white_left_c->SetBackgroundColour(*wxWHITE);
+    white_left_c->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
     h_title->Add(white_left_c, 0, wxEXPAND | wxTOP | wxBOTTOM, 0);
     h_title->Add(p->m_color_mix_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
     h_title->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
@@ -5597,7 +5610,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     h_title->Add(p->m_btn_del_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     h_title->Add(p->m_btn_add_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     auto* white_right_c = new wxPanel(p->m_panel_color_mix_title, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(SidebarProps::ContentMargin()), -1));
-    white_right_c->SetBackgroundColour(*wxWHITE);
+    white_right_c->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
     h_title->Add(white_right_c, 0, wxEXPAND | wxTOP | wxBOTTOM, 0);
     p->m_panel_color_mix_title->SetSizer(h_title);
     p->m_panel_color_mix_title->Layout();
@@ -5605,11 +5618,11 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     // Scrolled window for content with max height of 3 rows
     p->m_scrolled_color_mix = new wxScrolledWindow(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
     p->m_scrolled_color_mix->SetScrollRate(0, 5);
-    p->m_scrolled_color_mix->SetBackgroundColour(*wxWHITE);
+    p->m_scrolled_color_mix->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
 
     // Content panel — match physical filament content panel (sizer set dynamically in update)
     p->m_panel_color_mix_content = new wxPanel(p->m_scrolled_color_mix, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
-    p->m_panel_color_mix_content->SetBackgroundColour(*wxWHITE);
+    p->m_panel_color_mix_content->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
 
     // Add content panel to scrolled window
     auto* scrolled_sizer = new wxBoxSizer(wxVERTICAL);
@@ -5823,7 +5836,7 @@ void Sidebar::update_color_mix_panel()
         
         // Create a panel with border for the text
         auto* name_panel = new wxPanel(p->m_panel_color_mix_content, wxID_ANY);
-        name_panel->SetBackgroundColour(*wxWHITE);
+        name_panel->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
 
         auto* name_sizer = new wxBoxSizer(wxHORIZONTAL);
 
@@ -5836,8 +5849,8 @@ void Sidebar::update_color_mix_panel()
         }
 
         auto* name_btn = new wxStaticText(name_panel, wxID_ANY, lbl, wxDefaultPosition, wxDefaultSize, 0);
-        name_btn->SetBackgroundColour(*wxWHITE);
-        name_btn->SetForegroundColour(wxColour(50, 50, 50));
+        name_btn->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+        name_btn->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#262E30")));
         name_btn->SetCursor(wxCursor(wxCURSOR_HAND));
         name_btn->SetMinSize(wxSize(0, -1)); // allow sizer to shrink below text width
 
@@ -5869,7 +5882,7 @@ void Sidebar::update_color_mix_panel()
             wxRect rect = panel->GetClientRect();
 
             // Draw border matching combo (#dbdbdb, 1px)
-            dc.SetPen(wxPen(wxColour(0xdb, 0xdb, 0xdb), 1));
+            dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour(0xdb, 0xdb, 0xdb)), 1));
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
             dc.DrawRectangle(rect);
         });
@@ -5899,6 +5912,7 @@ void Sidebar::update_color_mix_panel()
             mfs2[i].gradient_start             = r.gradient_start;
             mfs2[i].gradient_end               = r.gradient_end;
             mfs2[i].display_color               = r.display_color;
+            mfs2[i].custom                      = true;
             if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
             wxGetApp().plater()->post_slice_state_change_update();
@@ -5945,6 +5959,7 @@ void Sidebar::update_color_mix_panel()
                 mfs2[i].gradient_enabled           = r.gradient_enabled;
                 mfs2[i].gradient_start             = r.gradient_start;
                 mfs2[i].gradient_end               = r.gradient_end;
+                mfs2[i].custom                      = true;
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();
                 wxGetApp().plater()->post_slice_state_change_update();
@@ -7625,12 +7640,12 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
     else if (is_physical_to_mixed_merge && target_depends_on_source) {
         BOOST_LOG_TRIVIAL(info) << "Physical to mixed merge: target depends on source, will delete physical and reset to default";
     }
-    
+
     // Delete the physical filament (this also removes mixed filaments that depend on it)
     pb.update_num_filaments(filament_id);
     size_t new_num_physical = pb.filament_presets.size();
 
-    size_t total_after_delete = new_num_physical;
+    size_t total_after_delete = pb.mixed_filaments.total_filaments(new_num_physical);
     wxGetApp().plater()->get_partplate_list().on_filament_deleted(total_after_delete, filament_id);
 
     int final_replace_id;
@@ -14089,6 +14104,9 @@ void Plater::priv::apply_color_mode()
     m_aui_mgr.GetArtProvider()->SetColour(wxAUI_DOCKART_INACTIVE_CAPTION_TEXT_COLOUR, *wxWHITE);
     m_aui_mgr.GetArtProvider()->SetColour(wxAUI_DOCKART_SASH_COLOUR, sash_color);
     m_aui_mgr.GetArtProvider()->SetColour(wxAUI_DOCKART_BORDER_COLOUR, is_dark ? *wxBLACK : wxColour(165, 165, 165));
+
+    if (sidebar)
+        sidebar->update_color_mix_panel();
 }
 
 static void get_position(wxWindowBase* child, wxWindowBase* until_parent, int& x, int& y) {
@@ -19808,10 +19826,13 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     if (preset_bundle != nullptr)
         id_remap = preset_bundle->consume_last_filament_id_remap();
 
-    // Build state map for remap if available
+    // Build state map for remap if available.
+    // When replace_filament_id >= 0 the caller handles paint transfer via
+    // update_extruder_count_when_delete_filament — skip the generic remap
+    // (which maps deleted→0) so paint is moved to the target, not lost.
     EnforcerBlockerStateMap state_map;
     bool should_remap_states = false;
-    if (!id_remap.empty()) {
+    if (!id_remap.empty() && replace_filament_id < 0) {
         should_remap_states = true;
         for (size_t i = 0; i < state_map.size(); ++i)
             state_map[i] = EnforcerBlockerType(i);

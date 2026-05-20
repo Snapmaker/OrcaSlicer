@@ -265,25 +265,19 @@ void SliceEngine::validate_config()
 {
     // A1: Validate config values (layer_height, nozzle_diameter, etc.)
     std::map<std::string, std::string> invalid = m_config.validate(true);
-    for (const auto& [key, msg] : invalid) {
-        BOOST_LOG_TRIVIAL(warning) << "Config validation: " << key << " - " << msg;
+    for (const auto& [key, msg] : invalid)
         m_stats.issues.push_back(make_error(-1, "CONFIG_INVALID_" + key, msg));
-    }
 
     // A2: Check config substitutions (unknown keys, forward-compat changes)
     if (!m_config_substitutions.empty()) {
         for (const auto& sub : m_config_substitutions.substitutions) {
             const char* key = sub.opt_def ? sub.opt_def->opt_key.c_str() : "?";
-            BOOST_LOG_TRIVIAL(warning)
-                << "Config substitution: key=" << key
-                << " old_value=" << sub.old_value;
             m_stats.issues.push_back(make_warning(-1, "CONFIG_SUBSTITUTION",
                 std::string("Config key '") + key
                 + "' value was substituted (old: " + sub.old_value + ")"));
         }
 
         for (const auto& key : m_config_substitutions.unrecogized_keys) {
-            BOOST_LOG_TRIVIAL(warning) << "Unrecognized config key in 3MF: " << key;
             m_stats.issues.push_back(make_warning(-1, "CONFIG_UNRECOGNIZED",
                 std::string("Unrecognized config key '") + key
                 + "' — may be from a newer slicer version"));
@@ -417,8 +411,6 @@ void SliceEngine::validate_presets()
             std::string details;
             for (const auto& name : modified_gcodes)
                 details += (details.empty() ? "" : ", ") + name;
-            BOOST_LOG_TRIVIAL(warning)
-                << "Preset validation: printer not found in system";
             std::string msg = "Custom printer preset not found in system presets";
             if (!details.empty())
                 msg += ": " + details;
@@ -430,8 +422,6 @@ void SliceEngine::validate_presets()
             std::string details;
             for (const auto& name : modified_gcodes)
                 details += (details.empty() ? "" : ", ") + name;
-            BOOST_LOG_TRIVIAL(warning)
-                << "Preset validation: filament not found in system";
             std::string msg = "Custom filament preset not found in system presets";
             if (!details.empty())
                 msg += ": " + details;
@@ -443,8 +433,6 @@ void SliceEngine::validate_presets()
             std::string details;
             for (const auto& name : modified_gcodes)
                 details += (details.empty() ? "" : ", ") + name;
-            BOOST_LOG_TRIVIAL(warning)
-                << "Preset validation: modified G-codes detected";
             std::string msg = "Modified G-code keys found in presets";
             if (!details.empty())
                 msg += ": " + details;
@@ -590,9 +578,6 @@ void SliceEngine::substitute_filament_params(ConfigOptionStrings* filament_ids, 
                                               const std::string& original_name)
 {
     const std::string& parent_name = official_parent.name;
-    BOOST_LOG_TRIVIAL(info) << "Substituting filament " << (ext_idx + 1)
-                            << " (\"" << original_name << "\") with official parent \""
-                            << parent_name << "\"";
 
     filament_ids->values[ext_idx] = parent_name;
 
@@ -955,8 +940,6 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
                     "Object \"" + obj->name + "\" is placed on the boundary of or exceeds the build volume",
                     obj->name));
             } else if (inst->print_volume_state == ModelInstancePVS_Fully_Outside) {
-                log_plate_message("[Pre-processing]", "WARNING", plate_id,
-                    "Object \"" + obj->name + "\" is completely outside the build volume and will not be printed.");
                 m_stats.issues.push_back(make_warning(plate_id, "BUILD_VOLUME_FULLY_OUTSIDE",
                     "Object \"" + obj->name + "\" is completely outside the build volume and will not be printed",
                     obj->name));
@@ -999,9 +982,6 @@ bool SliceEngine::run_build_volume_check(int plate_id, const std::set<int>& iden
                     double min_dist    = std::min({dist_left, dist_right, dist_bottom, dist_top});
                     if (min_dist < SPIRAL_LIFT_SAFETY_MARGIN) {
                         if (warned_objects.insert(obj->name).second) {
-                            log_plate_message("[Pre-processing]", "WARNING", plate_id,
-                                "Object \"" + obj->name + "\" is too close to bed boundary. "
-                                "Disable spiral lifting or keep at least 3.5mm gap to avoid collision.");
                             m_stats.issues.push_back(make_warning(plate_id,
                                 "SPIRAL_LIFT_NEAR_BOUNDARY",
                                 "Model too close to bed boundary. "
@@ -1172,7 +1152,6 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
     print.apply(m_model, merged_config);
 
     if (print.num_object_instances() == 0) {
-        BOOST_LOG_TRIVIAL(warning) << "Plate " << plate_id << " has no printable objects after apply, skipping";
         m_stats.issues.push_back(make_warning(plate_id, "NO_PRINTABLE_OBJECTS",
             "No printable objects on this plate after apply"));
         return false;
@@ -1371,9 +1350,6 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
     // Bed/filament compatibility
     if (!result.gcode_result.bed_match_result.match) {
         const auto& bm = result.gcode_result.bed_match_result;
-        log_plate_message("[Post-processing]", "WARNING", plate_id,
-            "Filament " + std::to_string(bm.extruder_id + 1)
-            + " is not compatible with bed type \"" + bm.bed_type_name + "\".");
         has_postprocess_warning = true;
         result.issues.push_back(make_warning(plate_id, "BED_FILAMENT_MISMATCH",
             "Filament " + std::to_string(bm.extruder_id + 1)
@@ -1382,15 +1358,11 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
 
     // Timelapse warnings
     if (result.gcode_result.timelapse_warning_code & 1) {
-        log_plate_message("[Post-processing]", "WARNING", plate_id,
-            "Timelapse is not supported in spiral vase mode on this printer.");
         has_postprocess_warning = true;
         result.issues.push_back(make_warning(plate_id, "TIMELAPSE_SPIRAL_VASE",
             "Timelapse is not supported in spiral vase mode on this printer"));
     }
     if ((result.gcode_result.timelapse_warning_code >> 1) & 1) {
-        log_plate_message("[Post-processing]", "WARNING", plate_id,
-            "Timelapse is not supported with by-object print sequence on this printer.");
         has_postprocess_warning = true;
         result.issues.push_back(make_warning(plate_id, "TIMELAPSE_BY_OBJECT",
             "Timelapse is not supported with by-object print sequence on this printer"));
@@ -1406,13 +1378,10 @@ void SliceEngine::run_postprocessing(int plate_id, PlateSliceResult& result) {
             result.issues.push_back(make_error(plate_id, w.error_code,
                 w.msg + " (code: " + w.error_code + ")"));
         } else if (w.level == 1) {
-            log_plate_message("[Post-processing]", "WARNING", plate_id,
-                w.msg + " (code: " + w.error_code + ")");
             has_postprocess_warning = true;
             result.issues.push_back(make_warning(plate_id, w.error_code,
                 w.msg + " (code: " + w.error_code + ")"));
         } else {
-            log_plate_message("[Post-processing]", "TIP", plate_id, w.msg);
             result.issues.push_back(make_tip(plate_id, w.error_code, w.msg));
         }
     }

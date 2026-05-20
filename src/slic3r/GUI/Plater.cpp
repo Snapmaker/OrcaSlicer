@@ -2024,7 +2024,7 @@ Sidebar::Sidebar(Plater *parent)
     bSizer39 = new wxBoxSizer( wxHORIZONTAL );
     p->m_filament_config_icon = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "filament_group");
     bSizer39->Add(p->m_filament_config_icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
-    p->m_staticText_filament_settings = new Label(p->m_panel_filament_title, _L("Filament Configuration"), LB_PROPAGATE_MOUSE_EVENT);
+    p->m_staticText_filament_settings = new Label(p->m_panel_filament_title, _L("Filament Management"), LB_PROPAGATE_MOUSE_EVENT);
     bSizer39->Add( p->m_staticText_filament_settings, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
     bSizer39->Add(FromDIP(10), 0, 0, 0, 0);
     bSizer39->SetMinSize(-1, FromDIP(30));
@@ -2728,7 +2728,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         p->m_filament_icon->SetBitmap_("pellets");
         p->m_filament_config_icon->SetBitmap_("filament_group");
     } else {
-		p->m_staticText_filament_settings->SetLabel(_L("Filament Configuration"));
+		p->m_staticText_filament_settings->SetLabel(_L("Filament Management"));
         p->m_filament_icon->SetBitmap_("filament");
         p->m_filament_config_icon->SetBitmap_("filament_group");
     }
@@ -5581,7 +5581,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     p->m_panel_color_mix_title->SetMaxSize(wxSize(-1, FromDIP(30)));
 
     p->m_color_mix_icon = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "color_palette");
-    auto* label = new Label(p->m_panel_color_mix_title, _L("Color Mix"), LB_PROPAGATE_MOUSE_EVENT);
+    auto* label = new Label(p->m_panel_color_mix_title, _L("Color Mixing"), LB_PROPAGATE_MOUSE_EVENT);
 
     p->m_btn_del_color_mix = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "delete_filament");
     p->m_btn_add_color_mix = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "add_filament");

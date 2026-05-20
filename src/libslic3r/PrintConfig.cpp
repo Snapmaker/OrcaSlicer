@@ -4341,11 +4341,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(0.0));
 
     def = this->add("dithering_local_z_mode", coBool);
-    def->label = L("Mixed Color Layer Thinner");
+    def->label = L("Subdivide Mix Layer");
     def->category = L("Material");
-    def->tooltip = L("Use Variable Layers for Color Blending\n\n"
-                     "Blend colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\n"
-                     "This setting increases color blending smoothness by splitting each blended layer according to the blend ratio. For example, a 66/33 blend at 0.12 mm layer height will print as one 0.08 mm layer and one 0.04 mm layer. At 0.20 mm layer height, a 75/25 blend will print as one 0.15 mm layer and one 0.05 mm layer.");
+    def->tooltip  = L("Enable \"Subdivide Mix Layer\" for mixing areas. Layer height will be subdivided for better color mixing results.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 

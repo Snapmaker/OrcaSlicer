@@ -2609,7 +2609,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("interlocking_depth", "multimaterial_settings_advanced#interlocking-depth");
         optgroup->append_single_option_line("interlocking_boundary_avoidance", "multimaterial_settings_advanced#interlocking-boundary-avoidance");
 
-        optgroup = page->new_optgroup(L("Mixed Color (Experimental)"), L"param_mixed_color");
+        optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
         optgroup->append_single_option_line("dithering_local_z_mode");
 
     page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders

@@ -120,8 +120,9 @@ modules:
       - |
         set -euo pipefail
         export CMAKE_POLICY_VERSION_MINIMUM=3.5
+        export FLATPAK_BUILDER_N_JOBS="${FLATPAK_BUILDER_N_JOBS:-4}"
         mkdir -p deps/build_flatpak && cd deps/build_flatpak
-        cmake ../ \
+        cmake -G Ninja ../ \
           -DDEP_WX_GTK3=ON \
           -DDEP_DOWNLOAD_DIR=/run/build/orca_deps/external-packages \
           -DCMAKE_PREFIX_PATH=/app \
@@ -129,7 +130,7 @@ modules:
           -DFLATPAK=ON \
           -DCMAKE_INSTALL_PREFIX=/app \
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-        cmake --build . -j"${FLATPAK_BUILDER_N_JOBS:-4}"
+        cmake --build . -j"${FLATPAK_BUILDER_N_JOBS}"
         test -f /app/include/openvdb/version.h
         test -f /app/lib/libopenvdb.a -o -f /app/lib64/libopenvdb.a
         rm -rf /run/build/orca_deps/external-packages
@@ -264,6 +265,7 @@ modules:
       - |
         set -euo pipefail
         export CMAKE_POLICY_VERSION_MINIMUM=3.5
+        export FLATPAK_BUILDER_N_JOBS="${FLATPAK_BUILDER_N_JOBS:-4}"
         test -f /app/include/openvdb/version.h
         test -f /app/lib/libopenvdb.a -o -f /app/lib64/libopenvdb.a
         mkdir -p build_flatpak

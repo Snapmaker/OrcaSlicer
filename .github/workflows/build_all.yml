@@ -85,10 +85,14 @@ jobs:
         variant:
           - arch: x86_64
             runner: ubuntu-24.04
+            jobs: 4
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            jobs: 2
     runs-on: ${{ matrix.variant.runner }}
     env:
+      # Passed into orca_deps / Snapmaker_Orca flatpak modules (see deps/CMakeLists.txt FLATPAK NPROC cap).
+      FLATPAK_BUILDER_N_JOBS: ${{ matrix.variant.jobs }}
       date:
       ver:
       ver_pure:
@@ -113,7 +117,8 @@ jobs:
       with:
         bundle: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
         manifest-path: scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
-        cache: true
+        # GNOME 49 upgrade: disable cache until green, then re-enable cache: true
+        cache: false
         arch: ${{ matrix.variant.arch }}
         upload-artifact: false
     - name: Find Flatpak bundle file

@@ -65,7 +65,7 @@ else ()
         DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/MPFR
         BUILD_IN_SOURCE ON
         CONFIGURE_COMMAND bash -c "autoreconf -f -i && env \"CFLAGS=${_mpfr_ccflags}\" \"CXXFLAGS=${_mpfr_ccflags}\" ./configure ${_cross_compile_arg} --prefix=${DESTDIR} --enable-shared=no --enable-static=yes --with-gmp=${DESTDIR} ${_mpfr_build_tgt}"
-        BUILD_COMMAND make -j
+        BUILD_COMMAND make -j${NPROC}
         INSTALL_COMMAND make install
         DEPENDS dep_GMP
     )

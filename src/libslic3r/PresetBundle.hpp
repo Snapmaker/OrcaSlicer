@@ -319,11 +319,15 @@ public:
         for (size_t i = 0; i <= total_filaments; ++i) {
             if (i == from_id + 1) {
                 // Source physical filament maps to target mixed filament
-                // The target's new virtual ID after deletion: new_num_physical + target_mixed_idx
+                // The target's new virtual ID after deletion: new_num_physical + adjusted_mixed_idx
                 size_t target_old_virtual_id = to_id;  // 0-based
                 size_t target_old_mixed_idx = target_old_virtual_id - num_physical;
                 size_t new_num_physical = num_physical - 1;
-                size_t target_new_virtual_id = new_num_physical + target_old_mixed_idx;
+                // Subtract deleted mixed filaments that appear before the target
+                size_t deleted_before_target = 0;
+                for (size_t vid : deleted_mixed_indices)
+                    if (vid < target_old_virtual_id) ++deleted_before_target;
+                size_t target_new_virtual_id = new_num_physical + target_old_mixed_idx - deleted_before_target;
                 m_last_filament_id_remap[i] = (unsigned int)(target_new_virtual_id + 1);  // Convert to 1-based
             } else if (i > from_id + 1 && i <= num_physical) {
                 // Subsequent physical filaments shift down by 1
@@ -338,9 +342,13 @@ public:
                     // This mixed filament will be deleted, map to 0 (invalid)
                     m_last_filament_id_remap[i] = 0;
                 } else {
-                    // This mixed filament will be kept, calculate its new virtual ID
+                    // This mixed filament will be kept, calculate its new virtual ID.
+                    // Subtract deleted mixed filaments that appear before this one.
                     size_t new_num_physical = num_physical - 1;
-                    size_t new_virtual_id = new_num_physical + old_mixed_idx;
+                    size_t deleted_before = 0;
+                    for (size_t vid : deleted_mixed_indices)
+                        if (vid < old_virtual_id) ++deleted_before;
+                    size_t new_virtual_id = new_num_physical + old_mixed_idx - deleted_before;
                     m_last_filament_id_remap[i] = (unsigned int)(new_virtual_id + 1);  // Convert to 1-based
                 }
             } else {

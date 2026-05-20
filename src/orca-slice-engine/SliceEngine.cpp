@@ -596,6 +596,8 @@ void SliceEngine::substitute_filament_params(ConfigOptionStrings* filament_ids, 
 
     filament_ids->values[ext_idx] = parent_name;
 
+    const size_t ext_sz = static_cast<size_t>(ext_idx);
+
     for (auto it = official_parent.config.cbegin(); it != official_parent.config.cend(); ++it) {
         const auto& key = it->first;
         const auto& opt = it->second;
@@ -606,31 +608,31 @@ void SliceEngine::substitute_filament_params(ConfigOptionStrings* filament_ids, 
         if (auto* dst = dynamic_cast<ConfigOptionFloats*>(target)) {
             target_size = dst->values.size();
             if (auto* src = dynamic_cast<const ConfigOptionFloats*>(opt.get())) {
-                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                if (!src->values.empty() && ext_sz < target_size)
                     dst->values[ext_idx] = src->values[0];
             }
         } else if (auto* dst = dynamic_cast<ConfigOptionPercents*>(target)) {
             target_size = dst->values.size();
             if (auto* src = dynamic_cast<const ConfigOptionPercents*>(opt.get())) {
-                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                if (!src->values.empty() && ext_sz < target_size)
                     dst->values[ext_idx] = src->values[0];
             }
         } else if (auto* dst = dynamic_cast<ConfigOptionInts*>(target)) {
             target_size = dst->values.size();
             if (auto* src = dynamic_cast<const ConfigOptionInts*>(opt.get())) {
-                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                if (!src->values.empty() && ext_sz < target_size)
                     dst->values[ext_idx] = src->values[0];
             }
         } else if (auto* dst = dynamic_cast<ConfigOptionStrings*>(target)) {
             target_size = dst->values.size();
             if (auto* src = dynamic_cast<const ConfigOptionStrings*>(opt.get())) {
-                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                if (!src->values.empty() && ext_sz < target_size)
                     dst->values[ext_idx] = src->values[0];
             }
         } else if (auto* dst = dynamic_cast<ConfigOptionBools*>(target)) {
             target_size = dst->values.size();
             if (auto* src = dynamic_cast<const ConfigOptionBools*>(opt.get())) {
-                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                if (!src->values.empty() && ext_sz < target_size)
                     dst->values[ext_idx] = src->values[0];
             }
         }
@@ -1718,12 +1720,13 @@ void SliceEngine::build_statistics() {
                                      ? plate_stats.filament_used_m.at(extruder_id)
                                      : 0.0;
 
-                if (ftypes && extruder_id < static_cast<int>(ftypes->values.size()))
+                const size_t ext_sz = static_cast<size_t>(extruder_id);
+                if (ftypes && ext_sz < ftypes->values.size())
                     detail.type = ftypes->values[extruder_id];
                 else
                     detail.type = "Unknown";
 
-                if (fcolors && extruder_id < static_cast<int>(fcolors->values.size()))
+                if (fcolors && ext_sz < fcolors->values.size())
                     detail.color = fcolors->values[extruder_id];
                 else
                     detail.color = "#000000";

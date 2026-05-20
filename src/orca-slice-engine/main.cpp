@@ -254,8 +254,9 @@ int main(int argc, char* argv[]) {
         if (boost::filesystem::exists(resource_path)) {
             set_resources_dir(resource_path.string());
         } else {
-            const char* env_resources = std::getenv("ORCA_RESOURCES");
-            if (env_resources) {
+            const char* env = std::getenv("ORCA_RESOURCES");
+            if (env) {
+                std::string env_resources(env);
                 set_resources_dir(env_resources);
                 BOOST_LOG_TRIVIAL(info) << "Resources directory (from env): " << env_resources;
             } else {

@@ -6241,8 +6241,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         if (print_cfg) {
             if (ConfigOptionFloat *opt = print_cfg->option<ConfigOptionFloat>(key))
                 opt->value = value;
-            else
-                print_cfg->set_key_value(key, new ConfigOptionFloat(value));
         }
         if (ConfigOptionFloat *opt = preset_bundle->project_config.option<ConfigOptionFloat>(key))
             opt->value = value;
@@ -6253,8 +6251,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         if (print_cfg) {
             if (ConfigOptionString *opt = print_cfg->option<ConfigOptionString>(key))
                 opt->value = value;
-            else
-                print_cfg->set_key_value(key, new ConfigOptionString(value));
         }
         if (ConfigOptionString *opt = preset_bundle->project_config.option<ConfigOptionString>(key))
             opt->value = value;
@@ -6267,8 +6263,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
                 opt->value = value;
             else if (ConfigOptionInt *opt = print_cfg->option<ConfigOptionInt>(key))
                 opt->value = value ? 1 : 0;
-            else
-                print_cfg->set_key_value(key, new ConfigOptionBool(value));
         }
         if (ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>(key))
             opt->value = value;
@@ -6283,8 +6277,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
                 opt->value = enabled;
             else if (ConfigOptionInt *opt = print_cfg->option<ConfigOptionInt>("mixed_filament_gradient_mode"))
                 opt->value = enabled ? 1 : 0;
-            else
-                print_cfg->set_key_value("mixed_filament_gradient_mode", new ConfigOptionBool(enabled));
         }
         if (ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_gradient_mode"))
             opt->value = enabled;

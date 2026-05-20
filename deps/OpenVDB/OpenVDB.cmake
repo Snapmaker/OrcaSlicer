@@ -13,11 +13,21 @@ if (IN_GIT_REPO)
     set(OPENVDB_DIRECTORY_FLAG --directory ${BINARY_DIR_REL}/dep_OpenVDB-prefix/src/dep_OpenVDB)
 endif ()
 
+# OpT::template eval -> OpT::eval in NodeManager.h:
+# - Required on Linux (GCC 13+) and Flatpak (GCC 15).
+# - Safe on MSVC (equivalent syntax) and macOS (Clang); same 0001-clang19.patch as CGAL/OpenCV.
+# - Patch runs at ExternalProject PATCH time (before configure), same pattern as deps/CGAL.
+if (IN_GIT_REPO)
+    set(_openvdb_patch_cmd ${GIT_EXECUTABLE} apply ${OPENVDB_DIRECTORY_FLAG} --verbose --ignore-space-change --whitespace=fix ${CMAKE_CURRENT_LIST_DIR}/0001-clang19.patch)
+else ()
+    set(_openvdb_patch_cmd git init && ${PATCH_CMD} ${CMAKE_CURRENT_LIST_DIR}/0001-clang19.patch)
+endif ()
+
 Snapmaker_Orca_add_cmake_project(OpenVDB
     #  support vs2022, update to 8.2
     URL https://github.com/tamasmeszaros/openvdb/archive/a68fd58d0e2b85f01adeb8b13d7555183ab10aa5.zip 
     URL_HASH SHA256=f353e7b99bd0cbfc27ac9082de51acf32a8bc0b3e21ff9661ecca6f205ec1d81
-    PATCH_COMMAND ${CMAKE_COMMAND} -E echo "Patching OpenVDB..." || true
+    PATCH_COMMAND ${_openvdb_patch_cmd}
     DEPENDS dep_TBB dep_Blosc dep_OpenEXR dep_Boost
     CMAKE_ARGS
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON 
@@ -31,13 +41,12 @@ Snapmaker_Orca_add_cmake_project(OpenVDB
         -DDISABLE_DEPENDENCY_VERSION_CHECKS=ON # Centos6 has old zlib
 )
 
-ExternalProject_Get_Property(dep_OpenVDB SOURCE_DIR)
-# Clang (Apple/Xcode) rejects OpT::template eval(...) without template args
-# (-Wmissing-template-arg-list-after-template-kw). Same OpenVDB sources on all macOS arch.
+# macOS-only fallback: keep the historical sed fix (no-op if the git patch already applied).
 if (APPLE)
-    ExternalProject_Add_Step(dep_OpenVDB fix_template_syntax
-        DEPENDEES configure
-        DEPENDERS build
+    ExternalProject_Get_Property(dep_OpenVDB SOURCE_DIR)
+    ExternalProject_Add_Step(dep_OpenVDB fix_template_syntax_mac
+        DEPENDEES patch
+        DEPENDERS configure
         COMMAND bash -c "cd '${SOURCE_DIR}/openvdb/openvdb/tree' && sed -i '' 's|OpT::template eval|OpT::eval|g' NodeManager.h"
     )
 endif ()

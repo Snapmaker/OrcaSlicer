@@ -73,6 +73,9 @@ private:
     void validate_presets();
     void apply_official_presets();
     bool validate_filament_official();
+    void substitute_filament_params(Slic3r::ConfigOptionStrings* filament_ids, int ext_idx,
+                                    const Slic3r::Preset& official_parent,
+                                    const std::string& original_name);
     bool validate_printer_model();
     bool validate_input();
     void process_plate(int plate_id);

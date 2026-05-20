@@ -244,23 +244,15 @@ int main(int argc, char* argv[]) {
     BOOST_LOG_TRIVIAL(info) << "Format: " << (cfg.format == OutputFormat::GCODE_3MF ? "gcode.3mf" : "gcode");
     if (cfg.timeout_seconds > 0)
         BOOST_LOG_TRIVIAL(info) << "Timeout: " << cfg.timeout_seconds << "s";
-    if (cfg.max_size_mb > 0)
-        BOOST_LOG_TRIVIAL(info) << "Max file size: " << cfg.max_size_mb << " MB";
-    else
-        BOOST_LOG_TRIVIAL(info) << "Max file size: unlimited";
-    BOOST_LOG_TRIVIAL(info) << "Filament substitution: " << (cfg.substitute_filaments ? "on" : "off");
-    BOOST_LOG_TRIVIAL(info) << "Clear custom G-code: " << (cfg.clear_custom_gcode ? "on" : "off");
 
     // --- Setup resources directory ---
     if (!resources_dir.empty()) {
         set_resources_dir(resources_dir);
-        BOOST_LOG_TRIVIAL(info) << "Resources directory: " << resources_dir;
     } else {
         boost::filesystem::path exe_path = boost::dll::program_location();
         boost::filesystem::path resource_path = exe_path.parent_path() / "resources";
         if (boost::filesystem::exists(resource_path)) {
             set_resources_dir(resource_path.string());
-            BOOST_LOG_TRIVIAL(info) << "Resources directory: " << resource_path;
         } else {
             const char* env_resources = std::getenv("ORCA_RESOURCES");
             if (env_resources) {
@@ -278,8 +270,6 @@ int main(int argc, char* argv[]) {
         bool has_printers = boost::filesystem::exists(resources_dir + "/printers");
         if (!has_profiles && !has_printers)
             BOOST_LOG_TRIVIAL(warning) << "Resources directory may be incomplete: " << resources_dir;
-        else
-            BOOST_LOG_TRIVIAL(info) << "Resources directory validated: " << resources_dir;
     }
 
     // --- Setup temporary directory (process-isolated to avoid multi-process collisions) ---
@@ -292,7 +282,6 @@ int main(int argc, char* argv[]) {
         cfg.temp_dir = unique_dir.string();
     }
     set_temporary_dir(cfg.temp_dir);
-    BOOST_LOG_TRIVIAL(info) << "Temporary directory: " << cfg.temp_dir;
 
     // --- Run the slicing pipeline ---
     std::vector<std::string> temp_files;

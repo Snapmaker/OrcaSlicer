@@ -161,7 +161,6 @@ void output_slice_statistics(const SliceOutputStats& stats,
         std::ofstream ofs(json_output_path);
         if (ofs.is_open()) {
             ofs << json_str;
-            BOOST_LOG_TRIVIAL(info) << "Statistics written to: " << json_output_path;
         } else {
             BOOST_LOG_TRIVIAL(warning) << "Failed to write statistics to: " << json_output_path;
         }

@@ -89,8 +89,6 @@ bool SliceEngine::run() {
         if (m_has_timeout) {
             m_timeout_deadline = std::chrono::steady_clock::now()
                                + std::chrono::seconds(m_cfg.timeout_seconds);
-            BOOST_LOG_TRIVIAL(info) << "Slicing timeout set to "
-                                    << m_cfg.timeout_seconds << "s";
         }
 
         try {
@@ -115,7 +113,6 @@ bool SliceEngine::run() {
 
         m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
                                              m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
-        BOOST_LOG_TRIVIAL(info) << "Output file: " << m_output_path;
 
         // Collect plates to process (internal plate_index is 0-based)
         std::vector<int> plates_to_process;
@@ -142,9 +139,6 @@ bool SliceEngine::run() {
             boost::filesystem::remove(m_output_path);
             BOOST_LOG_TRIVIAL(info) << "Removed output file due to errors: " << m_output_path;
         }
-
-        if (has_output && !m_any_error)
-            BOOST_LOG_TRIVIAL(info) << "Done!";
 
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "Unhandled exception in slicing pipeline: " << e.what();
@@ -249,7 +243,6 @@ bool SliceEngine::load_3mf() {
     }
 
     BOOST_LOG_TRIVIAL(info) << "Loaded " << m_model.objects.size() << " object(s)";
-    BOOST_LOG_TRIVIAL(info) << "3MF version: " << m_file_version.to_string();
 
     // Detect and reject post-processing scripts in cloud mode (RCE prevention)
     if (m_config.has("post_process")) {
@@ -368,8 +361,6 @@ void SliceEngine::load_system_presets()
         }
 
         m_presets_available = true;
-        BOOST_LOG_TRIVIAL(info)
-            << "System presets loaded from " << vendor_names.size() << " vendor(s)";
 
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(warning)
@@ -483,65 +474,6 @@ bool SliceEngine::validate_filament_official()
     int num_filaments = static_cast<int>(filament_ids->values.size());
     bool any_error = false;
 
-    // Lambda: substitute per-filament config values for extruder `ext_idx`
-    // with the official parent preset's values.
-    auto substitute_filament_params = [&](int ext_idx, const Preset& official_parent,
-                                           const std::string& original_name) {
-        const std::string& parent_name = official_parent.name;
-        BOOST_LOG_TRIVIAL(info) << "Substituting filament " << (ext_idx + 1)
-                                << " (\"" << original_name << "\") with official parent \""
-                                << parent_name << "\"";
-
-        // Update filament_settings_id to point to the official ancestor
-        filament_ids->values[ext_idx] = parent_name;
-
-        // Copy per-extruder array values from the official parent's config
-        for (auto it = official_parent.config.cbegin(); it != official_parent.config.cend(); ++it) {
-            const auto& key = it->first;
-            const auto& opt = it->second;
-            auto* target = m_config.option(key, true);
-            if (!target) continue;
-
-            size_t target_size = 0;
-            if (auto* dst = dynamic_cast<ConfigOptionFloats*>(target)) {
-                target_size = dst->values.size();
-                if (auto* src = dynamic_cast<const ConfigOptionFloats*>(opt.get())) {
-                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
-                        dst->values[ext_idx] = src->values[0];
-                }
-            } else if (auto* dst = dynamic_cast<ConfigOptionPercents*>(target)) {
-                target_size = dst->values.size();
-                if (auto* src = dynamic_cast<const ConfigOptionPercents*>(opt.get())) {
-                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
-                        dst->values[ext_idx] = src->values[0];
-                }
-            } else if (auto* dst = dynamic_cast<ConfigOptionInts*>(target)) {
-                target_size = dst->values.size();
-                if (auto* src = dynamic_cast<const ConfigOptionInts*>(opt.get())) {
-                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
-                        dst->values[ext_idx] = src->values[0];
-                }
-            } else if (auto* dst = dynamic_cast<ConfigOptionStrings*>(target)) {
-                target_size = dst->values.size();
-                if (auto* src = dynamic_cast<const ConfigOptionStrings*>(opt.get())) {
-                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
-                        dst->values[ext_idx] = src->values[0];
-                }
-            } else if (auto* dst = dynamic_cast<ConfigOptionBools*>(target)) {
-                target_size = dst->values.size();
-                if (auto* src = dynamic_cast<const ConfigOptionBools*>(opt.get())) {
-                    if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
-                        dst->values[ext_idx] = src->values[0];
-                }
-            }
-            // Skip single-value types (ConfigOptionFloat, ConfigOptionString, etc.)
-        }
-
-        m_stats.issues.push_back(make_warning(-1, "FILAMENT_SUBSTITUTED",
-            std::string("Filament \"") + original_name
-            + "\" substituted with official preset \"" + parent_name + "\""));
-    };
-
     // Lambda: check whether a system preset is "official" (Snapmaker or OrcaFilamentLibrary)
     auto is_official_preset = [](const Preset& p) -> bool {
         if (p.vendor && p.vendor->name == PresetBundle::SM_BUNDLE)
@@ -617,7 +549,7 @@ bool SliceEngine::validate_filament_official()
             // Try system presets first
             if (Preset* parent = find_in_system(inherits_name)) {
                 if (is_official_preset(*parent)) {
-                    substitute_filament_params(i, *parent, name);
+                    substitute_filament_params(filament_ids, i, *parent, name);
                     resolved = true;
                 } else {
                     std::string vendor_name = parent->vendor ? parent->vendor->name : "unknown";
@@ -653,6 +585,62 @@ bool SliceEngine::validate_filament_official()
     return !any_error;
 }
 
+void SliceEngine::substitute_filament_params(ConfigOptionStrings* filament_ids, int ext_idx,
+                                              const Preset& official_parent,
+                                              const std::string& original_name)
+{
+    const std::string& parent_name = official_parent.name;
+    BOOST_LOG_TRIVIAL(info) << "Substituting filament " << (ext_idx + 1)
+                            << " (\"" << original_name << "\") with official parent \""
+                            << parent_name << "\"";
+
+    filament_ids->values[ext_idx] = parent_name;
+
+    for (auto it = official_parent.config.cbegin(); it != official_parent.config.cend(); ++it) {
+        const auto& key = it->first;
+        const auto& opt = it->second;
+        auto* target = m_config.option(key, true);
+        if (!target) continue;
+
+        size_t target_size = 0;
+        if (auto* dst = dynamic_cast<ConfigOptionFloats*>(target)) {
+            target_size = dst->values.size();
+            if (auto* src = dynamic_cast<const ConfigOptionFloats*>(opt.get())) {
+                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                    dst->values[ext_idx] = src->values[0];
+            }
+        } else if (auto* dst = dynamic_cast<ConfigOptionPercents*>(target)) {
+            target_size = dst->values.size();
+            if (auto* src = dynamic_cast<const ConfigOptionPercents*>(opt.get())) {
+                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                    dst->values[ext_idx] = src->values[0];
+            }
+        } else if (auto* dst = dynamic_cast<ConfigOptionInts*>(target)) {
+            target_size = dst->values.size();
+            if (auto* src = dynamic_cast<const ConfigOptionInts*>(opt.get())) {
+                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                    dst->values[ext_idx] = src->values[0];
+            }
+        } else if (auto* dst = dynamic_cast<ConfigOptionStrings*>(target)) {
+            target_size = dst->values.size();
+            if (auto* src = dynamic_cast<const ConfigOptionStrings*>(opt.get())) {
+                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                    dst->values[ext_idx] = src->values[0];
+            }
+        } else if (auto* dst = dynamic_cast<ConfigOptionBools*>(target)) {
+            target_size = dst->values.size();
+            if (auto* src = dynamic_cast<const ConfigOptionBools*>(opt.get())) {
+                if (!src->values.empty() && ext_idx < static_cast<int>(target_size))
+                    dst->values[ext_idx] = src->values[0];
+            }
+        }
+    }
+
+    m_stats.issues.push_back(make_warning(-1, "FILAMENT_SUBSTITUTED",
+        std::string("Filament \"") + original_name
+        + "\" substituted with official preset \"" + parent_name + "\""));
+}
+
 bool SliceEngine::validate_printer_model()
 {
     const std::string ALLOWED_PRINTER_MODEL = "Snapmaker U1";
@@ -679,7 +667,6 @@ bool SliceEngine::validate_printer_model()
         return false;
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Printer model validation passed: " << printer_model;
     return true;
 }
 
@@ -701,130 +688,6 @@ void SliceEngine::apply_official_presets()
         }
     }
 
-    // Diagnostic: log all parameters that differ from desktop defaults
-    {
-        std::ostringstream diag;
-        diag << "=== Post-apply_official_presets diagnostic ===";
-
-        // Key parameters affecting print time / filament usage
-        auto log_float = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionFloat*>(m_config.option(key));
-                if (o) diag << " " << key << "=" << o->value;
-            }
-        };
-        auto log_ints = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionInts*>(m_config.option(key));
-                if (o) {
-                    diag << " " << key << "=[";
-                    for (size_t i = 0; i < o->values.size(); ++i) {
-                        if (i) diag << ",";
-                        diag << o->values[i];
-                    }
-                    diag << "]";
-                }
-            }
-        };
-        auto log_percent = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionPercent*>(m_config.option(key));
-                if (o) diag << " " << key << "=" << o->value;
-            }
-        };
-        auto log_int = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionInt*>(m_config.option(key));
-                if (o) diag << " " << key << "=" << o->value;
-            }
-        };
-        auto log_bool = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionBool*>(m_config.option(key));
-                if (o) diag << " " << key << "=" << (o->value ? "true" : "false");
-            }
-        };
-        auto log_floats = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionFloats*>(m_config.option(key));
-                if (o) {
-                    diag << " " << key << "=[";
-                    for (size_t i = 0; i < o->values.size(); ++i) {
-                        if (i) diag << ",";
-                        diag << o->values[i];
-                    }
-                    diag << "]";
-                }
-            }
-        };
-        auto log_string = [&](const char* key) {
-            if (m_config.has(key)) {
-                auto* o = dynamic_cast<ConfigOptionString*>(m_config.option(key));
-                if (o && !o->value.empty())
-                    diag << " " << key << "=\"" << o->value << "\"";
-            }
-        };
-
-        // G-code blocks (empty = cleared)
-        for (const char* k : gcode_keys)
-            log_string(k);
-
-        // Temperature
-        log_ints("nozzle_temperature");
-        log_ints("bed_temperature");
-
-        // Fill / wall
-        log_percent("sparse_infill_density");
-        log_int("wall_loops");
-
-        // Layer
-        log_float("layer_height");
-
-        // Speed / acceleration / jerk (affect print time)
-        log_float("outer_wall_speed");
-        log_float("inner_wall_speed");
-        log_float("sparse_infill_speed");
-        log_float("internal_solid_infill_speed");
-        log_float("top_surface_speed");
-        log_float("travel_speed");
-        log_float("default_acceleration");
-        log_float("travel_acceleration");
-        log_float("default_jerk");
-
-        // Wipe tower / flush volumes (affect filament usage)
-        log_bool("enable_prime_tower");
-        log_floats("flush_volumes_matrix");
-        log_floats("wiping_volumes_extruders");
-        log_float("prime_tower_width");
-        log_float("prime_volume");
-
-        // Z hop (spiral lift)
-        if (m_config.has("z_hop_types")) {
-            auto* o = m_config.option<ConfigOptionEnumsGeneric>("z_hop_types");
-            if (o) {
-                diag << " z_hop_types=[";
-                for (size_t i = 0; i < o->values.size(); ++i) {
-                    if (i) diag << ",";
-                    diag << o->values[i];
-                }
-                diag << "]";
-            }
-        }
-
-        // Print sequence
-        if (m_config.has("print_sequence")) {
-            auto* o = m_config.option<ConfigOptionEnum<PrintSequence> >("print_sequence");
-            if (o) diag << " print_sequence=" << static_cast<int>(o->value);
-        }
-
-        // Extruder clearance
-        log_float("extruder_clearance_radius");
-        log_float("extruder_clearance_height_to_lid");
-        log_float("extruder_clearance_height_to_rod");
-
-        diag << " ===";
-        BOOST_LOG_TRIVIAL(info) << diag.str();
-    }
 }
 
 // ============================================================================
@@ -901,9 +764,6 @@ void SliceEngine::process_plate(int plate_id) {
                 bbox.merge(pt);
             plate_width = bbox.size().x() - BED_AXES_TIP_RADIUS;
             plate_depth = bbox.size().y() - BED_AXES_TIP_RADIUS;
-            BOOST_LOG_TRIVIAL(info) << "Plate size from printable_area: "
-                << plate_width << " x " << plate_depth
-                << " (original bbox: " << bbox.size().x() << " x " << bbox.size().y() << ")";
         }
     }
 
@@ -1189,9 +1049,6 @@ Vec3d SliceEngine::setup_print_origin(int plate_id, double plate_width, double p
     double origin_y = -row * (plate_depth * (1.0 + LOGICAL_PART_PLATE_GAP));
 
     Vec3d origin(origin_x, origin_y, 0.0);
-    BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " origin: (" << origin_x << ", " << origin_y
-        << ") grid[" << row << "," << col << "] / " << total_plates << " plate(s)"
-        << ", dimensions: " << plate_width << " x " << plate_depth;
     return origin;
 }
 
@@ -1262,28 +1119,6 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
             }
         }
 
-        // Diagnostic: print each detected extruder and filament info
-        {
-            std::ostringstream oss;
-            for (int eid : used_extruders) oss << eid << " ";
-            BOOST_LOG_TRIVIAL(info) << "Extruder usage: model uses " << used_extruders.size()
-                << " extruder(s) [" << oss.str() << "], config has " << num_filaments
-                << " filament(s), has single_extruder_multi_material: "
-                << (m_config.has("single_extruder_multi_material")
-                    && m_config.option<ConfigOptionBool>("single_extruder_multi_material")->value);
-            auto pcg_it = m_model.plates_custom_gcodes.find(plate_id);
-            if (pcg_it != m_model.plates_custom_gcodes.end()) {
-                int tc_count = 0;
-                for (const auto& item : pcg_it->second.gcodes)
-                    if (item.type == CustomGCode::Type::ToolChange) ++tc_count;
-                BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id
-                    << " has " << pcg_it->second.gcodes.size() << " custom gcode entries ("
-                    << tc_count << " ToolChange)";
-            } else {
-                BOOST_LOG_TRIVIAL(info) << "Plate " << plate_id << " has no custom gcode entries";
-            }
-        }
-
         if (used_extruders.size() <= 1 && num_filaments > 1) {
             BOOST_LOG_TRIVIAL(info) << "Trimming filament config from " << num_filaments
                 << " to 1 to match single-extruder model";
@@ -1329,31 +1164,10 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
     for (const auto& pd : m_plate_data) {
         if (pd->plate_index == plate_id && !pd->config.empty()) {
             merged_config.apply(pd->config);
-            BOOST_LOG_TRIVIAL(info) << "Applied per-plate config overrides for plate " << plate_id;
             break;
         }
     }
-    auto apply_status = print.apply(m_model, merged_config);
-    BOOST_LOG_TRIVIAL(info) << "Print apply status: " << static_cast<int>(apply_status);
-
-    // Diagnostic: show wipe tower state and extruder count after apply
-    {
-        bool has_wt = print.has_wipe_tower();
-        auto extrs = print.extruders();
-        std::ostringstream oss;
-        for (auto e : extrs) oss << e << " ";
-        auto fd = m_config.option<ConfigOptionFloats>("filament_diameter");
-        bool enable_pt = m_config.option<ConfigOptionBool>("enable_prime_tower")->value;
-        BOOST_LOG_TRIVIAL(info) << "After apply: has_wipe_tower=" << has_wt
-            << ", enable_prime_tower=" << enable_pt
-            << ", filament_diameter.size=" << (fd ? (int)fd->values.size() : -1)
-            << ", print.extruders=[" << oss.str() << "]";
-    }
-
-    // Verify prime tower state after apply
-    if (print.has_wipe_tower()) {
-        BOOST_LOG_TRIVIAL(warning) << "Prime tower still enabled after apply";
-    }
+    print.apply(m_model, merged_config);
 
     if (print.num_object_instances() == 0) {
         BOOST_LOG_TRIVIAL(warning) << "Plate " << plate_id << " has no printable objects after apply, skipping";
@@ -1411,24 +1225,6 @@ bool SliceEngine::run_slicing(int plate_id, Print& print) {
 
     try {
         print.process();
-        // Diagnostic: show wipe tower state after successful slicing
-        if (print.has_wipe_tower()) {
-            const auto& tool_ordering = print.get_tool_ordering();
-            auto n_layers = std::distance(tool_ordering.begin(), tool_ordering.end());
-            BOOST_LOG_TRIVIAL(info) << "After process: wipe tower active, "
-                << n_layers << " tool layers";
-            size_t count = 0;
-            for (auto it = tool_ordering.begin(); it != tool_ordering.end() && count < 3; ++it, ++count) {
-                std::ostringstream oss;
-                for (auto e : it->extruders) oss << e << " ";
-                BOOST_LOG_TRIVIAL(info) << "  layer_tools[" << count << "]: extruders=[" << oss.str()
-                    << "], has_wipe_tower=" << it->has_wipe_tower
-                    << ", has_object=" << it->has_object
-                    << ", wipe_tower_partitions=" << it->wipe_tower_partitions;
-            }
-        } else {
-            BOOST_LOG_TRIVIAL(info) << "After process: no wipe tower (expected for single-extruder)";
-        }
     }
     catch (const SlicingErrors& exs) {
         for (const auto& ex : exs.errors_) {
@@ -1485,7 +1281,6 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
     try {
         GCodeProcessor::s_IsBBLPrinter = print.is_BBL_printer();
         std::string exported = print.export_gcode(gcode_output, &result.gcode_result, nullptr);
-        BOOST_LOG_TRIVIAL(info) << "G-code exported to: " << exported;
         result.gcode_path = exported;
 
         // Post-processing scripts are disabled in cloud mode to prevent
@@ -1498,8 +1293,6 @@ bool SliceEngine::export_gcode(int plate_id, Print& print, PlateSliceResult& res
             for (const auto& w : wstate.warnings) {
                 if (!w.current) continue;
                 bool is_critical = (w.level == PrintStateBase::WarningLevel::CRITICAL);
-                BOOST_LOG_TRIVIAL(warning) << "Print warning ["
-                    << (is_critical ? "error" : "warning") << "]: " << w.message;
                 if (is_critical)
                     result.issues.push_back(make_error(plate_id, "PRINT_WARNING", w.message));
                 else
@@ -1722,13 +1515,6 @@ void SliceEngine::package_output() {
             }
         }
 
-        BOOST_LOG_TRIVIAL(info) << "Plate " << pd->plate_index
-            << ": gcode=" << pd->gcode_file
-            << ", prediction=" << pd->gcode_prediction << "s"
-            << ", weight=" << pd->gcode_weight << "g"
-            << ", support=" << (pd->is_support_used ? "yes" : "no")
-            << ", printer=" << pd->printer_model_id
-            << ", nozzle=" << pd->nozzle_diameters;
     }
 
     StoreParams params;

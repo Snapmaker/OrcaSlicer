@@ -160,7 +160,10 @@ public:
 		float               filament_minimal_purge_on_wipe_tower = 0.f;
         float               retract_length;
         float               retract_speed;
+        float               flat_iron_area;
     };
+
+    const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
 
 private:
 	enum wipe_shape // A fill-in direction
@@ -212,6 +215,7 @@ private:
     float  m_rib_length                   = 0;
 
     bool   m_enable_arc_fitting           = false;
+    std::map<float, Polylines> m_outer_wall; // for wipe tower out wall and brim
 
 	// G-code generator parameters.
     float           m_cooling_tube_retraction   = 0.f;
@@ -352,6 +356,8 @@ private:
     Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
 
     WipeTowerInfo::ToolChange set_toolchange(int old_tool, int new_tool, float layer_height, float wipe_volume);
+
+    size_t get_out_wall_tool_for_all_layer();
 };
 
 

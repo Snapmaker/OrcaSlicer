@@ -224,6 +224,9 @@ ConflictResultOpt ConflictChecker::find_inter_of_lines_in_diff_objs(PrintObjectP
     LinesBucketQueue conflictQueue;
 
     if (wtdptr.has_value()) { // wipe tower at 0 by default
+#if 1
+        ExtrusionLayers wtels = wtdptr.value()->getTrueExtrusionLayersFromWipeTower();
+#else
         auto            wtpaths = wtdptr.value()->getFakeExtrusionPathsFromWipeTower();
         ExtrusionLayers wtels;
         wtels.type = ExtrusionLayersType::WIPE_TOWER;
@@ -234,6 +237,7 @@ ConflictResultOpt ConflictChecker::find_inter_of_lines_in_diff_objs(PrintObjectP
             el.layer    = nullptr;
             wtels.push_back(el);
         }
+#endif
         conflictQueue.emplace_back_bucket(std::move(wtels), wtdptr.value(), {wtdptr.value()->plate_origin.x(), wtdptr.value()->plate_origin.y()});
     }
     for (PrintObject *obj : objs) {

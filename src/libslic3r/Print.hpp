@@ -41,6 +41,7 @@ class TreeSupport;
 class PresetCollection;
 class PresetBundle;
 struct NozzleFilamentRuleMismatch;
+struct ExtrusionLayers;
 
 #define MAX_OUTER_NOZZLE_DIAMETER   4
 // BBS: move from PrintObjectSlice.cpp
@@ -593,6 +594,7 @@ struct FakeWipeTower
     float rotation_angle;
     float cone_angle;
     Vec2d plate_origin;
+    std::map<float, Polylines> outer_wall;
 
     void set_fake_extrusion_data(Vec2f p, float w, float h, float lh, float d, float bd, Vec2d o)
     {
@@ -720,6 +722,8 @@ struct FakeWipeTower
 
         return paths;
     }
+
+    ExtrusionLayers getTrueExtrusionLayersFromWipeTower() const;
 };
 
 struct WipeTowerData
@@ -955,6 +959,7 @@ public:
     size_t                      num_print_regions() const throw() { return m_print_regions.size(); }
     const PrintRegion&          get_print_region(size_t idx) const  { return *m_print_regions[idx]; }
     const ToolOrdering&         get_tool_ordering() const { return m_wipe_tower_data.tool_ordering; }
+    const FakeWipeTower& get_fake_wipe_tower() const { return m_fake_wipe_tower; }
 
     //BBS: plate's origin related functions
     void set_plate_origin(Vec3d origin) { m_origin = origin; }

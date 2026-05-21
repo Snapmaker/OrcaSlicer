@@ -39,6 +39,10 @@ Snapmaker_Orca_add_cmake_project(
         -DwxUSE_UNICODE=ON
         ${_wx_private_font}
         -DwxUSE_OPENGL=ON
+        # Use the GLX canvas backend (as OrcaSlicer 2.3.2 does). The EGL canvas
+        # default does not present/repaint reliably on NVIDIA, leaving the 3D
+        # viewport blank.
+        -DwxUSE_GLCANVAS_EGL=OFF
         -DwxUSE_WEBREQUEST=ON
         -DwxUSE_WEBVIEW=ON
         ${_wx_edge}

@@ -11,7 +11,7 @@
 #include "GUI_App.hpp"
 #include "GLModel.hpp"
 
-#include <GL/glew.h>
+#include <glad/gl.h>
 
 #include <wx/image.h>
 #include <boost/filesystem.hpp>
@@ -475,6 +475,14 @@ bool GLTexture::generate_from_text_string(const std::string& text_str, wxFont &f
 
 bool GLTexture::generate_from_text(const std::string &text_str, wxFont &font, wxColor background, wxColor foreground)
 {
+    // The GL function pointers (loaded by GLAD) may still be null during early
+    // UI initialization, before the 3D canvas has initialized OpenGL (e.g. when
+    // the bed shape is set in the MainFrame constructor). Calling GL here would
+    // dereference a null pointer and crash. Skip: textures created this early
+    // are (re)generated lazily during rendering once OpenGL is ready.
+    if (glGenTextures == nullptr)
+        return false;
+
     if (text_str.empty())
     {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":no text string, should not happen\n";

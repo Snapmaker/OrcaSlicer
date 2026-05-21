@@ -3581,6 +3581,7 @@ void TabFilament::build()
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
         optgroup->append_single_option_line("idle_temperature");
+        optgroup->append_single_option_line("filament_tower_ironing_area");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };
         line.append_option(optgroup->get_option("nozzle_temperature_range_low"));
         line.append_option(optgroup->get_option("nozzle_temperature_range_high"));

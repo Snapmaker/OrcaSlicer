@@ -1110,6 +1110,9 @@ static ExPolygons outer_inner_brim_area(const Print& print,
         expolygons_append(no_brim_area, expolyFromLines);
     }
 
+    const float scaled_flow_width = print.brim_flow().scaled_spacing();
+    no_brim_area = offset2_ex(no_brim_area, scaled_flow_width, -scaled_flow_width);
+
     for (const PrintObject* object : print.objects()) {
         if (brimAreaMap.find(object->id()) != brimAreaMap.end())
         {

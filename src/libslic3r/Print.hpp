@@ -41,6 +41,7 @@ class TreeSupport;
 class PresetCollection;
 class PresetBundle;
 struct NozzleFilamentRuleMismatch;
+struct ExtrusionLayers;
 
 #define MAX_OUTER_NOZZLE_DIAMETER   4
 // BBS: move from PrintObjectSlice.cpp
@@ -721,6 +722,8 @@ struct FakeWipeTower
 
         return paths;
     }
+
+    ExtrusionLayers getTrueExtrusionLayersFromWipeTower() const;
 };
 
 struct WipeTowerData

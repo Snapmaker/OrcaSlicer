@@ -4090,6 +4090,7 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
     std::map<int, double> flushed_volume_of_extruders_all_plates; // map<extruder_idx, flushed volume>
     std::map<int, double> wipe_tower_volume_of_extruders_all_plates; // map<extruder_idx, flushed volume>
     std::map<int, double> support_volume_of_extruders_all_plates; // map<extruder_idx, flushed volume>
+    std::set<int> all_extruder_ids;
     std::vector<double> model_used_filaments_m_all_plates;
     std::vector<double> model_used_filaments_g_all_plates;
     std::vector<double> flushed_filaments_m_all_plates;
@@ -4205,29 +4206,45 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
             total_cost_all_plates += print->print_statistics().total_cost;
         }
        
-        for (auto it = model_volume_of_extruders_all_plates.begin(); it != model_volume_of_extruders_all_plates.end(); it++) {
-            auto [model_used_filament_m, model_used_filament_g] = get_used_filament_from_volume(it->second, it->first);
+        for (auto it = model_volume_of_extruders_all_plates.begin(); it != model_volume_of_extruders_all_plates.end(); it++)
+            all_extruder_ids.insert(it->first);
+        for (auto it = flushed_volume_of_extruders_all_plates.begin(); it != flushed_volume_of_extruders_all_plates.end(); it++)
+            all_extruder_ids.insert(it->first);
+        for (auto it = wipe_tower_volume_of_extruders_all_plates.begin(); it != wipe_tower_volume_of_extruders_all_plates.end(); it++)
+            all_extruder_ids.insert(it->first);
+        for (auto it = support_volume_of_extruders_all_plates.begin(); it != support_volume_of_extruders_all_plates.end(); it++)
+            all_extruder_ids.insert(it->first);
+
+        for (auto it = all_extruder_ids.begin(); it != all_extruder_ids.end(); it++) {
+            int extruder_id = *it;
+
+            auto model_it = model_volume_of_extruders_all_plates.find(extruder_id);
+            double model_vol = model_it != model_volume_of_extruders_all_plates.end() ? model_it->second : 0.0;
+            auto [model_used_filament_m, model_used_filament_g] = get_used_filament_from_volume(model_vol, extruder_id);
             if (model_used_filament_m != 0.0 || model_used_filament_g != 0.0)
                 displayed_columns |= ColumnData::Model;
             model_used_filaments_m_all_plates.push_back(model_used_filament_m);
             model_used_filaments_g_all_plates.push_back(model_used_filament_g);
-        }
-        for (auto it = flushed_volume_of_extruders_all_plates.begin(); it != flushed_volume_of_extruders_all_plates.end(); it++) {
-            auto [flushed_filament_m, flushed_filament_g] = get_used_filament_from_volume(it->second, it->first);
+
+            auto flush_it = flushed_volume_of_extruders_all_plates.find(extruder_id);
+            double flush_vol = flush_it != flushed_volume_of_extruders_all_plates.end() ? flush_it->second : 0.0;
+            auto [flushed_filament_m, flushed_filament_g] = get_used_filament_from_volume(flush_vol, extruder_id);
             if (flushed_filament_m != 0.0 || flushed_filament_g != 0.0)
                 displayed_columns |= ColumnData::Flushed;
             flushed_filaments_m_all_plates.push_back(flushed_filament_m);
             flushed_filaments_g_all_plates.push_back(flushed_filament_g);
-        }
-        for (auto it = wipe_tower_volume_of_extruders_all_plates.begin(); it != wipe_tower_volume_of_extruders_all_plates.end(); it++) {
-            auto [wipe_tower_filament_m, wipe_tower_filament_g] = get_used_filament_from_volume(it->second, it->first);
+
+            auto wipe_it = wipe_tower_volume_of_extruders_all_plates.find(extruder_id);
+            double wipe_vol = wipe_it != wipe_tower_volume_of_extruders_all_plates.end() ? wipe_it->second : 0.0;
+            auto [wipe_tower_filament_m, wipe_tower_filament_g] = get_used_filament_from_volume(wipe_vol, extruder_id);
             if (wipe_tower_filament_m != 0.0 || wipe_tower_filament_g != 0.0)
                 displayed_columns |= ColumnData::WipeTower;
             wipe_tower_used_filaments_m_all_plates.push_back(wipe_tower_filament_m);
             wipe_tower_used_filaments_g_all_plates.push_back(wipe_tower_filament_g);
-        }
-        for (auto it = support_volume_of_extruders_all_plates.begin(); it != support_volume_of_extruders_all_plates.end(); it++) {
-            auto [support_filament_m, support_filament_g] = get_used_filament_from_volume(it->second, it->first);
+
+            auto support_it = support_volume_of_extruders_all_plates.find(extruder_id);
+            double support_vol = support_it != support_volume_of_extruders_all_plates.end() ? support_it->second : 0.0;
+            auto [support_filament_m, support_filament_g] = get_used_filament_from_volume(support_vol, extruder_id);
             if (support_filament_m != 0.0 || support_filament_g != 0.0)
                 displayed_columns |= ColumnData::Support;
             support_used_filaments_m_all_plates.push_back(support_filament_m);
@@ -4271,10 +4288,11 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
     // item
     {
         size_t i = 0;
-        for (auto it = model_volume_of_extruders_all_plates.begin(); it != model_volume_of_extruders_all_plates.end(); it++) {
+        for (auto it = all_extruder_ids.begin(); it != all_extruder_ids.end(); it++) {
+            int extruder_id = *it;
             if (i < model_used_filaments_m_all_plates.size() && i < model_used_filaments_g_all_plates.size()) {
                 std::vector<std::pair<std::string, float>> columns_offsets;
-                columns_offsets.push_back({ std::to_string(it->first + 1), offsets[_u8L("Filament")]});
+                columns_offsets.push_back({ std::to_string(extruder_id + 1), offsets[_u8L("Filament")]});
 
                 char buf[64];
                 double unit_conver = imperial_units ? GizmoObjectManipulation::oz_to_g : 1.0;
@@ -4313,7 +4331,7 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
                     columns_offsets.push_back({ buf, offsets[_u8L("Total")] });
                 }
 
-                append_item(filament_colors[it->first], columns_offsets);
+                append_item(filament_colors[extruder_id], columns_offsets);
             }
             i++;
         }

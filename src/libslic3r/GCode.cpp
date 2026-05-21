@@ -2698,6 +2698,25 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             this->placeholder_parser().set("scan_first_layer", new ConfigOptionBool(false));
         }
     }
+
+    // Compute chamber cooling mode based on all filaments used on this plate.
+    // 0 = keep warm (all high-temp), 1 = weak cooling, 2 = strong cooling.
+    {
+        int chamber_cooling_mode = 0;
+        for (unsigned int extruder : tool_ordering.all_extruders()) {
+            if (!m_config.filament_is_high_temperature.get_at(extruder)) {
+                int vitrification = m_config.temperature_vitrification.get_at(extruder);
+                if (vitrification <= 50) {
+                    chamber_cooling_mode = 2;
+                    break;
+                } else if (vitrification <= 70) {
+                    chamber_cooling_mode = 1;
+                }
+            }
+        }
+        this->placeholder_parser().set("chamber_cooling_mode", new ConfigOptionInt(chamber_cooling_mode));
+    }
+
     std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value,
                                                                        initial_extruder_id);
     if (print.config().gcode_flavor != gcfKlipper) {

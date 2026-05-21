@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <atomic>
 #include <fstream>
+#include <queue>
+#include <sstream>
 #include <mutex>
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
@@ -251,12 +253,96 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
     return presets;
 }
 
+// ---- BlendLUT ----
+
+BlendLUT::BlendLUT(size_t n) : m_n(n)
+{
+    if (n < 2) {
+        m_n = 0;
+        return;
+    }
+    // Store only b >= a entries; m_pair[a][b - a] for b in [a, n)
+    m_pair.resize(n);
+    for (size_t a = 0; a < n; ++a) {
+        m_pair[a].resize(n - a);
+        for (size_t b = a; b < n; ++b)
+            m_pair[a][b - a].resize(101);
+    }
+}
+
+// ---- CIELAB conversion & helpers ----
+
+CIELab sRGB_to_CIELab(const wxColour& c)
+{
+    double r = c.Red()   / 255.0;
+    double g = c.Green() / 255.0;
+    double b = c.Blue()  / 255.0;
+    float lab[3];
+    RGB2Lab(float(r), float(g), float(b), &lab[0], &lab[1], &lab[2]);
+    return { double(lab[0]), double(lab[1]), double(lab[2]) };
+}
+
+double delta_e_lab(const CIELab& a, const CIELab& b)
+{
+    return double(DeltaE00(float(a.L), float(a.a), float(a.b),
+                           float(b.L), float(b.a), float(b.b)));
+}
+
+BlendLUT build_blend_lut(const std::vector<wxColour>& palette)
+{
+    const size_t n = palette.size();
+    BlendLUT lut(n);
+    if (lut.empty()) return lut;
+
+    for (size_t a = 0; a < n; ++a) {
+        for (size_t b = a; b < n; ++b) {
+            for (int pct = 0; pct <= 100; ++pct) {
+                wxColour blended = blend_pair_filament_mixer(palette[a], palette[b], float(pct) / 100.f);
+                lut.m_pair[a][b - a][pct] = sRGB_to_CIELab(blended);
+            }
+        }
+    }
+    return lut;
+}
+
+CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
+                                    const std::vector<unsigned int>& ids,
+                                    const std::vector<int>& weights)
+{
+    if (ids.size() != weights.size() || ids.empty())
+        return { 50.0, 0.0, 0.0 };
+
+    // Sort by filament ID ascending — matches blend_display_color_from_sequence
+    // which iterates IDs from 1..n. Sequential lerp order matters.
+    std::vector<std::pair<unsigned int, int>> sorted;
+    sorted.reserve(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i)
+        sorted.emplace_back(ids[i], weights[i]);
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    std::vector<wxColour> colors;
+    std::vector<double>   dweights;
+    colors.reserve(sorted.size());
+    dweights.reserve(sorted.size());
+    for (const auto& [id, w] : sorted) {
+        if (id == 0 || id > palette.size()) continue;
+        colors.push_back(palette[id - 1]);
+        dweights.push_back(double(std::max(0, w)));
+    }
+
+    wxColour blended = blend_multi_filament_mixer(colors, dweights);
+    return sRGB_to_CIELab(blended);
+}
+
+// ---- ΔE2000 ----
+
 double color_delta_e00(const wxColour& lhs, const wxColour& rhs)
 {
     float lhs_l = 0.f, lhs_a = 0.f, lhs_b = 0.f;
     float rhs_l = 0.f, rhs_a = 0.f, rhs_b = 0.f;
-    RGB2Lab(float(lhs.Red()), float(lhs.Green()), float(lhs.Blue()), &lhs_l, &lhs_a, &lhs_b);
-    RGB2Lab(float(rhs.Red()), float(rhs.Green()), float(rhs.Blue()), &rhs_l, &rhs_a, &rhs_b);
+    RGB2Lab(float(lhs.Red()) / 255.f, float(lhs.Green()) / 255.f, float(lhs.Blue()) / 255.f, &lhs_l, &lhs_a, &lhs_b);
+    RGB2Lab(float(rhs.Red()) / 255.f, float(rhs.Green()) / 255.f, float(rhs.Blue()) / 255.f, &rhs_l, &rhs_a, &rhs_b);
     return double(DeltaE00(lhs_l, lhs_a, lhs_b, rhs_l, rhs_a, rhs_b));
 }
 
@@ -268,120 +354,237 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     if (!target_color.IsOk() || physical_colors.size() < 2)
         return best;
 
+    // ---- Step 1: build palette & pre-convert to Lab ----
+    const size_t n = physical_colors.size();
     std::vector<wxColour> palette;
-    palette.reserve(physical_colors.size());
-    for (const std::string& hex : physical_colors)
-        palette.emplace_back(parse_mixed_color(hex));
+    std::vector<CIELab>   palette_lab;
+    palette.reserve(n);
+    palette_lab.reserve(n);
+    for (const std::string& hex : physical_colors) {
+        wxColour c = parse_mixed_color(hex);
+        palette.emplace_back(c);
+        palette_lab.emplace_back(sRGB_to_CIELab(c));
+    }
+    const CIELab target_lab = sRGB_to_CIELab(target_color);
 
-    auto consider_candidate = [&best, &target_color](MixedColorMatchRecipeResult candidate) {
-        if (!candidate.valid)
-            return;
-        candidate.delta_e = color_delta_e00(target_color, candidate.preview_color);
-        if (!best.valid || candidate.delta_e + 1e-6 < best.delta_e)
-            best = std::move(candidate);
-    };
+    const int  loop_min_weight      = std::max(1, std::clamp(min_component_percent, 0, 50));
+    const auto compat                = build_compatibility_matrix(n);
 
-    const int loop_min_weight      = std::max(1, std::clamp(min_component_percent, 0, 50));
-    const int loop_max_pair_weight = 100 - loop_min_weight;
-
-    auto compat = build_compatibility_matrix(palette.size());
-
-    for (size_t left_idx = 0; left_idx < palette.size(); ++left_idx) {
-        for (size_t right_idx = left_idx + 1; right_idx < palette.size(); ++right_idx) {
-            if (!compat[left_idx][right_idx]) continue;
-            for (int mix_b_percent = loop_min_weight; mix_b_percent <= loop_max_pair_weight; ++mix_b_percent)
-                consider_candidate(build_pair_color_match_candidate(palette, unsigned(left_idx + 1), unsigned(right_idx + 1), mix_b_percent,
-                                                                    min_component_percent));
+    // Helper: encode filament IDs as gradient_component_ids string.
+    // Legacy format (all IDs ≤ 9): concatenated single chars, e.g. "123".
+    // Extended format (any ID > 9): '/' separated decimals, e.g. "1/12/3".
+    auto encode_gradient_ids = [](const std::vector<unsigned int>& ids) -> std::string {
+        bool extended = false;
+        for (unsigned int id : ids)
+            if (id > 9) { extended = true; break; }
+        std::ostringstream ss;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            if (i > 0) {
+                if (extended) ss << '/';
+            }
+            if (extended)
+                ss << ids[i];
+            else
+                ss << char('0' + ids[i]);
         }
-    }
-
-    std::vector<std::pair<double, unsigned int>> ranked_ids;
-    ranked_ids.reserve(palette.size());
-    for (size_t idx = 0; idx < palette.size(); ++idx)
-        ranked_ids.emplace_back(color_delta_e00(target_color, palette[idx]), unsigned(idx + 1));
-    std::sort(ranked_ids.begin(), ranked_ids.end(), [](const auto& lhs, const auto& rhs) {
-        if (lhs.first != rhs.first)
-            return lhs.first < rhs.first;
-        return lhs.second < rhs.second;
-    });
-
-    std::vector<unsigned int> candidate_pool;
-    candidate_pool.reserve(std::min<size_t>(palette.size(), 12));
-    auto push_unique_id = [&candidate_pool](unsigned int filament_id) {
-        if (filament_id == 0 || filament_id > 9)
-            return;
-        if (std::find(candidate_pool.begin(), candidate_pool.end(), filament_id) == candidate_pool.end())
-            candidate_pool.emplace_back(filament_id);
+        return ss.str();
     };
 
-    const size_t general_pool_limit = std::min<size_t>(ranked_ids.size(), 8);
-    for (size_t idx = 0; idx < general_pool_limit; ++idx)
-        push_unique_id(ranked_ids[idx].second);
+    auto encode_gradient_weights = [](const std::vector<int>& weights) -> std::string {
+        std::ostringstream ss;
+        for (size_t i = 0; i < weights.size(); ++i) {
+            if (i > 0) ss << '/';
+            ss << weights[i];
+        }
+        return ss.str();
+    };
 
-    size_t direct_token_count = 0;
-    for (const auto& [distance, filament_id] : ranked_ids) {
-        (void) distance;
-        if (filament_id < 3 || filament_id > 9)
-            continue;
-        push_unique_id(filament_id);
-        if (++direct_token_count >= 4)
-            break;
-    }
+    // ---- Step 2: build pair Blend LUT (polynomial mixing → Lab) ----
+    const BlendLUT lut = build_blend_lut(palette);
+    if (lut.empty()) return best;
 
-    if (candidate_pool.size() < 3)
-        return best;
+    // ---- helper: update best from a pair candidate ----
+    auto update_best_pair = [&](unsigned int a, unsigned int b, int pct, double de) {
+        if (!best.valid || de + 1e-6 < best.delta_e) {
+            best.valid         = true;
+            best.component_a   = a;
+            best.component_b   = b;
+            best.mix_b_percent = pct;
+            best.preview_color = blend_pair_filament_mixer(palette[a - 1], palette[b - 1], float(pct) / 100.f);
+            best.delta_e       = de;
+            best.gradient_component_ids.clear();
+            best.gradient_component_weights.clear();
+            best.manual_pattern.clear();
+        }
+    };
 
-    std::vector<unsigned int> triple_pool = candidate_pool;
-    std::sort(triple_pool.begin(), triple_pool.end());
-    for (size_t first_idx = 0; first_idx + 2 < triple_pool.size(); ++first_idx) {
-        for (size_t second_idx = first_idx + 1; second_idx + 1 < triple_pool.size(); ++second_idx) {
-            for (size_t third_idx = second_idx + 1; third_idx < triple_pool.size(); ++third_idx) {
-                const std::vector<unsigned int> ids = {triple_pool[first_idx], triple_pool[second_idx], triple_pool[third_idx]};
-                if (std::any_of(ids.begin(), ids.end(), [](unsigned int filament_id) { return filament_id == 0 || filament_id > 9; }))
-                    continue;
-                {
-                    size_t i0 = triple_pool[first_idx] - 1, i1 = triple_pool[second_idx] - 1, i2 = triple_pool[third_idx] - 1;
-                    if (!compat[i0][i1] || !compat[i1][i2] || !compat[i0][i2]) continue;
-                }
+    // ---- Step 3: pair coarse scan (step=5%) ----
+    constexpr int k_coarse_step = 5;
+    constexpr int k_top_coarse  = 30;
 
-                for (int weight_a = loop_min_weight; weight_a <= 100 - 2 * loop_min_weight; ++weight_a) {
-                    for (int weight_b = loop_min_weight; weight_a + weight_b <= 100 - loop_min_weight; ++weight_b) {
-                        const int weight_c = 100 - weight_a - weight_b;
-                        consider_candidate(
-                            build_multi_color_match_candidate(palette, ids, {weight_a, weight_b, weight_c}, min_component_percent));
-                    }
+    // max-heap of (ΔE, a, b, percent) — keeps top-k LOWEST ΔE, worst at top
+    using HeapEntry = std::tuple<double, unsigned int, unsigned int, int>;
+    auto cmp = [](const HeapEntry& x, const HeapEntry& y) { return std::get<0>(x) < std::get<0>(y); };
+    std::priority_queue<HeapEntry, std::vector<HeapEntry>, decltype(cmp)> heap(cmp);
+
+    for (size_t a = 0; a < n; ++a) {
+        for (size_t b = a + 1; b < n; ++b) {
+            if (!compat[a][b]) continue;
+            for (int pct = loop_min_weight; pct <= 100 - loop_min_weight; pct += k_coarse_step) {
+                const CIELab& blended_lab = lut.get(a, b, pct);
+                double de = delta_e_lab(target_lab, blended_lab);
+                update_best_pair(unsigned(a + 1), unsigned(b + 1), pct, de);
+                if (heap.size() < k_top_coarse) {
+                    heap.emplace(de, unsigned(a + 1), unsigned(b + 1), pct);
+                } else if (de < std::get<0>(heap.top())) {
+                    heap.pop();
+                    heap.emplace(de, unsigned(a + 1), unsigned(b + 1), pct);
                 }
             }
         }
     }
 
-#if 0 // 四色配方搜索：暂不启用
-    if (candidate_pool.size() < 4)
+    // ---- Step 4: pair fine search (step=1%, top-N from coarse) ----
+    while (!heap.empty()) {
+        auto [de, a, b, coarse_pct] = heap.top();
+        heap.pop();
+        int fine_min = std::max(loop_min_weight, coarse_pct - k_coarse_step + 1);
+        int fine_max = std::min(100 - loop_min_weight, coarse_pct + k_coarse_step - 1);
+        for (int pct = fine_min; pct <= fine_max; ++pct) {
+            if ((pct - loop_min_weight) % k_coarse_step == 0) continue; // already evaluated in coarse
+            const CIELab& blended_lab = lut.get(a - 1, b - 1, pct);
+            update_best_pair(a, b, pct, delta_e_lab(target_lab, blended_lab));
+        }
+    }
+
+    // ---- save best pair (before triple search may overwrite) ----
+    MixedColorMatchRecipeResult best_pair = best;
+
+    // ---- Step 5: early termination ----
+    if (best_pair.valid && best_pair.delta_e <= 0.5)
+        return best_pair;
+
+    // ---- Step 6: adaptive candidate pool (top-N by single-color ΔE) ----
+    std::vector<std::pair<double, unsigned int>> ranked_ids;
+    ranked_ids.reserve(n);
+    for (size_t idx = 0; idx < n; ++idx)
+        ranked_ids.emplace_back(delta_e_lab(target_lab, palette_lab[idx]), unsigned(idx + 1));
+    std::sort(ranked_ids.begin(), ranked_ids.end(), [](const auto& x, const auto& y) {
+        if (x.first != y.first) return x.first < y.first;
+        return x.second < y.second;
+    });
+
+    const size_t pool_size = std::min<size_t>(n, 8);
+    std::vector<unsigned int> candidate_pool;
+    candidate_pool.reserve(pool_size);
+    for (size_t i = 0; i < pool_size; ++i)
+        candidate_pool.emplace_back(ranked_ids[i].second);
+
+    if (candidate_pool.size() < 3)
         return best;
 
-    std::vector<unsigned int> quad_pool(candidate_pool.begin(), candidate_pool.begin() + std::min<size_t>(candidate_pool.size(), 6));
-    std::sort(quad_pool.begin(), quad_pool.end());
-    for (size_t first_idx = 0; first_idx + 3 < quad_pool.size(); ++first_idx) {
-        for (size_t second_idx = first_idx + 1; second_idx + 2 < quad_pool.size(); ++second_idx) {
-            for (size_t third_idx = second_idx + 1; third_idx + 1 < quad_pool.size(); ++third_idx) {
-                for (size_t fourth_idx = third_idx + 1; fourth_idx < quad_pool.size(); ++fourth_idx) {
-                    const std::vector<unsigned int> ids = {quad_pool[first_idx], quad_pool[second_idx], quad_pool[third_idx],
-                                                           quad_pool[fourth_idx]};
+    std::sort(candidate_pool.begin(), candidate_pool.end());
 
-                    for (int weight_a = loop_min_weight; weight_a <= 100 - 3 * loop_min_weight; ++weight_a) {
-                        for (int weight_b = loop_min_weight; weight_a + weight_b <= 100 - 2 * loop_min_weight; ++weight_b) {
-                            for (int weight_c = loop_min_weight; weight_a + weight_b + weight_c <= 100 - loop_min_weight; ++weight_c) {
-                                const int weight_d = 100 - weight_a - weight_b - weight_c;
-                                consider_candidate(build_multi_color_match_candidate(palette, ids, {weight_a, weight_b, weight_c, weight_d},
-                                                                                     min_component_percent));
-                            }
+    // ---- Step 7: triple layered search ----
+    constexpr int k_triple_coarse_step = 10;
+    constexpr int k_top_triple        = 20;
+
+    struct TripleEntry {
+        double       de;
+        unsigned int a, b, c;
+        int          wa, wb;
+        bool operator<(const TripleEntry& o) const { return de < o.de; }
+    };
+    std::priority_queue<TripleEntry> triple_heap;
+
+    // Coarse (step=10%)
+    for (size_t fi = 0; fi + 2 < candidate_pool.size(); ++fi) {
+        for (size_t fj = fi + 1; fj + 1 < candidate_pool.size(); ++fj) {
+            for (size_t fk = fj + 1; fk < candidate_pool.size(); ++fk) {
+                unsigned int a = candidate_pool[fi], b = candidate_pool[fj], c = candidate_pool[fk];
+                if (!compat[a - 1][b - 1] || !compat[b - 1][c - 1] || !compat[a - 1][c - 1]) continue;
+
+                for (int wa = loop_min_weight; wa <= 100 - 2 * loop_min_weight; wa += k_triple_coarse_step) {
+                    for (int wb = loop_min_weight; wa + wb <= 100 - loop_min_weight; wb += k_triple_coarse_step) {
+                        int wc = 100 - wa - wb;
+                        if (wc < loop_min_weight) continue;
+                        CIELab blended = blend_weighted_lab_accurate(palette, {a, b, c}, {wa, wb, wc});
+                        double  de      = delta_e_lab(target_lab, blended);
+                        // Update best triple
+                        if (!best.valid || de + 1e-6 < best.delta_e) {
+                            best.valid     = true;
+                            best.component_a = a;
+                            best.component_b = b;
+                            best.mix_b_percent = wa + wb > 0 ? int(std::lround(100.0 * double(wb) / double(wa + wb))) : 50;
+                            best.gradient_component_ids     = encode_gradient_ids({a, b, c});
+                            best.gradient_component_weights = encode_gradient_weights({wa, wb, wc});
+                            best.preview_color = blend_multi_filament_mixer(
+                                {palette[a - 1], palette[b - 1], palette[c - 1]},
+                                {double(wa), double(wb), double(wc)});
+                            best.delta_e = de;
+                            best.manual_pattern.clear();
+                        }
+                        if (triple_heap.size() < k_top_triple) {
+                            triple_heap.push({de, a, b, c, wa, wb});
+                        } else if (de < triple_heap.top().de) {
+                            triple_heap.pop();
+                            triple_heap.push({de, a, b, c, wa, wb});
                         }
                     }
                 }
             }
         }
     }
-#endif
+
+    // Fine (step=1%, refine ±5 window around coarse center)
+    while (!triple_heap.empty()) {
+        TripleEntry te = triple_heap.top();
+        triple_heap.pop();
+        int wa_min = std::max(loop_min_weight, te.wa - k_triple_coarse_step + 1);
+        int wa_max = std::min(100 - 2 * loop_min_weight, te.wa + k_triple_coarse_step - 1);
+        for (int wa = wa_min; wa <= wa_max; ++wa) {
+            if ((wa - loop_min_weight) % k_triple_coarse_step == 0) continue;
+            int wb_min = std::max(loop_min_weight, te.wb - k_triple_coarse_step + 1);
+            int wb_max = std::min(100 - wa - loop_min_weight, te.wb + k_triple_coarse_step - 1);
+            for (int wb = wb_min; wb <= wb_max; ++wb) {
+                if ((wb - loop_min_weight) % k_triple_coarse_step == 0) continue;
+                int wc = 100 - wa - wb;
+                if (wc < loop_min_weight) continue;
+                CIELab blended = blend_weighted_lab_accurate(palette, {te.a, te.b, te.c}, {wa, wb, wc});
+                double  de2    = delta_e_lab(target_lab, blended);
+                if (!best.valid || de2 + 1e-6 < best.delta_e) {
+                    best.valid     = true;
+                    best.component_a = te.a;
+                    best.component_b = te.b;
+                    best.mix_b_percent = wa + wb > 0 ? int(std::lround(100.0 * double(wb) / double(wa + wb))) : 50;
+                    best.gradient_component_ids     = encode_gradient_ids({te.a, te.b, te.c});
+                    best.gradient_component_weights = encode_gradient_weights({wa, wb, wc});
+                    best.preview_color = blend_multi_filament_mixer(
+                        {palette[te.a - 1], palette[te.b - 1], palette[te.c - 1]},
+                        {double(wa), double(wb), double(wc)});
+                    best.delta_e = de2;
+                    best.manual_pattern.clear();
+                }
+            }
+        }
+    }
+
+    // ---- final normalization: re-evaluate ΔE with consistent color_delta_e00 ----
+    // Pair and triple search may use different evaluation paths (LUT vs on-the-fly
+    // blend_multi_filament_mixer); re-evaluate both via the same pipeline for a fair
+    // comparison, then prefer the simpler (pair) recipe when ΔE gain is negligible.
+    if (best.valid)
+        best.delta_e = color_delta_e00(target_color, best.preview_color);
+    if (best_pair.valid) {
+        best_pair.delta_e = color_delta_e00(target_color, best_pair.preview_color);
+        // Pick the true winner under unified evaluation
+        if (!best.valid || best_pair.delta_e + 1e-6 < best.delta_e)
+            best = std::move(best_pair);
+        // Prefer simpler recipe when multi-color ΔE advantage is imperceptible
+        else if (!best.gradient_component_ids.empty() &&
+                 best_pair.delta_e <= best.delta_e + 0.5)
+            best = std::move(best_pair);
+    }
 
     return best;
 }
@@ -466,15 +669,35 @@ wxColour compute_color_match_recipe_display_color(const MixedColorMatchRecipeRes
 std::vector<unsigned int> decode_color_match_gradient_ids(const std::string& value)
 {
     std::vector<unsigned int> ids;
-    bool                      seen[10] = {false};
-    for (const char ch : value) {
-        if (ch < '1' || ch > '9')
-            continue;
-        const unsigned int id = unsigned(ch - '0');
-        if (seen[id])
-            continue;
-        seen[id] = true;
-        ids.emplace_back(id);
+    std::unordered_set<unsigned int> seen;
+    // Detect format: if contains '/' → extended (ID/ID/...), else legacy (concatenated chars)
+    if (value.find('/') != std::string::npos) {
+        std::string token;
+        for (const char ch : value) {
+            if (ch == '/') {
+                if (!token.empty()) {
+                    const unsigned int id = unsigned(std::strtoul(token.c_str(), nullptr, 10));
+                    if (id > 0 && seen.insert(id).second)
+                        ids.emplace_back(id);
+                    token.clear();
+                }
+            } else {
+                token.push_back(ch);
+            }
+        }
+        if (!token.empty()) {
+            const unsigned int id = unsigned(std::strtoul(token.c_str(), nullptr, 10));
+            if (id > 0 && seen.insert(id).second)
+                ids.emplace_back(id);
+        }
+    } else {
+        // Legacy format: concatenated single chars '1'-'9'
+        for (const char ch : value) {
+            if (ch < '1' || ch > '9') continue;
+            const unsigned int id = unsigned(ch - '0');
+            if (seen.insert(id).second)
+                ids.emplace_back(id);
+        }
     }
     return ids;
 }
@@ -538,7 +761,7 @@ MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<
     std::vector<std::pair<int, unsigned int>> weighted_ids;
     weighted_ids.reserve(ids.size());
     for (size_t idx = 0; idx < ids.size(); ++idx) {
-        if (ids[idx] == 0 || ids[idx] > palette.size() || ids[idx] > 9)
+        if (ids[idx] == 0 || ids[idx] > palette.size())
             return candidate;
         if (weights[idx] <= 0)
             continue;
@@ -573,8 +796,20 @@ MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<
     candidate.mix_b_percent     = pair_weight_total > 0 ?
                                       std::clamp(int(std::lround(100.0 * double(ordered_weights[1]) / double(pair_weight_total))), 0, 100) :
                                       50;
-    for (const unsigned int filament_id : ordered_ids)
-        candidate.gradient_component_ids.push_back(char('0' + filament_id));
+    {
+        bool extended = false;
+        for (unsigned int fid : ordered_ids)
+            if (fid > 9) { extended = true; break; }
+        std::ostringstream gid_ss;
+        for (size_t i = 0; i < ordered_ids.size(); ++i) {
+            if (i > 0 && extended) gid_ss << '/';
+            if (extended)
+                gid_ss << ordered_ids[i];
+            else
+                gid_ss << char('0' + ordered_ids[i]);
+        }
+        candidate.gradient_component_ids = gid_ss.str();
+    }
     {
         std::ostringstream weights_ss;
         for (size_t weight_idx = 0; weight_idx < ordered_weights.size(); ++weight_idx) {
@@ -948,10 +1183,8 @@ bool is_filament_compatible(const MixedFilament& mf)
         if (mf.component_a >= 1) fids.push_back(mf.component_a - 1);
         if (mf.component_b >= 1) fids.push_back(mf.component_b - 1);
         if (!mf.gradient_component_ids.empty()) {
-            for (char c : mf.gradient_component_ids) {
-                int idx = c - '1';
-                if (idx >= 0 && idx <= 8) fids.push_back(static_cast<unsigned int>(idx));
-            }
+            for (unsigned int fid : decode_color_match_gradient_ids(mf.gradient_component_ids))
+                if (fid >= 1) fids.push_back(fid - 1);
         }
     }
 

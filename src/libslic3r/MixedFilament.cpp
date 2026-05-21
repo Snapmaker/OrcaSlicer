@@ -223,7 +223,7 @@ static float clamp_surface_offset(float v)
     return std::clamp(v, -2.f, 2.f);
 }
 
-static float canonical_signed_bias_value(float component_a_surface_offset, float component_b_surface_offset)
+float MixedFilamentManager::canonical_signed_bias_value(float component_a_surface_offset, float component_b_surface_offset)
 {
     const float offset_a = clamp_surface_offset(component_a_surface_offset);
     const float offset_b = clamp_surface_offset(component_b_surface_offset);
@@ -235,7 +235,7 @@ static float canonical_signed_bias_value(float component_a_surface_offset, float
     return 0.f;
 }
 
-static std::string format_surface_offset_token(float value)
+std::string MixedFilamentManager::format_surface_offset_token(float value)
 {
     std::ostringstream ss;
     ss << std::fixed << std::setprecision(4) << clamp_surface_offset(value);
@@ -268,7 +268,7 @@ static void compute_gradient_heights(const MixedFilament &mf, float lower_bound,
     h_b = lo + pct_b * (hi - lo);
 }
 
-static void normalize_ratio_pair(int &a, int &b)
+void MixedFilamentManager::normalize_ratio_pair(int &a, int &b)
 {
     a = std::max(0, a);
     b = std::max(0, b);
@@ -320,10 +320,10 @@ static void compute_gradient_ratios(MixedFilament &mf, int gradient_mode, float 
         }
     }
 
-    normalize_ratio_pair(mf.ratio_a, mf.ratio_b);
+    MixedFilamentManager::normalize_ratio_pair(mf.ratio_a, mf.ratio_b);
 }
 
-static int safe_mod(int x, int m)
+int MixedFilamentManager::safe_mod(int x, int m)
 {
     if (m <= 0)
         return 0;
@@ -353,12 +353,12 @@ static bool use_component_b_advanced_dither(int layer_index, int ratio_a, int ra
         return true;
 
     // Base ordered pattern: as evenly distributed as possible for ratio_b/cycle.
-    const int pos = safe_mod(layer_index, cycle);
+    const int pos = MixedFilamentManager::safe_mod(layer_index, cycle);
     const int cycle_idx = (layer_index - pos) / cycle;
 
     // Rotate each cycle to avoid visible long-period vertical striping.
-    const int phase = safe_mod(cycle_idx * dithering_phase_step(cycle), cycle);
-    const int p = safe_mod(pos + phase, cycle);
+    const int phase = MixedFilamentManager::safe_mod(cycle_idx * dithering_phase_step(cycle), cycle);
+    const int p = MixedFilamentManager::safe_mod(pos + phase, cycle);
 
     const int b_before = (p * ratio_b) / cycle;
     const int b_after  = ((p + 1) * ratio_b) / cycle;
@@ -1371,7 +1371,7 @@ static std::vector<double> build_local_z_preview_pass_heights(double nominal_lay
     return build_alternating(gradient_h_a, gradient_h_b);
 }
 
-static double mixed_filament_reference_nozzle_mm(unsigned int               component_a,
+double MixedFilamentManager::mixed_filament_reference_nozzle_mm(unsigned int               component_a,
                                                  unsigned int               component_b,
                                                  const std::vector<double> &nozzle_diameters)
 {
@@ -1487,7 +1487,7 @@ std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedFilament
     if (!mixed_filament_supports_bias_apparent_color(mf, preview_settings, bias_mode_enabled))
         return { 100 - base_b, base_b };
 
-    const double reference_nozzle_mm = mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
+    const double reference_nozzle_mm = MixedFilamentManager::mixed_filament_reference_nozzle_mm(mf.component_a, mf.component_b, nozzle_diameters);
     const int apparent_b = MixedFilamentManager::apparent_mix_b_percent(base_b,
                                                                         mf.component_a_surface_offset,
                                                                         mf.component_b_surface_offset,
@@ -2111,7 +2111,7 @@ unsigned int MixedFilamentManager::resolve(unsigned int filament_id,
         if (!flattened_pattern.empty()) {
             const std::vector<std::string> tokens = split_pattern_group_to_tokens(flattened_pattern, num_physical);
             if (!tokens.empty()) {
-                const int pos = safe_mod(layer_index, int(tokens.size()));
+                const int pos = MixedFilamentManager::safe_mod(layer_index, int(tokens.size()));
                 const unsigned int resolved = physical_filament_from_token(tokens[size_t(pos)], mf, num_physical);
                 if (resolved >= 1 && resolved <= num_physical)
                     return resolved;
@@ -2128,7 +2128,7 @@ unsigned int MixedFilamentManager::resolve(unsigned int filament_id,
         const std::vector<unsigned int> gradient_sequence = build_weighted_gradient_sequence(
             gradient_ids, gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights);
         if (!gradient_sequence.empty()) {
-            const size_t pos = size_t(safe_mod(layer_index, int(gradient_sequence.size())));
+            const size_t pos = size_t(MixedFilamentManager::safe_mod(layer_index, int(gradient_sequence.size())));
             return gradient_sequence[pos];
         }
     }
@@ -2183,7 +2183,7 @@ unsigned int MixedFilamentManager::resolve_perimeter(unsigned int filament_id,
             if (!group.empty()) {
                 const std::vector<std::string> tokens = split_pattern_group_to_tokens(group, num_physical);
                 if (!tokens.empty()) {
-                    const int pos = safe_mod(layer_index, int(tokens.size()));
+                    const int pos = MixedFilamentManager::safe_mod(layer_index, int(tokens.size()));
                     const unsigned int resolved = physical_filament_from_token(tokens[size_t(pos)], mf, num_physical);
                     if (resolved >= 1 && resolved <= num_physical)
                         return resolved;

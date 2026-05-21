@@ -1556,50 +1556,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         update_wiping_button_visibility();
     }
 
-    if (opt_key == "dithering_local_z_mode") {
-        const bool local_z_enabled = boost::any_cast<bool>(value);
-        if (local_z_enabled &&
-            (!m_config->has("mixed_filament_region_collapse") ||
-             m_config->option("mixed_filament_region_collapse") == nullptr ||
-             m_config->opt_bool("mixed_filament_region_collapse"))) {
-            change_opt_value(*m_config, "mixed_filament_region_collapse", boost::any(false));
-            if (m_type == Preset::TYPE_PRINT) {
-                DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-                project_cfg.set_key_value("mixed_filament_region_collapse", new ConfigOptionBool(false));
-            }
-            if (Field *field = this->get_field("mixed_filament_region_collapse"))
-                field->set_value(boost::any(false), false);
-            update_dirty();
-        }
-        if (!local_z_enabled &&
-            m_config->has("dithering_local_z_whole_objects") &&
-            m_config->option("dithering_local_z_whole_objects") != nullptr &&
-            m_config->opt_bool("dithering_local_z_whole_objects")) {
-            change_opt_value(*m_config, "dithering_local_z_whole_objects", boost::any(false));
-            if (m_type == Preset::TYPE_PRINT) {
-                DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-                project_cfg.set_key_value("dithering_local_z_whole_objects", new ConfigOptionBool(false));
-            }
-            if (Field *field = this->get_field("dithering_local_z_whole_objects"))
-                field->set_value(boost::any(false), false);
-            update_dirty();
-        }
-        if (!local_z_enabled &&
-            m_config->has("dithering_local_z_direct_multicolor") &&
-            m_config->option("dithering_local_z_direct_multicolor") != nullptr &&
-            m_config->opt_bool("dithering_local_z_direct_multicolor")) {
-            change_opt_value(*m_config, "dithering_local_z_direct_multicolor", boost::any(false));
-            if (m_type == Preset::TYPE_PRINT) {
-                DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-                project_cfg.set_key_value("dithering_local_z_direct_multicolor", new ConfigOptionBool(false));
-            }
-            if (Field *field = this->get_field("dithering_local_z_direct_multicolor"))
-                field->set_value(boost::any(false), false);
-            update_dirty();
-        }
-    }
-
-
     if (opt_key == "single_extruder_multi_material"  ){
         const auto bSEMM = m_config->opt_bool("single_extruder_multi_material");
         wxGetApp().sidebar().show_SEMM_buttons(bSEMM);
@@ -2572,7 +2528,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("wipe_tower_bridging", "multimaterial_settings_prime_tower#maximal-bridging-distance");
         optgroup->append_single_option_line("wipe_tower_extra_spacing", "multimaterial_settings_prime_tower#wipe-tower-purge-lines-spacing");
         optgroup->append_single_option_line("wipe_tower_extra_flow", "multimaterial_settings_prime_tower#extra-flow-for-purge");
-        optgroup->append_single_option_line("local_z_wipe_tower_purge_lines", "multimaterial_settings_prime_tower");
         optgroup->append_single_option_line("wipe_tower_max_purge_speed", "multimaterial_settings_prime_tower#maximum-wipe-tower-print-speed");
         optgroup->append_single_option_line("wipe_tower_wall_type", "multimaterial_settings_prime_tower#wall-type");
         optgroup->append_single_option_line("wipe_tower_cone_angle", "multimaterial_settings_prime_tower#stabilization-cone-apex-angle");
@@ -2609,7 +2564,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("interlocking_depth", "multimaterial_settings_advanced#interlocking-depth");
         optgroup->append_single_option_line("interlocking_boundary_avoidance", "multimaterial_settings_advanced#interlocking-boundary-avoidance");
 
-        optgroup = page->new_optgroup(L("Mixed Color (Experimental)"), L"param_mixed_color");
+        optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
         optgroup->append_single_option_line("dithering_local_z_mode");
 
     page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
@@ -5216,6 +5171,11 @@ void Tab::load_current_preset()
 
     // Reload preset pages with the new configuration values.
     reload_config();
+
+    // Refresh field decorations (orange/modified markers) after reload.
+    // Without this, stale decorations from a previous dirty state persist
+    // even after discard_current_changes() resets the config.
+    update_changed_ui();
 
     update_ui_items_related_on_parent_preset(m_presets->get_selected_preset_parent());
 

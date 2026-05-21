@@ -1246,6 +1246,7 @@ private:
 
     WipeTowerWriter2& operator=(const WipeTowerWriter2& rhs);
 
+public:
     // Rotate the point around center of the wipe tower about given angle (in degrees)
     Vec2f rotate(Vec2f pt) const
     {
@@ -1313,6 +1314,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     , m_ramming_width_ratio(config.ramming_line_width_ratio)
     , m_enable_arc_fitting(config.enable_arc_fitting)
     , m_used_fillet(config.wipe_tower_fillet_wall)
+    , m_use_gap_wall(config.wipe_tower_wall_gap.value)
     , m_rib_width(config.wipe_tower_rib_width)
     , m_extra_rib_length(config.wipe_tower_extra_rib_length)
     , m_wall_type((int) config.wipe_tower_wall_type)
@@ -1496,8 +1498,9 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
 
         unsigned int tool = tools[idx_tool];
         m_left_to_right   = true;
-        toolchange_Change(writer, tool, m_filpar[tool].material); // Select the tool, set a speed override for soluble and flex materials.
-        toolchange_Load(writer, cleaning_box);                    // Prime the tool.
+        toolchange_Change(writer, tool, m_filpar[tool].material, writer.pos_rotated()); // Select the tool, set a speed override for soluble and flex materials.
+        writer.append("[deretraction_from_wipe_tower_generator]");
+        toolchange_Load(writer, cleaning_box);                                          // Prime the tool.
         if (idx_tool + 1 == tools.size()) {
             // Last tool should not be unloaded, but it should be wiped enough to become of a pure color.
             if (idx_tool == 0)
@@ -1548,15 +1551,17 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
 {
     size_t old_tool = m_current_tool;
 
-    float wipe_area   = 0.f;
-    float wipe_volume = 0.f;
+    float wipe_area    = 0.f;
+    float wipe_volume  = 0.f;
+    float ramming_depth = 0.f;
 
     // Finds this toolchange info
     if (tool != (unsigned int) (-1)) {
         for (const auto& b : m_layer_info->tool_changes)
             if (b.new_tool == tool) {
-                wipe_volume = b.wipe_volume;
-                wipe_area   = b.required_depth;
+                wipe_volume   = b.wipe_volume;
+                wipe_area     = b.required_depth;
+                ramming_depth = b.ramming_depth;
                 break;
             }
     } else {
@@ -1593,6 +1598,7 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
     writer.set_initial_position(initial_position, m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
 
     // Increase the extruder driver current to allow fast ramming.
+    // Increase the extruder driver current to allow fast ramming.
     if (m_set_extruder_trimpot)
         writer.set_extruder_trimpot(750);
 
@@ -1603,9 +1609,31 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material,
                           (is_first_layer() ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature),
                           new_tool_temp);
-        toolchange_Change(writer, tool, m_filpar[tool].material); // Change the tool, set a speed override for soluble and flex materials.
+        // Build target_pos: gap wall → outside the wall (pre-rotated); otherwise → current position
+        Vec2f target_pos = writer.pos_rotated();
+        float  box_edge_x = m_perimeter_width / 2.f;
+        float  gap_y = 0.f;
+        if (m_use_gap_wall) {
+            float gap_x = (predict_ramming_end_x((int) m_current_tool) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
+            float ramming_lw = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;
+            float ramming_ys = ramming_lw * m_filpar[m_current_tool].ramming_step_multiplicator * m_extra_spacing_ramming;
+            gap_y = m_depth_traversed + ramming_depth + ramming_ys + ramming_lw / 2.f + m_perimeter_width / 2.f;
+
+            float margin = 5.f * m_perimeter_width;
+            float rib_protrusion = (m_wall_type == (int) wtwRib) ? m_rib_width / 2.f : 0.f;
+            float outer_dist     = margin + rib_protrusion + m_wipe_tower_brim_width;
+            float wall_outer_x = (gap_x == 0.f) ? -outer_dist : m_wipe_tower_width + outer_dist;
+            box_edge_x = (gap_x == 0.f) ? m_perimeter_width / 2.f : m_wipe_tower_width - m_perimeter_width / 2.f;
+
+            target_pos = writer.rotate(Vec2f(wall_outer_x, gap_y + m_perimeter_width / 2.f));
+        }
+        toolchange_Change(writer, tool, m_filpar[tool].material, target_pos);
+        // Gap travel: through gap into cleaning_box edge before Load
+        if (m_use_gap_wall)
+            writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
+        // Deretraction after gap travel: nozzle reached cleaning_box edge, safe to push filament back
+        writer.append("[deretraction_from_wipe_tower_generator]");
         toolchange_Load(writer, cleaning_box);
-        writer.travel(writer.x(), writer.y() - m_perimeter_width); // cooling and loading were done a bit down the road
         toolchange_Wipe(writer, cleaning_box, wipe_volume); // Wipe the newly loaded filament until the end of the assigned wipe area.
         writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");
         ++m_num_tool_changes;
@@ -1630,6 +1658,28 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
         m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
 
     return construct_tcr(writer, false, old_tool, false);
+}
+
+// Predict the X position where the nozzle will be after ramming completes.
+// Must stay in sync with toolchange_Unload() behaviour directly below.
+// Ramming always starts from xl (L1644), m_left_to_right = true (L1649), first line goes right.
+// After N ramming lines: odd N → xr, even N → xl.
+// When ramming is disabled, nozzle stays at xl (set_position at ramming_start_pos, L1668).
+// L1677 may leave the nozzle at an intermediate X; gap width (~5×perimeter_width) tolerates this.
+float WipeTower2::predict_ramming_end_x(int old_tool) const
+{
+    // Same xl/xr as Unload (L1636-1637)
+    float xl = m_perimeter_width / 2.f + 1.f * m_perimeter_width;
+    float xr = m_wipe_tower_width - m_perimeter_width / 2.f - 1.f * m_perimeter_width;
+
+    // Same condition as Unload (L1654)
+    bool do_ramming = (m_semm && m_enable_filament_ramming) || m_filpar[old_tool].multitool_ramming;
+    if (!do_ramming)
+        return xl; // nozzle stays at ramming_start_pos
+
+    // Number of ramming lines for this tool; odd → ends at xr, even → ends at xl
+    int N = (int) m_filpar[old_tool].ramming_speed.size();
+    return (N % 2 == 1) ? xr : xl;
 }
 
 // Ram the hot material out of the melt zone, retract the filament into the cooling tubes and let it cool.
@@ -1719,12 +1769,19 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
 
         const float x    = volume_to_length(m_filpar[m_current_tool].ramming_speed[i] * time_step, line_width, m_layer_height);
         const float e    = m_filpar[m_current_tool].ramming_speed[i] * time_step / filament_area(); // transform volume per sec to E move;
-        const float dist = std::min(x - e_done, remaining); // distance to travel for either the next time_step, or to the next turnaround
+        // On the last ramming segment, stretch to cleaning_box edge so the nozzle ends predictably
+        float dist;
+        if (i == m_filpar[m_current_tool].ramming_speed.size() - 1 && remaining > x - e_done + WT_EPSILON)
+            dist = remaining;
+        else
+            dist = std::min(x - e_done, remaining);
         const float actual_time = dist / x * time_step;
         writer.ram(writer.x(), writer.x() + (m_left_to_right ? 1.f : -1.f) * dist, 0.f, 0.f, e * (dist / x), dist / (actual_time / 60.f));
         remaining -= dist;
 
         if (remaining < WT_EPSILON) { // we reached a turning point
+            if (i == m_filpar[m_current_tool].ramming_speed.size() - 1)
+                break; // last segment already reached edge, skip unnecessary turnaround
             writer.travel(writer.x(), writer.y() + y_step, 7200);
             m_left_to_right = !m_left_to_right;
             remaining       = xr - xl;
@@ -1842,20 +1899,19 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
     if (m_enable_filament_ramming)
         writer.append("; Ramming end\n");
 
-    // this is to align ramming and future wiping extrusions, so the future y-steps can be uniform from the start:
-    // the perimeter_width will later be subtracted, it is there to not load while moving over just extruded material
-    Vec2f pos = Vec2f(end_of_ramming.x(),
-                      end_of_ramming.y() + (y_step / m_extra_spacing_ramming - m_perimeter_width) / 2.f + m_perimeter_width);
-    if (do_ramming)
-        writer.travel(pos, 2400.f);
-    else
-        writer.set_position(pos);
+    // Backward wipe to shear off hanging filament before retraction
+    float wipe_back_dist = 2.f * m_perimeter_width;
+    float wipe_back_x    = writer.x() + (m_left_to_right ? -1.f : 1.f) * wipe_back_dist;
+    writer.travel(wipe_back_x, writer.y(), 7200);
+
+    // Final retraction to prevent old filament oozing during subsequent gap travel
+    writer.retract(m_filpar[m_current_tool].retract_length, m_filpar[m_current_tool].retract_speed * 60.f);
 
     writer.resume_preview().flush_planner_queue();
 }
 
 // Change the tool, set a speed override for soluble and flex materials.
-void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_tool, const std::string& new_material)
+void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_tool, const std::string& new_material, const Vec2f& target_pos)
 {
     // Ask the writer about how much of the old filament we consumed:
     if (m_current_tool < m_used_filament_length.size())
@@ -1869,16 +1925,13 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     if (m_is_mk4mmu3)
         writer.switch_filament_monitoring(true);
 
-    // Travel to where we assume we are. Custom toolchange or some special T code handling (parking extruder etc)
-    // gcode could have left the extruder somewhere, we cannot just start extruding. We should also inform the
-    // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
-    Vec2f current_pos = writer.pos_rotated();
+    // Travel to target position (wall outside when gap wall enabled, current position otherwise)
     writer
-        .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
-        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
-                Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
+        .feedrate(m_travel_speed * 60.f)
+        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(target_pos.x()) + " Y" +
+                Slic3r::float_to_string_decimal_point(target_pos.y()) + never_skip_tag() + "\n");
 
-    writer.append("[deretraction_from_wipe_tower_generator]");
+    //writer.append("[deretraction_from_wipe_tower_generator]");
 
     // The toolchange Tn command will be inserted later, only in case that the user does
     // not provide a custom toolchange gcode.
@@ -2049,6 +2102,207 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
     writer.change_analyzer_line_width(m_perimeter_width);
 }
 
+// Draw the outer perimeter wall (with gaps if m_use_gap_wall). Called BEFORE tool_change so the wall exists
+// before B filament wipes through the gap. Uses the first tool change's old_tool for extrusion.
+WipeTower::ToolChangeResult WipeTower2::draw_outer_wall(size_t layer_id)
+{
+    size_t old_tool = m_current_tool;
+
+    WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting, m_printer_model);
+    writer.set_extrusion_flow(m_extrusion_flow)
+        .set_z(m_z_pos)
+        .set_initial_tool(m_current_tool)
+        .set_y_shift(m_y_shift - (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f));
+
+    bool  first_layer   = is_first_layer() || (m_num_tool_changes <= 1 && m_no_sparse_layers);
+    float feedrate      = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_perimeter_speed * 60.f);
+    float current_depth = m_layer_info->depth - m_layer_info->toolchanges_depth();
+    WipeTower::box_coordinates fill_box(Vec2f(m_perimeter_width, m_layer_info->depth - (current_depth - m_perimeter_width)),
+                                        m_wipe_tower_width - 2 * m_perimeter_width, current_depth - m_perimeter_width);
+
+    writer.set_initial_position((m_left_to_right ? fill_box.ru : fill_box.lu),
+                                m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
+
+    bool toolchanges_on_layer = m_layer_info->toolchanges_depth() > WT_EPSILON;
+
+    // travel to ld corner for outer wall drawing:
+    if (writer.x() > fill_box.ld.x() + EPSILON)
+        writer.travel(fill_box.ld.x(), writer.y());
+    if (writer.y() > fill_box.ld.y() + EPSILON)
+        writer.travel(writer.x(), fill_box.ld.y());
+
+    const float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
+
+    std::vector<Vec2f> skip_points = get_wall_skip_points(layer_id);
+
+    Polygon poly;
+    if (m_wall_type == (int) wtwCone) {
+        WipeTower::box_coordinates wt_box(Vec2f(0.f, (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f)),
+                                          m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
+        bool infill_cone = first_layer && m_wipe_tower_width > 2 * spacing && m_wipe_tower_depth > 2 * spacing;
+        poly             = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing);
+    } else {
+        WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
+        poly = generate_support_rib_wall(writer, wt_box, feedrate, first_layer, m_wall_type == (int) wtwRib, true, skip_points);
+    }
+
+    // brim with chamfer (gradual layer-by-layer reduction)
+    int loops_num = (m_wipe_tower_brim_width + spacing / 2.f) / spacing;
+
+    if (m_wipe_tower_brim_width > 0) {
+        if (first_layer) {
+        } else if (m_prime_tower_brim_chamfer) {
+            size_t current_idx = m_layer_info - m_plan.begin();
+            int    dist_to_1st = (int) current_idx - (int) m_first_layer_idx;
+
+            if (m_first_layer_idx == size_t(-1) || m_first_layer_idx >= m_plan.size()) {
+                loops_num = 0;
+            } else {
+            bool depth_changed = (m_layer_info->depth != m_plan[m_first_layer_idx].depth);
+            if (depth_changed) {
+                loops_num = 0;
+            } else {
+                int chamfer_loops_num = (int) (m_prime_tower_brim_chamfer_max_width / spacing);
+                loops_num             = std::min(loops_num, chamfer_loops_num) - dist_to_1st;
+                if (loops_num < 0)
+                    loops_num = 0;
+            }
+        }
+        } else {
+            loops_num = 0;
+        }
+    }
+
+    if (loops_num > 0) {
+        writer.append("; WIPE_TOWER_BRIM_START\n");
+
+        for (int i = 0; i < loops_num; ++i) {
+            poly   = offset(poly, scale_(spacing)).front();
+            int cp = poly.closest_point_index(Point::new_scale(writer.x(), writer.y()));
+            writer.travel(unscale(poly.points[cp]).cast<float>());
+            for (int j = cp + 1; true; ++j) {
+                if (j == int(poly.points.size()))
+                    j = 0;
+                writer.extrude(unscale(poly.points[j]).cast<float>());
+                if (j == cp)
+                    break;
+            }
+        }
+
+        writer.append("; WIPE_TOWER_BRIM_END\n");
+
+        if (first_layer) {
+            m_wipe_tower_brim_width_real = loops_num * spacing;
+        }
+    }
+
+    // Now prepare future wipe.
+    int i = poly.closest_point_index(Point::new_scale(writer.x(), writer.y()));
+    writer.add_wipe_point(writer.pos());
+    writer.add_wipe_point(unscale(poly.points[i == 0 ? int(poly.points.size()) - 1 : i - 1]).cast<float>());
+
+    if (!m_no_sparse_layers || toolchanges_on_layer || first_layer) {
+        if (m_current_tool < m_used_filament_length.size())
+            m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
+        m_current_height += m_layer_info->height;
+    }
+
+    return construct_tcr(writer, false, old_tool, true);
+}
+
+// Draw the sparse infill (inner perimeter + sparse infill lines). Called AFTER all tool_changes and wipe.
+WipeTower::ToolChangeResult WipeTower2::draw_infill()
+{
+    assert(!this->layer_finished());
+    m_current_layer_finished = true;
+
+    size_t old_tool = m_current_tool;
+
+    WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting, m_printer_model);
+    writer.set_extrusion_flow(m_extrusion_flow)
+        .set_z(m_z_pos)
+        .set_initial_tool(m_current_tool)
+        .set_y_shift(m_y_shift - (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f));
+
+    bool  first_layer   = is_first_layer() || (m_num_tool_changes <= 1 && m_no_sparse_layers);
+    float feedrate      = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
+    float current_depth = m_layer_info->depth - m_layer_info->toolchanges_depth();
+    WipeTower::box_coordinates fill_box(Vec2f(m_perimeter_width, m_layer_info->depth - (current_depth - m_perimeter_width)),
+                                        m_wipe_tower_width - 2 * m_perimeter_width, current_depth - m_perimeter_width);
+
+    writer.set_initial_position((m_left_to_right ? fill_box.ru : fill_box.lu),
+                                m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
+
+    bool toolchanges_on_layer = m_layer_info->toolchanges_depth() > WT_EPSILON;
+
+    // inner perimeter of the sparse section, if there is space for it:
+    if (fill_box.ru.y() - fill_box.rd.y() > m_perimeter_width - WT_EPSILON)
+        writer.rectangle(fill_box.ld, fill_box.rd.x() - fill_box.ld.x(), fill_box.ru.y() - fill_box.rd.y(), feedrate);
+
+    // we are in one of the corners, travel to ld along the perimeter:
+    if (writer.x() > fill_box.ld.x() + EPSILON)
+        writer.travel(fill_box.ld.x(), writer.y());
+    if (writer.y() > fill_box.ld.y() + EPSILON)
+        writer.travel(writer.x(), fill_box.ld.y());
+
+    // Extrude infill to support the material to be printed above.
+    const float dy    = (fill_box.lu.y() - fill_box.ld.y() - m_perimeter_width);
+    float       left  = fill_box.lu.x() + 2 * m_perimeter_width;
+    float       right = fill_box.ru.x() - 2 * m_perimeter_width;
+    if (dy > m_perimeter_width) {
+        writer.travel(fill_box.ld + Vec2f(m_perimeter_width * 2, 0.f))
+            .append(";--------------------\n"
+                    "; CP EMPTY GRID START\n")
+            .comment_with_value(" layer #", m_num_layer_changes + 1);
+
+        bool solid_infill = m_layer_info + 1 == m_plan.end() ?
+                                false :
+                                std::any_of((m_layer_info + 1)->tool_changes.begin(), (m_layer_info + 1)->tool_changes.end(),
+                                            [this](const WipeTowerInfo::ToolChange& tch) {
+                                                return m_filpar[tch.new_tool].is_soluble || m_filpar[tch.old_tool].is_soluble;
+                                            });
+        solid_infill |= first_layer && m_adhesion;
+
+        if (solid_infill) {
+            float sparse_factor = 1.5f; // 1=solid, 2=every other line, etc.
+            if (first_layer) {          // the infill should touch perimeters
+                left -= m_perimeter_width;
+                right += m_perimeter_width;
+                sparse_factor = 1.f;
+            }
+            float y       = fill_box.ld.y() + m_perimeter_width;
+            int   n       = dy / (m_perimeter_width * sparse_factor);
+            float spacing = (dy - m_perimeter_width) / (n - 1);
+            int   i       = 0;
+            for (i = 0; i < n; ++i) {
+                writer.extrude(writer.x(), y, feedrate).extrude(i % 2 ? left : right, y);
+                y = y + spacing;
+            }
+            writer.extrude(writer.x(), fill_box.lu.y());
+        } else {
+            writer.extrude(fill_box.lu + Vec2f(m_perimeter_width * 2, 0.f), feedrate);
+
+            const int   n  = 1 + int((right - left) / m_bridging);
+            const float dx = (right - left) / n;
+            for (int i = 1; i <= n; ++i) {
+                float x = left + dx * i;
+                writer.travel(x, writer.y());
+                writer.extrude(x, i % 2 ? fill_box.rd.y() : fill_box.ru.y());
+            }
+        }
+
+        writer.append("; CP EMPTY GRID END\n"
+                      ";------------------\n\n\n\n\n\n\n");
+    }
+
+    if (!m_no_sparse_layers || toolchanges_on_layer || first_layer) {
+        if (m_current_tool < m_used_filament_length.size())
+            m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
+    }
+
+    return construct_tcr(writer, false, old_tool, true);
+}
+
 WipeTower::ToolChangeResult WipeTower2::finish_layer()
 {
     assert(!this->layer_finished());
@@ -2152,7 +2406,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
         poly             = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing);
     } else {
         WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
-        poly = generate_support_rib_wall(writer, wt_box, feedrate, first_layer, m_wall_type == (int) wtwRib, true, false);
+        poly = generate_support_rib_wall(writer, wt_box, feedrate, first_layer, m_wall_type == (int) wtwRib, true, std::vector<Vec2f>{});
     }
 
     // brim with chamfer (gradual layer-by-layer reduction)
@@ -2412,6 +2666,43 @@ static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first,
     return out;
 }
 
+// For each layer, compute gap positions on the outer wall where B filament will enter.
+// Gap X: on the wall closest to where ramming ends. Gap Y: ramming end + turnaround step + half line widths.
+void WipeTower2::get_all_wall_skip_points()
+{
+    m_wall_skip_points.clear();
+    m_wall_skip_points.resize(m_plan.size());
+
+    for (size_t layer_id = 0; layer_id < m_plan.size(); ++layer_id) {
+        const auto& layer = m_plan[layer_id];
+        if (layer.tool_changes.empty()) continue;
+
+        std::vector<Vec2f> skip_points;
+        float              process_depth = 0.f;
+
+        for (size_t tc_idx = 0; tc_idx < layer.tool_changes.size(); ++tc_idx) {
+            const auto& tc = layer.tool_changes[tc_idx];
+            // Gap on wall closest to where ramming ends; Y at ramming-wiping boundary
+            // TODO 多头: runtime do_ramming may differ from planning ramming_depth, use do_ramming ? tc.ramming_depth : 0.f
+            float x = (predict_ramming_end_x((int) tc.old_tool) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
+            float ramming_lw = m_perimeter_width * m_filpar[tc.old_tool].ramming_line_width_multiplicator;
+            float ramming_ys = ramming_lw * m_filpar[tc.old_tool].ramming_step_multiplicator * m_extra_spacing_ramming;
+            float y = process_depth + tc.ramming_depth + ramming_ys + ramming_lw / 2.f + m_perimeter_width / 2.f;
+            skip_points.emplace_back(x, y);
+            process_depth += tc.required_depth;
+        }
+        m_wall_skip_points[layer_id] = std::move(skip_points);
+    }
+}
+
+// Return pre-computed gap points for a given layer, with bounds check.
+std::vector<Vec2f> WipeTower2::get_wall_skip_points(size_t layer_id)
+{
+    if (layer_id < m_wall_skip_points.size())
+        return m_wall_skip_points[layer_id];
+    return {};
+}
+
 // Processes vector m_plan and calls respective functions to generate G-code for the wipe tower
 // Resulting ToolChangeResults are appended into vector "result"
 void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>& result)
@@ -2451,6 +2742,9 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
     m_rib_length = std::max(diagonal, m_rib_length);
     m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) / 2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
 
+    if (m_use_gap_wall)
+        get_all_wall_skip_points();
+
     m_layer_info     = m_plan.begin();
     m_current_height = 0.f;
 
@@ -2479,28 +2773,60 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
         int                         idx = first_toolchange_to_nonsoluble(layer.tool_changes);
         WipeTower::ToolChangeResult finish_layer_tcr;
 
-        if (idx == -1) {
-            // if there is no toolchange switching to non-soluble, finish layer
-            // will be called at the very beginning. That's the last possibility
-            // where a nonsoluble tool can be.
-            finish_layer_tcr = finish_layer();
-        }
+        if (m_use_gap_wall) {
+            // V2 flow: draw outer wall (with gaps) first, then tool changes, then infill
+            size_t layer_id = &layer - &m_plan.front();
+            WipeTower::ToolChangeResult outer_wall_tcr = draw_outer_wall(layer_id);
+            WipeTower::ToolChangeResult infill_tcr;
 
-        for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
-            layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
-            if (i == idx) // finish_layer will be called after this toolchange
-                finish_layer_tcr = finish_layer();
-        }
+            if (idx == -1)
+                infill_tcr = draw_infill();
 
-        if (layer_result.empty()) {
-            // there is nothing to merge finish_layer with
-            layer_result.emplace_back(std::move(finish_layer_tcr));
-        } else {
-            if (idx == -1) {
-                layer_result[0]              = merge_tcr(finish_layer_tcr, layer_result[0]);
+            for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
+                layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
+                if (i == idx)
+                    infill_tcr = draw_infill();
+            }
+
+
+            if (layer_result.empty()) {
+                layer_result.emplace_back(merge_tcr(outer_wall_tcr, infill_tcr));
+            } else if (idx == -1) {
+                // infill was drawn before tool changes: outer_wall → infill → TC1 → ...
+                WipeTower::ToolChangeResult wall_infill = merge_tcr(outer_wall_tcr, infill_tcr);
+                layer_result[0]                         = merge_tcr(wall_infill, layer_result[0]);
+                layer_result[0].force_travel            = true;
+            } else {
+                // infill drawn after soluble trigger: outer_wall → TC1 → ... → TC(idx) → infill → ...
+                layer_result[0]              = merge_tcr(outer_wall_tcr, layer_result[0]);
                 layer_result[0].force_travel = true;
-            } else
-                layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
+                layer_result[idx]            = merge_tcr(layer_result[idx], infill_tcr);
+            }
+        } else {
+            // Original flow: finish_layer does both infill and wall together
+            if (idx == -1) {
+                // if there is no toolchange switching to non-soluble, finish layer
+                // will be called at the very beginning. That's the last possibility
+                // where a nonsoluble tool can be.
+                finish_layer_tcr = finish_layer();
+            }
+
+            for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
+                layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
+                if (i == idx) // finish_layer will be called after this toolchange
+                    finish_layer_tcr = finish_layer();
+            }
+
+            if (layer_result.empty()) {
+                // there is nothing to merge finish_layer with
+                layer_result.emplace_back(std::move(finish_layer_tcr));
+            } else {
+                if (idx == -1) {
+                    layer_result[0]              = merge_tcr(finish_layer_tcr, layer_result[0]);
+                    layer_result[0].force_travel = true;
+                } else
+                    layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
+            }
         }
 
         result.emplace_back(std::move(layer_result));
@@ -2602,7 +2928,7 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
                                               bool                              first_layer,
                                               bool                              rib_wall,
                                               bool                              extrude_perimeter,
-                                              bool                              skip_points)
+                                              const std::vector<Vec2f>&         skip_points)
 {
     float     retract_length = m_filpar[m_current_tool].retract_length;
     float     retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
@@ -2621,8 +2947,8 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
     if (!extrude_perimeter)
         return wall_polygon;
 
-    if (skip_points) {
-        result_wall = contrust_gap_for_skip_points(wall_polygon, std::vector<Vec2f>(), m_wipe_tower_width, 2.5 * m_perimeter_width,
+    if (!skip_points.empty()) {
+        result_wall = contrust_gap_for_skip_points(wall_polygon, skip_points, m_wipe_tower_width, 2.5 * m_perimeter_width,
                                                    insert_skip_polygon);
     } else {
         result_wall.push_back(to_polyline(wall_polygon));

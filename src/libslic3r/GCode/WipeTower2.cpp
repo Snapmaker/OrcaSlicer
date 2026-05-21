@@ -1479,6 +1479,7 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
         unsigned int tool = tools[idx_tool];
         m_left_to_right   = true;
         toolchange_Change(writer, tool, m_filpar[tool].material, writer.pos_rotated()); // Select the tool, set a speed override for soluble and flex materials.
+        writer.append("[deretraction_from_wipe_tower_generator]");
         toolchange_Load(writer, cleaning_box);                                          // Prime the tool.
         if (idx_tool + 1 == tools.size()) {
             // Last tool should not be unloaded, but it should be wiped enough to become of a pure color.
@@ -1610,8 +1611,9 @@ WipeTower::ToolChangeResult WipeTower2::tool_change(size_t tool)
         // Gap travel: through gap into cleaning_box edge before Load
         if (m_use_gap_wall)
             writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
+        // Deretraction after gap travel: nozzle reached cleaning_box edge, safe to push filament back
+        writer.append("[deretraction_from_wipe_tower_generator]");
         toolchange_Load(writer, cleaning_box);
-        writer.travel(writer.x(), writer.y() - m_perimeter_width); // cooling and loading were done a bit down the road
         toolchange_Wipe(writer, cleaning_box, wipe_volume); // Wipe the newly loaded filament until the end of the assigned wipe area.
         writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");
         ++m_num_tool_changes;
@@ -1877,15 +1879,6 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
     if (m_enable_filament_ramming)
         writer.append("; Ramming end\n");
 
-    // this is to align ramming and future wiping extrusions, so the future y-steps can be uniform from the start:
-    // the perimeter_width will later be subtracted, it is there to not load while moving over just extruded material
-    Vec2f pos = Vec2f(end_of_ramming.x(),
-                      end_of_ramming.y() + (y_step / m_extra_spacing_ramming - m_perimeter_width) / 2.f + m_perimeter_width);
-    if (do_ramming)
-        writer.travel(pos, 2400.f);
-    else
-        writer.set_position(pos);
-
     // Backward wipe to shear off hanging filament before retraction
     float wipe_back_dist = 2.f * m_perimeter_width;
     float wipe_back_x    = writer.x() + (m_left_to_right ? -1.f : 1.f) * wipe_back_dist;
@@ -1918,7 +1911,7 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
         .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(target_pos.x()) + " Y" +
                 Slic3r::float_to_string_decimal_point(target_pos.y()) + never_skip_tag() + "\n");
 
-    writer.append("[deretraction_from_wipe_tower_generator]");
+    //writer.append("[deretraction_from_wipe_tower_generator]");
 
     // The toolchange Tn command will be inserted later, only in case that the user does
     // not provide a custom toolchange gcode.

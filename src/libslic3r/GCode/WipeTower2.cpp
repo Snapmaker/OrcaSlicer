@@ -2695,6 +2695,7 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
                     infill_tcr = draw_infill();
             }
 
+
             if (layer_result.empty()) {
                 layer_result.emplace_back(merge_tcr(outer_wall_tcr, infill_tcr));
             } else if (idx == -1) {

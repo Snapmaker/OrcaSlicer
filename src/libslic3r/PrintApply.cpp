@@ -1160,11 +1160,8 @@ static void append_mixed_component_extruders(const MixedFilamentManager &mixed_m
     append_unique_painted_extruder(painting_extruders, mixed_row->component_a, num_physical_extruders);
     append_unique_painted_extruder(painting_extruders, mixed_row->component_b, num_physical_extruders);
 
-    for (char token : mixed_row->gradient_component_ids) {
-        if (token < '1' || token > '9')
-            continue;
-        append_unique_painted_extruder(painting_extruders, unsigned(token - '0'), num_physical_extruders);
-    }
+    for (unsigned int id : MixedFilamentManager::decode_gradient_component_ids(mixed_row->gradient_component_ids, num_physical_extruders))
+        append_unique_painted_extruder(painting_extruders, id, num_physical_extruders);
 
     {
         const std::string flattened = MixedFilamentManager::normalize_manual_pattern(mixed_row->manual_pattern);

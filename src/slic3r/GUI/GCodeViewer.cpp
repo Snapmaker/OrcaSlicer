@@ -4185,33 +4185,17 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
         for (auto plate : plate_list.get_nonempty_plate_list())
         {
             auto plate_print_statistics = plate->get_slice_result()->print_statistics;
-            auto plate_extruders = plate->get_extruders(true);
-            for (size_t extruder_id : plate_extruders) {
-                extruder_id -= 1;
-                if (plate_print_statistics.model_volumes_per_extruder.find(extruder_id) == plate_print_statistics.model_volumes_per_extruder.end())
-                    model_volume_of_extruders_all_plates[extruder_id] += 0;
-                else {
-                    double model_volume = plate_print_statistics.model_volumes_per_extruder.at(extruder_id);
-                    model_volume_of_extruders_all_plates[extruder_id] += model_volume;
-                }
-                if (plate_print_statistics.flush_per_filament.find(extruder_id) == plate_print_statistics.flush_per_filament.end())
-                    flushed_volume_of_extruders_all_plates[extruder_id] += 0;
-                else {
-                    double flushed_volume = plate_print_statistics.flush_per_filament.at(extruder_id);
-                    flushed_volume_of_extruders_all_plates[extruder_id] += flushed_volume;
-                }
-                if (plate_print_statistics.wipe_tower_volumes_per_extruder.find(extruder_id) == plate_print_statistics.wipe_tower_volumes_per_extruder.end())
-                    wipe_tower_volume_of_extruders_all_plates[extruder_id] += 0;
-                else {
-                    double wipe_tower_volume = plate_print_statistics.wipe_tower_volumes_per_extruder.at(extruder_id);
-                    wipe_tower_volume_of_extruders_all_plates[extruder_id] += wipe_tower_volume;
-                }
-                if (plate_print_statistics.support_volumes_per_extruder.find(extruder_id) == plate_print_statistics.support_volumes_per_extruder.end())
-                    support_volume_of_extruders_all_plates[extruder_id] += 0;
-                else {
-                    double support_volume = plate_print_statistics.support_volumes_per_extruder.at(extruder_id);
-                    support_volume_of_extruders_all_plates[extruder_id] += support_volume;
-                }
+            for (const auto& [extruder_id, model_volume] : plate_print_statistics.model_volumes_per_extruder) {
+                model_volume_of_extruders_all_plates[extruder_id] += model_volume;
+            }
+            for (const auto& [extruder_id, flush_volume] : plate_print_statistics.flush_per_filament) {
+                flushed_volume_of_extruders_all_plates[extruder_id] += flush_volume;
+            }
+            for (const auto& [extruder_id, wipe_tower_volume] : plate_print_statistics.wipe_tower_volumes_per_extruder) {
+                wipe_tower_volume_of_extruders_all_plates[extruder_id] += wipe_tower_volume;
+            }
+            for (const auto& [extruder_id, support_volume] : plate_print_statistics.support_volumes_per_extruder) {
+                support_volume_of_extruders_all_plates[extruder_id] += support_volume;
             }
             const PrintEstimatedStatistics::Mode& plate_time_mode = plate_print_statistics.modes[static_cast<size_t>(m_time_estimate_mode)];
             total_time_all_plates += plate_time_mode.time;

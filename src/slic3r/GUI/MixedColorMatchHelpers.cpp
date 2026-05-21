@@ -106,7 +106,7 @@ std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeRe
         return weights;
 
     if (!recipe.gradient_component_ids.empty()) {
-        const std::vector<unsigned int> ids = decode_color_match_gradient_ids(recipe.gradient_component_ids);
+        const std::vector<unsigned int> ids = MixedFilamentManager::decode_gradient_component_ids(recipe.gradient_component_ids);
         const std::vector<int>          raw_weights =
             normalize_color_match_weights(decode_color_match_gradient_weights(recipe.gradient_component_weights, ids.size()), ids.size());
         if (ids.size() != raw_weights.size())
@@ -133,7 +133,7 @@ std::string summarize_color_match_recipe(const MixedColorMatchRecipeResult& reci
     std::vector<unsigned int> ids;
     std::vector<int>          weights;
     if (!recipe.gradient_component_ids.empty()) {
-        ids     = decode_color_match_gradient_ids(recipe.gradient_component_ids);
+        ids     = MixedFilamentManager::decode_gradient_component_ids(recipe.gradient_component_ids);
         weights = normalize_color_match_weights(decode_color_match_gradient_weights(recipe.gradient_component_weights, ids.size()),
                                                 ids.size());
     } else {
@@ -373,21 +373,9 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     // Helper: encode filament IDs as gradient_component_ids string.
     // Legacy format (all IDs ≤ 9): concatenated single chars, e.g. "123".
     // Extended format (any ID > 9): '/' separated decimals, e.g. "1/12/3".
+    // Single-ID extended format uses leading '/' to disambiguate from legacy: "/12".
     auto encode_gradient_ids = [](const std::vector<unsigned int>& ids) -> std::string {
-        bool extended = false;
-        for (unsigned int id : ids)
-            if (id > 9) { extended = true; break; }
-        std::ostringstream ss;
-        for (size_t i = 0; i < ids.size(); ++i) {
-            if (i > 0) {
-                if (extended) ss << '/';
-            }
-            if (extended)
-                ss << ids[i];
-            else
-                ss << char('0' + ids[i]);
-        }
-        return ss.str();
+        return MixedFilamentManager::encode_gradient_component_ids(ids);
     };
 
     auto encode_gradient_weights = [](const std::vector<int>& weights) -> std::string {
@@ -666,42 +654,6 @@ wxColour compute_color_match_recipe_display_color(const MixedColorMatchRecipeRes
     return parse_mixed_color(compute_mixed_filament_display_color(entry, context));
 }
 
-std::vector<unsigned int> decode_color_match_gradient_ids(const std::string& value)
-{
-    std::vector<unsigned int> ids;
-    std::unordered_set<unsigned int> seen;
-    // Detect format: if contains '/' → extended (ID/ID/...), else legacy (concatenated chars)
-    if (value.find('/') != std::string::npos) {
-        std::string token;
-        for (const char ch : value) {
-            if (ch == '/') {
-                if (!token.empty()) {
-                    const unsigned int id = unsigned(std::strtoul(token.c_str(), nullptr, 10));
-                    if (id > 0 && seen.insert(id).second)
-                        ids.emplace_back(id);
-                    token.clear();
-                }
-            } else {
-                token.push_back(ch);
-            }
-        }
-        if (!token.empty()) {
-            const unsigned int id = unsigned(std::strtoul(token.c_str(), nullptr, 10));
-            if (id > 0 && seen.insert(id).second)
-                ids.emplace_back(id);
-        }
-    } else {
-        // Legacy format: concatenated single chars '1'-'9'
-        for (const char ch : value) {
-            if (ch < '1' || ch > '9') continue;
-            const unsigned int id = unsigned(ch - '0');
-            if (seen.insert(id).second)
-                ids.emplace_back(id);
-        }
-    }
-    return ids;
-}
-
 std::vector<int> decode_color_match_gradient_weights(const std::string& value, size_t expected_components)
 {
     std::vector<int> weights;
@@ -796,20 +748,7 @@ MixedColorMatchRecipeResult build_multi_color_match_candidate(const std::vector<
     candidate.mix_b_percent     = pair_weight_total > 0 ?
                                       std::clamp(int(std::lround(100.0 * double(ordered_weights[1]) / double(pair_weight_total))), 0, 100) :
                                       50;
-    {
-        bool extended = false;
-        for (unsigned int fid : ordered_ids)
-            if (fid > 9) { extended = true; break; }
-        std::ostringstream gid_ss;
-        for (size_t i = 0; i < ordered_ids.size(); ++i) {
-            if (i > 0 && extended) gid_ss << '/';
-            if (extended)
-                gid_ss << ordered_ids[i];
-            else
-                gid_ss << char('0' + ordered_ids[i]);
-        }
-        candidate.gradient_component_ids = gid_ss.str();
-    }
+    candidate.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids(ordered_ids);
     {
         std::ostringstream weights_ss;
         for (size_t weight_idx = 0; weight_idx < ordered_weights.size(); ++weight_idx) {
@@ -1183,7 +1122,7 @@ bool is_filament_compatible(const MixedFilament& mf)
         if (mf.component_a >= 1) fids.push_back(mf.component_a - 1);
         if (mf.component_b >= 1) fids.push_back(mf.component_b - 1);
         if (!mf.gradient_component_ids.empty()) {
-            for (unsigned int fid : decode_color_match_gradient_ids(mf.gradient_component_ids))
+            for (unsigned int fid : MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids))
                 if (fid >= 1) fids.push_back(fid - 1);
         }
     }

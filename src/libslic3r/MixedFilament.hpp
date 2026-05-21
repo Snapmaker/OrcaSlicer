@@ -233,6 +233,27 @@ public:
     // Split a normalized pattern string by comma into group strings.
     static std::vector<std::string> split_pattern_groups(const std::string &pattern);
 
+    // ---- Gradient component ID encoding / decoding ------------------------
+
+    // Maximum number of physical filaments supported by the encoding.
+    static constexpr size_t kMaxPhysicalFilaments = 64;
+
+    // Encode filament IDs (1-based) to a compact string.
+    // Legacy format (all IDs ≤ 9):  concatenated single chars, e.g. "132".
+    // Extended format (any ID > 9): '/' separated decimals, e.g. "1/12/3".
+    // Single-ID extended uses leading '/' to disambiguate, e.g. "/12".
+    static std::string encode_gradient_component_ids(const std::vector<unsigned int> &ids);
+
+    // Decode a gradient_component_ids string to a vector of filament IDs (1-based).
+    // Handles both legacy and extended formats.  When num_physical > 0 each ID is
+    // validated to be ≤ num_physical.
+    static std::vector<unsigned int> decode_gradient_component_ids(const std::string &components,
+                                                                   size_t             num_physical = 0);
+
+    // Normalize a gradient_component_ids string to canonical form.
+    // Canonical form uses legacy encoding when all IDs ≤ 9, extended otherwise.
+    static std::string normalize_gradient_component_ids(const std::string &components);
+
     // ---- Queries --------------------------------------------------------
 
     // True when `filament_id` (1-based) refers to a mixed filament.
@@ -361,10 +382,30 @@ private:
 // that can be rendered as a vertical color ramp (no manual pattern, exactly 2 components).
 inline bool is_simple_gradient(const MixedFilament& mf)
 {
+    // Lightweight ID count without heap allocation.
+    // Canonical form: legacy "12" = two IDs, extended "1/12/3" = three IDs.
+    auto count_ids = [](const std::string& s) -> size_t {
+        if (s.empty()) return 0;
+        if (s.find('/') != std::string::npos) {
+            size_t n = 0;
+            bool in_token = false;
+            for (char c : s) {
+                if (c == '/') {
+                    if (in_token) ++n;
+                    in_token = false;
+                } else {
+                    in_token = true;
+                }
+            }
+            if (in_token) ++n;
+            return n;
+        }
+        return s.size();
+    };
     return mf.gradient_enabled
         && mf.component_a != mf.component_b
         && MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty()
-        && mf.gradient_component_ids.size() < 3;
+        && count_ids(mf.gradient_component_ids) < 3;
 }
 
 } // namespace Slic3r

@@ -3738,21 +3738,7 @@ static std::vector<unsigned int> decode_manual_pattern_sequence_for_gcode(const 
 
 static std::vector<unsigned int> decode_gradient_component_ids_for_gcode(const MixedFilament& mf, size_t num_physical)
 {
-    std::vector<unsigned int> ids;
-    if (mf.gradient_component_ids.empty() || num_physical == 0)
-        return ids;
-    bool seen[10] = { false };
-    ids.reserve(mf.gradient_component_ids.size());
-    for (const char c : mf.gradient_component_ids) {
-        if (c < '1' || c > '9')
-            continue;
-        const unsigned int id = unsigned(c - '0');
-        if (id == 0 || id > num_physical || seen[id])
-            continue;
-        seen[id] = true;
-        ids.emplace_back(id);
-    }
-    return ids;
+    return MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, num_physical);
 }
 
 static std::vector<int> decode_gradient_component_weights_for_gcode(const MixedFilament& mf, size_t expected_components)

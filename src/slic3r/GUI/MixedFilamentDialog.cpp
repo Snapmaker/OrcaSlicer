@@ -860,6 +860,7 @@ void MixedFilamentDialog::build_ui()
             update_match_legend_labels();
             if (m_match_strip_panel)   m_match_strip_panel->Refresh();
             if (m_match_blend_panel)   m_match_blend_panel->Refresh();
+            update_compatibility_warning();
         });
 
         m_match_ratio_card->SetSizer(m_match_ratio_card_sizer);
@@ -1254,6 +1255,7 @@ void MixedFilamentDialog::build_ui()
             if (m_match_tri_picker)  m_match_tri_picker->Refresh();
             if (m_match_strip_panel) m_match_strip_panel->Refresh();
             if (m_match_blend_panel) m_match_blend_panel->Refresh();
+            update_compatibility_warning();
         });
     }
 
@@ -2007,6 +2009,7 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
     m_match_tri_picker->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent&) {
         m_match_tri_dragging = false;
         if (m_match_tri_picker->HasCapture()) m_match_tri_picker->ReleaseMouse();
+        update_compatibility_warning();
     });
     m_match_tri_picker->Bind(wxEVT_MOTION, [handle_mouse](wxMouseEvent& e) { handle_mouse(e, false); });
     m_match_tri_picker->Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
@@ -2145,54 +2148,26 @@ void MixedFilamentDialog::update_compatibility_warning()
     if (!m_error_panel || !m_error_text || !m_warning_panel || !m_warning_text || !m_btn_confirm)
         return;
 
-    if (m_current_mode == MODE_MATCH) {
-        if (m_match_panel && m_match_panel->has_valid_recipe()) {
-            auto recipe = m_match_panel->selected_recipe();
-            MixedFilament mf;
-            mf.component_a = recipe.component_a;
-            mf.component_b = recipe.component_b;
-            mf.gradient_component_ids = recipe.gradient_component_ids;
-            if (!is_filament_compatible(mf)) {
-                m_error_text->SetLabel(_L("Different filament types cannot be mixed. Please correct the settings."));
-                m_error_text->Wrap(FromDIP(360));
-                m_error_panel->Show();
-                m_btn_confirm->Disable();
-            } else {
-                m_error_panel->Hide();
-                m_warning_panel->Hide();
-                m_btn_confirm->Enable();
-            }
-        } else {
-            // Check compatibility of currently selected filaments (default tri-picker selection)
-            std::vector<unsigned int> fids;
-            for (int idx : m_match_tri_indices)
-                fids.push_back((unsigned int)idx);
-            if (!fids.empty() && !is_filament_compatible(fids)) {
-                if (auto pair = find_incompatible_filament_pair(fids)) {
-                    m_error_text->SetLabel(
-                        wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
-                } else {
-                    m_error_text->SetLabel(_L("Different filament types cannot be mixed. Please correct the settings."));
-                }
-                m_error_text->Wrap(FromDIP(360));
-                m_error_panel->Show();
-                m_btn_confirm->Disable();
-            } else {
-                m_error_panel->Hide();
-                m_warning_panel->Hide();
-                m_btn_confirm->Enable();
-            }
-        }
-        Layout();
-        return;
-    }
-
-    sync_rows_to_result();
-
     // Collect all filament IDs referenced by the current mix
     std::vector<unsigned int> fids;
 
-    if (m_current_mode == MODE_CYCLE && m_pattern_ctrl) {
+    if (m_current_mode == MODE_MATCH) {
+        if (m_match_panel && m_match_panel->has_valid_recipe()) {
+            auto recipe = m_match_panel->selected_recipe();
+            if (recipe.component_a >= 1) fids.push_back(recipe.component_a - 1);
+            if (recipe.component_b >= 1) fids.push_back(recipe.component_b - 1);
+            if (!recipe.gradient_component_ids.empty()) {
+                for (char c : recipe.gradient_component_ids) {
+                    int idx = c - '1';
+                    if (idx >= 0 && idx <= 8) fids.push_back(static_cast<unsigned int>(idx));
+                }
+            }
+        } else {
+            for (int idx : m_match_tri_indices)
+                fids.push_back((unsigned int)idx);
+        }
+    } else if (m_current_mode == MODE_CYCLE && m_pattern_ctrl) {
+        sync_rows_to_result();
         const std::string raw = into_u8(m_pattern_ctrl->GetValue());
         const std::string norm = MixedFilamentManager::normalize_manual_pattern(raw);
         auto parsed = parse_cycle_pattern(norm, (int)m_filament_colours.size());
@@ -2202,7 +2177,7 @@ void MixedFilamentDialog::update_compatibility_warning()
                 fids.push_back(idx);
         }
     } else {
-        // Other modes: component_a, component_b, and gradient_component_ids
+        sync_rows_to_result();
         if (m_result.component_a >= 1) fids.push_back(m_result.component_a - 1);
         if (m_result.component_b >= 1) fids.push_back(m_result.component_b - 1);
         if (!m_result.gradient_component_ids.empty()) {
@@ -2214,16 +2189,11 @@ void MixedFilamentDialog::update_compatibility_warning()
     }
 
     if (!is_filament_compatible(fids)) {
-        m_warning_panel->Hide();
         if (auto pair = find_incompatible_filament_pair(fids)) {
-            m_error_text->SetLabel(
-                wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
+            set_error(wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
         } else {
-            m_error_text->SetLabel(_L("Different filament types cannot be mixed. Please correct the settings."));
+            set_error(_L("Different filament types cannot be mixed. Please correct the settings."));
         }
-        m_error_text->Wrap(FromDIP(360));
-        m_error_panel->Show();
-        m_btn_confirm->Disable();
     } else if (wxString low_msg = get_low_ratio_warning_msg(); !low_msg.empty()) {
         display_warning(low_msg);
         if (m_btn_confirm) m_btn_confirm->Enable();
@@ -2303,16 +2273,30 @@ wxString MixedFilamentDialog::get_low_ratio_warning_msg()
         }
         break;
     case MODE_MATCH:
-        if (m_match_panel) {
-            auto recipe = m_match_panel->selected_recipe();
-            if (recipe.valid) {
-                std::vector<int> weights = expand_color_match_recipe_weights(recipe, num_physical);
-                for (int i = 0; i < num_physical; ++i) {
-                    double w = weights[i] / 100.0;
-                    if (w > 0.0) {
-                        ratios[i] = w;
-                        total += w;
-                    }
+        {
+            int n_tri = (int)m_match_tri_indices.size();
+            if (n_tri == 2) {
+                double w0, w1;
+                if (m_match_gradient_selector) {
+                    int val = m_match_gradient_selector->value();
+                    w0 = (100.0 - val) / 100.0;
+                    w1 = val / 100.0;
+                } else {
+                    w0 = m_match_tri_wx;
+                    w1 = m_match_tri_wy;
+                }
+                for (int i = 0; i < 2 && i < n_tri; ++i) {
+                    int idx = std::clamp(m_match_tri_indices[i], 0, num_physical - 1);
+                    double w = (i == 0) ? w0 : w1;
+                    ratios[idx] = w;
+                    total += w;
+                }
+            } else if (n_tri >= 3) {
+                for (int i = 0; i < n_tri && i < 3; ++i) {
+                    int idx = std::clamp(m_match_tri_indices[i], 0, num_physical - 1);
+                    double w = (i == 0) ? m_match_tri_wx : (i == 1) ? m_match_tri_wy : m_match_tri_wz;
+                    ratios[idx] = w;
+                    total += w;
                 }
             }
         }

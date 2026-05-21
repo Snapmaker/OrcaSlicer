@@ -3608,7 +3608,7 @@ static inline void append_clipped_path(const ExtrusionPath& src_path,
                                        const ExPolygons*    include_masks,
                                        const ExPolygons*    exclude_masks,
                                        const double         flow_height_override,
-                                       ExtrusionEntityCollection& dst)
+                                       std::vector<ExtrusionPath>& dst)
 {
     Polylines segments{src_path.polyline};
     if (include_masks != nullptr && !include_masks->empty())
@@ -3621,8 +3621,108 @@ static inline void append_clipped_path(const ExtrusionPath& src_path,
             continue;
         ExtrusionPath clipped(segment, src_path);
         apply_local_z_flow_height_override(clipped, flow_height_override);
-        dst.append(std::move(clipped));
+        dst.emplace_back(std::move(clipped));
     }
+}
+
+static inline double local_z_polyline_distance2_to_point(const Polyline& polyline, const Point& point)
+{
+    if (polyline.points.empty())
+        return std::numeric_limits<double>::max();
+    if (polyline.points.size() == 1)
+        return (polyline.first_point() - point).cast<double>().squaredNorm();
+    const std::pair<int, Point> projected = foot_pt(polyline.points, point);
+    return projected.first >= 0 ? (projected.second - point).cast<double>().squaredNorm()
+                                : std::numeric_limits<double>::max();
+}
+
+static void local_z_order_clipped_paths_for_seam(std::vector<ExtrusionPath>& paths, const Point& seam_anchor)
+{
+    if (paths.empty())
+        return;
+
+    // Local-Z turns closed loops into open clipped fragments. Start the fragment
+    // batch at the original seam anchor when possible so previewed restarts stay aligned.
+    const double anchor_eps  = scaled<double>(0.02);
+    const double anchor_eps2 = anchor_eps * anchor_eps;
+
+    std::vector<ExtrusionPath> ordered;
+    ordered.reserve(paths.size() + 1);
+
+    size_t best_anchor_idx = size_t(-1);
+    double best_anchor_d2  = std::numeric_limits<double>::max();
+    for (size_t idx = 0; idx < paths.size(); ++idx) {
+        const double d2 = local_z_polyline_distance2_to_point(paths[idx].polyline, seam_anchor);
+        if (d2 < best_anchor_d2) {
+            best_anchor_d2  = d2;
+            best_anchor_idx = idx;
+        }
+    }
+
+    Point current_pos = seam_anchor;
+    if (best_anchor_idx != size_t(-1) && best_anchor_d2 <= anchor_eps2) {
+        ExtrusionPath anchor_path = std::move(paths[best_anchor_idx]);
+        paths.erase(paths.begin() + best_anchor_idx);
+
+        Polyline head;
+        Polyline tail;
+        Point split_point = seam_anchor;
+        anchor_path.polyline.split_at(split_point, &head, &tail);
+
+        if (tail.is_valid()) {
+            ExtrusionPath tail_path(std::move(tail), anchor_path);
+            ordered.emplace_back(std::move(tail_path));
+            current_pos = ordered.back().last_point();
+        }
+
+        if (head.is_valid()) {
+            ExtrusionPath head_path(std::move(head), anchor_path);
+            if (head_path.can_reverse())
+                head_path.reverse();
+            ordered.emplace_back(std::move(head_path));
+            current_pos = ordered.back().last_point();
+        }
+    }
+
+    while (!paths.empty()) {
+        size_t best_idx       = 0;
+        bool   best_reversed  = false;
+        double best_endpoint2 = std::numeric_limits<double>::max();
+
+        for (size_t idx = 0; idx < paths.size(); ++idx) {
+            const double first_d2 = (paths[idx].first_point() - current_pos).cast<double>().squaredNorm();
+            if (first_d2 < best_endpoint2) {
+                best_endpoint2 = first_d2;
+                best_idx       = idx;
+                best_reversed  = false;
+            }
+
+            if (paths[idx].can_reverse()) {
+                const double last_d2 = (paths[idx].last_point() - current_pos).cast<double>().squaredNorm();
+                if (last_d2 < best_endpoint2) {
+                    best_endpoint2 = last_d2;
+                    best_idx       = idx;
+                    best_reversed  = true;
+                }
+            }
+        }
+
+        ExtrusionPath next_path = std::move(paths[best_idx]);
+        paths.erase(paths.begin() + best_idx);
+        if (best_reversed)
+            next_path.reverse();
+        current_pos = next_path.last_point();
+        ordered.emplace_back(std::move(next_path));
+    }
+
+    paths = std::move(ordered);
+}
+
+static inline void append_clipped_paths(std::vector<ExtrusionPath>&& paths, ExtrusionEntityCollection& dst)
+{
+    for (ExtrusionPath& path : paths)
+        if (!path.empty())
+            dst.append(std::move(path));
 }
 
 static inline ExPolygons local_z_compensate_masks(const ExPolygons& src_masks,
@@ -3723,11 +3823,14 @@ static inline Polylines collect_local_z_polylines(const ExtrusionEntityCollectio
     return lines;
 }
 
+using LocalZLoopSeamPlacer = std::function<bool(const ExtrusionLoop&, ExtrusionLoop&, Point&)>;
+
 static std::unique_ptr<ExtrusionEntityCollection> clip_extrusion_collection_for_local_z(
     const ExtrusionEntityCollection& source,
     const ExPolygons*                include_masks,
     const ExPolygons*                exclude_masks,
-    const double                     flow_height_override)
+    const double                     flow_height_override,
+    const LocalZLoopSeamPlacer*      seam_placer = nullptr)
 {
     if (source.entities.empty())
         return nullptr;
@@ -3744,13 +3847,25 @@ static std::unique_ptr<ExtrusionEntityCollection> clip_extrusion_collection_for_
     ExtrusionEntityCollection flattened = source.flatten(false);
     for (const ExtrusionEntity* entity : flattened.entities) {
         if (const auto* path = dynamic_cast<const ExtrusionPath*>(entity)) {
-            append_clipped_path(*path, include_masks, exclude_masks, flow_height_override, *out);
+            std::vector<ExtrusionPath> clipped_paths;
+            append_clipped_path(*path, include_masks, exclude_masks, flow_height_override, clipped_paths);
+            append_clipped_paths(std::move(clipped_paths), *out);
         } else if (const auto* multipath = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
+            std::vector<ExtrusionPath> clipped_paths;
             for (const ExtrusionPath& path : multipath->paths)
-                append_clipped_path(path, include_masks, exclude_masks, flow_height_override, *out);
+                append_clipped_path(path, include_masks, exclude_masks, flow_height_override, clipped_paths);
+            append_clipped_paths(std::move(clipped_paths), *out);
         } else if (const auto* loop = dynamic_cast<const ExtrusionLoop*>(entity)) {
-            for (const ExtrusionPath& path : loop->paths)
-                append_clipped_path(path, include_masks, exclude_masks, flow_height_override, *out);
+            ExtrusionLoop seam_loop = *loop;
+            Point         seam_anchor = loop->first_point();
+            const bool    seam_ready =
+                seam_placer != nullptr && (*seam_placer)(*loop, seam_loop, seam_anchor);
+            std::vector<ExtrusionPath> clipped_paths;
+            for (const ExtrusionPath& path : seam_loop.paths)
+                append_clipped_path(path, include_masks, exclude_masks, flow_height_override, clipped_paths);
+            if (seam_ready)
+                local_z_order_clipped_paths_for_seam(clipped_paths, seam_anchor);
+            append_clipped_paths(std::move(clipped_paths), *out);
         } else {
             // Fallback for unknown entity subclasses: keep behavior unchanged for now.
             if (include_masks == nullptr && exclude_masks == nullptr && flow_height_override <= EPSILON)
@@ -5344,6 +5459,18 @@ LayerResult GCode::process_layer(const Print& print,
 
                 return false;
             };
+            LocalZLoopSeamPlacer local_z_loop_seam_placer =
+                [this, &layer](const ExtrusionLoop& src_loop, ExtrusionLoop& seam_loop, Point& seam_anchor) -> bool {
+                    seam_loop = src_loop;
+                    if (seam_loop.paths.empty() || m_config.spiral_mode)
+                        return false;
+
+                    const Point seam_reference = this->last_pos_defined() ? this->last_pos() : seam_loop.first_point();
+                    float       seam_overhang  = std::numeric_limits<float>::lowest();
+                    m_seam_placer.place_seam(&layer, seam_loop, seam_reference, seam_overhang);
+                    seam_anchor = seam_loop.first_point();
+                    return true;
+                };
 
             for (size_t region_id = 0; region_id < layer.regions().size(); ++region_id) {
                 const LayerRegion* layerm = layer.regions()[region_id];
@@ -5380,7 +5507,11 @@ LayerResult GCode::process_layer(const Print& print,
                                         : pass_bucket.compensated_masks_by_extruder[pass_extruder_id];
                                     if (pass_masks.empty())
                                         continue;
-                                    auto clipped_local = clip_extrusion_collection_for_local_z(*extrusions, &pass_masks, nullptr, pass_bucket.plan->flow_height);
+                                    auto clipped_local = clip_extrusion_collection_for_local_z(*extrusions,
+                                                                                               &pass_masks,
+                                                                                               nullptr,
+                                                                                               pass_bucket.plan->flow_height,
+                                                                                               &local_z_loop_seam_placer);
                                     if (!clipped_local)
                                         continue;
 
@@ -5421,7 +5552,11 @@ LayerResult GCode::process_layer(const Print& print,
                             const ExPolygons* base_exclude_masks =
                                 local_z_ctx->mixed_masks_union_for_base_exclude.empty() ? &local_z_ctx->mixed_masks_union
                                                                                         : &local_z_ctx->mixed_masks_union_for_base_exclude;
-                            auto clipped_base = clip_extrusion_collection_for_local_z(*extrusions, nullptr, base_exclude_masks, 0.);
+                            auto clipped_base = clip_extrusion_collection_for_local_z(*extrusions,
+                                                                                     nullptr,
+                                                                                     base_exclude_masks,
+                                                                                     0.,
+                                                                                     &local_z_loop_seam_placer);
                             if (!clipped_base)
                                 continue;
                             const LocalZPathHeightStats base_height_stats = collect_local_z_path_height_stats(*clipped_base);

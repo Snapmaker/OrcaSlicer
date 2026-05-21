@@ -12655,7 +12655,8 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
 
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": from set_current_panel, no_slice %1%, export_in_progress %2%, model_fits %3%, m_is_slicing %4%")%no_slice%export_in_progress%model_fits%m_is_slicing;
 
-            if (!no_slice && !this->model.objects.empty() && !export_in_progress && model_fits && current_has_print_instances)
+            if (!no_slice && !this->model.objects.empty() && !export_in_progress && model_fits && current_has_print_instances
+                && !current_plate->is_slice_result_valid())
             {
                 //if already running in background, not relice here
                 //BBS: add more judge for slicing

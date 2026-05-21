@@ -284,6 +284,7 @@ void Label::SetLabel(const wxString& label)
     if ((GetWindowStyle() & LB_AUTO_WRAP)) {
         int w = GetSize().x;
         if (w > 0) Wrap(w);
+        else wxStaticText::SetLabel(label);
     } else {
         wxStaticText::SetLabel(label);
     }

@@ -3332,6 +3332,7 @@ void MixedFilamentDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
         m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
     if (m_strip_panel)
         m_strip_panel->SetMinSize(wxSize(-1, FromDIP(STRIP_HEIGHT)));
+    Layout(); 
     Fit();
 }
 

@@ -3673,34 +3673,12 @@ static std::vector<unsigned int> build_grouped_manual_pattern_preview_sequence(c
 
 std::vector<unsigned int> MixedFilamentConfigPanel::decode_gradient_ids(const std::string &s)
 {
-    std::vector<unsigned int> ids;
-    if (s.empty())
-        return ids;
-
-    bool seen[10] = { false };
-    for (const char c : s) {
-        if (c < '1' || c > '9')
-            continue;
-        const unsigned int id = unsigned(c - '0');
-        if (seen[id])
-            continue;
-        seen[id] = true;
-        ids.emplace_back(id);
-    }
-    return ids;
+    return MixedFilamentManager::decode_gradient_component_ids(s, 0);
 }
 
 std::string MixedFilamentConfigPanel::encode_gradient_ids(const std::vector<unsigned int> &ids)
 {
-    std::string out;
-    bool seen[10] = { false };
-    for (const unsigned int id : ids) {
-        if (id == 0 || id > 9 || seen[id])
-            continue;
-        seen[id] = true;
-        out.push_back(char('0' + id));
-    }
-    return out;
+    return MixedFilamentManager::encode_gradient_component_ids(ids);
 }
 
 std::vector<unsigned int> MixedFilamentConfigPanel::decode_manual_pattern_ids(const std::string &pattern,
@@ -5789,15 +5767,15 @@ void Sidebar::update_color_mix_panel()
                                              virtual_id, mf, display_context);
 
         const std::string normalized_pattern_cm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+        std::vector<unsigned int> gradient_ids = MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0);
         const bool z_gradient_tile = mf.gradient_enabled && mf.component_a != mf.component_b
-                                  && normalized_pattern_cm.empty() && mf.gradient_component_ids.size() < 3;
-
+                                  && normalized_pattern_cm.empty() && gradient_ids.size() < 3;
         wxString lbl;
         if (!normalized_pattern_cm.empty())
             lbl = wxString(summarize_cycle_pattern_text(normalized_pattern_cm, mf, int(num_physical)));
-        else if (mf.gradient_component_ids.size() >= 3) {
+        else if (gradient_ids.size() >= 3) {
             // parse weights
-            const size_t n = mf.gradient_component_ids.size();
+            const size_t n = gradient_ids.size();
             std::vector<int> weights;
             {
                 std::string token;
@@ -5812,7 +5790,7 @@ void Sidebar::update_color_mix_panel()
             int sum = 0; for (int v : weights) sum += v;
             if (sum <= 0) { weights.assign(n, 0); weights[0] = 100; sum = 100; }
             for (size_t k = 0; k < n; ++k) {
-                const unsigned int fid = unsigned(mf.gradient_component_ids[k] - '0');
+                const unsigned int fid = gradient_ids[k];
                 const int pct = int(std::round(100.0 * weights[k] / sum));
                 if (k > 0) lbl += "+";
                 lbl += wxString::Format("F%u %d%%", fid, pct);
@@ -5828,8 +5806,8 @@ void Sidebar::update_color_mix_panel()
             const int pct_a = 100 - pct_b;
             lbl = wxString::Format("F%u %d%%+F%u %d%%", mf.component_a, pct_a, mf.component_b, pct_b);
             if (mf.distribution_mode != int(MixedFilament::Simple))
-                for (char c : mf.gradient_component_ids)
-                    lbl += wxString::Format("+F%d", int(c - '0'));
+                for (unsigned int fid : gradient_ids)
+                    lbl += wxString::Format("+F%u", fid);
         }
         
         bool has_error = !is_filament_compatible(mf);
@@ -6293,32 +6271,11 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         if (wxGetApp().mainframe)
             wxGetApp().mainframe->on_config_changed(print_cfg);
     };
-    auto decode_gradient_ids = [num_physical](const std::string &encoded) {
-        std::vector<unsigned int> ids;
-        if (encoded.empty() || num_physical == 0)
-            return ids;
-        bool seen[10] = { false };
-        for (const char c : encoded) {
-            if (c < '1' || c > '9')
-                continue;
-            const unsigned int id = unsigned(c - '0');
-            if (id == 0 || id > num_physical || seen[id])
-                continue;
-            seen[id] = true;
-            ids.emplace_back(id);
-        }
-        return ids;
+    auto decode_gradient_ids = [](const std::string &encoded) {
+        return MixedFilamentManager::decode_gradient_component_ids(encoded, 0);
     };
-    auto encode_gradient_ids = [num_physical](const std::vector<unsigned int> &ids) {
-        std::string encoded;
-        bool seen[10] = { false };
-        for (const unsigned int id : ids) {
-            if (id == 0 || id > num_physical || id > 9 || seen[id])
-                continue;
-            seen[id] = true;
-            encoded.push_back(char('0' + id));
-        }
-        return encoded;
+    auto encode_gradient_ids = [](const std::vector<unsigned int> &ids) {
+        return MixedFilamentManager::encode_gradient_component_ids(ids);
     };
     auto decode_gradient_weights = [](const std::string &encoded, size_t expected_count) {
         std::vector<int> out;
@@ -7334,16 +7291,15 @@ static bool mixed_filament_uses_physical(const MixedFilament* target_mf, unsigne
         return true;
     }
     
-    // Also check gradient components
-    for (char c : target_mf->gradient_component_ids) {
-        if (c >= '1' && c <= '9') {
-            unsigned int comp_id = static_cast<unsigned int>(c - '0');
-            if (comp_id == source_physical_1based) {
+    // Also check gradient components (delegates to centralized decode)
+    {
+        const std::vector<unsigned int> ids = MixedFilamentManager::decode_gradient_component_ids(target_mf->gradient_component_ids, 0);
+        for (unsigned int id : ids) {
+            if (id == source_physical_1based)
                 return true;
-            }
         }
     }
-    
+
     return false;
 }
 

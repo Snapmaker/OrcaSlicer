@@ -100,7 +100,6 @@ wxColour compute_color_match_recipe_display_color(
     const MixedColorMatchRecipeResult  &recipe,
     const MixedFilamentDisplayContext  &context);
 
-std::vector<unsigned int> decode_color_match_gradient_ids(const std::string& value);
 std::vector<int>          decode_color_match_gradient_weights(const std::string& value, size_t expected_components);
 MixedColorMatchRecipeResult build_pair_color_match_candidate(const std::vector<wxColour>& palette,
                                                              unsigned int                 component_a,

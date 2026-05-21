@@ -736,39 +736,77 @@ static int mix_percent_from_normalized_pattern(const std::string &pattern)
     return clamp_int(int(std::lround(100.0 * blend_b / double(groups.size()))), 0, 100);
 }
 
-static std::string normalize_gradient_component_ids(const std::string &components)
+std::string MixedFilamentManager::normalize_gradient_component_ids(const std::string &components)
 {
-    std::string normalized;
-    normalized.reserve(components.size());
-    bool seen[10] = { false };
-    for (const char c : components) {
-        if (c < '1' || c > '9')
-            continue;
-        const int idx = c - '0';
-        if (seen[idx])
-            continue;
-        seen[idx] = true;
-        normalized.push_back(c);
-    }
-    return normalized;
+    // Decode (no validation cap during normalization), then re-encode to canonical form.
+    auto ids = decode_gradient_component_ids(components, kMaxPhysicalFilaments);
+    return encode_gradient_component_ids(ids);
 }
 
-static std::vector<unsigned int> decode_gradient_component_ids(const std::string &components, size_t num_physical)
+std::string MixedFilamentManager::encode_gradient_component_ids(const std::vector<unsigned int> &ids)
+{
+    bool extended = false;
+    for (unsigned int id : ids)
+        if (id > 9) { extended = true; break; }
+
+    // Single extended ID: use leading '/' to disambiguate from legacy format
+    if (extended && ids.size() == 1)
+        return "/" + std::to_string(ids[0]);
+
+    std::string out;
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (i > 0 && extended) out.push_back('/');
+        if (extended)
+            out.append(std::to_string(ids[i]));
+        else
+            out.push_back(char('0' + ids[i]));
+    }
+    return out;
+}
+
+std::vector<unsigned int> MixedFilamentManager::decode_gradient_component_ids(const std::string &components,
+                                                                               size_t             num_physical)
 {
     std::vector<unsigned int> ids;
-    if (components.empty() || num_physical == 0)
+    if (components.empty())
         return ids;
 
-    bool seen[10] = { false };
+    const bool validate = (num_physical > 0);
+    std::unordered_set<unsigned int> seen;
     ids.reserve(components.size());
-    for (const char c : components) {
-        if (c < '1' || c > '9')
-            continue;
-        const unsigned int id = unsigned(c - '0');
-        if (id == 0 || id > num_physical || seen[id])
-            continue;
-        seen[id] = true;
-        ids.emplace_back(id);
+
+    // Extended format: /-separated decimal IDs
+    if (components.find('/') != std::string::npos) {
+        std::string token;
+        for (const char c : components) {
+            if (c == '/') {
+                if (!token.empty()) {
+                    const unsigned int id = unsigned(std::strtoul(token.c_str(), nullptr, 10));
+                    if (id >= 1 && (!validate || id <= num_physical) && seen.insert(id).second)
+                        ids.emplace_back(id);
+                    token.clear();
+                }
+            } else {
+                token.push_back(c);
+            }
+        }
+        if (!token.empty()) {
+            const unsigned int id = unsigned(std::strtoul(token.c_str(), nullptr, 10));
+            if (id >= 1 && (!validate || id <= num_physical) && seen.insert(id).second)
+                ids.emplace_back(id);
+        }
+    } else {
+        // Legacy format: concatenated single-digit chars
+        bool seen_legacy[10] = { false };
+        for (const char c : components) {
+            if (c < '1' || c > '9')
+                continue;
+            const unsigned int id = unsigned(c - '0');
+            if (id == 0 || (validate && id > num_physical) || seen_legacy[id])
+                continue;
+            seen_legacy[id] = true;
+            ids.emplace_back(id);
+        }
     }
     return ids;
 }
@@ -779,7 +817,7 @@ static int normalize_distribution_mode_without_pointillism(int distribution_mode
     if (clamped_mode != int(MixedFilament::SameLayerPointillisme))
         return clamped_mode;
 
-    const size_t gradient_count = decode_gradient_component_ids(gradient_component_ids, 9).size();
+    const size_t gradient_count = MixedFilamentManager::decode_gradient_component_ids(gradient_component_ids, 0).size();
     return gradient_count >= 3 ? int(MixedFilament::LayerCycle) : int(MixedFilament::Simple);
 }
 
@@ -1401,7 +1439,7 @@ int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament  
     if (!normalized_pattern.empty() || mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
         return std::clamp(mf.mix_b_percent, 0, 100);
 
-    const std::vector<unsigned int> gradient_ids = decode_gradient_component_ids(mf.gradient_component_ids, 9);
+    const std::vector<unsigned int> gradient_ids = MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0);
     if (gradient_ids.size() >= 3)
         return std::clamp(mf.mix_b_percent, 0, 100);
 
@@ -1473,7 +1511,7 @@ bool mixed_filament_supports_bias_apparent_color(const MixedFilament            
         return false;
     if (!MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty())
         return false;
-    if (decode_gradient_component_ids(mf.gradient_component_ids, 9).size() >= 3)
+    if (MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0).size() >= 3)
         return false;
     return mf.component_a >= 1 && mf.component_b >= 1 && mf.component_a != mf.component_b;
 }
@@ -1523,7 +1561,7 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
     }
 
     if (entry.distribution_mode != int(MixedFilament::Simple)) {
-        const std::vector<unsigned int> gradient_ids = decode_gradient_component_ids(entry.gradient_component_ids, context.num_physical);
+        const std::vector<unsigned int> gradient_ids = MixedFilamentManager::decode_gradient_component_ids(entry.gradient_component_ids, context.num_physical);
         if (gradient_ids.size() >= 3) {
             const std::vector<int> gradient_weights =
                 decode_gradient_component_weights(entry.gradient_component_weights, gradient_ids.size());
@@ -1665,13 +1703,10 @@ void MixedFilamentManager::remove_physical_filament(unsigned int deleted_filamen
 
         // Check gradient components
         bool uses_deleted_in_gradient = false;
-        for (char c : mf.gradient_component_ids) {
-            if (c >= '1' && c <= '9') {
-                unsigned int comp_id = static_cast<unsigned int>(c - '0');
-                if (comp_id == deleted_filament_id) {
-                    uses_deleted_in_gradient = true;
-                    break;
-                }
+        for (unsigned int comp_id : decode_gradient_component_ids(mf.gradient_component_ids, 0)) {
+            if (comp_id == deleted_filament_id) {
+                uses_deleted_in_gradient = true;
+                break;
             }
         }
         if (uses_deleted_in_gradient)
@@ -1684,19 +1719,13 @@ void MixedFilamentManager::remove_physical_filament(unsigned int deleted_filamen
             --mf.component_b;
 
         // Adjust gradient component IDs
-        std::string adjusted_gradient_ids;
-        for (char c : mf.gradient_component_ids) {
-            if (c >= '1' && c <= '9') {
-                unsigned int comp_id = static_cast<unsigned int>(c - '0');
-                if (comp_id > deleted_filament_id)
-                    adjusted_gradient_ids += char('0' + comp_id - 1);
-                else
-                    adjusted_gradient_ids += c;
-            } else {
-                adjusted_gradient_ids += c;
-            }
+        {
+            auto decoded = decode_gradient_component_ids(mf.gradient_component_ids, 0);
+            for (unsigned int &id : decoded)
+                if (id > deleted_filament_id)
+                    --id;
+            mf.gradient_component_ids = encode_gradient_component_ids(decoded);
         }
-        mf.gradient_component_ids = adjusted_gradient_ids;
 
         filtered.emplace_back(std::move(mf));
     }
@@ -1859,7 +1888,7 @@ std::string MixedFilamentManager::serialize_custom_entries()
         disable_pointillism_mode(mf);
         mf.stable_id = normalize_stable_id(mf.stable_id);
         const std::string normalized_ids = normalize_gradient_component_ids(mf.gradient_component_ids);
-        const std::string normalized_weights = normalize_gradient_component_weights(mf.gradient_component_weights, normalized_ids.size());
+        const std::string normalized_weights = normalize_gradient_component_weights(mf.gradient_component_weights, decode_gradient_component_ids(normalized_ids, 0).size());
         ss << mf.component_a << ','
            << mf.component_b << ','
            << (mf.enabled ? 1 : 0) << ','
@@ -2002,7 +2031,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             mf.pointillism_all_filaments = pointillism_all_filaments;
             mf.gradient_component_ids = normalize_gradient_component_ids(gradient_component_ids);
             mf.gradient_component_weights =
-                normalize_gradient_component_weights(gradient_component_weights, mf.gradient_component_ids.size());
+                normalize_gradient_component_weights(gradient_component_weights, decode_gradient_component_ids(mf.gradient_component_ids, 0).size());
             mf.manual_pattern = normalize_manual_pattern(manual_pattern);
             mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
             mf.local_z_max_sublayers = std::max(0, local_z_max_sublayers);
@@ -2035,7 +2064,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         mf.pointillism_all_filaments = pointillism_all_filaments;
         mf.gradient_component_ids = normalize_gradient_component_ids(gradient_component_ids);
         mf.gradient_component_weights =
-            normalize_gradient_component_weights(gradient_component_weights, mf.gradient_component_ids.size());
+            normalize_gradient_component_weights(gradient_component_weights, decode_gradient_component_ids(mf.gradient_component_ids, 0).size());
         mf.manual_pattern = normalize_manual_pattern(manual_pattern);
         mf.distribution_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));
         mf.local_z_max_sublayers = std::max(0, local_z_max_sublayers);
@@ -2347,13 +2376,10 @@ std::vector<size_t> MixedFilamentManager::mixed_filaments_using_physical(unsigne
         
         // Check gradient components
         if (!depends_on_physical) {
-            for (char c : mf.gradient_component_ids) {
-                if (c >= '1' && c <= '9') {
-                    unsigned int comp_id = static_cast<unsigned int>(c - '0');
-                    if (comp_id == physical_filament_1based) {
-                        depends_on_physical = true;
-                        break;
-                    }
+            for (unsigned int comp_id : decode_gradient_component_ids(mf.gradient_component_ids, 0)) {
+                if (comp_id == physical_filament_1based) {
+                    depends_on_physical = true;
+                    break;
                 }
             }
         }

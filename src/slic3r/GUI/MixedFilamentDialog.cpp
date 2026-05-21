@@ -25,6 +25,7 @@
 #include <numeric>
 #include <utility>
 #include <set>
+#include <sstream>
 
 namespace Slic3r { namespace GUI {
 
@@ -1646,21 +1647,22 @@ void MixedFilamentDialog::rebuild_filament_rows()
     const int max_idx = std::max(0, (int)m_filament_colours.size() - 1);
     std::vector<int> sels;
 
+    // Decode gradient_component_ids (supports both legacy single-char and extended /-separated formats)
+    std::vector<unsigned int> decoded_ids = MixedFilamentManager::decode_gradient_component_ids(m_result.gradient_component_ids);
+
     // Detect "all-ids" format (match recipe): gradient_component_ids contains
     // component_a as its first entry, meaning all filaments are listed there.
-    const std::string &ids = m_result.gradient_component_ids;
-    const bool all_ids_format = !ids.empty() &&
-        (ids[0] - '0') == (int)m_result.component_a;
+    const bool all_ids_format = !decoded_ids.empty() &&
+        decoded_ids[0] == m_result.component_a;
 
     if (all_ids_format) {
-        for (char c : ids)
-            sels.push_back(std::clamp(int(c - '1'), 0, max_idx));
+        for (unsigned int id : decoded_ids)
+            sels.push_back(std::clamp(int(id - 1), 0, max_idx));
     } else {
         sels.push_back(std::clamp((int)m_result.component_a - 1, 0, max_idx));
         sels.push_back(std::clamp((int)m_result.component_b - 1, 0, max_idx));
-        for (char c : ids) {
-            int idx = c - '1';
-            sels.push_back(std::clamp(idx, 0, max_idx));
+        for (unsigned int id : decoded_ids) {
+            sels.push_back(std::clamp(int(id - 1), 0, max_idx));
         }
     }
 
@@ -2100,31 +2102,35 @@ void MixedFilamentDialog::resize_gradient_ids(int target_count)
 {
     int extra = target_count - 2;
     if (extra <= 0) { m_result.gradient_component_ids.clear(); return; }
-    std::string ids = m_result.gradient_component_ids;
-    
-    // Build set of already used filament indices
-    std::set<int> used;
-    used.insert((int)m_result.component_a - 1);
-    used.insert((int)m_result.component_b - 1);
-    for (char c : ids) {
-        used.insert(c - '1');
-    }
-    
+
+    // Decode existing gradient IDs
+    std::vector<unsigned int> ids = MixedFilamentManager::decode_gradient_component_ids(m_result.gradient_component_ids);
+
+    // Build set of already used filament IDs (1-based)
+    std::set<unsigned int> used;
+    used.insert(m_result.component_a);
+    used.insert(m_result.component_b);
+    for (unsigned int id : ids)
+        used.insert(id);
+
     // Find unused filaments for new slots
     while ((int)ids.size() < extra) {
-        int new_filament = 0;
+        unsigned int new_filament = 0;
         for (int j = 0; j < (int)m_filament_colours.size(); ++j) {
-            if (used.find(j) == used.end()) {
-                new_filament = j;
-                used.insert(j);
+            unsigned int fid = (unsigned int)(j + 1);
+            if (used.find(fid) == used.end()) {
+                new_filament = fid;
+                used.insert(fid);
                 break;
             }
         }
-        if (new_filament >= 0 && new_filament <= 8)
-            ids += char('1' + new_filament);
+        if (new_filament >= 1)
+            ids.push_back(new_filament);
+        else
+            break;  // No unused filament available, stop filling
     }
     ids.resize((size_t)extra);
-    m_result.gradient_component_ids = ids;
+    m_result.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids(ids);
 }
 
 void MixedFilamentDialog::sync_rows_to_result()
@@ -2134,13 +2140,13 @@ void MixedFilamentDialog::sync_rows_to_result()
     int b = (m_filament_rows.size() > 1) ? get_filament_index(1) : a;
     m_result.component_a = (unsigned int)(std::max(0, a) + 1);
     m_result.component_b = (unsigned int)(std::max(0, b) + 1);
-    std::string ids;
+    std::vector<unsigned int> extra_ids;
     for (int i = 2; i < (int)m_filament_rows.size(); ++i) {
         int s = get_filament_index(i);
-        if (s >= 0 && s <= 8)
-            ids += char('1' + s);
+        if (s >= 0)
+            extra_ids.push_back((unsigned int)(s + 1));
     }
-    m_result.gradient_component_ids = ids;
+    m_result.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids(extra_ids);
 }
 
 void MixedFilamentDialog::update_compatibility_warning()
@@ -2157,9 +2163,8 @@ void MixedFilamentDialog::update_compatibility_warning()
             if (recipe.component_a >= 1) fids.push_back(recipe.component_a - 1);
             if (recipe.component_b >= 1) fids.push_back(recipe.component_b - 1);
             if (!recipe.gradient_component_ids.empty()) {
-                for (char c : recipe.gradient_component_ids) {
-                    int idx = c - '1';
-                    if (idx >= 0 && idx <= 8) fids.push_back(static_cast<unsigned int>(idx));
+                for (unsigned int id : MixedFilamentManager::decode_gradient_component_ids(recipe.gradient_component_ids)) {
+                    if (id >= 1) fids.push_back(id - 1);
                 }
             }
         } else {
@@ -2181,9 +2186,8 @@ void MixedFilamentDialog::update_compatibility_warning()
         if (m_result.component_a >= 1) fids.push_back(m_result.component_a - 1);
         if (m_result.component_b >= 1) fids.push_back(m_result.component_b - 1);
         if (!m_result.gradient_component_ids.empty()) {
-            for (char c : m_result.gradient_component_ids) {
-                int idx = c - '1';
-                if (idx >= 0 && idx <= 8) fids.push_back(static_cast<unsigned int>(idx));
+            for (unsigned int id : MixedFilamentManager::decode_gradient_component_ids(m_result.gradient_component_ids)) {
+                if (id >= 1) fids.push_back(id - 1);
             }
         }
     }
@@ -2669,7 +2673,7 @@ void MixedFilamentDialog::build_swatch_grid()
             Candidate c;
             c.color   = preset.preview_color;
             c.tooltip = from_u8(summarize_color_match_recipe(preset));
-            auto decoded = decode_color_match_gradient_ids(preset.gradient_component_ids);
+            auto decoded = MixedFilamentManager::decode_gradient_component_ids(preset.gradient_component_ids);
             if (decoded.size() >= 2) {
                 c.rows[0] = (int)decoded[0] - 1; c.rows[1] = (int)decoded[1] - 1;
                 c.n_rows = 2; c.b_pct = preset.mix_b_percent;
@@ -2854,12 +2858,13 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
         m_match_tri_indices.clear();
         m_match_tri_weights.clear();
         // Restore saved data if editing, otherwise use default 2:1:1
-        if (!m_result.gradient_component_ids.empty() && m_result.gradient_component_ids.size() >= 3) {
+        auto saved_ids = MixedFilamentManager::decode_gradient_component_ids(m_result.gradient_component_ids);
+        if (saved_ids.size() >= 3) {
             // Restore from saved match data
-            for (char c : m_result.gradient_component_ids) {
-                int id = c - '1';
-                if (id >= 0 && id < num_physical)
-                    m_match_tri_indices.push_back(id);
+            for (unsigned int id : saved_ids) {
+                int idx = int(id - 1);
+                if (idx >= 0 && idx < num_physical)
+                    m_match_tri_indices.push_back(idx);
             }
             if (m_match_tri_indices.size() >= 3) {
                 auto w = decode_color_match_gradient_weights(m_result.gradient_component_weights, (int)m_match_tri_indices.size());
@@ -2870,12 +2875,12 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
                 }
                 m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy, m_match_tri_wz};
             }
-        } else if (!m_result.gradient_component_ids.empty() && m_result.gradient_component_ids.size() == 2) {
+        } else if (saved_ids.size() == 2) {
             // 2-color saved match
-            for (char c : m_result.gradient_component_ids) {
-                int id = c - '1';
-                if (id >= 0 && id < num_physical)
-                    m_match_tri_indices.push_back(id);
+            for (unsigned int id : saved_ids) {
+                int idx = int(id - 1);
+                if (idx >= 0 && idx < num_physical)
+                    m_match_tri_indices.push_back(idx);
             }
             m_match_tri_weights = {(double)(100 - m_result.mix_b_percent) / 100.0, (double)m_result.mix_b_percent / 100.0};
             m_match_tri_wx = m_match_tri_weights[0]; m_match_tri_wy = m_match_tri_weights[1];
@@ -3161,16 +3166,16 @@ void MixedFilamentDialog::collect_result()
         if ((int)m_filament_rows.size() == 3) {
             m_result.distribution_mode = int(MixedFilament::LayerCycle);
             m_result.manual_pattern.clear();
-            // Store all 3 filament ids so gradient_component_ids.size() >= 3,
+            // Store all 3 filament ids (1-based) so gradient_component_ids has 3 entries,
             // which lets resolve() enter the weighted gradient branch.
             {
-                std::string all_ids;
+                std::vector<unsigned int> all_ids;
                 for (int i = 0; i < 3; ++i) {
                     int s = get_filament_index(i);
-                    if (s >= 0 && s <= 8)
-                        all_ids += char('1' + s);
+                    if (s >= 0)
+                        all_ids.push_back((unsigned int)(s + 1));
                 }
-                m_result.gradient_component_ids = all_ids;
+                m_result.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids(all_ids);
             }
             int r0 = (int)(m_tri_wx * 100 + 0.5);
             int r1 = (int)(m_tri_wy * 100 + 0.5);
@@ -3225,15 +3230,17 @@ void MixedFilamentDialog::collect_result()
                 int w2 = std::max(0, 100 - w0 - w1);
                 m_result.gradient_component_ids.clear();
                 std::string weights_str;
+                std::vector<unsigned int> match_ids;
                 // Only include filaments with actual weight > 0
-                if (w0 > 0) { m_result.gradient_component_ids.push_back(char('0' + m_match_tri_indices[0] + 1)); weights_str += std::to_string(w0); }
-                if (w1 > 0) { m_result.gradient_component_ids.push_back(char('0' + m_match_tri_indices[1] + 1)); if (!weights_str.empty()) weights_str += "/"; weights_str += std::to_string(w1); }
-                if (w2 > 0) { m_result.gradient_component_ids.push_back(char('0' + m_match_tri_indices[2] + 1)); if (!weights_str.empty()) weights_str += "/"; weights_str += std::to_string(w2); }
+                if (w0 > 0) { match_ids.push_back((unsigned int)(m_match_tri_indices[0] + 1)); weights_str += std::to_string(w0); }
+                if (w1 > 0) { match_ids.push_back((unsigned int)(m_match_tri_indices[1] + 1)); if (!weights_str.empty()) weights_str += "/"; weights_str += std::to_string(w1); }
+                if (w2 > 0) { match_ids.push_back((unsigned int)(m_match_tri_indices[2] + 1)); if (!weights_str.empty()) weights_str += "/"; weights_str += std::to_string(w2); }
+                m_result.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids(match_ids);
                 m_result.gradient_component_weights = weights_str;
-                if (m_result.gradient_component_ids.size() >= 3) {
+                if (match_ids.size() >= 3) {
                     m_result.distribution_mode = int(MixedFilament::LayerCycle);
                     m_result.mix_b_percent = 50;
-                } else if (m_result.gradient_component_ids.size() == 2) {
+                } else if (match_ids.size() == 2) {
                     m_result.distribution_mode = int(MixedFilament::Simple);
                     int total_w = 0;
                     if (w0 > 0) total_w += w0;
@@ -3245,8 +3252,7 @@ void MixedFilamentDialog::collect_result()
                 m_result.mix_b_percent = m_match_gradient_selector ? m_match_gradient_selector->value() : 50;
                 m_result.gradient_component_ids.clear();
                 // Store for constructor detection (Plater skips display for Simple mode)
-                m_result.gradient_component_ids.push_back(char('0' + m_result.component_a));
-                m_result.gradient_component_ids.push_back(char('0' + m_result.component_b));
+                m_result.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids({m_result.component_a, m_result.component_b});
                 m_result.gradient_component_weights.clear();
             }
         } else {

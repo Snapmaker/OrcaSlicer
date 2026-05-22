@@ -3050,9 +3050,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     const bool local_z_direct_multicolor =
         bool_from_full_config(full_cfg, "dithering_local_z_direct_multicolor",
                               print_cfg.dithering_local_z_direct_multicolor.value);
-    // Gradient rows always require local-Z sublayer splitting, regardless of
-    // the global dithering_local_z_mode switch. Non-gradient mixed rows only
-    // participate when dithering_local_z_mode is explicitly enabled.
+    // Gradient rows require Local-Z sublayer splitting even when the
+    // user-facing Local-Z toggle is off.
     const MixedFilamentManager &mixed_mgr = print->mixed_filament_manager();
     bool has_gradient_row = false;
     for (const auto &mf : mixed_mgr.mixed_filaments()) {

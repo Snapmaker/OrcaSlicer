@@ -3331,7 +3331,7 @@ void Print::_make_wipe_tower()
 
                 bool first_layer = &layer_tools == &m_wipe_tower_data.tool_ordering.front();
 
-                if (m_config.dithering_local_z_mode && layers_with_same_print_z != nullptr) {
+                if (layers_with_same_print_z != nullptr) {
                     const std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
                         collect_local_z_wipe_tower_toolchanges(*this, *layers_with_same_print_z, int(current_extruder_id));
                     if (!local_z_toolchanges.empty()) {

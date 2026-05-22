@@ -384,7 +384,8 @@ static bool parse_row_definition(const std::string &row,
                                  bool              &deleted,
                                  bool              &gradient_enabled,
                                  float             &gradient_start,
-                                 float             &gradient_end)
+                                 float             &gradient_end,
+                                 int               &cm_mode)
 {
     auto trim_copy = [](const std::string &s) {
         size_t lo = 0;
@@ -490,6 +491,7 @@ static bool parse_row_definition(const std::string &row,
     gradient_enabled = false;
     gradient_start = MixedFilament::k_default_gradient_dominant;
     gradient_end   = MixedFilament::k_default_gradient_minority;
+    cm_mode        = -1;
 
     size_t token_idx = 5;
     if (tokens.size() >= 6) {
@@ -568,6 +570,12 @@ static bool parse_row_definition(const std::string &row,
             uint64_t parsed_stable_id = stable_id;
             if (parse_uint64_token(tok.substr(1), parsed_stable_id))
                 stable_id = parsed_stable_id;
+            continue;
+        }
+        if ((tok[0] == 'c' || tok[0] == 'C') && tok.size() >= 3 && (tok[1] == 'm' || tok[1] == 'M')) {
+            int v = cm_mode;
+            if (parse_int_token(tok.substr(2), v))
+                cm_mode = std::clamp(v, -1, 3);
             continue;
         }
         if (tok[0] == 'r' || tok[0] == 'R') {
@@ -1904,6 +1912,8 @@ std::string MixedFilamentManager::serialize_custom_entries()
            << 'd' << (mf.deleted ? 1 : 0) << ','
            << 'o' << (mf.origin_auto ? 1 : 0) << ','
            << 'u' << mf.stable_id;
+        if (mf.ui_mode >= 0)
+            ss << ",cm" << mf.ui_mode;
         if (mf.gradient_enabled) {
             char buf[64];
             std::snprintf(buf, sizeof(buf), "%.4f/%.4f",
@@ -1984,10 +1994,11 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         bool gradient_enabled = false;
         float gradient_start = 0.8f;
         float gradient_end   = 0.2f;
+        int   cm_mode = -1;
         if (!parse_row_definition(row, a, b, stable_id, enabled, custom, origin_auto, mix, pointillism_all_filaments,
                                   gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode,
                                   local_z_max_sublayers, component_a_surface_offset, component_b_surface_offset, deleted,
-                                  gradient_enabled, gradient_start, gradient_end)) {
+                                  gradient_enabled, gradient_start, gradient_end, cm_mode)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
             continue;
@@ -2027,6 +2038,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             mf.component_a = std::min(a, b);
             mf.component_b = std::max(a, b);
             mf.stable_id = dedupe_stable_id(stable_id != 0 ? stable_id : mf.stable_id);
+            mf.ui_mode   = cm_mode;
             mf.enabled = enabled;
             mf.pointillism_all_filaments = pointillism_all_filaments;
             mf.gradient_component_ids = normalize_gradient_component_ids(gradient_component_ids);
@@ -2058,6 +2070,7 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         mf.component_a = a;
         mf.component_b = b;
         mf.stable_id = dedupe_stable_id(stable_id);
+        mf.ui_mode   = cm_mode;
         mf.mix_b_percent = mix;
         mf.ratio_a = 1;
         mf.ratio_b = 1;

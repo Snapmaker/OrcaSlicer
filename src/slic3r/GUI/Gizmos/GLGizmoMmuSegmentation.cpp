@@ -169,7 +169,7 @@ void GLGizmoMmuSegmentation::init_extruders_data(const std::vector<ColorRGBA> &e
         m_extruder_remap[i] = i;
 
     // Build minimal display context for gradient rendering
-    std::vector<std::string> physical_hex = wxGetApp().plater()->get_extruder_colors_from_plater_config(false);
+    std::vector<std::string> physical_hex = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
     // Only physical_colors is used for gradient rendering; other fields intentionally at defaults
     m_mixed_display_context = MixedFilamentDisplayContext{physical_hex.size(), std::move(physical_hex), {}, {}, false};
 }

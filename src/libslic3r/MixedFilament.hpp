@@ -99,6 +99,9 @@ struct MixedFilament
     // tombstoned instead of letting regeneration resurrect it.
     bool origin_auto = false;
 
+    // UI mode that created this row (-1=unknown/legacy, 0=RATIO, 1=CYCLE, 2=MATCH, 3=GRADIENT).
+    int ui_mode = -1;
+
     // Computed display colour as "#RRGGBB".
     std::string display_color;
 
@@ -126,7 +129,8 @@ struct MixedFilament
                enabled      == rhs.enabled &&
                deleted      == rhs.deleted &&
                custom       == rhs.custom &&
-               origin_auto  == rhs.origin_auto;
+               origin_auto  == rhs.origin_auto &&
+               ui_mode      == rhs.ui_mode;
     }
     bool operator!=(const MixedFilament &rhs) const { return !(*this == rhs); }
 };

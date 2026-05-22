@@ -1245,11 +1245,7 @@ void NetworkTestDialog::cleanup_threads()
 	for (int i = 0; i < TEST_JOB_MAX; i++) {
 		if (test_job[i] != nullptr) {
 			if (test_job[i]->joinable()) {
-				// HTTP timeout is 10 seconds; use 15 seconds to ensure
-				// threads have time to finish and avoid detaching them.
-				// Detached threads accessing stack-allocated dialog state
-				// after destruction is a use-after-free crash.
-				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(15000))) {
+				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(3000))) {
 					test_job[i]->detach();
 					BOOST_LOG_TRIVIAL(warning) << "Thread " << i << " didn't finish in time, detached";
 				}
@@ -1262,8 +1258,7 @@ void NetworkTestDialog::cleanup_threads()
 	// Clean up sequence job thread
 	if (m_sequence_job != nullptr) {
 		if (m_sequence_job->joinable()) {
-			// Sequence job runs multiple tests sequentially; give it more time.
-			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(30000))) {
+			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(5000))) {
 				m_sequence_job->detach();
 				BOOST_LOG_TRIVIAL(warning) << "Sequence job thread didn't finish in time, detached";
 			}

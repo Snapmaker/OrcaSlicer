@@ -136,6 +136,10 @@ private:
                                                       float layer_height, const WipeTower::box_coordinates &slot,
                                                       size_t slot_idx, bool *was_wipe_tower_purge);
     // Left / right edges of the wipe tower, for the planning of wipe moves.
+
+    Vec2d extruder_offset_at(size_t extruder_id) const;
+
+private:
     const float                                                  m_left;
     const float                                                  m_right;
     const Vec2f                                                  m_wipe_tower_pos;

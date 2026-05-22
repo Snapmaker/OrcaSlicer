@@ -29,7 +29,7 @@
 #include "Clients.h"
 
 #ifndef __cplusplus
-typedef unsigned int bool;
+#include <stdbool.h>
 #endif
 typedef void* (*pf)(int, unsigned char, char*, size_t);
 

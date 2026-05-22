@@ -331,9 +331,8 @@ void MixedFilamentDialog::build_ui()
         auto* error_icon = new wxStaticBitmap(m_error_panel, wxID_ANY, error_bmp.bmp());
         err_sizer->Add(error_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         err_sizer->AddSpacer(FromDIP(4));
-        m_error_text = new wxStaticText(m_error_panel, wxID_ANY, wxEmptyString);
+        m_error_text = new Label(m_error_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
         m_error_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#D32F2F")));
-        m_error_text->Wrap(FromDIP(360));
         err_sizer->Add(m_error_text, 1, wxALL, FromDIP(8));
         m_error_panel->SetSizer(err_sizer);
         top_sizer->Add(m_error_panel, 0, wxEXPAND);
@@ -350,9 +349,8 @@ void MixedFilamentDialog::build_ui()
         auto* warn_icon = new wxStaticBitmap(m_warning_panel, wxID_ANY, warn_bmp.bmp());
         warn_sizer->Add(warn_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         warn_sizer->AddSpacer(FromDIP(4));
-        m_warning_text = new wxStaticText(m_warning_panel, wxID_ANY, wxEmptyString);
+        m_warning_text = new Label(m_warning_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
         m_warning_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF842D")));
-        m_warning_text->Wrap(FromDIP(360));
         warn_sizer->Add(m_warning_text, 1, wxALL, FromDIP(8));
         m_warning_panel->SetSizer(warn_sizer);
         top_sizer->Add(m_warning_panel, 0, wxEXPAND);
@@ -549,9 +547,7 @@ void MixedFilamentDialog::build_ui()
         m_filament_card_title->SetFont(Label::Body_14);
         m_filament_card_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         m_filament_card_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-        card_title_row->Add(m_filament_card_title, 0, wxALIGN_CENTER_VERTICAL);
-
-        card_title_row->AddStretchSpacer();
+        card_title_row->Add(m_filament_card_title, 1, wxALIGN_CENTER_VERTICAL);
 
         m_btn_swap_gradient_dir = new ScalableButton(m_filament_card, wxID_ANY, "reverse_arrow");
         m_btn_swap_gradient_dir->SetToolTip(_L("Swap filaments"));
@@ -2222,7 +2218,6 @@ void MixedFilamentDialog::display_warning(const wxString& msg)
         return;
     m_error_panel->Hide();
     m_warning_text->SetLabel(msg);
-    m_warning_text->Wrap(FromDIP(360));
     m_warning_panel->Show();
     Layout();
 }
@@ -2233,7 +2228,6 @@ void MixedFilamentDialog::set_error(const wxString& msg)
         return;
     m_warning_panel->Hide();
     m_error_text->SetLabel(msg);
-    m_error_text->Wrap(FromDIP(360));
     m_error_panel->Show();
     if (m_btn_confirm) m_btn_confirm->Disable();
     Layout();
@@ -3344,7 +3338,8 @@ void MixedFilamentDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
         m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
     if (m_strip_panel)
         m_strip_panel->SetMinSize(wxSize(-1, FromDIP(STRIP_HEIGHT)));
-    Layout(); Fit();
+    Layout(); 
+    Fit();
 }
 
 }} // namespace Slic3r::GUI

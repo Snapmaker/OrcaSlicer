@@ -18,6 +18,7 @@ class ScalableButton;
 class RadioGroup;
 class Button;
 class ComboBox;
+class Label;
 class StaticBox;
 
 namespace Slic3r { namespace GUI {
@@ -83,9 +84,9 @@ private:
     wxPanel*                m_cycle_strip_panel   = nullptr;
     wxPanel*                m_swatch_grid_panel   = nullptr;
     wxPanel*                m_error_panel           = nullptr;
-    wxStaticText*           m_error_text            = nullptr;
+    Label*                   m_error_text            = nullptr;
     wxPanel*                m_warning_panel         = nullptr;
-    wxStaticText*           m_warning_text          = nullptr;
+    Label*                   m_warning_text          = nullptr;
     Button*                 m_btn_cancel          = nullptr;
     Button*                 m_btn_confirm         = nullptr;
     wxTextCtrl*             m_pattern_ctrl        = nullptr;

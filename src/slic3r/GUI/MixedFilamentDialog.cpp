@@ -329,7 +329,7 @@ void MixedFilamentDialog::build_ui()
         auto* error_icon = new wxStaticBitmap(m_error_panel, wxID_ANY, error_bmp.bmp());
         err_sizer->Add(error_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         err_sizer->AddSpacer(FromDIP(4));
-        m_error_text = new Label(m_error_panel, wxEmptyString, LB_AUTO_WRAP);
+        m_error_text = new Label(m_error_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
         m_error_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#D32F2F")));
         err_sizer->Add(m_error_text, 1, wxALL, FromDIP(8));
         m_error_panel->SetSizer(err_sizer);
@@ -347,7 +347,7 @@ void MixedFilamentDialog::build_ui()
         auto* warn_icon = new wxStaticBitmap(m_warning_panel, wxID_ANY, warn_bmp.bmp());
         warn_sizer->Add(warn_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
         warn_sizer->AddSpacer(FromDIP(4));
-        m_warning_text = new Label(m_warning_panel, wxEmptyString, LB_AUTO_WRAP);
+        m_warning_text = new Label(m_warning_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
         m_warning_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF842D")));
         warn_sizer->Add(m_warning_text, 1, wxALL, FromDIP(8));
         m_warning_panel->SetSizer(warn_sizer);
@@ -539,16 +539,13 @@ void MixedFilamentDialog::build_ui()
         m_filament_card->SetBorderColorNormal(wxColour("#F0F0F0"));
         m_filament_card_sizer = new wxBoxSizer(wxVERTICAL);
 
-        // Title
+        // Title row with add/remove/swap buttons
+        auto* card_title_row = new wxBoxSizer(wxHORIZONTAL);
         m_filament_card_title = new wxStaticText(m_filament_card, wxID_ANY, _L("Filament Selection"));
         m_filament_card_title->SetFont(Label::Body_14);
         m_filament_card_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         m_filament_card_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-        m_filament_card_sizer->Add(m_filament_card_title, 0, wxEXPAND | wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
-        m_filament_card_sizer->AddSpacer(FromDIP(8));
-
-        // Button row with add/remove/swap buttons
-        auto* card_title_row = new wxBoxSizer(wxHORIZONTAL);
+        card_title_row->Add(m_filament_card_title, 1, wxALIGN_CENTER_VERTICAL);
 
         m_btn_swap_gradient_dir = new ScalableButton(m_filament_card, wxID_ANY, "reverse_arrow");
         m_btn_swap_gradient_dir->SetToolTip(_L("Swap filaments"));
@@ -564,7 +561,7 @@ void MixedFilamentDialog::build_ui()
             update_preview();
             update_compatibility_warning();
         });
-        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL);
+        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
 
         // Remove filament button
         m_btn_remove_filament = new ScalableButton(m_filament_card, wxID_ANY, "icon_minus");
@@ -597,7 +594,7 @@ void MixedFilamentDialog::build_ui()
             });
         });
         card_title_row->Add(m_btn_add_filament, 0, wxALIGN_CENTER_VERTICAL);
-        m_filament_card_sizer->Add(card_title_row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
+        m_filament_card_sizer->Add(card_title_row, 0, wxEXPAND | wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
 
         m_filament_card_sizer->AddSpacer(FromDIP(12));
 

@@ -2323,9 +2323,8 @@ wxString MixedFilamentDialog::get_ratio_warning_msg()
         }
     }
     if (max_idx >= 0 && max_ratio > HIGH_RATIO_THRESHOLD) {
-        return wxString::Format(
-            _L("Filament %d ratio is too high (%.0f%%). Mix result may be dominated by a single color."),
-            max_idx + 1, max_ratio * 100.0);
+        return wxString::Format(_L("Filament %d ratio is too high. Mix may be affected."), max_idx + 1);
+
     }
 
     return wxEmptyString;

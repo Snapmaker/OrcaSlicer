@@ -4316,8 +4316,8 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Collapse same-color mixed regions");
     def->category = L("Others");
     def->tooltip = L("Merge ordinary mixed-filament painted regions into a single area when they resolve to the same physical filament on a layer.\n\n"
-                     "This improves continuity for adjacent same-color areas. Local Z dithering turns this off automatically when enabled, but you may turn it back on manually.\n\n"
-                     "Experimental with Local Z dithering.");
+                     "This improves continuity for adjacent same-color areas.\n\n"
+                     "Subdivide Mix Layer disables this behavior, and gradient mixed regions also bypass it because they use the Local-Z pipeline.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
@@ -4348,10 +4348,10 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("dithering_local_z_whole_objects", coBool);
-    def->label = L("Apply Local-Z to whole mixed objects");
+    def->label = L("Mixed color layer thinner");
     def->category = L("Others");
-    def->tooltip = L("Experimental. Extend Local-Z dithering beyond painted mixed zones so mixed wall regions can use Local-Z across the whole object.\n\n"
-                     "This also lets Local-Z continue through default mixed walls around painted areas instead of limiting the effect strictly to painted masks.");
+    def->tooltip = L("Experimental. Apply Local-Z thinning across whole mixed-color regions instead of limiting the effect strictly to painted mixed masks.\n\n"
+                     "Only available when Subdivide Mix Layer is enabled.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 

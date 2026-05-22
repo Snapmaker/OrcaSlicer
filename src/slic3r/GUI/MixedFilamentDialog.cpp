@@ -153,27 +153,28 @@ MixedFilamentDialog::MixedFilamentDialog(wxWindow* parent,
     , m_filament_colours(filament_colours)
     , m_result(existing)
 {
-    if (existing.gradient_enabled)
+    // Use saved UI mode when available (new format with cm token).
+    // Fall back to heuristics for legacy rows without cm token.
+    if (existing.ui_mode >= 0 && existing.ui_mode <= 3) {
+        m_current_mode = existing.ui_mode;
+    } else if (existing.gradient_enabled) {
         m_current_mode = MODE_GRADIENT;
-    else if (!MixedFilamentManager::normalize_manual_pattern(existing.manual_pattern).empty())
+    } else if (!MixedFilamentManager::normalize_manual_pattern(existing.manual_pattern).empty()) {
         m_current_mode = MODE_CYCLE;
-    else if (!existing.gradient_component_ids.empty() &&
-             existing.distribution_mode == int(MixedFilament::Simple))
+    } else if (!existing.gradient_component_ids.empty() &&
+             existing.distribution_mode == int(MixedFilament::Simple)) {
         m_current_mode = MODE_MATCH;
-    else if (!existing.gradient_component_ids.empty() &&
+    } else if (!existing.gradient_component_ids.empty() &&
              existing.distribution_mode == int(MixedFilament::LayerCycle)) {
-        // Distinguish match 3-color from ratio 3-color:
-        // ratio sets ratio_a/ratio_b to step counts (>1), match keeps them at 0 or 1
+        // Legacy heuristic: distinguish match 3-color from ratio 3-color.
+        // Fall back to MODE_MATCH when ratio_a/ratio_b are both ≤ 1.
         if (existing.ratio_a <= 1 && existing.ratio_b <= 1)
             m_current_mode = MODE_MATCH;
         else
             m_current_mode = MODE_RATIO;
-    }
-    else if (!existing.gradient_component_ids.empty() &&
-             existing.distribution_mode == int(MixedFilament::LayerCycle))
-        m_current_mode = MODE_GRADIENT;
-    else
+    } else {
         m_current_mode = MODE_RATIO;
+    }
 
     // Determine gradient direction from existing configuration
     // Direction 0: A→B (component_a starts dominant, transitions to component_b)
@@ -3156,6 +3157,7 @@ void MixedFilamentDialog::update_preview()
 void MixedFilamentDialog::collect_result()
 {
     sync_rows_to_result();
+    m_result.ui_mode = m_current_mode;
     int val = m_gradient_selector ? m_gradient_selector->value() : 50;
     m_result.mix_b_percent = val;
     // Default: drop Z-gradient state. Only MODE_GRADIENT re-enables it below.

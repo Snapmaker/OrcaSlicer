@@ -515,17 +515,12 @@ void SSWCP_Instance::sw_UploadEvent() {
 
 void SSWCP_Instance::sw_GetSoftwareInfo()
 {
-    try {
-        m_res_data["version"] = std::string(Snapmaker_VERSION);
+    m_res_data["version"] = std::string(Snapmaker_VERSION);
+    auto& server = wxGetApp().m_page_http_server;
+    m_res_data["http_host"] = std::string(LOCALHOST_URL) + std::to_string(server.get_port());
 
-        auto& server = wxGetApp().m_page_http_server;
-        m_res_data["http_host"] = std::string(LOCALHOST_URL) + std::to_string(server.get_port());
-
-        send_to_js();
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
+    send_to_js();
+    finish_job();
 }
 
 void SSWCP_Instance::sw_OpenNetworkDialog() {

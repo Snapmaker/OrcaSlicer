@@ -15167,34 +15167,67 @@ msgid "Enable \"Subdivide Mix Layer\" for mixing areas. Layer height will be sub
 msgstr "启用混色区域独立层高。启用后，使用混色区域的层高将被细分，以实现更好混色效果。"
 
 msgid "Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."
-msgstr "耗材%d与耗材%d无法混合，请选择相同类型耗材"
+msgstr "耗材%d与耗材%d无法混合，请选择相同类型耗材。"
 
 msgid "Color mixing failed. Please try again."
-msgstr "混色失败，请重试"
+msgstr "混色失败，请重试。"
 
 msgid "Filament %d ratio too low. Mix may be affected."
-msgstr "耗材%d参与混色的比例过小，可能会影响混色效果"
+msgstr "耗材%d参与混色的比例过小，可能会影响混色效果。"
 
 msgid "Filament %d not recognized. Please re-enter."
-msgstr "无法识别%d号耗材，请重新输入"
+msgstr "无法识别%d号耗材，请重新输入。"
 
 msgid "Please enter a valid 6-digit Hex value."
-msgstr "请输入有效的 6 位 Hex 色值"
+msgstr "请输入有效的 6 位 Hex 色值。"
 
 msgid "Color matching error. Please check filament parameters and try again."
-msgstr "颜色匹配异常，请检查耗材参数后重试"
+msgstr "颜色匹配异常，请检查耗材参数后重试。"
 
 msgid "Mix ratio below minimum. Match result recalculated."
-msgstr "混色结果超出最低混色比例范围，已重新计算匹配结果"
+msgstr "混色结果超出最低混色比例范围，已重新计算匹配结果。"
 
 msgid "Different filament types cannot be mixed. Please correct the settings."
-msgstr "不同类型耗材不可混色打印，请修正异常混色设置"
+msgstr "不同类型耗材不可混色打印，请修正异常混色设置。"
 
 msgid "Excessive filaments in the mix may affect the result. Please use with caution."
-msgstr "参与混色耗材数量过多，可能会影响混色效果，请谨慎使用"
+msgstr "参与混色耗材数量过多，可能会影响混色效果，请谨慎使用。"
 
 msgid "Mixing sub-layer height exceeds nozzle limit. Please adjust layer height settings."
-msgstr "当前混色子层高超出喷嘴物理极限，请调整配置层高或混色区域层高"
+msgstr "当前混色子层高超出喷嘴物理极限，请调整配置层高或混色区域层高。"
 
 msgid "Same filament colors cannot produce new colors. Please select different colors for mixing."
-msgstr "参与混色耗材颜色一致，无法混出更多颜色，请选用不同颜色耗材参与混色"
+msgstr "参与混色耗材颜色一致，无法混出更多颜色，请选用不同颜色耗材参与混色。"
+
+msgid "Full domain"
+msgstr "全域生效"
+
+msgid "Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."
+msgstr "包含无效字符。仅允许输入数字、方括号（[ 和]）和逗号（,）。"
+
+msgid "Unrecognized pattern format. Please check the pattern syntax."
+msgstr "无法识别的输入格式，请检查输入内容。"
+
+msgid "Leading or trailing commas are not allowed."
+msgstr "不允许在开头或末尾使用逗号。"
+
+msgid "Allowed Input: Only digits, square brackets ([ and ]), and commas (,)."
+msgstr "允许的输入：仅限数字、方括号（[ 和 ]）和逗号（,）。"
+
+msgid "Append filament %d to pattern"
+msgstr "将耗材 %d 序号输入到表单"
+
+msgid "This filament is used in the following mixed filament configurations:\n\n"
+msgstr "该耗材正在以下混色耗材配置中使用：\n\n"
+
+msgid "• Mixed Filament %d\n"
+msgstr "• 混色耗材 %d\n"
+
+msgid "\nDeleting this filament will invalidate these mixed filament configurations. Continue?"
+msgstr "\n删除该耗材将导致这些混色耗材配置失效。是否继续？"
+
+msgid "\nMerging this filament will invalidate these mixed filament configurations. Continue?"
+msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续？"
+
+msgid "Filament %d ratio is too high. Mix may be affected."
+msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"

@@ -2218,6 +2218,7 @@ void MixedFilamentDialog::display_warning(const wxString& msg)
         return;
     m_error_panel->Hide();
     m_warning_text->SetLabel(msg);
+    m_warning_text->Wrap(FromDIP(360));
     m_warning_panel->Show();
     Layout();
 }
@@ -2228,6 +2229,7 @@ void MixedFilamentDialog::set_error(const wxString& msg)
         return;
     m_warning_panel->Hide();
     m_error_text->SetLabel(msg);
+    m_error_text->Wrap(FromDIP(360));
     m_error_panel->Show();
     if (m_btn_confirm) m_btn_confirm->Disable();
     Layout();

@@ -4148,18 +4148,98 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
     const bool                bias_mode_enabled =
         bool_from_full_config(full_cfg, "mixed_filament_component_bias_enabled", print_cfg.mixed_filament_component_bias_enabled.value);
     const MixedFilamentManager &mixed_mgr = print_object.print()->mixed_filament_manager();
-    const bool                collapse_mixed_regions_effective = collapse_mixed_regions && !local_z_mode;
+    const bool                collapse_mixed_regions_effective = collapse_mixed_regions;
+    const size_t              num_channels = segmentation.empty() ? 0 : segmentation.front().size();
+
+    // Anchor mixed painted cadence to each independent vertical activation run
+    // instead of the object's global layer zero.
+    const auto mixed_zone_phase_slot = [num_channels](size_t layer_id, size_t channel_idx) {
+        return layer_id * num_channels + channel_idx;
+    };
+    std::vector<std::vector<int>> mixed_zone_component_local_layer_index(segmentation.size() * num_channels);
+    if (num_channels > 1) {
+        struct TrackedMixedZoneComponent
+        {
+            ExPolygon   mask;
+            BoundingBox bbox;
+            int         start_layer = 0;
+        };
+        std::vector<std::vector<TrackedMixedZoneComponent>> active_components(num_channels);
+        for (size_t layer_id = 0; layer_id < segmentation.size(); ++layer_id) {
+            throw_on_cancel();
+            if (segmentation[layer_id].size() != num_channels)
+                continue;
+
+            for (size_t channel_idx = 1; channel_idx < num_channels; ++channel_idx) {
+                const unsigned int channel_id = segmentation_channel_filament_id(channel_idx);
+                if (!mixed_mgr.is_mixed(channel_id, num_physical))
+                    continue;
+
+                const ExPolygons &state_masks = segmentation[layer_id][channel_idx];
+                if (state_masks.empty()) {
+                    active_components[channel_idx].clear();
+                    continue;
+                }
+
+                std::vector<int> &component_local_indices =
+                    mixed_zone_component_local_layer_index[mixed_zone_phase_slot(layer_id, channel_idx)];
+                component_local_indices.assign(state_masks.size(), -1);
+
+                std::vector<TrackedMixedZoneComponent> next_components;
+                next_components.reserve(state_masks.size());
+                for (size_t component_idx = 0; component_idx < state_masks.size(); ++component_idx) {
+                    const ExPolygon &component = state_masks[component_idx];
+                    if (component.empty())
+                        continue;
+
+                    const BoundingBox component_bbox = get_extents(component);
+                    int start_layer = -1;
+                    for (const TrackedMixedZoneComponent &active : active_components[channel_idx]) {
+                        if (!active.bbox.overlap(component_bbox))
+                            continue;
+                        if (!active.mask.overlaps(component))
+                            continue;
+                        if (start_layer < 0 || active.start_layer < start_layer)
+                            start_layer = active.start_layer;
+                    }
+                    if (start_layer < 0)
+                        start_layer = int(layer_id);
+
+                    component_local_indices[component_idx] = int(layer_id) - start_layer;
+                    TrackedMixedZoneComponent next;
+                    next.mask = component;
+                    next.bbox = component_bbox;
+                    next.start_layer = start_layer;
+                    next_components.emplace_back(std::move(next));
+                }
+
+                active_components[channel_idx] = std::move(next_components);
+            }
+        }
+    }
 
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, segmentation.size(), std::max(segmentation.size() / 128, size_t(1))),
-        [&print_object, &segmentation, &mixed_mgr, num_physical, preferred_a, preferred_b, base_height, collapse_mixed_regions_effective, bias_mode_enabled, throw_on_cancel](const tbb::blocked_range<size_t> &range) {
+        [&print_object,
+         &segmentation,
+         &mixed_mgr,
+         &mixed_zone_component_local_layer_index,
+         mixed_zone_phase_slot,
+         num_physical,
+         num_channels,
+         preferred_a,
+         preferred_b,
+         base_height,
+         collapse_mixed_regions_effective,
+         local_z_mode,
+         bias_mode_enabled,
+         throw_on_cancel](const tbb::blocked_range<size_t> &range) {
             const auto  &layer_ranges   = print_object.shared_regions()->layer_ranges;
             double       z              = print_object.get_layer(int(range.begin()))->slice_z;
             auto         it_layer_range = layer_range_first(layer_ranges, z);
             // MM segmentation channel 0 is the underlying / default color of the parent
             // region. Remaining channels correspond to filament IDs (1-based), which
             // now include enabled mixed / virtual filaments.
-            const size_t num_channels  = segmentation.empty() ? 0 : segmentation.front().size();
             const size_t num_extruders = num_channels > 0 ? num_channels - 1 : 0;
 
             struct ByExtruder {
@@ -4234,40 +4314,97 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                 }
                 for (size_t channel_idx = 1; channel_idx < num_channels; ++ channel_idx) {
                     const unsigned int channel_id = unsigned(channel_idx);
+                    const size_t local_layer_slot = mixed_zone_phase_slot(layer_id, channel_idx);
+                    const std::vector<int> *component_local_indices =
+                        local_layer_slot < mixed_zone_component_local_layer_index.size() ?
+                            &mixed_zone_component_local_layer_index[local_layer_slot] :
+                            nullptr;
                     bool collapse_this_channel = collapse_mixed_regions_effective;
                     if (collapse_this_channel) {
                         const MixedFilament *mixed_row = mixed_mgr.mixed_filament_from_id(channel_id, num_physical);
+                        if (mixed_row != nullptr && local_z_mode && local_z_eligible_mixed_row(*mixed_row))
+                            collapse_this_channel = false;
                         if (mixed_row != nullptr && mixed_row->gradient_enabled && mixed_row->component_a != mixed_row->component_b)
                             collapse_this_channel = false;
                     }
-                    const unsigned int effective_filament_id = collapse_this_channel ?
-                        mixed_mgr.effective_painted_region_filament_id(channel_id,
-                                                                       num_physical,
-                                                                       int(layer_id),
-                                                                       float(layer.print_z),
-                                                                       float(layer.height),
-                                                                       float(preferred_a),
-                                                                       float(preferred_b),
-                                                                       float(base_height)) :
-                        channel_id;
-                    const size_t effective_idx =
-                        effective_filament_id >= 1 && effective_filament_id <= num_extruders ? size_t(effective_filament_id - 1) : size_t(channel_idx - 1);
-                    ByExtruder &region = by_extruder[effective_idx];
-                    append(region.expolygons, std::move(segmentation[layer_id][channel_idx]));
-                    if (! region.expolygons.empty()) {
-                        region.bbox = get_extents(region.expolygons);
-                        layer_split = true;
-                    }
+                    ExPolygons &state_masks = segmentation[layer_id][channel_idx];
+                    const bool split_by_zone_phase =
+                        collapse_this_channel &&
+                        component_local_indices != nullptr &&
+                        component_local_indices->size() == state_masks.size() &&
+                        std::any_of(component_local_indices->begin(), component_local_indices->end(),
+                                    [](int idx) { return idx >= 0; });
 
-                    if (!region.expolygons.empty() &&
-                        bias_mode_enabled &&
-                        mixed_mgr.is_mixed(channel_id, num_physical) &&
-                        std::abs(mixed_mgr.component_surface_offset(channel_id,
-                                                                   num_physical,
-                                                                   int(layer_id),
-                                                                   float(layer.print_z),
-                                                                   float(layer.height))) > EPSILON)
-                        layer_has_component_bias = true;
+                    if (split_by_zone_phase) {
+                        for (size_t component_idx = 0; component_idx < state_masks.size(); ++component_idx) {
+                            if (state_masks[component_idx].empty())
+                                continue;
+
+                            const int local_layer_index =
+                                (*component_local_indices)[component_idx] >= 0 ? (*component_local_indices)[component_idx] : int(layer_id);
+                            const unsigned int effective_filament_id =
+                                mixed_mgr.effective_painted_region_filament_id(channel_id,
+                                                                               num_physical,
+                                                                               local_layer_index,
+                                                                               float(layer.print_z),
+                                                                               float(layer.height),
+                                                                               float(preferred_a),
+                                                                               float(preferred_b),
+                                                                               float(base_height));
+                            const size_t effective_idx =
+                                effective_filament_id >= 1 && effective_filament_id <= num_extruders ?
+                                    size_t(effective_filament_id - 1) :
+                                    size_t(channel_idx - 1);
+                            ByExtruder &region = by_extruder[effective_idx];
+                            region.expolygons.emplace_back(std::move(state_masks[component_idx]));
+                            region.bbox = get_extents(region.expolygons);
+                            layer_split = true;
+
+                            if (bias_mode_enabled &&
+                                std::abs(mixed_mgr.component_surface_offset(channel_id,
+                                                                           num_physical,
+                                                                           local_layer_index,
+                                                                           float(layer.print_z),
+                                                                           float(layer.height))) > EPSILON)
+                                layer_has_component_bias = true;
+                        }
+                        state_masks.clear();
+                    } else {
+                        const int local_layer_index =
+                            component_local_indices != nullptr &&
+                            component_local_indices->size() == 1 &&
+                            component_local_indices->front() >= 0 ? component_local_indices->front() : int(layer_id);
+                        const unsigned int effective_filament_id = collapse_this_channel ?
+                            mixed_mgr.effective_painted_region_filament_id(channel_id,
+                                                                           num_physical,
+                                                                           local_layer_index,
+                                                                           float(layer.print_z),
+                                                                           float(layer.height),
+                                                                           float(preferred_a),
+                                                                           float(preferred_b),
+                                                                           float(base_height)) :
+                            channel_id;
+                        const size_t effective_idx =
+                            effective_filament_id >= 1 && effective_filament_id <= num_extruders ?
+                                size_t(effective_filament_id - 1) :
+                                size_t(channel_idx - 1);
+                        ByExtruder &region = by_extruder[effective_idx];
+                        append(region.expolygons, std::move(state_masks));
+                        if (! region.expolygons.empty()) {
+                            region.bbox = get_extents(region.expolygons);
+                            layer_split = true;
+                        }
+
+                        if (!region.expolygons.empty() &&
+                            bias_mode_enabled &&
+                            mixed_mgr.is_mixed(channel_id, num_physical) &&
+                            std::abs(mixed_mgr.component_surface_offset(channel_id,
+                                                                       num_physical,
+                                                                       local_layer_index,
+                                                                       float(layer.print_z),
+                                                                       float(layer.height))) > EPSILON)
+                            layer_has_component_bias = true;
+                    }
                 }
 
                 if (!layer_split)

@@ -15198,3 +15198,34 @@ msgstr "当前混色子层高超出喷嘴物理极限，请调整配置层高或
 
 msgid "Same filament colors cannot produce new colors. Please select different colors for mixing."
 msgstr "参与混色耗材颜色一致，无法混出更多颜色，请选用不同颜色耗材参与混色"
+
+msgid "Full domain"
+msgstr "全域生效"
+
+msgid "Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."
+msgstr "包含无效字符。仅允许输入数字、方括号（[ 和]）和逗号（,）。"
+
+msgid "Unrecognized pattern format. Please check the pattern syntax."
+msgstr "无法识别的输入格式，请检查输入内容。"
+
+msgid "Leading or trailing commas are not allowed."
+msgstr "不允许在开头或末尾使用逗号。"
+
+msgid "Allowed Input: Only digits, square brackets ([ and ]), and commas (,)."
+msgstr "允许的输入：仅限数字、方括号（[ 和 ]）和逗号（,）。"
+
+msgid "Append filament %d to pattern"
+msgstr "将耗材 %d 序号输入到表单"
+
+msgid "This filament is used in the following mixed filament configurations:\n\n"
+msgstr "该耗材正在以下混色耗材配置中使用：\n\n"
+
+msgid "• Mixed Filament %d\n"
+msgstr "• 混色耗材 %d\n"
+
+msgid "\nDeleting this filament will invalidate these mixed filament configurations. Continue?"
+msgstr "\n删除该耗材将导致这些混色耗材配置失效。是否继续？"
+
+msgid "\nMerging this filament will invalidate these mixed filament configurations. Continue?"
+msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续？"
+

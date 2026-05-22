@@ -4348,7 +4348,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("dithering_local_z_whole_objects", coBool);
-    def->label = L("Mixed color layer thinner");
+    def->label = L("Full domain");
     def->category = L("Others");
     def->tooltip = L("Experimental. Apply Local-Z thinning across whole mixed-color regions instead of limiting the effect strictly to painted mixed masks.\n\n"
                      "Only available when Subdivide Mix Layer is enabled.");

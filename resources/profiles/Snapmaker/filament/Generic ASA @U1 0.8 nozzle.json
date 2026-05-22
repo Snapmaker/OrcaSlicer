@@ -1,42 +1,24 @@
 {
     "type": "filament",
-    "name": "Generic PC",
-    "inherits": "Generic PC @base",
+    "name": "Generic ASA @U1 0.8 nozzle",
+    "inherits": "Generic ASA @base",
     "from": "system",
-    "setting_id": "GFSC99",
+    "setting_id": "GFSB98",
     "instantiation": "true",
     "compatible_printers": [
-        "Snapmaker U1 (0.4 nozzle)"
-    ],
-    "eng_plate_temp": [
-        "100"
-    ],
-    "eng_plate_temp_initial_layer": [
-        "100"
-    ],
-    "hot_plate_temp": [
-        "100"
-    ],
-    "hot_plate_temp_initial_layer": [
-        "100"
-    ],
-    "textured_plate_temp": [
-        "100"
-    ],
-    "textured_plate_temp_initial_layer": [
-        "100"
+        "Snapmaker U1 (0.8 nozzle)"
     ],
     "enable_pressure_advance": [
         "0"
     ],
     "filament_end_gcode": [
-        "\n"
+        ""
     ],
     "filament_multitool_ramming": [
         "1"
     ],
     "filament_multitool_ramming_flow": [
-        "16"
+        "12"
     ],
     "filament_multitool_ramming_volume": [
         "0.5"
@@ -49,9 +31,6 @@
     ],
     "filament_vendor": [
         "Generic"
-    ],
-    "nozzle_temperature_initial_layer": [
-        "280"
     ],
     "filament_is_high_temperature": ["1"]
 }

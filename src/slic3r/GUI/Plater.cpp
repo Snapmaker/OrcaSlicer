@@ -5639,6 +5639,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
             mfs.back().gradient_start              = r.gradient_start;
             mfs.back().gradient_end                = r.gradient_end;
             mfs.back().display_color             = r.display_color;
+            mfs.back().ui_mode                       = r.ui_mode;
             mfs.back().custom                  = true;
         }
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -5890,6 +5891,7 @@ void Sidebar::update_color_mix_panel()
             mfs2[i].gradient_start             = r.gradient_start;
             mfs2[i].gradient_end               = r.gradient_end;
             mfs2[i].display_color               = r.display_color;
+            mfs2[i].ui_mode                       = r.ui_mode;
             mfs2[i].custom                      = true;
             if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
@@ -5937,6 +5939,7 @@ void Sidebar::update_color_mix_panel()
                 mfs2[i].gradient_enabled           = r.gradient_enabled;
                 mfs2[i].gradient_start             = r.gradient_start;
                 mfs2[i].gradient_end               = r.gradient_end;
+                mfs2[i].ui_mode                       = r.ui_mode;
                 mfs2[i].custom                      = true;
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();

@@ -2583,7 +2583,14 @@ void MixedFilamentDialog::build_swatch_grid()
     int n = (int)m_filament_colours.size();
     if (n < 2) return;
 
+    // Limit recommended swatches to the first 6 physical filaments.
+    constexpr int kMaxSwatchFilaments = 6;
+
     bool is_ratio_3 = (m_current_mode == MODE_RATIO) && ((int)m_filament_rows.size() == 3);
+    if(is_ratio_3) {
+        // In 3-row ratio mode, we can show triple combinations, but limit to the first 6 filaments to avoid combinatorial explosion.
+        n = std::min(n, kMaxSwatchFilaments);
+    }
 
     // Build candidates using the same preset logic as match mode.
     // For ratio mode with 2 rows: pair candidates at 25/50/75.

@@ -47,7 +47,7 @@ private:
     void sync_rows_to_result();
     void resize_gradient_ids(int target_count);
     void update_compatibility_warning();
-    wxString get_low_ratio_warning_msg();
+    wxString get_ratio_warning_msg();
     void display_warning(const wxString& msg);
     void set_error(const wxString& msg);
     std::string compute_preview_color();

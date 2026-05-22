@@ -2199,8 +2199,8 @@ void MixedFilamentDialog::update_compatibility_warning()
         } else {
             set_error(_L("Different filament types cannot be mixed. Please correct the settings."));
         }
-    } else if (wxString low_msg = get_low_ratio_warning_msg(); !low_msg.empty()) {
-        display_warning(low_msg);
+    } else if (wxString warning_msg = get_ratio_warning_msg(); !warning_msg.empty()) {
+        display_warning(warning_msg);
         if (m_btn_confirm) m_btn_confirm->Enable();
     } else if (m_current_mode == MODE_CYCLE && fids.size() == 1) {
         display_warning(_L("Same filament colors cannot produce new colors. Please select different colors for mixing."));
@@ -2239,9 +2239,9 @@ void MixedFilamentDialog::set_error(const wxString& msg)
     Layout();
 }
 
-wxString MixedFilamentDialog::get_low_ratio_warning_msg()
+wxString MixedFilamentDialog::get_ratio_warning_msg()
 {
-    static constexpr double LOW_RATIO_THRESHOLD = 0.25;
+    static constexpr double HIGH_RATIO_THRESHOLD = 0.667;
 
     if (m_filament_rows.empty() || m_filament_colours.empty())
         return wxEmptyString;
@@ -2313,12 +2313,19 @@ wxString MixedFilamentDialog::get_low_ratio_warning_msg()
     if (total <= 0.0)
         return wxEmptyString;
 
+    double max_ratio = 0.0;
+    int    max_idx   = -1;
     for (int i = 0; i < num_physical; ++i) {
         double ratio = ratios[i] / total;
-        if (ratio > 0.0 && ratio < LOW_RATIO_THRESHOLD) {
-            return wxString::Format(
-                _L("Filament %d ratio too low. Mix may be affected."), i + 1);
+        if (ratio > max_ratio) {
+            max_ratio = ratio;
+            max_idx   = i;
         }
+    }
+    if (max_idx >= 0 && max_ratio > HIGH_RATIO_THRESHOLD) {
+        return wxString::Format(
+            _L("Filament %d ratio is too high (%.0f%%). Mix result may be dominated by a single color."),
+            max_idx + 1, max_ratio * 100.0);
     }
 
     return wxEmptyString;

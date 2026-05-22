@@ -2566,6 +2566,7 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
         optgroup->append_single_option_line("dithering_local_z_mode");
+        optgroup->append_single_option_line("dithering_local_z_whole_objects");
 
     page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");

@@ -4454,9 +4454,13 @@ void GCodeProcessor::run_post_process()
                     PrintEstimatedStatistics::ETimeMode mode    = static_cast<PrintEstimatedStatistics::ETimeMode>(i);
                     if (mode == PrintEstimatedStatistics::ETimeMode::Normal || machine.enabled) {
                         char buf[128];
+                        // First layer actual print time = layer 0 total time - start gcode (prepare) time
+                        float first_layer_time = 0.0f;
+                        if (!machine.layers_time.empty())
+                            first_layer_time = std::max(0.0f, machine.layers_time[0] - machine.prepare_time);
                         sprintf(buf, "; estimated first layer printing time (%s mode) = %s\n",
                                 (mode == PrintEstimatedStatistics::ETimeMode::Normal) ? "normal" : "silent",
-                                get_time_dhms(machine.prepare_time).c_str());
+                                get_time_dhms(first_layer_time).c_str());
                         export_lines.append_line(buf);
                         processed = true;
                     }

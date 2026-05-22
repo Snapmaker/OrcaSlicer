@@ -64,7 +64,8 @@ void output_slice_statistics(const SliceOutputStats& stats,
 
     // ---- Aggregate totals for print_info_total ----
     double total_print_time = 0;
-    double total_weight = 0;
+    double total_weight  = 0;
+    double total_length  = 0;
     std::vector<ordered_json> total_filaments;
     {
         // Deduplicate by (type, color), summing used_g across plates
@@ -73,7 +74,8 @@ void output_slice_statistics(const SliceOutputStats& stats,
         for (const auto& plate : stats.plates) {
             if (plate.success) {
                 total_print_time += plate.print_time;
-                total_weight += plate.total_filament_g;
+                total_weight    += plate.total_filament_g;
+                total_length    += plate.total_filament_m;
                 for (const auto& detail : plate.filament_details) {
                     auto it = std::find_if(agg.begin(), agg.end(),
                         [&](const AggFilament& a) { return a.type == detail.type && a.color == detail.color; });
@@ -103,6 +105,7 @@ void output_slice_statistics(const SliceOutputStats& stats,
     print_info["print_time_seconds"]   = round2(total_print_time);
     print_info["print_time_formatted"] = format_time_hhmmss(static_cast<float>(total_print_time));
     print_info["total_weight_g"]       = round2(total_weight);
+    print_info["total_length_mm"]      = round2(total_length);
     print_info["plate_count"]          = static_cast<int>(stats.plates.size());
     print_info["filaments"]            = total_filaments;
     root["print_info_total"] = std::move(print_info);

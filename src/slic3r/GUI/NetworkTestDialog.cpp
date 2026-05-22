@@ -503,6 +503,11 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
         self->update_status(-1, info);
 	}).perform_sync();
 
+	if (m_closing.load()) {
+		m_in_testing[job].store(false);
+		return;
+	}
+
 	if (result == 0) {
         update_status(job, "test " + name + " ok");
     }
@@ -991,6 +996,11 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 		update_status(job, "test " + name + " failed ([Level 5] - unknown error)");
 	}
 
+	if (m_closing.load()) {
+		m_in_testing[job].store(false);
+		return;
+	}
+
 	update_status(-1, "========================================");
 	update_status(-1, ""); // 测试结束后的空行
 	m_in_testing[job].store(false);
@@ -1235,11 +1245,11 @@ void NetworkTestDialog::cleanup_threads()
 	for (int i = 0; i < TEST_JOB_MAX; i++) {
 		if (test_job[i] != nullptr) {
 			if (test_job[i]->joinable()) {
-				// Try to join with longer timeout (1000ms) to reduce chance of detach
-				// Threads should check m_closing and exit promptly
-				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(1000))) {
-					// Thread didn't finish in time, detach it to avoid blocking
-					// The thread will check m_closing and should exit safely
+				// HTTP timeout is 10 seconds; use 15 seconds to ensure
+				// threads have time to finish and avoid detaching them.
+				// Detached threads accessing stack-allocated dialog state
+				// after destruction is a use-after-free crash.
+				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(15000))) {
 					test_job[i]->detach();
 					BOOST_LOG_TRIVIAL(warning) << "Thread " << i << " didn't finish in time, detached";
 				}
@@ -1252,9 +1262,8 @@ void NetworkTestDialog::cleanup_threads()
 	// Clean up sequence job thread
 	if (m_sequence_job != nullptr) {
 		if (m_sequence_job->joinable()) {
-			// Try to join with longer timeout (1000ms)
-			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(1000))) {
-				// Thread didn't finish in time, detach it
+			// Sequence job runs multiple tests sequentially; give it more time.
+			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(30000))) {
 				m_sequence_job->detach();
 				BOOST_LOG_TRIVIAL(warning) << "Sequence job thread didn't finish in time, detached";
 			}

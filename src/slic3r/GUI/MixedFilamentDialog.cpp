@@ -563,7 +563,7 @@ void MixedFilamentDialog::build_ui()
             update_preview();
             update_compatibility_warning();
         });
-        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        card_title_row->Add(m_btn_swap_gradient_dir, 0, wxALIGN_CENTER_VERTICAL);
 
         // Remove filament button
         m_btn_remove_filament = new ScalableButton(m_filament_card, wxID_ANY, "icon_minus");

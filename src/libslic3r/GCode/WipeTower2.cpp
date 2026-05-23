@@ -1983,7 +1983,7 @@ WipeTower::ToolChangeResult WipeTower2::only_generate_out_wall()
     writer.set_extrusion_flow(m_extrusion_flow)
         .set_z(m_z_pos)
         .set_initial_tool(m_current_tool)
-        .set_y_shift(m_y_shift - (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f));
+        .set_y_shift(0.f);
 
     bool  first_layer = is_first_layer();
     float feedrate    = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
@@ -1994,12 +1994,13 @@ WipeTower::ToolChangeResult WipeTower2::only_generate_out_wall()
                                          m_wipe_tower_depth - fill_box_y);
 
     writer.set_initial_position((m_left_to_right ? fill_box.ru : fill_box.lu),
-                                m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
+                                m_wipe_tower_width, m_wipe_tower_depth, 0.f);
 
     writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_Start) + "\n");
 
     WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, m_wipe_tower_depth);
     generate_support_rib_wall(writer, wt_box, feedrate, first_layer, m_wall_type == (int) wtwRib, true, false);
+    writer.travel(wt_box.ld.x(), wt_box.ld.y());
 
     writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");
 
@@ -2448,12 +2449,21 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
             // will be called at the very beginning. That's the last possibility
             // where a nonsoluble tool can be.
             if (m_enable_timelapse_print) {
+                float saved_y_shift = m_y_shift;
+                m_y_shift           = 0.f;
                 timelapse_wall = only_generate_out_wall();
+                m_y_shift = saved_y_shift;
             }
             finish_layer_tcr = finish_layer();
         }
 
         for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
+            if (i == 0 && m_enable_timelapse_print) {
+                float saved_y_shift = m_y_shift;
+                m_y_shift           = 0.f;
+                timelapse_wall = only_generate_out_wall();
+                m_y_shift = saved_y_shift;
+            }
             layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
             if (i == idx) // finish_layer will be called after this toolchange
                 finish_layer_tcr = finish_layer();

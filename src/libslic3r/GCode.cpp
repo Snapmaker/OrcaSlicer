@@ -959,14 +959,6 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
                         wipe_tower_z = m_last_wipe_tower_print_z + m_tool_changes[m_layer_idx].front().layer_height;
                 }
 
-                // Emit timelapse outer wall before the main toolchange
-                if (m_enable_timelapse_print && m_is_first_print) {
-                    gcode += append_tcr2(gcodegen, m_tool_changes[m_layer_idx][m_tool_change_idx],
-                                         m_tool_changes[m_layer_idx][m_tool_change_idx].new_tool, wipe_tower_z);
-                    m_tool_change_idx++;
-                    m_is_first_print = false;
-                }
-
                 if (!ignore_sparse) {
                     gcode += append_tcr2(gcodegen, m_tool_changes[m_layer_idx][m_tool_change_idx++], extruder_id, wipe_tower_z);
                     m_last_wipe_tower_print_z = wipe_tower_z;
@@ -986,12 +978,6 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
                 wipe_tower_z = m_last_wipe_tower_print_z + m_tool_changes[m_layer_idx].front().layer_height;
         }
 
-        if (m_enable_timelapse_print && m_is_first_print) {
-            gcode += append_tcr(gcodegen, m_tool_changes[m_layer_idx][0], m_tool_changes[m_layer_idx][0].new_tool, wipe_tower_z);
-            m_tool_change_idx++;
-            m_is_first_print = false;
-        }
-
         if (gcodegen.writer().need_toolchange(extruder_id) || finish_layer) {
             if (!(size_t(m_tool_change_idx) < m_tool_changes[m_layer_idx].size()))
                 throw Slic3r::RuntimeError("Wipe tower generation failed, possibly due to empty first layer.");
@@ -1002,6 +988,38 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
             }
         }
     }
+
+    return gcode;
+}
+
+std::string WipeTowerIntegration::emit_timelapse_wall(GCode& gcodegen)
+{
+    std::string gcode;
+    if (!m_enable_timelapse_print || !m_is_first_print)
+        return gcode;
+
+    if (m_layer_idx >= (int)m_tool_changes.size())
+        return gcode;
+    if (!(size_t(m_tool_change_idx) < m_tool_changes[m_layer_idx].size()))
+        return gcode;
+
+    double wipe_tower_z = -1;
+    if (gcodegen.config().wipe_tower_no_sparse_layers.value) {
+        wipe_tower_z = m_last_wipe_tower_print_z;
+        bool ignore_sparse = (m_tool_changes[m_layer_idx].size() == 1 &&
+                              m_tool_changes[m_layer_idx].front().initial_tool == m_tool_changes[m_layer_idx].front().new_tool &&
+                              m_layer_idx != 0);
+        if (m_tool_change_idx == 0 && !ignore_sparse)
+            wipe_tower_z = m_last_wipe_tower_print_z + m_tool_changes[m_layer_idx].front().layer_height;
+    }
+
+    gcode += gcodegen.is_BBL_Printer()
+        ? append_tcr(gcodegen, m_tool_changes[m_layer_idx][m_tool_change_idx],
+                     m_tool_changes[m_layer_idx][m_tool_change_idx].new_tool, wipe_tower_z)
+        : append_tcr2(gcodegen, m_tool_changes[m_layer_idx][m_tool_change_idx],
+                      m_tool_changes[m_layer_idx][m_tool_change_idx].new_tool, wipe_tower_z);
+    m_tool_change_idx++;
+    m_is_first_print = false;
 
     return gcode;
 }
@@ -4264,6 +4282,24 @@ LayerResult GCode::process_layer(const Print& print,
                     }
                     has_insert_timelapse_gcode = true;
                 }
+                // Smooth timelapse: emit timelapse wall, take photo, then do tool change
+                if (m_wipe_tower->enable_timelapse_print() && m_wipe_tower->is_first_print()) {
+                    std::string wall_gcode = m_wipe_tower->emit_timelapse_wall(*this);
+                    if (!wall_gcode.empty()) {
+                        gcode += wall_gcode;
+                        std::string timepals_gcode = insert_timelapse_gcode();
+                        if (timepals_gcode.empty())
+                            timepals_gcode = "TIMELAPSE_TAKE_FRAME\n";
+                        gcode += timepals_gcode;
+                        m_writer.set_current_position_clear(false);
+                        double temp_z_after_timepals_gcode;
+                        if (GCodeProcessor::get_last_z_from_gcode(timepals_gcode, temp_z_after_timepals_gcode)) {
+                            Vec3d pos = m_writer.get_position();
+                            pos(2)    = temp_z_after_timepals_gcode;
+                            m_writer.set_position(pos);
+                        }
+                    }
+                }
                 gcode_toolchange = m_wipe_tower->tool_change(*this, extruder_id, extruder_id == layer_tools.extruders.back());
             }
         } else {
@@ -4274,20 +4310,6 @@ LayerResult GCode::process_layer(const Print& print,
             result.spiral_vase_enable = false;
         }
         gcode += std::move(gcode_toolchange);
-
-        if (m_wipe_tower && m_wipe_tower->enable_timelapse_print() && !gcode_toolchange.empty()) {
-            std::string timepals_gcode = insert_timelapse_gcode();
-            if (timepals_gcode.empty())
-                timepals_gcode = "TIMELAPSE_TAKE_FRAME\n";
-            gcode += timepals_gcode;
-            m_writer.set_current_position_clear(false);
-            double temp_z_after_timepals_gcode;
-            if (GCodeProcessor::get_last_z_from_gcode(timepals_gcode, temp_z_after_timepals_gcode)) {
-                Vec3d pos = m_writer.get_position();
-                pos(2)    = temp_z_after_timepals_gcode;
-                m_writer.set_position(pos);
-            }
-        }
 
         // let analyzer tag generator aware of a role type change
         if (layer_tools.has_wipe_tower && m_wipe_tower)

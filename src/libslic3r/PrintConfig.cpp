@@ -4355,6 +4355,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("dithering_local_z_infill", coBool);
+    def->label = L("Apply subdivision to infill");
+    def->category = L("Material");
+    def->tooltip = L("Experimental. When Subdivide Mix Layer is enabled, also apply the same subdivision to infill inside mixed-color areas.\n\n"
+                     "This is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\n"
+                     "It can improve internal color mixing, but may add toolchanges and affect infill behavior.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("dithering_local_z_direct_multicolor", coBool);
     def->label = L("Use direct multicolor Local-Z solver");
     def->category = L("Others");

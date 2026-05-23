@@ -96,8 +96,8 @@ static bool local_z_segments_exist(Polylines segments)
     return false;
 }
 
-static bool extrusion_collection_has_local_z_perimeter_segment(const ExtrusionEntityCollection &source,
-                                                               const ExPolygons               &include_masks)
+static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollection &source,
+                                                     const ExPolygons               &include_masks)
 {
     if (source.entities.empty() || include_masks.empty())
         return false;
@@ -123,7 +123,7 @@ static bool extrusion_collection_has_local_z_perimeter_segment(const ExtrusionEn
     return false;
 }
 
-static bool layer_has_local_z_perimeters(const Layer &layer, const ExPolygons &pass_masks)
+static bool layer_has_local_z_extrusions(const Layer &layer, const ExPolygons &pass_masks, bool include_infill)
 {
     if (pass_masks.empty())
         return false;
@@ -133,7 +133,16 @@ static bool layer_has_local_z_perimeters(const Layer &layer, const ExPolygons &p
             const auto *extrusions = dynamic_cast<const ExtrusionEntityCollection*>(entity);
             if (extrusions == nullptr)
                 continue;
-            if (extrusion_collection_has_local_z_perimeter_segment(*extrusions, pass_masks))
+            if (extrusion_collection_has_local_z_segment(*extrusions, pass_masks))
+                return true;
+        }
+        if (!include_infill)
+            continue;
+        for (const ExtrusionEntity *entity : layer_region->fills.entities) {
+            const auto *extrusions = dynamic_cast<const ExtrusionEntityCollection*>(entity);
+            if (extrusions == nullptr)
+                continue;
+            if (extrusion_collection_has_local_z_segment(*extrusions, pass_masks))
                 return true;
         }
     }
@@ -168,6 +177,7 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
 {
     std::vector<LocalZWipeTowerPassRef> pass_refs;
     const bool  local_z_whole_objects_enabled = print.full_print_config().opt_bool("dithering_local_z_whole_objects");
+    const bool  local_z_infill_enabled        = print.full_print_config().opt_bool("dithering_local_z_infill");
     const float local_z_perimeter_mask_expand = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
 
     for (size_t layer_to_print_idx = 0; layer_to_print_idx < layers.size(); ++layer_to_print_idx) {
@@ -249,7 +259,7 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
                 const ExPolygons &pass_masks = compensated_masks_by_extruder[extruder_id];
                 if (pass_masks.empty())
                     continue;
-                if (layer_has_local_z_perimeters(*layer_to_print.object_layer, pass_masks))
+                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, pass_masks, local_z_infill_enabled))
                     pass_ref.extruders.push_back(unsigned(extruder_id));
             }
 
@@ -767,6 +777,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_fillet_wall"
             || opt_key == "wipe_tower_filament"
             || opt_key == "wiping_volumes_extruders"
+            || opt_key == "dithering_local_z_infill"
             || opt_key == "enable_filament_ramming"
             || opt_key == "purge_in_prime_tower"
             || opt_key == "z_offset"

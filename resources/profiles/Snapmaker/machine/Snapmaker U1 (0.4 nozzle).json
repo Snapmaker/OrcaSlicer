@@ -186,7 +186,8 @@
     "extruder_clearance_radius": "72.5",
     "machine_load_filament_time": "0",
     "machine_unload_filament_time": "0",
-    "before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\n;[layer_z]\nG92 E0\nTIMELAPSE_TAKE_FRAME\nDEFECT_DETECTION_DETECT",
+    "before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\n;[layer_z]\nG92 E0\nDEFECT_DETECTION_DETECT",
+    "time_lapse_gcode": "TIMELAPSE_TAKE_FRAME",
     "z_hop_when_prime": [
         "0",
         "0",

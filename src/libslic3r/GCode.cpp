@@ -959,6 +959,14 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
                         wipe_tower_z = m_last_wipe_tower_print_z + m_tool_changes[m_layer_idx].front().layer_height;
                 }
 
+                // Emit timelapse outer wall before the main toolchange
+                if (m_enable_timelapse_print && m_is_first_print) {
+                    gcode += append_tcr2(gcodegen, m_tool_changes[m_layer_idx][m_tool_change_idx],
+                                         m_tool_changes[m_layer_idx][m_tool_change_idx].new_tool, wipe_tower_z);
+                    m_tool_change_idx++;
+                    m_is_first_print = false;
+                }
+
                 if (!ignore_sparse) {
                     gcode += append_tcr2(gcodegen, m_tool_changes[m_layer_idx][m_tool_change_idx++], extruder_id, wipe_tower_z);
                     m_last_wipe_tower_print_z = wipe_tower_z;
@@ -3805,7 +3813,8 @@ LayerResult GCode::process_layer(const Print& print,
     m_object_layer_over_raft = false;
     if (is_BBL_Printer()) {
         if (printer_structure == PrinterStructure::psI3 && !need_insert_timelapse_gcode_for_traditional && !m_spiral_vase &&
-            print.config().print_sequence == PrintSequence::ByLayer) {
+            print.config().print_sequence == PrintSequence::ByLayer &&
+            (!m_wipe_tower || !m_wipe_tower->enable_timelapse_print())) {
             std::string timepals_gcode = insert_timelapse_gcode();
             if (!timepals_gcode.empty()) {
                 gcode += timepals_gcode;
@@ -3820,7 +3829,8 @@ LayerResult GCode::process_layer(const Print& print,
             }
         }
     } else {
-        if (!m_config.time_lapse_gcode.value.empty()) {
+        if (!m_config.time_lapse_gcode.value.empty() &&
+            (!m_wipe_tower || !m_wipe_tower->enable_timelapse_print())) {
             DynamicConfig config;
             config.set_key_value("layer_num", new ConfigOptionInt(m_layer_index));
             config.set_key_value("layer_z", new ConfigOptionFloat(print_z));
@@ -4264,6 +4274,20 @@ LayerResult GCode::process_layer(const Print& print,
             result.spiral_vase_enable = false;
         }
         gcode += std::move(gcode_toolchange);
+
+        if (m_wipe_tower && m_wipe_tower->enable_timelapse_print() && !gcode_toolchange.empty()) {
+            std::string timepals_gcode = insert_timelapse_gcode();
+            if (timepals_gcode.empty())
+                timepals_gcode = "TIMELAPSE_TAKE_FRAME\n";
+            gcode += timepals_gcode;
+            m_writer.set_current_position_clear(false);
+            double temp_z_after_timepals_gcode;
+            if (GCodeProcessor::get_last_z_from_gcode(timepals_gcode, temp_z_after_timepals_gcode)) {
+                Vec3d pos = m_writer.get_position();
+                pos(2)    = temp_z_after_timepals_gcode;
+                m_writer.set_position(pos);
+            }
+        }
 
         // let analyzer tag generator aware of a role type change
         if (layer_tools.has_wipe_tower && m_wipe_tower)

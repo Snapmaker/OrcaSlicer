@@ -123,6 +123,9 @@ public:
 	// Call this method only if layer_finished() is false.
 	WipeTower::ToolChangeResult finish_layer();
 
+		// Generate outer wall only (no infill) for timelapse parking at fixed depth.
+		WipeTower::ToolChangeResult only_generate_out_wall();
+
 	// Is the current layer finished?
 	bool 			 layer_finished() const {
         return m_current_layer_finished;

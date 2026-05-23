@@ -1975,6 +1975,41 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
     writer.change_analyzer_line_width(m_perimeter_width);
 }
 
+WipeTower::ToolChangeResult WipeTower2::only_generate_out_wall()
+{
+    size_t old_tool = m_current_tool;
+
+    WipeTowerWriter2 writer(m_layer_height, m_perimeter_width, m_gcode_flavor, m_filpar, m_enable_arc_fitting, m_printer_model);
+    writer.set_extrusion_flow(m_extrusion_flow)
+        .set_z(m_z_pos)
+        .set_initial_tool(m_current_tool)
+        .set_y_shift(m_y_shift - (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f));
+
+    bool  first_layer = is_first_layer();
+    float feedrate    = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
+
+    float fill_box_y = m_layer_info->toolchanges_depth() + m_perimeter_width;
+    WipeTower::box_coordinates fill_box(Vec2f(m_perimeter_width, fill_box_y),
+                                         m_wipe_tower_width - 2 * m_perimeter_width,
+                                         m_wipe_tower_depth - fill_box_y);
+
+    writer.set_initial_position((m_left_to_right ? fill_box.ru : fill_box.lu),
+                                m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
+
+    writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_Start) + "\n");
+
+    WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, m_wipe_tower_depth);
+    generate_support_rib_wall(writer, wt_box, feedrate, first_layer, m_wall_type == (int) wtwRib, true, false);
+
+    writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");
+
+    if (!m_no_sparse_layers)
+        if (m_current_tool < m_used_filament_length.size())
+            m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
+
+    return construct_tcr(writer, false, old_tool, true);
+}
+
 WipeTower::ToolChangeResult WipeTower2::finish_layer()
 {
     assert(!this->layer_finished());
@@ -2406,11 +2441,15 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 
         int                         idx = first_toolchange_to_nonsoluble(layer.tool_changes);
         WipeTower::ToolChangeResult finish_layer_tcr;
+        WipeTower::ToolChangeResult timelapse_wall;
 
         if (idx == -1) {
             // if there is no toolchange switching to non-soluble, finish layer
             // will be called at the very beginning. That's the last possibility
             // where a nonsoluble tool can be.
+            if (m_enable_timelapse_print) {
+                timelapse_wall = only_generate_out_wall();
+            }
             finish_layer_tcr = finish_layer();
         }
 
@@ -2429,6 +2468,10 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
                 layer_result[0].force_travel = true;
             } else
                 layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
+        }
+
+        if (m_enable_timelapse_print && !timelapse_wall.gcode.empty()) {
+            layer_result.insert(layer_result.begin(), std::move(timelapse_wall));
         }
 
         result.emplace_back(std::move(layer_result));

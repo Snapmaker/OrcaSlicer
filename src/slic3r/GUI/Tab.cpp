@@ -1528,6 +1528,18 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if(opt_key == "purge_in_prime_tower")
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
 
+    if (m_type == Preset::TYPE_PRINT &&
+        opt_key == "dithering_local_z_mode" &&
+        boost::any_cast<bool>(value) &&
+        m_config->has("dithering_local_z_infill") &&
+        !m_config->opt_bool("dithering_local_z_infill")) {
+        DynamicPrintConfig new_conf = *m_config;
+        new_conf.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+        m_config_manipulation.apply(m_config, &new_conf);
+
+        DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
+        project_cfg.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+    }
 
     if (opt_key == "enable_prime_tower") {
         auto timelapse_type = m_config->option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
@@ -1864,6 +1876,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
          opt_key == "dithering_z_step_size" ||
          opt_key == "dithering_local_z_mode" ||
          opt_key == "dithering_local_z_whole_objects" ||
+         opt_key == "dithering_local_z_infill" ||
          opt_key == "dithering_local_z_direct_multicolor" ||
          opt_key == "dithering_step_painted_zones_only" ||
          opt_key == "mixed_filament_definitions")) {
@@ -2567,6 +2580,7 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
         optgroup->append_single_option_line("dithering_local_z_mode");
         optgroup->append_single_option_line("dithering_local_z_whole_objects");
+        optgroup->append_single_option_line("dithering_local_z_infill");
 
     page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");

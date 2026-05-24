@@ -5089,6 +5089,7 @@ LayerResult GCode::process_layer(const Print& print,
     const float      local_z_perimeter_mask_expand    = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
     const float      local_z_base_mask_expand         = float(scale_(LOCAL_Z_BASE_MASK_EXPAND_MM));
     const bool       local_z_whole_objects_enabled    = print.full_print_config().opt_bool("dithering_local_z_whole_objects");
+    const bool       local_z_infill_enabled           = print.full_print_config().opt_bool("dithering_local_z_infill");
 
     struct LocalZPassBucket {
         const SubLayerPlan*                                   plan { nullptr };
@@ -5481,8 +5482,10 @@ LayerResult GCode::process_layer(const Print& print,
                             continue;
 
                         const ExtrusionEntityCollection* filtered_extrusions = extrusions;
-                        if (entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
-                            local_z_ctx != nullptr && !local_z_ctx->mixed_masks_union.empty()) {
+                        const bool local_z_entity_enabled =
+                            entity_type == ObjectByExtruder::Island::Region::PERIMETERS ||
+                            (local_z_infill_enabled && entity_type == ObjectByExtruder::Island::Region::INFILL);
+                        if (local_z_entity_enabled && local_z_ctx != nullptr && !local_z_ctx->mixed_masks_union.empty()) {
                             for (LocalZPassBucket& pass_bucket : local_z_ctx->pass_buckets) {
                                 if (pass_bucket.plan == nullptr)
                                     continue;
@@ -5527,8 +5530,7 @@ LayerResult GCode::process_layer(const Print& print,
                                         if (last || entity_matches_surface(island_idx, *clipped_ptr)) {
                                             if (islands[island_idx].by_region.empty())
                                                 islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
-                                            islands[island_idx].by_region[region.print_region_id()].append(
-                                                ObjectByExtruder::Island::Region::PERIMETERS, clipped_ptr, nullptr);
+                                            islands[island_idx].by_region[region.print_region_id()].append(entity_type, clipped_ptr, nullptr);
                                             break;
                                         }
                                     }
@@ -5805,9 +5807,9 @@ LayerResult GCode::process_layer(const Print& print,
     if (local_z_perimeter_phase_b_enabled) {
         BOOST_LOG_TRIVIAL(info) << "Local-Z phase-b prepared"
                                 << " print_z=" << print_z
-                                << " perimeter_passes=" << local_z_pass_refs.size();
+                                << " path_passes=" << local_z_pass_refs.size();
         if (local_z_pass_refs.empty()) {
-            BOOST_LOG_TRIVIAL(warning) << "Local-Z phase-b enabled but produced no perimeter passes"
+            BOOST_LOG_TRIVIAL(warning) << "Local-Z phase-b enabled but produced no path passes"
                                        << " print_z=" << print_z;
         }
     }
@@ -5825,8 +5827,8 @@ LayerResult GCode::process_layer(const Print& print,
         int  local_z_phase_b_active_extruder = (m_writer.extruder() != nullptr) ? int(m_writer.extruder()->id()) : -1;
         BOOST_LOG_TRIVIAL(info) << "Local-Z phase-b emitting"
                                 << " print_z=" << print_z
-                                << " perimeter_passes=" << local_z_pass_refs.size();
-        gcode += "; local-z phase-b perimeter passes begin\n";
+                                << " path_passes=" << local_z_pass_refs.size();
+        gcode += "; local-z phase-b path passes begin\n";
         auto emit_local_z_toolchange = [&](unsigned int extruder_id, double toolchange_print_z) {
             if (has_wipe_tower && m_wipe_tower) {
                 gcode += m_wipe_tower->tool_change(*this, int(extruder_id), false, true, print_z + m_config.z_offset.value);
@@ -5871,7 +5873,7 @@ LayerResult GCode::process_layer(const Print& print,
                                      << " extruder=" << local_extruder_id;
             if (std::abs(m_writer.get_position().z() - pass_z) > EPSILON) {
                 gcode += this->retract(false, false, LiftType::NormalLift);
-                gcode += m_writer.travel_to_z(pass_z, "Local-Z perimeter pass");
+                gcode += m_writer.travel_to_z(pass_z, "Local-Z path pass");
             }
             if (std::abs(m_writer.get_position().z() - pass_z) > EPSILON) {
                 BOOST_LOG_TRIVIAL(warning) << "Local-Z pass z restore"
@@ -5913,7 +5915,9 @@ LayerResult GCode::process_layer(const Print& print,
 
                 for (ObjectByExtruder::Island& island : instance_to_print.object_by_extruder.islands) {
                     gcode += this->extrude_perimeters(print, island.by_region, first_layer, false);
+                    gcode += this->extrude_infill(print, island.by_region, false);
                     gcode += this->extrude_perimeters(print, island.by_region, first_layer, true);
+                    gcode += this->extrude_infill(print, island.by_region, true);
                 }
                 m_config.reduce_crossing_wall.value = saved_reduce_crossing_wall;
             }
@@ -6192,7 +6196,7 @@ LayerResult GCode::process_layer(const Print& print,
             gcode += this->retract(false, false, LiftType::NormalLift);
             gcode += m_writer.travel_to_z(nominal_layer_z, "Local-Z return to nominal layer");
         }
-        gcode += "; local-z phase-b perimeter passes end\n";
+        gcode += "; local-z phase-b path passes end\n";
     }
 
     if (nominal_layer_start_extruder >= 0) {

@@ -10005,6 +10005,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "dithering_z_step_size",
                                     "dithering_local_z_mode",
                                     "dithering_local_z_whole_objects",
+                                    "dithering_local_z_infill",
                                     "dithering_local_z_direct_multicolor",
                                     "dithering_step_painted_zones_only"
                                 };

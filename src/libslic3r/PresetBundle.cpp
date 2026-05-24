@@ -3611,16 +3611,50 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
 
 void PresetBundle::update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
                                                   size_t old_num_filaments,
-                                                  size_t new_num_filaments)
+                                                  size_t new_num_filaments,
+                                                  size_t deleted_mixed_idx)
 {
-    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u);
+    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u, deleted_mixed_idx);
+}
+
+// Checks manual_pattern and gradient dependency.
+// When norm is non-empty, the pair check is skipped (pattern tokens already
+// cover dependency detection via physical_filament_from_token).
+// When norm is empty, the caller checks pair first, then calls this as supplement.
+static bool mixed_filament_depends_on_physical(const MixedFilament& mf, unsigned int physical_1based)
+{
+    // ---- 1. manual_pattern ----
+    const std::string norm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+    if (!norm.empty()) {
+        const auto groups = MixedFilamentManager::split_pattern_groups(norm);
+        for (const std::string& group : groups) {
+            const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, 0);
+            for (const std::string& token : tokens) {
+                if (MixedFilamentManager::physical_filament_from_token(token, mf, MixedFilamentManager::kMaxPhysicalFilaments) == physical_1based)
+                    return true;
+            }
+        }
+    }
+
+    // ---- 2. gradient components ----
+    // Only check when there is no manual_pattern; a pattern already resolves
+    // every token, so gradient IDs would be a false positive at worst.
+    if (norm.empty()) {
+        for (unsigned int comp_id : MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0)) {
+            if (comp_id == physical_1based)
+                return true;
+        }
+    }
+
+    return false;
 }
 
 void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
                                            size_t old_num_filaments,
                                            size_t new_num_filaments,
                                            bool deleting_filament,
-                                           unsigned int deleted_1based)
+                                           unsigned int deleted_1based,
+                                           size_t deleted_mixed_idx)
 {
     size_t old_enabled_mixed = 0;
     for (const auto &mf : old_mixed)
@@ -3634,10 +3668,10 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
         unsigned int mapped = 0;
         if (deleting_filament && old_id == deleted_1based) {
             mapped = 0;
+        } else if (deleting_filament && old_id > deleted_1based) {
+            mapped = old_id - 1;
         } else if (old_id <= unsigned(new_num_filaments)) {
             mapped = old_id;
-            if (deleting_filament && old_id > deleted_1based)
-                --mapped;
         }
         m_last_filament_id_remap[old_id] = mapped;
     }
@@ -3661,14 +3695,32 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
     size_t stable_id_hits = 0;
     size_t fallback_pair_hits = 0;
     size_t missing_hits = 0;
+    size_t deleted_mixed_skips = 0;
     unsigned int old_virtual_id = unsigned(old_num_filaments + 1);
-    for (const auto &mf : old_mixed) {
+    for (size_t midx = 0; midx < old_mixed.size(); ++midx) {
+        const auto &mf = old_mixed[midx];
         if (!mf.enabled)
             continue;
 
+        // When a mixed filament is explicitly deleted, leave its old virtual ID
+        // mapped to 0 (NONE) so paint on the deleted filament is removed, rather
+        // than being reassigned to a surviving mixed via pair-based fallback.
+        if (midx == deleted_mixed_idx) {
+            ++old_virtual_id;
+            ++deleted_mixed_skips;
+            continue;
+        }
+
+        const std::string norm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
         unsigned int a = mf.component_a;
         unsigned int b = mf.component_b;
-        if (a == deleted_1based || b == deleted_1based) {
+        if (norm.empty() && (a == deleted_1based || b == deleted_1based)) {
+            m_last_filament_id_remap[old_virtual_id] = 0;
+            ++missing_hits;
+        } else if (deleting_filament && mixed_filament_depends_on_physical(mf, deleted_1based)) {
+            // The mixed filament was removed by remove_physical_filament because
+            // its manual_pattern or gradient references the deleted physical,
+            // even though component_a/component_b do not.
             m_last_filament_id_remap[old_virtual_id] = 0;
             ++missing_hits;
         } else {
@@ -3682,7 +3734,7 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
                 }
             }
             if (!mapped_by_stable_id) {
-                if (deleting_filament) {
+                if (deleting_filament && norm.empty()) {
                     if (a > deleted_1based)
                         --a;
                     if (b > deleted_1based)
@@ -3727,6 +3779,7 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
                             << " new_physical=" << new_num_filaments
                             << " deleting=" << (deleting_filament ? 1 : 0)
                             << " deleted_id=" << deleted_1based
+                            << " deleted_mixed_skips=" << deleted_mixed_skips
                             << " old_mixed_enabled=" << old_enabled_mixed
                             << " new_mixed_enabled=" << this->mixed_filaments.enabled_count()
                             << " stable_id_hits=" << stable_id_hits

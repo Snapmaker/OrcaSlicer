@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <sstream>
 #include <iomanip>
@@ -693,14 +694,19 @@ std::vector<std::string> MixedFilamentManager::split_pattern_group_to_tokens(con
 
 unsigned int MixedFilamentManager::physical_filament_from_token(const std::string &token, const MixedFilament &mf, size_t num_physical)
 {
+    // Cycle-mode invariant: component_a≡1, component_b≡2 always
+    // (enforced by UI and MixedFilamentDialog::MODE_CYCLE).
+    // Under this invariant the symbolic tokens "1"/"2" are identity
+    // mappings — no ambiguity with direct physical IDs 1 and 2.
     if (token == "1")
-        return mf.component_a;
+        return (mf.component_a >= 1 && mf.component_a <= num_physical) ? mf.component_a : 0;
     if (token == "2")
-        return mf.component_b;
+        return (mf.component_b >= 1 && mf.component_b <= num_physical) ? mf.component_b : 0;
 
     char *end = nullptr;
+    errno = 0;
     unsigned long id = std::strtoul(token.c_str(), &end, 10);
-    if (end && *end == '\0' && id >= 1 && id <= num_physical)
+    if (errno != ERANGE && *end == '\0' && id >= 1 && id <= num_physical)
         return unsigned(id);
 
     return 0;
@@ -1005,8 +1011,9 @@ static unsigned int decode_manual_pattern_preview_token(const std::string &token
         return (component_b >= 1 && component_b <= num_physical) ? component_b : 0;
 
     char *end = nullptr;
+    errno = 0;
     unsigned long id = std::strtoul(token.c_str(), &end, 10);
-    if (end && *end == '\0' && id >= 1 && id <= num_physical)
+    if (errno != ERANGE && *end == '\0' && id >= 1 && id <= num_physical)
         return unsigned(id);
 
     return 0;
@@ -1702,33 +1709,118 @@ void MixedFilamentManager::remove_physical_filament(unsigned int deleted_filamen
     if (deleted_filament_id == 0 || m_mixed.empty())
         return;
 
+    // Check and adjust filaments following resolve() order:
+    //   1. manual_pattern (cycle mode tokens)
+    //   2. gradient_component_ids
+    //   3. component_a / component_b (pair)
+
     std::vector<MixedFilament> filtered;
     filtered.reserve(m_mixed.size());
     for (MixedFilament mf : m_mixed) {
-        // Check pair components
-        if (mf.component_a == deleted_filament_id || mf.component_b == deleted_filament_id)
-            continue;
 
-        // Check gradient components
-        bool uses_deleted_in_gradient = false;
-        for (unsigned int comp_id : decode_gradient_component_ids(mf.gradient_component_ids, 0)) {
-            if (comp_id == deleted_filament_id) {
-                uses_deleted_in_gradient = true;
-                break;
+        // ---- 1. manual_pattern ----
+        bool uses_deleted_in_pattern = false;
+        const std::string norm = normalize_manual_pattern(mf.manual_pattern);
+        if (!norm.empty()) {
+            const auto groups = split_pattern_groups(norm);
+            for (const std::string &group : groups) {
+                const auto tokens = tokenize_pattern_group(group);
+                for (const std::string &token : tokens) {
+                    if (physical_filament_from_token(token, mf, kMaxPhysicalFilaments) == deleted_filament_id) {
+                        uses_deleted_in_pattern = true;
+                        break;
+                    }
+                }
+                if (uses_deleted_in_pattern) break;
             }
         }
-        if (uses_deleted_in_gradient)
+        if (uses_deleted_in_pattern)
             continue;
 
-        // Adjust component IDs for remaining filaments
-        if (mf.component_a > deleted_filament_id)
-            --mf.component_a;
-        if (mf.component_b > deleted_filament_id)
-            --mf.component_b;
+        // ---- 2. gradient components ----
+        // Only check when there is no manual_pattern; a pattern already resolves
+        // every token, so the gradient check would be a false positive at worst.
+        if (norm.empty()) {
+            bool uses_deleted_in_gradient = false;
+            for (unsigned int comp_id : decode_gradient_component_ids(mf.gradient_component_ids, 0)) {
+                if (comp_id == deleted_filament_id) {
+                    uses_deleted_in_gradient = true;
+                    break;
+                }
+            }
+            if (uses_deleted_in_gradient)
+                continue;
+        }
+
+        // ---- 3. pair components ----
+        // Only check when there is no manual_pattern; a pattern already resolves
+        // every token through physical_filament_from_token (symbolic "1"/"2" or
+        // literal numeric), so the pair check would be redundant at best and a
+        // false positive at worst (component_a/b may hold unrelated default values).
+        if (norm.empty() && (mf.component_a == deleted_filament_id || mf.component_b == deleted_filament_id))
+            continue;
+
+        // ---- Adjust IDs for the surviving mixed filament ----
+
+        // Adjust manual_pattern
+        if (!norm.empty()) {
+            const auto groups = split_pattern_groups(norm);
+            std::string adjusted;
+            for (size_t gi = 0; gi < groups.size(); ++gi) {
+                if (gi > 0) adjusted += ',';
+                const auto tokens = tokenize_pattern_group(groups[gi]);
+                for (const std::string &token : tokens) {
+                    // All tokens are treated as literal physical-filament IDs
+                    // during adjustment. In cycle mode (component_a≡1, component_b≡2)
+                    // the "1"/"2" identity mapping means decrementing them produces
+                    // the correct result; for non-cycle patterns without "1"/"2",
+                    // component_a/b are irrelevant (pair adjustment is guarded by
+                    // norm.empty()).
+                    char *end = nullptr;
+                    errno = 0;
+                    unsigned long id = std::strtoul(token.c_str(), &end, 10);
+                    if (errno != ERANGE && *end == '\0' && id > deleted_filament_id) {
+                        --id;
+                        if (id >= 10) {
+                            adjusted += '[';
+                            adjusted += std::to_string(id);
+                            adjusted += ']';
+                        } else {
+                            adjusted += std::to_string(id);
+                        }
+                    } else {
+                        if (token.size() > 1) {
+                            adjusted += '[';
+                            adjusted += token;
+                            adjusted += ']';
+                        } else {
+                            adjusted += token;
+                        }
+                    }
+                }
+            }
+            mf.manual_pattern = adjusted;
+        }
+
+        // Adjust pair components (only when no pattern — same rationale as Step 3)
+        if (norm.empty()) {
+            if (mf.component_a > deleted_filament_id)
+                --mf.component_a;
+            if (mf.component_b > deleted_filament_id)
+                --mf.component_b;
+        }
 
         // Adjust gradient component IDs
         {
             auto decoded = decode_gradient_component_ids(mf.gradient_component_ids, 0);
+            if (!norm.empty()) {
+                // When manual_pattern is the active resolution source the
+                // gradient deletion check was skipped — remove stale IDs
+                // that reference the now-deleted physical filament.
+                decoded.erase(
+                    std::remove(decoded.begin(), decoded.end(), deleted_filament_id),
+                    decoded.end());
+            }
             for (unsigned int &id : decoded)
                 if (id > deleted_filament_id)
                     --id;
@@ -1825,6 +1917,9 @@ std::string MixedFilamentManager::normalize_manual_pattern(const std::string &pa
             if (num_str == "0")
                 return {};
 
+            // Compressing [1]→1 and [2]→2 is safe under the cycle-mode
+            // invariant (component_a≡1, component_b≡2) — the symbolic
+            // tokens are identity mappings, so no information is lost.
             if (num_str.size() == 1) {
                 normalized.push_back(num_str[0]);
             } else {
@@ -2381,19 +2476,37 @@ std::vector<size_t> MixedFilamentManager::mixed_filaments_using_physical(unsigne
         if (mf.deleted || !mf.enabled) continue;
         
         bool depends_on_physical = false;
-        
-        // Check pair components
-        if (mf.component_a == physical_filament_1based || mf.component_b == physical_filament_1based) {
-            depends_on_physical = true;
+
+        // Check manual_pattern (cycle mode tokens — resolve order #1)
+        const std::string norm = normalize_manual_pattern(mf.manual_pattern);
+        if (!norm.empty()) {
+            const auto groups = split_pattern_groups(norm);
+            for (const std::string &group : groups) {
+                const auto tokens = tokenize_pattern_group(group);
+                for (const std::string &token : tokens) {
+                    if (physical_filament_from_token(token, mf, kMaxPhysicalFilaments) == physical_filament_1based) {
+                        depends_on_physical = true;
+                        break;
+                    }
+                }
+                if (depends_on_physical) break;
+            }
         }
-        
-        // Check gradient components
-        if (!depends_on_physical) {
+
+        // Check gradient components (resolve order #2)
+        if (!depends_on_physical && norm.empty()) {
             for (unsigned int comp_id : decode_gradient_component_ids(mf.gradient_component_ids, 0)) {
                 if (comp_id == physical_filament_1based) {
                     depends_on_physical = true;
                     break;
                 }
+            }
+        }
+
+        // Check pair components (resolve order #3)
+        if (!depends_on_physical && norm.empty()) {
+            if (mf.component_a == physical_filament_1based || mf.component_b == physical_filament_1based) {
+                depends_on_physical = true;
             }
         }
         

@@ -14643,15 +14643,23 @@ bool Plater::check_filament_temp_mixing()
     if (used_slots.empty())
         return true;
 
-    // Use filament_is_high_temperature from each filament preset
-    auto* is_high_opt = full_cfg.option<ConfigOptionBools>("filament_is_high_temperature");
+    // Read filament_is_high_temperature directly from each filament preset's
+    // own config rather than through full_config(). full_config() builds a
+    // merged snapshot that may lag behind when called from Sidebar hooks
+    // (the edited preset config hasn't been committed yet).
+    PresetBundle* bundle = wxGetApp().preset_bundle;
     bool has_high = false, has_low = false;
     for (int slot : used_slots) {
-        if (is_high_opt && slot < (int)is_high_opt->values.size()) {
-            if (is_high_opt->get_at(slot))
-                has_high = true;
-            else
-                has_low = true;
+        if (slot < (int)bundle->filament_presets.size()) {
+            const Preset* preset = bundle->filaments.find_preset(
+                bundle->filament_presets[slot], true);
+            if (preset) {
+                bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
+                if (is_high)
+                    has_high = true;
+                else
+                    has_low = true;
+            }
         }
     }
     bool compatible = !(has_high && has_low);

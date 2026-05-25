@@ -825,6 +825,33 @@ std::vector<unsigned int> MixedFilamentManager::decode_gradient_component_ids(co
     return ids;
 }
 
+void MixedFilamentManager::expand_virtual_extruder_ids(std::vector<int> &ids, size_t num_physical) const
+{
+    if (num_physical == 0)
+        return;
+    std::vector<int> expanded;
+    expanded.reserve(ids.size() * 2);
+    for (int id : ids) {
+        if (id > static_cast<int>(num_physical)) {
+            const MixedFilament *mf = mixed_filament_from_id(
+                static_cast<unsigned int>(id), num_physical);
+            if (mf != nullptr && mf->enabled) {
+                expanded.push_back(static_cast<int>(mf->component_a));
+                expanded.push_back(static_cast<int>(mf->component_b));
+                auto gradient_ids = decode_gradient_component_ids(
+                    mf->gradient_component_ids, num_physical);
+                for (unsigned int gid : gradient_ids)
+                    expanded.push_back(static_cast<int>(gid));
+            } else {
+                expanded.push_back(id);
+            }
+        } else {
+            expanded.push_back(id);
+        }
+    }
+    ids = std::move(expanded);
+}
+
 static int normalize_distribution_mode_without_pointillism(int distribution_mode, const std::string &gradient_component_ids)
 {
     const int clamped_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::Simple));

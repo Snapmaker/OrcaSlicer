@@ -1372,6 +1372,16 @@ int PartPlate::picking_id_component(int idx) const
     return this->m_plate_index * GRABBER_COUNT + idx;
 }
 
+
+static void expand_plate_extruders(std::vector<int>& ids)
+{
+	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
+	if (num_physical > 0) {
+		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);
+		std::sort(ids.begin(), ids.end());
+		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+	}
+}
 std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 {
 	std::vector<int> plate_extruders;
@@ -1484,6 +1494,10 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 	std::sort(plate_extruders.begin(), plate_extruders.end());
 	auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
 	plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+
+		expand_plate_extruders(plate_extruders);
+
+
 	return plate_extruders;
 }
 
@@ -1615,6 +1629,7 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
     std::sort(plate_extruders.begin(), plate_extruders.end());
     auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
     plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+    expand_plate_extruders(plate_extruders);
     std::ostringstream extruders_list;
     for (size_t i = 0; i < plate_extruders.size(); ++i) {
         if (i != 0)
@@ -1670,6 +1685,8 @@ std::vector<int> PartPlate::get_extruders_without_support(bool conside_custom_gc
 	std::sort(plate_extruders.begin(), plate_extruders.end());
 	auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
 	plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+
+	expand_plate_extruders(plate_extruders);
 	return plate_extruders;
 }
 

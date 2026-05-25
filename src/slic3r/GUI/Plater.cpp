@@ -10031,13 +10031,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "mixed_filament_pointillism_pixel_size",
                                     "mixed_filament_pointillism_line_gap",
                                     "mixed_filament_component_bias_enabled",
-                                    "mixed_filament_surface_indentation",
-                                    "dithering_z_step_size",
-                                    "dithering_local_z_mode",
-                                    "dithering_local_z_whole_objects",
-                                    "dithering_local_z_infill",
-                                    "dithering_local_z_direct_multicolor",
-                                    "dithering_step_painted_zones_only"
+                                    "mixed_filament_surface_indentation"
                                 };
                                 preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);
                                 if (current_num_filaments != desired_physical_filaments) {

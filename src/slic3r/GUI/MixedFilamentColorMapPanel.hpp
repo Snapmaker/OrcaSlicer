@@ -4,6 +4,7 @@
 
 #include <wx/panel.h>
 #include <wx/dcbuffer.h>
+#include <wx/timer.h>
 
 #include <algorithm>
 #include <vector>

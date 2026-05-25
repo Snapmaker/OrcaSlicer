@@ -2739,3 +2739,54 @@ TEST_CASE("GRAD-DEL-03: stale gradient ID removed when manual_pattern survives d
     }
     CHECK(found);
 }
+
+// ============================================================================
+// [MixedFilament][Config] — Dirty-check and config-resolution regression tests
+// ============================================================================
+
+// Regression test for Preset.cpp skipped_in_dirty fix:
+// mixed_filament_definitions is auto-generated (PresetBundle.cpp) and must not
+// cause the print preset to be marked dirty after loading a 3MF.
+TEST_CASE("mixed_filament_definitions skipped in dirty check", "[MixedFilament][Config]")
+{
+    Preset edited(Preset::TYPE_PRINT, "test_edited", false);
+    Preset reference(Preset::TYPE_PRINT, "test_reference", false);
+
+    // Simulate what happens after 3MF load: mixed_filament_definitions exists
+    // in edited (from the loaded config) but not in the system preset reference.
+    edited.config.set_key_value("mixed_filament_definitions", new ConfigOptionString("0,1;1,0"));
+
+    CHECK_FALSE(PresetCollection::is_dirty(&edited, &reference));
+}
+
+// Sanity check: the dirty mechanism still catches real user-facing changes.
+// A key that is NOT in skipped_in_dirty, exists only in edited, and differs
+// from its ConfigDef default MUST trigger dirty.
+TEST_CASE("non-skipped missing key triggers dirty", "[MixedFilament][Config]")
+{
+    Preset edited(Preset::TYPE_PRINT, "test_edited", false);
+    Preset reference(Preset::TYPE_PRINT, "test_reference", false);
+
+    // layer_height default is 0.2; 0.3 differs from default
+    edited.config.set_key_value("layer_height", new ConfigOptionFloat(0.3));
+
+    CHECK(PresetCollection::is_dirty(&edited, &reference));
+}
+
+// Verify that dithering_local_z_mode properly participates in dirty tracking
+// through the real PresetCollection::is_dirty path (not a mock lambda).
+// When both edited and reference have the same value, the preset is clean.
+TEST_CASE("dithering_local_z_mode dirty tracking via is_dirty", "[MixedFilament][Config]")
+{
+    Preset edited(Preset::TYPE_PRINT, "test_edited", false);
+    Preset reference(Preset::TYPE_PRINT, "test_reference", false);
+
+    // Both have dlzm=true → should be clean (no difference)
+    edited.config.set_key_value("dithering_local_z_mode", new ConfigOptionBool(true));
+    reference.config.set_key_value("dithering_local_z_mode", new ConfigOptionBool(true));
+    CHECK_FALSE(PresetCollection::is_dirty(&edited, &reference));
+
+    // Change edited to false → should be dirty
+    edited.config.set_key_value("dithering_local_z_mode", new ConfigOptionBool(false));
+    CHECK(PresetCollection::is_dirty(&edited, &reference));
+}

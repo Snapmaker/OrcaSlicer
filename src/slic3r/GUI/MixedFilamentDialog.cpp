@@ -19,6 +19,7 @@
 #include <wx/sizer.h>
 #include <wx/bmpbuttn.h>
 #include <wx/clrpicker.h>
+#include <wx/colordlg.h>
 #include <wx/wrapsizer.h>
 
 #include <algorithm>

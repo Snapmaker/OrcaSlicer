@@ -1,4 +1,5 @@
 #include "NetworkTestDialog.hpp"
+#include "MainFrame.hpp"
 #include "I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -1150,30 +1151,58 @@ void NetworkTestDialog::log_section_header(const wxString& title)
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
-	if (m_closing.load()) return;
-	CallAfter([this, job_id, info]() {
-		if (m_closing.load()) return;
+	if (m_closing.load())
+		return;
 
-		BOOST_LOG_TRIVIAL(warning) << NETWORK_TEST_LOG_TAG " " << into_u8(info);
-
-		switch (job_id) {
-		case TEST_ORCA_JOB:   text_link_val->SetLabelText(info);      break;
-		case TEST_BING_JOB:   text_bing_val->SetLabelText(info);      break;
-		case TEST_LAN_MQTT_JOB:    text_lan_mqtt_val->SetLabelText(info);    break;
-		case TEST_CLOUD_MQTT_JOB:  text_cloud_mqtt_val->SetLabelText(info);  break;
-		case TEST_LOGIN_API_JOB:   text_login_api_val->SetLabelText(info);   break;
-		case TEST_UPLOAD_API_JOB:  text_upload_api_val->SetLabelText(info);  break;
+	switch (job_id)
+	{
+		case TEST_ORCA_JOB:
+		{
+			text_link_val->SetLabelText(info);
+			break;
 		}
-
-		std::time_t t = std::time(0);
-		std::tm* now_time = std::localtime(&t);
-		std::stringstream buf;
-		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
-		wxString log_line = wxString(buf.str()) + ": " + info + "\n";
-		if (!m_closing.load() && txt_log) {
-			txt_log->AppendText(log_line);
+		case TEST_BING_JOB:
+		{
+			text_bing_val->SetLabelText(info);
+			break;
 		}
-	});
+		case TEST_LAN_MQTT_JOB:
+		{
+			text_lan_mqtt_val->SetLabelText(info);
+			break;
+		}
+		case TEST_CLOUD_MQTT_JOB:
+		{
+			text_cloud_mqtt_val->SetLabelText(info);
+			break;
+		}
+		case TEST_LOGIN_API_JOB:
+		{
+			text_login_api_val->SetLabelText(info);
+			break;
+		}
+		case TEST_UPLOAD_API_JOB:
+		{
+			text_upload_api_val->SetLabelText(info);
+			break;
+		}
+		default:
+			break;
+	}
+
+	std::time_t t = std::time(0);
+	std::tm* now_time = std::localtime(&t);
+	std::stringstream buf;
+	buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
+	wxString log_line = wxString(buf.str()) + ": " + info + "\n";
+	if (!m_closing.load() && txt_log) {
+		txt_log->AppendText(log_line);
+	}
+
+	// Send log to MainFrame for file writing
+	auto log_evt = new wxCommandEvent(EVT_NETWORK_TEST_LOG_UPDATE);
+	log_evt->SetString(info);
+	wxQueueEvent(wxGetApp().mainframe, log_evt);
 }
 
 void NetworkTestDialog::cleanup_threads()

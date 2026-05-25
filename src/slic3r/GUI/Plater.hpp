@@ -507,6 +507,9 @@ public:
     bool update_filament_colors_in_full_config();
     void config_change_notification(const DynamicPrintConfig &config, const std::string& key);
     void on_config_change(const DynamicPrintConfig &config);
+    /// Check whether high-temperature and low-temperature filaments are mixed on the current plate.
+    /// Returns true if compatible (no mixing), false if mixing is detected and error notification is shown.
+    bool check_filament_temp_mixing();
     void force_filament_colors_update();
     void force_print_bed_update();
     // On activating the parent window.

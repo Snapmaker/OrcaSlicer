@@ -1527,13 +1527,17 @@ StringObjectException Print::check_multi_filament_valid(const Print& print)
 {
     auto print_config = print.config();
     std::vector<unsigned int> extruders = print.extruders();
-    std::vector<std::string> filament_types;
-    filament_types.reserve(extruders.size());
 
-    for (const auto& extruder_idx : extruders)
-        filament_types.push_back(print_config.filament_type.get_at(extruder_idx));
-
-    if (!check_multi_filaments_compatibility(filament_types))
+    bool has_high = false, has_low = false;
+    for (const auto& extruder_idx : extruders) {
+        if (extruder_idx < print_config.filament_is_high_temperature.size()) {
+            if (print_config.filament_is_high_temperature.get_at(extruder_idx))
+                has_high = true;
+            else
+                has_low = true;
+        }
+    }
+    if (has_high && has_low)
         return {L("Cannot print multiple filaments which have large difference of temperature together. Otherwise, the extruder and nozzle may be blocked or damaged during printing.")};
 
     return {std::string()};
@@ -1548,7 +1552,6 @@ boost::regex regex_g92e0 { "^[ \\t]*[gG]92[ \\t]*[eE](0(\\.0*)?|\\.0+)[ \\t]*(;.
 StringObjectException Print::validate(StringObjectException *warning, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
 {
     std::vector<unsigned int> extruders = this->extruders();
-    unsigned int nozzles = m_config.nozzle_diameter.size();
 
     if (m_objects.empty())
         return {std::string()};
@@ -1556,10 +1559,13 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     if (extruders.empty())
         return { L("No extrusions under current settings.") };
 
-    if (nozzles < 2 && extruders.size() > 1 && m_config.print_sequence != PrintSequence::ByObject) {
+    // High/low temperature filament mixing check — enforced at both the
+    // real-time UI level (Plater::check_filament_temp_mixing) and here in
+    // validate() so that the background process does not clear the error
+    // notification (see Plater::priv::update line ~6507).
+    if (extruders.size() > 1) {
         auto ret = check_multi_filament_valid(*this);
-        if (!ret.string.empty())
-        {
+        if (!ret.string.empty()) {
             ret.type = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
             return ret;
         }

@@ -2870,7 +2870,9 @@ void Sidebar::update_presets(Preset::Type preset_type)
         update_dynamic_filament_list();
 
         // Real-time high/low temperature filament mixing check after filament preset change
-        p->plater->check_filament_temp_mixing();
+        if (!p->plater->check_filament_temp_mixing()) {
+            p->plater->get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
+        }
 
         break;
     }
@@ -8452,7 +8454,6 @@ struct Plater::priv
     bool m_slice_all_only_has_gcode{ false };
 
     bool m_need_update{false};
-    int  m_filament_temp_check_serial{0};  // cancels stale CallAfter in check_filament_temp_mixing()
     //BBS: add popup object table logic
     //ObjectTableDialog* m_popup_table{ nullptr };
 
@@ -11740,6 +11741,15 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                 this->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
                 notification_manager->set_all_slicing_errors_gray(true);
                 notification_manager->close_notification_of_type(NotificationType::ValidateError);
+            } else {
+                // Filament mixing detected — show error and keep plate invalid
+                StringObjectException err;
+                err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
+                err.string = _u8L("Cannot print multiple filaments which have large difference of "
+                                  "temperature together. Otherwise, the extruder and nozzle may "
+                                  "be blocked or damaged during printing.");
+                notification_manager->push_validate_error_notification(err);
+                this->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
             }
             if (invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
                 return_state |= UPDATE_BACKGROUND_PROCESS_RESTART;
@@ -20072,40 +20082,41 @@ void Plater::config_change_notification(const DynamicPrintConfig &config, const 
 
 bool Plater::check_filament_temp_mixing()
 {
-    // Use full_config() from preset_bundle — it always contains all keys including
-    // filament_type. p->config is a plate-level config that may not have it.
-    const DynamicPrintConfig& cfg = wxGetApp().preset_bundle->full_config();
-    auto* ft_opt = cfg.option<ConfigOptionStrings>("filament_type");
+    const DynamicPrintConfig& full_cfg = wxGetApp().preset_bundle->full_config();
+    auto* ft_opt = full_cfg.option<ConfigOptionStrings>("filament_type");
     if (!ft_opt || ft_opt->values.empty())
         return true;
 
     int num_filaments = (int)ft_opt->values.size();
     std::set<int> used_slots;
 
-    // ---- 1-based keys: wall / sparse infill / solid infill ----
-    static const char* keys_1based[] = {
-        "wall_filament", "sparse_infill_filament", "solid_infill_filament"
+    // Helper: collect used filament slots from a single config
+    auto collect_from_cfg = [&](const DynamicPrintConfig& cfg) {
+        static const char* keys_1based[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+        for (auto key : keys_1based) {
+            auto* opt = cfg.option<ConfigOptionInt>(key);
+            if (opt && opt->value >= 1 && opt->value <= num_filaments)
+                used_slots.insert(opt->value - 1);
+        }
+        static const char* keys_0based[] = {"support_filament", "support_interface_filament", "wipe_tower_filament"};
+        for (auto key : keys_0based) {
+            auto* opt = cfg.option<ConfigOptionInt>(key);
+            if (opt && opt->value >= 1 && opt->value <= num_filaments)
+                used_slots.insert(opt->value - 1);
+        }
     };
-    for (auto key : keys_1based) {
-        auto* opt = cfg.option<ConfigOptionInt>(key);
-        if (!opt) opt = p->config->option<ConfigOptionInt>(key);
-        if (opt && opt->value >= 1 && opt->value <= num_filaments)
-            used_slots.insert(opt->value - 1);
+
+    // Collect from full_config first (global defaults for wall/infill/etc.)
+    collect_from_cfg(full_cfg);
+
+    // Collect from every plate's config (per-plate overrides)
+    for (int i = 0; i < p->partplate_list.get_plate_count(); ++i) {
+        PartPlate* plate = p->partplate_list.get_plate(i);
+        if (plate)
+            collect_from_cfg(*plate->config());
     }
 
-    // ---- 0-based keys: support / support interface / wipe tower ----
-    // Value 0 means "use current filament", does not introduce a new material type.
-    static const char* keys_0based[] = {
-        "support_filament", "support_interface_filament", "wipe_tower_filament"
-    };
-    for (auto key : keys_0based) {
-        auto* opt = cfg.option<ConfigOptionInt>(key);
-        if (!opt) opt = p->config->option<ConfigOptionInt>(key);
-        if (opt && opt->value >= 1 && opt->value <= num_filaments)
-            used_slots.insert(opt->value - 1);
-    }
-
-    // ---- ModelVolume painting extruders (multi-material coloring) ----
+    // Collect from ModelVolume painting extruders (multi-material coloring)
     for (const ModelObject* mo : wxGetApp().model().objects) {
         for (const ModelVolume* mv : mo->volumes) {
             for (int eid : mv->get_extruders()) {
@@ -20118,10 +20129,8 @@ bool Plater::check_filament_temp_mixing()
     if (used_slots.empty())
         return true;
 
-    // Use filament_is_high_temperature from each filament preset rather than
-    // the outdated filament_info.json. If any used slot is high-temp and any
-    // other is not, high/low mixing is detected.
-    auto* is_high_opt = cfg.option<ConfigOptionBools>("filament_is_high_temperature");
+    // Use filament_is_high_temperature from each filament preset
+    auto* is_high_opt = full_cfg.option<ConfigOptionBools>("filament_is_high_temperature");
     bool has_high = false, has_low = false;
     for (int slot : used_slots) {
         if (is_high_opt && slot < (int)is_high_opt->values.size()) {
@@ -20132,29 +20141,6 @@ bool Plater::check_filament_temp_mixing()
         }
     }
     bool compatible = !(has_high && has_low);
-
-    // Defer notification update to the next event loop iteration so that all
-    // config changes from the current event have settled. Without this, rapid
-    // successive calls from on_config_change + Sidebar::update_presets can
-    // race: one pushes an error, the next reads stale config → thinks it's
-    // compatible → immediately closes the notification.
-    // The serial counter cancels all but the last deferred update.
-    int serial = ++p->m_filament_temp_check_serial;
-    wxTheApp->CallAfter([this, compatible, serial] {
-        if (serial != p->m_filament_temp_check_serial) return; // stale
-        if (!compatible) {
-            StringObjectException err;
-            err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
-            err.string = _u8L("Cannot print multiple filaments which have large difference of "
-                              "temperature together. Otherwise, the extruder and nozzle may "
-                              "be blocked or damaged during printing.");
-            p->notification_manager->push_validate_error_notification(err);
-            p->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
-        } else {
-            p->notification_manager->close_notification_of_type(NotificationType::ValidateError);
-            p->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
-        }
-    });
 
     return compatible;
 }
@@ -20251,8 +20237,12 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         update_title_dirty_status();
     }
 
-    // Real-time high/low temperature filament mixing check
-    check_filament_temp_mixing();
+    // Real-time high/low temperature filament mixing check.
+    // Notification push/close is handled by priv::update()'s three-layer guard;
+    // here we only mark the plate invalid to disable the slice button early.
+    if (!check_filament_temp_mixing()) {
+        p->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+    }
 }
 
 void Plater::set_bed_shape() const

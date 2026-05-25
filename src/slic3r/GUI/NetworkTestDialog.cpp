@@ -22,9 +22,6 @@
 namespace Slic3r {
 namespace GUI {
 
-wxDECLARE_EVENT(EVT_UPDATE_RESULT, wxCommandEvent);
-
-wxDEFINE_EVENT(EVT_UPDATE_RESULT, wxCommandEvent);
 
 static wxString NA_STR = _L("N/A");
 
@@ -313,45 +310,6 @@ NetworkTestDialog::~NetworkTestDialog()
 
 void NetworkTestDialog::init_bind()
 {
-	Bind(EVT_UPDATE_RESULT, [weak_this = weak_this](wxCommandEvent& evt) {
-		auto self = weak_this.lock();
-		if (!self || self->m_closing.load()) return;
-
-		if (evt.GetInt() == TEST_ORCA_JOB) {
-			self->text_link_val->SetLabelText(evt.GetString());
-		} else if (evt.GetInt() == TEST_BING_JOB) {
-			self->text_bing_val->SetLabelText(evt.GetString());
-		} else if (evt.GetInt() == TEST_LAN_MQTT_JOB) {
-			self->text_lan_mqtt_val->SetLabelText(evt.GetString());
-		} else if (evt.GetInt() == TEST_CLOUD_MQTT_JOB) {
-			self->text_cloud_mqtt_val->SetLabelText(evt.GetString());
-		} else if (evt.GetInt() == TEST_LOGIN_API_JOB) {
-			self->text_login_api_val->SetLabelText(evt.GetString());
-		} else if (evt.GetInt() == TEST_UPLOAD_API_JOB) {
-			self->text_upload_api_val->SetLabelText(evt.GetString());
-		}
-
-		std::time_t t = std::time(0);
-		std::tm* now_time = std::localtime(&t);
-		std::stringstream buf;
-		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
-		wxString info = wxString(buf.str()) + ": " + evt.GetString() + "\n";
-		try {
-			if (!self->m_closing.load() && self->txt_log) {
-				self->txt_log->AppendText(info);
-			}
-		}
-		catch (std::exception& e) {
-			BOOST_LOG_TRIVIAL(error) << "Unkown Exception in print_log, exception=" << e.what();
-			return;
-		}
-		catch (...) {
-			BOOST_LOG_TRIVIAL(error) << "Unkown Exception in print_log";
-			return;
-		}
-		return;
-	});
-
 	Bind(wxEVT_CLOSE_WINDOW, &NetworkTestDialog::on_close, this);
 }
 
@@ -372,9 +330,6 @@ wxString NetworkTestDialog::get_dns_info()
 
 void NetworkTestDialog::start_all_job()
 {
-	if (m_all_testing.exchange(true))
-		return;
-
 	log_section_header(_L("Network test started"));
 
 	start_test_github_thread();
@@ -383,8 +338,6 @@ void NetworkTestDialog::start_all_job()
 	start_test_cloud_mqtt_thread();
 	start_test_login_api_thread();
 	start_test_upload_api_thread();
-
-	m_all_testing.store(false);
 }
 
 void NetworkTestDialog::start_all_job_sequence()
@@ -502,11 +455,6 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
         self->update_status(job, "test " + name + " failed");
         self->update_status(-1, info);
 	}).perform_sync();
-
-	if (m_closing.load()) {
-		m_in_testing[job].store(false);
-		return;
-	}
 
 	if (result == 0) {
         update_status(job, "test " + name + " ok");
@@ -865,11 +813,6 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 		update_status(-1, "--- Step 1: Network Layer Test (ICMP Ping) ---");
 		start_test_ping(server, job);
 
-		if (m_closing.load()) {
-			m_in_testing[job].store(false);
-			return;
-		}
-
 		// 添加步骤间空行
 		update_status(-1, "");
 
@@ -994,11 +937,6 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 		update_status(-1, "");
 		update_status(-1, "Connection Quality: [Level 5] Failed (unknown error)");
 		update_status(job, "test " + name + " failed ([Level 5] - unknown error)");
-	}
-
-	if (m_closing.load()) {
-		m_in_testing[job].store(false);
-		return;
 	}
 
 	update_status(-1, "========================================");
@@ -1212,31 +1150,30 @@ void NetworkTestDialog::log_section_header(const wxString& title)
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
-	// Sync to file log with a searchable tag so users can find
-	// network test results in the log file using "[NetworkTest]".
-	BOOST_LOG_TRIVIAL(warning) << NETWORK_TEST_LOG_TAG " " << into_u8(info);
-
-	// Early exit if dialog is closing - don't access any members
 	if (m_closing.load()) return;
-
-	// Use try-catch to protect against accessing destroyed dialog
-	try {
-		// Double check before creating event
+	CallAfter([this, job_id, info]() {
 		if (m_closing.load()) return;
 
-		auto evt = new wxCommandEvent(EVT_UPDATE_RESULT, this->GetId());
-		evt->SetString(info);
-		evt->SetInt(job_id);
+		BOOST_LOG_TRIVIAL(warning) << NETWORK_TEST_LOG_TAG " " << into_u8(info);
 
-		// Triple check before queuing - race condition window is very small
-		if (!m_closing.load()) {
-			wxQueueEvent(this, evt);
-		} else {
-			delete evt;
+		switch (job_id) {
+		case TEST_ORCA_JOB:   text_link_val->SetLabelText(info);      break;
+		case TEST_BING_JOB:   text_bing_val->SetLabelText(info);      break;
+		case TEST_LAN_MQTT_JOB:    text_lan_mqtt_val->SetLabelText(info);    break;
+		case TEST_CLOUD_MQTT_JOB:  text_cloud_mqtt_val->SetLabelText(info);  break;
+		case TEST_LOGIN_API_JOB:   text_login_api_val->SetLabelText(info);   break;
+		case TEST_UPLOAD_API_JOB:  text_upload_api_val->SetLabelText(info);  break;
 		}
-	} catch (...) {
-		// Silently ignore if dialog was destroyed during operation
-	}
+
+		std::time_t t = std::time(0);
+		std::tm* now_time = std::localtime(&t);
+		std::stringstream buf;
+		buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
+		wxString log_line = wxString(buf.str()) + ": " + info + "\n";
+		if (!m_closing.load() && txt_log) {
+			txt_log->AppendText(log_line);
+		}
+	});
 }
 
 void NetworkTestDialog::cleanup_threads()
@@ -1244,21 +1181,25 @@ void NetworkTestDialog::cleanup_threads()
 	// Clean up test job threads
 	for (int i = 0; i < TEST_JOB_MAX; i++) {
 		if (test_job[i] != nullptr) {
-			if (test_job[i]->joinable()) {
-				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(3000))) {
+				// Try to join with longer timeout (1000ms) to reduce chance of detach
+				// Threads should check m_closing and exit promptly
+				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(1000))) {
+					// Thread didn't finish in time, detach it to avoid blocking
+					// The thread will check m_closing and should exit safely
 					test_job[i]->detach();
 					BOOST_LOG_TRIVIAL(warning) << "Thread " << i << " didn't finish in time, detached";
 				}
 			}
 			delete test_job[i];
 			test_job[i] = nullptr;
-		}
 	}
 
 	// Clean up sequence job thread
 	if (m_sequence_job != nullptr) {
 		if (m_sequence_job->joinable()) {
-			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(5000))) {
+			// Try to join with longer timeout (1000ms)
+			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(1000))) {
+				// Thread didn't finish in time, detach it
 				m_sequence_job->detach();
 				BOOST_LOG_TRIVIAL(warning) << "Sequence job thread didn't finish in time, detached";
 			}

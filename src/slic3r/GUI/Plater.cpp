@@ -2871,7 +2871,16 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
         // Real-time high/low temperature filament mixing check after filament preset change
         if (!p->plater->check_filament_temp_mixing()) {
+            StringObjectException err;
+            err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
+            err.string = _u8L("Cannot print multiple filaments which have large difference of "
+                              "temperature together. Otherwise, the extruder and nozzle may "
+                              "be blocked or damaged during printing.");
+            p->plater->get_notification_manager()->push_validate_error_notification(err);
             p->plater->get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
+        } else {
+            p->plater->get_notification_manager()->close_notification_of_type(NotificationType::ValidateError);
+            p->plater->get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
         }
 
         break;
@@ -20237,11 +20246,18 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         update_title_dirty_status();
     }
 
-    // Real-time high/low temperature filament mixing check.
-    // Notification push/close is handled by priv::update()'s three-layer guard;
-    // here we only mark the plate invalid to disable the slice button early.
+    // Real-time high/low temperature filament mixing check
     if (!check_filament_temp_mixing()) {
+        StringObjectException err;
+        err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
+        err.string = _u8L("Cannot print multiple filaments which have large difference of "
+                          "temperature together. Otherwise, the extruder and nozzle may "
+                          "be blocked or damaged during printing.");
+        p->notification_manager->push_validate_error_notification(err);
         p->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+    } else {
+        p->notification_manager->close_notification_of_type(NotificationType::ValidateError);
+        p->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
     }
 }
 

@@ -329,13 +329,18 @@ if ! flatpak-builder \
     exit 1
 fi
 
-# Create bundle
+# Create bundle (app only; runtime comes from Flathub — matches GitHub flatpak-github-actions)
+FLATHUB_RUNTIME_REPO="https://flathub.org/repo/flathub.flatpakrepo"
 echo -e "${YELLOW}Creating Flatpak bundle...${NC}"
+echo -e "${BLUE}Using --runtime-repo (GNOME Platform from Flathub, not embedded in the .flatpak).${NC}"
+echo -e "${BLUE}Expected bundle size ~130-180MB after manifest strips static deps from /app.${NC}"
+echo -e "${BLUE}Users must have Flathub and org.gnome.Platform//49 installed (use -i or flatpak install).${NC}"
 if ! flatpak build-bundle \
+    --runtime-repo="$FLATHUB_RUNTIME_REPO" \
+    --arch="$ARCH" \
     "$BUILD_DIR/repo" \
     "$BUNDLE_NAME" \
-    io.github.Snapmaker.Snapmaker_Orca \
-    --arch="$ARCH"; then
+    io.github.Snapmaker.Snapmaker_Orca; then
     echo -e "${RED}Error: Failed to create Flatpak bundle${NC}"
     exit 1
 fi
@@ -349,7 +354,9 @@ if [[ "$FORCE_CLEAN" != true ]]; then
     echo -e "Build cache: ${GREEN}$CACHE_DIR${NC} (preserved for faster future builds)"
 fi
 echo ""
-echo -e "${BLUE}To install the Flatpak:${NC}"
+echo -e "${BLUE}To install the Flatpak (Flathub + GNOME 49 runtime required):${NC}"
+echo -e "flatpak remote-add --if-not-exists flathub $FLATHUB_RUNTIME_REPO"
+echo -e "flatpak install --user flathub org.gnome.Platform//49 org.gnome.Sdk//49  # if missing"
 echo -e "flatpak install --user $BUNDLE_NAME"
 echo ""
 echo -e "${BLUE}To run Snapmaker_Orca:${NC}"

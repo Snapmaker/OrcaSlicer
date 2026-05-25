@@ -117,6 +117,9 @@ jobs:
       with:
         bundle: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
         manifest-path: scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
+        # App-only bundle (~140MB). Runtime org.gnome.Platform//49 is pulled from Flathub at install time.
+        repository-url: https://flathub.org/repo/flathub.flatpakrepo
+        repository-name: flathub
         # GNOME 49 upgrade: disable cache until green, then re-enable cache: true
         cache: false
         arch: ${{ matrix.variant.arch }}

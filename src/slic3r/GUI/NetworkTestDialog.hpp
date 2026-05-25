@@ -94,6 +94,7 @@ protected:
 	std::atomic<bool> m_in_testing[TEST_JOB_MAX];
 	bool           m_download_cancel = false;
 	std::atomic<bool> m_closing{false};
+	
 	void init_bind();
 
 public:

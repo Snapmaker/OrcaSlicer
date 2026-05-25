@@ -1181,6 +1181,7 @@ void NetworkTestDialog::cleanup_threads()
 	// Clean up test job threads
 	for (int i = 0; i < TEST_JOB_MAX; i++) {
 		if (test_job[i] != nullptr) {
+			if (test_job[i]->joinable()) {
 				// Try to join with longer timeout (1000ms) to reduce chance of detach
 				// Threads should check m_closing and exit promptly
 				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(1000))) {
@@ -1192,6 +1193,7 @@ void NetworkTestDialog::cleanup_threads()
 			}
 			delete test_job[i];
 			test_job[i] = nullptr;
+		}
 	}
 
 	// Clean up sequence job thread

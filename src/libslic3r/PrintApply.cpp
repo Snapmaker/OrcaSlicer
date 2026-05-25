@@ -1017,11 +1017,6 @@ static PrintObjectRegions* generate_print_object_regions(
         region_set.emplace(it, region);
         return region;
     };
-    auto create_unique_region = [&all_regions](PrintRegionConfig &&config) -> PrintRegion* {
-        size_t hash = config.hash();
-        all_regions.emplace_back(std::make_unique<PrintRegion>(std::move(config), hash, int(all_regions.size())));
-        return all_regions.back().get();
-    };
     // Chain the regions in the order they are stored in the volumes list.
     for (int volume_id = 0; volume_id < int(model_volumes.size()); ++ volume_id) {
         const ModelVolume &volume = *model_volumes[volume_id];
@@ -1077,7 +1072,9 @@ static PrintObjectRegions* generate_print_object_regions(
                     cfg.wall_filament.value    = painted_extruder_id;
                     cfg.solid_infill_filament.value = painted_extruder_id;
                     cfg.sparse_infill_filament.value       = painted_extruder_id;
-                    PrintRegion *painted_region = create_unique_region(std::move(cfg));
+                    // Keep PrintRegion config-interned. If a painted target resolves to the same
+                    // config as its parent, alias it instead of creating a duplicate PrintRegion.
+                    PrintRegion *painted_region = get_create_region(std::move(cfg));
                     if (painted_region->config().wall_filament.value != painted_extruder_id ||
                         painted_region->config().solid_infill_filament.value != painted_extruder_id ||
                         painted_region->config().sparse_infill_filament.value != painted_extruder_id) {

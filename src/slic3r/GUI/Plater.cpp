@@ -2181,23 +2181,13 @@ Sidebar::Sidebar(Plater *parent)
     h_physical_title->Add(physical_label, 0, wxALIGN_CENTER_VERTICAL);
     h_physical_title->AddStretchSpacer();
 
-    // Delete filament button
+    // Delete filament button — delegates to delete_filament for consistent remap behavior
     ScalableButton* del_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "delete_filament");
     del_btn->SetToolTip(_L("Remove last filament"));
     del_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
         if (p->combos_filament.size() <= 1)
             return;
-        size_t filament_count = p->combos_filament.size() - 1;
-        if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_count) || (filament_count == 1)) {
-            wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", true);
-        }
-        if (p->editing_filament >= filament_count) {
-            p->editing_filament = -1;
-        }
-        wxGetApp().preset_bundle->set_num_filaments(filament_count);
-        wxGetApp().plater()->on_filaments_change(filament_count);
-        wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
-        wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+        delete_filament(size_t(-1), -1);
     });
     p->m_bpButton_del_filament = del_btn;
 
@@ -6041,14 +6031,16 @@ void Sidebar::update_color_mix_panel()
             menu.AppendSubMenu(merge_submenu, _L("Merge with"));
             
             menu.Append(del_id, _L("Delete"));
-            menu.Bind(wxEVT_MENU, [this, i](wxCommandEvent&) {
+            menu.Bind(wxEVT_MENU, [this, i, num_physical](wxCommandEvent&) {
                 auto& mgr2 = wxGetApp().preset_bundle->mixed_filaments;
                 auto& mfs2 = mgr2.mixed_filaments();
-                if (i < mfs2.size()) mfs2[i].deleted = true;
+                const std::vector<MixedFilament> old_mixed = mfs2;
+                if (i < mfs2.size()) { mfs2[i].deleted = true; mfs2[i].enabled = false; }
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr2.serialize_custom_entries();
+                wxGetApp().preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical, i);
                 wxGetApp().plater()->post_slice_state_change_update();
-                wxGetApp().plater()->on_filaments_change(p->combos_filament.size());
+                wxGetApp().plater()->on_filaments_change(num_physical);
                 wxWeakRef<Sidebar> weak_this(this);
                 wxTheApp->CallAfter([weak_this]() {
                     Sidebar* sidebar = weak_this.get();
@@ -6899,7 +6891,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
                      }
                      p->m_expanded_mixed_filament_rows.clear();
                      set_mixed_string("mixed_filament_definitions", mgr.serialize_custom_entries());
-                     wxGetApp().preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical);
+                     wxGetApp().preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical, mixed_id);
                      notify_mixed_change();
                      if (wxGetApp().plater())
                          wxGetApp().plater()->update_project_dirty_from_presets();
@@ -7203,10 +7195,12 @@ void Sidebar::on_filaments_delete(size_t filament_id)
 {
     auto& choices = combos_filament();
 
+    p->m_skip_mixed_filament_sync_once = false;
+
     if (filament_id >= choices.size())
         return;
 
-    if (choices.size() == 1)
+    if (choices.size() <= 2)
         choices[0]->GetDropDown().Invalidate();
 
     wxWindowUpdateLocker noUpdates_scrolled_panel(this);
@@ -7244,6 +7238,16 @@ void Sidebar::on_filaments_delete(size_t filament_id)
             sizer->Hide(p->m_flushing_volume_btn);
     }
 
+    if (p->m_bpButton_del_filament != nullptr && p->m_panel_physical_filaments_title != nullptr) {
+        auto* inner_sizer = p->m_panel_physical_filaments_title->GetSizer();
+        if (inner_sizer) {
+            if (p->combos_filament.size() > 1)
+                inner_sizer->Show(p->m_bpButton_del_filament);
+            else
+                inner_sizer->Hide(p->m_bpButton_del_filament);
+        }
+    }
+
     for (size_t idx = filament_id; idx < p->combos_filament.size(); ++idx) {
         p->combos_filament[idx]->update();
     }
@@ -7272,8 +7276,17 @@ void Sidebar::on_filaments_delete(size_t filament_id)
     });
     p->m_panel_filament_title->Refresh();
     update_ui_from_settings();
-    dynamic_filament_list.update();
+    update_dynamic_filament_list();
     update_mixed_filament_panel();
+    update_color_mix_panel();
+
+    if (PresetBundle *pb = wxGetApp().preset_bundle) {
+        const bool can_add = pb->mixed_filaments.total_filaments(p->combos_filament.size()) < MAXIMUM_FILAMENT_NUMBER;
+        if (p->m_bpButton_add_filament)
+            p->m_bpButton_add_filament->Enable(can_add);
+        if (p->m_btn_add_color_mix)
+            p->m_btn_add_color_mix->Enable(can_add);
+    }
 }
 
 void Sidebar::edit_filament() {
@@ -7288,19 +7301,36 @@ static bool mixed_filament_uses_physical(const MixedFilament* target_mf, unsigne
 {
     if (!target_mf)
         return false;
-    
-    // Check if target mixed filament uses source physical filament as component
-    if (target_mf->component_a == source_physical_1based || target_mf->component_b == source_physical_1based) {
-        return true;
+
+    // Check manual_pattern tokens (resolve order #1)
+    const std::string norm = MixedFilamentManager::normalize_manual_pattern(target_mf->manual_pattern);
+    if (!norm.empty()) {
+        const auto groups = MixedFilamentManager::split_pattern_groups(norm);
+        for (const std::string &group : groups) {
+            const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, 0);
+            for (const std::string &token : tokens) {
+                if (MixedFilamentManager::physical_filament_from_token(token, *target_mf, MixedFilamentManager::kMaxPhysicalFilaments) == source_physical_1based)
+                    return true;
+            }
+        }
     }
-    
-    // Also check gradient components (delegates to centralized decode)
-    {
+
+    // Check gradient components (resolve order #2).
+    // Only check when there is no manual_pattern; a pattern already resolves
+    // every token, so gradient IDs would be a false positive at worst.
+    if (norm.empty()) {
         const std::vector<unsigned int> ids = MixedFilamentManager::decode_gradient_component_ids(target_mf->gradient_component_ids, 0);
         for (unsigned int id : ids) {
             if (id == source_physical_1based)
                 return true;
         }
+    }
+
+    // Check if target mixed filament uses source physical filament as component
+    // (resolve order #3). Only reached when the mixed filament has no manual_pattern,
+    // because in cycle mode pattern tokens "1"/"2" already cover component_a/b.
+    if (norm.empty() && (target_mf->component_a == source_physical_1based || target_mf->component_b == source_physical_1based)) {
+        return true;
     }
 
     return false;
@@ -19780,13 +19810,21 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
         id_remap = preset_bundle->consume_last_filament_id_remap();
 
     // Build state map for remap if available.
-    // When replace_filament_id >= 0 the caller handles paint transfer via
-    // update_extruder_count_when_delete_filament — skip the generic remap
-    // (which maps deleted→0) so paint is moved to the target, not lost.
+    // Use the remap for both pure-delete and merge paths so that mixed
+    // filaments deleted by remove_physical_filament are correctly mapped
+    // to NONE instead of being shifted onto wrong IDs.
     EnforcerBlockerStateMap state_map;
     bool should_remap_states = false;
-    if (!id_remap.empty() && replace_filament_id < 0) {
+    if (!id_remap.empty()) {
         should_remap_states = true;
+        if (replace_filament_id >= 0) {
+            // Merge: inject the merge target into the remap so the deleted
+            // physical filament maps to the target instead of 0.
+            size_t old_1based = filament_id + 1;
+            size_t new_1based = replace_filament_id + 1;
+            if (old_1based < id_remap.size())
+                id_remap[old_1based] = (unsigned int)new_1based;
+        }
         for (size_t i = 0; i < state_map.size(); ++i)
             state_map[i] = EnforcerBlockerType(i);
         for (size_t i = 1; i < state_map.size(); ++i) {

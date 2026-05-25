@@ -1187,6 +1187,7 @@ void NetworkTestDialog::update_status(int job_id, wxString info)
 			break;
 		}
 		default:
+			BOOST_LOG_TRIVIAL(warning) << "[NetworkTest] unknown job_id=" << job_id << ", info=" << into_u8(info);
 			break;
 	}
 

@@ -92,7 +92,9 @@ OutFile "${OUTPUT_FILE}"
 
 Section "Main program" SecMain
     SectionIn RO
-    
+
+    Call EnsureSnapmakerNotRunning
+
     SetOutPath "$INSTDIR"
     
     DetailPrint "Installing ${PRODUCT_NAME}..."
@@ -198,7 +200,28 @@ Function LaunchApp
     ExecShell "open" "$INSTDIR\snapmaker-orca.exe"
 FunctionEnd
 
+; Prevent overwriting locked DLLs when snapmaker-orca (or legacy Snapmaker_Orca.exe) is still running.
+Function EnsureSnapmakerNotRunning
+    snapmaker_check_loop:
+        ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
+        IntCmp $0 0 snapmaker_in_use snapmaker_try_legacy snapmaker_try_legacy
+    snapmaker_try_legacy:
+        ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul' $0
+        IntCmp $0 0 snapmaker_in_use snapmaker_idle snapmaker_idle
+    snapmaker_in_use:
+        IfSilent snapmaker_silent snapmaker_prompt
+    snapmaker_silent:
+        SetErrorLevel 7
+        Quit
+    snapmaker_prompt:
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is still running (snapmaker-orca.exe).$\r$\nClose the program, then click Retry, or Cancel to exit the installer." IDRETRY snapmaker_check_loop
+        Abort
+    snapmaker_idle:
+FunctionEnd
+
 Function .onInit
+
+    Call EnsureSnapmakerNotRunning
 
     ReadRegStr $R0 ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString"
     StrCmp $R0 "" done

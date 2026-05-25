@@ -2352,11 +2352,24 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
     }
 #endif
 
-    m_rib_length = std::max({m_rib_length, sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width)});
+    if (m_wall_type == int(WipeTowerWallType::wtwRib)) {
+        float square_width = align_ceil(std::sqrt(std::fabs(m_wipe_tower_depth * m_wipe_tower_width)), m_perimeter_width);
+        m_wipe_tower_width = square_width;
+
+        int planSize = static_cast<int>(m_plan.size());
+        for (int idx = 0; idx < planSize; idx++) {
+            for (auto& toolchange : m_plan[idx].tool_changes) {
+                toolchange = set_toolchange(toolchange.old_tool, toolchange.new_tool, m_plan[idx].height, toolchange.wipe_volume);
+            }
+        }
+        plan_tower(); // need Re-calculate depth
+    }
+
+    float diagonal = sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width);
+    m_rib_length   = std::max({m_rib_length, diagonal});
     m_rib_length += m_extra_rib_length;
-    m_rib_length = std::max(0.f, m_rib_length);
-    m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) /
-                                             2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
+    m_rib_length = std::max(diagonal, m_rib_length);
+    m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) / 2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
 
     m_layer_info     = m_plan.begin();
     m_current_height = 0.f;
@@ -2463,7 +2476,33 @@ Polygon WipeTower2::generate_rib_polygon(const WipeTower::box_coordinates& wt_bo
     /*if (p_1_2.front().points.size() != 16)
         std::cout << "error " << std::endl;*/
     return p_1_2.front();
-};
+}
+
+// from plan_toolchange
+WipeTower2::WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, int new_tool, float layer_height, float wipe_volume)
+{
+    float width = m_wipe_tower_width - 3 * m_perimeter_width;
+    if(std::fabs(width) < EPSILON)
+    {
+        assert(false);
+        return WipeTowerInfo::ToolChange(old_tool, new_tool);
+    }
+    float volume = 0.25f * std::accumulate(m_filpar[old_tool].ramming_speed.begin(), m_filpar[old_tool].ramming_speed.end(), 0.f);
+    float line_width = m_perimeter_width * m_filpar[old_tool].ramming_line_width_multiplicator;
+    float length_to_extrude = volume_to_length(volume, line_width, layer_height);
+
+    float ramming_depth   = m_enable_filament_ramming ? ((int(length_to_extrude / width) + 1) *
+                                                       (m_perimeter_width * m_filpar[old_tool].ramming_line_width_multiplicator *
+                                                        m_filpar[old_tool].ramming_step_multiplicator) *
+                                                       m_extra_spacing_ramming) :
+                                                        0;
+    float first_wipe_line = -(width * ((length_to_extrude / width) - int(length_to_extrude / width)) - width);
+    float first_wipe_volume = length_to_volume(first_wipe_line, m_perimeter_width * m_extra_flow, layer_height);
+    float wiping_depth = get_wipe_depth(wipe_volume - first_wipe_volume, layer_height, 
+        m_perimeter_width, m_extra_flow, m_extra_spacing_wipe, width);
+
+    return WipeTowerInfo::ToolChange(old_tool, new_tool, ramming_depth + wiping_depth, ramming_depth, first_wipe_line, wipe_volume);
+}
 
 Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 writer,
                                               const WipeTower::box_coordinates& wt_box,

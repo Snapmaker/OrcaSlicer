@@ -920,13 +920,15 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                     if (valid && optdef != nullptr && optdef->is_scalar() && optdef->type != coPoint && optdef->type != coPoint3) {
                         if (array_values.size() == 1) {
                             value_str = array_values.front();
-                        } else if (!array_values.empty() &&
-                                   std::all_of(array_values.begin() + 1, array_values.end(),
-                                               [&](const std::string &value) { return value == array_values.front(); })) {
-                            value_str = array_values.front();
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
-                                                       << ": collapsing redundant json array for scalar option " << it.key()
-                                                       << " in " << file;
+                        } else if (!array_values.empty()) {
+                            const std::string& first_value = array_values.front();
+                            bool all_values_equal = std::all_of(array_values.begin() + 1, array_values.end(),
+                                                                [&first_value](const std::string& value) { return value == first_value; });
+                            if (all_values_equal) {
+                                value_str = first_value;
+                                BOOST_LOG_TRIVIAL(warning)
+                                    << __FUNCTION__ << ": collapsing redundant json array for scalar option " << it.key() << " in " << file;
+                            }
                         }
                     }
                     if (valid && value_str.empty()) {

@@ -15037,7 +15037,7 @@ msgstr "Bambu Studio 基于 Prusa Research 的 PrusaSlicer 开发而来，而 Pr
 msgid "Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."
 msgstr "Snapmaker Orca 集成了来自 3D 打印开源社区的一些特性，并在代码注释中提供了具体的归属说明。"
 
-msgid "Snapmaker Orca is licensed under the GNU Affero Generall Public License, version 3."
+msgid "Snapmaker Orca is licensed under the GNU Affero General Public License, version 3."
 msgstr "Snapmaker Orca 采用 GNU Affero 通用公共许可证，第 3 版进行授权。"
 
 msgid "OrcaSlicer is forked from Bambu Studio by Bambu Lab."

@@ -15154,6 +15154,9 @@ msgstr "顺序"
 msgid "Target Color:"
 msgstr "目标色:"
 
+msgid "Swap filaments"
+msgstr "切换方向"
+
 msgid "Min Mix Ratio"
 msgstr "最低混色比例"
 

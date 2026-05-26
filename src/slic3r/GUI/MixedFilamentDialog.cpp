@@ -3120,7 +3120,7 @@ void MixedFilamentDialog::validate_cycle_pattern()
             return;
         }
         if (!parsed.invalid_token.empty()) {
-            set_error(_L("Invalid token in pattern. Please check the pattern syntax."));
+            set_error(_L("Unrecognized pattern format. Please check the pattern syntax."));
             return;
         }
     }

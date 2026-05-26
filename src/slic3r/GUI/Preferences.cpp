@@ -6,7 +6,6 @@
 #include "MsgDialog.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
-#include "libslic3r/MixedFilament.hpp"
 #include <wx/language.h>
 #include <wx/notebook.h>
 #include "Notebook.hpp"
@@ -19,7 +18,6 @@
 #include <wx/listimpl.cpp>
 #include <wx/display.h>
 #include <map>
-#include <memory>
 
 #include "sentry_wrapper/SentryWrapper.hpp"
 
@@ -723,8 +721,7 @@ void PreferencesDialog::set_dark_mode()
 #endif
 }
 
-wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string param,
-                                                  std::function<bool(bool new_val, bool old_val)> confirm_cb)
+wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string param)
 {
     wxBoxSizer *m_sizer_checkbox  = new wxBoxSizer(wxHORIZONTAL);
 
@@ -747,19 +744,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
 
 
      //// save config
-    auto in_handler = std::make_shared<bool>(false);
-    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param, confirm_cb, in_handler](wxCommandEvent &e) {
-        if (*in_handler) { e.Skip(); return; }
-        if (confirm_cb) {
-            bool old_val = !checkbox->GetValue();
-            bool new_val = checkbox->GetValue();
-            bool final_val = confirm_cb(new_val, old_val);
-            if (final_val != new_val) {
-                *in_handler = true;
-                checkbox->SetValue(final_val);
-                *in_handler = false;
-            }
-        }
+    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param](wxCommandEvent &e) {
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
@@ -791,16 +776,6 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
                 wxGetApp().stop_sync_user_preset();
             }
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " sync_user_preset: " << (sync ? "true" : "false");
-        }
-
-        if (param == "auto_generate_gradients") {
-            MixedFilamentManager::set_auto_generate_enabled(checkbox->GetValue());
-            if (wxGetApp().preset_bundle != nullptr && wxGetApp().plater() != nullptr) {
-                const size_t num_physical = wxGetApp().preset_bundle->filament_presets.size();
-                wxGetApp().plater()->set_auto_generated_gradient_decision(num_physical, checkbox->GetValue());
-                wxGetApp().preset_bundle->update_multi_material_filament_presets();
-                wxGetApp().plater()->on_filaments_change(num_physical);
-            }
         }
 
         #ifdef __WXMSW__
@@ -1066,8 +1041,6 @@ PreferencesDialog::PreferencesDialog(wxWindow *parent, wxWindowID id, const wxSt
                 j["auto_flushing"] = value;
                 value = wxGetApp().app_config->get("auto_calculate_when_filament_change");
                 j["auto_calculate_when_filament_change"] = value;
-                value = wxGetApp().app_config->get("auto_generate_gradients");
-                j["auto_generate_gradients"] = value;
                 agent->track_event("preferences_changed", j.dump());
             }
         } catch(...) {}
@@ -1248,45 +1221,7 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_use_free_camera_settings = create_item_checkbox(_L("Use free camera"), page, _L("If enabled, use free camera. If not enabled, use constrained camera."), 50, "use_free_camera");
     auto swap_pan_rotate = create_item_checkbox(_L("Swap pan and rotate mouse buttons"), page, _L("If enabled, swaps the left and right mouse buttons pan and rotate functions."), 50, "swap_mouse_buttons");
     auto reverse_mouse_zoom = create_item_checkbox(_L("Reverse mouse zoom"), page, _L("If enabled, reverses the direction of zoom with mouse wheel."), 50, "reverse_mouse_wheel_zoom");
-    auto allow_filament_temp_mixing = create_item_checkbox(_L("Allow high/low temperature filament mixing"), page, _L("If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."), 50, "allow_filament_temp_mixing",
-        [this](bool new_val, bool old_val) -> bool {
-            // Only confirm when turning ON; allow turning OFF without dialog.
-            if (!new_val)
-                return false;
-
-            wxDialog dlg(this, wxID_ANY, _L("高/低温材料混打风险"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
-            dlg.SetBackgroundColour(*wxWHITE);
-
-            auto* main_sizer = new wxBoxSizer(wxVERTICAL);
-
-            wxString msg = _L("混合使用打印温度差异较大的耗材，可能导致：\n"
-                              "· 喷嘴阻塞\n"
-                              "· 喷嘴损坏\n"
-                              "· 层间粘附问题\n\n"
-                              "仍要启用高/低温耗材混合打印吗？");
-            auto* text = new wxStaticText(&dlg, wxID_ANY, msg);
-            text->Wrap(FromDIP(400));
-            main_sizer->Add(text, 0, wxALL, FromDIP(20));
-
-            auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
-            auto* btn_yes = new wxButton(&dlg, wxID_YES, _L("是"));
-            btn_yes->SetBackgroundColour(wxColour(0, 255, 0));
-            auto* btn_no  = new wxButton(&dlg, wxID_NO, _L("否"));
-
-            btn_yes->Bind(wxEVT_BUTTON, [&dlg](wxCommandEvent&) { dlg.EndModal(wxID_YES); });
-            btn_no->Bind(wxEVT_BUTTON,  [&dlg](wxCommandEvent&) { dlg.EndModal(wxID_NO); });
-
-            btn_sizer->AddStretchSpacer();
-            btn_sizer->Add(btn_yes, 0, wxALL, FromDIP(5));
-            btn_sizer->Add(btn_no, 0, wxALL, FromDIP(5));
-
-            main_sizer->Add(btn_sizer, 0, wxEXPAND | wxALL, FromDIP(10));
-            dlg.SetSizer(main_sizer);
-            dlg.Fit();
-            dlg.CenterOnParent();
-
-            return dlg.ShowModal() == wxID_YES;
-        });
+    auto allow_filament_temp_mixing = create_item_checkbox(_L("Allow high/low temperature filament mixing"), page, _L("If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."), 50, "allow_filament_temp_mixing");
     auto camera_orbit_mult = create_camera_orbit_mult_input(_L("Orbit speed multiplier"), page, _L("Multiplies the orbit speed for finer or coarser camera movement."));
 
     auto item_show_splash_screen = create_item_checkbox(_L("Show splash screen"), page, _L("Show the splash screen during startup."), 50, "show_splash_screen");
@@ -1294,10 +1229,6 @@ wxWindow* PreferencesDialog::create_general_page()
 
     auto item_calc_mode = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time the color changed."), page, _L("If enabled, auto-calculate every time the color changed."), 50, "auto_calculate");
     auto item_calc_in_long_retract = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time when the filament is changed."), page, _L("If enabled, auto-calculate every time when filament is changed"), 50, "auto_calculate_when_filament_change");
-#if 0 // Developer section and auto-generate gradients — hidden, preserved for potential future re-enablement
-    auto item_auto_generate_gradients = create_item_checkbox(_L("Mixed filaments: Auto-generate gradients."), page, _L("If enabled, Snapmaker Orca automatically creates gradient mixed filaments from physical filament pairs."), 50, "auto_generate_gradients");
-    auto title_full_spectrum = create_item_title(_devL("Developer"), page, _devL("Developer"));
-#endif // Developer section and auto-generate gradients
     auto item_remember_printer_config = create_item_checkbox(_L("Remember printer configuration"), page, _L("If enabled, Orca will remember and switch filament/process configuration for each printer automatically."), 50, "remember_printer_config");
     auto item_step_mesh_setting = create_item_checkbox(_L("Show the step mesh parameter setting dialog."), page, _L("If enabled,a parameter settings dialog will appear during STEP file import."), 50, "enable_step_mesh_setting");
     auto item_multi_machine = create_item_checkbox(_L("Multi-device Management (Take effect after restarting Snapmaker Orca)."), page, _L("With this option enabled, you can send a task to multiple devices at the same time and manage multiple devices."), 50, "enable_multi_machine");
@@ -1399,20 +1330,16 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(camera_orbit_mult, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_show_splash_screen, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_hints, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_calc_in_long_retract, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_multi_machine, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_step_mesh_setting, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_auto_arrange, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_presets, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_calc_mode, 0, wxTOP, FromDIP(3));
-    sizer_page->Add(item_calc_in_long_retract, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_user_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_system_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_remember_printer_config, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_save_presets, 0, wxTOP, FromDIP(3));
-#if 0 // Developer section and auto-generate gradients — hidden, preserved for potential future re-enablement
-    sizer_page->Add(title_full_spectrum, 0, wxTOP | wxEXPAND, FromDIP(20));
-    sizer_page->Add(item_auto_generate_gradients, 0, wxTOP, FromDIP(3));
-#endif // Developer section and auto-generate gradients
     //sizer_page->Add(title_network, 0, wxTOP | wxEXPAND, FromDIP(20));
     //sizer_page->Add(item_check_stable_version_only, 0, wxTOP, FromDIP(3));
 

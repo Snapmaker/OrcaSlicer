@@ -1561,7 +1561,7 @@ msgstr "構成を読込み中"
 msgid "Click to download new version in default browser: %s"
 msgstr "新バージョンをダウンロードするにはクリックしてください: %s"
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca をアップデートする必要があります"
 
 msgid "This is the newest version."
@@ -7254,9 +7254,6 @@ msgstr "アップデート中では造形タスクを送信できません"
 
 msgid "The selected printer is incompatible with the chosen printer presets."
 msgstr ""
-
-msgid "Incompatible filament types cannot be mixed. Please correct the selection."
-msgstr "互換性のないフィラメントタイプは混合できません。選択を修正してください。"
 
 msgid "An SD card needs to be inserted before send to printer SD card."
 msgstr ""

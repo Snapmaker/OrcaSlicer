@@ -1583,7 +1583,7 @@ msgstr "Načítání konfigurace"
 msgid "Click to download new version in default browser: %s"
 msgstr "Kliknutím stáhnete novou verzi ve výchozím prohlížeči: %s"
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca potřebuje aktualizaci"
 
 msgid "This is the newest version."

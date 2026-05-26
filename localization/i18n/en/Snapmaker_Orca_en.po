@@ -1535,7 +1535,7 @@ msgstr ""
 msgid "Click to download new version in default browser: %s"
 msgstr ""
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca needs an update"
 
 msgid "This is the newest version."
@@ -8245,7 +8245,7 @@ msgstr ""
 msgid "Approximate color matching."
 msgstr ""
 
-msgid "Append all"
+msgid "Append"
 msgstr ""
 
 msgid "Add consumable extruder after existing extruders."

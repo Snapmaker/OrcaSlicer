@@ -1585,7 +1585,7 @@ msgstr "Yapılandırma yükleniyor"
 msgid "Click to download new version in default browser: %s"
 msgstr "Yeni sürümü varsayılan tarayıcıda indirmek için tıklayın: %s"
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Orca Dilimleyicinin yükseltilmesi gerekiyor"
 
 msgid "This is the newest version."

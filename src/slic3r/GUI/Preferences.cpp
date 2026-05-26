@@ -18,6 +18,7 @@
 #include <wx/listimpl.cpp>
 #include <wx/display.h>
 #include <map>
+#include <memory>
 
 #include "sentry_wrapper/SentryWrapper.hpp"
 
@@ -721,7 +722,8 @@ void PreferencesDialog::set_dark_mode()
 #endif
 }
 
-wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string param)
+wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string param,
+                                                  std::function<bool(bool new_val, bool old_val)> confirm_cb)
 {
     wxBoxSizer *m_sizer_checkbox  = new wxBoxSizer(wxHORIZONTAL);
 
@@ -744,7 +746,19 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
 
 
      //// save config
-    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param](wxCommandEvent &e) {
+    auto in_handler = std::make_shared<bool>(false);
+    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param, confirm_cb, in_handler](wxCommandEvent &e) {
+        if (*in_handler) { e.Skip(); return; }
+        if (confirm_cb) {
+            bool old_val = !checkbox->GetValue();
+            bool new_val = checkbox->GetValue();
+            bool final_val = confirm_cb(new_val, old_val);
+            if (final_val != new_val) {
+                *in_handler = true;
+                checkbox->SetValue(final_val);
+                *in_handler = false;
+            }
+        }
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
@@ -1221,7 +1235,45 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_use_free_camera_settings = create_item_checkbox(_L("Use free camera"), page, _L("If enabled, use free camera. If not enabled, use constrained camera."), 50, "use_free_camera");
     auto swap_pan_rotate = create_item_checkbox(_L("Swap pan and rotate mouse buttons"), page, _L("If enabled, swaps the left and right mouse buttons pan and rotate functions."), 50, "swap_mouse_buttons");
     auto reverse_mouse_zoom = create_item_checkbox(_L("Reverse mouse zoom"), page, _L("If enabled, reverses the direction of zoom with mouse wheel."), 50, "reverse_mouse_wheel_zoom");
-    auto allow_filament_temp_mixing = create_item_checkbox(_L("Allow high/low temperature filament mixing"), page, _L("If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."), 50, "allow_filament_temp_mixing");
+    auto allow_filament_temp_mixing = create_item_checkbox(_L("Allow high/low temperature filament mixing"), page, _L("If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."), 50, "allow_filament_temp_mixing",
+        [this](bool new_val, bool old_val) -> bool {
+            // Only confirm when turning ON; allow turning OFF without dialog.
+            if (!new_val)
+                return false;
+
+            wxDialog dlg(this, wxID_ANY, _L("高/低温材料混打风险"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
+            dlg.SetBackgroundColour(*wxWHITE);
+
+            auto* main_sizer = new wxBoxSizer(wxVERTICAL);
+
+            wxString msg = _L("混合使用打印温度差异较大的耗材，可能导致：\n"
+                              "· 喷嘴阻塞\n"
+                              "· 喷嘴损坏\n"
+                              "· 层间粘附问题\n\n"
+                              "仍要启用高/低温耗材混合打印吗？");
+            auto* text = new wxStaticText(&dlg, wxID_ANY, msg);
+            text->Wrap(FromDIP(400));
+            main_sizer->Add(text, 0, wxALL, FromDIP(20));
+
+            auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
+            auto* btn_yes = new wxButton(&dlg, wxID_YES, _L("是"));
+            btn_yes->SetBackgroundColour(wxColour(0, 255, 0));
+            auto* btn_no  = new wxButton(&dlg, wxID_NO, _L("否"));
+
+            btn_yes->Bind(wxEVT_BUTTON, [&dlg](wxCommandEvent&) { dlg.EndModal(wxID_YES); });
+            btn_no->Bind(wxEVT_BUTTON,  [&dlg](wxCommandEvent&) { dlg.EndModal(wxID_NO); });
+
+            btn_sizer->AddStretchSpacer();
+            btn_sizer->Add(btn_yes, 0, wxALL, FromDIP(5));
+            btn_sizer->Add(btn_no, 0, wxALL, FromDIP(5));
+
+            main_sizer->Add(btn_sizer, 0, wxEXPAND | wxALL, FromDIP(10));
+            dlg.SetSizer(main_sizer);
+            dlg.Fit();
+            dlg.CenterOnParent();
+
+            return dlg.ShowModal() == wxID_YES;
+        });
     auto camera_orbit_mult = create_camera_orbit_mult_input(_L("Orbit speed multiplier"), page, _L("Multiplies the orbit speed for finer or coarser camera movement."));
 
     auto item_show_splash_screen = create_item_checkbox(_L("Show splash screen"), page, _L("Show the splash screen during startup."), 50, "show_splash_screen");

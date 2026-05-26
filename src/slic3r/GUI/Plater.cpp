@@ -2099,10 +2099,18 @@ void Sidebar::update_presets(Preset::Type preset_type)
             err.string = _u8L("Cannot print multiple filaments which have large difference of "
                               "temperature together. Otherwise, the extruder and nozzle may "
                               "be blocked or damaged during printing.");
-            p->plater->get_notification_manager()->push_validate_error_notification(err);
-            p->plater->get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
+            if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")) {
+                p->plater->get_notification_manager()->push_notification(
+                    NotificationType::ValidateWarning,
+                    NotificationManager::NotificationLevel::WarningNotificationLevel,
+                    _u8L("WARNING:") + "\n" + err.string);
+            } else {
+                p->plater->get_notification_manager()->push_validate_error_notification(err);
+                p->plater->get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
+            }
         } else {
             p->plater->get_notification_manager()->close_notification_of_type(NotificationType::ValidateError);
+            p->plater->get_notification_manager()->close_notification_of_type(NotificationType::ValidateWarning);
             p->plater->get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
         }
 
@@ -6522,22 +6530,30 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                 this->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
                 notification_manager->set_all_slicing_errors_gray(true);
                 notification_manager->close_notification_of_type(NotificationType::ValidateError);
+                notification_manager->close_notification_of_type(NotificationType::ValidateWarning);
+                // Pass a warning from validation and either show a notification,
+                // or hide the old one.
+                process_validation_warning(warning);
             } else {
-                // Filament mixing detected — show error and keep plate invalid
+                // Filament mixing detected
                 StringObjectException err;
                 err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
                 err.string = _u8L("Cannot print multiple filaments which have large difference of "
                                   "temperature together. Otherwise, the extruder and nozzle may "
                                   "be blocked or damaged during printing.");
-                notification_manager->push_validate_error_notification(err);
-                this->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+                if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")) {
+                    notification_manager->push_notification(
+                        NotificationType::ValidateWarning,
+                        NotificationManager::NotificationLevel::WarningNotificationLevel,
+                        _u8L("WARNING:") + "\n" + err.string);
+                } else {
+                    notification_manager->push_validate_error_notification(err);
+                    this->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+                }
             }
             if (invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
                 return_state |= UPDATE_BACKGROUND_PROCESS_RESTART;
 
-            // Pass a warning from validation and either show a notification,
-            // or hide the old one.
-            process_validation_warning(warning);
             if (printer_technology == ptFFF) {
                 view3D->get_canvas3d()->reset_sequential_print_clearance();
                 view3D->get_canvas3d()->set_as_dirty();
@@ -8434,6 +8450,15 @@ void Plater::priv::on_action_open_project(SimpleEvent&)
 void Plater::priv::on_action_slice_plate(SimpleEvent&)
 {
     if (q != nullptr) {
+        // Pre-slice confirmation for high/low temp filament mixing
+        if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")
+            && !q->check_filament_temp_mixing()) {
+            wxMessageDialog dlg(q, _L("该组合可能导致风险，是否继续"),
+                                _L("确认"), wxYES_NO | wxICON_WARNING);
+            if (dlg.ShowModal() != wxID_YES)
+                return;
+        }
+
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received slice plate event\n" ;
         //BBS update extruder params and speed table before slicing
         const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
@@ -8453,6 +8478,15 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
 void Plater::priv::on_action_slice_all(SimpleEvent&)
 {
     if (q != nullptr) {
+        // Pre-slice confirmation for high/low temp filament mixing
+        if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")
+            && !q->check_filament_temp_mixing()) {
+            wxMessageDialog dlg(q, _L("该组合可能导致风险，是否继续"),
+                                _L("确认"), wxYES_NO | wxICON_WARNING);
+            if (dlg.ShowModal() != wxID_YES)
+                return;
+        }
+
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received slice project event\n" ;
         //BBS update extruder params and speed table before slicing
         const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
@@ -14763,10 +14797,18 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         err.string = _u8L("Cannot print multiple filaments which have large difference of "
                           "temperature together. Otherwise, the extruder and nozzle may "
                           "be blocked or damaged during printing.");
-        p->notification_manager->push_validate_error_notification(err);
-        p->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+        if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")) {
+            p->notification_manager->push_notification(
+                NotificationType::ValidateWarning,
+                NotificationManager::NotificationLevel::WarningNotificationLevel,
+                _u8L("WARNING:") + "\n" + err.string);
+        } else {
+            p->notification_manager->push_validate_error_notification(err);
+            p->partplate_list.get_curr_plate()->update_apply_result_invalid(true);
+        }
     } else {
         p->notification_manager->close_notification_of_type(NotificationType::ValidateError);
+        p->notification_manager->close_notification_of_type(NotificationType::ValidateWarning);
         p->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
     }
 }

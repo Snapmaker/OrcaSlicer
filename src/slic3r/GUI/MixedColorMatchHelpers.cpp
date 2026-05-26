@@ -234,7 +234,7 @@ std::vector<MixedColorMatchRecipeResult> build_color_match_presets(const std::ve
         }
     }
 
-#if 0 // 四色预设：暂不启用
+#if 0 // four-color presets: disabled
     const size_t quad_limit = std::min<size_t>(palette.size(), 5);
     for (size_t first_idx = 0; first_idx + 3 < quad_limit && presets.size() < k_max_presets; ++first_idx) {
         for (size_t second_idx = first_idx + 1; second_idx + 2 < quad_limit && presets.size() < k_max_presets; ++second_idx) {

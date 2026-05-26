@@ -1561,7 +1561,7 @@ msgstr "構成を読込み中"
 msgid "Click to download new version in default browser: %s"
 msgstr "新バージョンをダウンロードするにはクリックしてください: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca をアップデートする必要があります"
 
 msgid "This is the newest version."

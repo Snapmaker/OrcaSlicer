@@ -1537,7 +1537,7 @@ msgstr "正在加载配置"
 msgid "Click to download new version in default browser: %s"
 msgstr "在默认浏览器中点击下载最新版本: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca需要进行升级"
 
 msgid "This is the newest version."

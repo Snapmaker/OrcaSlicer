@@ -702,10 +702,7 @@ UdpSocket::UdpSocket( Bonjour::ReplyFn replyfn, const asio::ip::address& multica
 UdpSocket::~UdpSocket()
 {
 	boost::system::error_code ec;
-		// 取消所有异步操作
 		socket.cancel(ec);
-		
-		// 关闭socket
 		if (socket.is_open())
 			socket.close(ec);
 		

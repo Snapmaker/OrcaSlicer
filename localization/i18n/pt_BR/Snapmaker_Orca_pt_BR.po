@@ -1597,7 +1597,7 @@ msgstr "Carregando configuração"
 msgid "Click to download new version in default browser: %s"
 msgstr "Clique para baixar a nova versão no navegador padrão: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "O Snapmaker Orca precisa de uma atualização"
 
 msgid "This is the newest version."

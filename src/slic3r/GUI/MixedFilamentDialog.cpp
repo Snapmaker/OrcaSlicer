@@ -101,7 +101,7 @@ private:
         int thumb_x = track_x + active_w - thumb_d / 2;
         thumb_x = std::clamp(thumb_x, track_x - thumb_d/2, track_x + track_w - thumb_d/2);
         int thumb_y = (sz.y - thumb_d) / 2;
-        dc.SetBrush(wxBrush(wxGetApp().dark_mode() ? wxColour("#FFFFFF") : StateColor::darkModeColorFor(wxColour("#FFFFFF"))));
+        dc.SetBrush(wxBrush(wxColour("#FFFFFF")));
         dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#009688")), FromDIP(1)));
         dc.DrawEllipse(thumb_x, thumb_y, thumb_d, thumb_d);
     }

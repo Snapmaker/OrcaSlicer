@@ -151,7 +151,7 @@ wxString CopyrightsDialog::get_html_text()
         _L("License"),
         _L("Snapmaker Orca is licensed under "),
         "https://www.gnu.org/licenses/agpl-3.0.html",_L("GNU Affero General Public License, version 3"),
-        _L("Snapmaker Orca is based on Orca Slicer"),
+        _L("Snapmaker Orca is Based on Orca Slicer"),
         _L("Libraries"),
         _L("This software uses open source components whose copyright and other proprietary rights belong to their respective owners"));
 
@@ -210,12 +210,8 @@ void CopyrightsDialog::onCloseDialog(wxEvent &)
 }
 
 AboutDialog::AboutDialog()
-    : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe),
-                wxID_ANY,
-                wxString::Format(_L("About %s"), _L("Snapmaker Orca")),
-                wxDefaultPosition,
-                wxDefaultSize,
-                /*wxCAPTION*/wxDEFAULT_DIALOG_STYLE)
+    : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe),wxID_ANY,from_u8((boost::format(_utf8(L("About %s"))) % (wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME)).str()),wxDefaultPosition,
+        wxDefaultSize, /*wxCAPTION*/wxDEFAULT_DIALOG_STYLE)
 {
     SetFont(wxGetApp().normal_font());
 	SetBackgroundColour(*wxWHITE);
@@ -245,32 +241,26 @@ AboutDialog::AboutDialog()
 
     // version
     {
-        const int title_wrap_width = FromDIP(520);
-        const wxString sm_version_label = format_wxstr("Snapmaker Orca %1%", Snapmaker_VERSION);
         vesizer->Add(0, FromDIP(165), 1, wxEXPAND, FromDIP(5));
-        wxStaticText* version = new wxStaticText(this, wxID_ANY, _L("Snapmaker Orca"), wxDefaultPosition, wxSize(title_wrap_width, -1), wxALIGN_CENTER_HORIZONTAL);
-        wxStaticText* sm_version = new wxStaticText(this, wxID_ANY, sm_version_label, wxDefaultPosition, wxSize(title_wrap_width, -1), wxALIGN_CENTER_HORIZONTAL);
+        auto version_string = _L("Snapmaker Orca ") + " " + std::string(Snapmaker_VERSION);
+        wxStaticText* version = new wxStaticText(this, wxID_ANY, version_string.c_str(), wxDefaultPosition, wxDefaultSize);
         wxStaticText* bs_version = new wxStaticText(this, wxID_ANY, wxString::Format("Based on Orca Slicer"), wxDefaultPosition, wxDefaultSize);
         bs_version->SetFont(Label::Body_12);
-        sm_version->SetFont(Label::Body_12);
         wxFont version_font = GetFont();
         #ifdef __WXMSW__
         version_font.SetPointSize(version_font.GetPointSize()-1);
         #else
             version_font.SetPointSize(11);
         #endif
-        version_font.SetPointSize(14);
+        version_font.SetPointSize(FromDIP(16));
         version->SetFont(version_font);
-        version->Wrap(title_wrap_width);
         version->SetForegroundColour(wxColour("#FFFFFD"));
-        sm_version->SetForegroundColour(wxColour("#FFFFFD"));
         bs_version->SetForegroundColour(wxColour("#FFFFFD"));
         version->SetBackgroundColour(wxColour("#4d4d4d"));
-        sm_version->SetBackgroundColour(wxColour("#4d4d4d"));
         bs_version->SetBackgroundColour(wxColour("#4d4d4d"));
 
+
         vesizer->Add(version, 0, wxALL | wxALIGN_CENTER_HORIZONTAL, FromDIP(5));
-        vesizer->Add(sm_version, 0, wxALL | wxALIGN_CENTER_HORIZONTAL, FromDIP(2));
         vesizer->Add(bs_version, 0, wxALL | wxALIGN_CENTER_HORIZONTAL, FromDIP(5));
 // #if BBL_INTERNAL_TESTING
 //         wxString build_time = wxString::Format("Build Time: %s", std::string(SLIC3R_BUILD_TIME));
@@ -299,6 +289,7 @@ AboutDialog::AboutDialog()
     text_list.push_back(_L("Snapmaker Orca is forked from Orca Slicer by SoftFever."));
     text_list.push_back(_L("OrcaSlicer is forked from Bambu Studio by Bambu Lab."));
     text_list.push_back(_L("Bambu Studio is forked from PrusaSlicer by Prusa Research, which is from Slic3r by Alessandro Ranellucci and the RepRap community. Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill."));
+    text_list.push_back(_L("Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."));
     text_list.push_back(_L(""));
     text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero General Public License, version 3."));
     

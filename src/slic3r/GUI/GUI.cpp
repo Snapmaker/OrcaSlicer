@@ -109,8 +109,10 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 	try{
 
         const ConfigOptionDef *opt_def = config.def()->get(opt_key);
-        if (opt_def == nullptr)
-            throw Slic3r::RuntimeError("Unknown config option key: " + opt_key);
+        if (opt_def == nullptr) {
+            BOOST_LOG_TRIVIAL(error) << "Unknown config option key: " << opt_key;
+            return;
+        }
 
         // Some older presets may not carry newly introduced keys. Ensure the
         // option exists before mutating it through typed accessors below.

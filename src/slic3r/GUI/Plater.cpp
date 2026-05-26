@@ -1246,6 +1246,8 @@ public:
             });
         }
 
+        Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { EndModal(wxID_CANCEL); });
+
         CentreOnParent();
         wxGetApp().UpdateDlgDarkUI(this);
     }
@@ -3295,6 +3297,8 @@ public:
         SetSizerAndFit(root);
         SetMinSize(wxSize(FromDIP(380), std::max(GetSize().GetHeight(), FromDIP(460))));
         update_weight_labels();
+
+        Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { EndModal(wxID_CANCEL); });
 
         if (m_color_map) {
             m_color_map->Bind(wxEVT_SLIDER, [this](wxCommandEvent &) {

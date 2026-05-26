@@ -42,16 +42,16 @@ unsigned int resolve_mixed_with_layer_heights(const MixedFilamentManager *mixed_
         return filament_id_1based;
 
     const MixedFilament *mixed_row = mixed_mgr->mixed_filament_from_id(filament_id_1based, num_physical);
-    const bool is_custom_mixed = mixed_row != nullptr && mixed_row->custom;
 
     // Z-direction gradient short-circuits the legacy A/B layer cycle below: the
     // gradient path needs the per-(object, layer) run lookup performed inside
     // MixedFilamentManager::resolve.
-    const bool gradient_active = mixed_row != nullptr && mixed_row->gradient_enabled
-        && current_object != nullptr && layer_index > 0
-        && mixed_row->component_a != mixed_row->component_b;
+    const bool gradient_active = 
+        (mixed_row != nullptr && current_object != nullptr) &&
+        (mixed_row->gradient_enabled && mixed_row->component_a != mixed_row->component_b) &&
+        (layer_index > 0);
 
-    if (!is_custom_mixed && !gradient_active && (layer_height_a > 0.f || layer_height_b > 0.f)) {
+    if (mixed_row != nullptr && !mixed_row->custom && !gradient_active && (layer_height_a > 0.f || layer_height_b > 0.f)) {
         const float safe_base = std::max<float>(0.01f, base_layer_height);
         const int ratio_a = std::max(1, int(std::lround((layer_height_a > 0.f ? layer_height_a : safe_base) / safe_base)));
         const int ratio_b = std::max(1, int(std::lround((layer_height_b > 0.f ? layer_height_b : safe_base) / safe_base)));

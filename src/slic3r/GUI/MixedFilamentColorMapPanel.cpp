@@ -359,7 +359,8 @@ std::vector<double> MixedFilamentColorMapPanel::raw_weights_from_pos(double norm
     }
     case GeometryMode::Triangle:
     case GeometryMode::TriangleWithCenter: return simplex_weights_from_pos(make_vec(normalized_x, normalized_y));
-    case GeometryMode::Radial: break;
+    default:
+        break;
     }
 
     const std::vector<AnchorPoint> anchors = radial_anchor_points();

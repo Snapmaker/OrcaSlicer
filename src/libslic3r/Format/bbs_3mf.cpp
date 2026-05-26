@@ -577,34 +577,37 @@ namespace Slic3r {
 
 static size_t physical_filament_count_from_project_config(const DynamicPrintConfig &config)
 {
-    if (const auto *opt = config.option<ConfigOptionStrings>("filament_colour"); opt != nullptr && !opt->values.empty())
-        return opt->values.size();
-    if (const auto *opt = config.option<ConfigOptionStrings>("filament_settings_id"); opt != nullptr && !opt->values.empty())
-        return opt->values.size();
-    if (const auto *opt = config.option<ConfigOptionStrings>("filament_ids"); opt != nullptr && !opt->values.empty())
-        return opt->values.size();
-    if (const auto *opt = config.option<ConfigOptionStrings>("default_filament_colour"); opt != nullptr && !opt->values.empty())
-        return opt->values.size();
-    if (const auto *opt = config.option<ConfigOptionFloats>("nozzle_diameter"); opt != nullptr && !opt->values.empty())
+    for (const char* key : {"filament_colour", "filament_settings_id",
+                             "filament_ids", "default_filament_colour"}) {
+        if (const auto* opt = config.option<ConfigOptionStrings>(key); opt && !opt->values.empty())
+            return opt->values.size();
+    }
+    if (const auto* opt = config.option<ConfigOptionFloats>("nozzle_diameter"); opt && !opt->values.empty())
         return opt->values.size();
     return 0;
 }
 
 static int max_supported_filament_id_from_project_config(const DynamicPrintConfig &config)
 {
-    const size_t physical_count = physical_filament_count_from_project_config(config);
+    size_t physical_count = 0;
+    std::vector<std::string> physical_colors;
+    auto try_color_key = [&](const char* key) -> bool {
+        const auto* opt = config.option<ConfigOptionStrings>(key);
+        if (opt != nullptr && !opt->values.empty()) {
+            physical_count  = opt->values.size();
+            physical_colors = opt->values;
+            return true;
+        }
+        return false;
+    };
+    if (!try_color_key("filament_colour") && !try_color_key("default_filament_colour")) {
+        physical_count = physical_filament_count_from_project_config(config);
+        if (physical_count > 0)
+            physical_colors.assign(physical_count, "#FFFFFF");
+    }
+
     if (physical_count == 0)
         return std::numeric_limits<int>::max();
-
-    std::vector<std::string> physical_colors;
-    if (const auto *opt = config.option<ConfigOptionStrings>("filament_colour"); opt != nullptr)
-        physical_colors = opt->values;
-    else if (const auto *opt = config.option<ConfigOptionStrings>("default_filament_colour"); opt != nullptr)
-        physical_colors = opt->values;
-    if (physical_colors.size() < physical_count)
-        physical_colors.resize(physical_count, "#FFFFFF");
-    else if (physical_colors.size() > physical_count)
-        physical_colors.resize(physical_count);
 
     size_t max_filament_id = physical_count;
     if (physical_count >= 2) {

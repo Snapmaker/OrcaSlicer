@@ -16250,7 +16250,7 @@ msgstr ""
 msgid "Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."
 msgstr "
 
-msgid "Snapmaker Orca is licensed under the GNU Affero Generall Public License, version 3."
+msgid "Snapmaker Orca is licensed under the GNU Affero General Public License, version 3."
 msgstr ""
 
 msgid "OrcaSlicer is forked from Bambu Studio by Bambu Lab."

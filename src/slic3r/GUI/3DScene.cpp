@@ -1,4 +1,4 @@
-#include <GL/glew.h>
+#include <glad/gl.h>
 
 #include "3DScene.hpp"
 #include "GLShader.hpp"
@@ -454,8 +454,8 @@ void GLVolume::render_with_outline(const GUI::Size& cnv_size)
 
         glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_tex, 0));
     } else {
-        glsafe(::glGenFramebuffersEXT(1, &depth_fbo));
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, depth_fbo));
+        glsafe(::glGenFramebuffers(1, &depth_fbo));
+        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, depth_fbo));
 
         glActiveTexture(GL_TEXTURE0);
         glsafe(::glGenTextures(1, &depth_tex));
@@ -467,7 +467,7 @@ void GLVolume::render_with_outline(const GUI::Size& cnv_size)
         glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, cnv_size.get_width(), cnv_size.get_height(), 0, GL_DEPTH_COMPONENT,
                               GL_FLOAT, nullptr));
 
-        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_TEXTURE_2D, depth_tex, 0));
+        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_tex, 0));
     }
     glsafe(::glClear(GL_DEPTH_BUFFER_BIT));
     if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
@@ -480,7 +480,7 @@ void GLVolume::render_with_outline(const GUI::Size& cnv_size)
     if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Arb) {
         glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, 0));
     } else if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Ext) {
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0));
+        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, 0));
     }
     shader->set_uniform("is_outline", true);
     shader->set_uniform("screen_size", Vec2f{cnv_size.get_width(), cnv_size.get_height()});
@@ -497,9 +497,9 @@ void GLVolume::render_with_outline(const GUI::Size& cnv_size)
         if (depth_fbo != 0)
             glsafe(::glDeleteFramebuffers(1, &depth_fbo));
     } else if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Ext) {
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0));
+        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, 0));
         if (depth_fbo != 0)
-            glsafe(::glDeleteFramebuffersEXT(1, &depth_fbo));
+            glsafe(::glDeleteFramebuffers(1, &depth_fbo));
     }
     if (depth_tex != 0)
         glsafe(::glDeleteTextures(1, &depth_tex));

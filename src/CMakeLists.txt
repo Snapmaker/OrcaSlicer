@@ -9,6 +9,10 @@ add_subdirectory(dev-utils)
 # add_subdirectory(avrdude)
 # Note: semver and hints are now included from deps_src/CMakeLists.txt
 
+# OpenGL function loader (replaces GLEW, which fails to init on modern GL
+# contexts on some drivers, e.g. NVIDIA — see OpenGLManager).
+add_subdirectory(glad)
+
 # Add MQTT library
 add_subdirectory(mqtt)
 

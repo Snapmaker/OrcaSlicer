@@ -2073,8 +2073,8 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
 
     // Update add/remove button visibility
     bool can_remove = !is_match_mode && !is_gradient_mode && !is_cycle_mode && (n > 2);
-    bool can_add = !is_match_mode && !is_gradient_mode && !is_cycle_mode && (n < max_filaments_for_mode(m_current_mode)) && (n < (int)m_filament_colours.size());
-    bool show_add = !is_match_mode && !is_gradient_mode && !is_cycle_mode;
+    bool show_add = !is_match_mode && !is_gradient_mode && !is_cycle_mode && n < max_filaments_for_mode(m_current_mode);
+    bool can_add = n < (int)m_filament_colours.size();
     if (m_btn_remove_filament) m_btn_remove_filament->Show(can_remove);
     if (m_btn_add_filament) {
         m_btn_add_filament->Show(show_add);

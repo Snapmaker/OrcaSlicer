@@ -1603,7 +1603,7 @@ msgstr ""
 "Klicken Sie hier, um die neueste Version im Standardbrowser herunterzuladen: "
 "%s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca benötigt ein Upgrade"
 
 msgid "This is the newest version."

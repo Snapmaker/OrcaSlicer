@@ -1543,7 +1543,7 @@ msgstr "Konfiguráció betöltése"
 msgid "Click to download new version in default browser: %s"
 msgstr "Kattints az új verzió letöltéséhez az alapértelmezett böngészőben: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "A Snapmaker Orcat frissíteni kell"
 
 msgid "This is the newest version."

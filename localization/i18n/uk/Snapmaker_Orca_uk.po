@@ -1593,7 +1593,7 @@ msgid "Click to download new version in default browser: %s"
 msgstr ""
 "Натисніть OK, щоб завантажити останню версію в стандартному браузері: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca потребує оновлення"
 
 msgid "This is the newest version."

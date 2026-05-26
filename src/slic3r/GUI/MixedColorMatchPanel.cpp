@@ -223,13 +223,13 @@ MixedColorMatchPanel::MixedColorMatchPanel(wxWindow *parent,
     m_recipe_formula_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
     right_col->Add(m_recipe_formula_label, 0, wxEXPAND | wxBOTTOM, M2);
 
-    // Large solid color swatch — "混色效果"
+    // Large solid color swatch — "Blend result"
     m_recipe_preview = new wxPanel(this, wxID_ANY, wxDefaultPosition,
                                    wxSize(FromDIP(120), FromDIP(100)), wxBORDER_SIMPLE);
     right_col->Add(m_recipe_preview, 0, wxEXPAND | wxBOTTOM, M2);
     right_col->Add(new wxStaticText(this, wxID_ANY, _L("Blend result")), 0, wxALIGN_CENTER | wxBOTTOM, M);
 
-    // Striped preview — "混色预览"
+    // Striped preview — "Color preview"
     m_striped_preview = new StripedPreviewPanel(this, wxSize(FromDIP(120), FromDIP(100)));
     right_col->Add(m_striped_preview, 0, wxEXPAND | wxBOTTOM, M2);
     right_col->Add(new wxStaticText(this, wxID_ANY, _L("Color preview")), 0, wxALIGN_CENTER);

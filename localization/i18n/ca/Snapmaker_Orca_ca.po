@@ -1600,7 +1600,7 @@ msgstr "S'està carregant la configuració"
 msgid "Click to download new version in default browser: %s"
 msgstr "Feu clic per descarregar la nova versió al navegador predeterminat: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "L'Snapmaker Orca necessita una actualització"
 
 msgid "This is the newest version."

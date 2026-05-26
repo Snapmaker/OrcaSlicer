@@ -1539,7 +1539,7 @@ msgstr "Konfigurationen laddas"
 msgid "Click to download new version in default browser: %s"
 msgstr "Tryck på ladda ner ny version ifrån standard webbläsaren: %s"
 
-msgid "The Snapmaker Orca needs an upgrade"
+msgid "Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca behöver uppdateras"
 
 msgid "This is the newest version."

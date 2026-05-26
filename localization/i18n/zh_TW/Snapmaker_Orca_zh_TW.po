@@ -1561,7 +1561,7 @@ msgstr "正在讀取設定檔"
 msgid "Click to download new version in default browser: %s"
 msgstr "在預設瀏覽器中開啟頁面下載最新版本： %s"
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca 需要進行升級"
 
 msgid "This is the newest version."
@@ -7316,9 +7316,6 @@ msgstr "設備升級中，無法傳送列印作業"
 
 msgid "The selected printer is incompatible with the chosen printer presets."
 msgstr "所選列印設備與選擇的列印設備預設檔不相容。"
-
-msgid "Incompatible filament types cannot be mixed. Please correct the selection."
-msgstr "不同類型耗材不可混色列印，請修正異常混色設定。"
 
 msgid "An SD card needs to be inserted before send to printer SD card."
 msgstr "傳送到列印設備需要插入 SD 記憶卡。"
@@ -16739,12 +16736,6 @@ msgstr "經由列印主機連接的列印設備連接失敗。"
 #, c-format, boost-format
 msgid "Mismatched type of print host: %s"
 msgstr "列印主機類型不符：%s"
-
-msgid "Mixed Color (Experimental)"
-msgstr "混色(實驗)"
-
-msgid "Mixed Color Layer Thinner"
-msgstr "混色層高細化"
 
 msgid "Connection to AstroBox is working correctly."
 msgstr "與 AstroBox 的連接工作正常。"

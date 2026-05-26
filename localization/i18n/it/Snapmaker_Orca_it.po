@@ -1611,7 +1611,7 @@ msgstr "Caricamento configurazione"
 msgid "Click to download new version in default browser: %s"
 msgstr "Fai clic per scaricare la nuova versione nel browser predefinito: %s"
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca necessita di aggiornamento"
 
 msgid "This is the newest version."

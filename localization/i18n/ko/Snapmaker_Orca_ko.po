@@ -1573,7 +1573,7 @@ msgstr "구성 파일 로드 중"
 msgid "Click to download new version in default browser: %s"
 msgstr "기본 브라우저에서 새 버전을 다운로드하려면 클릭: %s"
 
-msgid "Snapmaker Orca needs an upgrade"
+msgid "The Snapmaker Orca needs an upgrade"
 msgstr "Snapmaker Orca 업그레이드가 필요합니다"
 
 msgid "This is the newest version."

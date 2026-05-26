@@ -285,24 +285,13 @@ AboutDialog::AboutDialog()
     
 
     // SM Beta
-<<<<<<< HEAD
     text_list.push_back(_L("Note: The firmware version of SnapmakerU1 should be no less than") + " " + std::string(MIN_FIRM_VER));
     text_list.push_back(_L("Snapmaker Orca is forked from Orca Slicer by SoftFever."));
     text_list.push_back(_L("OrcaSlicer is forked from Bambu Studio by Bambu Lab."));
     text_list.push_back(_L("Bambu Studio is forked from PrusaSlicer by Prusa Research, which is from Slic3r by Alessandro Ranellucci and the RepRap community. Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill."));
     text_list.push_back(_L("Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."));
     text_list.push_back(_L(""));
-    text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero General Public License, version 3."));
-=======
-    //text_list.push_back(_L("Note: The firmware version of SnapmakerU1 should be no less than") + " " + std::string(MIN_FIRM_VER));
-    //text_list.push_back(_L("Snapmaker Orca is forked from Orca Slicer by SoftFever."));
-    //text_list.push_back(_L("OrcaSlicer is forked from Bambu Studio by Bambu Lab."));
-    //text_list.push_back(_L("Bambu Studio is forked from PrusaSlicer by Prusa Research, which is from Slic3r by Alessandro Ranellucci and the RepRap community. Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill."));
-    //text_list.push_back(_L("Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."));
-    //text_list.push_back(_L(""));
-    //text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero Generall Public License, version 3."));
-    text_list.push_back(_L("20260521 顶盖需求，打印时，根据使用的耗材决定最适合的顶盖模式。当前不做高低温耗材混用检测！！！"));
->>>>>>> 0022181c88 (fix：增加版本描述)
+    text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero Generall Public License, version 3."));
     
     text_sizer->Add( 0, 0, 0, wxTOP, FromDIP(33));
     bool is_zh = wxGetApp().app_config->get("language") == "zh_CN";

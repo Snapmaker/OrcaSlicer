@@ -1976,15 +1976,6 @@ static std::vector<LocalZActivePair> build_local_z_pair_cycle_for_row(const Mixe
         pair_weights.emplace_back(std::max(1, gradient_weights[1] + gradient_weights[2]));
     }
 
-    if (!mf.gradient_enabled && gradient_ids.size() == 3) {
-        const int w1 = gradient_weights[0];
-        const int w2 = gradient_weights[1];
-        const int w3 = gradient_weights[2];
-        pair_weights[0] = std::max(1, w1 + w2 - w3);
-        pair_weights[1] = std::max(1, w1 + w3 - w2);
-        pair_weights[2] = std::max(1, w2 + w3 - w1);
-    }
-
     if (pair_options.size() < 2 || pair_options.size() != pair_weights.size())
         return {};
 

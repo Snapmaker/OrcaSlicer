@@ -200,6 +200,9 @@ void AppConfig::set_defaults()
     if (get("reverse_mouse_wheel_zoom").empty())
         set_bool("reverse_mouse_wheel_zoom", false);
 
+    if (get("allow_filament_temp_mixing").empty())
+        set_bool("allow_filament_temp_mixing", false);
+
     if (get("camera_orbit_mult").empty())
         set("camera_orbit_mult", "1.0");
 

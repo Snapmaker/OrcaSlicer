@@ -133,7 +133,9 @@ Flow LayerRegion::flow(FlowRole role, double layer_height) const
     } else if (role == frTopSolidInfill) {
         config_width = m_region->config().top_surface_line_width;
     } else {
-        throw Slic3r::InvalidArgument("Unknown role");
+        BOOST_LOG_TRIVIAL(error) << "Unknown role in LayerRegion::flow: " << int(role);
+        assert(false);
+        return Flow();
     }
 
     if (config_width.value == 0)

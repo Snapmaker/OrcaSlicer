@@ -576,10 +576,13 @@ void MixedFilamentDialog::build_ui()
                 m_tri_wx = 1.0/3.0; m_tri_wy = 1.0/3.0; m_tri_wz = 1.0/3.0;
             }
             resize_gradient_ids(new_count);
-            CallAfter([this]() {
-                rebuild_filament_rows();
-                update_compatibility_warning();
-                Layout(); Fit();
+            wxWeakRef<wxWindow> weak_self(this);
+            CallAfter([weak_self]() {
+                if (!weak_self) return;
+                auto* self = static_cast<MixedFilamentDialog*>(weak_self.get());
+                self->rebuild_filament_rows();
+                self->update_compatibility_warning();
+                self->Layout(); self->Fit();
             });
         });
         card_title_row->Add(m_btn_remove_filament, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
@@ -590,10 +593,13 @@ void MixedFilamentDialog::build_ui()
         m_btn_add_filament->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             sync_rows_to_result();
             resize_gradient_ids((int)m_filament_rows.size() + 1);
-            CallAfter([this]() {
-                rebuild_filament_rows();
-                update_compatibility_warning();
-                Layout(); Fit();
+            wxWeakRef<wxWindow> weak_self(this);
+            CallAfter([weak_self]() {
+                if (!weak_self) return;
+                auto* self = static_cast<MixedFilamentDialog*>(weak_self.get());
+                self->rebuild_filament_rows();
+                self->update_compatibility_warning();
+                self->Layout(); self->Fit();
             });
         });
         card_title_row->Add(m_btn_add_filament, 0, wxALIGN_CENTER_VERTICAL);
@@ -1269,6 +1275,8 @@ void MixedFilamentDialog::build_ui()
         collect_result();
         EndModal(wxID_OK);
     });
+
+    Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { EndModal(wxID_CANCEL); });
 
     Fit();
     CentreOnParent();

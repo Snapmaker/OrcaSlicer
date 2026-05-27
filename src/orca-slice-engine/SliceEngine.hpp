@@ -8,13 +8,18 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
-#include "libslic3r/Preset.hpp"
-#include "libslic3r/PresetBundle.hpp"
-#include "libslic3r/Print.hpp"
-#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Semver.hpp"
 
 #include "Types.hpp"
+
+// Forward declarations for types used by pointer/reference only
+namespace Slic3r {
+    class Print;
+    class Preset;
+    class PresetBundle;
+    struct PlateData;
+}
+using PlateDataPtrs = std::vector<Slic3r::PlateData*>;
 
 struct EngineConfig {
     std::string input_file;
@@ -72,6 +77,7 @@ struct PlateSliceResult {
 class SliceEngine {
 public:
     SliceEngine(const EngineConfig& cfg, std::vector<std::string>& temp_files);
+    ~SliceEngine();
 
     // Run the full pipeline. Returns true if at least one plate produced output.
     bool run();
@@ -135,7 +141,7 @@ private:
     Slic3r::DynamicPrintConfig m_config;
     Slic3r::ConfigSubstitutionContext m_config_substitutions{
         Slic3r::ForwardCompatibilitySubstitutionRule::Enable};
-    Slic3r::PlateDataPtrs m_plate_data;
+    PlateDataPtrs m_plate_data;
     std::vector<Slic3r::Preset*> m_project_presets;
     bool m_is_bbl_3mf = false;
     Slic3r::Semver m_file_version;

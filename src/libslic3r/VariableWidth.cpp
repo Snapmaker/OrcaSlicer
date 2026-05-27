@@ -1,6 +1,118 @@
 #include "VariableWidth.hpp"
 
+#include "BoundingBox.hpp"
+
 namespace Slic3r {
+
+static Points closed_loop_points(const ThickPolyline& thick_polyline)
+{
+    Points points = thick_polyline.points;
+    if (points.size() > 1 && points.front() == points.back())
+        points.pop_back();
+    return points;
+}
+
+static bool points_match_cyclic(const Points& lhs, const Points& rhs, const coord_t point_tolerance, const bool reversed)
+{
+    if (lhs.size() != rhs.size() || lhs.empty())
+        return false;
+
+    const double tolerance_sq = double(point_tolerance) * double(point_tolerance);
+    for (size_t start = 0; start < rhs.size(); ++start) {
+        if ((lhs.front() - rhs[start]).cast<double>().squaredNorm() > tolerance_sq)
+            continue;
+
+        bool matches = true;
+        for (size_t i = 0; i < lhs.size(); ++i) {
+            const size_t rhs_idx = reversed ? (start + rhs.size() - i) % rhs.size() : (start + i) % rhs.size();
+            if ((lhs[i] - rhs[rhs_idx]).cast<double>().squaredNorm() > tolerance_sq) {
+                matches = false;
+                break;
+            }
+        }
+
+        if (matches)
+            return true;
+    }
+
+    return false;
+}
+
+static bool are_near_duplicate_closed_gap_fill_loops(const ThickPolyline& lhs, const ThickPolyline& rhs)
+{
+    if (!lhs.is_closed() || !rhs.is_closed())
+        return false;
+
+    const Points lhs_points = closed_loop_points(lhs);
+    const Points rhs_points = closed_loop_points(rhs);
+    if (lhs_points.size() < 3 || lhs_points.size() != rhs_points.size())
+        return false;
+
+    const coord_t bbox_tolerance  = scale_(0.05);
+    const coord_t point_tolerance = scale_(0.05);
+    const double  length_tolerance = double(scale_(0.20));
+
+    const BoundingBox lhs_bbox(lhs_points);
+    const BoundingBox rhs_bbox(rhs_points);
+    if (!lhs_bbox.defined || !rhs_bbox.defined)
+        return false;
+
+    if (std::abs(lhs_bbox.min.x() - rhs_bbox.min.x()) > bbox_tolerance ||
+        std::abs(lhs_bbox.min.y() - rhs_bbox.min.y()) > bbox_tolerance ||
+        std::abs(lhs_bbox.max.x() - rhs_bbox.max.x()) > bbox_tolerance ||
+        std::abs(lhs_bbox.max.y() - rhs_bbox.max.y()) > bbox_tolerance)
+        return false;
+
+    if (std::abs(length(lhs_points) - length(rhs_points)) > length_tolerance)
+        return false;
+
+    const double area_tolerance = double(scale_(0.05)) * std::max(length(lhs_points), length(rhs_points));
+    if (std::abs(std::abs(area(lhs_points)) - std::abs(area(rhs_points))) > area_tolerance)
+        return false;
+
+    return points_match_cyclic(lhs_points, rhs_points, point_tolerance, false) ||
+           points_match_cyclic(lhs_points, rhs_points, point_tolerance, true);
+}
+
+static ExtrusionPaths closed_gap_fill_loop_to_extrusion_paths(const ThickPolyline& thick_polyline, ExtrusionRole role, const Flow& flow)
+{
+    ExtrusionPaths paths;
+    if (!thick_polyline.is_closed())
+        return paths;
+
+    ThickLines lines = thick_polyline.thicklines();
+    if (lines.empty())
+        return paths;
+
+    double total_length = 0.0;
+    double weighted_width_sum = 0.0;
+    for (const ThickLine& line : lines) {
+        const coordf_t line_len = line.length();
+        if (line_len < SCALED_EPSILON)
+            continue;
+
+        total_length += line_len;
+        weighted_width_sum += line_len * 0.5 * (line.a_width + line.b_width);
+    }
+
+    if (total_length <= SCALED_EPSILON)
+        return paths;
+
+    ExtrusionPath path(role);
+    path.polyline.points = thick_polyline.points;
+    if (!path.polyline.is_valid())
+        return paths;
+
+    const double average_width = weighted_width_sum / total_length;
+    const Flow   new_flow      = (role == erOverhangPerimeter && flow.bridge()) ?
+        flow :
+        flow.with_width(unscale<float>(average_width) + flow.height() * float(1. - 0.25 * PI));
+    path.mm3_per_mm = new_flow.mm3_per_mm();
+    path.width      = new_flow.width();
+    path.height     = new_flow.height();
+    paths.emplace_back(std::move(path));
+    return paths;
+}
 
 ExtrusionMultiPath thick_polyline_to_multi_path(const ThickPolyline& thick_polyline, ExtrusionRole role, const Flow& flow, const float tolerance, const float merge_tolerance)
 {
@@ -219,8 +331,33 @@ void variable_width(const ThickPolylines& polylines, ExtrusionRole role, const F
     // variable extrusion within a single move; this value shall only affect the amount
     // of segments, and any pruning shall be performed before we apply this tolerance.
     const float tolerance = float(scale_(0.05));
-    for (const ThickPolyline& p : polylines) {
-        ExtrusionPaths paths = thick_polyline_to_extrusion_paths_2(p, role, flow, tolerance);
+    const ThickPolylines* source_polylines = &polylines;
+    ThickPolylines        deduplicated_gap_fill_loops;
+
+    if (role == erGapFill && polylines.size() > 1) {
+        deduplicated_gap_fill_loops.reserve(polylines.size());
+        for (const ThickPolyline& polyline : polylines) {
+            bool is_duplicate = false;
+            for (const ThickPolyline& kept : deduplicated_gap_fill_loops) {
+                if (are_near_duplicate_closed_gap_fill_loops(polyline, kept)) {
+                    is_duplicate = true;
+                    break;
+                }
+            }
+
+            if (!is_duplicate)
+                deduplicated_gap_fill_loops.emplace_back(polyline);
+        }
+
+        source_polylines = &deduplicated_gap_fill_loops;
+    }
+
+    for (const ThickPolyline& p : *source_polylines) {
+        ExtrusionPaths paths;
+        if (role == erGapFill && p.is_closed())
+            paths = closed_gap_fill_loop_to_extrusion_paths(p, role, flow);
+        if (paths.empty())
+            paths = thick_polyline_to_extrusion_paths_2(p, role, flow, tolerance);
         // Append paths to collection.
         if (!paths.empty()) {
             if (paths.front().first_point() == paths.back().last_point())

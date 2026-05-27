@@ -453,6 +453,7 @@
   "Print Now is only available in Cloud Mode": "Print Now is only available in Cloud Mode",
   "nozzle_mismatch_tip": "The nozzle diameter does not match the preset. Please confirm the match before starting the print.",
   "Next": "Next",
+  "File stream error. Please resend.": "File stream error. Please resend.",
 
 
   "Error Code": "Error Code",

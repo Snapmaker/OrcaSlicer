@@ -1195,10 +1195,13 @@ static wxString get_full_label(std::string opt_key, const DynamicPrintConfig& co
 {
     opt_key = get_pure_opt_key(opt_key);
 
-    if (config.option(opt_key)->is_nil())
+    const ConfigOption *raw_opt = config.option(opt_key);
+    if (raw_opt == nullptr || raw_opt->is_nil())
         return _L("N/A");
 
     const ConfigOptionDef* opt = config.def()->get(opt_key);
+    if (opt == nullptr)
+        return from_u8(opt_key);
     return opt->full_label.empty() ? opt->label : opt->full_label;
 }
 
@@ -1215,12 +1218,17 @@ static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& 
     opt_idx = orig_opt_idx >= 0 ? orig_opt_idx : 0;
     opt_key = get_pure_opt_key(opt_key);
 
-    if (config.option(opt_key)->is_nil())
+    const ConfigOption *raw_opt = config.option(opt_key);
+    if (raw_opt == nullptr || raw_opt->is_nil())
         return _L("N/A");
 
     wxString out;
 
     const ConfigOptionDef* opt = config.def()->get(opt_key);
+    if (opt == nullptr)
+        return from_u8(raw_opt->serialize());
+    if (raw_opt->type() != opt->type)
+        return from_u8(raw_opt->serialize());
     bool is_nullable = opt->nullable;
 
     switch (opt->type) {
@@ -1678,18 +1686,28 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         for (const std::string& opt_key : dirty_options) {
             const Search::Option& option = searcher.get_option(opt_key, type);
             if (option.opt_key() != opt_key) {
-                // When founded option isn't the correct one.
-                // It can be for dirty_options: "default_print_profile", "printer_model", "printer_settings_id",
-                // because of they don't exist in searcher
+                // Only show the fallback for user-facing option types
+                // (bool/float/int/enum). Internal keys like IDs and
+                // serialized blobs are coString — skip those silently.
+                const ConfigOption* o = old_config.option(opt_key);
+                if (!o) o = new_config.option(opt_key);
+                if (!o || o->type() == coString || o->type() == coStrings)
+                    continue;
+                wxString label = from_u8(opt_key);
+                if (old_config.def()) {
+                    const ConfigOptionDef* def = old_config.def()->get(opt_key);
+                    if (def && !def->label.empty())
+                        label = def->label;
+                }
+                PresetItem pi = {type, opt_key,
+                    _L("Other"), wxEmptyString,
+                    label,
+                    get_string_value(opt_key, old_config),
+                    get_string_value(opt_key, new_config)};
+                m_presetitems.push_back(pi);
                 continue;
             }
 
-            /*m_tree->Append(opt_key, type, option.category_local, option.group_local, option.label_local,
-                get_string_value(opt_key, old_config), get_string_value(opt_key, new_config), category_icon_map.at(option.category));*/
-
-
-            //PresetItem pi = {opt_key, type, 1983};
-            //m_presetitems.push_back()
             PresetItem pi = {type, opt_key, option.category_local, option.group_local, option.label_local, get_string_value(opt_key, old_config), get_string_value(opt_key, new_config)};
             m_presetitems.push_back(pi);
 

@@ -741,8 +741,8 @@ void SliceEngine::process_plate(int plate_id) {
 
     // Calculate plate dimensions and origin (done before build-volume check
     // so the check can translate instances into plate-local coordinates).
-    double plate_width = 200.0;
-    double plate_depth = 200.0;
+    double plate_width = DEFAULT_PLATE_WIDTH;
+    double plate_depth = DEFAULT_PLATE_DEPTH;
 
     if (m_config.has("printable_area")) {
         auto printable_area_opt = m_config.option<ConfigOptionPoints>("printable_area");

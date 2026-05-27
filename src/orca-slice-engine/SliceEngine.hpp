@@ -45,6 +45,30 @@ struct PlateSliceResult {
     std::vector<Issue> issues;                   // collected issues for this plate
 };
 
+// ============================================================================
+// SliceEngine — headless cloud slicing pipeline
+// ============================================================================
+//
+// Pipeline stages:
+//   Stage 1 — load_3mf() → validate_config() → validate_presets() → validate_input()
+//   Stage 2 — per-plate: filter_instances() → build_volume_check() → apply_model()
+//             →  validation() → slicing() → export_gcode() → postprocessing()
+//   Stage 3 — package_output() → build_statistics()
+//
+// Config flow (three layers, applied in order):
+//   1. m_config         — raw 3MF project_settings.config (DynamicPrintConfig)
+//   2. merged_config    — m_config + engine overrides (per-plate, G-code strip)
+//      (created in apply_model(), passed to Print::apply())
+//   3. m_full_print_config — Print's internal full config, includes all
+//      PrintConfig + PrintObjectConfig + PrintRegionConfig defaults
+//      (accessible via print.full_print_config())
+//
+// Key design decisions:
+//   - Fresh Print object per retry attempt (no explicit dtor / placement-new)
+//   - Per-plate error handling via report_error() helper
+//   - try-catch boundary at process_plate() prevents one plate from crashing the job
+//   - Custom G-code stripped for cloud safety (apply_official_presets)
+//
 class SliceEngine {
 public:
     SliceEngine(const EngineConfig& cfg, std::vector<std::string>& temp_files);
@@ -119,4 +143,7 @@ private:
     // Preset validation (requires system profiles at resources_dir/profiles/)
     std::unique_ptr<Slic3r::PresetBundle> m_preset_bundle;
     bool m_presets_available = false;
+
+    static constexpr double DEFAULT_PLATE_WIDTH = 200.0;
+    static constexpr double DEFAULT_PLATE_DEPTH = 200.0;
 };

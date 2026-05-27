@@ -577,55 +577,38 @@ void SliceEngine::substitute_filament_params(ConfigOptionStrings* filament_ids, 
                                               const Preset& official_parent,
                                               const std::string& original_name)
 {
-    const std::string& parent_name = official_parent.name;
+    filament_ids->values[ext_idx] = official_parent.name;
 
-    filament_ids->values[ext_idx] = parent_name;
+    const size_t dst_idx = static_cast<size_t>(ext_idx);
 
-    const size_t ext_sz = static_cast<size_t>(ext_idx);
-
+    // Iterate all config keys from the official parent preset.
+    // Use ConfigOption::is_nil() and set_at() to handle all types uniformly,
+    // including Nullable variants (nozzle_temperature, hot_plate_temp, etc.)
+    // that were previously skipped by explicit dynamic_cast branches.
     for (auto it = official_parent.config.cbegin(); it != official_parent.config.cend(); ++it) {
-        const auto& key = it->first;
-        const auto& opt = it->second;
-        auto* target = m_config.option(key, true);
-        if (!target) continue;
+        const auto& key     = it->first;
+        const auto& src_opt = it->second;
 
-        size_t target_size = 0;
-        if (auto* dst = dynamic_cast<ConfigOptionFloats*>(target)) {
-            target_size = dst->values.size();
-            if (auto* src = dynamic_cast<const ConfigOptionFloats*>(opt.get())) {
-                if (!src->values.empty() && ext_sz < target_size)
-                    dst->values[ext_idx] = src->values[0];
-            }
-        } else if (auto* dst = dynamic_cast<ConfigOptionPercents*>(target)) {
-            target_size = dst->values.size();
-            if (auto* src = dynamic_cast<const ConfigOptionPercents*>(opt.get())) {
-                if (!src->values.empty() && ext_sz < target_size)
-                    dst->values[ext_idx] = src->values[0];
-            }
-        } else if (auto* dst = dynamic_cast<ConfigOptionInts*>(target)) {
-            target_size = dst->values.size();
-            if (auto* src = dynamic_cast<const ConfigOptionInts*>(opt.get())) {
-                if (!src->values.empty() && ext_sz < target_size)
-                    dst->values[ext_idx] = src->values[0];
-            }
-        } else if (auto* dst = dynamic_cast<ConfigOptionStrings*>(target)) {
-            target_size = dst->values.size();
-            if (auto* src = dynamic_cast<const ConfigOptionStrings*>(opt.get())) {
-                if (!src->values.empty() && ext_sz < target_size)
-                    dst->values[ext_idx] = src->values[0];
-            }
-        } else if (auto* dst = dynamic_cast<ConfigOptionBools*>(target)) {
-            target_size = dst->values.size();
-            if (auto* src = dynamic_cast<const ConfigOptionBools*>(opt.get())) {
-                if (!src->values.empty() && ext_sz < target_size)
-                    dst->values[ext_idx] = src->values[0];
-            }
-        }
+        auto* dst_opt = m_config.option(key, true);  // get or create
+        if (!dst_opt) continue;
+
+        // Only vector options can have per-extruder values; scalar options are shared.
+        auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
+        if (!dst_vec) continue;
+        if (dst_vec->size() <= dst_idx) continue;
+
+        // Only fill missing values — do not overwrite user-specified settings.
+        if (!dst_vec->is_nil(dst_idx)) continue;
+
+        // Copy parent preset's first extruder value into the target extruder slot.
+        auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(src_opt.get());
+        if (src_vec && src_vec->size() > 0)
+            dst_vec->set_at(src_vec, dst_idx, 0);
     }
 
     m_stats.issues.push_back(make_warning(-1, "FILAMENT_SUBSTITUTED",
         std::string("Filament \"") + original_name
-        + "\" substituted with official preset \"" + parent_name + "\""));
+        + "\" substituted with official preset \"" + official_parent.name + "\""));
 }
 
 bool SliceEngine::validate_printer_model()

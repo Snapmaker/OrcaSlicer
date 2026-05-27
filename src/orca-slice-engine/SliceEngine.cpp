@@ -726,6 +726,7 @@ bool SliceEngine::validate_input() {
 // ============================================================================
 
 void SliceEngine::process_plate(int plate_id) {
+    try {
     // --- Filter instances for this plate ---
     std::set<int> identify_ids;
     int instances_on_plate = filter_instances(plate_id, identify_ids);
@@ -865,6 +866,20 @@ void SliceEngine::process_plate(int plate_id) {
     // All retries exhausted
     BOOST_LOG_TRIVIAL(error) << "Slicing/export failed for plate " << (plate_id + 1)
         << " after " << MAX_RETRIES << " attempts";
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "Unhandled exception processing plate " << (plate_id + 1)
+            << ": " << e.what();
+        m_any_error = true;
+        set_error_type(EXIT_SLICING_ERROR);
+        m_stats.issues.push_back(make_error(plate_id, "INTERNAL_ERROR",
+            std::string("Plate ") + std::to_string(plate_id + 1) + " slicing failed: " + e.what()));
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "Unhandled non-standard exception processing plate " << (plate_id + 1);
+        m_any_error = true;
+        set_error_type(EXIT_SLICING_ERROR);
+        m_stats.issues.push_back(make_error(plate_id, "INTERNAL_ERROR",
+            std::string("Plate ") + std::to_string(plate_id + 1) + " slicing failed with unknown error"));
+    }
 }
 
 // ============================================================================

@@ -1570,6 +1570,15 @@ void SliceEngine::package_output() {
 // Exit code derivation
 // ============================================================================
 
+void SliceEngine::report_error(int plate_id, int exit_code, const std::string& code,
+                               const std::string& message, bool set_main_message) {
+    m_any_error = true;
+    set_error_type(exit_code);
+    m_stats.issues.push_back(make_error(plate_id, code, message));
+    if (set_main_message && m_stats.error_message.empty())
+        m_stats.error_message = message;
+}
+
 void SliceEngine::set_error_type(int code) {
     if (code > m_error_type)
         m_error_type = code;

@@ -93,6 +93,8 @@ private:
     void run_postprocessing(int plate_id, PlateSliceResult& result);
 
     // --- State ---
+    void report_error(int plate_id, int exit_code, const std::string& code,
+                      const std::string& message, bool set_main_message = false);
     EngineConfig m_cfg;
     std::string m_output_path;
     SliceOutputStats m_stats;

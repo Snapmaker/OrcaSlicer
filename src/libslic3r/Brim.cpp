@@ -964,7 +964,11 @@ static ExPolygons outer_inner_brim_area(const Print& print,
                     // config brim width in auto-brim mode
                     if (has_brim_auto) {
                         double brimWidthRaw = configBrimWidthByVolumeGroups(adhesion, maxSpeed, groupVolumePtrs, volumeGroup.slices, groupHeight);
-                        brim_width = scale_(floor(brimWidthRaw / flowWidth / 2) * flowWidth * 2);
+                        double auto_brim = scale_(floor(brimWidthRaw / flowWidth / 2) * flowWidth * 2);
+                        // Only use auto-calculated width if the algorithm determined brim is needed.
+                        // Otherwise fall back to the user-configured brim_width.
+                        if (auto_brim > 0)
+                            brim_width = auto_brim;
                     }
                     for (const ExPolygon& ex_poly : volumeGroup.slices) {
                         // BBS: additional brim width will be added if part's adhesion area is too small and brim is not generated

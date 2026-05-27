@@ -149,9 +149,12 @@ static std::vector<PrintObjectTrafoAndInstances> print_objects_from_model_object
             trafo.trafo = model_instance_transformation.get_matrix_with_applied_shrinkage_compensation(shrinkage_compensation);
             
             auto shift = Point::new_scale(trafo.trafo.data()[12], trafo.trafo.data()[13]);
-            // Reset the XY axes of the transformation.
+            // Reset the XYZ translation axes of the transformation.
+            // XY offsets are stored in shift for per-instance positioning;
+            // Z offset is discarded to ensure first layer starts at Z=0.
             trafo.trafo.data()[12] = 0;
             trafo.trafo.data()[13] = 0;
+            trafo.trafo.data()[14] = 0;
             // Search or insert a trafo.
             auto it = trafos.emplace(trafo).first;
             const_cast<PrintObjectTrafoAndInstances&>(*it).instances.emplace_back(PrintInstance{ nullptr, model_instance, shift });

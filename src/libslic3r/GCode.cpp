@@ -2212,6 +2212,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
 
     m_enable_cooling_markers = true;
     this->apply_print_config(print.config());
+    m_config.apply(print.full_print_config(), true);
 
     // m_volumetric_speed = DoExport::autospeed_volumetric_limit(print);
     print.throw_if_canceled();

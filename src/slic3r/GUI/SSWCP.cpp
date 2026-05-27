@@ -10,6 +10,7 @@
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <iomanip>
 #include <regex>
 #include <thread>
 #include <string_view>
@@ -3147,7 +3148,9 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             return;
         }
 
-        auto& config = wxGetApp().plater()->get_partplate_list().get_curr_plate()->fff_print()->config();
+        auto* print = wxGetApp().plater()->get_partplate_list().get_curr_plate()->fff_print();
+        auto& config = print->config();
+        auto full_config = print->full_print_config();
         auto& result = *(wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_slice_result());
         /*GCodeProcessor processor;
         processor.process_file(filename.data());
@@ -3199,10 +3202,37 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         }
         
 
-        // filament type 
-        if (config.has("filament_type")) {
-            auto filament_type        = config.option<ConfigOptionStrings>("filament_type")->values;
-            response["filament_type"] = filament_type;
+        // filament type
+        if (full_config.has("filament_type")) {
+            std::vector<std::string> filament_types;
+            size_t                   filament_count = full_config.option<ConfigOptionStrings>("filament_type")->values.size();
+            if (full_config.has("filament_colour")) {
+                filament_count = std::max(filament_count, full_config.option<ConfigOptionStrings>("filament_colour")->values.size());
+            }
+
+            filament_types.reserve(filament_count);
+            for (size_t i = 0; i < filament_count; ++i) {
+                std::string displayed_filament_type;
+                std::string filament_type = full_config.get_filament_type(displayed_filament_type, int(i));
+                boost::trim(filament_type);
+                filament_types.emplace_back(std::move(filament_type));
+            }
+            response["filament_type"] = filament_types;
+        }
+
+        // file nozzle diameters
+        if (full_config.has("nozzle_diameter")) {
+            const auto *opt_nozzle_diameters = full_config.option<ConfigOptionFloats>("nozzle_diameter");
+            if (opt_nozzle_diameters != nullptr) {
+                std::vector<std::string> nozzle_diameters;
+                nozzle_diameters.reserve(opt_nozzle_diameters->values.size());
+                for (double diameter : opt_nozzle_diameters->values) {
+                    std::ostringstream stream;
+                    stream << std::fixed << std::setprecision(1) << diameter;
+                    nozzle_diameters.emplace_back(stream.str());
+                }
+                response["nozzle_diameters"] = nozzle_diameters;
+            }
         }
         
 

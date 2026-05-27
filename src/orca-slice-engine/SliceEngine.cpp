@@ -18,6 +18,10 @@
 #include "libslic3r/GCode/PostProcessor.hpp"
 #include "libslic3r/ProjectTask.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Print.hpp"
 
 constexpr int MAX_RETRIES = 3;
 
@@ -43,6 +47,8 @@ bool is_wipe_tower_error(const PlateSliceResult& result) {
 }
 
 } // namespace
+
+SliceEngine::~SliceEngine() = default;
 
 SliceEngine::SliceEngine(const EngineConfig& cfg, std::vector<std::string>& temp_files)
     : m_cfg(cfg)

@@ -1096,7 +1096,8 @@ int PresetBundle::validate_presets(const std::string &file_name, DynamicPrintCon
         different_values = config.option<ConfigOptionStrings>("different_settings_to_system", true)->values;
 
     //PrinterTechnology printer_technology = Preset::printer_technology(config);
-    size_t filament_count = config.option<ConfigOptionFloats>("filament_diameter")->values.size();
+    const auto* filament_diameter_opt = config.option<ConfigOptionFloats>("filament_diameter");
+    size_t filament_count = filament_diameter_opt ? filament_diameter_opt->values.size() : 0;
     inherits_values.resize(filament_count + 2, std::string());
     different_values.resize(filament_count + 2, std::string());
     filament_preset_name.resize(filament_count, std::string());

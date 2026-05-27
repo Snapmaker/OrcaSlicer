@@ -2120,16 +2120,12 @@ WipeTower::ToolChangeResult WipeTower2::draw_outer_wall(size_t layer_id)
     WipeTower::box_coordinates fill_box(Vec2f(m_perimeter_width, m_layer_info->depth - (current_depth - m_perimeter_width)),
                                         m_wipe_tower_width - 2 * m_perimeter_width, current_depth - m_perimeter_width);
 
-    writer.set_initial_position((m_left_to_right ? fill_box.ru : fill_box.lu),
+    // Set initial position to ld corner where wall drawing starts.
+    // This ensures append_tcr2() unretracts at the actual wall start, not inside the cleaning box.
+    writer.set_initial_position(fill_box.ld,
                                 m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
 
     bool toolchanges_on_layer = m_layer_info->toolchanges_depth() > WT_EPSILON;
-
-    // travel to ld corner for outer wall drawing:
-    if (writer.x() > fill_box.ld.x() + EPSILON)
-        writer.travel(fill_box.ld.x(), writer.y());
-    if (writer.y() > fill_box.ld.y() + EPSILON)
-        writer.travel(writer.x(), fill_box.ld.y());
 
     const float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
 

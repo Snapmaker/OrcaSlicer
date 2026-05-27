@@ -63,7 +63,7 @@ bool SliceEngine::run() {
         return false;
     }
 
-    // Config & preset validation (desktop parity — non-blocking)
+    // Config & preset validation (desktop parity)
     validate_config();
     load_system_presets();
     validate_presets();
@@ -83,6 +83,12 @@ bool SliceEngine::run() {
 
     // Block slicing if printer model is not Snapmaker U1
     if (!validate_printer_model()) {
+        build_statistics();
+        return false;
+    }
+
+    // Abort if earlier config validation detected unrecoverable invalid values
+    if (m_any_error) {
         build_statistics();
         return false;
     }
@@ -271,8 +277,12 @@ void SliceEngine::validate_config()
 {
     // A1: Validate config values (layer_height, nozzle_diameter, etc.)
     std::map<std::string, std::string> invalid = m_config.validate(true);
-    for (const auto& [key, msg] : invalid)
-        m_stats.issues.push_back(make_error(-1, "CONFIG_INVALID_" + key, msg));
+    if (!invalid.empty()) {
+        for (const auto& [key, msg] : invalid)
+            m_stats.issues.push_back(make_error(-1, "CONFIG_INVALID_" + key, msg));
+        m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+    }
 
     // A2: Check config substitutions (unknown keys, forward-compat changes)
     if (!m_config_substitutions.empty()) {

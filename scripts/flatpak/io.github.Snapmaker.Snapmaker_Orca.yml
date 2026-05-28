@@ -291,6 +291,20 @@ modules:
       - /include
 
     post-install:
+      # orca_deps installs static libs and headers into /app for SLIC3R_STATIC linking.
+      # Module "cleanup:" only removes files installed by *this* module, so strip build-only
+      # artifacts here (matches ~140MB Flathub bundles vs ~600MB if left in place).
+      - |
+        set -euo pipefail
+        rm -rf /app/include
+        find /app/lib /app/lib64 -name '*.a' -delete
+        find /app/lib /app/lib64 -name '*.la' -delete
+        rm -rf /app/lib/cmake /app/lib/pkgconfig /app/lib/debug
+        rm -rf /app/lib64/cmake /app/lib64/pkgconfig
+        rm -rf /app/share/doc /app/share/ECM /app/share/cmake /app/share/man /app/share/info
+        for _tool in vdb_print qconvex qdelaunay qhalf qhull qvoronoi rbox openssl c_rehash curl-config env.sh wx-config wxrc wxrc-3.1; do
+          rm -f "/app/bin/${_tool}"
+        done
 
       - | # Desktop Integration files
         install -Dm644 -t /app/share/icons/hicolor/scalable/apps/ resources/images/Snapmaker_Orca.svg

@@ -22,6 +22,7 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 constexpr int MAX_RETRIES = 3;
 
@@ -57,6 +58,17 @@ SliceEngine::SliceEngine(const EngineConfig& cfg, std::vector<std::string>& temp
 }
 
 bool SliceEngine::run() {
+    // Pre-compute output path so JSON is written to the correct filename
+    // even when the slicing pipeline returns early (e.g., filament validation).
+    m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
+                                         m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
+
+    // Apply FullPrintConfig defaults as baseline so every config key has
+    // a valid value before the 3MF overlays project settings on top.
+    // This mirrors PresetBundle::full_fff_config() and prevents
+    // Print::apply() crashes on missing options.
+    m_config.apply(FullPrintConfig::defaults());
+
     bool load_ok = load_3mf();
     if (!load_ok) {
         build_statistics();
@@ -67,13 +79,15 @@ bool SliceEngine::run() {
     validate_config();
     load_system_presets();
     validate_presets();
+    apply_printer_preset_config();
 
-    // Filament official compliance check & substitution
-    if (m_cfg.substitute_filaments) {
-        if (!validate_filament_official()) {
-            build_statistics();
-            return false;
-        }
+    // Filament validation: always run to catch truly invalid presets.
+    // When substitute_filaments is true (default), enforce official-only policy.
+    // When false (--allow-custom-presets), validate structural soundness but
+    // accept custom filaments with a warning.
+    if (!validate_filament_official(m_cfg.substitute_filaments)) {
+        build_statistics();
+        return false;
     }
 
     // Strip custom G-code blocks for cloud safety
@@ -122,9 +136,6 @@ bool SliceEngine::run() {
                 return false;
             }
         }
-
-        m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
-                                             m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
 
         // Collect plates to process (internal plate_index is 0-based)
         std::vector<int> plates_to_process;
@@ -462,7 +473,76 @@ void SliceEngine::validate_presets()
     }
 }
 
-bool SliceEngine::validate_filament_official()
+void SliceEngine::apply_printer_preset_config()
+{
+    // Try to merge the printer preset config (system or project-embedded)
+    // into m_config to get machine-specific values (printable_area,
+    // printable_height, etc.).
+    //
+    // FullPrintConfig defaults are applied separately before load_3mf()
+    // to provide a baseline for all config keys.
+    if (!m_presets_available || !m_preset_bundle)
+        return;
+    if (!m_config.has("printer_settings_id"))
+        return;
+
+    const std::string printer_name = m_config.opt_string("printer_settings_id");
+    if (printer_name.empty())
+        return;
+
+    // Look up the printer preset: try system first, then project-embedded.
+    const Preset* printer_preset = m_preset_bundle->printers.find_preset(printer_name, false);
+    if (!printer_preset || printer_preset->name != printer_name) {
+        for (auto* pp : m_project_presets) {
+            if (pp && pp->name == printer_name && pp->type == Preset::TYPE_PRINTER) {
+                printer_preset = pp;
+                break;
+            }
+        }
+    }
+
+    if (!printer_preset) {
+        BOOST_LOG_TRIVIAL(info) << "Printer preset '" << printer_name
+            << "' not found; using defaults only";
+        return;
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "Applying printer preset config: " << printer_name;
+    m_config.apply(printer_preset->config);
+}
+
+bool SliceEngine::has_inline_filament_config(int ext_idx)
+{
+    // Check whether the config has per-extruder filament parameters for
+    // the given extruder index, even when no named filament preset exists.
+    // This handles 3MF files where filament config values are embedded
+    // directly in project_settings.config without a preset definition.
+    auto is_non_nil = [&](const char* key) -> bool {
+        if (!m_config.has(key)) return false;
+        auto* opt = m_config.option<ConfigOptionFloats>(key, true);
+        if (!opt) return false;
+        if (static_cast<int>(opt->values.size()) <= ext_idx) return false;
+        return !opt->is_nil(ext_idx) && opt->values[ext_idx] > 0;
+    };
+
+    // nozzle_temperature or filament_diameter is a strong signal that
+    // filament config is present inline.
+    if (is_non_nil("nozzle_temperature")) return true;
+    if (is_non_nil("filament_diameter")) return true;
+
+    // Fallback: check if filament_type is set (weaker signal, but
+    // confirms the extruder has filament assigned).
+    if (m_config.has("filament_type")) {
+        auto* ft = m_config.option<ConfigOptionStrings>("filament_type", true);
+        if (ft && ext_idx < static_cast<int>(ft->values.size())
+              && !ft->values[ext_idx].empty())
+            return true;
+    }
+
+    return false;
+}
+
+bool SliceEngine::validate_filament_official(bool enforce)
 {
     // Skip if system presets are not available (no reference for comparison)
     if (!m_presets_available || !m_preset_bundle)
@@ -477,6 +557,20 @@ bool SliceEngine::validate_filament_official()
 
     int num_filaments = static_cast<int>(filament_ids->values.size());
     bool any_error = false;
+
+    // Helper: report an issue at the appropriate severity.
+    // When not enforcing, non-official filaments are warnings instead of errors.
+    // Truly invalid presets (missing, broken inheritance) remain errors either way.
+    auto report = [&](bool is_official_violation, const std::string& code, const std::string& msg) {
+        if (!enforce && is_official_violation) {
+            BOOST_LOG_TRIVIAL(warning) << msg;
+            m_stats.issues.push_back(make_warning(-1, code, msg));
+        } else {
+            BOOST_LOG_TRIVIAL(error) << msg;
+            m_stats.issues.push_back(make_error(-1, code, msg));
+            any_error = true;
+        }
+    };
 
     // Lambda: check whether a system preset is "official" (Snapmaker or OrcaFilamentLibrary)
     auto is_official_preset = [](const Preset& p) -> bool {
@@ -511,22 +605,62 @@ bool SliceEngine::validate_filament_official()
                 continue; // OK
             }
             std::string msg = "Filament \"" + name + "\" belongs to unsupported vendor";
-            BOOST_LOG_TRIVIAL(error) << msg;
-            m_stats.issues.push_back(make_error(-1, "FILAMENT_UNSUPPORTED_VENDOR", msg));
-            any_error = true;
+            report(/*is_official_violation=*/true, "FILAMENT_UNSUPPORTED_VENDOR", msg);
             continue;
         }
 
         // Case 2: Not a direct system match — walk the inheritance chain
         Preset* current = find_in_project(name);
         if (!current) {
+            // When not enforcing, filament config values may be embedded
+            // directly in project_settings.config without a named preset.
+            if (!enforce && has_inline_filament_config(i)) {
+                std::string msg = "Filament \"" + name
+                    + "\" is an inline custom filament (no preset definition, "
+                    + "but per-extruder config values are present)";
+                BOOST_LOG_TRIVIAL(warning) << msg;
+                m_stats.issues.push_back(make_warning(-1, "FILAMENT_CUSTOM_INLINE", msg));
+                continue;
+            }
             std::string msg = "Filament \"" + name + "\" is not a recognized preset";
-            BOOST_LOG_TRIVIAL(error) << msg;
-            m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN", msg));
-            any_error = true;
+            // FILAMENT_UNKNOWN: preset truly doesn't exist — always an error
+            report(/*is_official_violation=*/false, "FILAMENT_UNKNOWN", msg);
             continue;
         }
 
+        // If not enforcing and the preset exists in project, validate
+        // structural soundness (inheritance chain) but don't require
+        // an official ancestor.
+        if (!enforce) {
+            // Walk the chain just far enough to detect circular/invalid
+            // inheritance — accept the preset regardless of ancestry.
+            std::set<std::string> visited;
+            Preset* walk = current;
+            bool chain_ok = true;
+            while (walk) {
+                std::string parent = walk->inherits();
+                if (parent.empty()) break;  // root reached, acceptable
+                if (!visited.insert(parent).second) {
+                    std::string msg = "Circular inheritance detected in filament \"" + name + "\"";
+                    BOOST_LOG_TRIVIAL(error) << msg;
+                    m_stats.issues.push_back(make_error(-1, "FILAMENT_CIRCULAR_INHERITS", msg));
+                    any_error = true;
+                    chain_ok = false;
+                    break;
+                }
+                Preset* next = find_in_system(parent);
+                if (!next) next = find_in_project(parent);
+                walk = next;
+            }
+            if (!chain_ok) continue;
+            // Custom filament with sound structure — accepted with warning
+            std::string msg = "Filament \"" + name + "\" is a custom preset (not official)";
+            BOOST_LOG_TRIVIAL(warning) << msg;
+            m_stats.issues.push_back(make_warning(-1, "FILAMENT_CUSTOM", msg));
+            continue;
+        }
+
+        // Enforce mode: must resolve to an official ancestor
         bool resolved = false;
         std::set<std::string> visited;
         while (current && !resolved) {

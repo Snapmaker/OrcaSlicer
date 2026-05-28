@@ -10024,6 +10024,22 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         if (geometry_only_project_import && preset_bundle != nullptr) {
                             const size_t current_num_filaments = preset_bundle->filament_presets.size();
                             const bool current_project_empty = this->model.objects.empty();
+                            static const t_config_option_keys imported_local_z_option_keys = {
+                                "dithering_z_step_size",
+                                "dithering_local_z_mode",
+                                "dithering_local_z_whole_objects",
+                                "dithering_local_z_infill",
+                                "dithering_local_z_direct_multicolor",
+                                "dithering_step_painted_zones_only"
+                            };
+                            static const t_config_option_keys imported_print_option_keys = {
+                                "dithering_local_z_mode",
+                                "dithering_local_z_whole_objects",
+                                "dithering_local_z_infill"
+                            };
+                            auto apply_imported_print_options = [&preset_bundle, &config_loaded]() {
+                                preset_bundle->prints.get_edited_preset().config.apply_only(config_loaded, imported_print_option_keys, true);
+                            };
                             if (current_project_empty) {
                                 static const t_config_option_keys imported_project_option_keys = {
                                     "filament_colour",
@@ -10047,6 +10063,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "dithering_step_painted_zones_only"
                                 };
                                 preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);
+                                apply_imported_print_options();
                                 if (current_num_filaments != desired_physical_filaments) {
                                     q->confirm_auto_generated_gradients(desired_physical_filaments);
                                     preset_bundle->set_num_filaments(unsigned(desired_physical_filaments));
@@ -10057,15 +10074,19 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                                         << " desired_physical_filaments=" << desired_physical_filaments
                                                         << " mixed_enabled=" << preset_bundle->mixed_filaments.enabled_count();
                                 wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
-                            } else if (current_num_filaments < desired_physical_filaments) {
-                                std::vector<std::string> new_colors;
-                                if (imported_filament_colors.size() > current_num_filaments) {
-                                    new_colors.assign(imported_filament_colors.begin() + current_num_filaments,
-                                                      imported_filament_colors.begin() + desired_physical_filaments);
+                            } else {
+                                preset_bundle->project_config.apply_only(config_loaded, imported_local_z_option_keys, true);
+                                apply_imported_print_options();
+                                if (current_num_filaments < desired_physical_filaments) {
+                                    std::vector<std::string> new_colors;
+                                    if (imported_filament_colors.size() > current_num_filaments) {
+                                        new_colors.assign(imported_filament_colors.begin() + current_num_filaments,
+                                                          imported_filament_colors.begin() + desired_physical_filaments);
+                                    }
+                                    q->confirm_auto_generated_gradients(desired_physical_filaments);
+                                    preset_bundle->set_num_filaments(unsigned(desired_physical_filaments), new_colors);
+                                    wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
                                 }
-                                q->confirm_auto_generated_gradients(desired_physical_filaments);
-                                preset_bundle->set_num_filaments(unsigned(desired_physical_filaments), new_colors);
-                                wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
                             }
                         }
 

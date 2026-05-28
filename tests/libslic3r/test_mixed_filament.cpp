@@ -2805,3 +2805,16 @@ TEST_CASE("Local Z whole object setting is available for 3MF project config", "[
     REQUIRE(full_config.has("dithering_local_z_whole_objects"));
     CHECK(full_config.opt_bool("dithering_local_z_whole_objects"));
 }
+
+TEST_CASE("Local Z infill subdivision defaults inactive when Subdivide Mix Layer is off", "[MixedFilament][Config]")
+{
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_mode"));
+    REQUIRE(bundle.project_config.has("dithering_local_z_infill"));
+    CHECK_FALSE(bundle.project_config.opt_bool("dithering_local_z_mode"));
+    CHECK_FALSE(bundle.project_config.opt_bool("dithering_local_z_infill"));
+
+    DynamicPrintConfig full_config = bundle.full_fff_config();
+    REQUIRE(full_config.has("dithering_local_z_infill"));
+    CHECK_FALSE(full_config.opt_bool("dithering_local_z_infill"));
+}

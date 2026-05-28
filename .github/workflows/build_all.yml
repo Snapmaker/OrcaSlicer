@@ -69,6 +69,7 @@ jobs:
     secrets: inherit
   flatpak:
     name: "Flatpak"
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.build-deps-only }}
     concurrency:
       group: flatpak-${{ matrix.variant.arch }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false

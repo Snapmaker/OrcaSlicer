@@ -5,6 +5,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <vector>
 
@@ -2789,4 +2790,18 @@ TEST_CASE("dithering_local_z_mode dirty tracking via is_dirty", "[MixedFilament]
     // Change edited to false → should be dirty
     edited.config.set_key_value("dithering_local_z_mode", new ConfigOptionBool(false));
     CHECK(PresetCollection::is_dirty(&edited, &reference));
+}
+
+TEST_CASE("Local Z whole object setting is available for 3MF project config", "[MixedFilament][Config]")
+{
+    const auto &print_options = Preset::print_options();
+    CHECK(std::find(print_options.begin(), print_options.end(), "dithering_local_z_whole_objects") != print_options.end());
+
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_whole_objects"));
+
+    bundle.project_config.set_key_value("dithering_local_z_whole_objects", new ConfigOptionBool(true));
+    DynamicPrintConfig full_config = bundle.full_fff_config();
+    REQUIRE(full_config.has("dithering_local_z_whole_objects"));
+    CHECK(full_config.opt_bool("dithering_local_z_whole_objects"));
 }

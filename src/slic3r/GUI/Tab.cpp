@@ -1528,17 +1528,37 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if(opt_key == "purge_in_prime_tower")
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
 
-    if (m_type == Preset::TYPE_PRINT &&
-        opt_key == "dithering_local_z_mode" &&
-        boost::any_cast<bool>(value) &&
-        m_config->has("dithering_local_z_infill") &&
-        !m_config->opt_bool("dithering_local_z_infill")) {
+    if (m_type == Preset::TYPE_PRINT && opt_key == "dithering_local_z_mode") {
+        const bool local_z_enabled = boost::any_cast<bool>(value);
         DynamicPrintConfig new_conf = *m_config;
-        new_conf.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
-        m_config_manipulation.apply(m_config, &new_conf);
-
+        bool dependent_config_changed = false;
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-        project_cfg.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+
+        auto set_print_bool = [this, &new_conf, &dependent_config_changed](const char *key, bool enabled) {
+            if (!m_config->has(key) || m_config->option(key) == nullptr || m_config->opt_bool(key) == enabled)
+                return;
+            new_conf.set_key_value(key, new ConfigOptionBool(enabled));
+            dependent_config_changed = true;
+        };
+        auto set_project_bool = [&project_cfg](const char *key, bool enabled) {
+            project_cfg.set_key_value(key, new ConfigOptionBool(enabled));
+        };
+
+        if (local_z_enabled) {
+            set_print_bool("dithering_local_z_infill", true);
+        } else {
+            set_print_bool("dithering_local_z_whole_objects", false);
+            set_print_bool("dithering_local_z_infill", false);
+            set_project_bool("dithering_local_z_direct_multicolor", false);
+        }
+
+        if (dependent_config_changed)
+            m_config_manipulation.apply(m_config, &new_conf);
+
+        if (new_conf.has("dithering_local_z_whole_objects"))
+            set_project_bool("dithering_local_z_whole_objects", new_conf.opt_bool("dithering_local_z_whole_objects"));
+        if (new_conf.has("dithering_local_z_infill"))
+            set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
     }
 
     if (opt_key == "enable_prime_tower") {

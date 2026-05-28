@@ -677,6 +677,77 @@ void SliceEngine::apply_official_presets()
 }
 
 // ============================================================================
+// Build a full print config by merging system presets (printer + filament)
+// underneath the project config from the 3MF.  This mirrors what the desktop
+// does via PresetBundle::full_config() / full_fff_config() and ensures that
+// filament-level keys (nozzle_temperature, hot_plate_temp, etc.) carry the
+// values from the matching system filament preset rather than the raw
+// FullPrintConfig defaults.
+// ============================================================================
+
+DynamicPrintConfig SliceEngine::build_full_print_config()
+{
+    DynamicPrintConfig out;
+    out.apply(FullPrintConfig::defaults());
+
+    if (m_presets_available && m_preset_bundle) {
+        auto& bundle = *m_preset_bundle;
+
+        // Layer 1: System printer config (Snapmaker U1)
+        auto* printer_id_opt = m_config.option<ConfigOptionString>("printer_settings_id");
+        if (printer_id_opt && !printer_id_opt->value.empty()) {
+            const Preset* printer_preset = bundle.printers.find_preset(printer_id_opt->value, true);
+            if (printer_preset)
+                out.apply(printer_preset->config);
+        }
+
+        // Layer 2: System filament config (per-extruder)
+        auto* filament_ids = m_config.option<ConfigOptionStrings>("filament_settings_id");
+        if (filament_ids && !filament_ids->values.empty()) {
+            const size_t num_filaments = filament_ids->values.size();
+
+            // Collect filament config pointers for each extruder.
+            std::vector<const DynamicPrintConfig*> filament_configs;
+            for (size_t i = 0; i < num_filaments; ++i) {
+                const Preset* preset = bundle.filaments.find_preset(filament_ids->values[i], true);
+                if (preset)
+                    filament_configs.push_back(&preset->config);
+            }
+
+            if (!filament_configs.empty()) {
+                // Merge per-filament values into `out`, mirroring
+                // PresetBundle::full_fff_config() multi-filament logic.
+                for (const auto& key : filament_configs.front()->keys()) {
+                    if (key == "compatible_prints" || key == "compatible_printers")
+                        continue;
+
+                    ConfigOption* dst_opt = out.option(key, false);
+                    if (!dst_opt) continue;
+
+                    if (dst_opt->is_scalar()) {
+                        const ConfigOption* src = filament_configs.front()->option(key);
+                        if (src) dst_opt->set(src);
+                    } else {
+                        auto* dst_vec = static_cast<ConfigOptionVectorBase*>(dst_opt);
+                        std::vector<const ConfigOption*> opts(num_filaments, nullptr);
+                        for (size_t i = 0; i < num_filaments; ++i)
+                            opts[i] = (i < filament_configs.size())
+                                          ? filament_configs[i]->option(key)
+                                          : nullptr;
+                        dst_vec->set(opts);
+                    }
+                }
+            }
+        }
+    }
+
+    // Layer 3: Project config from 3MF (highest priority)
+    out.apply(m_config);
+
+    return out;
+}
+
+// ============================================================================
 // Stage 3: Validate input
 // ============================================================================
 
@@ -1069,7 +1140,9 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
     //
     // Work on a per-plate copy so extruder-count trimming does not leak
     // into subsequent plates (m_config is shared across the pipeline).
-    DynamicPrintConfig merged_config = m_config;
+    // Build full config (system defaults + printer + filament + project)
+    // before per-plate trimming and overrides.
+    DynamicPrintConfig merged_config = build_full_print_config();
     {
         std::set<int> used_extruders;
         for (ModelObject* obj : m_model.objects) {

@@ -60,13 +60,13 @@ struct PlateSliceResult {
 //             →  validation() → slicing() → export_gcode() → postprocessing()
 //   Stage 3 — package_output() → build_statistics()
 //
-// Config flow (three layers, applied in order):
-//   1. m_config         — raw 3MF project_settings.config (DynamicPrintConfig)
-//   2. merged_config    — m_config + engine overrides (per-plate, G-code strip)
-//      (created in apply_model(), passed to Print::apply())
-//   3. m_full_print_config — Print's internal full config, includes all
-//      PrintConfig + PrintObjectConfig + PrintRegionConfig defaults
-//      (accessible via print.full_print_config())
+// Config flow (four layers, applied in order):
+//   1. FullPrintConfig::defaults() — system defaults
+//   2. System printer preset  — Snapmaker U1, from m_preset_bundle
+//   3. System filament preset — per-extruder, from m_preset_bundle
+//   4. m_config              — 3MF project config (highest priority)
+//   Merged in build_full_print_config(), then engine overrides + per-plate
+//   applied in apply_model() before passing to Print::apply().
 //
 // Key design decisions:
 //   - Fresh Print object per retry attempt (no explicit dtor / placement-new)
@@ -102,6 +102,7 @@ private:
     void load_system_presets();
     void validate_presets();
     void apply_official_presets();
+    Slic3r::DynamicPrintConfig build_full_print_config();
     bool validate_filament_official();
     void substitute_filament_params(Slic3r::ConfigOptionStrings* filament_ids, int ext_idx,
                                     const Slic3r::Preset& official_parent,

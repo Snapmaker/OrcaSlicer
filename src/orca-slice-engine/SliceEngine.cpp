@@ -63,10 +63,9 @@ bool SliceEngine::run() {
     m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
                                          m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
 
-    // Apply FullPrintConfig defaults as baseline so every config key has
-    // a valid value before the 3MF overlays project settings on top.
-    // This mirrors PresetBundle::full_fff_config() and prevents
-    // Print::apply() crashes on missing options.
+    // Apply FullPrintConfig defaults as baseline BEFORE the 3MF overlays
+    // project settings on top. This ensures every config key has a valid value
+    // and the build_full_print_config() resolution works correctly.
     m_config.apply(FullPrintConfig::defaults());
 
     bool load_ok = load_3mf();
@@ -475,54 +474,32 @@ void SliceEngine::validate_presets()
 
 void SliceEngine::apply_printer_preset_config()
 {
-    // Try to merge the printer preset config (system or project-embedded)
-    // into m_config to get machine-specific values (printable_area,
-    // printable_height, etc.).
-    //
-    // FullPrintConfig defaults are applied separately before load_3mf()
-    // to provide a baseline for all config keys.
-    if (!m_presets_available || !m_preset_bundle)
-        return;
-    if (!m_config.has("printer_settings_id"))
-        return;
-
-    const std::string printer_name = m_config.opt_string("printer_settings_id");
-    if (printer_name.empty())
-        return;
-
-    // Look up the printer preset: try system first, then project-embedded.
-    const Preset* printer_preset = m_preset_bundle->printers.find_preset(printer_name, false);
-    if (!printer_preset || printer_preset->name != printer_name) {
-        for (auto* pp : m_project_presets) {
-            if (pp && pp->name == printer_name && pp->type == Preset::TYPE_PRINTER) {
-                printer_preset = pp;
-                break;
-            }
-        }
-    }
-
-    if (!printer_preset) {
-        BOOST_LOG_TRIVIAL(info) << "Printer preset '" << printer_name
-            << "' not found; using defaults only";
+    if (!m_presets_available || !m_preset_bundle) {
+        std::string msg = "System presets not available; cannot verify printer configuration.";
+        BOOST_LOG_TRIVIAL(error) << msg;
+        m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+        m_stats.error_message = msg;
+        m_stats.issues.push_back(make_error(-1, "PRINTER_PRESET_MISSING", msg));
         return;
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Applying printer preset config: " << printer_name;
-    // Only fill keys that are missing (nil) in m_config — do not overwrite
-    // values already set by the project config or FullPrintConfig defaults.
-    // This matches the semantics of substitute_filament_params().
-    for (auto it = printer_preset->config.cbegin();
-         it != printer_preset->config.cend(); ++it) {
+    // Build a fully-resolved config via the engine's own config builder.
+    // This correctly resolves printer preset inheritance chains and includes
+    // all defaults.  We merge back only nil keys so project config wins.
+    DynamicPrintConfig resolved = build_full_print_config();
+    BOOST_LOG_TRIVIAL(info) << "Applying printer preset config";
+
+    // Only fill nil/missing values — project config takes precedence.
+    for (auto it = resolved.cbegin();
+         it != resolved.cend(); ++it) {
         const auto& key = it->first;
         auto* dst_opt = m_config.option(key, false);
         if (!dst_opt) continue;
-        // Scalar options: only copy if nil.
         if (dst_opt->is_scalar()) {
             if (!dst_opt->is_nil()) continue;
             dst_opt->set(it->second.get());
         } else {
-            // Vector options: copy per-element only if nil at that index,
-            // matching substitute_filament_params() per-extruder semantics.
             auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
             auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(it->second.get());
             if (!dst_vec || !src_vec) continue;
@@ -530,6 +507,22 @@ void SliceEngine::apply_printer_preset_config()
                 if (dst_vec->is_nil(i))
                     dst_vec->set_at(src_vec, i, i);
             }
+        }
+    }
+
+    // Verify critical printer parameters are now valid.
+    struct { const char* key; const char* label; } critical[] = {
+        {"printable_area",   "Printable area"},
+        {"printable_height", "Printable height"},
+    };
+    for (auto& c : critical) {
+        if (!m_config.has(c.key)) {
+            BOOST_LOG_TRIVIAL(error) << "Critical config key missing: " << c.label;
+            m_any_error = true;
+            set_error_type(EXIT_VALIDATION_ERROR);
+            m_stats.issues.push_back(make_error(-1,
+                std::string("CONFIG_MISSING_") + c.key,
+                std::string("Missing critical config: ") + c.label));
         }
     }
 }

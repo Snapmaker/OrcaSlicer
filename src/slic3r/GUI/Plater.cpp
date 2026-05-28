@@ -10021,6 +10021,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             size = int(desired_physical_filaments);
 
                         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+                        bool imported_print_options = false;
                         if (geometry_only_project_import && preset_bundle != nullptr) {
                             const size_t current_num_filaments = preset_bundle->filament_presets.size();
                             const bool current_project_empty = this->model.objects.empty();
@@ -10037,7 +10038,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 "dithering_local_z_whole_objects",
                                 "dithering_local_z_infill"
                             };
-                            auto apply_imported_print_options = [&preset_bundle, &config_loaded]() {
+                            auto apply_imported_print_options = [&preset_bundle, &config_loaded, &imported_print_options]() {
+                                imported_print_options = std::any_of(imported_print_option_keys.begin(),
+                                                                     imported_print_option_keys.end(),
+                                                                     [&config_loaded](const std::string &key) {
+                                                                         return config_loaded.has(key);
+                                                                     });
                                 preset_bundle->prints.get_edited_preset().config.apply_only(config_loaded, imported_print_option_keys, true);
                             };
                             if (current_project_empty) {
@@ -10102,6 +10108,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             ++filament_size;
                         }
                         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
+                        if (imported_print_options) {
+                            if (Tab *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+                                print_tab->update_dirty();
+                                print_tab->reload_config();
+                            }
+                        }
                     }
 
                     std::string import_project_action = wxGetApp().app_config->get("import_project_action");

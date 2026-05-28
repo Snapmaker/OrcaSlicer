@@ -510,20 +510,40 @@ void SliceEngine::apply_printer_preset_config()
         }
     }
 
-    // Verify critical printer parameters are now valid.
-    struct { const char* key; const char* label; } critical[] = {
-        {"printable_area",   "Printable area"},
-        {"printable_height", "Printable height"},
-    };
-    for (auto& c : critical) {
-        if (!m_config.has(c.key)) {
-            BOOST_LOG_TRIVIAL(error) << "Critical config key missing: " << c.label;
+    // Verify printer-specific parameters have been overridden by the U1
+    // preset and are NOT still at FullPrintConfig defaults.
+    // FullPrintConfig sets printable_area = [(0,0),(200,0),(200,200),(0,200)]
+    // and printable_height = 100.0 as generic placeholders. If these survive
+    // the preset merge, the U1 preset did not take effect.
+    {
+        auto fail = [&](const std::string& detail) {
+            std::string msg = "Printer configuration incomplete: " + detail
+                + ". The U1 printer preset was not applied correctly. "
+                "Verify the resources directory contains Snapmaker U1 machine profiles.";
+            BOOST_LOG_TRIVIAL(error) << msg;
             m_any_error = true;
             set_error_type(EXIT_VALIDATION_ERROR);
-            m_stats.issues.push_back(make_error(-1,
-                std::string("CONFIG_MISSING_") + c.key,
-                std::string("Missing critical config: ") + c.label));
+            m_stats.error_message = msg;
+            m_stats.issues.push_back(make_error(-1, "PRINTER_PRESET_NOT_APPLIED", msg));
+        };
+
+        // printable_area: default is 4-point 200x200 rect
+        auto* pa = m_config.option<ConfigOptionPoints>("printable_area");
+        if (!pa || pa->values.size() != 4) {
+            fail("printable_area missing or wrong format");
+        } else {
+            bool is_default =
+                (pa->values[0].x() == 0.0 && pa->values[0].y() == 0.0) &&
+                (pa->values[1].x() == 200.0 && pa->values[1].y() == 0.0) &&
+                (pa->values[2].x() == 200.0 && pa->values[2].y() == 200.0) &&
+                (pa->values[3].x() == 0.0 && pa->values[3].y() == 200.0);
+            if (is_default) fail("printable_area is still the 200x200 default");
         }
+
+        // printable_height: default is 100.0
+        auto* ph = m_config.option<ConfigOptionFloat>("printable_height");
+        if (!ph || ph->value == 100.0)
+            fail("printable_height is still the 100.0 default");
     }
 }
 

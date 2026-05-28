@@ -15151,8 +15151,8 @@ msgstr "编辑混色"
 msgid "Order"
 msgstr "顺序"
 
-msgid "Target Color:"
-msgstr "目标色:"
+msgid "Target Color"
+msgstr "目标色"
 
 msgid "Swap filaments"
 msgstr "切换方向"

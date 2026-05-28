@@ -508,7 +508,30 @@ void SliceEngine::apply_printer_preset_config()
     }
 
     BOOST_LOG_TRIVIAL(info) << "Applying printer preset config: " << printer_name;
-    m_config.apply(printer_preset->config);
+    // Only fill keys that are missing (nil) in m_config — do not overwrite
+    // values already set by the project config or FullPrintConfig defaults.
+    // This matches the semantics of substitute_filament_params().
+    for (auto it = printer_preset->config.cbegin();
+         it != printer_preset->config.cend(); ++it) {
+        const auto& key = it->first;
+        auto* dst_opt = m_config.option(key, false);
+        if (!dst_opt) continue;
+        // Scalar options: only copy if nil.
+        if (dst_opt->is_scalar()) {
+            if (!dst_opt->is_nil()) continue;
+            dst_opt->set(it->second.get());
+        } else {
+            // Vector options: copy per-element only if nil at that index,
+            // matching substitute_filament_params() per-extruder semantics.
+            auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
+            auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(it->second.get());
+            if (!dst_vec || !src_vec) continue;
+            for (size_t i = 0; i < dst_vec->size() && i < src_vec->size(); ++i) {
+                if (dst_vec->is_nil(i))
+                    dst_vec->set_at(src_vec, i, i);
+            }
+        }
+    }
 }
 
 bool SliceEngine::has_inline_filament_config(int ext_idx)
@@ -628,31 +651,45 @@ bool SliceEngine::validate_filament_official(bool enforce)
             continue;
         }
 
-        // If not enforcing and the preset exists in project, validate
-        // structural soundness (inheritance chain) but don't require
-        // an official ancestor.
-        if (!enforce) {
-            // Walk the chain just far enough to detect circular/invalid
-            // inheritance — accept the preset regardless of ancestry.
-            std::set<std::string> visited;
-            Preset* walk = current;
-            bool chain_ok = true;
+        // Common: look up a parent by name in system or project presets.
+        auto find_ancestor = [&](const std::string& inherits_name) -> Preset* {
+            if (Preset* p = find_in_system(inherits_name)) return p;
+            return find_in_project(inherits_name);
+        };
+
+        // Common walk: follow the inheritance chain, detecting circular refs
+        // and unknown ancestors. 'walk' is advanced through the chain; returns
+        // false if a structural error is found (circular / unknown ancestor).
+        auto walk_chain = [&](Preset*& walk, std::set<std::string>& visited) -> bool {
             while (walk) {
-                std::string parent = walk->inherits();
-                if (parent.empty()) break;  // root reached, acceptable
-                if (!visited.insert(parent).second) {
+                std::string inherits_name = walk->inherits();
+                if (inherits_name.empty()) return true; // root reached
+                if (!visited.insert(inherits_name).second) {
                     std::string msg = "Circular inheritance detected in filament \"" + name + "\"";
                     BOOST_LOG_TRIVIAL(error) << msg;
                     m_stats.issues.push_back(make_error(-1, "FILAMENT_CIRCULAR_INHERITS", msg));
                     any_error = true;
-                    chain_ok = false;
-                    break;
+                    return false;
                 }
-                Preset* next = find_in_system(parent);
-                if (!next) next = find_in_project(parent);
+                Preset* next = find_ancestor(inherits_name);
+                if (!next) {
+                    std::string msg = "Filament \"" + name + "\" inherits from unknown preset \""
+                                    + inherits_name + "\"";
+                    BOOST_LOG_TRIVIAL(error) << msg;
+                    m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN_ANCESTOR", msg));
+                    any_error = true;
+                    return false;
+                }
                 walk = next;
             }
-            if (!chain_ok) continue;
+            return true; // empty inherits
+        };
+
+        // Non-enforce mode: validate structural soundness, accept regardless of ancestry.
+        if (!enforce) {
+            Preset* walk = current;
+            std::set<std::string> visited;
+            if (!walk_chain(walk, visited)) continue;
             // Custom filament with sound structure — accepted with warning
             std::string msg = "Filament \"" + name + "\" is a custom preset (not official)";
             BOOST_LOG_TRIVIAL(warning) << msg;
@@ -660,7 +697,7 @@ bool SliceEngine::validate_filament_official(bool enforce)
             continue;
         }
 
-        // Enforce mode: must resolve to an official ancestor
+        // Enforce mode: must resolve to an official ancestor.
         bool resolved = false;
         std::set<std::string> visited;
         while (current && !resolved) {
@@ -671,7 +708,6 @@ bool SliceEngine::validate_filament_official(bool enforce)
                 BOOST_LOG_TRIVIAL(error) << msg;
                 m_stats.issues.push_back(make_error(-1, "FILAMENT_NO_OFFICIAL_ANCESTOR", msg));
                 any_error = true;
-                resolved = true;
                 break;
             }
 
@@ -680,37 +716,40 @@ bool SliceEngine::validate_filament_official(bool enforce)
                 BOOST_LOG_TRIVIAL(error) << msg;
                 m_stats.issues.push_back(make_error(-1, "FILAMENT_CIRCULAR_INHERITS", msg));
                 any_error = true;
-                resolved = true;
                 break;
             }
 
-            // Try system presets first
-            if (Preset* parent = find_in_system(inherits_name)) {
-                if (is_official_preset(*parent)) {
-                    substitute_filament_params(filament_ids, i, *parent, name);
-                    resolved = true;
-                } else {
-                    std::string vendor_name = parent->vendor ? parent->vendor->name : "unknown";
-                    std::string msg = "Filament \"" + name + "\" derives from unsupported vendor \""
-                                    + vendor_name + "\" via \"" + inherits_name + "\"";
-                    BOOST_LOG_TRIVIAL(error) << msg;
-                    m_stats.issues.push_back(make_error(-1, "FILAMENT_UNSUPPORTED_VENDOR", msg));
-                    any_error = true;
-                    resolved = true;
-                }
+            Preset* parent = find_ancestor(inherits_name);
+            if (!parent) {
+                std::string msg = "Filament \"" + name + "\" inherits from unknown preset \""
+                                + inherits_name + "\"";
+                BOOST_LOG_TRIVIAL(error) << msg;
+                m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN_ANCESTOR", msg));
+                any_error = true;
+                break;
+            }
+
+            if (is_official_preset(*parent)) {
+                substitute_filament_params(filament_ids, i, *parent, name);
+                resolved = true;
+            } else if (parent->vendor) {
+                std::string vendor_name = parent->vendor->name;
+                std::string msg = "Filament \"" + name + "\" derives from unsupported vendor \""
+                                + vendor_name + "\" via \"" + inherits_name + "\"";
+                BOOST_LOG_TRIVIAL(error) << msg;
+                m_stats.issues.push_back(make_error(-1, "FILAMENT_UNSUPPORTED_VENDOR", msg));
+                any_error = true;
+                resolved = true;
+            } else if (parent->type == Preset::TYPE_FILAMENT) {
+                // Project-embedded filament — continue walking up
+                current = parent;
             } else {
-                // Not in system — try project embedded, then continue walking
-                Preset* project_parent = find_in_project(inherits_name);
-                if (project_parent) {
-                    current = project_parent;
-                } else {
-                    std::string msg = "Filament \"" + name + "\" inherits from unknown preset \""
-                                    + inherits_name + "\"";
-                    BOOST_LOG_TRIVIAL(error) << msg;
-                    m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN_ANCESTOR", msg));
-                    any_error = true;
-                    resolved = true;
-                }
+                std::string msg = "Filament \"" + name + "\" inherits from non-filament preset \""
+                                + inherits_name + "\"";
+                BOOST_LOG_TRIVIAL(error) << msg;
+                m_stats.issues.push_back(make_error(-1, "FILAMENT_UNKNOWN_ANCESTOR", msg));
+                any_error = true;
+                resolved = true;
             }
         }
     }

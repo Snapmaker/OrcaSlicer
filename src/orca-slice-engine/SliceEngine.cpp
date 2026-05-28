@@ -658,22 +658,90 @@ bool SliceEngine::validate_printer_model()
 
 void SliceEngine::apply_official_presets()
 {
-    // Strip all custom G-code blocks — cloud slicing must not execute
-    // or embed user-supplied G-code for safety and consistency.
-    constexpr const char* gcode_keys[] = {
-        "start_gcode", "end_gcode", "layer_gcode",
-        "machine_start_gcode", "machine_end_gcode",
-        "before_layer_change_gcode", "between_objects_gcode",
-        "toolchange_gcode", "print_host",
-    };
-    for (const char* key : gcode_keys) {
-        if (m_config.has(key)) {
-            m_config.set_key_value(key, new ConfigOptionString(""));
-            m_stats.issues.push_back(make_tip(-1, "GCODE_CLEARED",
-                std::string("Custom G-code '") + key + "' cleared for cloud safety"));
+    // Find the official Snapmaker printer preset to source default G-code blocks.
+    // Mirrors the filament substitution logic: walk the inherits chain upward,
+    // fall back to nozzle-diameter-matched U1 preset if no official ancestor found.
+    const Preset* official_printer = nullptr;
+
+    if (m_presets_available && m_preset_bundle) {
+        auto& bundle = *m_preset_bundle;
+
+        // Check whether a system preset is "official" (Snapmaker vendor)
+        auto is_official = [](const Preset& p) -> bool {
+            return p.vendor && p.vendor->name == PresetBundle::SM_BUNDLE;
+        };
+
+        auto* printer_id = m_config.option<ConfigOptionString>("printer_settings_id");
+        std::string printer_name = printer_id ? printer_id->value : "";
+
+        // Look up the printer preset — system first, then project-embedded
+        if (!printer_name.empty()) {
+            const Preset* sys = bundle.printers.find_preset(printer_name, false);
+            const Preset* current = (sys && sys->name == printer_name) ? sys : nullptr;
+
+            // Walk inherits chain to find official Snapmaker ancestor
+            std::set<std::string> visited;
+            while (current) {
+                if (is_official(*current)) {
+                    official_printer = current;
+                    break;
+                }
+                std::string parent_name = current->inherits();
+                if (parent_name.empty() || !visited.insert(parent_name).second)
+                    break;
+                current = bundle.printers.find_preset(parent_name, false);
+            }
+        }
+
+        // Fallback: match by nozzle diameter
+        if (!official_printer) {
+            std::string nozzle_str = "0.4";
+            auto* nd = m_config.option<ConfigOptionFloats>("nozzle_diameter");
+            if (nd && !nd->values.empty()) {
+                double dia = nd->values[0];
+                if (dia < 0.3)      nozzle_str = "0.2";
+                else if (dia < 0.5) nozzle_str = "0.4";
+                else if (dia < 0.7) nozzle_str = "0.6";
+                else                nozzle_str = "0.8";
+            }
+            std::string fallback = "Snapmaker U1 (" + nozzle_str + " nozzle)";
+            official_printer = bundle.printers.find_preset(fallback, true);
         }
     }
 
+    // Replace every G-code key the official printer preset provides.
+    // Any other G-code-related key still gets cleared for cloud safety.
+    std::set<std::string> replaced;
+    if (official_printer) {
+        for (auto it = official_printer->config.cbegin();
+             it != official_printer->config.cend(); ++it) {
+            const std::string& key = it->first;
+            if (key.find("gcode") == std::string::npos && key != "print_host")
+                continue;
+            if (!m_config.has(key)) continue;
+
+            std::string value;
+            auto* opt = official_printer->config.option<ConfigOptionString>(key);
+            if (opt) value = opt->value;
+            m_config.set_key_value(key, new ConfigOptionString(value));
+            replaced.insert(key);
+            m_stats.issues.push_back(make_tip(-1, "GCODE_REPLACED",
+                std::string("G-code '") + key + "' replaced with official default"));
+        }
+    }
+
+    // Clear any remaining G-code keys not covered by the official printer preset
+    constexpr const char* known_gcode_keys[] = {
+        "start_gcode", "end_gcode", "layer_gcode",
+        "between_objects_gcode", "toolchange_gcode",
+    };
+    for (const char* key : known_gcode_keys) {
+        if (!m_config.has(key)) continue;
+        if (replaced.count(key)) continue;
+        m_config.set_key_value(key, new ConfigOptionString(""));
+        m_stats.issues.push_back(make_tip(-1, "GCODE_CLEARED",
+            std::string("Custom G-code '") + key + "' cleared for cloud safety"));
+    }
 }
 
 // ============================================================================

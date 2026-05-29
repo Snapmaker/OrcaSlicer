@@ -76,22 +76,30 @@ bool SliceEngine::run() {
 
     // Config & preset validation (desktop parity)
     validate_config();
+
+    // Suppress libslic3r log spam during system preset loading and validation
+    boost::log::core::get()->set_logging_enabled(false);
     load_system_presets();
     validate_presets();
-    apply_printer_preset_config();
+    boost::log::core::get()->set_logging_enabled(true);
 
-    // Filament validation: always run to catch truly invalid presets.
-    // When substitute_filaments is true (default), enforce official-only policy.
-    // When false (--allow-custom-presets), validate structural soundness but
-    // accept custom filaments with a warning.
-    if (!validate_filament_official(m_cfg.substitute_filaments)) {
+    // Printer preset substitution (includes G-code from official printer).
+    // When substitute_printer is true (default), force substitution to official.
+    // When false (--allow-custom-printer-presets), accept custom with warning.
+    if (!validate_printer_official(m_cfg.substitute_printer)) {
         build_statistics();
         return false;
     }
 
-    // Strip custom G-code blocks for cloud safety
-    if (m_cfg.clear_custom_gcode) {
-        apply_official_presets();
+    apply_printer_preset_config();
+
+    // Filament validation: always run to catch truly invalid presets.
+    // When substitute_filaments is true (default), enforce official-only policy.
+    // When false (--allow-custom-filament-presets), validate structural soundness but
+    // accept custom filaments with a warning.
+    if (!validate_filament_official(m_cfg.substitute_filaments)) {
+        build_statistics();
+        return false;
     }
 
     // Block slicing if printer model is not Snapmaker U1
@@ -313,19 +321,13 @@ void SliceEngine::validate_config()
 
 void SliceEngine::load_system_presets()
 {
-    // Determine profiles directory: --data-dir takes precedence,
-    // otherwise derive from resources_dir/profiles/
-    std::string profiles_path;
-    if (!m_cfg.data_dir.empty()) {
-        profiles_path = m_cfg.data_dir;
-    } else {
-        const std::string res_dir = Slic3r::resources_dir();
-        if (res_dir.empty()) {
-            BOOST_LOG_TRIVIAL(info) << "No resources directory set; skipping preset validation";
-            return;
-        }
-        profiles_path = res_dir + "/profiles";
+    // Always derive profiles path from resources_dir/profiles/
+    const std::string res_dir = Slic3r::resources_dir();
+    if (res_dir.empty()) {
+        BOOST_LOG_TRIVIAL(info) << "No resources directory set; skipping preset validation";
+        return;
     }
+    std::string profiles_path = res_dir + "/profiles";
 
     boost::filesystem::path profiles_dir(profiles_path);
     if (!boost::filesystem::exists(profiles_dir) ||
@@ -635,6 +637,21 @@ bool SliceEngine::validate_filament_official(bool enforce)
     for (int i = 0; i < num_filaments; ++i) {
         const std::string& name = filament_ids->values[i];
 
+        // Check if this is an official filament by looking for its JSON file
+        // under resources/profiles/Snapmaker/filament/ or OrcaFilamentLibrary/filament/
+        // (find_preset may miss some system presets due to binary search ordering)
+        auto is_official_file = [&](const std::string& preset_name) -> bool {
+            const std::string res = Slic3r::resources_dir();
+            if (res.empty()) return false;
+            // Snapmaker filament
+            if (boost::filesystem::exists(res + "/profiles/Snapmaker/filament/" + preset_name + ".json"))
+                return true;
+            // OrcaFilamentLibrary (Generic filaments)
+            if (boost::filesystem::exists(res + "/profiles/" + PresetBundle::ORCA_FILAMENT_LIBRARY + "/filament/" + preset_name + ".json"))
+                return true;
+            return false;
+        };
+
         // Case 1: Direct system preset match
         if (Preset* sys = find_in_system(name)) {
             if (is_official_preset(*sys)) {
@@ -643,6 +660,12 @@ bool SliceEngine::validate_filament_official(bool enforce)
             std::string msg = "Filament \"" + name + "\" belongs to unsupported vendor";
             report(/*is_official_violation=*/true, "FILAMENT_UNSUPPORTED_VENDOR", msg);
             continue;
+        }
+
+        // Case 1b: File-based check — preset exists on disk but not
+        // found via find_preset (known issue with binary search ordering)
+        if (is_official_file(name)) {
+            continue; // OK
         }
 
         // Case 2: Not a direct system match — walk the inheritance chain
@@ -842,92 +865,181 @@ bool SliceEngine::validate_printer_model()
     return true;
 }
 
-void SliceEngine::apply_official_presets()
+bool SliceEngine::validate_printer_official(bool enforce)
 {
-    // Find the official Snapmaker printer preset to source default G-code blocks.
-    // Mirrors the filament substitution logic: walk the inherits chain upward,
-    // fall back to nozzle-diameter-matched U1 preset if no official ancestor found.
-    const Preset* official_printer = nullptr;
+    auto* printer_id = m_config.option<ConfigOptionString>("printer_settings_id");
+    if (!printer_id || printer_id->value.empty())
+        return true;
 
+    const std::string& name = printer_id->value;
+    const std::string res_dir = Slic3r::resources_dir();
+
+    // Helper: check if a preset name matches an official Snapmaker
+    // printer preset by looking for its JSON file under
+    // resources/profiles/Snapmaker/machine/
+    auto is_official_machine = [&](const std::string& preset_name) -> bool {
+        if (res_dir.empty()) return false;
+        return boost::filesystem::exists(
+            res_dir + "/profiles/Snapmaker/machine/" + preset_name + ".json");
+    };
+
+    // Case 1: The printer_settings_id directly matches an official
+    // Snapmaker preset file — no substitution needed.
+    if (is_official_machine(name)) {
+        return true;
+    }
+
+    // Case 2: Not directly official. Look for the preset in
+    // project-embedded presets or system presets and walk the
+    // inherits chain to find an official ancestor.
+    const Preset* current = nullptr;
     if (m_presets_available && m_preset_bundle) {
-        auto& bundle = *m_preset_bundle;
+        current = m_preset_bundle->printers.find_preset(name, false);
+    }
+    if (!current) {
+        for (auto* pp : m_project_presets) {
+            if (pp && pp->name == name && pp->type == Preset::TYPE_PRINTER) {
+                current = pp;
+                break;
+            }
+        }
+    }
 
-        // Check whether a system preset is "official" (Snapmaker vendor)
-        auto is_official = [](const Preset& p) -> bool {
-            return p.vendor && p.vendor->name == PresetBundle::SM_BUNDLE;
-        };
+    if (!current) {
+        if (!enforce) {
+            BOOST_LOG_TRIVIAL(warning) << "Printer preset \"" << name
+                << "\" not found in system presets; accepted in allow-custom mode";
+            m_stats.issues.push_back(make_warning(-1, "PRINTER_CUSTOM_NOT_FOUND",
+                std::string("Printer preset \"") + name + "\" not found in system presets"));
+            return true;
+        }
+        std::string msg = "Printer preset \"" + name + "\" is not a recognized preset";
+        BOOST_LOG_TRIVIAL(error) << msg;
+        m_any_error = true;
+        set_error_type(EXIT_VALIDATION_ERROR);
+        m_stats.error_message = msg;
+        m_stats.issues.push_back(make_error(-1, "PRINTER_UNKNOWN", msg));
+        return false;
+    }
 
-        auto* printer_id = m_config.option<ConfigOptionString>("printer_settings_id");
-        std::string printer_name = printer_id ? printer_id->value : "";
+    // Walk the inherits chain to find official Snapmaker ancestor
+    std::set<std::string> visited;
+    const Preset* walk = current;
+    while (walk) {
+        std::string inherits_name = walk->inherits();
+        if (inherits_name.empty()) break;
+        if (!visited.insert(inherits_name).second) {
+            std::string msg = "Circular inheritance in printer preset \"" + name + "\"";
+            BOOST_LOG_TRIVIAL(error) << msg;
+            m_any_error = true;
+            set_error_type(EXIT_VALIDATION_ERROR);
+            m_stats.issues.push_back(make_error(-1, "PRINTER_CIRCULAR_INHERITS", msg));
+            return false;
+        }
 
-        // Look up the printer preset — system first, then project-embedded
-        if (!printer_name.empty()) {
-            const Preset* sys = bundle.printers.find_preset(printer_name, false);
-            const Preset* current = (sys && sys->name == printer_name) ? sys : nullptr;
+        if (is_official_machine(inherits_name)) {
+            if (enforce) {
+                substitute_printer_params(name, inherits_name);
+            } else {
+                BOOST_LOG_TRIVIAL(warning) << "Printer preset \"" << name
+                    << "\" is a custom preset (not official)";
+                m_stats.issues.push_back(make_warning(-1, "PRINTER_CUSTOM",
+                    std::string("Printer preset \"") + name + "\" is a custom preset (not official)"));
+            }
+            return true;
+        }
 
-            // Walk inherits chain to find official Snapmaker ancestor
-            std::set<std::string> visited;
-            while (current) {
-                if (is_official(*current)) {
-                    official_printer = current;
+        const Preset* parent = nullptr;
+        if (m_presets_available && m_preset_bundle) {
+            parent = m_preset_bundle->printers.find_preset(inherits_name, false);
+        }
+        if (!parent) {
+            for (auto* pp : m_project_presets) {
+                if (pp && pp->name == inherits_name && pp->type == Preset::TYPE_PRINTER) {
+                    parent = pp;
                     break;
                 }
-                std::string parent_name = current->inherits();
-                if (parent_name.empty() || !visited.insert(parent_name).second)
-                    break;
-                current = bundle.printers.find_preset(parent_name, false);
             }
         }
+        if (!parent) break;
+        walk = parent;
+    }
 
-        // Fallback: match by nozzle diameter
-        if (!official_printer) {
-            std::string nozzle_str = "0.4";
-            auto* nd = m_config.option<ConfigOptionFloats>("nozzle_diameter");
-            if (nd && !nd->values.empty()) {
-                double dia = nd->values[0];
-                if (dia < 0.3)      nozzle_str = "0.2";
-                else if (dia < 0.5) nozzle_str = "0.4";
-                else if (dia < 0.7) nozzle_str = "0.6";
-                else                nozzle_str = "0.8";
+    if (!enforce) {
+        BOOST_LOG_TRIVIAL(warning) << "Printer preset \"" << name
+            << "\" is a custom preset (not official)";
+        m_stats.issues.push_back(make_warning(-1, "PRINTER_CUSTOM",
+            std::string("Printer preset \"") + name + "\" is a custom preset (not official)"));
+        return true;
+    }
+
+    std::string msg = "Printer preset \"" + name
+        + "\" is not derived from any Snapmaker official printer preset";
+    BOOST_LOG_TRIVIAL(error) << msg;
+    m_any_error = true;
+    set_error_type(EXIT_VALIDATION_ERROR);
+    m_stats.error_message = msg;
+    m_stats.issues.push_back(make_error(-1, "PRINTER_NO_OFFICIAL_ANCESTOR", msg));
+    return false;
+}
+
+void SliceEngine::substitute_printer_params(const std::string& original_name,
+                                             const std::string& parent_name)
+{
+    BOOST_LOG_TRIVIAL(info) << "Substituting printer preset \"" << original_name
+        << "\" with official parent \"" << parent_name << "\"";
+
+    m_config.set_key_value("printer_settings_id",
+        new ConfigOptionString(parent_name));
+
+    // Load the parent preset config from the Snapmaker machine directory
+    std::string parent_path = Slic3r::resources_dir()
+        + "/profiles/Snapmaker/machine/" + parent_name + ".json";
+
+    DynamicPrintConfig parent_cfg;
+    std::map<std::string, std::string> key_values;
+    std::string reason;
+    try {
+        ConfigSubstitutions subs = parent_cfg.load_from_json(
+            parent_path, ForwardCompatibilitySubstitutionRule::EnableSilent,
+            key_values, reason);
+
+        // Copy printer_model from parent if available
+        auto* pm = parent_cfg.option<ConfigOptionString>("printer_model");
+        if (pm && m_config.has("printer_model")) {
+            m_config.set_key_value("printer_model",
+                new ConfigOptionString(pm->value));
+        }
+
+        // Fill nil/missing values from parent config
+        for (auto it = parent_cfg.cbegin(); it != parent_cfg.cend(); ++it) {
+            const auto& key = it->first;
+            auto* dst_opt = m_config.option(key, false);
+            if (!dst_opt) continue;
+
+            if (dst_opt->is_scalar()) {
+                if (!dst_opt->is_nil()) continue;
+                dst_opt->set(it->second.get());
+            } else {
+                auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
+                auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(
+                    it->second.get());
+                if (!dst_vec || !src_vec) continue;
+                for (size_t i = 0; i < dst_vec->size() && i < src_vec->size(); ++i) {
+                    if (dst_vec->is_nil(i))
+                        dst_vec->set_at(src_vec, i, i);
+                }
             }
-            std::string fallback = "Snapmaker U1 (" + nozzle_str + " nozzle)";
-            official_printer = bundle.printers.find_preset(fallback, true);
         }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "Failed to load parent preset config from " << parent_path
+            << ": " << e.what();
     }
 
-    // Replace every G-code key the official printer preset provides.
-    // Any other G-code-related key still gets cleared for cloud safety.
-    std::set<std::string> replaced;
-    if (official_printer) {
-        for (auto it = official_printer->config.cbegin();
-             it != official_printer->config.cend(); ++it) {
-            const std::string& key = it->first;
-            if (key.find("gcode") == std::string::npos && key != "print_host")
-                continue;
-            if (!m_config.has(key)) continue;
-
-            std::string value;
-            auto* opt = official_printer->config.option<ConfigOptionString>(key);
-            if (opt) value = opt->value;
-            m_config.set_key_value(key, new ConfigOptionString(value));
-            replaced.insert(key);
-            m_stats.issues.push_back(make_tip(-1, "GCODE_REPLACED",
-                std::string("G-code '") + key + "' replaced with official default"));
-        }
-    }
-
-    // Clear any remaining G-code keys not covered by the official printer preset
-    constexpr const char* known_gcode_keys[] = {
-        "start_gcode", "end_gcode", "layer_gcode",
-        "between_objects_gcode", "toolchange_gcode",
-    };
-    for (const char* key : known_gcode_keys) {
-        if (!m_config.has(key)) continue;
-        if (replaced.count(key)) continue;
-        m_config.set_key_value(key, new ConfigOptionString(""));
-        m_stats.issues.push_back(make_tip(-1, "GCODE_CLEARED",
-            std::string("Custom G-code '") + key + "' cleared for cloud safety"));
-    }
+    m_stats.issues.push_back(make_warning(-1, "PRINTER_SUBSTITUTED",
+        std::string("Printer preset \"") + original_name
+        + "\" substituted with official preset \"" + parent_name + "\""));
 }
 
 // ============================================================================

@@ -28,13 +28,11 @@ struct EngineConfig {
     OutputFormat format = OutputFormat::GCODE_3MF;
     bool single_plate = false;
     std::string temp_dir;          // temp directory for intermediate gcode files
-    std::string data_dir;          // --data-dir, custom system presets path (empty = auto)
     int timeout_seconds = 0;       // 0 = no timeout; cloud service sets based on file size
     int max_size_mb = 200;         // 0 = no limit; max input file size in megabytes
     std::string cancel_file;       // watchdog file path for external cancellation
-    bool enforce_official_presets = true;  // P0-2: replace user config with official presets
-    bool substitute_filaments = true;     // whether to check & substitute filament with official parent
-    bool clear_custom_gcode = true;       // whether to strip custom G-code blocks for cloud safety
+    bool substitute_printer  = true;   // whether to substitute printer preset with official parent
+    bool substitute_filaments = true;  // whether to substitute filament presets with official parent
 };
 
 // Intermediate result for a single plate during the pipeline
@@ -69,10 +67,6 @@ struct PlateSliceResult {
 //   applied in apply_model() before passing to Print::apply().
 //
 // Key design decisions:
-//   - Fresh Print object per retry attempt (no explicit dtor / placement-new)
-//   - Per-plate error handling via report_error() helper
-//   - try-catch boundary at process_plate() prevents one plate from crashing the job
-//   - Custom G-code stripped for cloud safety (apply_official_presets)
 //
 class SliceEngine {
 public:
@@ -101,7 +95,7 @@ private:
     void validate_config();
     void load_system_presets();
     void validate_presets();
-    void apply_official_presets();
+    bool validate_printer_official(bool enforce = true);
     Slic3r::DynamicPrintConfig build_full_print_config();
     bool validate_filament_official(bool enforce = true);
     bool has_inline_filament_config(int ext_idx);
@@ -109,6 +103,8 @@ private:
     void substitute_filament_params(Slic3r::ConfigOptionStrings* filament_ids, int ext_idx,
                                     const Slic3r::Preset& official_parent,
                                     const std::string& original_name);
+    void substitute_printer_params(const std::string& original_name,
+                                    const std::string& parent_name);
     bool validate_printer_model();
     bool validate_input();
     void process_plate(int plate_id);

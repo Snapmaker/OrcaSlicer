@@ -93,7 +93,8 @@ CliArgs parse_args(int argc, char* argv[]) {
             }
         }
         else if ((arg == "-d" || arg == "--data-dir") && i + 1 < argc) {
-            args.engine_cfg.data_dir = argv[++i];
+            BOOST_LOG_TRIVIAL(warning) << "--data-dir is deprecated and ignored; presets are always loaded from <resources>/profiles";
+            ++i; // consume the value
         }
         else if ((arg == "-t" || arg == "--timeout") && i + 1 < argc) {
             try {
@@ -120,15 +121,14 @@ CliArgs parse_args(int argc, char* argv[]) {
             args.engine_cfg.cancel_file = argv[++i];
         }
         else if (arg == "--allow-custom-presets") {
-            args.engine_cfg.enforce_official_presets = false;
-            args.engine_cfg.substitute_filaments    = false;
-            args.engine_cfg.clear_custom_gcode      = false;
-        }
-        else if (arg == "--no-filament-substitution") {
+            args.engine_cfg.substitute_printer  = false;
             args.engine_cfg.substitute_filaments = false;
         }
-        else if (arg == "--keep-custom-gcode") {
-            args.engine_cfg.clear_custom_gcode = false;
+        else if (arg == "--allow-custom-printer-presets") {
+            args.engine_cfg.substitute_printer = false;
+        }
+        else if (arg == "--allow-custom-filament-presets") {
+            args.engine_cfg.substitute_filaments = false;
         }
         else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
             std::string fmt = argv[++i];
@@ -249,16 +249,20 @@ int main(int argc, char* argv[]) {
     if (!resources_dir.empty()) {
         set_resources_dir(resources_dir);
     } else {
-        boost::filesystem::path exe_path = boost::dll::program_location();
-        boost::filesystem::path resource_path = exe_path.parent_path() / "resources";
-        if (boost::filesystem::exists(resource_path)) {
-            set_resources_dir(resource_path.string());
+        // Auto-detect: prefer ../resources (Ubuntu packaging: bin/orca-slice-engine -> x/resources/)
+        // fall back to ./resources (development layout)
+        boost::filesystem::path exe_dir = boost::dll::program_location().parent_path();
+        boost::filesystem::path parent_resources = exe_dir.parent_path() / "resources";
+        boost::filesystem::path local_resources  = exe_dir / "resources";
+        if (boost::filesystem::exists(parent_resources)) {
+            set_resources_dir(parent_resources.string());
+        } else if (boost::filesystem::exists(local_resources)) {
+            set_resources_dir(local_resources.string());
         } else {
             const char* env = std::getenv("ORCA_RESOURCES");
             if (env) {
-                std::string env_resources(env);
-                set_resources_dir(env_resources);
-                BOOST_LOG_TRIVIAL(info) << "Resources directory (from env): " << env_resources;
+                set_resources_dir(env);
+                BOOST_LOG_TRIVIAL(info) << "Resources directory (from env): " << env;
             } else {
                 BOOST_LOG_TRIVIAL(warning) << "No resources directory specified. Using default preset loading.";
             }

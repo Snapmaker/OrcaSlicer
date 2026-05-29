@@ -646,8 +646,11 @@ bool SliceEngine::validate_filament_official(bool enforce)
             // Snapmaker filament
             if (boost::filesystem::exists(res + "/profiles/Snapmaker/filament/" + preset_name + ".json"))
                 return true;
-            // OrcaFilamentLibrary (Generic filaments)
-            if (boost::filesystem::exists(res + "/profiles/" + PresetBundle::ORCA_FILAMENT_LIBRARY + "/filament/" + preset_name + ".json"))
+            // OrcaFilamentLibrary (Generic filaments) — also try @System suffix
+            const std::string orca_dir = res + "/profiles/" + PresetBundle::ORCA_FILAMENT_LIBRARY + "/filament/";
+            if (boost::filesystem::exists(orca_dir + preset_name + ".json"))
+                return true;
+            if (boost::filesystem::exists(orca_dir + preset_name + " @System.json"))
                 return true;
             return false;
         };

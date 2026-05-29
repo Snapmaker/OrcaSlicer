@@ -1558,40 +1558,15 @@ bool SliceEngine::apply_model(int plate_id, Print& print, const Vec3d& origin) {
         }
 
         if (used_extruders.size() <= 1 && num_filaments > 1) {
-            BOOST_LOG_TRIVIAL(info) << "Trimming filament config from " << num_filaments
-                << " to 1 to match single-extruder model";
+            // Single extruder model with multiple filaments configured.
+            // Disable the prime/wipe tower to prevent tool change errors,
+            // but keep filament arrays intact so model volumes referencing
+            // non-zero extruders still map correctly.
+            BOOST_LOG_TRIVIAL(info) << "Disabling prime tower for single-extruder plate "
+                << (plate_id + 1) << " (used extruders: "
+                << (used_extruders.empty() ? "none" : std::to_string(*used_extruders.begin()))
+                << ", filaments configured: " << num_filaments << ")";
             merged_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
-
-            // Truncate all filament-related array options to 1 entry.
-            // This prevents Print::has_wipe_tower() from returning true due to
-            // filament_diameter.size() > 1, which is the root cause of the
-            // "append_tcr was asked to do a toolchange it didn't expect" error.
-            // flush_volumes_matrix (N*N flat vector) and wiping_volumes_extruders
-            // must also be trimmed to keep the config internally consistent:
-            // a 5*5 matrix with only 1 extruder would mismatch sqrt(size) later.
-            constexpr const char* trim_keys[] = {
-                "filament_diameter",
-                "filament_density",
-                "filament_cost",
-                "filament_colour",
-                "filament_type",
-                "filament_is_support",
-                "filament_settings_id",
-                "nozzle_diameter",
-                "flush_volumes_matrix",
-                "wiping_volumes_extruders",
-            };
-            for (const char* key : trim_keys) {
-                auto* opt = merged_config.option(key, true);
-                if (!opt) continue;
-                if (auto* fs = dynamic_cast<ConfigOptionFloats*>(opt)) {
-                    if (!fs->values.empty()) { fs->values.resize(1); merged_config.set_key_value(key, new ConfigOptionFloats(fs->values)); }
-                } else if (auto* ss = dynamic_cast<ConfigOptionStrings*>(opt)) {
-                    if (!ss->values.empty()) { ss->values.resize(1); merged_config.set_key_value(key, new ConfigOptionStrings(ss->values)); }
-                } else if (auto* bs = dynamic_cast<ConfigOptionBools*>(opt)) {
-                    if (!bs->values.empty()) { bs->values.resize(1); merged_config.set_key_value(key, new ConfigOptionBools(bs->values)); }
-                }
-            }
         } else if (used_extruders.size() <= 1) {
             BOOST_LOG_TRIVIAL(info) << "Disabling prime tower (single extruder model)";
             merged_config.set_key_value("enable_prime_tower", new ConfigOptionBool(false));

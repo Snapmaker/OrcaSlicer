@@ -549,9 +549,8 @@ void SliceEngine::validate_presets()
             std::string details;
             for (const auto& name : modified_gcodes)
                 details += (details.empty() ? "" : ", ") + name;
-            std::string msg = "Modified G-code keys found in presets";
-            if (!details.empty())
-                msg += ": " + details;
+            std::string msg = "Custom G-code detected in presets (" + details
+                + ") — disabled for cloud safety";
             m_stats.issues.push_back(make_warning(-1, "PRESET_MODIFIED_GCODES", msg));
             break;
         }
@@ -739,8 +738,8 @@ bool SliceEngine::validate_filament_official(bool enforce)
             // directly in project_settings.config without a named preset.
             if (!enforce && has_inline_filament_config(i)) {
                 std::string msg = "Filament \"" + name
-                    + "\" is an inline custom filament (no preset definition, "
-                    + "but per-extruder config values are present)";
+                    + "\" is a custom filament without a preset definition"
+                    + " — accepted in allow-custom mode";
                 BOOST_LOG_TRIVIAL(warning) << msg;
                 m_stats.issues.push_back(make_warning(-1, "FILAMENT_CUSTOM_INLINE", msg));
                 continue;
@@ -1098,9 +1097,13 @@ void SliceEngine::substitute_printer_params(const std::string& original_name,
             << ": " << e.what();
     }
 
-    m_stats.issues.push_back(make_warning(-1, "PRINTER_SUBSTITUTED",
-        std::string("Printer preset \"") + original_name
-        + "\" substituted with official preset \"" + parent_name + "\""));
+    const std::string printer_msg = original_name == parent_name
+        ? std::string("Printer preset \"") + original_name
+            + "\" config values updated from official preset"
+        : std::string("Custom printer preset \"") + original_name
+            + "\" replaced with official preset \""
+            + parent_name + "\" for cloud safety";
+    m_stats.issues.push_back(make_warning(-1, "PRINTER_SUBSTITUTED", printer_msg));
 }
 
 // ============================================================================

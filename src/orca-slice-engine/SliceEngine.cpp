@@ -36,6 +36,78 @@ constexpr double BED_AXES_TIP_RADIUS = 1.25;
 // 1/5, same as GUI's LOGICAL_PART_PLATE_GAP
 constexpr double LOGICAL_PART_PLATE_GAP = 0.2;
 
+// RAII guard to temporarily suppress all boost::log output.
+// Restores the previous logging state on destruction, ensuring
+// that exceptions during the suppressed scope do not leave
+// logging permanently disabled.
+class ScopedLogSuppressor {
+public:
+    ScopedLogSuppressor() {
+        boost::log::core::get()->set_logging_enabled(false);
+    }
+    ~ScopedLogSuppressor() {
+        boost::log::core::get()->set_logging_enabled(true);
+    }
+    ScopedLogSuppressor(const ScopedLogSuppressor&) = delete;
+    ScopedLogSuppressor& operator=(const ScopedLogSuppressor&) = delete;
+};
+
+// --- Config helpers ---
+
+// Fill nil/missing values in dst from src. Scalar options use set();
+// vector options use set_at() per index for nil slots only.
+// Non-existent keys in dst are skipped.  Used by preset substitution
+// and printer config layering to fill gaps while preserving user values.
+inline void fill_nil_from(DynamicPrintConfig& dst, const DynamicPrintConfig& src)
+{
+    for (auto it = src.cbegin(); it != src.cend(); ++it) {
+        const auto& key   = it->first;
+        auto*       dst_opt = dst.option(key, false);
+        if (!dst_opt) continue;
+
+        if (dst_opt->is_scalar()) {
+            if (dst_opt->is_nil())
+                dst_opt->set(it->second.get());
+        } else {
+            auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
+            auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(it->second.get());
+            if (!dst_vec || !src_vec) continue;
+            for (size_t i = 0; i < dst_vec->size() && i < src_vec->size(); ++i)
+                if (dst_vec->is_nil(i))
+                    dst_vec->set_at(src_vec, i, i);
+        }
+    }
+}
+
+// --- Official preset file helpers ---
+
+// Directory constants for system preset files under resources/profiles/
+static const char* const SNAPMK_MACHINE_DIR  = "/profiles/Snapmaker/machine/";
+static const char* const SNAPMK_FILAMENT_DIR = "/profiles/Snapmaker/filament/";
+static const char* const ORCA_FILAMENT_DIR() { // ORCA_FILAMENT_LIBRARY is a runtime string
+    static const std::string s = std::string("/profiles/") + PresetBundle::ORCA_FILAMENT_LIBRARY + "/filament/";
+    return s.c_str();
+}
+
+// Check whether a machine name matches an official Snapmaker printer preset on disk.
+inline bool is_official_machine_file(const std::string& preset_name) {
+    const std::string& res = Slic3r::resources_dir();
+    if (res.empty()) return false;
+    return boost::filesystem::exists(res + SNAPMK_MACHINE_DIR + preset_name + ".json");
+}
+
+// Check whether a filament name matches an official preset on disk
+// (Snapmaker or OrcaFilamentLibrary, including @System suffix for Generic filaments).
+inline bool is_official_filament_file(const std::string& preset_name) {
+    const std::string& res = Slic3r::resources_dir();
+    if (res.empty()) return false;
+    const std::string snap_path = res + SNAPMK_FILAMENT_DIR + preset_name + ".json";
+    const std::string orca_dir  = res + ORCA_FILAMENT_DIR();
+    return boost::filesystem::exists(snap_path)
+        || boost::filesystem::exists(orca_dir + preset_name + ".json")
+        || boost::filesystem::exists(orca_dir + preset_name + " @System.json");
+}
+
 // Check if a plate result indicates a wipe tower tool change mismatch.
 // CGAL/float differences on some platforms cause non-consecutive extruder
 // ID handling to fail during G-code export.
@@ -63,9 +135,19 @@ bool SliceEngine::run() {
     m_output_path = generate_output_path(m_cfg.input_file, m_cfg.output_base,
                                          m_cfg.plate_id, m_cfg.format, m_cfg.single_plate);
 
-    // Apply FullPrintConfig defaults as baseline BEFORE the 3MF overlays
-    // project settings on top. This ensures every config key has a valid value
-    // and the build_full_print_config() resolution works correctly.
+    // --- Config layering & mutation order ---
+    // m_config is the shared project config from the 3MF. The following
+    // pipeline stages mutate it in order, each building on the previous:
+    //
+    // 1. FullPrintConfig::defaults()    — baseline for all keys
+    // 2. load_3mf()                     — overlay 3MF project + embedded presets
+    // 3. load_system_presets()          — (side-effect: populates m_preset_bundle)
+    // 4. validate_printer_official()    — MAY replace printer_settings_id + fill nil from official
+    // 5. apply_printer_preset_config()  — fill remaining nil printer keys from system preset
+    // 6. validate_filament_official()   — MAY replace filament_settings_id + fill nil from official
+    //
+    // After these stages, m_config is a fully-resolved config ready for slicing.
+    // Per-plate overrides are applied separately in apply_model().
     m_config.apply(FullPrintConfig::defaults());
 
     bool load_ok = load_3mf();
@@ -78,10 +160,11 @@ bool SliceEngine::run() {
     validate_config();
 
     // Suppress libslic3r log spam during system preset loading and validation
-    boost::log::core::get()->set_logging_enabled(false);
-    load_system_presets();
-    validate_presets();
-    boost::log::core::get()->set_logging_enabled(true);
+    {
+        ScopedLogSuppressor quiet;
+        load_system_presets();
+        validate_presets();
+    }
 
     // Printer preset substitution (includes G-code from official printer).
     // When substitute_printer is true (default), force substitution to official.
@@ -492,25 +575,7 @@ void SliceEngine::apply_printer_preset_config()
     DynamicPrintConfig resolved = build_full_print_config();
     BOOST_LOG_TRIVIAL(info) << "Applying printer preset config";
 
-    // Only fill nil/missing values — project config takes precedence.
-    for (auto it = resolved.cbegin();
-         it != resolved.cend(); ++it) {
-        const auto& key = it->first;
-        auto* dst_opt = m_config.option(key, false);
-        if (!dst_opt) continue;
-        if (dst_opt->is_scalar()) {
-            if (!dst_opt->is_nil()) continue;
-            dst_opt->set(it->second.get());
-        } else {
-            auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
-            auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(it->second.get());
-            if (!dst_vec || !src_vec) continue;
-            for (size_t i = 0; i < dst_vec->size() && i < src_vec->size(); ++i) {
-                if (dst_vec->is_nil(i))
-                    dst_vec->set_at(src_vec, i, i);
-            }
-        }
-    }
+    fill_nil_from(m_config, resolved);
 
     // Verify printer-specific parameters have been overridden by the U1
     // preset and are NOT still at FullPrintConfig defaults.
@@ -637,24 +702,6 @@ bool SliceEngine::validate_filament_official(bool enforce)
     for (int i = 0; i < num_filaments; ++i) {
         const std::string& name = filament_ids->values[i];
 
-        // Check if this is an official filament by looking for its JSON file
-        // under resources/profiles/Snapmaker/filament/ or OrcaFilamentLibrary/filament/
-        // (find_preset may miss some system presets due to binary search ordering)
-        auto is_official_file = [&](const std::string& preset_name) -> bool {
-            const std::string res = Slic3r::resources_dir();
-            if (res.empty()) return false;
-            // Snapmaker filament
-            if (boost::filesystem::exists(res + "/profiles/Snapmaker/filament/" + preset_name + ".json"))
-                return true;
-            // OrcaFilamentLibrary (Generic filaments) — also try @System suffix
-            const std::string orca_dir = res + "/profiles/" + PresetBundle::ORCA_FILAMENT_LIBRARY + "/filament/";
-            if (boost::filesystem::exists(orca_dir + preset_name + ".json"))
-                return true;
-            if (boost::filesystem::exists(orca_dir + preset_name + " @System.json"))
-                return true;
-            return false;
-        };
-
         // Case 1: Direct system preset match
         if (Preset* sys = find_in_system(name)) {
             if (is_official_preset(*sys)) {
@@ -667,7 +714,7 @@ bool SliceEngine::validate_filament_official(bool enforce)
 
         // Case 1b: File-based check — preset exists on disk but not
         // found via find_preset (known issue with binary search ordering)
-        if (is_official_file(name)) {
+        if (is_official_filament_file(name)) {
             continue; // OK
         }
 
@@ -875,20 +922,10 @@ bool SliceEngine::validate_printer_official(bool enforce)
         return true;
 
     const std::string& name = printer_id->value;
-    const std::string res_dir = Slic3r::resources_dir();
-
-    // Helper: check if a preset name matches an official Snapmaker
-    // printer preset by looking for its JSON file under
-    // resources/profiles/Snapmaker/machine/
-    auto is_official_machine = [&](const std::string& preset_name) -> bool {
-        if (res_dir.empty()) return false;
-        return boost::filesystem::exists(
-            res_dir + "/profiles/Snapmaker/machine/" + preset_name + ".json");
-    };
 
     // Case 1: The printer_settings_id directly matches an official
     // Snapmaker preset file — no substitution needed.
-    if (is_official_machine(name)) {
+    if (is_official_machine_file(name)) {
         return true;
     }
 
@@ -940,7 +977,7 @@ bool SliceEngine::validate_printer_official(bool enforce)
             return false;
         }
 
-        if (is_official_machine(inherits_name)) {
+        if (is_official_machine_file(inherits_name)) {
             if (enforce) {
                 substitute_printer_params(name, inherits_name);
             } else {
@@ -995,45 +1032,25 @@ void SliceEngine::substitute_printer_params(const std::string& original_name,
     m_config.set_key_value("printer_settings_id",
         new ConfigOptionString(parent_name));
 
-    // Load the parent preset config from the Snapmaker machine directory
+    // Load the parent preset config from disk
     std::string parent_path = Slic3r::resources_dir()
-        + "/profiles/Snapmaker/machine/" + parent_name + ".json";
+        + SNAPMK_MACHINE_DIR + parent_name + ".json";
 
     DynamicPrintConfig parent_cfg;
     std::map<std::string, std::string> key_values;
     std::string reason;
     try {
-        ConfigSubstitutions subs = parent_cfg.load_from_json(
-            parent_path, ForwardCompatibilitySubstitutionRule::EnableSilent,
+        parent_cfg.load_from_json(parent_path,
+            ForwardCompatibilitySubstitutionRule::EnableSilent,
             key_values, reason);
 
         // Copy printer_model from parent if available
         auto* pm = parent_cfg.option<ConfigOptionString>("printer_model");
-        if (pm && m_config.has("printer_model")) {
+        if (pm && m_config.has("printer_model"))
             m_config.set_key_value("printer_model",
                 new ConfigOptionString(pm->value));
-        }
 
-        // Fill nil/missing values from parent config
-        for (auto it = parent_cfg.cbegin(); it != parent_cfg.cend(); ++it) {
-            const auto& key = it->first;
-            auto* dst_opt = m_config.option(key, false);
-            if (!dst_opt) continue;
-
-            if (dst_opt->is_scalar()) {
-                if (!dst_opt->is_nil()) continue;
-                dst_opt->set(it->second.get());
-            } else {
-                auto* dst_vec = dynamic_cast<ConfigOptionVectorBase*>(dst_opt);
-                auto* src_vec = dynamic_cast<const ConfigOptionVectorBase*>(
-                    it->second.get());
-                if (!dst_vec || !src_vec) continue;
-                for (size_t i = 0; i < dst_vec->size() && i < src_vec->size(); ++i) {
-                    if (dst_vec->is_nil(i))
-                        dst_vec->set_at(src_vec, i, i);
-                }
-            }
-        }
+        fill_nil_from(m_config, parent_cfg);
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(warning)
             << "Failed to load parent preset config from " << parent_path

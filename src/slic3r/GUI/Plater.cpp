@@ -8,6 +8,7 @@
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
 #include "common_func/common_func.hpp"
+#include "filamentsync/SyncFilamentColorDialog.hpp"
 
 #include <cstddef>
 #include <array>
@@ -726,6 +727,7 @@ struct Sidebar::priv
     ScalableButton *  m_bpButton_del_filament;
     ScalableButton *  m_bpButton_ams_filament;
     ScalableButton *  m_bpButton_set_filament;
+    ScalableButton *  m_bpButton_sync_filament = nullptr;
     int                         m_menu_filament_id = -1;
     wxPanel* m_panel_filament_content;
     wxScrolledWindow* m_scrolledWindow_filament_content;
@@ -2214,8 +2216,18 @@ Sidebar::Sidebar(Plater *parent)
     });
     p->m_bpButton_add_filament = add_btn;
 
+    // Sync filament button
+    // TODO: icon_nname
+    ScalableButton* sync_filament_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "add_filament", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER, false, 16);
+    sync_filament_btn->SetToolTip(_L("Synchronize filament information"));
+    sync_filament_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+        show_sync_filament_dialog();
+    });
+    p->m_bpButton_sync_filament = sync_filament_btn;
+
     h_physical_title->Add(del_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-    h_physical_title->Add(add_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    h_physical_title->Add(add_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
+    h_physical_title->Add(sync_filament_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     auto* white_right_f = new wxPanel(p->m_panel_physical_filaments_title, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(SidebarProps::ContentMargin()), -1));
     white_right_f->SetBackgroundColour(*wxWHITE);
     h_physical_title->Add(white_right_f, 0, wxEXPAND | wxTOP | wxBOTTOM, 0);
@@ -7841,6 +7853,36 @@ void Sidebar::sync_ams_list()
         }
     }
     Layout();
+}
+
+void Sidebar::show_sync_filament_dialog()
+{
+    // Check if connected to a device
+    MachineObject* obj = wxGetApp().getDeviceManager()->get_selected_machine();
+    if (!obj || !obj->is_connected()) {
+        MessageDialog dlg(this,
+            _L("Please connect to a device first before synchronizing filament information."),
+            _L("Device not connected"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
+
+    // Initialize design filament list from current project config
+    std::list<FilamentData> designFilamentList;
+    // TODO: populate designFilamentList from p->combos_filament and project config
+
+    // Initialize machine filament list from the connected device
+    std::list<FilamentData> machineFilamentList;
+    // TODO: populate machineFilamentList from obj->amsList (AMS trays) and obj->vtTray (virtual tray)
+
+    // Create and show the sync dialog
+    SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
+    if (dlg.ShowModal() == wxID_OK) {
+        std::list<FilamentData> syncedData = dlg.getSyncDataList();
+        bool addToSoftwareList = dlg.isAddToSoftwareList();
+        // TODO: apply syncedData back to project config
+        // TODO: if addToSoftwareList, add remaining filaments to the software filament list
+    }
 }
 
 void Sidebar::show_SEMM_buttons(bool bshow)

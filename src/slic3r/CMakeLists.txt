@@ -111,6 +111,19 @@ set(SLIC3R_GUI_SOURCES
     GUI/Field.hpp
     GUI/FileArchiveDialog.cpp
     GUI/FileArchiveDialog.hpp
+    GUI/filamentsync/FilamentColorMapBox.cpp
+    GUI/filamentsync/FilamentColorMapBox.hpp
+    GUI/filamentsync/FilamentColorMapBoxGroup.cpp
+    GUI/filamentsync/FilamentColorMapBoxGroup.hpp
+    GUI/filamentsync/FilamentColorRadio.cpp
+    GUI/filamentsync/FilamentColorRadio.hpp
+    GUI/filamentsync/FilamentData.hpp
+    GUI/filamentsync/MachineFilamentPicker.cpp
+    GUI/filamentsync/MachineFilamentPicker.hpp
+    GUI/filamentsync/PlaterPreview.cpp
+    GUI/filamentsync/PlaterPreview.hpp
+    GUI/filamentsync/SyncFilamentColorDialog.cpp
+    GUI/filamentsync/SyncFilamentColorDialog.hpp
     GUI/format.hpp
     GUI/GCodeViewer.cpp
     GUI/GCodeViewer.hpp

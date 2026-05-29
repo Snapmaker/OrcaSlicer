@@ -1,0 +1,35 @@
+#pragma once
+
+#include <list>
+#include <memory>
+
+#include <wx/popupwin.h>
+
+#include "FilamentData.hpp"
+
+class wxSizer;
+class FilamentColorRadio;
+
+class MachineFilamentPicker : public wxPopupTransientWindow
+{
+public:
+    MachineFilamentPicker(wxWindow* parent,
+                          const std::list<FilamentData>& dataList,
+                          unsigned int curIndex);
+
+    FilamentData getSelectedData() const;
+    unsigned int getSelectedIndex() const;
+
+    void setSelectedIndex(unsigned int index);
+
+    void popupAt(const wxPoint& pos);
+
+private:
+    void onRadioClicked(const FilamentData& data);
+    void deselectAllExcept(const FilamentData& currentData);
+
+    std::list<std::shared_ptr<FilamentColorRadio>> m_radioList;
+    FilamentData m_currentSelectedData;
+
+    wxSizer* m_pGridSizer = nullptr;
+};

@@ -12263,6 +12263,12 @@ msgstr "墙体加圆角"
 msgid "The wall of prime tower will fillet."
 msgstr "擦料塔的墙壁做倒角处理"
 
+msgid "Wall gap"
+msgstr "外墙缺口"
+
+msgid "Create small gaps in the wipe tower outer wall at tool change entry points. The first extrusion path after a filament change will enter through the gap, leaving the filament blob on the gap edge instead of on the outer wall surface."
+msgstr "在擦拭塔外墙换料入口处创建小缺口。换料后的第一条挤出路径将从缺口进入，将料丝残留留在缺口边缘而非外墙表面。"
+
 msgid "The extruder to use when printing perimeter of the wipe tower. Set to 0 to use the one that is available (non-soluble would be preferred)."
 msgstr "打印擦拭塔周长时使用的挤出机。设置为0将使用唯一的挤出机（尽量使用不可溶的材料）。"
 

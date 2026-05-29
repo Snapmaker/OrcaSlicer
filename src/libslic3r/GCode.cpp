@@ -882,9 +882,9 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                 line.replace(line.find(cur_gcode_start), 3, oss.str());
                 old_pos = transformed_pos;
             }
-			else {
-				continue;
-			}
+            else {
+                line = line_out.str();
+            }
         }
 
         gcode_out += line + "\n";

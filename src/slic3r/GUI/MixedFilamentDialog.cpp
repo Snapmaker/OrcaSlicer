@@ -2231,9 +2231,9 @@ void MixedFilamentDialog::display_warning(const wxString& msg)
         return;
     m_error_panel->Hide();
     m_warning_panel->Show();
-    Layout();
+    Layout(); // land panel width first, so the auto-wrap label's CalcMin gets a real width
     m_warning_text->SetLabel(msg);
-    Layout();
+    Layout(); // re-wrap with correct width; single Layout on macOS may calc height from stale zero-width
 }
 
 void MixedFilamentDialog::set_error(const wxString& msg)
@@ -2242,10 +2242,10 @@ void MixedFilamentDialog::set_error(const wxString& msg)
         return;
     m_warning_panel->Hide();
     m_error_panel->Show();
-    Layout();
+    Layout(); // land panel width first, so the auto-wrap label's CalcMin gets a real width
     m_error_text->SetLabel(msg);
     if (m_btn_confirm) m_btn_confirm->Disable();
-    Layout();
+    Layout(); // re-wrap with correct width; single Layout on macOS may calc height from stale zero-width
 }
 
 wxString MixedFilamentDialog::get_ratio_warning_msg()

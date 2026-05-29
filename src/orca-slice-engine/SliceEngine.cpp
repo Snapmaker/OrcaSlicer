@@ -986,6 +986,27 @@ bool SliceEngine::validate_printer_official(bool enforce)
     }
 
     if (!current) {
+        // Prefix matching heuristic: user-modified system printer presets
+        // are exported with a suffix (e.g. "Snapmaker U1 (0.6 nozzle) - 拷贝").
+        // Match the longest official printer preset that is a prefix.
+        if (enforce && m_preset_bundle) {
+            Preset* best = nullptr;
+            for (auto& preset : m_preset_bundle->printers) {
+                if (!is_official_machine_file(preset.name)) continue;
+                if (preset.name.size() >= name.size()) continue;
+                if (name.compare(0, preset.name.size(), preset.name) != 0) continue;
+                if (!best || preset.name.size() > best->name.size())
+                    best = &preset;
+            }
+            if (best) {
+                BOOST_LOG_TRIVIAL(info) << "Printer \"" << name
+                    << "\" resolved via prefix matching to \""
+                    << best->name << "\"";
+                substitute_printer_params(name, best->name);
+                return true;
+            }
+        }
+
         if (!enforce) {
             BOOST_LOG_TRIVIAL(warning) << "Printer preset \"" << name
                 << "\" not found in system presets; accepted in allow-custom mode";

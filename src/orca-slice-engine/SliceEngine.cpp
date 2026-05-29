@@ -746,29 +746,25 @@ bool SliceEngine::validate_filament_official(bool enforce)
                 continue;
             }
 
-            // Heuristic: OrcaSlicer copies user-modified system presets as
-            // "SystemName - suffix" (e.g. "Generic PETG @U1 0.6 nozzle - 拷贝").
-            // When the 3MF lacks an embedded preset file (user saved as a local
-            // user preset but not to the project), try stripping the suffix and
-            // matching the base name against system presets.
+            // Heuristic: user-modified system presets are exported with
+            // a suffix (e.g. "Generic PETG @U1 0.6 nozzle - 拷贝" or
+            // "Generic PETG @U1 0.6 nozzle 1").  Match by prefix: iterate
+            // all loaded official presets and find the longest matching one.
             {
-                auto pos = name.rfind(" - ");
-                if (pos != std::string::npos && pos > 0) {
-                    std::string base_name = name.substr(0, pos);
-                    // Try system preset lookup first
-                    Preset* base_preset = find_in_system(base_name);
-                    if (!base_preset && is_official_filament_file(base_name)) {
-                        // File exists but not loaded (shouldn't happen after
-                        // linear fallback, but kept as safety net)
-                        continue;  // can't substitute without config
-                    }
-                    if (base_preset) {
-                        BOOST_LOG_TRIVIAL(info) << "Filament \"" << name
-                            << "\" resolved via suffix-stripping heuristic to \""
-                            << base_name << "\"";
-                        substitute_filament_params(filament_ids, i, *base_preset, name);
-                        continue;
-                    }
+                Preset* best = nullptr;
+                for (auto& preset : m_preset_bundle->filaments) {
+                    if (!is_official_preset(preset)) continue;
+                    if (preset.name.size() >= name.size()) continue;
+                    if (name.compare(0, preset.name.size(), preset.name) != 0) continue;
+                    if (!best || preset.name.size() > best->name.size())
+                        best = &preset;
+                }
+                if (best) {
+                    BOOST_LOG_TRIVIAL(info) << "Filament \"" << name
+                        << "\" resolved via prefix matching to \""
+                        << best->name << "\"";
+                    substitute_filament_params(filament_ids, i, *best, name);
+                    continue;
                 }
             }
 

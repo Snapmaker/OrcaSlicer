@@ -455,14 +455,19 @@ void SliceEngine::load_system_presets()
         // needed — duplicate detection is not critical for cloud validation).
         const auto rule = ForwardCompatibilitySubstitutionRule::EnableSilent;
 
-        for (size_t i = 0; i < vendor_names.size(); ++i) {
-            const std::string& vendor = vendor_names[i];
-            // First vendor: no base_bundle. Subsequent: pass this bundle for
-            // cross-vendor preset inheritance resolution.
-            const PresetBundle* base = (i == 0) ? nullptr : m_preset_bundle.get();
-            m_preset_bundle->load_vendor_configs_from_json(
-                profiles_dir.string(), vendor,
-                PresetBundle::LoadSystem, rule, base);
+        // Only load Snapmaker + OrcaFilamentLibrary — the two vendors
+        // whose presets are relevant for cloud engine validation.
+        // Loading additional vendors clears Snapmaker presets that are
+        // incompatible with non-Snapmaker printers.
+        {
+            // Load OrcaFilamentLibrary first (generic filament base),
+            // then Snapmaker on top with inheritance from Orca.
+            const std::string vendors[] = { PresetBundle::ORCA_FILAMENT_LIBRARY, "Snapmaker" };
+            for (const auto& vendor : vendors) {
+                m_preset_bundle->load_vendor_configs_from_json(
+                    profiles_dir.string(), vendor,
+                    PresetBundle::LoadSystem, rule, nullptr);
+            }
         }
 
         m_presets_available = true;
@@ -684,10 +689,16 @@ bool SliceEngine::validate_filament_official(bool enforce)
         return false;
     };
 
-    // Look up a preset name: system presets first, then project embedded
+    // Look up a preset name: system presets first, then project embedded.
+    // When find_preset's binary search fails (known ordering issue with
+    // Snapmaker presets), fall back to linear scan of all loaded presets.
     auto find_in_system = [this](const std::string& name) -> Preset* {
         auto* p = m_preset_bundle->filaments.find_preset(name, false);
         if (p && p->name == name) return p;
+        // Binary search failed — linear scan fallback
+        for (auto& preset : m_preset_bundle->filaments) {
+            if (preset.name == name) return &preset;
+        }
         return nullptr;
     };
 
@@ -703,23 +714,26 @@ bool SliceEngine::validate_filament_official(bool enforce)
         const std::string& name = filament_ids->values[i];
 
         // Case 1: Direct system preset match
-        if (Preset* sys = find_in_system(name)) {
-            if (is_official_preset(*sys)) {
-                continue; // OK
-            }
-            std::string msg = "Filament \"" + name + "\" belongs to unsupported vendor";
-            report(/*is_official_violation=*/true, "FILAMENT_UNSUPPORTED_VENDOR", msg);
-            continue;
+        Preset* sys = find_in_system(name);
+        if (sys && is_official_preset(*sys)) {
+            continue; // OK — directly matches an official system preset
         }
 
         // Case 1b: File-based check — preset exists on disk but not
         // found via find_preset (known issue with binary search ordering)
-        if (is_official_filament_file(name)) {
+        if (!sys && is_official_filament_file(name)) {
             continue; // OK
         }
 
-        // Case 2: Not a direct system match — walk the inheritance chain
-        Preset* current = find_in_project(name);
+        // Case 2: Try project-embedded presets.
+        // When sys is non-null but not official (e.g., a project-embedded
+        // preset loaded into the bundle via load_project_embedded_presets),
+        // use it as the starting point for the inherits-chain walk.
+        Preset* current = sys;  // may be a non-official system match
+        if (!current) {
+            current = find_in_project(name);
+        }
+
         if (!current) {
             // When not enforcing, filament config values may be embedded
             // directly in project_settings.config without a named preset.
@@ -731,6 +745,33 @@ bool SliceEngine::validate_filament_official(bool enforce)
                 m_stats.issues.push_back(make_warning(-1, "FILAMENT_CUSTOM_INLINE", msg));
                 continue;
             }
+
+            // Heuristic: OrcaSlicer copies user-modified system presets as
+            // "SystemName - suffix" (e.g. "Generic PETG @U1 0.6 nozzle - 拷贝").
+            // When the 3MF lacks an embedded preset file (user saved as a local
+            // user preset but not to the project), try stripping the suffix and
+            // matching the base name against system presets.
+            {
+                auto pos = name.rfind(" - ");
+                if (pos != std::string::npos && pos > 0) {
+                    std::string base_name = name.substr(0, pos);
+                    // Try system preset lookup first
+                    Preset* base_preset = find_in_system(base_name);
+                    if (!base_preset && is_official_filament_file(base_name)) {
+                        // File exists but not loaded (shouldn't happen after
+                        // linear fallback, but kept as safety net)
+                        continue;  // can't substitute without config
+                    }
+                    if (base_preset) {
+                        BOOST_LOG_TRIVIAL(info) << "Filament \"" << name
+                            << "\" resolved via suffix-stripping heuristic to \""
+                            << base_name << "\"";
+                        substitute_filament_params(filament_ids, i, *base_preset, name);
+                        continue;
+                    }
+                }
+            }
+
             std::string msg = "Filament \"" + name + "\" is not a recognized preset";
             // FILAMENT_UNKNOWN: preset truly doesn't exist — always an error
             report(/*is_official_violation=*/false, "FILAMENT_UNKNOWN", msg);

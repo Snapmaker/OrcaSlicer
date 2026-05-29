@@ -918,9 +918,13 @@ void SliceEngine::substitute_filament_params(ConfigOptionStrings* filament_ids, 
             dst_vec->set_at(src_vec, dst_idx, 0);
     }
 
-    m_stats.issues.push_back(make_warning(-1, "FILAMENT_SUBSTITUTED",
-        std::string("Filament \"") + original_name
-        + "\" substituted with official preset \"" + official_parent.name + "\""));
+    const std::string msg = original_name == official_parent.name
+        ? std::string("Filament \"") + original_name
+            + "\" config values updated from official preset"
+        : std::string("Custom filament \"") + original_name
+            + "\" replaced with official preset \""
+            + official_parent.name + "\" for cloud safety";
+    m_stats.issues.push_back(make_warning(-1, "FILAMENT_SUBSTITUTED", msg));
 }
 
 bool SliceEngine::validate_printer_model()

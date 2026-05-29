@@ -2758,6 +2758,7 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 
     m_old_temperature = -1; // reset last temperature written in the gcode
 
+    size_t wall_tool = get_out_wall_tool_for_all_layer();
     for (const WipeTower2::WipeTowerInfo& layer : m_plan) {
         std::vector<WipeTower::ToolChangeResult> layer_result;
         set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
@@ -2766,7 +2767,7 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
         if (m_layer_info->depth < m_wipe_tower_depth - m_perimeter_width)
             m_y_shift = (m_wipe_tower_depth - m_layer_info->depth - m_perimeter_width) / 2.f;
 
-        int                         idx = first_toolchange_to_nonsoluble(layer.tool_changes);
+        int idx = first_toolchange_to_nonsoluble(layer.tool_changes);
         WipeTower::ToolChangeResult finish_layer_tcr;
 
         if (m_use_gap_wall) {
@@ -2775,54 +2776,28 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
             WipeTower::ToolChangeResult outer_wall_tcr = draw_outer_wall(layer_id);
             WipeTower::ToolChangeResult infill_tcr;
 
-            if (idx == -1)
-                infill_tcr = draw_infill();
-
-            for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
-                layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
-                if (i == idx)
-                    infill_tcr = draw_infill();
-            }
-
-
-            if (layer_result.empty()) {
-                layer_result.emplace_back(merge_tcr(outer_wall_tcr, infill_tcr));
-            } else if (idx == -1) {
-                // infill was drawn before tool changes: outer_wall → infill → TC1 → ...
-                WipeTower::ToolChangeResult wall_infill = merge_tcr(outer_wall_tcr, infill_tcr);
-                layer_result[0]                         = merge_tcr(wall_infill, layer_result[0]);
-                layer_result[0].force_travel            = true;
-            } else {
-                // infill drawn after soluble trigger: outer_wall → TC1 → ... → TC(idx) → infill → ...
-                layer_result[0]              = merge_tcr(outer_wall_tcr, layer_result[0]);
-                layer_result[0].force_travel = true;
-                layer_result[idx]            = merge_tcr(layer_result[idx], infill_tcr);
-            }
-        } else {
-            // Original flow: finish_layer does both infill and wall together
-            if (idx == -1) {
-                // if there is no toolchange switching to non-soluble, finish layer
-                // will be called at the very beginning. That's the last possibility
-                // where a nonsoluble tool can be.
+        int insert_finish_layer_idx = -1;
+        for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
+            if (i == 0 && (layer.tool_changes[i].old_tool == wall_tool)) {
                 finish_layer_tcr = finish_layer();
             }
-
-            for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
-                layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
-                if (i == idx) // finish_layer will be called after this toolchange
-                    finish_layer_tcr = finish_layer();
+            layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
+            if (i == 0 && (layer.tool_changes[i].old_tool == wall_tool)) {
+            } 
+            else if (layer.tool_changes[i].new_tool == wall_tool) {
+                finish_layer_tcr = finish_layer();
+                insert_finish_layer_idx = i;
             }
-
-            if (layer_result.empty()) {
-                // there is nothing to merge finish_layer with
-                layer_result.emplace_back(std::move(finish_layer_tcr));
-            } else {
-                if (idx == -1) {
-                    layer_result[0]              = merge_tcr(finish_layer_tcr, layer_result[0]);
-                    layer_result[0].force_travel = true;
-                } else
-                    layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
-            }
+        }
+        if (layer_result.empty()) {
+            // there is nothing to merge finish_layer with
+            layer_result.emplace_back(std::move(finish_layer_tcr));
+        } else {
+            if (insert_finish_layer_idx == -1) {
+                layer_result[0]              = merge_tcr(finish_layer_tcr, layer_result[0]);
+                layer_result[0].force_travel = true;
+            } else
+                layer_result[insert_finish_layer_idx] = merge_tcr(layer_result[insert_finish_layer_idx], finish_layer_tcr);
         }
 
         result.emplace_back(std::move(layer_result));
@@ -2911,11 +2886,59 @@ size_t WipeTower2::get_out_wall_tool_for_all_layer()
     std::set<size_t> filament_set;
     for (const auto& layer : m_plan) {
         for (const auto& tc : layer.tool_changes) {
-            filament_set.insert(tc.old_tool);
-            filament_set.insert(tc.new_tool);
+            if (tc.old_tool < m_filpar.size() && !m_filpar[tc.old_tool].is_soluble) {
+                filament_set.insert(tc.old_tool);
+            } 
+            if (tc.new_tool < m_filpar.size() && !m_filpar[tc.new_tool].is_soluble) {
+                filament_set.insert(tc.new_tool);
+            }
         }
     }
     return filament_set.empty() ? 0 : *filament_set.begin();
+}
+
+Polylines get_fill_first_brim_layer_line(const Polygon& wall_polygon, const WipeTower::box_coordinates& wt_box) 
+{
+    Polylines fill_first_layer_brim;
+    auto    max_point = wall_polygon.bounding_box().max;
+    auto    min_point = wall_polygon.bounding_box().min;
+    auto    min_x     = min_point.x();
+    auto    max_x     = max_point.x();
+    coord_t base_step = scale_(0.5f);
+    for (auto i = max_point.y(); i > min_point.y(); i -= base_step) {
+        Line   horizontal_line(Point(min_x, i), Point(max_x, i));
+        Points intersect_points;
+        wall_polygon.intersections(horizontal_line, &intersect_points);
+        std::sort(intersect_points.begin(), intersect_points.end());
+        if (intersect_points.size() == 4) {
+            if (intersect_points[1].x() - intersect_points[0].x() > base_step) {
+                Polyline fill_line({intersect_points[0], intersect_points[1]});
+                fill_first_layer_brim.push_back(fill_line);
+            }
+            if (intersect_points[3].x() - intersect_points[2].x() > base_step) {
+                Polyline fill_line({intersect_points[2], intersect_points[3]});
+                fill_first_layer_brim.push_back(fill_line);
+            }
+        }
+        else if (intersect_points.size() == 2) {
+            auto len = intersect_points[1].x() - intersect_points[0].x();
+            if (len > scale_(wt_box.rd.x() - wt_box.ld.x()) + 2 * base_step) {
+                if (intersect_points[0].y() > scale_(wt_box.lu.y()) + base_step ||
+                    intersect_points[0].y() < scale_(wt_box.ld.y()) - base_step) {
+                    Polyline fill_line({intersect_points[0], intersect_points[1]});
+                    fill_first_layer_brim.push_back(fill_line);
+                } else {
+                    Point    left_point(coord_t(scale_(wt_box.ld.x())) - base_step, intersect_points[0].y());
+                    Polyline fill_line1({intersect_points[0], left_point});
+                    Point    right_point(coord_t(scale_(wt_box.rd.x())) + base_step, intersect_points[0].y());
+                    Polyline fill_line2({right_point, intersect_points[1]});
+                    fill_first_layer_brim.push_back(fill_line1);
+                    fill_first_layer_brim.push_back(fill_line2);
+                }
+            }
+        }
+    }
+    return fill_first_layer_brim;
 }
 
 Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 writer,
@@ -2930,6 +2953,7 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
     float     retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
     Polygon   wall_polygon   = rib_wall ? generate_rib_polygon(wt_box) : generate_rectange_polygon(wt_box.ld, wt_box.ru);
     Polylines result_wall;
+    Polylines fill_first_layer_brim;
     Polygon   insert_skip_polygon;
     if (m_used_fillet) {
         if (!rib_wall && m_y_shift > EPSILON) // do nothing because the fillet will cause it to be suspended.
@@ -2940,6 +2964,9 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
             wall_polygon           = union_({wall_polygon, wt_box_polygon}).front();
         }
     }
+    /*if (first_layer && rib_wall) {
+        fill_first_layer_brim = get_fill_first_brim_layer_line(wall_polygon, wt_box);
+    }*/
     if (!extrude_perimeter)
         return wall_polygon;
 
@@ -2950,6 +2977,9 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
         result_wall.push_back(to_polyline(wall_polygon));
         insert_skip_polygon = wall_polygon;
     }
+    /*if (!fill_first_layer_brim.empty() &&  rib_wall) {
+        result_wall.insert(result_wall.end(), fill_first_layer_brim.begin(), fill_first_layer_brim.end());
+    }*/
     writer.generate_path(result_wall, feedrate, retract_length, retract_speed, m_used_fillet);
     // if (m_cur_layer_id == 0) {
     //     BoundingBox bbox = get_extents(result_wall);

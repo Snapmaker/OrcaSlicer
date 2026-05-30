@@ -1214,6 +1214,7 @@ static bool painted_region_targets_match(const PrintObjectRegions           &pri
 
 static bool same_layer_pointillism_enabled(const MixedFilamentManager &mixed_mgr)
 {
+    // Deprecated: same-layer pointillism is disabled and will be removed.
 #if 0
     for (const MixedFilament &mf : mixed_mgr.mixed_filaments())
         if (mf.enabled && mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))

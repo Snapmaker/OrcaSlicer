@@ -7,6 +7,9 @@
 #include <wx/sizer.h>
 #include <wx/image.h>
 #include <wx/statbox.h>
+#include <cmath>
+#include <algorithm>
+#include <limits>
 
 #include "FilamentColorMapBoxGroup.hpp"
 #include "PlaterPreview.hpp"
@@ -17,6 +20,32 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Widgets/StaticLine.hpp"
+
+namespace
+{
+
+// --- Dialog layout ---
+constexpr int g_dialogWidth        = 700; // DIP
+constexpr int g_dialogHeight       = 600; // DIP
+constexpr int g_sectionMargin      = 12;  // DIP — outer margin for major sections
+constexpr int g_separatorMargin    = 8;   // DIP — left/right of separators
+constexpr int g_radioButtonSpacing = 20;  // DIP — between mode radio buttons
+constexpr int g_buttonSpacing      = 8;   // DIP — between bottom buttons
+constexpr int g_hintLabelWrapWidth = 500; // DIP
+
+// Sizer proportions (vertical)
+constexpr int g_mappingGroupProportion = 1;
+constexpr int g_platePreviewProportion = 2;
+
+// --- Color processing ---
+constexpr int            g_colorMax      = 255; // max RGBA component value
+constexpr int            g_alphaDecode   = 255; // noLight alpha decode: 255 - alpha
+constexpr int            g_alphaMax      = 255; // fully opaque
+constexpr int            g_alphaBkg      = 0;   // transparent background
+constexpr int            g_noLightMin    = 0;   // minimum noLight brightness to use ratio
+constexpr unsigned char  g_pixelTransparent = 0;
+
+} // namespace
 
 namespace Slic3r
 {
@@ -31,7 +60,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
 {
-    SetSize(FromDIP(wxSize(700, 600)));
+    SetSize(FromDIP(wxSize(g_dialogWidth, g_dialogHeight)));
 
     auto* mainSizer = new wxBoxSizer(wxVERTICAL);
 
@@ -43,7 +72,8 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     m_pMappingModeRadio->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) {
         onModeChanged(true);
     });
-    modeSizer->Add(m_pMappingModeRadio, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(20));
+    modeSizer->Add(m_pMappingModeRadio, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
+                   FromDIP(g_radioButtonSpacing));
 
     m_pOverwriteModeRadio = new wxRadioButton(this, wxID_ANY, _L("Direct Overwrite"));
     m_pOverwriteModeRadio->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) {
@@ -51,51 +81,58 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     });
     modeSizer->Add(m_pOverwriteModeRadio, 0, wxALIGN_CENTER_VERTICAL);
 
-    mainSizer->Add(modeSizer, 0, wxEXPAND | wxALL, FromDIP(12));
+    mainSizer->Add(modeSizer, 0, wxEXPAND | wxALL, FromDIP(g_sectionMargin));
 
     // ---- Separator ----
     auto* sep1 = new StaticLine(this);
     sep1->SetLineColour("#CECECE");
-    mainSizer->Add(sep1, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
+    mainSizer->Add(sep1, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
 
     // ---- Filament mapping group ----
     m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(this, m_designDataList, m_machineDataList);
-    mainSizer->Add(m_pFilamentColorMapBoxGroup, 1, wxEXPAND | wxALL, FromDIP(8));
+    m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
+        if (m_pPlaterPreview)
+            m_pPlaterPreview->onCoverPreview();
+    });
+    mainSizer->Add(m_pFilamentColorMapBoxGroup, g_mappingGroupProportion, wxEXPAND | wxALL,
+                   FromDIP(g_separatorMargin));
 
     // ---- Separator ----
     auto* sep2 = new StaticLine(this);
     sep2->SetLineColour("#CECECE");
-    mainSizer->Add(sep2, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
+    mainSizer->Add(sep2, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
 
     // ---- Plate preview ----
     m_pPlaterPreview = new PlaterPreview(this);
-    mainSizer->Add(m_pPlaterPreview, 2, wxEXPAND | wxALL, FromDIP(8));
+    mainSizer->Add(m_pPlaterPreview, g_platePreviewProportion, wxEXPAND | wxALL,
+                   FromDIP(g_separatorMargin));
 
     // ---- Separator ----
     auto* sep3 = new StaticLine(this);
     sep3->SetLineColour("#CECECE");
-    mainSizer->Add(sep3, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
+    mainSizer->Add(sep3, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
 
     // ---- Hint label ----
     m_pHintLabel = new wxStaticText(this, wxID_ANY,
         _L("Note: Only filament type and color information are synchronized, nozzle order is not included."));
-    m_pHintLabel->Wrap(FromDIP(500));
-    mainSizer->Add(m_pHintLabel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
+    m_pHintLabel->Wrap(FromDIP(g_hintLabelWrapWidth));
+    mainSizer->Add(m_pHintLabel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_sectionMargin));
 
     // ---- Separator ----
     auto* sep4 = new StaticLine(this);
     sep4->SetLineColour("#CECECE");
-    mainSizer->Add(sep4, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
+    mainSizer->Add(sep4, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
 
     // ---- Add to software list checkbox ----
     m_pAddToSoftwareListCheck = new wxCheckBox(this, wxID_ANY,
         _L("Add remaining printhead filaments to the software filament list"));
-    mainSizer->Add(m_pAddToSoftwareListCheck, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
+    mainSizer->Add(m_pAddToSoftwareListCheck, 0, wxEXPAND | wxLEFT | wxRIGHT,
+                   FromDIP(g_sectionMargin));
 
     // ---- Separator ----
     auto* sep5 = new StaticLine(this);
     sep5->SetLineColour("#CECECE");
-    mainSizer->Add(sep5, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
+    mainSizer->Add(sep5, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
 
     // ---- Bottom buttons ----
     auto* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
@@ -103,31 +140,33 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
     m_pResetBtn = new wxButton(this, wxID_ANY, _L("Reset"));
     m_pResetBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onReset(); });
-    buttonSizer->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    buttonSizer->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
+                     FromDIP(g_buttonSpacing));
 
     m_pCancelBtn = new wxButton(this, wxID_CANCEL, _L("Cancel"));
     m_pCancelBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onCancel(); });
-    buttonSizer->Add(m_pCancelBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    buttonSizer->Add(m_pCancelBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
+                     FromDIP(g_buttonSpacing));
 
     m_pSyncBtn = new wxButton(this, wxID_OK, _L("Sync Now"));
     m_pSyncBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onSync(); });
     buttonSizer->Add(m_pSyncBtn, 0, wxALIGN_CENTER_VERTICAL);
 
-    mainSizer->Add(buttonSizer, 0, wxEXPAND | wxALL, FromDIP(12));
+    mainSizer->Add(buttonSizer, 0, wxEXPAND | wxALL, FromDIP(g_sectionMargin));
 
     SetSizer(mainSizer);
     Layout();
     CentreOnParent();
 
-    // Initialize plate preview with thumbnails and plate count
     initPlatePreview();
+    onAutoMatch();
 }
 
 std::list<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
 {
-    // TODO: return final sync data list
-    std::list<FilamentData> result;
-    return result;
+    if (m_pFilamentColorMapBoxGroup)
+        return m_pFilamentColorMapBoxGroup->getCurFilamentList();
+    return {};
 }
 
 bool SyncFilamentColorDialog::isAddToSoftwareList() const
@@ -150,7 +189,6 @@ void SyncFilamentColorDialog::onCancel()
 
 void SyncFilamentColorDialog::onSync()
 {
-    // TODO: write synced data back to project config
     EndModal(wxID_OK);
 }
 
@@ -180,23 +218,20 @@ void SyncFilamentColorDialog::initPlatePreview()
         return;
 
     PartPlateList& plateList = plater->get_partplate_list();
-    int plateCount = plateList.get_plate_count();
-    int currentPlate = plateList.get_curr_plate_index();
+    int plateCount    = plateList.get_plate_count();
+    int currentPlate  = plateList.get_curr_plate_index();
 
     m_pPlaterPreview->setTotalPlateCount(static_cast<unsigned int>(plateCount));
     m_pPlaterPreview->setCurrentPlate(static_cast<unsigned int>(currentPlate));
 
-    // Register plate switch callback: reload both thumbnails when user flips pages
     m_pPlaterPreview->bindPlateSwitchCallback([this](unsigned int newPlateIndex) {
         loadPlateThumbnail(newPlateIndex);
     });
 
-    // Register cover preview callback: regenerate cover when filament mapping changes
     m_pPlaterPreview->bindCoverPreviewCallback([this]() {
         loadCoverPreview();
     });
 
-    // Load thumbnails for the initial plate
     loadPlateThumbnail(static_cast<unsigned int>(currentPlate));
 }
 
@@ -223,7 +258,6 @@ void SyncFilamentColorDialog::loadCoverPreview()
     if (!plater || !m_pPlaterPreview)
         return;
 
-    // Get the plate index that PlaterPreview is currently showing (not the plater's current plate)
     unsigned int plateIndex = m_pPlaterPreview->getCurrentPlate();
 
     PartPlateList& plateList = plater->get_partplate_list();
@@ -252,35 +286,67 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
     wxImage image(thumb.width, thumb.height);
     image.InitAlpha();
 
-    std::map<unsigned int, std::array<float, 3>> colorMap;
+    // Build 0-based color lookup: filament_id = 255 - noLight.px[3].
+    // Use sequential list position as the key — it matches the
+    // extruder-to-alpha encoding: alpha = 256 - extruder_id, 255 - alpha = extruder_id - 1.
+    std::map<int, wxColour> colorMap;
+    int idx = 0;
     for (const auto& fd : filamentMapping) {
-        colorMap[fd.m_index] = {fd.m_color_r / 255.0f, fd.m_color_g / 255.0f, fd.m_color_b / 255.0f};
+        colorMap[idx] = wxColour(fd.m_color_r, fd.m_color_g, fd.m_color_b);
+        ++idx;
     }
 
     for (unsigned int r = 0; r < thumb.height; ++r) {
         unsigned int rr = (thumb.height - 1 - r) * thumb.width;
         for (unsigned int c = 0; c < thumb.width; ++c) {
-            unsigned char* origPx = const_cast<unsigned char*>(thumb.pixels.data()) + 4 * (rr + c);
-            unsigned char* maskPx = const_cast<unsigned char*>(noLightThumb.pixels.data()) + 4 * (rr + c);
+            unsigned char* originPx  = const_cast<unsigned char*>(thumb.pixels.data()) + 4 * (rr + c);
+            unsigned char* noLightPx = const_cast<unsigned char*>(noLightThumb.pixels.data()) + 4 * (rr + c);
 
-            unsigned int extruderId = static_cast<unsigned int>(maskPx[3]);
+            // Background / transparent pixel — copy original as-is
+            if (originPx[3] == g_pixelTransparent) {
+                image.SetRGB(static_cast<int>(c), static_cast<int>(r),
+                             originPx[0], originPx[1], originPx[2]);
+                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), originPx[3]);
+                continue;
+            }
 
-            auto it = colorMap.find(extruderId);
+            // noLight alpha = 255 - (extruder_id - 1)  →  filament_id = 255 - alpha
+            int filament_id = g_alphaDecode - static_cast<int>(noLightPx[3]);
+
+            auto it = colorMap.find(filament_id);
             if (it != colorMap.end()) {
-                const auto& tc = it->second;
-                float origLum = 0.299f * origPx[0] + 0.587f * origPx[1] + 0.114f * origPx[2];
-                float targetLum = 0.299f * (tc[0] * 255.0f) + 0.587f * (tc[1] * 255.0f) + 0.114f * (tc[2] * 255.0f);
+                const wxColour& amsColor = it->second;
 
-                float lumRatio = (targetLum > 0.0f) ? (origLum / targetLum) : 1.0f;
-                unsigned char newR = static_cast<unsigned char>(std::min(255.0f, tc[0] * 255.0f * lumRatio));
-                unsigned char newG = static_cast<unsigned char>(std::min(255.0f, tc[1] * 255.0f * lumRatio));
-                unsigned char newB = static_cast<unsigned char>(std::min(255.0f, tc[2] * 255.0f * lumRatio));
+                int originRgb  = originPx[0]  + originPx[1]  + originPx[2];
+                int noLightRgb = noLightPx[0] + noLightPx[1] + noLightPx[2];
+
+                unsigned char newR, newG, newB;
+                if (noLightRgb > g_noLightMin && originRgb >= noLightRgb) {
+                    // Bright area: add lighting delta to the target color
+                    newR = std::clamp(amsColor.Red()   + (originPx[0] - noLightPx[0]),
+                                      0, g_colorMax);
+                    newG = std::clamp(amsColor.Green() + (originPx[1] - noLightPx[1]),
+                                      0, g_colorMax);
+                    newB = std::clamp(amsColor.Blue()  + (originPx[2] - noLightPx[2]),
+                                      0, g_colorMax);
+                } else if (noLightRgb > g_noLightMin) {
+                    // Shadow area: scale target color by original/noLight ratio
+                    float ratio = static_cast<float>(originRgb) / static_cast<float>(noLightRgb);
+                    newR = std::clamp(static_cast<int>(amsColor.Red()   * ratio), 0, g_colorMax);
+                    newG = std::clamp(static_cast<int>(amsColor.Green() * ratio), 0, g_colorMax);
+                    newB = std::clamp(static_cast<int>(amsColor.Blue()  * ratio), 0, g_colorMax);
+                } else {
+                    newR = amsColor.Red();
+                    newG = amsColor.Green();
+                    newB = amsColor.Blue();
+                }
 
                 image.SetRGB(static_cast<int>(c), static_cast<int>(r), newR, newG, newB);
-                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), origPx[3]);
+                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), originPx[3]);
             } else {
-                image.SetRGB(static_cast<int>(c), static_cast<int>(r), origPx[0], origPx[1], origPx[2]);
-                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), origPx[3]);
+                image.SetRGB(static_cast<int>(c), static_cast<int>(r),
+                             originPx[0], originPx[1], originPx[2]);
+                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), originPx[3]);
             }
         }
     }

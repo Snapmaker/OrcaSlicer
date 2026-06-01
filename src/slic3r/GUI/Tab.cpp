@@ -1462,6 +1462,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if (wxGetApp().plater() == nullptr) {
         return;
     }
+    if (m_config == nullptr) {
+        return;
+    }
 
     if (opt_key == "compatible_prints")
         this->compatible_widget_reload(m_compatible_prints);
@@ -1525,6 +1528,18 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if(opt_key == "purge_in_prime_tower")
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
 
+    if (m_type == Preset::TYPE_PRINT &&
+        opt_key == "dithering_local_z_mode" &&
+        boost::any_cast<bool>(value) &&
+        m_config->has("dithering_local_z_infill") &&
+        !m_config->opt_bool("dithering_local_z_infill")) {
+        DynamicPrintConfig new_conf = *m_config;
+        new_conf.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+        m_config_manipulation.apply(m_config, &new_conf);
+
+        DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
+        project_cfg.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+    }
 
     if (opt_key == "enable_prime_tower") {
         auto timelapse_type = m_config->option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
@@ -1552,7 +1567,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
         update_wiping_button_visibility();
     }
-
 
     if (opt_key == "single_extruder_multi_material"  ){
         const auto bSEMM = m_config->opt_bool("single_extruder_multi_material");
@@ -1767,7 +1781,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     // -1 means caculate all
     auto update_flush_volume = [](int idx = -1) {
         if (idx < 0) {
-            size_t filament_size = wxGetApp().plater()->get_extruder_colors_from_plater_config().size();
+            size_t filament_size = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false).size();
             for (size_t i = 0; i < filament_size; ++i)
                 wxGetApp().plater()->sidebar().auto_calc_flushing_volumes(i);
         }
@@ -1840,10 +1854,46 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
+    const bool refresh_mixed_filament_panel =
+        (m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled") ||
+        (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_type");
+
+    // Keep Mixed Filaments global settings in sync with project_config. In
+    // full_fff_config(), project_config is applied last and would otherwise
+    // override the edited print preset value from the Others panel.
+    if (m_type == Preset::TYPE_PRINT &&
+        (opt_key == "mixed_filament_gradient_mode" ||
+         opt_key == "mixed_filament_height_lower_bound" ||
+         opt_key == "mixed_filament_height_upper_bound" ||
+         opt_key == "mixed_color_layer_height_a" ||
+         opt_key == "mixed_color_layer_height_b" ||
+         opt_key == "mixed_filament_advanced_dithering" ||
+         opt_key == "mixed_filament_pointillism_pixel_size" ||
+         opt_key == "mixed_filament_pointillism_line_gap" ||
+         opt_key == "mixed_filament_component_bias_enabled" ||
+         opt_key == "mixed_filament_surface_indentation" ||
+         opt_key == "mixed_filament_region_collapse" ||
+         opt_key == "dithering_z_step_size" ||
+         opt_key == "dithering_local_z_mode" ||
+         opt_key == "dithering_local_z_whole_objects" ||
+         opt_key == "dithering_local_z_infill" ||
+         opt_key == "dithering_local_z_direct_multicolor" ||
+         opt_key == "dithering_step_painted_zones_only" ||
+         opt_key == "mixed_filament_definitions")) {
+        DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
+        if (const ConfigOption *opt = m_config->option(opt_key))
+            project_cfg.set_key_value(opt_key, opt->clone());
+    }
+
     update();
     if(m_active_page)
         m_active_page->update_visibility(m_mode, true);
     m_page_view->GetParent()->Layout();
+
+    if (refresh_mixed_filament_panel && wxGetApp().plater() != nullptr) {
+        wxGetApp().sidebar().update_mixed_filament_panel(false);
+        wxGetApp().sidebar().update_color_mix_panel();
+    }
 }
 
 void Tab::show_timelapse_warning_dialog() {
@@ -2307,6 +2357,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "strength_settings_infill#sparse-infill-pattern");
+        if (m_type >= Preset::TYPE_COUNT) {
+            optgroup->append_single_option_line("enable_infill_filament_override");
+            optgroup->append_single_option_line("infill_filament_use_base_first_layers");
+            optgroup->append_single_option_line("infill_filament_use_base_last_layers");
+            optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
+        }
         optgroup->append_single_option_line("infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("skin_infill_density", "strength_settings_patterns#locked-zag");
@@ -2497,7 +2553,6 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
-        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
@@ -2523,7 +2578,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("interlocking_depth", "multimaterial_settings_advanced#interlocking-depth");
         optgroup->append_single_option_line("interlocking_boundary_avoidance", "multimaterial_settings_advanced#interlocking-boundary-avoidance");
 
-page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
+        optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
+        optgroup->append_single_option_line("dithering_local_z_mode");
+        optgroup->append_single_option_line("dithering_local_z_whole_objects");
+        optgroup->append_single_option_line("dithering_local_z_infill");
+
+    page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");
 optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops");
         optgroup->append_single_option_line("skirt_type", "others_settings_skirt#type");
@@ -2793,6 +2853,31 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
     return t;
 }
 
+static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
+{
+    DynamicPrintConfig resolved(config);
+    const auto*        infill_override_opt = config.option<ConfigOptionBool>("enable_infill_filament_override");
+    const bool         infill_override_enabled = infill_override_opt != nullptr && infill_override_opt->value;
+
+    if (!infill_override_enabled && resolved.has("sparse_infill_filament"))
+        resolved.erase("sparse_infill_filament");
+
+    if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
+        const int extruder = extruder_opt->value;
+        if (!resolved.has("wall_filament"))
+            resolved.set_key_value("wall_filament", new ConfigOptionInt(extruder));
+        if (!resolved.has("sparse_infill_filament"))
+            resolved.set_key_value("sparse_infill_filament", new ConfigOptionInt(extruder));
+        if (!resolved.has("solid_infill_filament"))
+            resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(extruder));
+    }
+
+    if (!resolved.has("solid_infill_filament") && resolved.has("sparse_infill_filament"))
+        resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament")));
+
+    return resolved;
+}
+
 TabPrintModel::TabPrintModel(ParamsPanel* parent, std::vector<std::string> const & keys)
     : TabPrint(parent, Preset::TYPE_MODEL)
     , m_keys(intersect(Preset::print_options(), keys))
@@ -2861,19 +2946,19 @@ void TabPrintModel::update_model_config()
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
         DynamicPrintConfig const & global_config= *m_config;
-        DynamicPrintConfig const & local_config = m_object_configs.begin()->second->get();
+        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get());
         DynamicPrintConfig diff_config;
         std::vector<std::string> all_keys = local_config.keys(); // at least one has these keys
         std::vector<std::string> local_keys = intersect(m_keys, all_keys); // all equal on these keys
         if (m_object_configs.size() > 1) {
             std::vector<std::string> global_keys = m_keys; // all equal with global on these keys
             for (auto & config : m_object_configs) {
-                auto equals = global_config.equal(config.second->get());
+                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get());
+                auto equals = global_config.equal(resolved_config);
                 global_keys = intersect(global_keys, equals);
-                diff_config.apply_only(config.second->get(), substruct(config.second->keys(), equals));
-                if (&config.second->get() == &local_config) continue;
-                all_keys = concat(all_keys, config.second->keys());
-                local_keys = intersect(local_keys, local_config.equal(config.second->get()));
+                diff_config.apply_only(resolved_config, substruct(resolved_config.keys(), equals));
+                all_keys = concat(all_keys, resolved_config.keys());
+                local_keys = intersect(local_keys, local_config.equal(resolved_config));
             }
             all_keys = intersect(all_keys, m_keys);
             m_null_keys = substruct(substruct(all_keys, global_keys), local_keys);
@@ -5104,6 +5189,11 @@ void Tab::load_current_preset()
     // Reload preset pages with the new configuration values.
     reload_config();
 
+    // Refresh field decorations (orange/modified markers) after reload.
+    // Without this, stale decorations from a previous dirty state persist
+    // even after discard_current_changes() resets the config.
+    update_changed_ui();
+
     update_ui_items_related_on_parent_preset(m_presets->get_selected_preset_parent());
 
 //	m_undo_to_sys_btn->Enable(!preset.is_default);
@@ -5533,8 +5623,7 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
             if (preset_name.find("Snapmaker U1") != std::string::npos) {
                 // 在 update_selections() 改变耗材数量之前先保存旧数量和颜色
-                size_t old_filament_count = m_preset_bundle->filament_presets.size();
-                std::vector<std::string> old_filament_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config();
+                std::vector<std::string> old_filament_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
                 std::vector<std::string> old_filament_presets = m_preset_bundle->filament_presets;
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);

@@ -1,4 +1,4 @@
-{
+﻿{
   "type": "process",
   "from": "system",
   "instantiation": "false",
@@ -76,7 +76,7 @@
   "draft_shield": "disabled",
   "independent_support_layer_height": "1",
   "interface_shells": "0",
-  "max_bridge_length": "10",
+  "max_bridge_length": "0",
   "print_flow_ratio": "1",
   "wall_loops": "3",
   "detect_thin_wall": "0",

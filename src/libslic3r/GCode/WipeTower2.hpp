@@ -353,7 +353,7 @@ private:
     // Switch to new filament cartridge. No XY displacement.
     // new_tool: index of B filament; new_material: B material name
     void toolchange_Change(WipeTowerWriter2 &writer, const size_t new_tool, 
-        const std::string& new_material, const Vec2f& target_pos);
+        const std::string& new_material);
 
 	// First extrusion of B filament: horizontal back-and-forth within cleaning_box.
 	// Start position = writer.x() from Unload end (or gap edge when m_use_gap_wall).

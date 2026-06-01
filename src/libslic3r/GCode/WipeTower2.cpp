@@ -1508,8 +1508,7 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
         unsigned int tool = tools[idx_tool];
         m_left_to_right   = true;
         // Select the tool, set a speed override for soluble and flex materials.
-        toolchange_Change(writer, tool, m_filpar[tool].material, writer.pos_rotated()); 
-        writer.append("[deretraction_from_wipe_tower_generator]");
+        toolchange_Change(writer, tool, m_filpar[tool].material); 
         toolchange_Load(writer, cleaning_box);                                          // Prime the tool.
         if (idx_tool + 1 == tools.size()) {
             // Last tool should not be unloaded, but it should be wiped enough to become of a pure color.
@@ -1623,30 +1622,7 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material,
                           (is_first_layer() ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature),
                           new_tool_temp);
-        // Build target_pos: gap wall → outside the wall (pre-rotated); otherwise → current position
-        Vec2f target_pos = writer.pos_rotated();
-        float  box_edge_x = m_perimeter_width / 2.f;
-        float  gap_y = 0.f;
-        if (m_use_gap_wall) {
-            float gap_x = (predict_ramming_end_x((int) m_current_tool) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
-            float ramming_lw = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;
-            float ramming_ys = ramming_lw * m_filpar[m_current_tool].ramming_step_multiplicator * m_extra_spacing_ramming;
-            gap_y = m_depth_traversed + ramming_depth + ramming_ys + ramming_lw / 2.f + m_perimeter_width / 2.f;
-
-            float margin = 5.f * m_perimeter_width;
-            float rib_protrusion = (m_wall_type == (int) wtwRib) ? m_rib_width / 2.f : 0.f;
-            float outer_dist     = margin + rib_protrusion + m_wipe_tower_brim_width;
-            float wall_outer_x = (gap_x == 0.f) ? -outer_dist : m_wipe_tower_width + outer_dist;
-            box_edge_x = (gap_x == 0.f) ? m_perimeter_width / 2.f : m_wipe_tower_width - m_perimeter_width / 2.f;
-
-            target_pos = writer.rotate(Vec2f(wall_outer_x, gap_y + m_perimeter_width / 2.f));
-        }
-        toolchange_Change(writer, tool, m_filpar[tool].material, target_pos);
-        // Gap travel: through gap into cleaning_box edge before Load
-        if (m_use_gap_wall)
-            writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
-        // Deretraction after gap travel: nozzle reached cleaning_box edge, safe to push filament back
-        //writer.append("[deretraction_from_wipe_tower_generator]");
+        toolchange_Change(writer, tool, m_filpar[tool].material);
         toolchange_Load(writer, cleaning_box);
         writer.travel(writer.x(), writer.y() - m_perimeter_width); // cooling and loading were done a bit down the road
         toolchange_Wipe(writer, cleaning_box, wipe_volume); // Wipe the newly loaded filament until the end of the assigned wipe area.
@@ -1746,7 +1722,7 @@ WipeTower::ToolChangeResult WipeTower2::local_z_tool_change(size_t new_tool,
     const int new_tool_temp = is_first_layer() ? m_filpar[new_tool].first_layer_temperature : m_filpar[new_tool].temperature;
 
     toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material, old_tool_temp, new_tool_temp);
-    toolchange_Change(writer, new_tool, m_filpar[new_tool].material, writer.pos_rotated());
+    toolchange_Change(writer, new_tool, m_filpar[new_tool].material);
     toolchange_Load(writer, cleaning_box);
     writer.travel(writer.x(), writer.y() - m_perimeter_width);
     toolchange_Wipe(writer, cleaning_box, wipe_volume);
@@ -2022,7 +1998,7 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
 
 // Change the tool, set a speed override for soluble and flex materials.
 void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_tool, 
-    const std::string& new_material, const Vec2f& target_pos)
+    const std::string& new_material)
 {
     // Ask the writer about how much of the old filament we consumed:
     if (m_current_tool < m_used_filament_length.size())
@@ -2036,14 +2012,46 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     if (m_is_mk4mmu3)
         writer.switch_filament_monitoring(true);
 
+    Vec2f current_pos = writer.pos_rotated();
+    float box_edge_x = m_perimeter_width / 2.f;
+    float gap_y      = 0.f;
+    if (m_use_gap_wall) {
+        float ramming_depth = 0.f;
+        if (m_layer_info != m_plan.end()) {
+            for (const auto& b : m_layer_info->tool_changes) {
+                if (b.new_tool == new_tool) {
+                    ramming_depth = b.ramming_depth;
+                    break;
+                }
+            }
+        }
+
+        float gap_x      = (predict_ramming_end_x((int) m_current_tool) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
+        float ramming_lw = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;
+        float ramming_ys = ramming_lw * m_filpar[m_current_tool].ramming_step_multiplicator * m_extra_spacing_ramming;
+        gap_y            = m_depth_traversed + ramming_depth + ramming_ys + ramming_lw / 2.f + m_perimeter_width / 2.f;
+
+        float margin         = 5.f * m_perimeter_width;
+        float rib_protrusion = (m_wall_type == (int) wtwRib) ? m_rib_width / 2.f : 0.f;
+        float outer_dist     = margin + rib_protrusion + m_wipe_tower_brim_width;
+        float wall_outer_x   = (gap_x == 0.f) ? -outer_dist : m_wipe_tower_width + outer_dist;
+        box_edge_x           = (gap_x == 0.f) ? m_perimeter_width / 2.f : m_wipe_tower_width - m_perimeter_width / 2.f;
+
+        current_pos = writer.rotate(Vec2f(wall_outer_x, gap_y + m_perimeter_width / 2.f));
+    }
+
     // Travel to where we assume we are. Custom toolchange or some special T code handling (parking extruder etc)
     // gcode could have left the extruder somewhere, we cannot just start extruding. We should also inform the
     // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
     //Vec2f current_pos = writer.pos_rotated();
     writer
         .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
-        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(target_pos.x()) + " Y" +
-                Slic3r::float_to_string_decimal_point(target_pos.y()) + never_skip_tag() + "\n");
+        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
+                Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
+
+    // Gap travel: through gap into cleaning_box edge before Load
+    if (m_use_gap_wall)
+        writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
 
     writer.append("[deretraction_from_wipe_tower_generator]");
 

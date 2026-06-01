@@ -15244,5 +15244,5 @@ msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
 msgid "Tower ironing area"
 msgstr "擦拭塔熨烫面积"
 
-msgid "Tower ironing area"
+msgid "Ironing area for prime tower interface layer (where different materials meet)."
 msgstr "擦拭塔的起始点熨烫面积"

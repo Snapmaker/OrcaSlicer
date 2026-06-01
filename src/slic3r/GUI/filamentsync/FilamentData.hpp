@@ -4,6 +4,11 @@
 #include <functional>
 #include <string>
 
+namespace Slic3r
+{
+namespace GUI
+{
+
 struct FilamentData
 {
     unsigned int m_index   = 0;
@@ -14,3 +19,6 @@ struct FilamentData
 };
 
 using FilamentInfoCallback = std::function<void(const FilamentData& data)>;
+
+} // namespace GUI
+} // namespace Slic3r

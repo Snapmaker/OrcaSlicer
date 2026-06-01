@@ -8,7 +8,14 @@
 #include "FilamentData.hpp"
 #include "FilamentColorMapBox.hpp"
 
+
 class wxSizer;
+
+namespace Slic3r
+{
+namespace GUI
+{
+
 class MachineFilamentPicker;
 
 class FilamentColorMapBoxGroup : public wxPanel
@@ -36,3 +43,6 @@ private:
 
     wxSizer* m_pWrapSizer = nullptr;
 };
+
+} // namespace GUI
+} // namespace Slic3r

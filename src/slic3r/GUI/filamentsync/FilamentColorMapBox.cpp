@@ -3,6 +3,11 @@
 #include <wx/stattext.h>
 #include <wx/sizer.h>
 
+namespace Slic3r
+{
+namespace GUI
+{
+
 FilamentColorMapBox::FilamentColorMapBox(wxWindow* parent, const FilamentData& aboveData, const FilamentData& belowData)
     : wxPanel(parent, wxID_ANY)
     , m_aboveFilament(aboveData)
@@ -50,3 +55,6 @@ void FilamentColorMapBox::onBelowButtonClicked()
 {
     // TODO: implement below button click handler
 }
+
+} // namespace GUI
+} // namespace Slic3r

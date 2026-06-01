@@ -5,6 +5,10 @@
 #include "FilamentData.hpp"
 
 class wxStaticText;
+namespace Slic3r
+{
+namespace GUI
+{
 
 class FilamentColorMapBox : public wxPanel
 {
@@ -42,3 +46,6 @@ private:
     FilamentInfoCallback m_aboveCallback = nullptr;
     FilamentInfoCallback m_belowCallback = nullptr;
 };
+
+} // namespace GUI
+} // namespace Slic3r

@@ -4,7 +4,13 @@
 
 #include "FilamentData.hpp"
 
+
 class wxStaticText;
+
+namespace Slic3r
+{
+namespace GUI
+{
 
 class FilamentColorRadio : public wxPanel
 {
@@ -32,3 +38,6 @@ private:
 
     FilamentInfoCallback m_selectedCallback = nullptr;
 };
+
+} // namespace GUI
+} // namespace Slic3r

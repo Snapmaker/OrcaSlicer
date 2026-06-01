@@ -3,6 +3,11 @@
 #include <wx/stattext.h>
 #include <wx/sizer.h>
 
+namespace Slic3r
+{
+namespace GUI
+{
+
 FilamentColorRadio::FilamentColorRadio(wxWindow* parent, const FilamentData& data)
     : wxPanel(parent, wxID_ANY)
     , m_machineData(data)
@@ -39,3 +44,6 @@ void FilamentColorRadio::onRadioClicked()
 {
     // TODO: implement click-to-select handler
 }
+
+} // namespace GUI
+} // namespace Slic3r

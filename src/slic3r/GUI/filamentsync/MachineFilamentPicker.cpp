@@ -4,6 +4,11 @@
 
 #include "FilamentColorRadio.hpp"
 
+namespace Slic3r
+{
+namespace GUI
+{
+
 MachineFilamentPicker::MachineFilamentPicker(wxWindow* parent,
                                              const std::list<FilamentData>& dataList,
                                              unsigned int curIndex)
@@ -43,3 +48,6 @@ void MachineFilamentPicker::deselectAllExcept(const FilamentData& currentData)
 {
     // TODO: implement deselect all others
 }
+
+} // namespace GUI
+} // namespace Slic3r

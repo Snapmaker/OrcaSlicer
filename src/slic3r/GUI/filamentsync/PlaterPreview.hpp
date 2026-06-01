@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <wx/panel.h>
 #include <wx/bitmap.h>
 
@@ -7,6 +9,14 @@ class wxButton;
 class wxComboBox;
 class wxStaticBitmap;
 class wxStaticText;
+
+namespace Slic3r
+{
+namespace GUI
+{
+
+using PlateSwitchCallback  = std::function<void(unsigned int newPlateIndex)>;
+using CoverPreviewCallback = std::function<void()>;
 
 class PlaterPreview : public wxPanel
 {
@@ -22,11 +32,20 @@ public:
 
     void setTotalPlateCount(unsigned int count);
 
-private:
+    void bindPlateSwitchCallback(PlateSwitchCallback cb);
+    void bindCoverPreviewCallback(CoverPreviewCallback cb);
+
     void onCoverPreview();
+
+private:
     void onPrePage();
     void onNextPage();
     void onPlateComboBoxChanged(int index);
+    void updateNavButtons();
+
+    void rescaleBitmaps();
+    void rescaleOriginalBitmap();
+    void rescaleCoverBitmap();
 
     wxStaticBitmap* m_pOriginalThumbnail = nullptr;
     wxStaticBitmap* m_pCoverThumbnail    = nullptr;
@@ -38,6 +57,16 @@ private:
     wxComboBox*   m_pPlateCombo  = nullptr;
     wxStaticText* m_pPlateLabel  = nullptr;
 
+    wxBitmap m_originalBitmap;
+    wxBitmap m_coverBitmap;
+    bool     m_isRescaling = false;
+
     unsigned int m_currentPlateIndex = 0;
     unsigned int m_totalPlateCount   = 1;
+
+    PlateSwitchCallback  m_plateSwitchCallback  = nullptr;
+    CoverPreviewCallback m_coverPreviewCallback = nullptr;
 };
+
+} // namespace GUI
+} // namespace Slic3r

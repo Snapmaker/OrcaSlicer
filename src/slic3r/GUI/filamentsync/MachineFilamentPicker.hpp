@@ -7,7 +7,14 @@
 
 #include "FilamentData.hpp"
 
+
 class wxSizer;
+
+namespace Slic3r
+{
+namespace GUI
+{
+
 class FilamentColorRadio;
 
 class MachineFilamentPicker : public wxPopupTransientWindow
@@ -33,3 +40,6 @@ private:
 
     wxSizer* m_pGridSizer = nullptr;
 };
+
+} // namespace GUI
+} // namespace Slic3r

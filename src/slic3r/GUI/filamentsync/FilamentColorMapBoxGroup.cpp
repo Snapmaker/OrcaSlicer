@@ -4,6 +4,11 @@
 
 #include "MachineFilamentPicker.hpp"
 
+namespace Slic3r
+{
+namespace GUI
+{
+
 FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
                                                    const std::list<FilamentData>& designDataList,
                                                    const std::list<FilamentData>& machineDataList)
@@ -40,3 +45,6 @@ void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentDat
 {
     // TODO: implement update box filament data
 }
+
+} // namespace GUI
+} // namespace Slic3r

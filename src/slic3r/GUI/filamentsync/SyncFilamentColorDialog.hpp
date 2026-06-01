@@ -10,6 +10,15 @@ class wxRadioButton;
 class wxStaticText;
 class wxCheckBox;
 class wxButton;
+
+namespace Slic3r
+{
+
+struct ThumbnailData;
+
+namespace GUI
+{
+
 class FilamentColorMapBoxGroup;
 class PlaterPreview;
 
@@ -32,21 +41,34 @@ private:
     void onAutoMatch();
     void onCoverMatch();
 
+    void initPlatePreview();
+    void loadPlateThumbnail(unsigned int plateIndex);
+    void loadCoverPreview();
+
+    wxBitmap generateCoverPreview(const ThumbnailData& thumb,
+                                   const ThumbnailData& noLightThumb,
+                                   const std::list<FilamentData>& filamentMapping);
+
+    static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
+
+    // Mode selection
     wxRadioButton* m_pMappingModeRadio   = nullptr;
     wxRadioButton* m_pOverwriteModeRadio = nullptr;
 
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
-
     PlaterPreview* m_pPlaterPreview = nullptr;
-
     wxStaticText* m_pHintLabel = nullptr;
     wxCheckBox* m_pAddToSoftwareListCheck = nullptr;
-    
+
     wxButton* m_pResetBtn = nullptr;
     wxButton* m_pCancelBtn = nullptr;
     wxButton* m_pSyncBtn  = nullptr;
 
+    // Data
     std::list<FilamentData> m_designDataList;
     std::list<FilamentData> m_machineDataList;
     bool m_bMappingMode = true;
 };
+
+} // namespace GUI
+} // namespace Slic3r

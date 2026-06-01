@@ -384,7 +384,7 @@ void MixedFilamentDialog::build_ui()
         m_match_input_card->SetBorderColorNormal(wxColour("#F0F0F0"));
         auto* card1_sizer = new wxBoxSizer(wxVERTICAL);
 
-        auto* filament_label = new wxStaticText(m_match_input_card, wxID_ANY, _L("Filaments:"));
+        auto* filament_label = new wxStaticText(m_match_input_card, wxID_ANY, _L("Filaments"));
         filament_label->SetFont(Label::Body_14);
         filament_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         filament_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -411,7 +411,7 @@ void MixedFilamentDialog::build_ui()
         card1_sizer->Add(m_match_badges_panel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
 
         // Target Color label
-        auto* target_label = new wxStaticText(m_match_input_card, wxID_ANY, _L("Target Color:"));
+        auto* target_label = new wxStaticText(m_match_input_card, wxID_ANY, _L("Target Color"));
         target_label->SetFont(Label::Body_14);
         target_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         target_label->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -965,7 +965,7 @@ void MixedFilamentDialog::build_ui()
         m_cycle_card_sizer = new wxBoxSizer(wxVERTICAL);
 
         // Title
-        auto* cycle_title = new wxStaticText(m_cycle_card, wxID_ANY, _L("Pattern"));
+        auto* cycle_title = new wxStaticText(m_cycle_card, wxID_ANY, _L("Filaments"));
         cycle_title->SetFont(Label::Body_14);
         cycle_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         cycle_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -2230,9 +2230,10 @@ void MixedFilamentDialog::display_warning(const wxString& msg)
     if (!m_warning_panel || !m_warning_text || !m_error_panel)
         return;
     m_error_panel->Hide();
-    m_warning_text->SetLabel(msg);
     m_warning_panel->Show();
-    Layout();
+    Layout(); // land panel width first, so the auto-wrap label's CalcMin gets a real width
+    m_warning_text->SetLabel(msg);
+    Layout(); // re-wrap with correct width; single Layout on macOS may calc height from stale zero-width
 }
 
 void MixedFilamentDialog::set_error(const wxString& msg)
@@ -2240,10 +2241,11 @@ void MixedFilamentDialog::set_error(const wxString& msg)
     if (!m_error_panel || !m_error_text || !m_warning_panel)
         return;
     m_warning_panel->Hide();
-    m_error_text->SetLabel(msg);
     m_error_panel->Show();
+    Layout(); // land panel width first, so the auto-wrap label's CalcMin gets a real width
+    m_error_text->SetLabel(msg);
     if (m_btn_confirm) m_btn_confirm->Disable();
-    Layout();
+    Layout(); // re-wrap with correct width; single Layout on macOS may calc height from stale zero-width
 }
 
 wxString MixedFilamentDialog::get_ratio_warning_msg()
@@ -3080,6 +3082,7 @@ void MixedFilamentDialog::rebuild_cycle_legend()
     if (m_scrolled_content) {
         m_scrolled_content->Layout();
         m_scrolled_content->FitInside();
+        m_scrolled_content->Refresh();
     }
 }
 

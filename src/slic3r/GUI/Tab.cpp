@@ -1528,17 +1528,37 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if(opt_key == "purge_in_prime_tower")
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
 
-    if (m_type == Preset::TYPE_PRINT &&
-        opt_key == "dithering_local_z_mode" &&
-        boost::any_cast<bool>(value) &&
-        m_config->has("dithering_local_z_infill") &&
-        !m_config->opt_bool("dithering_local_z_infill")) {
+    if (m_type == Preset::TYPE_PRINT && opt_key == "dithering_local_z_mode") {
+        const bool local_z_enabled = boost::any_cast<bool>(value);
         DynamicPrintConfig new_conf = *m_config;
-        new_conf.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
-        m_config_manipulation.apply(m_config, &new_conf);
-
+        bool dependent_config_changed = false;
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-        project_cfg.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+
+        auto set_print_bool = [this, &new_conf, &dependent_config_changed](const char *key, bool enabled) {
+            if (!m_config->has(key) || m_config->option(key) == nullptr || m_config->opt_bool(key) == enabled)
+                return;
+            new_conf.set_key_value(key, new ConfigOptionBool(enabled));
+            dependent_config_changed = true;
+        };
+        auto set_project_bool = [&project_cfg](const char *key, bool enabled) {
+            project_cfg.set_key_value(key, new ConfigOptionBool(enabled));
+        };
+
+        if (local_z_enabled) {
+            set_print_bool("dithering_local_z_infill", true);
+        } else {
+            set_print_bool("dithering_local_z_whole_objects", false);
+            set_print_bool("dithering_local_z_infill", false);
+            set_project_bool("dithering_local_z_direct_multicolor", false);
+        }
+
+        if (dependent_config_changed)
+            m_config_manipulation.apply(m_config, &new_conf);
+
+        if (new_conf.has("dithering_local_z_whole_objects"))
+            set_project_bool("dithering_local_z_whole_objects", new_conf.opt_bool("dithering_local_z_whole_objects"));
+        if (new_conf.has("dithering_local_z_infill"))
+            set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
     }
 
     if (opt_key == "enable_prime_tower") {
@@ -2878,6 +2898,18 @@ static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig
     return resolved;
 }
 
+static void sync_plate_bed_type_to_global(DynamicPrintConfig& config)
+{
+    if (wxGetApp().preset_bundle == nullptr)
+        return;
+
+    DynamicConfig& global_cfg = wxGetApp().preset_bundle->project_config;
+    if (global_cfg.has("curr_bed_type")) {
+        BedType global_bed_type = global_cfg.opt_enum<BedType>("curr_bed_type");
+        config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(global_bed_type));
+    }
+}
+
 TabPrintModel::TabPrintModel(ParamsPanel* parent, std::vector<std::string> const & keys)
     : TabPrint(parent, Preset::TYPE_MODEL)
     , m_keys(intersect(Preset::print_options(), keys))
@@ -2942,6 +2974,9 @@ void TabPrintModel::update_model_config()
     m_config->apply(*m_parent_tab->m_config);
     if (m_type != Preset::TYPE_PLATE) {
         m_config->apply_only(*wxGetApp().plate_tab->get_config(), plate_keys);
+    } else {
+        sync_plate_bed_type_to_global(m_prints.get_selected_preset().config);
+        sync_plate_bed_type_to_global(*m_config);
     }
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
@@ -3135,10 +3170,9 @@ void TabPrintPlate::build()
     load_initial_data();
 
     m_config->option("curr_bed_type", true);
-    if (m_preset_bundle->project_config.has("curr_bed_type")) {
-        BedType global_bed_type = m_preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-        m_config->set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(global_bed_type));
-    }
+    m_prints.get_selected_preset().config.option("curr_bed_type", true);
+    sync_plate_bed_type_to_global(m_prints.get_selected_preset().config);
+    sync_plate_bed_type_to_global(*m_config);
     m_config->option("first_layer_sequence_choice", true);
     m_config->option("first_layer_print_sequence", true);
     m_config->option("other_layers_print_sequence", true);

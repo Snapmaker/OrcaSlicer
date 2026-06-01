@@ -22,7 +22,6 @@ public:
     FilamentColorMapBox(wxWindow* parent, const FilamentData& aboveData, const FilamentData& belowData);
 
     void bindButton(FilamentInfoCallback cb, ButtonType type = ButtonType::Below);
-
     void setEnable(bool bEnable, ButtonType type = ButtonType::Below);
 
     void updateAboveData(const FilamentData& data);
@@ -35,8 +34,13 @@ private:
     void onAboveButtonClicked();
     void onBelowButtonClicked();
 
+    void applyColors();
+
     FilamentData m_aboveFilament;
     FilamentData m_belowFilament;
+
+    bool m_bAboveEnabled = true;
+    bool m_bBelowEnabled = true;
 
     wxPanel*      m_pAbovePanel = nullptr;
     wxStaticText* m_pAboveLabel = nullptr;

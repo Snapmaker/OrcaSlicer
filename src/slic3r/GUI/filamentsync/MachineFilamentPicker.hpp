@@ -31,6 +31,10 @@ public:
 
     void popupAt(const wxPoint& pos);
 
+    void bindSelectionCallback(FilamentInfoCallback cb);
+
+    void OnDismiss() override;
+
 private:
     void onRadioClicked(const FilamentData& data);
     void deselectAllExcept(const FilamentData& currentData);
@@ -38,7 +42,9 @@ private:
     std::list<std::shared_ptr<FilamentColorRadio>> m_radioList;
     FilamentData m_currentSelectedData;
 
-    wxSizer* m_pGridSizer = nullptr;
+    wxSizer* m_pWrapSizer = nullptr;
+
+    FilamentInfoCallback m_selectionCallback = nullptr;
 };
 
 } // namespace GUI

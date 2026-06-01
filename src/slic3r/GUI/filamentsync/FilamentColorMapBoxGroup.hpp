@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <list>
 #include <memory>
 
@@ -28,8 +29,11 @@ public:
     std::list<FilamentData> getCurFilamentList() const;
 
     void setGroupBoxEnable(bool bEnable, FilamentColorMapBox::ButtonType type);
-
     void showMachineFilamentPicker(int boxIndex);
+    void updateBoxBelowData(int boxIndex, const FilamentData& machineData);
+    int getBoxCount() const;
+
+    void bindMappingChangedCallback(std::function<void()> cb);
 
 private:
     void onBoxBelowClicked(const FilamentData& aboveData);
@@ -42,6 +46,8 @@ private:
     MachineFilamentPicker* m_pPicker = nullptr;
 
     wxSizer* m_pWrapSizer = nullptr;
+
+    std::function<void()> m_mappingChangedCallback = nullptr;
 };
 
 } // namespace GUI

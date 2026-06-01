@@ -1,8 +1,31 @@
 #include "FilamentColorMapBoxGroup.hpp"
 
-#include <wx/sizer.h>
+#include <wx/wrapsizer.h>
+#include <algorithm>
 
 #include "MachineFilamentPicker.hpp"
+
+namespace
+{
+
+// --- Layout ---
+constexpr int g_boxMargin = 4; // DIP — margin around each FilamentColorMapBox
+
+// --- Default below (placeholder) ---
+constexpr unsigned char g_placeholderGrey = 0xCC;
+
+Slic3r::GUI::FilamentData makeDefaultBelow(unsigned int index)
+{
+    Slic3r::GUI::FilamentData d;
+    d.m_index   = index;
+    d.m_name    = "--";
+    d.m_color_r = g_placeholderGrey;
+    d.m_color_g = g_placeholderGrey;
+    d.m_color_b = g_placeholderGrey;
+    return d;
+}
+
+} // namespace
 
 namespace Slic3r
 {
@@ -16,34 +39,115 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
 {
-    // TODO: implement layout, create FilamentColorMapBox list
+    m_pWrapSizer = new wxWrapSizer(wxHORIZONTAL);
+
+    int boxIndex = 0;
+    for (const auto& designData : m_designDataList) {
+        FilamentData initialBelow = makeDefaultBelow(designData.m_index);
+
+        auto box = std::make_unique<FilamentColorMapBox>(this, designData, initialBelow);
+        box->bindButton([this, boxIndex](const FilamentData&) {
+            showMachineFilamentPicker(boxIndex);
+        }, FilamentColorMapBox::ButtonType::Below);
+
+        m_pWrapSizer->Add(box.get(), 0, wxALL, FromDIP(g_boxMargin));
+        m_boxList.push_back(std::move(box));
+        ++boxIndex;
+    }
+
+    SetSizer(m_pWrapSizer);
+    Layout();
 }
 
 std::list<FilamentData> FilamentColorMapBoxGroup::getCurFilamentList() const
 {
-    // TODO: return current mapped filament list
     std::list<FilamentData> result;
+    for (const auto& box : m_boxList) {
+        FilamentData data = box->getBelowData();
+        data.m_index = box->getAboveData().m_index;
+        result.push_back(data);
+    }
     return result;
 }
 
 void FilamentColorMapBoxGroup::setGroupBoxEnable(bool bEnable, FilamentColorMapBox::ButtonType type)
 {
-    // TODO: implement group enable/disable
+    for (auto& box : m_boxList)
+        box->setEnable(bEnable, type);
 }
 
 void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
 {
-    // TODO: implement show picker
+    if (boxIndex < 0 || static_cast<size_t>(boxIndex) >= m_boxList.size())
+        return;
+
+    // Destroy any existing picker before opening a new one.
+    if (m_pPicker) {
+        m_pPicker->Destroy();
+        m_pPicker = nullptr;
+    }
+
+    // Determine the currently-mapped machine filament index for pre-selection.
+    auto it = m_boxList.begin();
+    std::advance(it, boxIndex);
+    unsigned int curMachineIndex = (*it)->getBelowData().m_index;
+
+    auto* picker = new MachineFilamentPicker(this, m_machineDataList, curMachineIndex);
+
+    // When user clicks a radio in the picker, update the target box.
+    picker->bindSelectionCallback([this, boxIndex](const FilamentData& data) {
+        updateBoxFilament(boxIndex, data);
+        m_pPicker = nullptr;
+    });
+
+    // Position the popup near the target box.
+    auto boxIt = m_boxList.begin();
+    std::advance(boxIt, boxIndex);
+    wxPoint screenPos = (*boxIt)->GetScreenPosition();
+    screenPos.y += (*boxIt)->GetSize().y;
+
+    m_pPicker = picker;
+    picker->popupAt(screenPos);
+}
+
+void FilamentColorMapBoxGroup::updateBoxBelowData(int boxIndex, const FilamentData& machineData)
+{
+    updateBoxFilament(boxIndex, machineData);
+}
+
+int FilamentColorMapBoxGroup::getBoxCount() const
+{
+    return static_cast<int>(m_boxList.size());
+}
+
+void FilamentColorMapBoxGroup::bindMappingChangedCallback(std::function<void()> cb)
+{
+    m_mappingChangedCallback = std::move(cb);
 }
 
 void FilamentColorMapBoxGroup::onBoxBelowClicked(const FilamentData& aboveData)
 {
-    // TODO: implement box below click handler
+    int idx = 0;
+    for (const auto& box : m_boxList) {
+        if (box->getAboveData().m_index == aboveData.m_index) {
+            showMachineFilamentPicker(idx);
+            return;
+        }
+        ++idx;
+    }
 }
 
 void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentData& machineData)
 {
-    // TODO: implement update box filament data
+    if (boxIndex < 0 || static_cast<size_t>(boxIndex) >= m_boxList.size())
+        return;
+
+    auto it = m_boxList.begin();
+    std::advance(it, boxIndex);
+    (*it)->updateBelowData(machineData);
+
+    if (m_mappingChangedCallback)
+        m_mappingChangedCallback();
 }
 
 } // namespace GUI

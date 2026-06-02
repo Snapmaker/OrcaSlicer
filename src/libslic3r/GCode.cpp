@@ -4931,8 +4931,13 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
-        // BBS
-        int bed_temp = get_bed_temperature(first_extruder_id, false, print.config().curr_bed_type);
+        // Use the maximum bed temperature across all active extruders so that a mixed-material
+        // print (e.g. PLA + TPU) does not drop the bed temp to the lower-temp material's value
+        // on layer 2, which would cause adhesion failures for the higher-temp material.
+        int bed_temp = 0;
+        for (const Extruder& extruder : m_writer.extruders()) {
+            bed_temp = std::max(bed_temp, get_bed_temperature(extruder.id(), false, print.config().curr_bed_type));
+        }
         gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.
         m_second_layer_things_done = true;

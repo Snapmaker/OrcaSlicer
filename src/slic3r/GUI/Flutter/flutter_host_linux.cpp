@@ -227,6 +227,8 @@ public:
         if (m_view) gtk_widget_grab_focus(GTK_WIDGET(m_view));
     }
 
+    void* nativeHandle() const override { return nullptr; }
+
     void setMethodCallHandler(MethodCallHandler h) override {
         m_handler = std::move(h);
     }

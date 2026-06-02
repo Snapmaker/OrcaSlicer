@@ -340,13 +340,11 @@ public:
         if (hwnd) ::SetFocus(hwnd);
     }
 
-#ifdef __WXMSW__
     void* nativeHandle() const override {
         FlutterDesktopViewRef view =
             FlutterDesktopViewControllerGetView(m_controller);
         return (void*)FlutterDesktopViewGetHWND(view);
     }
-#endif
 
     void setMethodCallHandler(MethodCallHandler h) override {
         m_handler = std::move(h);
@@ -394,6 +392,7 @@ public:
         props.assets_path = assets.c_str();
         props.icu_data_path = icu.c_str();
         props.aot_library_path = aot.c_str();
+        props.dart_entrypoint = entrypoint.empty() ? nullptr : entrypoint.c_str();
 
         FlutterDesktopEngineRef engine =
             FlutterDesktopEngineCreate(&props);

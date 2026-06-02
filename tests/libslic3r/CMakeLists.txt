@@ -9,6 +9,7 @@ add_executable(${_TEST_NAME}_tests
 	test_config.cpp
 	test_custom_gcode.cpp
 	test_elephant_foot_compensation.cpp
+	test_flutter_platform.cpp
 	test_geometry.cpp
 	test_mixed_filament.cpp
 	test_triangle_selector.cpp
@@ -32,7 +33,8 @@ if (TARGET OpenVDB::openvdb)
     target_sources(${_TEST_NAME}_tests PRIVATE test_hollowing.cpp)
 endif()
     
-target_link_libraries(${_TEST_NAME}_tests test_common libslic3r OpenSSL::Crypto)
+target_link_libraries(${_TEST_NAME}_tests test_common libslic3r libslic3r_gui OpenSSL::Crypto)
+target_include_directories(${_TEST_NAME}_tests PRIVATE "${CMAKE_SOURCE_DIR}/src/slic3r/GUI")
 if (WIN32)
     target_link_libraries(${_TEST_NAME}_tests bcrypt.lib)
 endif()

@@ -6,7 +6,7 @@
     "machine_tech": "FFF",
     "family": "MyPrinter",
     "bed_model": "Custom_350_bed.stl",
-    "bed_texture": "orcaslicer_bed_texture.svg",
+    "bed_texture": "Snapmaker_Orca_bed_texture.svg",
     "hotend_model": "",
     "default_materials": "Generic PLA @MyToolChanger;Generic ABS @MyToolChanger;Generic PLA-CF @MyToolChanger;Generic PETG @MyToolChanger;Generic TPU @MyToolChanger;Generic ASA @MyToolChanger;Generic PC @MyToolChanger;Generic PVA @MyToolChanger;Generic PA @MyToolChanger;Generic PA-CF @MyToolChanger"
 }

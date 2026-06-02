@@ -3218,9 +3218,12 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
     if (opt_extruder)
         if (int extruder = opt_extruder->value; extruder != 0) {
             // Not a default extruder.
-            out.sparse_infill_filament.value = extruder;
-            out.solid_infill_filament.value  = extruder;
-            out.wall_filament.value          = extruder;
+            if (out.sparse_infill_filament.value == 0) 
+                out.sparse_infill_filament.value = extruder;
+            if (out.solid_infill_filament.value == 0)
+                out.solid_infill_filament.value  = extruder;
+            if (out.wall_filament.value == 0)
+                out.wall_filament.value          = extruder;
         }
     const auto *opt_enable_infill_filament_override = in.opt<ConfigOptionBool>(key_enable_infill_filament_override);
     const auto *opt_sparse_infill_filament = in.opt<ConfigOptionInt>("sparse_infill_filament");

@@ -36,7 +36,6 @@ public:
     void bindMappingChangedCallback(std::function<void()> cb);
 
 private:
-    void onBoxBelowClicked(const FilamentData& aboveData);
     void updateBoxFilament(int boxIndex, const FilamentData& machineData);
 
     std::list<std::unique_ptr<FilamentColorMapBox>> m_boxList;

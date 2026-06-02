@@ -11,6 +11,7 @@ namespace GUI
 
 struct FilamentData
 {
+    // 0-based index from the filament list; used for matching with machine filaments
     unsigned int m_index   = 0;
     std::string  m_name;
     uint8_t      m_color_r = 0;

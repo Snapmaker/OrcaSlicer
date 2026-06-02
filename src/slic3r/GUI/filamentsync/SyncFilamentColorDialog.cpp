@@ -217,12 +217,12 @@ void SyncFilamentColorDialog::initPlatePreview()
     if (!plater || !m_pPlaterPreview)
         return;
 
-    PartPlateList& plateList = plater->get_partplate_list();
-    int plateCount    = plateList.get_plate_count();
-    int currentPlate  = plateList.get_curr_plate_index();
+    PartPlateList& plateList   = plater->get_partplate_list();
+    unsigned int plateCount    = plateList.get_plate_count();
+    unsigned int currentPlate  = plateList.get_curr_plate_index();
 
-    m_pPlaterPreview->setTotalPlateCount(static_cast<unsigned int>(plateCount));
-    m_pPlaterPreview->setCurrentPlate(static_cast<unsigned int>(currentPlate));
+    m_pPlaterPreview->setTotalPlateCount(plateCount);
+    m_pPlaterPreview->setCurrentPlate(currentPlate);
 
     m_pPlaterPreview->bindPlateSwitchCallback([this](unsigned int newPlateIndex) {
         loadPlateThumbnail(newPlateIndex);
@@ -232,7 +232,7 @@ void SyncFilamentColorDialog::initPlatePreview()
         loadCoverPreview();
     });
 
-    loadPlateThumbnail(static_cast<unsigned int>(currentPlate));
+    loadPlateThumbnail(currentPlate);
 }
 
 void SyncFilamentColorDialog::loadPlateThumbnail(unsigned int plateIndex)
@@ -242,7 +242,7 @@ void SyncFilamentColorDialog::loadPlateThumbnail(unsigned int plateIndex)
         return;
 
     PartPlateList& plateList = plater->get_partplate_list();
-    PartPlate* plate = plateList.get_plate(static_cast<int>(plateIndex));
+    PartPlate* plate = plateList.get_plate(plateIndex);
     if (!plate || !plate->thumbnail_data.is_valid())
         return;
 
@@ -261,7 +261,7 @@ void SyncFilamentColorDialog::loadCoverPreview()
     unsigned int plateIndex = m_pPlaterPreview->getCurrentPlate();
 
     PartPlateList& plateList = plater->get_partplate_list();
-    PartPlate* plate = plateList.get_plate(static_cast<int>(plateIndex));
+    PartPlate* plate = plateList.get_plate(plateIndex);
     if (!plate || !plate->thumbnail_data.is_valid())
         return;
 
@@ -283,6 +283,9 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
                                                         const ThumbnailData& noLightThumb,
                                                         const std::list<FilamentData>& filamentMapping)
 {
+    if (thumb.width != noLightThumb.width || thumb.height != noLightThumb.height)
+        return thumbnailToBitmap(thumb);
+
     wxImage image(thumb.width, thumb.height);
     image.InitAlpha();
 
@@ -299,19 +302,20 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
     for (unsigned int r = 0; r < thumb.height; ++r) {
         unsigned int rr = (thumb.height - 1 - r) * thumb.width;
         for (unsigned int c = 0; c < thumb.width; ++c) {
-            unsigned char* originPx  = const_cast<unsigned char*>(thumb.pixels.data()) + 4 * (rr + c);
-            unsigned char* noLightPx = const_cast<unsigned char*>(noLightThumb.pixels.data()) + 4 * (rr + c);
+            const unsigned char* originPx  = thumb.pixels.data() + 4 * (rr + c);
+            const unsigned char* noLightPx = noLightThumb.pixels.data() + 4 * (rr + c);
 
             // Background / transparent pixel — copy original as-is
             if (originPx[3] == g_pixelTransparent) {
-                image.SetRGB(static_cast<int>(c), static_cast<int>(r),
-                             originPx[0], originPx[1], originPx[2]);
-                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), originPx[3]);
+                image.SetRGB(c, r, originPx[0], originPx[1], originPx[2]);
+                image.SetAlpha(c, r, originPx[3]);
                 continue;
             }
 
+            // TODO Directly cover the cases where the quantity of consumables exceeds the mapping limit for the model.
+
             // noLight alpha = 255 - (extruder_id - 1)  →  filament_id = 255 - alpha
-            int filament_id = g_alphaDecode - static_cast<int>(noLightPx[3]);
+            int filament_id = g_alphaDecode - noLightPx[3];
 
             auto it = colorMap.find(filament_id);
             if (it != colorMap.end()) {
@@ -323,12 +327,9 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
                 unsigned char newR, newG, newB;
                 if (noLightRgb > g_noLightMin && originRgb >= noLightRgb) {
                     // Bright area: add lighting delta to the target color
-                    newR = std::clamp(amsColor.Red()   + (originPx[0] - noLightPx[0]),
-                                      0, g_colorMax);
-                    newG = std::clamp(amsColor.Green() + (originPx[1] - noLightPx[1]),
-                                      0, g_colorMax);
-                    newB = std::clamp(amsColor.Blue()  + (originPx[2] - noLightPx[2]),
-                                      0, g_colorMax);
+                    newR = std::clamp(amsColor.Red()   + (originPx[0] - noLightPx[0]), 0, g_colorMax);
+                    newG = std::clamp(amsColor.Green() + (originPx[1] - noLightPx[1]), 0, g_colorMax);
+                    newB = std::clamp(amsColor.Blue()  + (originPx[2] - noLightPx[2]), 0, g_colorMax);
                 } else if (noLightRgb > g_noLightMin) {
                     // Shadow area: scale target color by original/noLight ratio
                     float ratio = static_cast<float>(originRgb) / static_cast<float>(noLightRgb);
@@ -341,12 +342,12 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
                     newB = amsColor.Blue();
                 }
 
-                image.SetRGB(static_cast<int>(c), static_cast<int>(r), newR, newG, newB);
-                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), originPx[3]);
+                image.SetRGB(c, r, newR, newG, newB);
+                image.SetAlpha(c, r, originPx[3]);
             } else {
-                image.SetRGB(static_cast<int>(c), static_cast<int>(r),
-                             originPx[0], originPx[1], originPx[2]);
-                image.SetAlpha(static_cast<int>(c), static_cast<int>(r), originPx[3]);
+                // TODO: Handle the case where filament_id is not found in colorMap
+                image.SetRGB(c, r, originPx[0], originPx[1], originPx[2]);
+                image.SetAlpha(c, r, originPx[3]);
             }
         }
     }
@@ -361,9 +362,9 @@ wxBitmap SyncFilamentColorDialog::thumbnailToBitmap(const ThumbnailData& thumb)
     for (unsigned int r = 0; r < thumb.height; ++r) {
         unsigned int rr = (thumb.height - 1 - r) * thumb.width;
         for (unsigned int c = 0; c < thumb.width; ++c) {
-            unsigned char* px = const_cast<unsigned char*>(thumb.pixels.data()) + 4 * (rr + c);
-            image.SetRGB(static_cast<int>(c), static_cast<int>(r), px[0], px[1], px[2]);
-            image.SetAlpha(static_cast<int>(c), static_cast<int>(r), px[3]);
+            const unsigned char* px = thumb.pixels.data() + 4 * (rr + c);
+            image.SetRGB(c, r, px[0], px[1], px[2]);
+            image.SetAlpha(c, r, px[3]);
         }
     }
     return wxBitmap(image);

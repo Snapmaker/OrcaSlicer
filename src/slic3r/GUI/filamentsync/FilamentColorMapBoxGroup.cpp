@@ -78,7 +78,7 @@ void FilamentColorMapBoxGroup::setGroupBoxEnable(bool bEnable, FilamentColorMapB
 
 void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
 {
-    if (boxIndex < 0 || static_cast<size_t>(boxIndex) >= m_boxList.size())
+    if (boxIndex < 0 || boxIndex >= m_boxList.size())
         return;
 
     // Destroy any existing picker before opening a new one.
@@ -100,6 +100,10 @@ void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
         m_pPicker = nullptr;
     });
 
+    picker->bindOnDismissCallback([this]() {
+        m_pPicker = nullptr;
+    });
+
     // Position the popup near the target box.
     auto boxIt = m_boxList.begin();
     std::advance(boxIt, boxIndex);
@@ -117,7 +121,7 @@ void FilamentColorMapBoxGroup::updateBoxBelowData(int boxIndex, const FilamentDa
 
 int FilamentColorMapBoxGroup::getBoxCount() const
 {
-    return static_cast<int>(m_boxList.size());
+    return m_boxList.size();
 }
 
 void FilamentColorMapBoxGroup::bindMappingChangedCallback(std::function<void()> cb)
@@ -125,21 +129,9 @@ void FilamentColorMapBoxGroup::bindMappingChangedCallback(std::function<void()> 
     m_mappingChangedCallback = std::move(cb);
 }
 
-void FilamentColorMapBoxGroup::onBoxBelowClicked(const FilamentData& aboveData)
-{
-    int idx = 0;
-    for (const auto& box : m_boxList) {
-        if (box->getAboveData().m_index == aboveData.m_index) {
-            showMachineFilamentPicker(idx);
-            return;
-        }
-        ++idx;
-    }
-}
-
 void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentData& machineData)
 {
-    if (boxIndex < 0 || static_cast<size_t>(boxIndex) >= m_boxList.size())
+    if (boxIndex < 0 || boxIndex >= m_boxList.size())
         return;
 
     auto it = m_boxList.begin();

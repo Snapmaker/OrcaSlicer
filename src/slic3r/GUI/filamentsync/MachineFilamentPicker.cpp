@@ -40,7 +40,7 @@ MachineFilamentPicker::MachineFilamentPicker(wxWindow* parent,
     }
 
     // Pre-select the current index
-    if (curIndex > 0) {
+    if (curIndex < dataList.size()) {
         setSelectedIndex(curIndex);
     }
 
@@ -89,8 +89,16 @@ void MachineFilamentPicker::bindSelectionCallback(FilamentInfoCallback cb)
     m_selectionCallback = std::move(cb);
 }
 
+void MachineFilamentPicker::bindOnDismissCallback(std::function<void()> cb)
+{
+    m_onDismissCallback = std::move(cb);
+}
+
 void MachineFilamentPicker::OnDismiss()
 {
+    if (m_onDismissCallback)
+        m_onDismissCallback();
+
     CallAfter([this]() { Destroy(); });
 }
 

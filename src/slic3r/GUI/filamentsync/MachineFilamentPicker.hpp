@@ -32,6 +32,7 @@ public:
     void popupAt(const wxPoint& pos);
 
     void bindSelectionCallback(FilamentInfoCallback cb);
+    void bindOnDismissCallback(std::function<void()> cb);
 
     void OnDismiss() override;
 
@@ -45,6 +46,7 @@ private:
     wxSizer* m_pWrapSizer = nullptr;
 
     FilamentInfoCallback m_selectionCallback = nullptr;
+    std::function<void()> m_onDismissCallback = nullptr;
 };
 
 } // namespace GUI

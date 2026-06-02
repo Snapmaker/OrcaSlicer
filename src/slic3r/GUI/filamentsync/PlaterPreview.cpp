@@ -143,7 +143,7 @@ void PlaterPreview::setCurrentPlate(unsigned int plateIndex)
     m_currentPlateIndex = plateIndex;
 
     if (m_pPlateCombo)
-        m_pPlateCombo->SetSelection(static_cast<int>(plateIndex));
+        m_pPlateCombo->SetSelection(plateIndex);
 
     updateNavButtons();
 }
@@ -164,7 +164,7 @@ void PlaterPreview::setTotalPlateCount(unsigned int count)
 
         if (m_currentPlateIndex >= m_totalPlateCount)
             m_currentPlateIndex = 0;
-        m_pPlateCombo->SetSelection(static_cast<int>(m_currentPlateIndex));
+        m_pPlateCombo->SetSelection(m_currentPlateIndex);
     }
 
     updateNavButtons();
@@ -194,7 +194,7 @@ void PlaterPreview::onPrePage()
     --m_currentPlateIndex;
 
     if (m_pPlateCombo)
-        m_pPlateCombo->SetSelection(static_cast<int>(m_currentPlateIndex));
+        m_pPlateCombo->SetSelection(m_currentPlateIndex);
 
     updateNavButtons();
 
@@ -210,7 +210,7 @@ void PlaterPreview::onNextPage()
     ++m_currentPlateIndex;
 
     if (m_pPlateCombo)
-        m_pPlateCombo->SetSelection(static_cast<int>(m_currentPlateIndex));
+        m_pPlateCombo->SetSelection(m_currentPlateIndex);
 
     updateNavButtons();
 
@@ -220,10 +220,10 @@ void PlaterPreview::onNextPage()
 
 void PlaterPreview::onPlateComboBoxChanged(int index)
 {
-    if (index < 0 || static_cast<unsigned int>(index) >= m_totalPlateCount)
+    if (index < 0 || index >= m_totalPlateCount)
         return;
 
-    m_currentPlateIndex = static_cast<unsigned int>(index);
+    m_currentPlateIndex = index;
 
     updateNavButtons();
 

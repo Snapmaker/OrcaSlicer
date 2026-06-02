@@ -15151,8 +15151,8 @@ msgstr "编辑混色"
 msgid "Order"
 msgstr "顺序"
 
-msgid "Target Color:"
-msgstr "目标色:"
+msgid "Target Color"
+msgstr "目标色"
 
 msgid "Swap filaments"
 msgstr "切换方向"
@@ -15204,6 +15204,9 @@ msgstr "参与混色耗材颜色一致，无法混出更多颜色，请选用不
 
 msgid "Full domain"
 msgstr "全域生效"
+
+msgid "Apply subdivision to infill"
+msgstr "应用到填充"
 
 msgid "Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."
 msgstr "包含无效字符。仅允许输入数字、方括号（[ 和]）和逗号（,）。"

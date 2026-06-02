@@ -4362,7 +4362,7 @@ void PrintConfigDef::init_fff_params()
                      "This is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\n"
                      "It can improve internal color mixing, but may add toolchanges and affect infill behavior.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("dithering_local_z_direct_multicolor", coBool);
     def->label = L("Use direct multicolor Local-Z solver");

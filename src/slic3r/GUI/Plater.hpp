@@ -1,7 +1,9 @@
 #ifndef slic3r_Plater_hpp_
 #define slic3r_Plater_hpp_
 
+#include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
@@ -10,6 +12,7 @@
 #include <wx/notebook.h>
 
 #include "Selection.hpp"
+#include "MixedColorMatchHelpers.hpp"
 
 #include "libslic3r/enum_bitmask.hpp"
 #include "libslic3r/Preset.hpp"
@@ -150,12 +153,17 @@ public:
     // BBS. Add on_filaments_change() method.
     void on_filaments_change(size_t num_filaments);
     void change_filament(size_t from_id, size_t to_id);
+    void merge_mixed_filament(size_t from_id, size_t to_id);
     void add_filament();
     void delete_filament(size_t filament_id  = size_t(-1), int replace_filament_id = -1); // 0 base, -1 means default
     void add_custom_filament(wxColour new_col);
     void edit_filament();
 
     void on_filaments_delete(size_t filament_id);
+    void init_color_mix_panel(wxWindow* parent, wxSizer* sizer);
+    void update_color_mix_panel();
+    void update_mixed_filament_panel(bool sync_manager = true);
+    std::vector<unsigned int> get_ui_ordered_filament_ids() const;
     // BBS
     void on_bed_type_change(BedType bed_type);
     void load_ams_list(std::string const & device, MachineObject* obj);
@@ -491,7 +499,9 @@ public:
     bool leave_gizmos_stack();
 
     void on_filaments_change(size_t extruders_count);
-    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1);
+    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_snapshot = {});
+    bool confirm_auto_generated_gradients(size_t num_physical);
+    void set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients);
     // BBS
     void on_bed_type_change(BedType bed_type);
     bool update_filament_colors_in_full_config();
@@ -501,7 +511,7 @@ public:
     void force_print_bed_update();
     // On activating the parent window.
     void on_activate();
-    std::vector<std::string> get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result = nullptr) const;
+    std::vector<std::string> get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result = nullptr, bool include_mixed = true) const;
     std::vector<std::string> get_colors_for_color_print(const GCodeProcessorResult* const result = nullptr) const;
 
     void update_menus();
@@ -666,6 +676,7 @@ public:
 #endif
 
     void reset_gcode_toolpaths();
+    void post_slice_state_change_update();
     void reset_last_loaded_gcode() { m_last_loaded_gcode = ""; }
 
     const Mouse3DController& get_mouse3d_controller() const;
@@ -860,6 +871,7 @@ private:
 };
 
 std::vector<int> get_min_flush_volumes(const DynamicPrintConfig& full_config);
+
 } // namespace GUI
 } // namespace Slic3r
 

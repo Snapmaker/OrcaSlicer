@@ -291,7 +291,7 @@ AboutDialog::AboutDialog()
     text_list.push_back(_L("Bambu Studio is forked from PrusaSlicer by Prusa Research, which is from Slic3r by Alessandro Ranellucci and the RepRap community. Orca Slicer incorporates a lot of features from SuperSlicer by @supermerill."));
     text_list.push_back(_L("Snapmaker Orca integrates some features from the 3D printing open-source community, with specific attributions provided in the code comments."));
     text_list.push_back(_L(""));
-    text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero Generall Public License, version 3."));
+    text_list.push_back(_L("Snapmaker Orca is licensed under the GNU Affero General Public License, version 3."));
     
     text_sizer->Add( 0, 0, 0, wxTOP, FromDIP(33));
     bool is_zh = wxGetApp().app_config->get("language") == "zh_CN";

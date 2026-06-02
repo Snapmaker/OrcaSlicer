@@ -4428,8 +4428,16 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         continue;
 
                     auto preserve_parent_region = [&by_region, &parent_layer_region, &parent_print_region]() {
-                        if (!parent_layer_region.slices.empty())
-                            by_region[parent_print_region.print_object_region_id()].surfaces = parent_layer_region.slices;
+                        if (parent_layer_region.slices.empty())
+                            return;
+
+                        ByRegion &dst = by_region[parent_print_region.print_object_region_id()];
+                        if (dst.surfaces.empty()) {
+                            dst.surfaces = parent_layer_region.slices;
+                        } else {
+                            dst.surfaces.append(parent_layer_region.slices);
+                            dst.needs_merge = true;
+                        }
                     };
 
                     if (it_painted_region_begin == layer_range.painted_regions.cend()) {
@@ -4524,6 +4532,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                                 dst.needs_merge = true;
                             }
                         }
+                    }
+
+                    const bool has_foreign_assigned_region =
+                        std::any_of(assigned_extruder.begin(), assigned_extruder.end(),
+                                    [](bool assigned) { return assigned; });
+                    if (!has_foreign_assigned_region) {
+                        preserve_parent_region();
+                        continue;
                     }
 
                     // Trim slices of this LayerRegion with all the MM regions.

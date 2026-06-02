@@ -134,6 +134,8 @@ set(lisbslic3r_sources
     FileParserError.hpp
     FilamentHotBedNozzleRules.cpp
     FilamentHotBedNozzleRules.hpp
+    FilamentSyncAlgorithm.cpp
+    FilamentSyncAlgorithm.hpp
     Fill/Fill3DHoneycomb.cpp
     Fill/Fill3DHoneycomb.hpp
     Fill/FillAdaptive.cpp

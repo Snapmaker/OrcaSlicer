@@ -132,6 +132,8 @@ set(lisbslic3r_sources
     Feature/Interlocking/VoxelUtils.cpp
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
+    FilamentHotBedNozzleRules.cpp
+    FilamentHotBedNozzleRules.hpp
     Fill/Fill3DHoneycomb.cpp
     Fill/Fill3DHoneycomb.hpp
     Fill/FillAdaptive.cpp
@@ -283,6 +285,11 @@ set(lisbslic3r_sources
     MinAreaBoundingBox.hpp
     MinimumSpanningTree.cpp
     MinimumSpanningTree.hpp
+    MixedFilament.cpp
+    MixedFilament.hpp
+    filament_mixer.cpp
+    filament_mixer.h
+    filament_mixer_model.h
     miniz_extension.cpp
     miniz_extension.hpp
     ModelArrange.cpp

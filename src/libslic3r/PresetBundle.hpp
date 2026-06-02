@@ -4,6 +4,7 @@
 #include "Preset.hpp"
 #include "AppConfig.hpp"
 #include "enum_bitmask.hpp"
+#include "MixedFilament.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -26,6 +27,15 @@ enum class VendorType {
     Marlin,
     Marlin_BBL
 };
+
+struct ConnectMachineInfo
+{
+    std::string filament_info {""};
+    std::string nozzle_info {""};
+    std::string color_info{""};
+    int index {0};
+};
+
 namespace Slic3r {
 
 // Bundle of Print + Filament + Printer presets.
@@ -153,8 +163,12 @@ public:
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
 
+    // Mixed (virtual) filaments for layer-based colour mixing.
+    MixedFilamentManager        mixed_filaments;
+
     // Snapmaker
     std::map<int, std::pair<std::string, std::string>> machine_filaments;
+    std::vector<ConnectMachineInfo>                    m_connect_machine_info_list;
 
     // Calibrate
     Preset const * calibrate_printer = nullptr;
@@ -248,7 +262,115 @@ public:
 
     // Read out the number of extruders from an active printer preset,
     // update size and content of filament_presets.
-    void                        update_multi_material_filament_presets(size_t to_delete_filament_id = size_t(-1));
+    void                        update_multi_material_filament_presets(size_t to_delete_filament_id = size_t(-1),
+                                                                       size_t old_num_filaments = size_t(-1));
+    // Rebuild old->new virtual filament mapping after mixed-row enable/delete
+    // changes when the physical filament count itself did not change.
+    void                        update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
+                                                               size_t old_num_filaments,
+                                                               size_t new_num_filaments,
+                                                               size_t deleted_mixed_idx = size_t(-1));
+    // Mapping generated during the latest filament count change.
+    // Index is old 1-based filament ID, value is new 1-based filament ID (0 = removed).
+    const std::vector<unsigned int>& last_filament_id_remap() const { return m_last_filament_id_remap; }
+    
+    // Build custom remap for mixed filament merge operations
+    // This is used when merging a mixed filament into another filament (physical or mixed)
+    void build_merge_filament_remap(size_t from_id, size_t to_id, size_t total_filaments)
+    {
+        m_last_filament_id_remap.assign(total_filaments + 1, 0);
+        for (size_t i = 0; i <= total_filaments; ++i) {
+            if (i == from_id + 1) {
+                // When from_id < to_id, the target also shifts down by 1 after
+                // source removal, so its new 1-based ID is `to_id` (not to_id+1).
+                if (from_id < to_id)
+                    m_last_filament_id_remap[i] = (unsigned int)(to_id);
+                else
+                    m_last_filament_id_remap[i] = (unsigned int)(to_id + 1);
+            } else if (i > from_id + 1) {
+                m_last_filament_id_remap[i] = (unsigned int)(i - 1);  // Shift down IDs after deleted one
+            } else {
+                m_last_filament_id_remap[i] = (unsigned int)i;  // Keep unchanged
+            }
+        }
+    }
+    
+    // Build custom remap for physical to mixed filament merge operations
+    // This accounts for virtual ID changes when a physical filament is deleted
+    // AND accounts for mixed filaments that depend on the physical filament being deleted
+    // num_physical: number of physical filaments before deletion
+    void build_merge_filament_remap(size_t from_id, size_t to_id, size_t total_filaments, size_t num_physical)
+    {
+        m_last_filament_id_remap.assign(total_filaments + 1, 0);
+        
+        // First, identify which mixed filaments will be deleted (those that depend on from_id)
+        std::set<size_t> deleted_mixed_indices;
+        unsigned int from_1based = (unsigned int)(from_id + 1);
+
+        std::vector<size_t> dependent = mixed_filaments.mixed_filaments_using_physical(from_1based);
+        size_t visible = 0;
+        const auto& mfs_ref = mixed_filaments.mixed_filaments();
+        for (size_t k = 0; k < mfs_ref.size(); ++k) {
+            if (!mfs_ref[k].enabled || mfs_ref[k].deleted) continue;
+            if (std::find(dependent.begin(), dependent.end(), k) != dependent.end())
+                deleted_mixed_indices.insert(num_physical + visible);
+            ++visible;
+        }
+        
+        for (size_t i = 0; i <= total_filaments; ++i) {
+            if (i == from_id + 1) {
+                // Source physical filament maps to target mixed filament
+                // The target's new virtual ID after deletion: new_num_physical + adjusted_mixed_idx
+                size_t target_old_virtual_id = to_id;  // 0-based
+                size_t target_old_mixed_idx = target_old_virtual_id - num_physical;
+                size_t new_num_physical = num_physical - 1;
+                // Subtract deleted mixed filaments that appear before the target
+                size_t deleted_before_target = 0;
+                for (size_t vid : deleted_mixed_indices)
+                    if (vid < target_old_virtual_id) ++deleted_before_target;
+                size_t target_new_virtual_id = new_num_physical + target_old_mixed_idx - deleted_before_target;
+                m_last_filament_id_remap[i] = (unsigned int)(target_new_virtual_id + 1);  // Convert to 1-based
+            } else if (i > from_id + 1 && i <= num_physical) {
+                // Subsequent physical filaments shift down by 1
+                m_last_filament_id_remap[i] = (unsigned int)(i - 1);
+            } else if (i > num_physical) {
+                // Mixed filament indices will change (because num_physical decreases)
+                size_t old_virtual_id = i - 1;
+                size_t old_mixed_idx = old_virtual_id - num_physical;
+                
+                // Check if this mixed filament will be deleted
+                if (deleted_mixed_indices.find(old_virtual_id) != deleted_mixed_indices.end()) {
+                    // This mixed filament will be deleted, map to 0 (invalid)
+                    m_last_filament_id_remap[i] = 0;
+                } else {
+                    // This mixed filament will be kept, calculate its new virtual ID.
+                    // Subtract deleted mixed filaments that appear before this one.
+                    size_t new_num_physical = num_physical - 1;
+                    size_t deleted_before = 0;
+                    for (size_t vid : deleted_mixed_indices)
+                        if (vid < old_virtual_id) ++deleted_before;
+                    size_t new_virtual_id = new_num_physical + old_mixed_idx - deleted_before;
+                    m_last_filament_id_remap[i] = (unsigned int)(new_virtual_id + 1);  // Convert to 1-based
+                }
+            } else {
+                // Physical filaments before source remain unchanged
+                m_last_filament_id_remap[i] = (unsigned int)i;
+            }
+        }
+    }
+    
+    // Set custom remap table directly
+    void set_filament_id_remap(const std::vector<unsigned int>& remap)
+    {
+        m_last_filament_id_remap = remap;
+    }
+    
+    std::vector<unsigned int> consume_last_filament_id_remap()
+    {
+        std::vector<unsigned int> out = std::move(m_last_filament_id_remap);
+        m_last_filament_id_remap.clear();
+        return out;
+    }
 
     // Update the is_compatible flag of all print and filament presets depending on whether they are marked
     // as compatible with the currently selected printer (and print in case of filament presets).
@@ -261,7 +383,12 @@ public:
     // Set the is_visible flag for printer vendors, printer models and printer variants
     // based on the user configuration.
     // If the "vendor" section is missing, enable all models and variants of the particular vendor.
-    void                        load_installed_printers(const AppConfig &config);
+    // Also merges newly shipped nozzle variants into app config when the model was already enabled (no wizard needed).
+    void                        load_installed_printers(AppConfig &config);
+
+    // If the user already enabled a printer model (any nozzle variant in app config), enable every variant
+    // currently defined in the vendor profile. Called from load_installed_printers; exposed for rare direct use.
+    void                        install_missing_variants_for_enabled_models(AppConfig &config);
 
     const std::string&          get_preset_name_by_alias(const Preset::Type& preset_type, const std::string& alias) const;
 
@@ -298,6 +425,12 @@ private:
     std::pair<PresetsConfigSubstitutions, std::string> load_system_presets_from_json(ForwardCompatibilitySubstitutionRule compatibility_rule);
     // Merge one vendor's presets with the other vendor's presets, report duplicates.
     std::vector<std::string>    merge_presets(PresetBundle &&other);
+    void                        build_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
+                                                        size_t old_num_filaments,
+                                                        size_t new_num_filaments,
+                                                        bool deleting_filament,
+                                                        unsigned int deleted_1based,
+                                                        size_t deleted_mixed_idx = size_t(-1));
     // Update renamed_from and alias maps of system profiles.
     void 						update_system_maps();
 
@@ -320,6 +453,7 @@ private:
     bool validation_mode = false;
     std::string vendor_to_validate = ""; 
     int m_errors = 0;
+    std::vector<unsigned int> m_last_filament_id_remap;
 
 };
 

@@ -2,6 +2,7 @@
 #include "I18N.hpp"
 
 #include <atomic>
+#include <cstdlib>
 #include <locale>
 #include <ctime>
 #include <cstdarg>
@@ -60,6 +61,7 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/nowide/convert.hpp>
+#include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/cstdio.hpp>
 
 // We are using quite an old TBB 2017 U7, which does not support global control API officially.
@@ -340,7 +342,7 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 	//BBS log file at C:\\Users\\[yourname]\\AppData\\Roaming\\Snapmaker_Orca\\log\\[log_filename].log
 	auto log_folder = boost::filesystem::path(g_data_dir) / "log";
 	if (!boost::filesystem::exists(log_folder)) {
-		boost::filesystem::create_directory(log_folder);
+		boost::filesystem::create_directories(log_folder);
 	}
 	auto full_path = (log_folder / file).make_preferred();
 
@@ -1162,7 +1164,8 @@ std::string string_printf(const char *format, ...)
 
 std::string header_slic3r_generated()
 {
-	return std::string(SLIC3R_APP_NAME " " Snapmaker_VERSION);
+    // Keep generated G-code branded like Snapmaker Orca for printer-side compatibility.
+    return std::string("Snapmaker Orca ") + Snapmaker_VERSION;
 }
 
 std::string header_gcodeviewer_generated()
@@ -1517,8 +1520,12 @@ bool bbl_calc_md5(std::string &filename, std::string &md5_out)
 // SoftFever: copy directory recursively
 void copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter)
 {
-    BOOST_LOG_TRIVIAL(info) << Slic3r::format("copy_directory_recursively %1% -> %2%", source, target);
+    BOOST_LOG_TRIVIAL(debug) << Slic3r::format("copy_directory_recursively %1% -> %2%", source, target);
     std::string error_message;
+
+    if (!boost::filesystem::exists(source) || !boost::filesystem::is_directory(source)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);        
+    }
 
     if (boost::filesystem::exists(target))
         boost::filesystem::remove_all(target);

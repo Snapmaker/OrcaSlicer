@@ -286,6 +286,7 @@ enum BedType {
     btPEI,
     btPTE,
     btPCT,
+    btGESP,
     btSuperTack,
     btCount
 };
@@ -428,6 +429,9 @@ static std::string get_bed_temp_key(const BedType type)
     if (type == btPTE)
         return "textured_plate_temp";
 
+    if (type == btGESP)
+        return "graphic_effect_plate_temp";
+
     return "";
 }
 
@@ -450,6 +454,9 @@ static std::string get_bed_temp_1st_layer_key(const BedType type)
 
     if (type == btPTE)
         return "textured_plate_temp_initial_layer";
+
+    if (type == btGESP)
+        return "graphic_effect_plate_temp_initial_layer";
 
     return "";
 }
@@ -1010,6 +1017,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                  fuzzy_skin_octaves))
     ((ConfigOptionFloat,                fuzzy_skin_persistence))
     ((ConfigOptionFloat,                gap_infill_speed))
+    ((ConfigOptionBool,                 enable_infill_filament_override))
+    ((ConfigOptionInt,                  infill_filament_use_base_first_layers))
+    ((ConfigOptionInt,                  infill_filament_use_base_last_layers))
     ((ConfigOptionInt,                  sparse_infill_filament))
     ((ConfigOptionFloatOrPercent,       sparse_infill_line_width))
     ((ConfigOptionPercent,              infill_wall_overlap))
@@ -1308,12 +1318,14 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,               eng_plate_temp))
     ((ConfigOptionInts,               hot_plate_temp)) // hot is short for high temperature
     ((ConfigOptionInts,               textured_plate_temp))
+    ((ConfigOptionInts,               graphic_effect_plate_temp))
     ((ConfigOptionInts,               supertack_plate_temp_initial_layer))
     ((ConfigOptionInts,               cool_plate_temp_initial_layer))
     ((ConfigOptionInts,               textured_cool_plate_temp_initial_layer))
     ((ConfigOptionInts,               eng_plate_temp_initial_layer))
     ((ConfigOptionInts,               hot_plate_temp_initial_layer)) // hot is short for high temperature
     ((ConfigOptionInts,               textured_plate_temp_initial_layer))
+    ((ConfigOptionInts,               graphic_effect_plate_temp_initial_layer))
     ((ConfigOptionBools,              enable_overhang_bridge_fan))
     ((ConfigOptionInts,               overhang_fan_speed))
     ((ConfigOptionEnumsGeneric,       overhang_fan_threshold))
@@ -1358,6 +1370,24 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBool,               ooze_prevention))
     ((ConfigOptionString,             filename_format))
     ((ConfigOptionStrings,            post_process))
+    ((ConfigOptionFloat,              mixed_color_layer_height_a))
+    ((ConfigOptionFloat,              mixed_color_layer_height_b))
+    ((ConfigOptionBool,               mixed_filament_gradient_mode))
+    ((ConfigOptionFloat,              mixed_filament_height_lower_bound))
+    ((ConfigOptionFloat,              mixed_filament_height_upper_bound))
+    ((ConfigOptionBool,               mixed_filament_advanced_dithering))
+    ((ConfigOptionFloat,              mixed_filament_pointillism_pixel_size))
+    ((ConfigOptionFloat,              mixed_filament_pointillism_line_gap))
+    ((ConfigOptionBool,               mixed_filament_component_bias_enabled))
+    ((ConfigOptionFloat,              mixed_filament_surface_indentation))
+    ((ConfigOptionBool,               mixed_filament_region_collapse))
+    ((ConfigOptionString,             mixed_filament_definitions))
+    ((ConfigOptionFloat,              dithering_z_step_size))
+    ((ConfigOptionBool,               dithering_local_z_mode))
+    ((ConfigOptionBool,               dithering_local_z_whole_objects))
+    ((ConfigOptionBool,               dithering_local_z_infill))
+    ((ConfigOptionBool,               dithering_local_z_direct_multicolor))
+    ((ConfigOptionBool,               dithering_step_painted_zones_only))
     ((ConfigOptionString,             printer_model))
     ((ConfigOptionFloat,              resolution))
     ((ConfigOptionFloats,             retraction_minimum_travel))
@@ -1397,6 +1427,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              prime_tower_brim_chamfer_max_width))
     ((ConfigOptionFloat,              wipe_tower_bridging))
     ((ConfigOptionPercent,            wipe_tower_extra_flow))
+    ((ConfigOptionFloat,              local_z_wipe_tower_purge_lines))
     ((ConfigOptionFloats,             flush_volumes_matrix))
     ((ConfigOptionFloats,             flush_volumes_vector))
 

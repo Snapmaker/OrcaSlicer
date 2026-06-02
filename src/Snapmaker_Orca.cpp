@@ -1120,9 +1120,23 @@ int CLI::run(int argc, char **argv)
     sliced_info_t sliced_info;
     std::map<std::string, std::string> record_key_values;
 
+    // Only honor downward_check when explicitly requested on CLI.
+    // This prevents accidental activation during normal GUI startup.
+    bool downward_check_requested = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--downward_check" || boost::algorithm::starts_with(arg, "--downward_check=") ||
+            arg == "--downward-check" || boost::algorithm::starts_with(arg, "--downward-check=")) {
+            downward_check_requested = true;
+            break;
+        }
+    }
+
     ConfigOptionBool* downward_check_option = m_config.option<ConfigOptionBool>("downward_check");
-    if (downward_check_option)
+    if (downward_check_option && downward_check_requested)
         downward_check = downward_check_option->value;
+    else
+        downward_check = false;
 
     bool start_gui = m_actions.empty() && !downward_check;
     if (start_gui) {
@@ -1256,6 +1270,12 @@ int CLI::run(int argc, char **argv)
     ConfigOptionBool* allow_newer_file_option = m_config.option<ConfigOptionBool>("allow_newer_file");
     if (allow_newer_file_option)
         allow_newer_file = allow_newer_file_option->value;
+    const char *force_allow_newer_file_env = boost::nowide::getenv("SNAPMAKER_ORCA_ALLOW_NEWER_FILE");
+    if (force_allow_newer_file_env != nullptr && *force_allow_newer_file_env != '\0' &&
+        std::strcmp(force_allow_newer_file_env, "0") != 0) {
+        BOOST_LOG_TRIVIAL(warning) << "Forcing CLI newer-file compatibility from SNAPMAKER_ORCA_ALLOW_NEWER_FILE";
+        allow_newer_file = true;
+    }
 
     ConfigOptionBool* avoid_extrusion_cali_region_option = m_config.option<ConfigOptionBool>("avoid_extrusion_cali_region");
     if (avoid_extrusion_cali_region_option)
@@ -3108,6 +3128,10 @@ int CLI::run(int argc, char **argv)
         plate_obj_size_info.obj_bbox= plate->get_objects_bounding_box();
         BOOST_LOG_TRIVIAL(info) << boost::format("plate %1%, object bbox: min {%2%, %3%, %4%} - max {%5%, %6%, %7%}")
                     %(plate_index+1) %plate_obj_size_info.obj_bbox.min.x() % plate_obj_size_info.obj_bbox.min.y() % plate_obj_size_info.obj_bbox.min.z() %plate_obj_size_info.obj_bbox.max.x() % plate_obj_size_info.obj_bbox.max.y() % plate_obj_size_info.obj_bbox.max.z();
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower begin"
+                                 << " plate=" << (plate_index + 1)
+                                 << " has_wipe_tower_x=" << print_config.has("wipe_tower_x")
+                                 << " smooth_timelapse=" << is_smooth_timelapse;
         if (!print_config.has("wipe_tower_x")) {
             plate_obj_size_info.has_wipe_tower = false;
             BOOST_LOG_TRIVIAL(info) << boost::format("can not found wipe_tower_x in config, set to no wipe tower");
@@ -3115,6 +3139,9 @@ int CLI::run(int argc, char **argv)
         }
 
         int valid_count = plate->printable_instance_size();
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower printable instances"
+                                 << " plate=" << (plate_index + 1)
+                                 << " valid_count=" << valid_count;
         if (valid_count <= 0){
             plate_obj_size_info.has_wipe_tower = false;
             BOOST_LOG_TRIVIAL(info) << boost::format("no printable object found, set to no wipe tower");
@@ -3123,6 +3150,9 @@ int CLI::run(int argc, char **argv)
 
         bool is_sequence = false;
         get_print_sequence(plate, print_config, is_sequence);
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower print sequence"
+                                 << " plate=" << (plate_index + 1)
+                                 << " is_sequence=" << is_sequence;
         if (is_sequence && valid_count > 1) {
             plate_obj_size_info.has_wipe_tower = false;
             BOOST_LOG_TRIVIAL(info) << boost::format("sequence print, valid_count=%1%, set to no wipe tower")%valid_count;
@@ -3131,6 +3161,16 @@ int CLI::run(int argc, char **argv)
 
         std::vector<int> extruders = plate->get_extruders_under_cli(true, print_config);
         unsigned int filaments_cnt = extruders.size();
+        std::ostringstream extruder_list;
+        for (size_t i = 0; i < extruders.size(); ++i) {
+            if (i != 0)
+                extruder_list << ",";
+            extruder_list << extruders[i];
+        }
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower extruders"
+                                 << " plate=" << (plate_index + 1)
+                                 << " filaments_cnt=" << filaments_cnt
+                                 << " extruders=[" << extruder_list.str() << "]";
         if ((filaments_cnt <= 1) && !is_smooth_timelapse){
             plate_obj_size_info.has_wipe_tower = false;
             BOOST_LOG_TRIVIAL(info) << boost::format("filaments_cnt=%1%, set to no wipe tower")%filaments_cnt;
@@ -3139,27 +3179,67 @@ int CLI::run(int argc, char **argv)
 
         ConfigOptionFloats *wipe_x_option = dynamic_cast<ConfigOptionFloats *>(print_config.option("wipe_tower_x"));
         ConfigOptionFloats *wipe_y_option = dynamic_cast<ConfigOptionFloats *>(print_config.option("wipe_tower_y"));
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower wipe options"
+                                 << " plate=" << (plate_index + 1)
+                                 << " wipe_x_option=" << (wipe_x_option != nullptr)
+                                 << " wipe_y_option=" << (wipe_y_option != nullptr)
+                                 << " wipe_x_size=" << (wipe_x_option != nullptr ? wipe_x_option->size() : 0)
+                                 << " wipe_y_size=" << (wipe_y_option != nullptr ? wipe_y_option->size() : 0);
+        if (wipe_x_option == nullptr || wipe_y_option == nullptr || wipe_x_option->size() == 0 || wipe_y_option->size() == 0) {
+            plate_obj_size_info.has_wipe_tower = false;
+            BOOST_LOG_TRIVIAL(error) << "check_plate_wipe_tower missing wipe tower coordinate options"
+                                     << " plate=" << (plate_index + 1);
+            return;
+        }
 
         plate_obj_size_info.wipe_x = wipe_x_option->get_at(plate_index);
         plate_obj_size_info.wipe_y = wipe_y_option->get_at(plate_index);
 
         ConfigOptionFloat* width_option = print_config.option<ConfigOptionFloat>("prime_tower_width", true);
+        ConfigOptionFloat* brim_width_option = print_config.option<ConfigOptionFloat>("prime_tower_brim_width", true);
+        ConfigOptionFloat* volume_option = print_config.option<ConfigOptionFloat>("prime_volume", true);
+        ConfigOptionFloat* brim_chamfer_max_width_option = print_config.option<ConfigOptionFloat>("prime_tower_brim_chamfer_max_width", true);
+        ConfigOptionBool* brim_chamfer_option = print_config.option<ConfigOptionBool>("prime_tower_brim_chamfer", true);
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower scalar options"
+                                 << " plate=" << (plate_index + 1)
+                                 << " width_option=" << (width_option != nullptr)
+                                 << " brim_width_option=" << (brim_width_option != nullptr)
+                                 << " volume_option=" << (volume_option != nullptr)
+                                 << " brim_chamfer_max_width_option=" << (brim_chamfer_max_width_option != nullptr)
+                                 << " brim_chamfer_option=" << (brim_chamfer_option != nullptr);
+        if (width_option == nullptr || brim_width_option == nullptr || volume_option == nullptr ||
+            brim_chamfer_max_width_option == nullptr || brim_chamfer_option == nullptr) {
+            plate_obj_size_info.has_wipe_tower = false;
+            BOOST_LOG_TRIVIAL(error) << "check_plate_wipe_tower missing scalar wipe tower options"
+                                     << " plate=" << (plate_index + 1);
+            return;
+        }
+
         plate_obj_size_info.wipe_width = width_option->value;
 
-        ConfigOptionFloat* brim_width_option = print_config.option<ConfigOptionFloat>("prime_tower_brim_width", true);
         float brim_width = brim_width_option->value;
 
-        ConfigOptionFloat* volume_option = print_config.option<ConfigOptionFloat>("prime_volume", true);
         float wipe_volume = volume_option->value;
 
-        ConfigOptionFloat* brim_chamfer_max_width_option = print_config.option<ConfigOptionFloat>("prime_tower_brim_chamfer_max_width", true);
         float brim_chamfer_max_width = brim_chamfer_max_width_option->value;
 
-        ConfigOptionBool* brim_chamfer_option = print_config.option<ConfigOptionBool>("prime_tower_brim_chamfer", true);
         bool brim_chamfer = brim_chamfer_option->value;
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower estimate input"
+                                 << " plate=" << (plate_index + 1)
+                                 << " wipe_x=" << plate_obj_size_info.wipe_x
+                                 << " wipe_y=" << plate_obj_size_info.wipe_y
+                                 << " wipe_width=" << plate_obj_size_info.wipe_width
+                                 << " wipe_volume=" << wipe_volume
+                                 << " brim_width=" << brim_width
+                                 << " brim_chamfer=" << brim_chamfer
+                                 << " brim_chamfer_max_width=" << brim_chamfer_max_width;
 
         Vec3d wipe_tower_size = plate->estimate_wipe_tower_size(print_config, plate_obj_size_info.wipe_width, wipe_volume, filaments_cnt);
         plate_obj_size_info.wipe_depth = wipe_tower_size(1);
+        BOOST_LOG_TRIVIAL(debug) << "check_plate_wipe_tower estimate result"
+                                 << " plate=" << (plate_index + 1)
+                                 << " wipe_depth=" << plate_obj_size_info.wipe_depth
+                                 << " wipe_height=" << wipe_tower_size(2);
 
         Vec3d origin = plate->get_origin();
         Vec3d start(origin(0) + plate_obj_size_info.wipe_x - brim_width, origin(1) + plate_obj_size_info.wipe_y, 0.f);

@@ -499,6 +499,27 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
     return toolchanges;
 }
 
+// Return the effective wipe tower volume for a given extruder: the greater of
+// the global prime_volume and the per-filament minimal purge. This ensures
+// per-filament overrides are respected even in non-SEMM mode.
+static float effective_wipe_tower_volume(const PrintConfig& config, size_t extruder_id)
+{
+    return std::max<float>(
+        (float)config.prime_volume,
+        (float)config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id));
+}
+
+// Return the effective wipe tower volume as the maximum across all filaments.
+// Used for tower depth estimation where we need to account for the worst case.
+static float effective_max_wipe_tower_volume(const PrintConfig& config)
+{
+    return std::max<float>(
+        (float)config.prime_volume,
+        (float)*std::max_element(
+            config.filament_minimal_purge_on_wipe_tower.values.begin(),
+            config.filament_minimal_purge_on_wipe_tower.values.end()));
+}
+
 } // namespace
 
 //BBS
@@ -3121,7 +3142,7 @@ const WipeTowerData &Print::wipe_tower_data(size_t filaments_cnt) const
             maximum *= 0.6; 
             const_cast<Print *>(this)->m_wipe_tower_data.depth = maximum / (layer_height * width);
         } else {
-            double wipe_volume = m_config.prime_volume;
+            double wipe_volume = effective_max_wipe_tower_volume(m_config);
             if (filaments_cnt == 1 && enable_timelapse_print()) {
                 const_cast<Print *>(this)->m_wipe_tower_data.depth = wipe_volume / (layer_height * width);
             } else {
@@ -3159,7 +3180,7 @@ void Print::_make_wipe_tower()
         for (unsigned int i = 0; i < number_of_extruders; ++i) {
             for (unsigned int j = 0; j < number_of_extruders; ++j) {
                 if (wipe_volumes[i][j] > 0) {
-                    wipe_volumes[i][j] = m_config.prime_volume;
+                    wipe_volumes[i][j] = effective_wipe_tower_volume(m_config, j);
                 }
             }
         }
@@ -3363,7 +3384,7 @@ void Print::_make_wipe_tower()
                     }
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
-                                                           toolchange.old_tool, toolchange.new_tool, (float) m_config.prime_volume);
+                                                           toolchange.old_tool, toolchange.new_tool, effective_wipe_tower_volume(m_config, toolchange.new_tool));
                     }
                     if (!local_z_toolchanges.empty())
                         current_extruder_id = local_z_toolchanges.back().new_tool;
@@ -3377,7 +3398,7 @@ void Print::_make_wipe_tower()
                 for (const auto extruder_id : nominal_layer_extruders) {
                     if ((first_layer && extruder_id == m_wipe_tower_data.tool_ordering.all_extruders().back()) || extruder_id !=
                         current_extruder_id) {
-                        float volume_to_wipe = m_config.prime_volume;
+                        float volume_to_wipe = effective_wipe_tower_volume(m_config, extruder_id);
                         if (m_config.purge_in_prime_tower && m_config.single_extruder_multi_material) {
                             volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
                             volume_to_wipe *= m_config.flush_multiplier;

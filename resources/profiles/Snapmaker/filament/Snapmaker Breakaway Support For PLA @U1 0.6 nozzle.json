@@ -11,7 +11,7 @@
   "filament_type": [
     "PLA"
   ],
-  "enable_pressure_advance": ["1"],
+  "enable_pressure_advance": ["0"],
   "filament_cost": ["69.98"],
   "filament_density": ["1.3"],
   "filament_flow_ratio": ["0.95"],

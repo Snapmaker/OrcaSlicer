@@ -2015,43 +2015,47 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     Vec2f current_pos = writer.pos_rotated();
     float box_edge_x = m_perimeter_width / 2.f;
     float gap_y      = 0.f;
-    if (m_use_gap_wall) {
-        float ramming_depth = 0.f;
-        if (m_layer_info != m_plan.end()) {
-            for (const auto& b : m_layer_info->tool_changes) {
-                if (b.new_tool == new_tool) {
-                    ramming_depth = b.ramming_depth;
-                    break;
-                }
+
+    // Always compute gap Y to position nozzle at ramming-wipe boundary, even without gap wall
+    float ramming_depth = 0.f;
+    if (m_layer_info != m_plan.end()) {
+        for (const auto& b : m_layer_info->tool_changes) {
+            if (b.new_tool == new_tool) {
+                ramming_depth = b.ramming_depth;
+                break;
             }
         }
+    }
 
-        float gap_x      = (predict_ramming_end_x((int) m_current_tool) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
-        float ramming_lw = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;
-        float ramming_ys = ramming_lw * m_filpar[m_current_tool].ramming_step_multiplicator * m_extra_spacing_ramming;
-        gap_y            = m_depth_traversed + ramming_depth + ramming_ys + ramming_lw / 2.f + m_perimeter_width / 2.f;
+    float gap_x      = (predict_ramming_end_x((int) m_current_tool) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
+    float ramming_lw = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;
+    float ramming_ys = ramming_lw * m_filpar[m_current_tool].ramming_step_multiplicator * m_extra_spacing_ramming;
+    gap_y            = m_depth_traversed + ramming_depth + ramming_ys + ramming_lw / 2.f + m_perimeter_width / 2.f;
+    box_edge_x       = (gap_x == 0.f) ? m_perimeter_width / 2.f : m_wipe_tower_width - m_perimeter_width / 2.f;
 
+    if (m_use_gap_wall) {
         float margin         = 5.f * m_perimeter_width;
         float rib_protrusion = (m_wall_type == (int) wtwRib) ? m_rib_width / 2.f : 0.f;
         float outer_dist     = margin + rib_protrusion + m_wipe_tower_brim_width;
         float wall_outer_x   = (gap_x == 0.f) ? -outer_dist : m_wipe_tower_width + outer_dist;
-        box_edge_x           = (gap_x == 0.f) ? m_perimeter_width / 2.f : m_wipe_tower_width - m_perimeter_width / 2.f;
 
         current_pos = writer.rotate(Vec2f(wall_outer_x, gap_y + m_perimeter_width / 2.f));
-    }
 
-    // Travel to where we assume we are. Custom toolchange or some special T code handling (parking extruder etc)
-    // gcode could have left the extruder somewhere, we cannot just start extruding. We should also inform the
-    // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
-    //Vec2f current_pos = writer.pos_rotated();
-    writer
-        .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
-        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
-                Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
+        // Travel to where we assume we are. Custom toolchange or some special T code handling (parking extruder etc)
+        // gcode could have left the extruder somewhere, we cannot just start extruding. We should also inform the
+        // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
+        writer
+            .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
+            .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
+                    Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
 
-    // Gap travel: through gap into cleaning_box edge before Load
-    if (m_use_gap_wall)
+        // Gap travel: through gap into cleaning_box edge before Load
         writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
+    } else {
+        writer
+            .feedrate(m_travel_speed * 60.f)
+            .travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
+    }
 
     writer.append("[deretraction_from_wipe_tower_generator]");
 
@@ -2125,7 +2129,6 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
 
     float retract_length = m_filpar[m_current_tool].retract_length;
     float retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
-    bool should_flat_ironging = true;
 
     // now the wiping itself:
     for (int i = 0; true; ++i) {
@@ -2140,49 +2143,46 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
                 wipe_speed = std::min(target_speed, wipe_speed + 50.f);
         }
 
-        float ironing_length = 3.;
         float traversed_x = writer.x();
-        if (i == 0) 
+        if (i == 0)
         {
-            if (m_left_to_right) 
-            {
-                float dx = xr - writer.pos().x();
-                if (abs(dx) < ironing_length)
-                    ironing_length = abs(dx);
-                writer.extrude(writer.x() + ironing_length, writer.y(), wipe_speed);
-                writer.retract(retract_length, retract_speed);
-                writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 600.);
-                if (should_flat_ironging)
+            if (m_use_gap_wall) {
+                float ironing_length = 3.;
+                if (m_left_to_right)
                 {
+                    float dx = xr - writer.pos().x();
+                    if (abs(dx) < ironing_length)
+                        ironing_length = abs(dx);
+                    writer.extrude(writer.x() + ironing_length, writer.y(), wipe_speed);
+                    writer.retract(retract_length, retract_speed);
+                    writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 600.);
                     writer.travel(writer.x() + 0.5f * ironing_length, writer.y(), 240.);
                     Vec2f pos{writer.x() + 1.f * ironing_length, writer.y()};
                     writer.spiral_flat_ironing(writer.pos(), flat_iron_area, m_perimeter_width, flat_iron_speed);
                     writer.travel(pos, wipe_speed);
-                } 
+                    writer.retract(-retract_length, retract_speed);
+                    writer.extrude(xr, writer.y(), wipe_speed);
+                }
                 else
                 {
-                    writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 240.);
-                }
-                writer.retract(-retract_length, retract_speed);
-                writer.extrude(xr, writer.y(), wipe_speed);
-            }
-            else
-            {
-                float dx = xl - writer.pos().x();
-                if (abs(dx) < ironing_length)
-                    ironing_length = abs(dx);
-                writer.extrude(writer.x() - ironing_length, writer.y(), wipe_speed);
-                writer.retract(retract_length, retract_speed);
-                writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 600.);
-                if (should_flat_ironging) {
+                    float dx = xl - writer.pos().x();
+                    if (abs(dx) < ironing_length)
+                        ironing_length = abs(dx);
+                    writer.extrude(writer.x() - ironing_length, writer.y(), wipe_speed);
+                    writer.retract(retract_length, retract_speed);
+                    writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 600.);
                     writer.travel(writer.x() - 0.5f * ironing_length, writer.y(), 240.);
                     Vec2f pos{writer.x() - 1.0f * ironing_length, writer.y()};
                     writer.spiral_flat_ironing(writer.pos(), flat_iron_area, m_perimeter_width, flat_iron_speed);
                     writer.travel(pos, wipe_speed);
-                } else
-                    writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 240.);
-                writer.retract(-retract_length, retract_speed);
-                writer.extrude(xl, writer.y(), wipe_speed);
+                    writer.retract(-retract_length, retract_speed);
+                    writer.extrude(xl, writer.y(), wipe_speed);
+                }
+            } else {
+                if (m_left_to_right)
+                    writer.extrude(xr, writer.y(), wipe_speed);
+                else
+                    writer.extrude(xl, writer.y(), wipe_speed);
             }
         }
         else

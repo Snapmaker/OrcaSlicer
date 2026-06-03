@@ -10027,6 +10027,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             if (current_project_empty) {
                                 static const t_config_option_keys imported_project_option_keys = {
                                     "filament_colour",
+                                    "filament_multi_colors",
+                                    "filament_colour_mode",
+                                    "filament_colour_sku",
                                     "mixed_filament_definitions",
                                     "mixed_filament_gradient_mode",
                                     "mixed_filament_height_lower_bound",

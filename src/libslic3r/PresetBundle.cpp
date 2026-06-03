@@ -57,6 +57,49 @@ void startup_profile_log(const std::string& message)
         BOOST_LOG_TRIVIAL(warning) << "[StartupProfile] " << message;
 }
 
+static void ensure_filament_color_fields_aligned(DynamicPrintConfig &config)
+{
+    ConfigOptionStrings *filament_color = config.option<ConfigOptionStrings>("filament_colour");
+    if (filament_color == nullptr)
+        return;
+
+    const size_t target_count = filament_color->values.size();
+    auto *multi_colors = config.option<ConfigOptionStrings>("filament_multi_colors", true);
+    auto *modes        = config.option<ConfigOptionInts>("filament_colour_mode", true);
+    auto *skus         = config.option<ConfigOptionStrings>("filament_colour_sku", true);
+
+    const size_t old_multi_count = multi_colors->values.size();
+    multi_colors->resize(target_count);
+    modes->resize(target_count);
+    skus->resize(target_count);
+
+    for (size_t i = 0; i < target_count; ++i) {
+        if (modes->values[i] != 0 && modes->values[i] != 1)
+            modes->values[i] = 0;
+        const bool has_sku = !skus->values[i].empty();
+        const bool single_or_empty_multi = multi_colors->values[i].empty() || multi_colors->values[i].find('|') == std::string::npos;
+        if (i >= old_multi_count || multi_colors->values[i].empty() || (!has_sku && modes->values[i] == 0 && single_or_empty_multi))
+            multi_colors->values[i] = filament_color->values[i];
+    }
+}
+
+static void erase_filament_color_fields(DynamicPrintConfig &config, size_t index)
+{
+    auto erase_string_at = [index](ConfigOptionStrings *opt) {
+        if (opt != nullptr && opt->values.size() > index)
+            opt->values.erase(opt->values.begin() + index);
+    };
+    auto erase_int_at = [index](ConfigOptionInts *opt) {
+        if (opt != nullptr && opt->values.size() > index)
+            opt->values.erase(opt->values.begin() + index);
+    };
+
+    erase_string_at(config.option<ConfigOptionStrings>("filament_multi_colors", true));
+    erase_int_at(config.option<ConfigOptionInts>("filament_colour_mode", true));
+    erase_string_at(config.option<ConfigOptionStrings>("filament_colour_sku", true));
+    ensure_filament_color_fields_aligned(config);
+}
+
 } // namespace
 
 static std::vector<std::string> s_project_options {
@@ -64,6 +107,9 @@ static std::vector<std::string> s_project_options {
     "flush_volumes_matrix",
     // BBS
     "filament_colour",
+    "filament_multi_colors",
+    "filament_colour_mode",
+    "filament_colour_sku",
     "wipe_tower_x",
     "wipe_tower_y",
     "wipe_tower_rotation_angle",
@@ -150,6 +196,7 @@ PresetBundle::PresetBundle()
     this->printers.select_preset(0);
 
     this->project_config.apply_only(FullPrintConfig::defaults(), s_project_options);
+    ensure_filament_color_fields_aligned(this->project_config);
 }
 
 PresetBundle::PresetBundle(const PresetBundle &rhs)
@@ -1728,6 +1775,7 @@ void PresetBundle::update_selections(AppConfig &config)
     }
     filament_colors.resize(filament_presets.size(), "#26A69A");
     project_config.option<ConfigOptionStrings>("filament_colour")->values = filament_colors;
+    ensure_filament_color_fields_aligned(project_config);
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
         boost::algorithm::split(matrix, config.get_printer_setting(initial_printer_profile_name, "flush_volumes_matrix"), boost::algorithm::is_any_of("|"));
@@ -1864,6 +1912,7 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     }
     filament_colors.resize(filament_presets.size(), "#26A69A");
     project_config.option<ConfigOptionStrings>("filament_colour")->values = filament_colors;
+    ensure_filament_color_fields_aligned(project_config);
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
         boost::algorithm::split(matrix, config.get_printer_setting(initial_printer_profile_name, "flush_volumes_matrix"), boost::algorithm::is_any_of("|"));
@@ -1993,6 +2042,7 @@ void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
         ams_multi_color_filment.resize(to_del_filament_id);
     }
 
+    erase_filament_color_fields(project_config, to_del_filament_id);
     update_multi_material_filament_presets(to_del_filament_id, old_filament_count);
 }
 
@@ -2006,12 +2056,16 @@ void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> ne
     ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     filament_color->resize(n);
     ams_multi_color_filment.resize(n);
+    ensure_filament_color_fields_aligned(project_config);
     // BBS set new filament color to new_color
     if (old_filament_count < n) {
         if (!new_colors.empty()) {
+            ConfigOptionStrings *multi_colors = project_config.option<ConfigOptionStrings>("filament_multi_colors", true);
             for (int i = old_filament_count; i < n; i++) {
                 filament_color->values[i] = new_colors[i - old_filament_count];
+                multi_colors->values[i] = new_colors[i - old_filament_count];
             }
+            ensure_filament_color_fields_aligned(project_config);
         }
     }
     update_multi_material_filament_presets(size_t(-1), size_t(old_filament_count));
@@ -2028,13 +2082,17 @@ void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
     ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     filament_color->resize(n);
     ams_multi_color_filment.resize(n);
+    ensure_filament_color_fields_aligned(project_config);
 
     //BBS set new filament color to new_color
     if (old_filament_count < n) {
         if (!new_color.empty()) {
+            ConfigOptionStrings *multi_colors = project_config.option<ConfigOptionStrings>("filament_multi_colors", true);
             for (int i = old_filament_count; i < n; i++) {
                 filament_color->values[i] = new_color;
+                multi_colors->values[i] = new_color;
             }
+            ensure_filament_color_fields_aligned(project_config);
         }
     }
 
@@ -2098,6 +2156,7 @@ unsigned int PresetBundle::sync_ams_list(unsigned int &unknowns)
     ConfigOptionStrings *filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     filament_color->resize(filament_presets.size());
     filament_color->values = filament_colors;
+    ensure_filament_color_fields_aligned(project_config);
     update_multi_material_filament_presets();
     return filament_presets.size();
 }
@@ -2814,6 +2873,7 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
 
         // 4) Load the project config values (the per extruder wipe matrix etc).
         this->project_config.apply_only(config, s_project_options);
+        ensure_filament_color_fields_aligned(this->project_config);
 
         break;
     }

@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "material_key": "Snapmaker PLA Dual Silk",
+  "vendor": "Snapmaker",
+  "filament_type": "PLA",
+  "filament_sub_type": "Dual Silk",
+  "colors": [
+    {
+      "name": "Sunset Ember",
+      "sku": "34202",
+      "mode": 1,
+      "primary_color": "#D9A63A",
+      "colors": [
+        "#D9A63A",
+        "#CC434F"
+      ]
+    },
+    {
+      "name": "Aurora Gold",
+      "sku": "34203",
+      "mode": 1,
+      "primary_color": "#D9A63A",
+      "colors": [
+        "#D9A63A",
+        "#9675CD"
+      ]
+    },
+    {
+      "name": "Solar Alloy",
+      "sku": "34204",
+      "mode": 1,
+      "primary_color": "#D9A63A",
+      "colors": [
+        "#D9A63A",
+        "#C4C7D9"
+      ]
+    },
+    {
+      "name": "Mint Lemonade",
+      "sku": "34205",
+      "mode": 1,
+      "primary_color": "#ECED17",
+      "colors": [
+        "#ECED17",
+        "#44ADE5"
+      ]
+    },
+    {
+      "name": "Sea Glass",
+      "sku": "34206",
+      "mode": 1,
+      "primary_color": "#44ADE5",
+      "colors": [
+        "#44ADE5",
+        "#18CCAF"
+      ]
+    },
+    {
+      "name": "Ice Lake",
+      "sku": "34207",
+      "mode": 1,
+      "primary_color": "#C4C7D9",
+      "colors": [
+        "#C4C7D9",
+        "#44ADE5"
+      ]
+    },
+    {
+      "name": "City Billboar",
+      "sku": "34208",
+      "mode": 1,
+      "primary_color": "#CBF914",
+      "colors": [
+        "#CBF914",
+        "#D623AA"
+      ]
+    }
+  ]
+}

@@ -325,6 +325,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/MixedFilamentBadge.hpp
     GUI/ObjColorDialog.cpp
     GUI/ObjColorDialog.hpp
+    GUI/OfficialFilamentColorLibrary.cpp
+    GUI/OfficialFilamentColorLibrary.hpp
     GUI/ObjectDataViewModel.cpp
     GUI/ObjectDataViewModel.hpp
     GUI/OG_CustomCtrl.cpp

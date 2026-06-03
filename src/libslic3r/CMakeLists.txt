@@ -464,11 +464,12 @@ if (APPLE)
         )
 endif ()
 
+list(APPEND lisbslic3r_sources Format/STEP.hpp)
 if (SLIC3R_ENABLE_STEP)
-    list(APPEND lisbslic3r_sources
-        Format/STEP.cpp
-        Format/STEP.hpp
-    )
+    list(APPEND lisbslic3r_sources Format/STEP.cpp)
+else()
+    # OCCT-free stub so STEP callers still compile and link on ARM64
+    list(APPEND lisbslic3r_sources Format/STEP_stub.cpp)
 endif()
 
 add_library(libslic3r STATIC ${lisbslic3r_sources}

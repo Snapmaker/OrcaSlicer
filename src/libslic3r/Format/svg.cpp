@@ -9,6 +9,11 @@
 
 #include <boost/log/trivial.hpp>
 
+// SVG-to-3D extrusion is implemented with OpenCASCADE (OCCT). When OCCT is
+// unavailable (e.g. Windows ARM64; OCCT 7.6 has no ARM64 support), compile an
+// OCCT-free stub instead (see the #else branch at the bottom of this file).
+#ifdef SLIC3R_ENABLE_STEP
+
 #include "BRepBuilderAPI_MakeWire.hxx"
 #include "BRepBuilderAPI_MakeEdge.hxx"
 #include "BRepBuilderAPI_MakeFace.hxx"
@@ -400,3 +405,16 @@ bool load_svg(const char *path, Model *model, std::string &message)
     return true;
 }
 } // namespace Slic3r
+
+#else // !SLIC3R_ENABLE_STEP
+
+// OCCT-free stub: SVG-to-3D import unavailable in this build.
+namespace Slic3r {
+bool load_svg(const char * /*path*/, Model * /*model*/, std::string &message)
+{
+    message = "SVG import is not supported in this build.";
+    return false;
+}
+} // namespace Slic3r
+
+#endif // SLIC3R_ENABLE_STEP

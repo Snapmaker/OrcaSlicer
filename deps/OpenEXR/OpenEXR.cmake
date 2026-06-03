@@ -36,6 +36,20 @@ else ()
     set(_patch_cmd "")
 endif ()
 
+# On ARM64 Windows, OpenEXR 2.5.5's cmake SSE2 probe compiles successfully
+# (MSVC 14.4x emmintrin.h lists ARM64 as supported) but the actual IlmImf
+# SIMD code doesn't build correctly. Force-disable SSE2/SSSE3 on ARM64.
+if (MSVC AND "${DEPS_ARCH}" STREQUAL "arm64")
+    set(_openexr_simd_args
+        -DOPENEXR_IMF_HAVE_SSE2=OFF
+        -DOPENEXR_IMF_HAVE_SSSE3=OFF
+        -DILMBASE_HAVE_SSE=OFF
+        -DILMBASE_FORCE_DISABLE_INTEL_SSE=ON
+    )
+else()
+    set(_openexr_simd_args "")
+endif()
+
 Snapmaker_Orca_add_cmake_project(OpenEXR
     # GIT_REPOSITORY https://github.com/openexr/openexr.git
     URL https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v2.5.5.zip
@@ -49,6 +63,7 @@ Snapmaker_Orca_add_cmake_project(OpenEXR
         -DPYILMBASE_ENABLE:BOOL=OFF
         -DOPENEXR_VIEWERS_ENABLE:BOOL=OFF
         -DOPENEXR_BUILD_UTILS:BOOL=OFF
+        ${_openexr_simd_args}
 )
 endif()
 

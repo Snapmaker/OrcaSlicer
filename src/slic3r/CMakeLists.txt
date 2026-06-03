@@ -118,6 +118,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/filamentsync/FilamentColorRadio.cpp
     GUI/filamentsync/FilamentColorRadio.hpp
     GUI/filamentsync/FilamentData.hpp
+    GUI/filamentsync/FilamentSyncAlgorithm.cpp
+    GUI/filamentsync/FilamentSyncAlgorithm.hpp
     GUI/filamentsync/MachineFilamentPicker.cpp
     GUI/filamentsync/MachineFilamentPicker.hpp
     GUI/filamentsync/PlaterPreview.cpp

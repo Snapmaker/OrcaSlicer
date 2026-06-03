@@ -142,5 +142,39 @@ void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentDat
         m_mappingChangedCallback();
 }
 
+void FilamentColorMapBoxGroup::updateGroupMappings(const std::vector<int>& machineIndices)
+{
+    const auto boxCount     = static_cast<int>(m_boxList.size());
+    const auto indexCount   = static_cast<int>(machineIndices.size());
+    const auto machineCount = static_cast<int>(m_machineDataList.size());
+    const int  n            = std::min(boxCount, indexCount);
+
+    for (int i = 0; i < n; ++i) {
+        auto boxIt = m_boxList.begin();
+        std::advance(boxIt, i);
+
+        int mi = machineIndices[i];
+        if (mi >= 0 && mi < machineCount) {
+            auto mIt = m_machineDataList.begin();
+            std::advance(mIt, mi);
+            (*boxIt)->updateBelowData(*mIt);
+        } else {
+            (*boxIt)->updateBelowData(makeDefaultBelow((*boxIt)->getAboveData().m_index));
+        }
+    }
+
+    // Unmatched remaining boxes (design count > machineIndices size)
+    for (int i = n; i < boxCount; ++i) {
+        auto boxIt = m_boxList.begin();
+        std::advance(boxIt, i);
+        (*boxIt)->updateBelowData(makeDefaultBelow((*boxIt)->getAboveData().m_index));
+    }
+
+    Layout();
+
+    if (m_mappingChangedCallback)
+        m_mappingChangedCallback();
+}
+
 } // namespace GUI
 } // namespace Slic3r

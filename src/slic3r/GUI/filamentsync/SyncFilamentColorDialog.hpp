@@ -45,10 +45,9 @@ private:
     void loadPlateThumbnail(unsigned int plateIndex);
     void loadCoverPreview();
 
-    wxBitmap generateCoverPreview(const ThumbnailData& thumb,
-                                   const ThumbnailData& noLightThumb,
-                                   const std::list<FilamentData>& filamentMapping);
-
+    static wxBitmap generateCoverPreview(const ThumbnailData& thumb,
+                                          const ThumbnailData& noLightThumb,
+                                          const std::list<FilamentData>& filamentMapping);
     static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
 
     // Mode selection

@@ -3,6 +3,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <vector>
 
 #include <wx/panel.h>
 
@@ -32,6 +33,10 @@ public:
     void showMachineFilamentPicker(int boxIndex);
     void updateBoxBelowData(int boxIndex, const FilamentData& machineData);
     int getBoxCount() const;
+
+    // Batch update all boxes from algorithm result.
+    // machineIndices[i] = machine filament index for design box i, or -1 = unmatched.
+    void updateGroupMappings(const std::vector<int>& machineIndices);
 
     void bindMappingChangedCallback(std::function<void()> cb);
 

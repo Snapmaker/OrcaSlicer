@@ -36,35 +36,54 @@ else ()
     set(_patch_cmd "")
 endif ()
 
-# On ARM64 Windows, OpenEXR 2.5.5's cmake SSE2 probe compiles successfully
-# (MSVC 14.4x emmintrin.h lists ARM64 as supported) but the actual IlmImf
-# SIMD code doesn't build correctly. Force-disable SSE2/SSSE3 on ARM64.
 if (MSVC AND "${DEPS_ARCH}" STREQUAL "arm64")
-    set(_openexr_simd_args
-        -DOPENEXR_IMF_HAVE_SSE2=OFF
-        -DOPENEXR_IMF_HAVE_SSSE3=OFF
-        -DILMBASE_HAVE_SSE=OFF
-        -DILMBASE_FORCE_DISABLE_INTEL_SSE=ON
+    # Windows ARM64: MSVC 14.4x emmintrin.h incorrectly includes ARM64 in its
+    # guard but SSE2 emulation is incomplete for IlmImf. Use CMAKE_CACHE_ARGS
+    # (sets with FORCE) instead of CMAKE_ARGS so the auto-detection is truly
+    # suppressed — CMAKE_ARGS can't override a value already in the cache.
+    ExternalProject_Add(dep_OpenEXR
+        EXCLUDE_FROM_ALL    ON
+        URL      https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v2.5.5.zip
+        URL_HASH SHA256=0307a3d7e1fa1e77e9d84d7e9a8694583fbbbfd50bdc6884e2c96b8ef6b902de
+        INSTALL_DIR  ${DESTDIR}
+        DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/OpenEXR
+        CMAKE_GENERATOR             "Visual Studio 17 2022"
+        CMAKE_GENERATOR_PLATFORM    "ARM64"
+        CMAKE_CACHE_ARGS
+            -DCMAKE_INSTALL_PREFIX:STRING=${DESTDIR}
+            -DCMAKE_PREFIX_PATH:STRING=${DESTDIR}
+            -DCMAKE_BUILD_TYPE:STRING=Release
+            -DBUILD_SHARED_LIBS:BOOL=OFF
+            -DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=ON
+            -DBUILD_TESTING:BOOL=OFF
+            -DPYILMBASE_ENABLE:BOOL=OFF
+            -DOPENEXR_VIEWERS_ENABLE:BOOL=OFF
+            -DOPENEXR_BUILD_UTILS:BOOL=OFF
+            -DCMAKE_POLICY_VERSION_MINIMUM:STRING=3.5
+            -DOPENEXR_IMF_HAVE_SSE2:BOOL=OFF
+            -DOPENEXR_IMF_HAVE_SSSE3:BOOL=OFF
+            -DOPENEXR_IMF_HAVE_SSE4_1:BOOL=OFF
+            -DILMBASE_HAVE_SSE:BOOL=OFF
+            -DILMBASE_FORCE_DISABLE_INTEL_SSE:BOOL=ON
+        BUILD_COMMAND   ${CMAKE_COMMAND} --build . --config Release -- /m
+        INSTALL_COMMAND ${CMAKE_COMMAND} --build . --target install --config Release
     )
 else()
-    set(_openexr_simd_args "")
+    Snapmaker_Orca_add_cmake_project(OpenEXR
+        # GIT_REPOSITORY https://github.com/openexr/openexr.git
+        URL      https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v2.5.5.zip
+        URL_HASH SHA256=0307a3d7e1fa1e77e9d84d7e9a8694583fbbbfd50bdc6884e2c96b8ef6b902de
+        PATCH_COMMAND ${_patch_cmd}
+        DEPENDS ${ZLIB_PKG}
+        GIT_TAG v2.5.5
+        CMAKE_ARGS
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+            -DBUILD_TESTING=OFF
+            -DPYILMBASE_ENABLE:BOOL=OFF
+            -DOPENEXR_VIEWERS_ENABLE:BOOL=OFF
+            -DOPENEXR_BUILD_UTILS:BOOL=OFF
+    )
 endif()
-
-Snapmaker_Orca_add_cmake_project(OpenEXR
-    # GIT_REPOSITORY https://github.com/openexr/openexr.git
-    URL https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v2.5.5.zip
-    URL_HASH SHA256=0307a3d7e1fa1e77e9d84d7e9a8694583fbbbfd50bdc6884e2c96b8ef6b902de
-    PATCH_COMMAND ${_patch_cmd}
-    DEPENDS ${ZLIB_PKG}
-    GIT_TAG v2.5.5
-    CMAKE_ARGS
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        -DBUILD_TESTING=OFF
-        -DPYILMBASE_ENABLE:BOOL=OFF
-        -DOPENEXR_VIEWERS_ENABLE:BOOL=OFF
-        -DOPENEXR_BUILD_UTILS:BOOL=OFF
-        ${_openexr_simd_args}
-)
 endif()
 
 if (MSVC)

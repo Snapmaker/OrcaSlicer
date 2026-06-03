@@ -1,0 +1,120 @@
+name: Build Windows ARM64
+
+on:
+  push:
+    branches: [ feat/windows-arm64 ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'build_release_vs2022.bat'
+      - '.github/workflows/build_windows_arm64.yml'
+
+jobs:
+  build-arm64:
+    name: Windows ARM64 (native)
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install MSYS2 (clangarm64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-gmp
+            mingw-w64-clang-aarch64-mpfr
+
+      - name: Generate MSVC-compatible import libs for GMP and MPFR
+        shell: pwsh
+        run: |
+          $msys2Root = "C:\msys64"
+          $clangArm64Bin = "$msys2Root\clangarm64\bin"
+          $clangArm64Inc = "$msys2Root\clangarm64\include"
+          $llvmDlltool = (Get-Command llvm-dlltool -ErrorAction SilentlyContinue)?.Source
+          if (-not $llvmDlltool) {
+            # Fall back to VS-bundled llvm-dlltool
+            $vsLlvmBase = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\ARM64\bin"
+            $llvmDlltool = "$vsLlvmBase\llvm-dlltool.exe"
+          }
+
+          foreach ($lib in @(
+            @{ dll = "libgmp-10.dll";  out = "libgmp-10.lib"  },
+            @{ dll = "libmpfr-4.dll";  out = "libmpfr-4.lib"  }
+          )) {
+            $dllPath = "$clangArm64Bin\$($lib.dll)"
+            $libPath = "$clangArm64Bin\$($lib.out)"
+            Write-Host "Generating $($lib.out) from $($lib.dll)"
+            & "$llvmDlltool" -m arm64 -l $libPath -D $lib.dll -d ""
+            # Use dumpbin + lib.exe if llvm-dlltool produces an empty def
+            if (-not (Test-Path $libPath) -or (Get-Item $libPath).Length -eq 0) {
+              $defPath = "$env:TEMP\$($lib.dll).def"
+              $exports = & dumpbin /exports $dllPath 2>&1 |
+                Select-String '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' |
+                ForEach-Object { $_.Matches[0].Groups[1].Value }
+              "EXPORTS" | Set-Content $defPath
+              $exports | Add-Content $defPath
+              & lib.exe /DEF:$defPath /MACHINE:ARM64 /OUT:$libPath /NOLOGO
+            }
+          }
+
+          # Stage libs and headers in the repo blob directories so cmake picks them up
+          New-Item -ItemType Directory -Force -Path "deps\GMP\gmp\lib\win-arm64"  | Out-Null
+          New-Item -ItemType Directory -Force -Path "deps\MPFR\mpfr\lib\win-arm64" | Out-Null
+          Copy-Item "$clangArm64Bin\libgmp-10.dll"  "deps\GMP\gmp\lib\win-arm64\"
+          Copy-Item "$clangArm64Bin\libgmp-10.lib"  "deps\GMP\gmp\lib\win-arm64\"
+          Copy-Item "$clangArm64Bin\libmpfr-4.dll"  "deps\MPFR\mpfr\lib\win-arm64\"
+          Copy-Item "$clangArm64Bin\libmpfr-4.lib"  "deps\MPFR\mpfr\lib\win-arm64\"
+          Copy-Item "$clangArm64Inc\gmp.h"           "deps\GMP\gmp\include\"
+          Copy-Item "$clangArm64Inc\mpfr.h"          "deps\MPFR\mpfr\include\" -ErrorAction SilentlyContinue
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        id: cache-deps
+        with:
+          path: deps/build-arm64/OrcaSlicer_dep
+          key: deps-arm64-${{ hashFiles('deps/**') }}-${{ runner.os }}
+
+      - name: Build dependencies (ARM64)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          cd deps
+          mkdir build-arm64
+          cd build-arm64
+          cmake ../ -G "Visual Studio 17 2022" -A ARM64 ^
+            -DDESTDIR="%CD%/OrcaSlicer_dep" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DDEP_DEBUG=OFF
+          cmake --build . --config Release --target deps -- -m
+
+      - name: Build Snapmaker OrcaSlicer (ARM64)
+        shell: cmd
+        run: |
+          set DEPS=%CD%\deps\build-arm64\OrcaSlicer_dep
+          mkdir build-arm64
+          cd build-arm64
+          cmake .. -G "Visual Studio 17 2022" -A ARM64 ^
+            -DBBL_RELEASE_TO_PUBLIC=1 ^
+            -DORCA_TOOLS=ON ^
+            -DSLIC3R_ENABLE_STEP=OFF ^
+            -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" ^
+            -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+          cmake --build . --config Release --target ALL_BUILD -- -m
+          cmake --build . --target install --config Release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snapmaker-OrcaSlicer-Windows-ARM64
+          path: build-arm64/Snapmaker_Orca/
+          retention-days: 30

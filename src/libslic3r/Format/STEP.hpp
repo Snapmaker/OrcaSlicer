@@ -1,5 +1,7 @@
 #ifndef slic3r_Format_STEP_hpp_
 #define slic3r_Format_STEP_hpp_
+
+#ifdef SLIC3R_ENABLE_STEP
 #include "XCAFDoc_DocumentTool.hxx"
 #include "XCAFApp_Application.hxx"
 #include "XCAFDoc_ShapeTool.hxx"
@@ -107,4 +109,5 @@ private:
 
 }; // namespace Slic3r
 
+#endif /* SLIC3R_ENABLE_STEP */
 #endif /* slic3r_Format_STEP_hpp_ */

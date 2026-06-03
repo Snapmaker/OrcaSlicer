@@ -101,6 +101,14 @@ endif()
 option(SLIC3R_STATIC 			"Compile Snapmaker_Orca with static libraries (Boost, TBB, glew)" ${SLIC3R_STATIC_INITIAL})
 option(SLIC3R_GUI    			"Compile Snapmaker_Orca with GUI components (OpenGL, wxWidgets)" 1)
 option(SLIC3R_FHS               "Assume Snapmaker_Orca is to be installed in a FHS directory structure" 0)
+
+# STEP/OCCT support requires OpenCASCADE 7.7+ for Windows ARM64. Default OFF on ARM64.
+if (WIN32 AND "${CMAKE_GENERATOR_PLATFORM}" STREQUAL "ARM64")
+    set(_step_default OFF)
+else()
+    set(_step_default ON)
+endif()
+option(SLIC3R_ENABLE_STEP "Compile with STEP file import support (requires OpenCASCADE)" ${_step_default})
 option(SLIC3R_WX_STABLE         "Build against wxWidgets stable (3.0) as oppsed to dev (3.1) on Linux" 0)
 option(SLIC3R_PROFILE 			"Compile Snapmaker_Orca with an invasive Shiny profiler" 0)
 option(SLIC3R_PCH               "Use precompiled headers" 1)
@@ -764,6 +772,8 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         set(_arch "x64")
     elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86")
         set(_arch "x86")
+    elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "ARM64")
+        set(_arch "arm64")
     else ()
         message(FATAL_ERROR "Unable to detect architecture")
     endif ()
@@ -782,9 +792,12 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         message ("set out_dir to CMAKE_CURRENT_BINARY_DIR: ${_out_dir}")
     endif ()
 
-    file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_arch}/libgmp-10.dll
-            ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_arch}/libmpfr-4.dll
-            ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
+    if (NOT "${_arch}" STREQUAL "arm64")
+        file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_arch}/libgmp-10.dll
+                ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_arch}/libmpfr-4.dll
+            DESTINATION ${_out_dir})
+    endif()
+    file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
         DESTINATION ${_out_dir})
 
     # Copy Sentry and Crashpad artifacts if they were built by deps
@@ -795,6 +808,7 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         )
     endif()
 
+    if (SLIC3R_ENABLE_STEP)
     file(COPY ${CMAKE_PREFIX_PATH}/bin/occt/TKBO.dll
             ${CMAKE_PREFIX_PATH}/bin/occt/TKBRep.dll
             ${CMAKE_PREFIX_PATH}/bin/occt/TKCAF.dll
@@ -823,42 +837,51 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${CMAKE_PREFIX_PATH}/bin/occt/TKXSBase.dll
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
          DESTINATION ${_out_dir})
+    endif() # SLIC3R_ENABLE_STEP
 
     # Build the DLL list in a local variable first
     set(_dll_list
-        ${_out_dir}/libgmp-10.dll
-        ${_out_dir}/libmpfr-4.dll
         ${_out_dir}/WebView2Loader.dll
-
-        ${_out_dir}/TKBO.dll
-        ${_out_dir}/TKBRep.dll
-        ${_out_dir}/TKCAF.dll
-        ${_out_dir}/TKCDF.dll
-        ${_out_dir}/TKernel.dll
-        ${_out_dir}/TKG2d.dll
-        ${_out_dir}/TKG3d.dll
-        ${_out_dir}/TKGeomAlgo.dll
-        ${_out_dir}/TKGeomBase.dll
-        ${_out_dir}/TKHLR.dll
-        ${_out_dir}/TKLCAF.dll
-        ${_out_dir}/TKMath.dll
-        ${_out_dir}/TKMesh.dll
-        ${_out_dir}/TKPrim.dll
-        ${_out_dir}/TKService.dll
-        ${_out_dir}/TKShHealing.dll
-        ${_out_dir}/TKSTEP.dll
-        ${_out_dir}/TKSTEP209.dll
-        ${_out_dir}/TKSTEPAttr.dll
-        ${_out_dir}/TKSTEPBase.dll
-        ${_out_dir}/TKTopAlgo.dll
-        ${_out_dir}/TKV3d.dll
-        ${_out_dir}/TKVCAF.dll
-        ${_out_dir}/TKXCAF.dll
-        ${_out_dir}/TKXDESTEP.dll
-        ${_out_dir}/TKXSBase.dll
-
-        ${_out_dir}/freetype.dll
     )
+
+    if (NOT "${_arch}" STREQUAL "arm64")
+        list(APPEND _dll_list
+            ${_out_dir}/libgmp-10.dll
+            ${_out_dir}/libmpfr-4.dll
+        )
+    endif()
+
+    if (SLIC3R_ENABLE_STEP)
+        list(APPEND _dll_list
+            ${_out_dir}/TKBO.dll
+            ${_out_dir}/TKBRep.dll
+            ${_out_dir}/TKCAF.dll
+            ${_out_dir}/TKCDF.dll
+            ${_out_dir}/TKernel.dll
+            ${_out_dir}/TKG2d.dll
+            ${_out_dir}/TKG3d.dll
+            ${_out_dir}/TKGeomAlgo.dll
+            ${_out_dir}/TKGeomBase.dll
+            ${_out_dir}/TKHLR.dll
+            ${_out_dir}/TKLCAF.dll
+            ${_out_dir}/TKMath.dll
+            ${_out_dir}/TKMesh.dll
+            ${_out_dir}/TKPrim.dll
+            ${_out_dir}/TKService.dll
+            ${_out_dir}/TKShHealing.dll
+            ${_out_dir}/TKSTEP.dll
+            ${_out_dir}/TKSTEP209.dll
+            ${_out_dir}/TKSTEPAttr.dll
+            ${_out_dir}/TKSTEPBase.dll
+            ${_out_dir}/TKTopAlgo.dll
+            ${_out_dir}/TKV3d.dll
+            ${_out_dir}/TKVCAF.dll
+            ${_out_dir}/TKXCAF.dll
+            ${_out_dir}/TKXDESTEP.dll
+            ${_out_dir}/TKXSBase.dll
+            ${_out_dir}/freetype.dll
+        )
+    endif()
 
     # Add Sentry DLLs to the list if Sentry is enabled
     if (SLIC3R_SENTRY)

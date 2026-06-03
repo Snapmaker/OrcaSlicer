@@ -23,7 +23,9 @@
 //BBS: add bbs 3mf
 #include "Format/bbs_3mf.hpp"
 //BBS: add step
+#ifdef SLIC3R_ENABLE_STEP
 #include "Format/STEP.hpp"
+#endif
 //BBS: add stl
 #include "Format/STL.hpp"
 #include "Format/OBJ.hpp"

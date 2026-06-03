@@ -220,6 +220,10 @@ if (MSVC)
         message(STATUS "\nDetected X86 compiler => building X86 deps bundle\n")
         set(DEPS_ARCH "x86")
         include("deps-windows.cmake")
+    elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "ARM64")
+        message(STATUS "\nDetected ARM64 compiler => building ARM64 deps bundle\n")
+        set(DEPS_ARCH "arm64")
+        include("deps-windows.cmake")
     else ()
         message(FATAL_ERROR "Unable to detect architecture")
     endif ()
@@ -296,9 +300,16 @@ include(Blosc/Blosc.cmake)
 include(OpenEXR/OpenEXR.cmake)
 include(OpenVDB/OpenVDB.cmake)
 
-include(GMP/GMP.cmake)
-include(MPFR/MPFR.cmake)
-include(CGAL/CGAL.cmake)
+if (NOT ("${DEPS_ARCH}" STREQUAL "arm64"))
+    include(GMP/GMP.cmake)
+    include(MPFR/MPFR.cmake)
+    include(CGAL/CGAL.cmake)
+else()
+    # Windows ARM64: GMP/MPFR are pre-installed by the CI workflow via MSYS2 clangarm64.
+    # CGAL is built without exact arithmetic (CGAL_DISABLE_GMP=ON).
+    # STEP import is disabled (requires OCCT 7.7+ for ARM64, currently using 7.6).
+    include(CGAL/CGAL.cmake)
+endif()
 
 include(NLopt/NLopt.cmake)
 include(libnoise/libnoise.cmake)
@@ -362,8 +373,15 @@ if((REV_PARSE_RESULT EQUAL 0) AND (REV_PARSE_OUTPUT STREQUAL "true"))
     file(RELATIVE_PATH BINARY_DIR_REL  ${CMAKE_SOURCE_DIR}/.. ${CMAKE_BINARY_DIR})
 endif ()
 
-include(OCCT/OCCT.cmake)
+if (NOT ("${DEPS_ARCH}" STREQUAL "arm64"))
+    include(OCCT/OCCT.cmake)
+endif()
 include(OpenCV/OpenCV.cmake)
+
+set(_occt_pkg "")
+if (NOT ("${DEPS_ARCH}" STREQUAL "arm64"))
+    set(_occt_pkg dep_OCCT)
+endif()
 
 set(_dep_list
     dep_Boost
@@ -379,7 +397,7 @@ set(_dep_list
     dep_OpenCV
     dep_CGAL
     dep_GLFW
-    dep_OCCT
+    ${_occt_pkg}
     ${FREETYPE_PKG}
     ${PNG_PKG}
     ${ZLIB_PKG}

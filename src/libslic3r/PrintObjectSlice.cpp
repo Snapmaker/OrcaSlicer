@@ -4428,8 +4428,16 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         continue;
 
                     auto preserve_parent_region = [&by_region, &parent_layer_region, &parent_print_region]() {
-                        if (!parent_layer_region.slices.empty())
-                            by_region[parent_print_region.print_object_region_id()].surfaces = parent_layer_region.slices;
+                        if (parent_layer_region.slices.empty())
+                            return;
+
+                        ByRegion &dst = by_region[parent_print_region.print_object_region_id()];
+                        if (dst.surfaces.empty()) {
+                            dst.surfaces = parent_layer_region.slices;
+                        } else {
+                            dst.surfaces.append(parent_layer_region.slices);
+                            dst.needs_merge = true;
+                        }
                     };
 
                     if (it_painted_region_begin == layer_range.painted_regions.cend()) {
@@ -4467,7 +4475,7 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     if (const int cfg_wall = parent_print_region.config().wall_filament.value;
                         cfg_wall >= 1 && cfg_wall <= int(by_extruder.size()))
                         self_extruder_id = cfg_wall;
-                    if (default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
+                    if (clamp_parent_to_geometry && default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
                         default_self_expolygons = intersection_ex(parent_layer_region.slices.surfaces, default_segmentation);
                     std::vector<bool> assigned_extruder(by_extruder.size(), false);
                     std::vector<int>  alias_to_self_extruders;
@@ -4491,12 +4499,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         // Update the beginning PaintedRegion iterator for the next iteration.
                         it_painted_region_begin = it_target_region;
 
-                        // FIXME: Don't trim by self, it is not reliable.
                         if (it_target_region->region == &parent_print_region) {
                             if (self_extruder_id < 0)
                                 self_extruder_id = extruder_id;
                             if (extruder_id != self_extruder_id)
                                 alias_to_self_extruders.emplace_back(extruder_id);
+                            if (!clamp_parent_to_geometry)
+                                continue;
+
                             ExPolygons self_segmented = intersection_ex(parent_layer_region.slices.surfaces, segmented.expolygons);
                             if (!self_segmented.empty()) {
                                 if (explicit_self_expolygons.empty())
@@ -4524,6 +4534,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                                 dst.needs_merge = true;
                             }
                         }
+                    }
+
+                    const bool has_foreign_assigned_region =
+                        std::any_of(assigned_extruder.begin(), assigned_extruder.end(),
+                                    [](bool assigned) { return assigned; });
+                    if (!has_foreign_assigned_region) {
+                        preserve_parent_region();
+                        continue;
                     }
 
                     // Trim slices of this LayerRegion with all the MM regions.

@@ -32,9 +32,7 @@ public:
 
     virtual void focus() = 0;
 
-#ifdef __WXMSW__
-    virtual void* nativeHandle() const { return nullptr; }
-#endif
+    virtual void* nativeHandle() const = 0;
 };
 
 // ── Engine layer (one per process, creates views) ──────────────────────

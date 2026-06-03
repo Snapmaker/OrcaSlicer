@@ -60,6 +60,8 @@ public:
             [controller.view.window makeFirstResponder:controller.view];
     }
 
+    void* nativeHandle() const override { return nullptr; }
+
     void invokeMethod(const std::string& method,
                       const std::string& arguments) override {
         if (!channel) return;
@@ -96,7 +98,7 @@ public:
 
     bool start() override {
         project = [[FlutterDartProject alloc] initWithPrecompiledDartBundle:nil];
-        return true;
+        return project != nil;
     }
 
     void stop() override {

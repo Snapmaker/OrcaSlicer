@@ -5,6 +5,9 @@
 #include <wx/dcclient.h>
 #include <wx/settings.h>
 #include <boost/log/trivial.hpp>
+#ifdef __linux__
+#include <fontconfig/fontconfig.h>
+#endif
 
 
 wxFont Label::sysFont(int size, bool bold)
@@ -64,21 +67,35 @@ void Label::initSysFont()
     const std::string &resource_path = Slic3r::resources_dir();
     wxString font_path = wxString::FromUTF8(resource_path + "/fonts/HarmonyOS_Sans_SC_Bold.ttf");
     bool result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Bold returns %1%")%result;
-    printf("add font of HarmonyOS_Sans_SC_Bold returns %d\n", result);
+    BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Bold returns %1%") % result;
     font_path = wxString::FromUTF8(resource_path + "/fonts/HarmonyOS_Sans_SC_Regular.ttf");
     result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Regular returns %1%")%result;
-    printf("add font of HarmonyOS_Sans_SC_Regular returns %d\n", result);
+    BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Regular returns %1%") % result;
     // Adding NanumGothic Regular and Bold
     font_path = wxString::FromUTF8(resource_path + "/fonts/NanumGothic-Regular.ttf");
     result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Regular returns %1%")%result;
-    printf("add font of NanumGothic-Regular returns %d\n", result);
+    BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Regular returns %1%") % result;
     font_path = wxString::FromUTF8(resource_path + "/fonts/NanumGothic-Bold.ttf");
     result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Bold returns %1%")%result;
-    printf("add font of NanumGothic-Bold returns %d\n", result);
+    BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Bold returns %1%") % result;
+#endif
+#ifdef __linux__
+    // BBS fix #164 (font crash): wxFont::AddPrivateFont() calls FcConfigAppFontAddFile()
+    // which only registers the font PATH in fontconfig's in-memory database — it does NOT
+    // build the font metrics. On startup, Pango spawns a "[pango] fontcon" background
+    // thread that immediately tries to access these font patterns. If the metrics haven't
+    // been built yet, the patterns contain NULL pointers, causing a SIGSEGV at offset
+    // 0x38 inside libpangoft2 (confirmed in issue #164 by community investigation).
+    //
+    // Calling FcConfigBuildFonts() here forces fontconfig to fully scan and initialize
+    // all registered font files synchronously, before any Pango code can race to access
+    // the uninitialized patterns.
+    FcConfig *fc_config = FcConfigGetCurrent();
+    if (fc_config != nullptr) {
+        if (!FcConfigBuildFonts(fc_config)) {
+            BOOST_LOG_TRIVIAL(warning) << "FcConfigBuildFonts() failed — bundled fonts may not render correctly";
+        }
+    }
 #endif
     Head_48 = Label::sysFont(48, true);
     Head_32 = Label::sysFont(32, true);

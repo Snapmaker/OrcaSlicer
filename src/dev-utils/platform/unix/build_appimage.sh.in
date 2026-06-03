@@ -20,7 +20,7 @@ mkdir -p usr/share/icons/hicolor/192x192/apps
 cp resources/images/@SLIC3R_APP_KEY@_192px.png usr/share/icons/hicolor/192x192/apps/@SLIC3R_APP_KEY@.png
 cat <<EOF > @SLIC3R_APP_KEY@.desktop
 [Desktop Entry]
-Name=@SLIC3R_APP_KEY@
+Name=@SLIC3R_APP_NAME@
 Exec=AppRun %F
 Icon=@SLIC3R_APP_KEY@
 Type=Application

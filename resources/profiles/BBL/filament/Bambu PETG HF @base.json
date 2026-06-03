@@ -5,6 +5,7 @@
     "from": "system",
     "filament_id": "GFG02",
     "instantiation": "false",
+    "filament_type": ["PETG-HF"],
     "cool_plate_temp": [
         "0"
     ],

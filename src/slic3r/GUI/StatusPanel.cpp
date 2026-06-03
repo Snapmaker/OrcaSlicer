@@ -864,7 +864,9 @@ StatusBasePanel::StatusBasePanel(wxWindow *parent, wxWindowID id, const wxPoint 
 
     m_project_task_panel = new PrintingTaskPanel(this, PrintingTaskType::PRINGINT);
     m_project_task_panel->init_bitmaps();
-    m_monitoring_sizer->Add(m_project_task_panel, 0, wxALL | wxEXPAND , 0);
+    // BBS: use proportion=1 so the task panel expands to fill available vertical space on
+    // ultrawide (21:9) displays instead of being pushed off-screen (issue #228)
+    m_monitoring_sizer->Add(m_project_task_panel, 1, wxALL | wxEXPAND , 0);
 
 //    auto m_panel_separotor2 = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
 //    m_panel_separotor2->SetBackgroundColour(STATUS_PANEL_BG);
@@ -1013,6 +1015,11 @@ wxBoxSizer *StatusBasePanel::create_monitoring_page()
     m_setting_button->SetMinSize(wxSize(FromDIP(38), FromDIP(24)));
     m_setting_button->SetBackgroundColour(STATUS_TITLE_BG);
 
+    // BBS: network/IP settings button so users can edit the printer IP without print-failure prompt (issue #229)
+    m_network_button = new CameraItem(m_panel_monitoring_title, "monitor_network_wired", "monitor_network_wired");
+    m_network_button->SetMinSize(wxSize(FromDIP(38), FromDIP(24)));
+    m_network_button->SetBackgroundColour(STATUS_TITLE_BG);
+
     m_camera_switch_button = new wxStaticBitmap(m_panel_monitoring_title, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize(FromDIP(38), FromDIP(24)), 0);
     m_camera_switch_button->SetMinSize(wxSize(FromDIP(38), FromDIP(24)));
     m_camera_switch_button->SetBackgroundColour(STATUS_TITLE_BG);
@@ -1031,6 +1038,7 @@ wxBoxSizer *StatusBasePanel::create_monitoring_page()
     m_bitmap_recording_img->SetToolTip(_L("Video"));
     m_bitmap_vcamera_img->SetToolTip(_L("Go Live"));
     m_setting_button->SetToolTip(_L("Camera Setting"));
+    m_network_button->SetToolTip(_L("Network Settings"));
     m_camera_switch_button->SetToolTip(_L("Switch Camera View"));
 
     bSizer_monitoring_title->Add(m_camera_switch_button, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
@@ -1039,6 +1047,7 @@ wxBoxSizer *StatusBasePanel::create_monitoring_page()
     bSizer_monitoring_title->Add(m_bitmap_recording_img, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
     bSizer_monitoring_title->Add(m_bitmap_vcamera_img, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
     bSizer_monitoring_title->Add(m_setting_button, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
+    bSizer_monitoring_title->Add(m_network_button, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
 
     bSizer_monitoring_title->Add(FromDIP(13), 0, 0);
 
@@ -1549,21 +1558,31 @@ wxBoxSizer *StatusBasePanel::create_extruder_control(wxWindow *parent)
     bSizer_e_ctrl->Add(m_bpButton_e_down_10, 0, wxALIGN_CENTER_HORIZONTAL, 0);
 
 
-    m_button_unload = new Button(panel, _L("Unload"));
+    // BBS: issue #65 — Load button (mirrors Unload)
+    m_button_load = new Button(panel, _L("Load"));
 
     StateColor abort_bg(std::pair<wxColour, int>(wxColour(255, 255, 255), StateColor::Disabled), std::pair<wxColour, int>(wxColour(206, 206, 206), StateColor::Pressed),
                         std::pair<wxColour, int>(wxColour(238, 238, 238), StateColor::Hovered), std::pair<wxColour, int>(wxColour(255, 255, 255), StateColor::Enabled),
                         std::pair<wxColour, int>(wxColour(255, 255, 255), StateColor::Normal));
-    m_button_unload->SetBackgroundColor(abort_bg);
+    m_button_load->SetBackgroundColor(abort_bg);
     StateColor abort_bd(std::pair<wxColour, int>(wxColour(144, 144, 144), StateColor::Disabled), std::pair<wxColour, int>(wxColour(38, 46, 48), StateColor::Enabled));
-    m_button_unload->SetBorderColor(abort_bd);
+    m_button_load->SetBorderColor(abort_bd);
     StateColor abort_text(std::pair<wxColour, int>(wxColour(144, 144, 144), StateColor::Disabled), std::pair<wxColour, int>(wxColour(38, 46, 48), StateColor::Enabled));
+    m_button_load->SetTextColor(abort_text);
+    m_button_load->SetFont(Label::Body_10);
+    m_button_load->SetMinSize(wxSize(-1, FromDIP(24)));
+    m_button_load->SetCornerRadius(FromDIP(12));
+
+    m_button_unload = new Button(panel, _L("Unload"));
+    m_button_unload->SetBackgroundColor(abort_bg);
+    m_button_unload->SetBorderColor(abort_bd);
     m_button_unload->SetTextColor(abort_text);
     m_button_unload->SetFont(Label::Body_10);
     m_button_unload->SetMinSize(wxSize(-1, FromDIP(24)));
     m_button_unload->SetCornerRadius(FromDIP(12));
     bSizer_e_ctrl->Add(0, 0, 1, wxEXPAND, 0);
-    bSizer_e_ctrl->Add(m_button_unload, 0, wxALIGN_CENTER_HORIZONTAL| wxTOP|wxBOTTOM, FromDIP(5));
+    bSizer_e_ctrl->Add(m_button_load,   0, wxALIGN_CENTER_HORIZONTAL | wxTOP | wxBOTTOM, FromDIP(3));
+    bSizer_e_ctrl->Add(m_button_unload, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP | wxBOTTOM, FromDIP(3));
 
     bSizer_e_ctrl->Add(0, FromDIP(9), 0, wxEXPAND, 0);
 
@@ -1606,6 +1625,25 @@ wxBoxSizer *StatusBasePanel::create_ams_group(wxWindow *parent)
     //m_ams_control->SetMinSize(wxSize(FromDIP(510), FromDIP(286)));
     m_ams_control->SetDoubleBuffered(true);
     sizer_box->Add(m_ams_control, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, FromDIP(10));
+
+    // BBS: issue #98 — Sync Filaments button to pull current filament data from the device
+    StateColor sync_btn_bg(std::pair<wxColour, int>(wxColour(255,255,255), StateColor::Disabled),
+                           std::pair<wxColour, int>(wxColour(206,206,206), StateColor::Pressed),
+                           std::pair<wxColour, int>(wxColour(238,238,238), StateColor::Hovered),
+                           std::pair<wxColour, int>(wxColour(255,255,255), StateColor::Enabled),
+                           std::pair<wxColour, int>(wxColour(255,255,255), StateColor::Normal));
+    StateColor sync_btn_bd(std::pair<wxColour, int>(wxColour(144,144,144), StateColor::Disabled),
+                           std::pair<wxColour, int>(wxColour(38, 46,  48), StateColor::Enabled));
+    StateColor sync_btn_text(std::pair<wxColour, int>(wxColour(144,144,144), StateColor::Disabled),
+                             std::pair<wxColour, int>(wxColour(38, 46,  48), StateColor::Enabled));
+    m_button_sync_filament = new Button(m_ams_control_box, _L("Sync Filaments"));
+    m_button_sync_filament->SetBackgroundColor(sync_btn_bg);
+    m_button_sync_filament->SetBorderColor(sync_btn_bd);
+    m_button_sync_filament->SetTextColor(sync_btn_text);
+    m_button_sync_filament->SetFont(Label::Body_10);
+    m_button_sync_filament->SetMinSize(wxSize(-1, FromDIP(24)));
+    m_button_sync_filament->SetCornerRadius(FromDIP(12));
+    sizer_box->Add(m_button_sync_filament, 0, wxALIGN_CENTER_HORIZONTAL | wxBOTTOM, FromDIP(8));
 
     m_ams_control_box->SetBackgroundColour(*wxWHITE);
     m_ams_control_box->SetSizer(sizer_box);
@@ -1759,6 +1797,8 @@ StatusPanel::StatusPanel(wxWindow *parent, wxWindowID id, const wxPoint &pos, co
 
     m_setting_button->Connect(wxEVT_LEFT_DOWN, wxMouseEventHandler(StatusPanel::on_camera_enter), NULL, this);
     m_setting_button->Connect(wxEVT_LEFT_DCLICK, wxMouseEventHandler(StatusPanel::on_camera_enter), NULL, this);
+    // BBS: network settings button (issue #229)
+    m_network_button->Connect(wxEVT_LEFT_DOWN, wxMouseEventHandler(StatusPanel::on_network_settings_enter), NULL, this);
     m_tempCtrl_bed->Connect(wxEVT_KILL_FOCUS, wxFocusEventHandler(StatusPanel::on_bed_temp_kill_focus), NULL, this);
     m_tempCtrl_bed->Connect(wxEVT_SET_FOCUS, wxFocusEventHandler(StatusPanel::on_bed_temp_set_focus), NULL, this);
     m_tempCtrl_nozzle->Connect(wxEVT_KILL_FOCUS, wxFocusEventHandler(StatusPanel::on_nozzle_temp_kill_focus), NULL, this);
@@ -1777,6 +1817,8 @@ StatusPanel::StatusPanel(wxWindow *parent, wxWindowID id, const wxPoint &pos, co
     m_bpButton_e_10->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_axis_ctrl_e_up_10), NULL, this);
     m_bpButton_e_down_10->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_axis_ctrl_e_down_10), NULL, this);
     m_button_unload->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_unload), NULL, this);
+    m_button_load->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_load), NULL, this);
+    m_button_sync_filament->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_sync_filament), NULL, this);
     Bind(EVT_AMS_EXTRUSION_CALI, &StatusPanel::on_filament_extrusion_cali, this);
     Bind(EVT_AMS_LOAD, &StatusPanel::on_ams_load, this);
     Bind(EVT_AMS_UNLOAD, &StatusPanel::on_ams_unload, this);
@@ -1818,6 +1860,7 @@ StatusPanel::~StatusPanel()
 
     m_setting_button->Disconnect(wxEVT_LEFT_DOWN, wxMouseEventHandler(StatusPanel::on_camera_enter), NULL, this);
     m_setting_button->Disconnect(wxEVT_LEFT_DCLICK, wxMouseEventHandler(StatusPanel::on_camera_enter), NULL, this);
+    m_network_button->Disconnect(wxEVT_LEFT_DOWN, wxMouseEventHandler(StatusPanel::on_network_settings_enter), NULL, this);
     m_tempCtrl_bed->Disconnect(wxEVT_KILL_FOCUS, wxFocusEventHandler(StatusPanel::on_bed_temp_kill_focus), NULL, this);
     m_tempCtrl_bed->Disconnect(wxEVT_SET_FOCUS, wxFocusEventHandler(StatusPanel::on_bed_temp_set_focus), NULL, this);
     m_tempCtrl_nozzle->Disconnect(wxEVT_KILL_FOCUS, wxFocusEventHandler(StatusPanel::on_nozzle_temp_kill_focus), NULL, this);
@@ -1838,6 +1881,8 @@ StatusPanel::~StatusPanel()
     m_options_btn->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_show_print_options), NULL, this);
     m_parts_btn->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_show_parts_options), NULL, this);
     m_button_unload->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_unload), NULL, this);
+    m_button_load->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_load), NULL, this);
+    m_button_sync_filament->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_sync_filament), NULL, this);
 
     // remove warning dialogs
     if (m_print_error_dlg != nullptr)
@@ -2174,9 +2219,15 @@ void StatusPanel::update(MachineObject *obj)
 }
 
 void StatusPanel::show_recenter_dialog() {
-    RecenterDialog dlg(this);
-    if (dlg.ShowModal() == wxID_OK)
-        obj->command_go_home();
+    // BBS: issue #66 — use a non-modal (modeless) dialog so the UI remains responsive while
+    // the user decides.  We pass the home command as a callback so no blocking wait is needed.
+    RecenterDialog *dlg = new RecenterDialog(this);
+    dlg->Bind(wxEVT_WINDOW_MODAL_DIALOG_CLOSED, [this, dlg](wxWindowModalDialogEvent &e) {
+        if (e.GetReturnCode() == wxID_OK && obj)
+            obj->command_go_home();
+        dlg->Destroy();
+    });
+    dlg->ShowWindowModal();
 }
 
 void StatusPanel::show_error_message(MachineObject *obj, bool is_exist, wxString msg, std::string print_error_str, wxString image_url, std::vector<int> used_button)
@@ -3441,6 +3492,25 @@ void StatusPanel::on_start_unload(wxCommandEvent &event)
     if (obj) obj->command_ams_change_filament(false, "255", "255");
 }
 
+// BBS: issue #65 — trigger filament load sequence on the device
+void StatusPanel::on_start_load(wxCommandEvent &event)
+{
+    if (!obj) return;
+    // M701 is the standard "load filament" G-code; active extruder will pull filament
+    obj->publish_gcode("M701\n");
+}
+
+// BBS: issue #98 — request fresh filament status from the device and refresh the AMS view
+void StatusPanel::on_sync_filament(wxCommandEvent &event)
+{
+    if (!obj) return;
+    // Ask the device to report its current filament / tray info by sending a status request
+    json j;
+    j["pushing"]["command"]     = "pushall";
+    j["pushing"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    obj->publish_json(j.dump());
+}
+
 void StatusPanel::on_set_bed_temp()
 {
     wxString str = m_tempCtrl_bed->GetTextCtrl()->GetValue();
@@ -4182,6 +4252,12 @@ void StatusPanel::on_camera_enter(wxMouseEvent& event)
         m_camera_popup->update(m_media_play_ctrl->IsStreaming());
         m_camera_popup->Popup();
     }
+}
+
+// BBS: open the IP/network settings dialog from the monitoring title bar (issue #229)
+void StatusPanel::on_network_settings_enter(wxMouseEvent& event)
+{
+    wxGetApp().show_modal_ip_address_enter_dialog(_L("Network Settings"));
 }
 
 void StatusBasePanel::on_camera_source_change(wxCommandEvent& event)

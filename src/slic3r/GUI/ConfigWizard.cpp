@@ -1807,7 +1807,13 @@ void ConfigWizard::priv::load_pages()
             index->add_page(page_diams);
             //index->add_page(page_temps);
         }
-   
+
+        // Add 3rd party vendor printer pages (e.g. Generic Klipper, Marlin, etc.)
+        for (auto &pair : pages_3rdparty) {
+            if (pair.second.first  != nullptr) { index->add_page(pair.second.first); }
+            if (pair.second.second != nullptr) { index->add_page(pair.second.second); }
+        }
+
     // Filaments & Materials
         if (any_fff_selected) { index->add_page(page_filaments); }
     }
@@ -1977,7 +1983,7 @@ void ConfigWizard::priv::create_3rdparty_pages()
             add_page(pageSLA);
         }
 
-        //pages_3rdparty.insert({vendor->id, {pageFFF, pageSLA}});
+        pages_3rdparty.insert({vendor->id, {pageFFF, pageSLA}});
     }
 }
 
@@ -2618,6 +2624,7 @@ bool ConfigWizard::priv::apply_config(AppConfig *app_config, PresetBundle *prese
 
     // Update the selections from the compatibilty.
     preset_bundle->export_selections(*app_config);
+    app_config->save();  // BBS: flush filament selections immediately (issue #101)
 
     // Update Preset Combobox
     //auto evt = new SimpleEvent(EVT_UPDATE_PRESET_CB);

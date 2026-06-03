@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Generic PP @base",
+    "inherits": "fdm_filament_pp",
+    "from": "system",
+    "filament_id": "GFLPP_B1",
+    "instantiation": "false",
+    "filament_start_gcode": [
+        "; filament start gcode"
+    ]
+}

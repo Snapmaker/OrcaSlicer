@@ -191,6 +191,14 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
             token = tmpUrl.substr(start).ToStdString();
         }
 
+        auto info = wxGetApp().sm_get_userinfo();
+        info->set_user_login(true);
+        info->set_user_token(token);
+
+        // BBS: persist login token so it survives app restart (issue #116)
+        if (wxGetApp().app_config)
+            wxGetApp().app_config->set("sm_user_token", token);
+
         this->EndModal(wxID_OK);
 
         wxGetApp().CallAfter([token, this]() {
@@ -208,10 +216,18 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                                 user_id = std::to_string(data["id"].get<int>());
                             }
                             if (data.count("nickname")) {
-                                wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
+                                std::string nickname = data["nickname"].get<std::string>();
+                                wxGetApp().sm_get_userinfo()->set_user_name(nickname);
+                                // BBS: persist username so it survives app restart (issue #226)
+                                if (wxGetApp().app_config)
+                                    wxGetApp().app_config->set("sm_user_name", nickname);
                             }
                             if (data.count("icon")) {
-                                wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
+                                std::string icon_url = data["icon"].get<std::string>();
+                                wxGetApp().sm_get_userinfo()->set_user_icon_url(icon_url);
+                                // BBS: persist icon URL so it survives app restart (issue #226)
+                                if (wxGetApp().app_config)
+                                    wxGetApp().app_config->set("sm_user_icon_url", icon_url);
                             }
                             if (data.count("account")) {
                                 wxGetApp().sm_get_userinfo()->set_user_account(data["account"].get<std::string>());

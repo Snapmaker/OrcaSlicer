@@ -3601,14 +3601,28 @@ void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx)
     wipe_tower_x->values.resize(m_plate_list.size(), wipe_tower_x->values.front());
     wipe_tower_y->values.resize(m_plate_list.size(), wipe_tower_y->values.front());
 
-    auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
-    // set the default position, the same with print config(left top)
-    ConfigOptionFloat wt_x_opt(WIPE_TOWER_DEFAULT_X_POS);
-    ConfigOptionFloat wt_y_opt(WIPE_TOWER_DEFAULT_Y_POS);
-    if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
-        wt_x_opt = ConfigOptionFloat(I3_WIPE_TOWER_DEFAULT_X_POS);
-        wt_y_opt = ConfigOptionFloat(I3_WIPE_TOWER_DEFAULT_Y_POS);
+    // Fix #135: compute position from actual bed dimensions instead of hardcoded values.
+    float default_x = WIPE_TOWER_DEFAULT_X_POS;
+    float default_y = WIPE_TOWER_DEFAULT_Y_POS;
+    const auto* area_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionPoints>("printable_area");
+    if (area_opt && !area_opt->values.empty()) {
+        BoundingBoxf bed_bbox(area_opt->values);
+        float bed_width    = float(bed_bbox.size().x());
+        float bed_height   = float(bed_bbox.size().y());
+        const float tower_width    = 60.f;
+        const float depth_estimate = 26.f;
+        const float margin         = 10.f;
+        default_x = std::max(0.f, bed_width  - tower_width    - margin);
+        default_y = std::max(0.f, bed_height - depth_estimate - margin);
+    } else {
+        auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
+        if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
+            default_x = I3_WIPE_TOWER_DEFAULT_X_POS;
+            default_y = I3_WIPE_TOWER_DEFAULT_Y_POS;
+        }
     }
+    ConfigOptionFloat wt_x_opt(default_x);
+    ConfigOptionFloat wt_y_opt(default_y);
     dynamic_cast<ConfigOptionFloats *>(proj_cfg.option("wipe_tower_x"))->set_at(&wt_x_opt, plate_idx, 0);
     dynamic_cast<ConfigOptionFloats *>(proj_cfg.option("wipe_tower_y"))->set_at(&wt_y_opt, plate_idx, 0);
 }

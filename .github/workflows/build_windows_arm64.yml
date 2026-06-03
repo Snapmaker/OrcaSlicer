@@ -101,7 +101,8 @@ jobs:
           cmake ../ -G "Visual Studio 17 2022" -A ARM64 ^
             -DDESTDIR="%CD%/OrcaSlicer_dep" ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DDEP_DEBUG=OFF
+            -DDEP_DEBUG=OFF ^
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build . --config Release --target deps -- -m
 
       - name: Build Snapmaker OrcaSlicer (ARM64)

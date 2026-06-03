@@ -10,13 +10,14 @@ if (APPLE AND CMAKE_OSX_ARCHITECTURES)
     set(_context_arch_line "-DBOOST_CONTEXT_ARCHITECTURE:STRING=${CMAKE_OSX_ARCHITECTURES}")
 endif ()
 
-# Windows ARM64: Boost.Context's fcontext implementation requires assembling
+# Windows ARM64: Boost.Context's default fcontext implementation assembles
 # .asm files via armasm64, which trips a CMake ASM_ARMASM linker-module bug
-# under the VS generator. The slicer uses neither boost::context nor
-# boost::coroutine (0 references in src/), so exclude them on ARM64.
-set(_boost_exclude "contract|fiber|numpy|stacktrace|wave|test")
+# under the VS generator. Switching to the winfib implementation (Windows
+# Fiber API) avoids assembly entirely while keeping the Boost::context target
+# that Boost.Asio's stackful coroutines depend on.
+set(_context_impl_line "")
 if (MSVC AND "${DEPS_ARCH}" STREQUAL "arm64")
-    set(_boost_exclude "${_boost_exclude}|context|coroutine|coroutine2")
+    set(_context_impl_line "-DBOOST_CONTEXT_IMPLEMENTATION:STRING=winfib")
 endif()
 
 Snapmaker_Orca_add_cmake_project(Boost
@@ -24,11 +25,12 @@ Snapmaker_Orca_add_cmake_project(Boost
     URL_HASH SHA256=4d27e9efed0f6f152dc28db6430b9d3dfb40c0345da7342eaa5a987dde57bd95
     LIST_SEPARATOR |
     CMAKE_ARGS
-        -DBOOST_EXCLUDE_LIBRARIES:STRING=${_boost_exclude}
+        -DBOOST_EXCLUDE_LIBRARIES:STRING=contract|fiber|numpy|stacktrace|wave|test
         -DBOOST_LOCALE_ENABLE_ICU:BOOL=OFF # do not link to libicu, breaks compatibility between distros
         -DBUILD_TESTING:BOOL=OFF
         "${_context_abi_line}"
         "${_context_arch_line}"
+        "${_context_impl_line}"
 )
 
 set(DEP_Boost_DEPENDS ZLIB)

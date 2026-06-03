@@ -365,7 +365,6 @@ public:
 
     std::vector<GUI::GLModel> model_per_colors;
     bool                              IsTransparent();
-    void                              set_colors(const std::vector<ColorRGBA>& colors) { m_colors = colors; }
 
 private:
     std::vector<ColorRGBA> m_colors;

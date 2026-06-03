@@ -510,7 +510,6 @@ public:
     void on_config_change(const DynamicPrintConfig &config);
     void force_filament_colors_update();
     void force_print_bed_update();
-    wxBitmap render_plate_thumbnail(int width, int height);
     // On activating the parent window.
     void on_activate();
     std::vector<std::string> get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result = nullptr, bool include_mixed = true) const;

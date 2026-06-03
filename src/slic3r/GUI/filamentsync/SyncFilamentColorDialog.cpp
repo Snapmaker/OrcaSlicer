@@ -12,17 +12,14 @@
 #include <limits>
 
 #include "FilamentColorMapBoxGroup.hpp"
-#include "FilamentSyncAlgorithm.hpp"
 #include "PlaterPreview.hpp"
+
 #include "libslic3r/GCode/ThumbnailData.hpp"
-#include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Widgets/StaticLine.hpp"
-#include "slic3r/GUI/GLCanvas3D.hpp"
-#include "slic3r/GUI/3DScene.hpp"
 
 namespace
 {
@@ -206,27 +203,12 @@ void SyncFilamentColorDialog::onModeChanged(bool bIsMappingMode)
 
 void SyncFilamentColorDialog::onAutoMatch()
 {
-    if (!m_pFilamentColorMapBoxGroup)
-        return;
-
-    std::vector<int> mapping = compute_color_match(
-        m_designDataList, m_machineDataList);
-
-    m_pFilamentColorMapBoxGroup->updateGroupMappings(mapping);
-    Layout();
+    // TODO: implement nearest-color auto-match algorithm
 }
 
 void SyncFilamentColorDialog::onCoverMatch()
 {
-    if (!m_pFilamentColorMapBoxGroup)
-        return;
-
-    std::vector<int> mapping = compute_direct_override(
-        m_designDataList.size(),
-        m_machineDataList.size());
-
-    m_pFilamentColorMapBoxGroup->updateGroupMappings(mapping);
-    Layout();
+    // TODO: implement sequential one-to-one override
 }
 
 void SyncFilamentColorDialog::initPlatePreview()
@@ -261,13 +243,11 @@ void SyncFilamentColorDialog::loadPlateThumbnail(unsigned int plateIndex)
 
     PartPlateList& plateList = plater->get_partplate_list();
     PartPlate* plate = plateList.get_plate(plateIndex);
-    if (!plate)
+    if (!plate || !plate->thumbnail_data.is_valid())
         return;
 
-    // Render original preview through the standard OpenGL pipeline (same as main view)
-    wxBitmap originalBmp = plater->render_plate_thumbnail(FromDIP(280), FromDIP(280));
-    if (originalBmp.IsOk())
-        m_pPlaterPreview->setOriginalPreview(originalBmp);
+    wxBitmap originalBmp = thumbnailToBitmap(plate->thumbnail_data);
+    m_pPlaterPreview->setOriginalPreview(originalBmp);
 
     loadCoverPreview();
 }
@@ -275,51 +255,28 @@ void SyncFilamentColorDialog::loadPlateThumbnail(unsigned int plateIndex)
 void SyncFilamentColorDialog::loadCoverPreview()
 {
     Plater* plater = wxGetApp().plater();
-    auto* preset_bundle = wxGetApp().preset_bundle;
-    if (!plater || !preset_bundle || !m_pPlaterPreview)
+    if (!plater || !m_pPlaterPreview)
         return;
 
-    // Get filament mapping from the UI
-    if (!m_pFilamentColorMapBoxGroup)
+    unsigned int plateIndex = m_pPlaterPreview->getCurrentPlate();
+
+    PartPlateList& plateList = plater->get_partplate_list();
+    PartPlate* plate = plateList.get_plate(plateIndex);
+    if (!plate || !plate->thumbnail_data.is_valid())
         return;
 
-    std::list<FilamentData> filamentMapping = m_pFilamentColorMapBoxGroup->getCurFilamentList();
-    if (filamentMapping.empty()) {
-        // No mapping — re-render original preview as cover
-        wxBitmap bmp = plater->render_plate_thumbnail(FromDIP(280), FromDIP(280));
-        if (bmp.IsOk())
-            m_pPlaterPreview->setCoverPreview(bmp);
-        return;
+    std::list<FilamentData> filamentMapping;
+    if (m_pFilamentColorMapBoxGroup)
+        filamentMapping = m_pFilamentColorMapBoxGroup->getCurFilamentList();
+
+    if (plate->no_light_thumbnail_data.is_valid() && !filamentMapping.empty()) {
+        wxBitmap coverBmp = generateCoverPreview(plate->thumbnail_data,
+                                                  plate->no_light_thumbnail_data,
+                                                  filamentMapping);
+        m_pPlaterPreview->setCoverPreview(coverBmp);
+    } else {
+        m_pPlaterPreview->setCoverPreview(thumbnailToBitmap(plate->thumbnail_data));
     }
-
-    // Save original filament colours from project config
-    auto* co = static_cast<ConfigOptionStrings*>(preset_bundle->project_config.option("filament_colour"));
-    if (!co)
-        return;
-
-    std::vector<std::string> original_colors = co->values;
-
-    // Apply synced filament colors to project config
-    int idx = 0;
-    for (const auto& sd : filamentMapping) {
-        if (idx >= static_cast<int>(co->values.size()))
-            break;
-        wxColour c(sd.m_color_r, sd.m_color_g, sd.m_color_b);
-        co->values[idx] = c.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
-        ++idx;
-    }
-
-    // Force GLVolume colors to pick up the modified project config
-    plater->force_filament_colors_update();
-
-    // Render thumbnail with synced colors through the standard OpenGL pipeline
-    wxBitmap bmp = plater->render_plate_thumbnail(FromDIP(280), FromDIP(280));
-    if (bmp.IsOk())
-        m_pPlaterPreview->setCoverPreview(bmp);
-
-    // Restore original filament colours
-    co->values = original_colors;
-    plater->force_filament_colors_update();
 }
 
 wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thumb,
@@ -364,20 +321,26 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
             if (it != colorMap.end()) {
                 const wxColour& amsColor = it->second;
 
-                // Per-channel multiplicative blending to match OpenGL lighting:
-                //   regularPixel = materialColor × lightingFactor
-                //   noLightPixel  = materialColor  (ban_light → flat)
-                //   newPixel = machineColor × (regularPixel / noLightPixel)
-                // The ratio is clamped to avoid overflow in near-black regions.
-                auto blendChannel = [](unsigned char orig, unsigned char noLight, unsigned char ams) -> unsigned char {
-                    if (noLight == 0) return ams;
-                    float ratio = static_cast<float>(orig) / static_cast<float>(noLight);
-                    ratio = std::clamp(ratio, 0.05f, 5.0f);
-                    return static_cast<unsigned char>(std::clamp(static_cast<int>(ams * ratio), 0, g_colorMax));
-                };
-                unsigned char newR = blendChannel(originPx[0], noLightPx[0], amsColor.Red());
-                unsigned char newG = blendChannel(originPx[1], noLightPx[1], amsColor.Green());
-                unsigned char newB = blendChannel(originPx[2], noLightPx[2], amsColor.Blue());
+                int originRgb  = originPx[0]  + originPx[1]  + originPx[2];
+                int noLightRgb = noLightPx[0] + noLightPx[1] + noLightPx[2];
+
+                unsigned char newR, newG, newB;
+                if (noLightRgb > g_noLightMin && originRgb >= noLightRgb) {
+                    // Bright area: add lighting delta to the target color
+                    newR = std::clamp(amsColor.Red()   + (originPx[0] - noLightPx[0]), 0, g_colorMax);
+                    newG = std::clamp(amsColor.Green() + (originPx[1] - noLightPx[1]), 0, g_colorMax);
+                    newB = std::clamp(amsColor.Blue()  + (originPx[2] - noLightPx[2]), 0, g_colorMax);
+                } else if (noLightRgb > g_noLightMin) {
+                    // Shadow area: scale target color by original/noLight ratio
+                    float ratio = static_cast<float>(originRgb) / static_cast<float>(noLightRgb);
+                    newR = std::clamp(static_cast<int>(amsColor.Red()   * ratio), 0, g_colorMax);
+                    newG = std::clamp(static_cast<int>(amsColor.Green() * ratio), 0, g_colorMax);
+                    newB = std::clamp(static_cast<int>(amsColor.Blue()  * ratio), 0, g_colorMax);
+                } else {
+                    newR = amsColor.Red();
+                    newG = amsColor.Green();
+                    newB = amsColor.Blue();
+                }
 
                 image.SetRGB(c, r, newR, newG, newB);
                 image.SetAlpha(c, r, originPx[3]);

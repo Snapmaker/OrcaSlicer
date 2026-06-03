@@ -23,6 +23,28 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install CMake 3.31.x (project requires <= 3.31 on Windows)
+        # The windows-11-arm runner ships CMake 4.x, which removed pre-3.5
+        # policy compatibility AND has incomplete ASM_ARMASM linker modules
+        # (breaks Boost.Context on ARM64). Pin to the last 3.x release.
+        shell: pwsh
+        run: |
+          $ver = "3.31.6"
+          $url = "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-arm64.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\cmake.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\cmake.zip" -DestinationPath "$env:RUNNER_TEMP\cmake" -Force
+          $cmakeBin = "$env:RUNNER_TEMP\cmake\cmake-$ver-windows-arm64\bin"
+          if (-not (Test-Path "$cmakeBin\cmake.exe")) {
+            throw "cmake.exe not found at $cmakeBin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $cmakeBin
+          Write-Host "Pinned CMake bin: $cmakeBin"
+
+      - name: Verify CMake version
+        shell: pwsh
+        run: cmake --version
+
       - name: Install MSYS2 (clangarm64) with GMP/MPFR and LLVM tools
         uses: msys2/setup-msys2@v2
         with:

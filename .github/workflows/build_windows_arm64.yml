@@ -23,7 +23,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install MSYS2 (clangarm64)
+      - name: Install MSYS2 (clangarm64) with GMP/MPFR and binutils
         uses: msys2/setup-msys2@v2
         with:
           msystem: CLANGARM64
@@ -31,49 +31,38 @@ jobs:
           install: >-
             mingw-w64-clang-aarch64-gmp
             mingw-w64-clang-aarch64-mpfr
+            mingw-w64-clang-aarch64-binutils
 
       - name: Generate MSVC-compatible import libs for GMP and MPFR
-        shell: pwsh
+        # Use MSYS2 gendef + dlltool — they understand mingw DLLs natively
+        # and produce COFF import libraries that MSVC link.exe accepts.
+        shell: msys2 {0}
         run: |
-          $msys2Root = "C:\msys64"
-          $clangArm64Bin = "$msys2Root\clangarm64\bin"
-          $clangArm64Inc = "$msys2Root\clangarm64\include"
-          $llvmDlltool = (Get-Command llvm-dlltool -ErrorAction SilentlyContinue)?.Source
-          if (-not $llvmDlltool) {
-            # Fall back to VS-bundled llvm-dlltool
-            $vsLlvmBase = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\ARM64\bin"
-            $llvmDlltool = "$vsLlvmBase\llvm-dlltool.exe"
-          }
+          set -euo pipefail
+          BIN=/clangarm64/bin
 
-          foreach ($lib in @(
-            @{ dll = "libgmp-10.dll";  out = "libgmp-10.lib"  },
-            @{ dll = "libmpfr-4.dll";  out = "libmpfr-4.lib"  }
-          )) {
-            $dllPath = "$clangArm64Bin\$($lib.dll)"
-            $libPath = "$clangArm64Bin\$($lib.out)"
-            Write-Host "Generating $($lib.out) from $($lib.dll)"
-            & "$llvmDlltool" -m arm64 -l $libPath -D $lib.dll -d ""
-            # Use dumpbin + lib.exe if llvm-dlltool produces an empty def
-            if (-not (Test-Path $libPath) -or (Get-Item $libPath).Length -eq 0) {
-              $defPath = "$env:TEMP\$($lib.dll).def"
-              $exports = & dumpbin /exports $dllPath 2>&1 |
-                Select-String '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' |
-                ForEach-Object { $_.Matches[0].Groups[1].Value }
-              "EXPORTS" | Set-Content $defPath
-              $exports | Add-Content $defPath
-              & lib.exe /DEF:$defPath /MACHINE:ARM64 /OUT:$libPath /NOLOGO
-            }
-          }
+          for pair in "libgmp-10.dll libgmp-10" "libmpfr-4.dll libmpfr-4"; do
+            dll=$(echo $pair | cut -d' ' -f1)
+            base=$(echo $pair | cut -d' ' -f2)
+            echo "--- $dll ---"
+            cd $BIN
+            gendef $dll
+            dlltool -m arm64 -D $dll -d ${base}.def -l ${base}.lib
+            echo "Generated ${base}.lib ($(wc -c < ${base}.lib) bytes)"
+          done
 
-          # Stage libs and headers in the repo blob directories so cmake picks them up
-          New-Item -ItemType Directory -Force -Path "deps\GMP\gmp\lib\win-arm64"  | Out-Null
-          New-Item -ItemType Directory -Force -Path "deps\MPFR\mpfr\lib\win-arm64" | Out-Null
-          Copy-Item "$clangArm64Bin\libgmp-10.dll"  "deps\GMP\gmp\lib\win-arm64\"
-          Copy-Item "$clangArm64Bin\libgmp-10.lib"  "deps\GMP\gmp\lib\win-arm64\"
-          Copy-Item "$clangArm64Bin\libmpfr-4.dll"  "deps\MPFR\mpfr\lib\win-arm64\"
-          Copy-Item "$clangArm64Bin\libmpfr-4.lib"  "deps\MPFR\mpfr\lib\win-arm64\"
-          Copy-Item "$clangArm64Inc\gmp.h"           "deps\GMP\gmp\include\"
-          Copy-Item "$clangArm64Inc\mpfr.h"          "deps\MPFR\mpfr\include\" -ErrorAction SilentlyContinue
+          # Stage into the repo's win-arm64 blob dirs (cmake uses win-${DEPS_ARCH})
+          REPO=$(cygpath -u "$GITHUB_WORKSPACE")
+          mkdir -p $REPO/deps/GMP/gmp/lib/win-arm64
+          mkdir -p $REPO/deps/MPFR/mpfr/lib/win-arm64
+
+          cp $BIN/libgmp-10.dll  $REPO/deps/GMP/gmp/lib/win-arm64/
+          cp $BIN/libgmp-10.lib  $REPO/deps/GMP/gmp/lib/win-arm64/
+          cp $BIN/libmpfr-4.dll  $REPO/deps/MPFR/mpfr/lib/win-arm64/
+          cp $BIN/libmpfr-4.lib  $REPO/deps/MPFR/mpfr/lib/win-arm64/
+          cp /clangarm64/include/gmp.h  $REPO/deps/GMP/gmp/include/
+          cp /clangarm64/include/mpfr.h $REPO/deps/MPFR/mpfr/include/ || true
+          echo "Staged GMP/MPFR win-arm64 blobs."
 
       - name: Cache deps
         uses: actions/cache@v4

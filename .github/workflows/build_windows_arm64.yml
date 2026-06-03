@@ -34,25 +34,35 @@ jobs:
             mingw-w64-clang-aarch64-binutils
 
       - name: Generate MSVC-compatible import libs for GMP and MPFR
-        # Use MSYS2 gendef + dlltool — they understand mingw DLLs natively
-        # and produce COFF import libraries that MSVC link.exe accepts.
+        # objdump -p (binutils) parses PE export tables without needing gendef.
+        # dlltool -m arm64 then produces a COFF .lib that MSVC link.exe accepts.
         shell: msys2 {0}
         run: |
           set -euo pipefail
           BIN=/clangarm64/bin
-
-          for pair in "libgmp-10.dll libgmp-10" "libmpfr-4.dll libmpfr-4"; do
-            dll=$(echo $pair | cut -d' ' -f1)
-            base=$(echo $pair | cut -d' ' -f2)
-            echo "--- $dll ---"
-            cd $BIN
-            gendef $dll
-            dlltool -m arm64 -D $dll -d ${base}.def -l ${base}.lib
-            echo "Generated ${base}.lib ($(wc -c < ${base}.lib) bytes)"
-          done
-
-          # Stage into the repo's win-arm64 blob dirs (cmake uses win-${DEPS_ARCH})
           REPO=$(cygpath -u "$GITHUB_WORKSPACE")
+
+          make_import_lib() {
+            local dll="$1"   # e.g. libgmp-10.dll
+            local lib="$2"   # e.g. libgmp-10.lib
+            local def="/tmp/${dll%.dll}.def"
+
+            echo "--- $dll ---"
+            # objdump -p prints export lines as: [ord/hint] name
+            echo "EXPORTS" > "$def"
+            objdump -p "$BIN/$dll" \
+              | awk '/^\[/{print $NF}' \
+              >> "$def"
+            echo "  $(wc -l < "$def") export entries"
+
+            dlltool -m arm64 -D "$dll" -d "$def" -l "$BIN/$lib"
+            echo "  $lib: $(wc -c < "$BIN/$lib") bytes"
+          }
+
+          make_import_lib libgmp-10.dll  libgmp-10.lib
+          make_import_lib libmpfr-4.dll  libmpfr-4.lib
+
+          # Stage into repo blob dirs so cmake's win-${DEPS_ARCH} lookup works
           mkdir -p $REPO/deps/GMP/gmp/lib/win-arm64
           mkdir -p $REPO/deps/MPFR/mpfr/lib/win-arm64
 
@@ -62,7 +72,7 @@ jobs:
           cp $BIN/libmpfr-4.lib  $REPO/deps/MPFR/mpfr/lib/win-arm64/
           cp /clangarm64/include/gmp.h  $REPO/deps/GMP/gmp/include/
           cp /clangarm64/include/mpfr.h $REPO/deps/MPFR/mpfr/include/ || true
-          echo "Staged GMP/MPFR win-arm64 blobs."
+          echo "Done staging GMP/MPFR win-arm64 blobs."
 
       - name: Cache deps
         uses: actions/cache@v4

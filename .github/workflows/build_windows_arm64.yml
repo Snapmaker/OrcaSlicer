@@ -23,7 +23,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install MSYS2 (clangarm64) with GMP/MPFR and binutils
+      - name: Install MSYS2 (clangarm64) with GMP/MPFR
         uses: msys2/setup-msys2@v2
         with:
           msystem: CLANGARM64
@@ -31,11 +31,11 @@ jobs:
           install: >-
             mingw-w64-clang-aarch64-gmp
             mingw-w64-clang-aarch64-mpfr
-            mingw-w64-clang-aarch64-binutils
 
       - name: Generate MSVC-compatible import libs for GMP and MPFR
-        # objdump -p (binutils) parses PE export tables without needing gendef.
-        # dlltool -m arm64 then produces a COFF .lib that MSVC link.exe accepts.
+        # CLANGARM64 is LLVM-based: use llvm-readobj (parse PE exports) +
+        # llvm-dlltool (emit COFF .lib). Both ship with the clang package
+        # that is already a dependency of mingw-w64-clang-aarch64-gmp.
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -48,14 +48,15 @@ jobs:
             local def="/tmp/${dll%.dll}.def"
 
             echo "--- $dll ---"
-            # objdump -p prints export lines as: [ord/hint] name
+            # llvm-readobj --coff-exports lists "Name: <symbol>" per export
             echo "EXPORTS" > "$def"
-            objdump -p "$BIN/$dll" \
-              | awk '/^\[/{print $NF}' \
+            llvm-readobj --coff-exports "$BIN/$dll" \
+              | awk '/Name: /{print $2}' \
               >> "$def"
-            echo "  $(wc -l < "$def") export entries"
+            echo "  $(( $(wc -l < "$def") - 1 )) exports found"
 
-            dlltool -m arm64 -D "$dll" -d "$def" -l "$BIN/$lib"
+            # llvm-dlltool produces a COFF import .lib MSVC link.exe accepts
+            llvm-dlltool -m arm64 -D "$dll" -d "$def" -l "$BIN/$lib"
             echo "  $lib: $(wc -c < "$BIN/$lib") bytes"
           }
 

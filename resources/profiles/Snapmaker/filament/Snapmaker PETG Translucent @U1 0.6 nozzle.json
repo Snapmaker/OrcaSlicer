@@ -39,5 +39,6 @@
   "filament_unloading_speed": ["90"],
   "filament_unloading_speed_start": ["100"],
   "filament_wipe_distance": ["2"],
-  "filament_z_hop_types": ["Slope Lift"]
+  "filament_z_hop_types": ["Slope Lift"],
+  "enable_pressure_advance": ["0"]
 }

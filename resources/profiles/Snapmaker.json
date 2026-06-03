@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.48.02",
+  "version": "02.02.49.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -1887,7 +1887,16 @@
     {
       "name": "Snapmaker Breakaway Support For PLA @U1 0.8 nozzle",
       "sub_path": "filament/Snapmaker Breakaway Support For PLA @U1 0.8 nozzle.json"
-    }],
+    },
+    {
+      "name": "Snapmaker PLA Full Spectrum @U1 0.4 nozzle",
+      "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 0.4 nozzle.json"
+    },
+    {
+      "name": "Snapmaker Breakaway Support For PLA @U1",
+      "sub_path": "filament/Snapmaker Breakaway Support For PLA @U1.json"
+    }
+    ],
   "machine_list": [
     {
       "name": "fdm_klipper",

@@ -12,14 +12,17 @@
 #include <limits>
 
 #include "FilamentColorMapBoxGroup.hpp"
+#include "FilamentSyncAlgorithm.hpp"
 #include "PlaterPreview.hpp"
-
 #include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Widgets/StaticLine.hpp"
+#include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/3DScene.hpp"
 
 namespace
 {
@@ -203,12 +206,45 @@ void SyncFilamentColorDialog::onModeChanged(bool bIsMappingMode)
 
 void SyncFilamentColorDialog::onAutoMatch()
 {
-    // TODO: implement nearest-color auto-match algorithm
+    if (!m_pFilamentColorMapBoxGroup)
+        return;
+
+    std::vector<FilamentData> design_vec(m_designDataList.begin(), m_designDataList.end());
+    std::vector<FilamentData> machine_vec(m_machineDataList.begin(), m_machineDataList.end());
+
+    std::vector<int> mapping = compute_color_match(design_vec, machine_vec);
+
+    int idx = 0;
+    for (int m_idx : mapping) {
+        if (m_idx >= 0 && m_idx < static_cast<int>(m_machineDataList.size())) {
+            auto it = m_machineDataList.begin();
+            std::advance(it, m_idx);
+            m_pFilamentColorMapBoxGroup->updateBoxBelowData(idx, *it);
+        }
+        ++idx;
+    }
+    Layout();
 }
 
 void SyncFilamentColorDialog::onCoverMatch()
 {
-    // TODO: implement sequential one-to-one override
+    if (!m_pFilamentColorMapBoxGroup)
+        return;
+
+    std::vector<int> mapping = compute_direct_override(
+        m_designDataList.size(),
+        m_machineDataList.size());
+
+    int idx = 0;
+    for (int m_idx : mapping) {
+        if (m_idx >= 0 && m_idx < static_cast<int>(m_machineDataList.size())) {
+            auto it = m_machineDataList.begin();
+            std::advance(it, m_idx);
+            m_pFilamentColorMapBoxGroup->updateBoxBelowData(idx, *it);
+        }
+        ++idx;
+    }
+    Layout();
 }
 
 void SyncFilamentColorDialog::initPlatePreview()
@@ -259,6 +295,9 @@ void SyncFilamentColorDialog::loadCoverPreview()
         return;
 
     unsigned int plateIndex = m_pPlaterPreview->getCurrentPlate();
+
+    // Refresh plate thumbnails so that no_light_thumbnail_data is up-to-date
+    plater->update_all_plate_thumbnails(true);
 
     PartPlateList& plateList = plater->get_partplate_list();
     PartPlate* plate = plateList.get_plate(plateIndex);

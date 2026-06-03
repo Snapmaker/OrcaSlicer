@@ -4,17 +4,15 @@
 #include <cstdint>
 #include <vector>
 
+#include "FilamentData.hpp"
+
 namespace Slic3r {
 
 // Closest-color matching using CIE76 Delta E in CIE Lab (D65).
 // Returns design_index -> machine_index mapping; -1 means unmatched.
 std::vector<int> compute_color_match(
-    const std::vector<uint8_t>& design_r,
-    const std::vector<uint8_t>& design_g,
-    const std::vector<uint8_t>& design_b,
-    const std::vector<uint8_t>& machine_r,
-    const std::vector<uint8_t>& machine_g,
-    const std::vector<uint8_t>& machine_b);
+    const std::vector<GUI::FilamentData>& design_data,
+    const std::vector<GUI::FilamentData>& machine_data);
 
 // Sequential 1:1 override: design[i] -> machine[i] until either list is exhausted.
 std::vector<int> compute_direct_override(

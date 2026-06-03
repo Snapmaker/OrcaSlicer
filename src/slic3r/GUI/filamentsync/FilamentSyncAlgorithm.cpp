@@ -7,29 +7,29 @@
 namespace {
 
 // ---- sRGB transfer function (IEC 61966-2-1) ----
-constexpr float kSrgbThreshold  = 0.04045f;
-constexpr float kSrgbLinearSlope = 1.0f / 12.92f;
-constexpr float kSrgbGammaA     = 0.055f;
-constexpr float kSrgbGammaB     = 1.055f;
-constexpr float kSrgbGammaExp   = 2.4f;
+constexpr float k_srgb_threshold   = 0.04045f;
+constexpr float k_srgb_linear_slope = 1.0f / 12.92f;
+constexpr float k_srgb_gamma_a     = 0.055f;
+constexpr float k_srgb_gamma_b     = 1.055f;
+constexpr float k_srgb_gamma_exp   = 2.4f;
 
 // ---- CIE Lab (D65) constants ----
-constexpr float kCieDelta    = 6.0f / 29.0f;       // δ
-constexpr float kCieDelta2   = kCieDelta * kCieDelta;
-constexpr float kCieDelta3   = kCieDelta * kCieDelta * kCieDelta;
-constexpr float kCieFour29th = 4.0f / 29.0f;       // constant term in Lab f(t) linear branch
-constexpr float kCieLabLScale = 116.0f;
-constexpr float kCieLabLShift = 16.0f;
-constexpr float kCieLabAScale = 500.0f;
-constexpr float kCieLabBScale = 200.0f;
+constexpr float k_cie_delta     = 6.0f / 29.0f;       // δ
+constexpr float k_cie_delta2    = k_cie_delta * k_cie_delta;
+constexpr float k_cie_delta3    = k_cie_delta * k_cie_delta * k_cie_delta;
+constexpr float k_cie_four_29th = 4.0f / 29.0f;       // constant term in Lab f(t) linear branch
+constexpr float k_cie_lab_l_scale = 116.0f;
+constexpr float k_cie_lab_l_shift = 16.0f;
+constexpr float k_cie_lab_a_scale = 500.0f;
+constexpr float k_cie_lab_b_scale = 200.0f;
 
 // ---- D65 reference white ----
-constexpr float kD65Xn = 0.95047f;
-constexpr float kD65Yn = 1.00000f;
-constexpr float kD65Zn = 1.08883f;
+constexpr float k_d65_xn = 0.95047f;
+constexpr float k_d65_yn = 1.00000f;
+constexpr float k_d65_zn = 1.08883f;
 
 // ---- Color channel range ----
-constexpr float kColorMax = 255.0f;
+constexpr float k_color_max = 255.0f;
 
 struct Lab { float L, a, b; };
 
@@ -37,17 +37,17 @@ struct Lab { float L, a, b; };
 
 float srgb_to_linear(float c)
 {
-    c /= kColorMax;
-    return (c <= kSrgbThreshold)
-        ? (c * kSrgbLinearSlope)
-        : std::pow((c + kSrgbGammaA) / kSrgbGammaB, kSrgbGammaExp);
+    c /= k_color_max;
+    return (c <= k_srgb_threshold)
+        ? (c * k_srgb_linear_slope)
+        : std::pow((c + k_srgb_gamma_a) / k_srgb_gamma_b, k_srgb_gamma_exp);
 }
 
 float lab_f(float t)
 {
-    return (t > kCieDelta3)
+    return (t > k_cie_delta3)
         ? std::cbrt(t)
-        : (t / (3.0f * kCieDelta2) + kCieFour29th);
+        : (t / (3.0f * k_cie_delta2) + k_cie_four_29th);
 }
 
 void rgb_to_lab(uint8_t r, uint8_t g, uint8_t b,
@@ -64,13 +64,13 @@ void rgb_to_lab(uint8_t r, uint8_t g, uint8_t b,
     float z = 0.0193339f * lr + 0.1191920f * lg + 0.9503041f * lb;
 
     // XYZ -> Lab
-    float fx = lab_f(x / kD65Xn);
-    float fy = lab_f(y / kD65Yn);
-    float fz = lab_f(z / kD65Zn);
+    float fx = lab_f(x / k_d65_xn);
+    float fy = lab_f(y / k_d65_yn);
+    float fz = lab_f(z / k_d65_zn);
 
-    L     = kCieLabLScale * fy - kCieLabLShift;
-    a     = kCieLabAScale * (fx - fy);
-    b_val = kCieLabBScale * (fy - fz);
+    L     = k_cie_lab_l_scale * fy - k_cie_lab_l_shift;
+    a     = k_cie_lab_a_scale * (fx - fy);
+    b_val = k_cie_lab_b_scale * (fy - fz);
 }
 
 } // anonymous namespace
@@ -93,15 +93,11 @@ float delta_e_cie76(uint8_t r1, uint8_t g1, uint8_t b1,
 }
 
 std::vector<int> compute_color_match(
-    const std::vector<uint8_t>& design_r,
-    const std::vector<uint8_t>& design_g,
-    const std::vector<uint8_t>& design_b,
-    const std::vector<uint8_t>& machine_r,
-    const std::vector<uint8_t>& machine_g,
-    const std::vector<uint8_t>& machine_b)
+    const std::vector<GUI::FilamentData>& design_data,
+    const std::vector<GUI::FilamentData>& machine_data)
 {
-    const size_t designCount  = design_r.size();
-    const size_t machineCount = machine_r.size();
+    const size_t designCount  = design_data.size();
+    const size_t machineCount = machine_data.size();
 
     std::vector<int> result(designCount, -1);
     if (designCount == 0 || machineCount == 0)
@@ -110,13 +106,13 @@ std::vector<int> compute_color_match(
     // Precompute Lab values for all machine filaments
     std::vector<Lab> machineLab(machineCount);
     for (size_t j = 0; j < machineCount; ++j)
-        rgb_to_lab(machine_r[j], machine_g[j], machine_b[j],
+        rgb_to_lab(machine_data[j].m_color_r, machine_data[j].m_color_g, machine_data[j].m_color_b,
                    machineLab[j].L, machineLab[j].a, machineLab[j].b);
 
     // For each design filament, find the perceptually closest machine filament
     for (size_t i = 0; i < designCount; ++i) {
         float designL, designA, designB;
-        rgb_to_lab(design_r[i], design_g[i], design_b[i],
+        rgb_to_lab(design_data[i].m_color_r, design_data[i].m_color_g, design_data[i].m_color_b,
                    designL, designA, designB);
 
         float bestDist = std::numeric_limits<float>::max();
@@ -142,9 +138,17 @@ std::vector<int> compute_direct_override(
     size_t machine_count)
 {
     std::vector<int> result(design_count, -1);
-    const size_t n = std::min(design_count, machine_count);
-    for (size_t i = 0; i < n; ++i)
-        result[i] = static_cast<int>(i);
+    if (machine_count == 0)
+        return result;
+
+    for (size_t i = 0; i < design_count; ++i) {
+        if (i < 4) {
+            if (i < machine_count)
+                result[i] = static_cast<int>(i);
+        } else {
+            result[i] = static_cast<int>((i - 4) % machine_count);
+        }
+    }
     return result;
 }
 

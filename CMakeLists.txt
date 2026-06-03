@@ -792,12 +792,9 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         message ("set out_dir to CMAKE_CURRENT_BINARY_DIR: ${_out_dir}")
     endif ()
 
-    if (NOT "${_arch}" STREQUAL "arm64")
-        file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_arch}/libgmp-10.dll
-                ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_arch}/libmpfr-4.dll
-            DESTINATION ${_out_dir})
-    endif()
-    file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
+    file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_arch}/libgmp-10.dll
+            ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_arch}/libmpfr-4.dll
+            ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
         DESTINATION ${_out_dir})
 
     # Copy Sentry and Crashpad artifacts if they were built by deps
@@ -841,15 +838,10 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
 
     # Build the DLL list in a local variable first
     set(_dll_list
+        ${_out_dir}/libgmp-10.dll
+        ${_out_dir}/libmpfr-4.dll
         ${_out_dir}/WebView2Loader.dll
     )
-
-    if (NOT "${_arch}" STREQUAL "arm64")
-        list(APPEND _dll_list
-            ${_out_dir}/libgmp-10.dll
-            ${_out_dir}/libmpfr-4.dll
-        )
-    endif()
 
     if (SLIC3R_ENABLE_STEP)
         list(APPEND _dll_list

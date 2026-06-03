@@ -83,16 +83,17 @@ jobs:
 
           make_import_lib libgmp-10.dll  libgmp-10.lib
 
-          # MPFR 4.x (soname 6) ships as libmpfr-6.dll in MSYS2 CLANGARM64;
-          # fall back to libmpfr-4.dll if an older package is installed.
+          # MPFR 4.x ships as libmpfr-6.dll (soname 6) in MSYS2 CLANGARM64, but
+          # the repo expects the libmpfr-4 name. Rename the DLL to libmpfr-4.dll
+          # FIRST, then generate the import lib against that name so the runtime
+          # DLL reference baked into the .lib is correct (else the slicer would
+          # try to load libmpfr-6.dll at runtime, which we never ship).
           MPFR_DLL=$(ls $BIN/libmpfr-*.dll 2>/dev/null | head -1 | xargs basename)
           echo "Found MPFR DLL: $MPFR_DLL"
-          make_import_lib "$MPFR_DLL"  "${MPFR_DLL%.dll}.lib"
-          # cmake expects libmpfr-4.{dll,lib} — copy under that canonical name
           if [ "$MPFR_DLL" != "libmpfr-4.dll" ]; then
-            cp "$BIN/$MPFR_DLL"                    "$BIN/libmpfr-4.dll"
-            cp "$BIN/${MPFR_DLL%.dll}.lib"         "$BIN/libmpfr-4.lib"
+            cp "$BIN/$MPFR_DLL" "$BIN/libmpfr-4.dll"
           fi
+          make_import_lib libmpfr-4.dll  libmpfr-4.lib
 
           # Stage into repo blob dirs so cmake's win-${DEPS_ARCH} lookup works
           mkdir -p $REPO/deps/GMP/gmp/lib/win-arm64

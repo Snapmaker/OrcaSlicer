@@ -303,16 +303,13 @@ include(Blosc/Blosc.cmake)
 include(OpenEXR/OpenEXR.cmake)
 include(OpenVDB/OpenVDB.cmake)
 
-if (NOT ("${DEPS_ARCH}" STREQUAL "arm64"))
-    include(GMP/GMP.cmake)
-    include(MPFR/MPFR.cmake)
-    include(CGAL/CGAL.cmake)
-else()
-    # Windows ARM64: GMP/MPFR are pre-installed by the CI workflow via MSYS2 clangarm64.
-    # CGAL is built without exact arithmetic (CGAL_DISABLE_GMP=ON).
-    # STEP import is disabled (requires OCCT 7.7+ for ARM64, currently using 7.6).
-    include(CGAL/CGAL.cmake)
-endif()
+# On Windows ARM64, GMP/MPFR are provided as prebuilt blobs in deps/*/lib/win-arm64
+# (staged by the CI workflow from MSYS2 clangarm64). GMP.cmake / MPFR.cmake's MSVC
+# branch copies them into the dep prefix just like x64, so CGAL builds with real
+# GMP/MPFR exact arithmetic on every Windows arch.
+include(GMP/GMP.cmake)
+include(MPFR/MPFR.cmake)
+include(CGAL/CGAL.cmake)
 
 include(NLopt/NLopt.cmake)
 include(libnoise/libnoise.cmake)

@@ -510,6 +510,9 @@ public:
     /// Check whether high-temperature and low-temperature filaments are mixed on the current plate.
     /// Returns true if compatible (no mixing), false if mixing is detected and error notification is shown.
     bool check_filament_temp_mixing();
+    /// Sync notification state with current filament temp mixing status.
+    /// Returns true if compatible (no mixing), false if mixing detected.
+    bool sync_filament_temp_mixing_notification();
     void force_filament_colors_update();
     void force_print_bed_update();
     // On activating the parent window.

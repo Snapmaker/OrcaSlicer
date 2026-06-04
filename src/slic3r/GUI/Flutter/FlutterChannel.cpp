@@ -1,32 +1,78 @@
 #include "FlutterChannel.h"
+#include "FlutterMiddleware.h"
+#include <wx/app.h>
+#include <boost/log/trivial.hpp>
 
 // ── FlutterChannel ────────────────────────────────────────────────
 
 FlutterChannel::FlutterChannel(const std::string& name)
-    : m_channelName(name) {}
+    : m_channelName(name), m_state(std::make_shared<State>())
+{
+    m_routes["system.ready"] = [state = m_state](const std::string&, FlutterViewHost::Reply) {
+        if (!state->view) {
+            BOOST_LOG_TRIVIAL(warning) << "[flutter] drain: view is null, dropping "
+                                       << state->pendingMessages.size() << " messages";
+            state->pendingMessages.clear();
+            return;
+        }
+        state->dartReady = true;
+        while (!state->pendingMessages.empty()) {
+            auto& msg = state->pendingMessages.front();
+            state->view->invokeMethod(msg.first, msg.second);
+            state->pendingMessages.pop_front();
+        }
+    };
+}
 
 FlutterChannel& FlutterChannel::on(const std::string& method, Handler h) {
-    assert(!m_handlerCalled && "FlutterChannel::on: called after handler()");
-    assert(h);
-    assert(m_routes.find(method) == m_routes.end() &&
-           "FlutterChannel::on: duplicate method");
+    if (m_handlerCalled) {
+        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::on: called after handler(), ignoring '" << method << "'";
+        return *this;
+    }
+    if (!h) {
+        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::on: null handler for '" << method << "', ignoring";
+        return *this;
+    }
+    if (method == "system.ready") {
+        BOOST_LOG_TRIVIAL(warning) << "[flutter] system.ready is reserved, ignoring user handler";
+        return *this;
+    }
+    if (m_routes.find(method) != m_routes.end()) {
+        BOOST_LOG_TRIVIAL(warning) << "[flutter] FlutterChannel::on: duplicate method '" << method << "', keeping first handler";
+        return *this;
+    }
     m_routes[method] = std::move(h);
     return *this;
 }
 
 FlutterChannel& FlutterChannel::use(std::shared_ptr<Middleware> m) {
-    assert(m);
-    assert(!m_handlerCalled && "FlutterChannel::use: called after handler()");
-    if (!m_handlerCalled)
-        m_middleware.push_back(std::move(m));
+    if (!m) {
+        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::use: null middleware, ignoring";
+        return *this;
+    }
+    if (m_handlerCalled) {
+        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::use: called after handler(), ignoring";
+        return *this;
+    }
+    m_middleware.push_back(std::move(m));
     return *this;
 }
 
 FlutterViewHost::MethodCallHandler
 FlutterChannel::handler(FlutterViewHost* view) {
-    assert(view);
-    assert(!m_handlerCalled && "FlutterChannel::handler: already called");
-    m_view = view;
+    if (!view) {
+        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::handler: null view, returning no-op";
+        return [](const std::string&, const std::string&, FlutterViewHost::Reply r) {
+            r("Error: channel not bound — null view");
+        };
+    }
+    if (m_handlerCalled) {
+        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::handler: already called, returning no-op";
+        return [](const std::string&, const std::string&, FlutterViewHost::Reply r) {
+            r("Error: handler already consumed");
+        };
+    }
+    m_state->view = view;
     m_handlerCalled = true;
 
     auto routes     = m_routes;
@@ -45,52 +91,74 @@ FlutterChannel::handler(FlutterViewHost* view) {
             rawReply(r);
         };
 
-        // onInbound (forward)
         auto& mws = *middleware;
-        for (size_t i = 0; i < mws.size(); ++i) {
-            try {
-                if (!mws[i]->onInbound(method, args, reply)) {
-                    // short-circuit: fire earlier onOutbound (reverse)
-                    for (int j = static_cast<int>(i) - 1; j >= 0; --j)
-                        mws[j]->onOutbound(method, args);
+
+        auto rollbackOnOutbound = [&mws](const std::string& m, const std::string& a,
+                                          size_t lastIdx) {
+            for (int j = static_cast<int>(lastIdx); j >= 0; --j)
+                mws[j]->onOutbound(m, a);
+        };
+
+        auto executeChain = [&](const std::string& m, const std::string& a,
+                                FlutterViewHost::Reply r, size_t startIdx = 0) {
+            for (size_t i = startIdx; i < mws.size(); ++i) {
+                if (!mws[i]->onInbound(m, a, r)) {
+                    rollbackOnOutbound(m, a, i - 1);
                     return;
                 }
-            } catch (const std::exception& e) {
-                reply(std::string("Error: ") + e.what());
-                for (int j = static_cast<int>(i) - 1; j >= 0; --j)
-                    mws[j]->onOutbound(method, args);
-                return;
-            } catch (...) {
-                reply("Error: middleware exception");
-                for (int j = static_cast<int>(i) - 1; j >= 0; --j)
-                    mws[j]->onOutbound(method, args);
+            }
+            auto it = routes.find(m);
+            if (it != routes.end())
+                it->second(a, r);
+            else
+                r("");
+            for (int i = static_cast<int>(mws.size()) - 1; i >= 0; --i)
+                mws[i]->onOutbound(m, a);
+        };
+
+        for (size_t i = 0; i < mws.size(); ++i) {
+            if (!mws[i]->onInbound(method, args, reply)) {
+                // ThreadGuardMiddleware defers execution to UI thread via CallAfter.
+                if (auto guard = std::dynamic_pointer_cast<ThreadGuardMiddleware>(mws[i])) {
+                    guard->CallAfter([executeChain, method, args, reply, i]() {
+                        executeChain(method, args, reply, i);
+                    });
+                    return;
+                }
+                rollbackOnOutbound(method, args, i - 1);
                 return;
             }
         }
 
-        // handler (with guard against unmatched routes + exceptions)
+        // All middlewares passed — run handler + onOutbound
         auto it = routes.find(method);
-        if (it != routes.end()) {
-            try {
-                it->second(args, reply);
-            } catch (const std::exception& e) {
-                reply(std::string("Error: ") + e.what());
-            } catch (...) {
-                reply("Error: unknown");
-            }
-        } else {
-            reply(""); // unmatched route: prevent Dart hang
-        }
-
-        // onOutbound (reverse)
+        if (it != routes.end())
+            it->second(args, reply);
+        else
+            reply("");
         for (int i = static_cast<int>(mws.size()) - 1; i >= 0; --i)
             mws[i]->onOutbound(method, args);
     };
 }
 
-void FlutterChannel::invoke(const std::string& method, const std::string& args)
+bool FlutterChannel::invoke(const std::string& method, const std::string& args)
 {
-    if (m_view) m_view->invokeMethod(method, args);
+    if (!wxThread::IsMain()) {
+        BOOST_LOG_TRIVIAL(error)
+            << "[flutter] invoke(" << method << ") called from non-UI thread, dropping";
+        return false;
+    }
+    auto& st = *m_state;
+    if (!st.dartReady) {
+        if (st.pendingMessages.size() >= 256) {
+            BOOST_LOG_TRIVIAL(warning) << "[flutter] queue full, dropping oldest message";
+            st.pendingMessages.pop_front();
+        }
+        st.pendingMessages.emplace_back(method, args);
+        return true;
+    }
+    if (st.view) st.view->invokeMethod(method, args);
+    return true;
 }
 
 FlutterChannel::Namespace FlutterChannel::ns(const std::string& prefix) {

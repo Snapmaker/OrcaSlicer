@@ -562,6 +562,9 @@ if (SLIC3R_ENABLE_STEP)
     )
 endif()
 
+# JPEG is always required (libslic3r links JPEG::JPEG unconditionally).
+find_package(JPEG REQUIRED)
+
 find_package(libnoise REQUIRED)
 target_link_libraries(libslic3r
     PUBLIC

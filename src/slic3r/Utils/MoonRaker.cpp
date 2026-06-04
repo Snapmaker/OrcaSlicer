@@ -3006,10 +3006,11 @@ void Moonraker_Mqtt::on_auth_arrived(const std::string& payload) {
     }
 
     int64_t id = body["id"].get<int64_t>();
-    auto [cb, _] = get_request_callback(id);
+    auto cb = get_request_callback(id).first;
     delete_response_target(id);
 
     if (!cb) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] auth callback not found, id: " << id;
         return;
     }
 
@@ -3034,6 +3035,7 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
     delete_response_target(id);
 
     if (!cb) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] response callback not found, id: " << id;
         return;
     }
 

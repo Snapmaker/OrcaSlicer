@@ -2700,17 +2700,21 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     }
 
     // Compute chamber cooling mode based on all filaments used on this plate.
-    // 0 = keep warm (all high-temp), 1 = weak cooling, 2 = strong cooling.
+    constexpr int kChamberCoolingKeepWarm  = 0;
+    constexpr int kChamberCoolingWeak      = 1;
+    constexpr int kChamberCoolingStrong    = 2;
+    constexpr int kVitrificationStrongCool = 50;  // <= 50: trigger strong cooling
+    constexpr int kVitrificationWeakCool   = 70;  // <= 70: trigger weak cooling (and > 50)
     {
-        int chamber_cooling_mode = 0;
+        int chamber_cooling_mode = kChamberCoolingKeepWarm;
         for (unsigned int extruder : tool_ordering.all_extruders()) {
             if (!m_config.filament_is_high_temperature.get_at(extruder)) {
                 int vitrification = m_config.temperature_vitrification.get_at(extruder);
-                if (vitrification <= 50) {
-                    chamber_cooling_mode = 2;
+                if (vitrification <= kVitrificationStrongCool) {
+                    chamber_cooling_mode = kChamberCoolingStrong;
                     break;
-                } else if (vitrification <= 70) {
-                    chamber_cooling_mode = 1;
+                } else if (vitrification <= kVitrificationWeakCool) {
+                    chamber_cooling_mode = kChamberCoolingWeak;
                 }
             }
         }

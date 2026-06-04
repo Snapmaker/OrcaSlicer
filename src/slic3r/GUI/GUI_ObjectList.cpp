@@ -5982,6 +5982,7 @@ void ObjectList::reload_all_plates(bool notify_partplate)
     wxGetApp().plater()->update();
     // update printable states on canvas
     wxGetApp().plater()->get_view3D_canvas3D()->update_instance_printable_state_for_objects(obj_idxs);
+    wxGetApp().plater()->sync_filament_temp_mixing_notification();
 }
 
 void ObjectList::on_plate_selected(int plate_index)

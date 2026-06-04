@@ -1805,6 +1805,7 @@ void Selection::notify_instance_update(int object_idx, int instance_idx)
         else
             plate_list.notify_instance_update(object_idx, instance_idx);
     }
+    wxGetApp().plater()->sync_filament_temp_mixing_notification();
 }
 
 void Selection::erase()

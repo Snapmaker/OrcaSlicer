@@ -102,13 +102,7 @@ option(SLIC3R_STATIC 			"Compile Snapmaker_Orca with static libraries (Boost, TB
 option(SLIC3R_GUI    			"Compile Snapmaker_Orca with GUI components (OpenGL, wxWidgets)" 1)
 option(SLIC3R_FHS               "Assume Snapmaker_Orca is to be installed in a FHS directory structure" 0)
 
-# STEP/OCCT support requires OpenCASCADE 7.7+ for Windows ARM64. Default OFF on ARM64.
-if (WIN32 AND "${CMAKE_GENERATOR_PLATFORM}" STREQUAL "ARM64")
-    set(_step_default OFF)
-else()
-    set(_step_default ON)
-endif()
-option(SLIC3R_ENABLE_STEP "Compile with STEP file import support (requires OpenCASCADE)" ${_step_default})
+option(SLIC3R_ENABLE_STEP "Compile with STEP file import support (requires OpenCASCADE)" ON)
 option(SLIC3R_WX_STABLE         "Build against wxWidgets stable (3.0) as oppsed to dev (3.1) on Linux" 0)
 option(SLIC3R_PROFILE 			"Compile Snapmaker_Orca with an invasive Shiny profiler" 0)
 option(SLIC3R_PCH               "Use precompiled headers" 1)

@@ -373,15 +373,10 @@ if((REV_PARSE_RESULT EQUAL 0) AND (REV_PARSE_OUTPUT STREQUAL "true"))
     file(RELATIVE_PATH BINARY_DIR_REL  ${CMAKE_SOURCE_DIR}/.. ${CMAKE_BINARY_DIR})
 endif ()
 
-if (NOT ("${DEPS_ARCH}" STREQUAL "arm64"))
-    include(OCCT/OCCT.cmake)
-endif()
+include(OCCT/OCCT.cmake)
 include(OpenCV/OpenCV.cmake)
 
-set(_occt_pkg "")
-if (NOT ("${DEPS_ARCH}" STREQUAL "arm64"))
-    set(_occt_pkg dep_OCCT)
-endif()
+set(_occt_pkg dep_OCCT)
 
 set(_dep_list
     dep_Boost

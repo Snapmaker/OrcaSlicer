@@ -253,6 +253,11 @@ void OfficialFilamentColorDialog::update_swatch_selection()
     }
 }
 
+void OfficialFilamentColorDialog::on_dpi_changed(const wxRect&)
+{
+    Fit();
+}
+
 void OfficialFilamentColorDialog::on_more_color(wxCommandEvent&)
 {
     wxColourData data;

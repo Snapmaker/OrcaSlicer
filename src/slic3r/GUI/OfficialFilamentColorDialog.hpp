@@ -40,6 +40,7 @@ private:
     void update_preview();
     void update_swatch_selection();
     void on_more_color(wxCommandEvent& event);
+    void on_dpi_changed(const wxRect& suggested_rect) override;
 
 private:
     OfficialFilamentMaterial m_material;

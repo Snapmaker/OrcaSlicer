@@ -99,22 +99,21 @@ OfficialFilamentColorLibrary& OfficialFilamentColorLibrary::instance()
 bool OfficialFilamentColorLibrary::ensure_loaded()
 {
     if (m_loaded)
-        return !m_load_failed;
+        return true;
 
     clear();
-    m_load_failed = !load_index();
-    if (m_load_failed)
+    if (!load_index()) {
         clear();
+        return false;
+    }
     m_loaded = true;
-
-    return !m_load_failed;
+    return true;
 }
 
 void OfficialFilamentColorLibrary::reload()
 {
     clear();
-    m_loaded      = false;
-    m_load_failed = false;
+    m_loaded = false;
     ensure_loaded();
 }
 

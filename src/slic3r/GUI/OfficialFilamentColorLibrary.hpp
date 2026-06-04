@@ -44,7 +44,6 @@ private:
 
 private:
     bool m_loaded { false };
-    bool m_load_failed { false };
 
     std::unordered_map<std::string, OfficialFilamentMaterial> m_materials_by_key;
     std::unordered_map<std::string, std::string>              m_material_key_by_sku;

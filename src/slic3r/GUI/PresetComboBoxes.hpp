@@ -250,6 +250,13 @@ private:
     wxRect get_machine_connecting_btn_rect() const;
     wxRect get_edit_btn_rect() const;
     wxRect get_dropdown_rect() const;
+
+    void select_legacy_filament_color();
+    void apply_filament_color(const std::string& primary_color,
+                              const std::vector<std::string>& colors,
+                              int mode,
+                              const std::string& sku);
+    std::string current_filament_material_key() const;
 };
 
 

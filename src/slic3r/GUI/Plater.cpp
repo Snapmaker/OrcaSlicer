@@ -7917,7 +7917,8 @@ void Sidebar::show_sync_filament_dialog()
             for (const auto& entry : mf) {
                 const auto& name  = entry.second.first;
                 const auto& color = entry.second.second; // "#RRGGBBAA"
-                if (color.empty()) continue;
+                if (color.empty())
+                    continue;
 
                 unsigned char rgba[4] = {0, 0, 0, 0};
                 BitmapCache::parse_color4(color, rgba);
@@ -7931,23 +7932,28 @@ void Sidebar::show_sync_filament_dialog()
             }
         }
 
-        // Secondary path: Bambu-style AMS data
         if (machineFilamentList.empty()) {
             auto* dev_mgr = wxGetApp().getDeviceManager();
             auto* obj = dev_mgr ? dev_mgr->get_selected_machine() : nullptr;
             if (obj && obj->is_online()) {
                 for (const auto& ams_pair : obj->amsList) {
                     Ams* ams = ams_pair.second;
-                    if (!ams) continue;
+                    if (!ams)
+                        continue;
                     for (const auto& tray_pair : ams->trayList) {
                         AmsTray* tray = tray_pair.second;
-                        if (!tray || !tray->is_exists) continue;
+                        if (!tray || !tray->is_exists)
+                            continue;
                         std::string displayName = tray->type;
-                        if (displayName.empty()) displayName = tray->sub_brands;
-                        if (displayName.empty()) displayName = tray->setting_id;
-                        if (displayName.empty()) continue;
+                        if (displayName.empty())
+                            displayName = tray->sub_brands;
+                        if (displayName.empty())
+                            displayName = tray->setting_id;
+                        if (displayName.empty())
+                            continue;
                         wxColour tc = tray->wx_color;
-                        if (!tc.IsOk()) tc = tray->get_color();
+                        if (!tc.IsOk())
+                            tc = tray->get_color();
                         FilamentData fd;
                         fd.m_index   = static_cast<unsigned int>(machineFilamentList.size());
                         fd.m_name    = displayName;
@@ -7960,11 +7966,14 @@ void Sidebar::show_sync_filament_dialog()
                 const auto& vt = obj->vt_tray;
                 if (vt.is_exists) {
                     std::string vtName = vt.type;
-                    if (vtName.empty()) vtName = vt.sub_brands;
-                    if (vtName.empty()) vtName = vt.setting_id;
+                    if (vtName.empty())
+                        vtName = vt.sub_brands;
+                    if (vtName.empty())
+                        vtName = vt.setting_id;
                     if (!vtName.empty()) {
                         wxColour tc = vt.wx_color;
-                        if (!tc.IsOk()) tc = AmsTray::decode_color(vt.color);
+                        if (!tc.IsOk())
+                            tc = AmsTray::decode_color(vt.color);
                         FilamentData fd;
                         fd.m_index   = static_cast<unsigned int>(machineFilamentList.size());
                         fd.m_name    = vtName;

@@ -1,5 +1,6 @@
 #include "OfficialFilamentColorLibrary.hpp"
 
+#include "FilamentColorUtils.hpp"
 #include "libslic3r/Utils.hpp"
 
 #include <boost/filesystem.hpp>
@@ -34,7 +35,7 @@ int json_mode(const nlohmann::json& j)
 std::vector<std::string> json_string_array(const nlohmann::json& j, const char* key)
 {
     std::vector<std::string> values;
-    const auto               it = j.find(key);
+    const auto it = j.find(key);
     if (it == j.end() || !it->is_array())
         return values;
 
@@ -43,6 +44,14 @@ std::vector<std::string> json_string_array(const nlohmann::json& j, const char* 
             values.emplace_back(item.get<std::string>());
     }
     return values;
+}
+
+std::string normalize_json_color(const std::string& color, bool& has_invalid_color)
+{
+    const std::string normalized = FilamentColorUtils::normalize_hex_color(color);
+    if (!color.empty() && normalized.empty())
+        has_invalid_color = true;
+    return normalized;
 }
 
 bool load_json_file(const boost::filesystem::path& path, nlohmann::json& out)
@@ -93,10 +102,10 @@ bool OfficialFilamentColorLibrary::ensure_loaded()
         return !m_load_failed;
 
     clear();
-    m_loaded      = true;
     m_load_failed = !load_index();
     if (m_load_failed)
         clear();
+    m_loaded = true;
 
     return !m_load_failed;
 }
@@ -155,7 +164,7 @@ std::vector<OfficialFilamentColor> OfficialFilamentColorLibrary::get_colors_for_
 bool OfficialFilamentColorLibrary::load_index()
 {
     nlohmann::json index;
-    const auto     index_path = colours_root() / "index.json";
+    const auto index_path = colours_root() / "index.json";
     if (!load_json_file(index_path, index))
         return false;
 
@@ -167,8 +176,10 @@ bool OfficialFilamentColorLibrary::load_index()
 
     bool loaded_any = false;
     for (const nlohmann::json& material_ref : *materials_it) {
-        if (!material_ref.is_object())
+        if (!material_ref.is_object()) {
+            BOOST_LOG_TRIVIAL(warning) << "Skip invalid official filament color material index item: " << index_path.string();
             continue;
+        }
 
         const std::string file = json_string(material_ref, "file");
         if (!is_safe_relative_file(file)) {
@@ -176,7 +187,8 @@ bool OfficialFilamentColorLibrary::load_index()
             continue;
         }
 
-        loaded_any = load_material_file(file) || loaded_any;
+        const bool loaded_material = load_material_file(file);
+        loaded_any = loaded_material || loaded_any;
     }
 
     return loaded_any;
@@ -200,6 +212,11 @@ bool OfficialFilamentColorLibrary::load_material_file(const std::string& file)
         return false;
     }
 
+    if (m_materials_by_key.find(material.material_key) != m_materials_by_key.end()) {
+        BOOST_LOG_TRIVIAL(warning) << "Skip duplicate official filament color material_key: " << material.material_key;
+        return false;
+    }
+
     const auto colors_it = material_json.find("colors");
     if (colors_it == material_json.end() || !colors_it->is_array()) {
         BOOST_LOG_TRIVIAL(warning) << "Skip official filament color file without colors array: " << file;
@@ -207,24 +224,47 @@ bool OfficialFilamentColorLibrary::load_material_file(const std::string& file)
     }
 
     for (const nlohmann::json& color_json : *colors_it) {
-        if (!color_json.is_object())
+        if (!color_json.is_object()) {
+            BOOST_LOG_TRIVIAL(warning) << "Skip invalid color item in official filament color file: " << file;
             continue;
+        }
 
         OfficialFilamentColor color;
-        color.name          = json_string(color_json, "name");
-        color.sku           = json_string(color_json, "sku");
-        color.mode          = json_mode(color_json);
-        color.primary_color = json_string(color_json, "primary_color");
-        color.colors        = json_string_array(color_json, "colors");
+        color.name = json_string(color_json, "name");
+        color.sku = json_string(color_json, "sku");
+        color.mode = json_mode(color_json);
+
+        bool has_invalid_color = false;
+        color.primary_color = normalize_json_color(json_string(color_json, "primary_color"), has_invalid_color);
+
+        for (const std::string& raw_color : json_string_array(color_json, "colors")) {
+            const std::string normalized_color = normalize_json_color(raw_color, has_invalid_color);
+            if (!normalized_color.empty())
+                color.colors.emplace_back(normalized_color);
+        }
+
+        if (has_invalid_color) {
+            BOOST_LOG_TRIVIAL(warning) << "Skip color item with invalid color value in official filament color file: " << file;
+            continue;
+        }
 
         if (color.primary_color.empty() && !color.colors.empty())
             color.primary_color = color.colors.front();
         if (color.colors.empty() && !color.primary_color.empty())
             color.colors.emplace_back(color.primary_color);
-        if (color.sku.empty() || color.primary_color.empty())
+        if (color.sku.empty() || color.primary_color.empty() || color.colors.empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "Skip incomplete color item in official filament color file: " << file;
             continue;
+        }
 
-        material.colors.emplace_back(color);
+        if (m_material_key_by_sku.find(color.sku) != m_material_key_by_sku.end()) {
+            BOOST_LOG_TRIVIAL(warning) << "Skip duplicate filament color SKU: " << color.sku;
+            continue;
+        }
+
+        m_material_key_by_sku.emplace(color.sku, material.material_key);
+        m_colors_by_sku.emplace(color.sku, color);
+        material.colors.emplace_back(std::move(color));
     }
 
     if (material.colors.empty()) {
@@ -232,11 +272,7 @@ bool OfficialFilamentColorLibrary::load_material_file(const std::string& file)
         return false;
     }
 
-    m_materials_by_key[material.material_key] = material;
-    for (const OfficialFilamentColor& color : material.colors) {
-        m_material_key_by_sku[color.sku] = material.material_key;
-        m_colors_by_sku[color.sku]       = color;
-    }
+    m_materials_by_key.emplace(material.material_key, std::move(material));
 
     return true;
 }

@@ -10,7 +10,7 @@ struct OfficialFilamentColor
 {
     std::string name;
     std::string sku;
-    int         mode { 0 };
+    int mode { 0 }; // 0 平均显示，1 渐变显示
     std::string primary_color;
     std::vector<std::string> colors;
 };

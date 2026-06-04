@@ -14,13 +14,16 @@ struct MixedFilamentDisplayContext;
 
 namespace Slic3r { namespace GUI {
 
-// Unified colour-block parameters used by both solid and gradient swatches.
+// Unified colour-block parameters used by solid, segmented, and gradient swatches.
 struct ColorBlockParams
 {
-    enum Mode { Solid, Gradient };
+    enum Mode { Solid, Segments, Gradient };
+    enum GradientDirection { LeftToRight, BottomToTop };
+
     Mode mode = Solid;
+    GradientDirection gradient_direction = BottomToTop;
     wxColour solid_color;
-    std::vector<wxColour> gradient_colors; // 2-stop gradient, already sorted (bottom→top)
+    std::vector<wxColour> colors;
     wxString label;
     int width  = 20;
     int height = 20;
@@ -42,11 +45,9 @@ public:
                        bool show_number = true, int badge_size = 20);
 
 private:
-    wxColour m_solid_color;
-    bool m_is_gradient = false;
     bool m_show_number = true;
     wxString m_label;
-    std::vector<wxColour> m_gradient_colors;
+    ColorBlockParams m_color_block;
 
     void on_paint(wxPaintEvent&);
     void on_left_up(wxMouseEvent&);

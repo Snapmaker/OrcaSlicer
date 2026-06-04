@@ -2164,6 +2164,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_StartCloudPrint();
     } else if (m_cmd == "sw_StartLocalPrint") {
         sw_StartLocalPrint();
+    } else if (m_cmd == "sw_MachineHeartbeat") {
+        sw_MachineHeartbeat();
     } else if (m_cmd == "sw_SetDeviceName") {
         sw_SetDeviceName();
     } else if (m_cmd == "sw_ControlLed") {
@@ -2720,6 +2722,29 @@ void SSWCP_MachineOption_Instance::sw_StartLocalPrint()
         auto self = weak_self.lock();
         if (self) {
             BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_StartLocalPrint response: " << response.dump();
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
+}
+
+void SSWCP_MachineOption_Instance::sw_MachineHeartbeat()
+{
+    BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_MachineHeartbeat params: " << m_param_data.dump();
+
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_MachineHeartbeat: Can't find the active machine";
+        handle_general_fail(-1, "Can't find the active machine");
+        return;
+    }
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_machine_heartbeat(m_param_data, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_MachineHeartbeat response: " << response.dump();
             SSWCP_Instance::on_mqtt_msg_arrived(self, response);
         }
     });
@@ -6240,6 +6265,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_CancelPullCloudFile",
     "sw_StartCloudPrint",
     "sw_StartLocalPrint",
+    "sw_MachineHeartbeat",
     "sw_SetDeviceName",
     "sw_ControlLed",
     "sw_ControlPrintSpeed",

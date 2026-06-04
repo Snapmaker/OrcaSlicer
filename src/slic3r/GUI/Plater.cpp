@@ -7857,21 +7857,15 @@ void Sidebar::sync_ams_list()
 
 void Sidebar::show_sync_filament_dialog()
 {
-    // Check if connected to a device
-    // DeviceManager* dev_mgr = wxGetApp().getDeviceManager();
-    // MachineObject* obj = nullptr;
-    // if (dev_mgr) {
-    //     std::string dev_id = dev_mgr->get_first_online_user_machine();
-    //     if (!dev_id.empty())
-    //         obj = dev_mgr->get_user_machine(dev_id);
-    // }
-    // if (!obj || obj->is_connecting() || !obj->is_connected()) {
-    //     MessageDialog dlg(this,
-    //         _L("Please connect to a device first before synchronizing filament information."),
-    //         _L("Device not connected"), wxOK);
-    //     dlg.ShowModal();
-    //     return;
-    // }
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+    if (!host) {
+        MessageDialog dlg(this,
+            _L("Please connect to a device first before synchronizing filament information."),
+            _L("Device not connected"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
 
     PresetBundle* preset_bundle = wxGetApp().preset_bundle;
     if (!preset_bundle)

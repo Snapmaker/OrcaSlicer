@@ -5096,8 +5096,8 @@ void apply_fuzzy_skin_segmentation(PrintObject &print_object, ThrowOnCancel thro
             it_layer_range = layer_range_next(layer_ranges, it_layer_range, layer.slice_z);
             const PrintObjectRegions::LayerRangeRegions &layer_range = *it_layer_range;
 
-            assert(segmentation[layer_idx].size() == 1);
-            const ExPolygons &fuzzy_skin_segmentation      = segmentation[layer_idx][0];
+            assert(segmentation[layer_idx].size() >= 2);
+            const ExPolygons &fuzzy_skin_segmentation      = segmentation[layer_idx][1];
             const BoundingBox fuzzy_skin_segmentation_bbox = get_extents(fuzzy_skin_segmentation);
             if (fuzzy_skin_segmentation.empty())
                 continue;

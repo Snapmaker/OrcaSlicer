@@ -1099,6 +1099,7 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
 
     // update scene
     wxGetApp().plater()->update();
+    wxGetApp().plater()->sync_filament_temp_mixing_notification();
 }
 
 void ObjectList::update_name_in_model(const wxDataViewItem& item) const
@@ -5921,6 +5922,7 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
 
     // update scene
     wxGetApp().plater()->update();
+    wxGetApp().plater()->sync_filament_temp_mixing_notification();
 
     // BBS: update extruder/filament column
     Refresh();

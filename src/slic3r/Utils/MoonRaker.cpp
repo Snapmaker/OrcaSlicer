@@ -2542,6 +2542,23 @@ void Moonraker_Mqtt::async_start_cloud_print(const nlohmann::json& targets,
     }
 }
 
+// Request device to start local file print
+static const std::string METHOD_START_LOCAL_PRINT = "server.files.start_local_print";
+
+void Moonraker_Mqtt::async_start_local_print(const nlohmann::json& targets,
+                                              std::function<void(const nlohmann::json& response)> callback)
+{
+    if (!send_to_request(METHOD_START_LOCAL_PRINT, targets, true, callback,
+                         [callback]() {
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        callback(json::value_t::null);
+    }
+}
+
 // 请求设备开启云打印
 void Moonraker_Mqtt::async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)> callback)
 {

@@ -746,17 +746,17 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
 
 
      //// save config
-    auto in_handler = std::make_shared<bool>(false);
-    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param, confirm_cb, in_handler](wxCommandEvent &e) {
-        if (*in_handler) { e.Skip(); return; }
+    auto reentry_guard = std::make_shared<bool>(false);
+    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param, confirm_cb, reentry_guard](wxCommandEvent &e) {
+        if (*reentry_guard) { e.Skip(); return; }
         if (confirm_cb) {
             bool old_val = !checkbox->GetValue();
             bool new_val = checkbox->GetValue();
             bool final_val = confirm_cb(new_val, old_val);
             if (final_val != new_val) {
-                *in_handler = true;
+                *reentry_guard = true;
                 checkbox->SetValue(final_val);
-                *in_handler = false;
+                *reentry_guard = false;
             }
         }
         app_config->set_bool(param, checkbox->GetValue());

@@ -112,7 +112,10 @@ jobs:
         id: cache-deps
         with:
           path: deps/build-arm64/OrcaSlicer_dep
-          key: deps-arm64-${{ hashFiles('deps/**') }}-${{ runner.os }}
+          # Hash only the dependency cmake definitions (fixed-depth globs). Using
+          # 'deps/**' scans the whole built dep tree (millions of files) and times
+          # out hashFiles at the post-save step, failing the job after a good build.
+          key: deps-arm64-${{ runner.os }}-${{ hashFiles('deps/CMakeLists.txt', 'deps/*.cmake', 'deps/*/*.cmake') }}
 
       - name: Build dependencies (ARM64)
         if: steps.cache-deps.outputs.cache-hit != 'true'

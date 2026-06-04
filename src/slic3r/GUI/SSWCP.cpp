@@ -2162,6 +2162,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_CancelPullCloudFile();
     } else if (m_cmd == "sw_StartCloudPrint") {
         sw_StartCloudPrint();
+    } else if (m_cmd == "sw_StartLocalPrint") {
+        sw_StartLocalPrint();
     } else if (m_cmd == "sw_SetDeviceName") {
         sw_SetDeviceName();
     } else if (m_cmd == "sw_ControlLed") {
@@ -2690,6 +2692,37 @@ void SSWCP_MachineOption_Instance::sw_StartCloudPrint()
     catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+void SSWCP_MachineOption_Instance::sw_StartLocalPrint()
+{
+    if (!m_param_data.count("type") || !m_param_data.count("path")) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_StartLocalPrint: param [type] or [path] required!";
+        handle_general_fail(-1, "param [type] or [path] required!");
+        return;
+    }
+
+    BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_StartLocalPrint params: " << m_param_data.dump();
+
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_StartLocalPrint: Can't find the active machine";
+        handle_general_fail(-1, "Can't find the active machine");
+        return;
+    }
+
+    json items = m_param_data;
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_start_local_print(items, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_StartLocalPrint response: " << response.dump();
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
 }
 
 void SSWCP_MachineOption_Instance::sw_MachineFilesRoots()
@@ -6206,6 +6239,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_PullCloudFile",
     "sw_CancelPullCloudFile",
     "sw_StartCloudPrint",
+    "sw_StartLocalPrint",
     "sw_SetDeviceName",
     "sw_ControlLed",
     "sw_ControlPrintSpeed",

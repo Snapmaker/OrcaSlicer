@@ -269,6 +269,8 @@ public:
 
     virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
+    virtual void async_start_local_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
     virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;

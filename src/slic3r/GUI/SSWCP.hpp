@@ -463,6 +463,9 @@ private:
     // 请求设备下载文件并打印
     void sw_StartCloudPrint();
 
+    // Request device to start local file print
+    void sw_StartLocalPrint();
+
     // 设备耗材同步
     void sw_UpdateMachineFilamentInfo();
 

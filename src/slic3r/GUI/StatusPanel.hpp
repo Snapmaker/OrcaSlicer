@@ -301,6 +301,7 @@ protected:
     wxStaticText*   m_staticText_consumption_of_time;
     wxStaticText *  m_staticText_consumption_of_weight;
     Label *         m_staticText_monitoring;
+    Label *         m_staticText_device_ip {nullptr};
     wxStaticText *  m_staticText_timelapse;
     SwitchButton *  m_bmToggleBtn_timelapse;
 

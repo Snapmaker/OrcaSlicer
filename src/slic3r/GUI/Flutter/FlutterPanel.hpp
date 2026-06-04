@@ -5,7 +5,8 @@
 #include <unordered_map>
 #include "flutter_host.h"
 
-// Simple dispatch table for Dart↔C++ MethodChannel communication
+// Simple dispatch table for Dart↔C++ MethodChannel communication.
+// @deprecated Use FlutterChannel instead (namespace + middleware + view binding).
 class Dispatcher {
 public:
     using Fn = std::function<void(

@@ -7857,6 +7857,9 @@ void Sidebar::sync_ams_list()
 
 void Sidebar::show_sync_filament_dialog()
 {
+    if (!wxGetApp().plater())
+        return;
+
     std::shared_ptr<PrintHost> host = nullptr;
     wxGetApp().get_connect_host(host);
     if (!host) {
@@ -7982,6 +7985,7 @@ void Sidebar::show_sync_filament_dialog()
     }
 
     // ---- Show dialog ----
+    wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
     if (dlg.ShowModal() == wxID_OK && preset_bundle) {
         std::list<FilamentData> syncedData = dlg.getSyncDataList();

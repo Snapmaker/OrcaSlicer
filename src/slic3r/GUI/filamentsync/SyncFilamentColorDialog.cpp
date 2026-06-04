@@ -296,9 +296,6 @@ void SyncFilamentColorDialog::loadCoverPreview()
 
     unsigned int plateIndex = m_pPlaterPreview->getCurrentPlate();
 
-    // Refresh plate thumbnails so that no_light_thumbnail_data is up-to-date
-    plater->update_all_plate_thumbnails(true);
-
     PartPlateList& plateList = plater->get_partplate_list();
     PartPlate* plate = plateList.get_plate(plateIndex);
     if (!plate || !plate->thumbnail_data.is_valid())

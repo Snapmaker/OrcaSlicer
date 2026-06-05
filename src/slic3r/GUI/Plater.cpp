@@ -8026,9 +8026,26 @@ void Sidebar::show_sync_filament_dialog()
     if (dlg.ShowModal() == wxID_OK && preset_bundle) {
         std::vector<FilamentData> syncedData = dlg.getSyncDataList();
 
+        size_t effective_size = syncedData.size();
+        size_t combo_Size = p->combos_filament.size();
+        if (effective_size != combo_Size) {
+            if (effective_size > combo_Size && 
+                    (effective_size > MAXIMUM_EXTRUDER_NUMBER || 
+                        preset_bundle->mixed_filaments.total_filaments(effective_size) >= MAXIMUM_FILAMENT_NUMBER)) {
+                // TODO We haven't decided yet how to handle the cases that exceed the limit. 
+                // For now, we'll just assume that no action will be taken.
+                effective_size = combo_Size;
+            }
+            if (effective_size != combo_Size) {
+                wxColour    new_col   = Plater::get_next_color_for_filament();
+                std::string new_color = into_u8(new_col.GetAsString(wxC2S_HTML_SYNTAX));
+                preset_bundle->set_num_filaments(effective_size, new_color);
+            }
+        }
+
         ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-        
-        for (size_t i = 0, size = syncedData.size(); i < size; ++i) {
+
+        for (size_t i = 0; i < effective_size; ++i) {
             Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name);
             if (matched) {
                 preset_bundle->set_filament_preset(i, matched->name);
@@ -8040,7 +8057,7 @@ void Sidebar::show_sync_filament_dialog()
             }
         }
 
-        const size_t num_filaments = p->combos_filament.size();
+        const size_t num_filaments = effective_size;
         wxGetApp().plater()->on_filaments_change(num_filaments);
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         preset_bundle->export_selections(*wxGetApp().app_config);
@@ -8051,7 +8068,7 @@ void Sidebar::show_sync_filament_dialog()
         }
 
         // Auto calculation of flushing volumes for synced filaments
-        for (size_t i = 0, size = syncedData.size(); i < size; ++i) {
+        for (size_t i = 0; i < effective_size; ++i) {
             auto_calc_flushing_volumes(i);
         }
     }

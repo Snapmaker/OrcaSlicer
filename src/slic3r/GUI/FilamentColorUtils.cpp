@@ -150,9 +150,9 @@ nlohmann::json build_preprint_color_multi_item(const std::string& multi_colors, 
 
     nlohmann::json out_colors = nlohmann::json::array();
     for (const std::string& color : colors)
-        out_colors.push_back(strip_hash_for_preprint(color, "#FFFFFF"));
+        out_colors.push_back(color.substr(1));
 
-    nlohmann::json item;
+    nlohmann::json item; 
     item["mode"]   = normalized_mode;
     item["nums"]   = colors.size();
     item["colors"] = out_colors;

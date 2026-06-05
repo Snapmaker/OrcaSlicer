@@ -1,5 +1,6 @@
 // Implementation of web communication protocol for Slicer Studio
 #include "SSWCP.hpp"
+#include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "DownloadManager.hpp"
@@ -3188,17 +3189,29 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
         // filament colour
         if (config.has("filament_colour")) {
-            auto filament_color        = config.option<ConfigOptionStrings>("filament_colour")->values;
+            auto filament_color = config.option<ConfigOptionStrings>("filament_colour")->values;
+            const ConfigOptionStrings* filament_multi_colors = config.has("filament_multi_colors") ?
+                config.option<ConfigOptionStrings>("filament_multi_colors") : nullptr;
+            const ConfigOptionInts* filament_colour_modes = config.has("filament_colour_mode") ?
+                config.option<ConfigOptionInts>("filament_colour_mode") : nullptr;
 
             std::vector<long long> number_res(filament_color.size(), 0);
             std::vector<std::string> str_res(filament_color.size());
-            for (int i = 0; i < filament_color.size(); ++i) {
+            json multi_color_res = json::array();
+            for (size_t i = 0; i < filament_color.size(); ++i) {
                 number_res[i] = color_to_int(filament_color[i]);
-                str_res[i]    = filament_color[i];
+                str_res[i] = filament_color[i];
+
+                const std::string multi_colors = filament_multi_colors != nullptr && filament_multi_colors->values.size() > i ?
+                    filament_multi_colors->values[i] : std::string();
+                const int mode = filament_colour_modes != nullptr && filament_colour_modes->values.size() > i ?
+                    filament_colour_modes->values[i] : 0;
+                multi_color_res.push_back(FilamentColorUtils::build_preprint_color_multi_item(multi_colors, mode, filament_color[i]));
             }
 
             response["filament_color"] = number_res;
             response["filament_color_rgba"] = str_res;
+            response["filament_color_multi"] = multi_color_res;
         }
         
 

@@ -745,7 +745,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
     m_sizer_checkbox->Add(checkbox_title, 0, wxALIGN_CENTER | wxALL, 3);
 
 
-     //// save config
+     //// save config 
     auto reentry_guard = std::make_shared<bool>(false);
     checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param, confirm_cb, reentry_guard](wxCommandEvent &e) {
         if (*reentry_guard) { e.Skip(); return; }

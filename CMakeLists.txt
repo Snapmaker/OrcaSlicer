@@ -944,8 +944,6 @@ set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
-set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
-set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
 # Preinstall guard in one place:
 # 1) Block while app is running.
 # 2) If old version exists, uninstall it with clear failure reason.
@@ -1020,23 +1018,8 @@ SnapmakerOrcaPre_uninst_launch_failed:
 
 SnapmakerOrcaPre_finish:
 ]=])
-# URL protocol registration (CPACK_NSIS_INSTALL_SCRIPT is not expanded by CMake's NSIS template).
-set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [=[
-  SetRegView 64
-  WriteRegStr HKLM "Software\Classes\snapmaker-orca" "" "URL:Snapmaker Orca"
-  WriteRegStr HKLM "Software\Classes\snapmaker-orca" "URL Protocol" ""
-  WriteRegStr HKLM "Software\Classes\snapmaker-orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
-  WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "" "URL:Snapmaker Orca"
-  WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "URL Protocol" ""
-  WriteRegStr HKLM "Software\Classes\Snapmaker_Orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
-  SetRegView 32
-]=])
-set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [=[
-  SetRegView 64
-  DeleteRegKey HKLM "Software\Classes\snapmaker-orca"
-  DeleteRegKey HKLM "Software\Classes\Snapmaker_Orca"
-  SetRegView 32
-]=])
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS)
 # Desktop shortcut inside MUI_STARTMENU_WRITE_BEGIN: respects "do not create shortcuts" on the start menu page.
 set(CPACK_NSIS_CREATE_ICONS_EXTRA [=[
   SetShellVarContext current
@@ -1052,7 +1035,6 @@ set (CPACK_PACKAGE_CHECKSUM SHA256)
 set (CPACK_PACKAGE_INSTALL_REGISTRY_KEY "Snapmaker_Orca")
 set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-# Install-options page (PATH). Desktop shortcut is created via CPACK_NSIS_CREATE_ICONS_EXTRA above.
 set (CPACK_NSIS_MODIFY_PATH "ON")
 set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;Snapmaker Orca")
 set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also include in install command
@@ -1060,4 +1042,6 @@ set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also in
 set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")
 set(CPACK_GENERATOR NSIS)
 set(CPACK_VERBATIM_VARIABLES ON)
+include(PatchCPackNSISTemplate)
+snapmaker_patch_cpack_nsis_template()
 include(CPack)

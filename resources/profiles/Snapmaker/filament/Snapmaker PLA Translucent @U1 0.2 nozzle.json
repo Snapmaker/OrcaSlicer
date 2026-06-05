@@ -53,7 +53,7 @@
     "enable_overhang_bridge_fan": [
         "1"
     ],
-    "enable_pressure_advance": ["1"],
+    "enable_pressure_advance": ["0"],
     "eng_plate_temp": [
         "60"
     ],

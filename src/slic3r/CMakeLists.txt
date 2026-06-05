@@ -114,6 +114,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/FileArchiveDialog.hpp
     GUI/Flutter/FlutterPanel.cpp
     GUI/Flutter/FlutterPanel.hpp
+    GUI/Flutter/FlutterChannel.cpp
+    GUI/Flutter/FlutterChannel.h
+    GUI/Flutter/FlutterMiddleware.cpp
+    GUI/Flutter/FlutterMiddleware.h
     GUI/Flutter/flutter_host.h
     GUI/Flutter/flutter_platform.h
     GUI/format.hpp

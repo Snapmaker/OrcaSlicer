@@ -5,8 +5,10 @@
 
 // =========================================================================
 // Two-layer architecture:
-//   FlutterEngineHost — one per process, owns the FlutterEngine lifecycle
-//   FlutterViewHost   — one per panel, owns a ViewController + MethodChannel
+//   FlutterEngineHost — creates FlutterViewHost instances.  On macOS the
+//       host retains engine references centrally; on Windows/Linux it is a
+//       stateless factory and each view owns its own engine.
+//   FlutterViewHost   — one per panel, owns the native view + engine.
 // =========================================================================
 
 // ── View layer (one per visible panel) ─────────────────────────────────

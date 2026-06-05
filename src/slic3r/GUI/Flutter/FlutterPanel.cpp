@@ -1,4 +1,6 @@
 #include "FlutterPanel.hpp"
+#include "FlutterMiddleware.h"
+#include <cassert>
 
 FlutterPanel::FlutterPanel(wxWindow* parent)
     : wxWindow(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -9,20 +11,35 @@ FlutterPanel::FlutterPanel(wxWindow* parent)
     Bind(wxEVT_SET_FOCUS, &FlutterPanel::onSetFocus, this);
 }
 
+// Lazy-init — first call creates the channel with the given name; subsequent
+// calls return the existing channel (name parameter is ignored).
+FlutterChannel& FlutterPanel::channel(const std::string& name) {
+    if (!m_channel) {
+        m_channel = std::make_unique<FlutterChannel>(name);
+    }
+    return *m_channel;
+}
+
+FlutterChannel& FlutterPanel::channel() {
+    assert(m_channel);
+    return *m_channel;
+}
+
 bool FlutterPanel::startView(FlutterEngineHost* engine,
                               const std::string& entrypoint,
-                              const std::string& channelName,
-                              FlutterViewHost::MethodCallHandler handler) {
+                              const std::string& channelName) {
     m_view = engine->createView(entrypoint, channelName);
     if (!m_view) return false;
-    if (handler) m_view->setMethodCallHandler(std::move(handler));
 
-    // Defer embedInto until the panel has a valid size.  When this panel
-    // is on a non-selected notebook page it has a 0×0 or 1×1 allocation,
-    // and calling embedInto would fall back to a hard-coded default
-    // (800×600) that is visible for one frame before the first wxEVT_SIZE
-    // corrects it.  tryEmbed() is called from onShow / onSize and handles
-    // the one-shot embed at the real client size.
+    if (!m_channel) {
+        m_channel = std::make_unique<FlutterChannel>(channelName);
+    }
+
+    m_channel->use(makeThreadGuardMiddleware());
+    m_channel->use(makeLoggingMiddleware());
+
+    m_view->setMethodCallHandler(m_channel->handler(m_view.get()));
+
     tryEmbed();
     if (m_embedded) {
         wxSize sz = GetSize();
@@ -32,17 +49,13 @@ bool FlutterPanel::startView(FlutterEngineHost* engine,
     return true;
 }
 
-void FlutterPanel::setHandler(FlutterViewHost::MethodCallHandler handler) {
-    if (m_view) m_view->setMethodCallHandler(std::move(handler));
+void FlutterPanel::resizeView(int width, int height) {
+    if (m_view) m_view->resize(width, height);
 }
 
 void FlutterPanel::onShow(wxShowEvent& event) {
     if (event.IsShown() && m_view) {
         tryEmbed();
-        // Use GetSize() (wxWidgets-tracked size) rather than
-        // GetClientSize() (GTK allocation).  After DoSetSelection
-        // calls SetSize, the wx size is correct even if GTK hasn't
-        // updated the widget allocation yet.
         wxSize sz = GetSize();
         if (sz.GetWidth() > 1 && sz.GetHeight() > 1)
             m_view->resize(sz.GetWidth(), sz.GetHeight());
@@ -59,8 +72,6 @@ void FlutterPanel::tryEmbed() {
 }
 
 void FlutterPanel::onSetFocus(wxFocusEvent& event) {
-    // Defer via CallAfter: on Windows, calling ::SetFocus during
-    // WM_SETFOCUS processing is silently ignored by the OS.
     CallAfter([this] {
         if (m_view) m_view->focus();
     });
@@ -69,10 +80,6 @@ void FlutterPanel::onSetFocus(wxFocusEvent& event) {
 
 void FlutterPanel::SetFocus() {
 #ifdef __WXMSW__
-    // MSWGetFocusHWND() override returns the Flutter child HWND, so
-    // wxWindow::SetFocus() calls ::SetFocus(childHwnd) directly.  No
-    // two-step focus dance needed — eliminates the race where notebook
-    // or mouse-click handling could reclaim focus from child to panel.
     wxWindow::SetFocus();
 #else
     wxWindow::SetFocus();
@@ -83,9 +90,6 @@ void FlutterPanel::SetFocus() {
 void FlutterPanel::onSize(wxSizeEvent& event) {
     if (m_view) {
         tryEmbed();
-        // Use event.GetSize() rather than GetClientSize(): on wxGTK,
-        // GetClientSize() queries the GTK allocation which may be stale
-        // if GTK hasn't processed the size allocation yet.
         wxSize sz = event.GetSize();
         if (sz.GetWidth() > 1 && sz.GetHeight() > 1)
             m_view->resize(sz.GetWidth(), sz.GetHeight());
@@ -94,18 +98,6 @@ void FlutterPanel::onSize(wxSizeEvent& event) {
 }
 
 #ifdef __WXMSW__
-// wxWidgets' PreProcessMessage walks the parent chain from msg.hwnd up
-// through WS_CHILD parents, finds this FlutterPanel, and calls
-// MSWTranslateMessage on it.  The base MSWTranslateMessage calls
-// ::TranslateMessage (which generates WM_CHAR and posts it) and returns
-// true — consuming WM_KEYDOWN before Flutter's WndProc ever sees it.
-// The orphaned WM_CHAR then arrives at the Flutter child but its
-// KeyboardManager has no pending key-down to pair it with.
-//
-// Returning false here skips the entire PreProcessMessage parent-chain
-// walk for messages targeted at the Flutter child HWND, letting the
-// main loop's native ::TranslateMessage + ::DispatchMessage deliver
-// both WM_KEYDOWN and WM_CHAR to the Flutter child in order.
 bool FlutterPanel::MSWShouldPreProcessMessage(WXMSG* msg) {
     if (m_view) {
         HWND child = (HWND)m_view->nativeHandle();

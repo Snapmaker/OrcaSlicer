@@ -261,7 +261,116 @@ TEST_CASE("Namespace on() guards against duplicate method names", "[FlutterChann
 {
     FlutterChannel channel("test");
     channel.on("getVersion", [](const auto&, auto r) { r("v1"); });
-    // ns adds prefix, so "device.getVersion" != "getVersion"
     REQUIRE_NOTHROW(channel.ns("device").on("getVersion",
         [](const auto&, auto r) { r("v2"); }));
+}
+
+// ── Integration: handler + mock view ──────────────────────────────
+
+class IntegrationMockView : public FlutterViewHost {
+public:
+    MethodCallHandler m_handler;
+    std::vector<std::string> sent;
+    void* nativeHandle() const override { return nullptr; }
+    void embedInto(void*) override {}
+    void resize(int, int) override {}
+    void focus() override {}
+    void setMethodCallHandler(MethodCallHandler h) override { m_handler = std::move(h); }
+    void invokeMethod(const std::string& m, const std::string& a) override { sent.push_back(m + ":" + a); }
+};
+
+TEST_CASE("Multiple handler invocations each get independent reply", "[FlutterChannel][integration]")
+{
+    FlutterChannel channel("test");
+    channel.on("getVersion", [](auto, auto r) { r("v1"); })
+           .on("getStatus",  [](auto, auto r) { r("idle"); });
+
+    IntegrationMockView view;
+    auto handler = channel.handler(&view);
+
+    std::string r1, r2, r3;
+    handler("getVersion", "", [&](auto s) { r1 = s; });
+    handler("getStatus",  "", [&](auto s) { r2 = s; });
+    handler("getVersion", "", [&](auto s) { r3 = s; });
+
+    REQUIRE(r1 == "v1");
+    REQUIRE(r2 == "idle");
+    REQUIRE(r3 == "v1");
+}
+
+TEST_CASE("Reply from handler reaches outer callback", "[FlutterChannel][integration]")
+{
+    FlutterChannel channel("test");
+    int n = 0;
+    channel.on("ping", [&](auto, auto r) { n++; r("pong"); });
+
+    IntegrationMockView view;
+    auto handler = channel.handler(&view);
+
+    handler("ping", "", [&](auto) { n++; });
+    handler("ping", "", [&](auto) { n++; });
+    handler("ping", "", [&](auto) { n++; });
+
+    REQUIRE(n == 6); // 3 handlers + 3 reply callbacks
+}
+
+TEST_CASE("system.ready drains queued messages in FIFO order", "[FlutterChannel][integration]")
+{
+    FlutterChannel channel("test");
+    IntegrationMockView view;
+    channel.handler(&view);
+
+    channel.invoke("a", "1");
+    channel.invoke("b", "2");
+    REQUIRE(view.sent.empty());
+
+    view.m_handler("system.ready", "", [](auto) {});
+
+    REQUIRE(view.sent.size() == 2);
+    REQUIRE(view.sent[0] == "a:1");
+    REQUIRE(view.sent[1] == "b:2");
+}
+
+TEST_CASE("on() after handler() is ignored", "[FlutterChannel][integration]")
+{
+    FlutterChannel channel("test");
+    channel.on("getVersion", [](auto, auto r) { r("v1"); });
+
+    IntegrationMockView view;
+    channel.handler(&view);
+
+    REQUIRE_NOTHROW(channel.on("late", [](auto, auto r) { r("late"); }));
+
+    std::string result = "not-called";
+    view.m_handler("late", "", [&](auto s) { result = s; });
+    REQUIRE(result.empty());
+}
+
+TEST_CASE("Unregistered method returns empty reply", "[FlutterChannel][integration]")
+{
+    FlutterChannel channel("test");
+    channel.on("getVersion", [](auto, auto r) { r("v1"); });
+
+    IntegrationMockView view;
+    auto handler = channel.handler(&view);
+
+    std::string result = "not-called";
+    handler("unknown", "{}", [&](auto s) { result = s; });
+    REQUIRE(result.empty());
+}
+
+TEST_CASE("Namespace routes work through frozen handler", "[FlutterChannel][integration]")
+{
+    FlutterChannel channel("test");
+    channel.ns("device").on("connect", [](auto, auto r) { r("ok"); });
+    channel.ns("device").on("scan",    [](auto, auto r) { r("[]"); });
+
+    IntegrationMockView view;
+    auto handler = channel.handler(&view);
+
+    std::string r1, r2;
+    handler("device.connect", "{}", [&](auto s) { r1 = s; });
+    handler("device.scan",    "{}", [&](auto s) { r2 = s; });
+    REQUIRE(r1 == "ok");
+    REQUIRE(r2 == "[]");
 }

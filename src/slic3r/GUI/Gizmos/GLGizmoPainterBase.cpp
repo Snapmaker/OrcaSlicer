@@ -6,6 +6,8 @@
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Camera.hpp"
+#include "slic3r/GUI/CameraUtils.hpp"
+#include "slic3r/GUI/MeshUtils.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -157,6 +159,9 @@ void GLGizmoPainterBase::render_cursor()
     // Raycast and return if there's no hit.
     update_raycast_cache(m_parent.get_local_mouse_position(), camera, trafo_matrices);
     if (m_rr.mesh_id == -1)
+        return;
+
+    if (m_tool_type == ToolType::POLYGON_LASSO)
         return;
 
     if (m_tool_type == ToolType::BRUSH) {
@@ -581,6 +586,401 @@ std::vector<GLGizmoPainterBase::ProjectedHeightRange> GLGizmoPainterBase::get_pr
     return hit_triangles_by_mesh;
 }
 
+void GLGizmoPainterBase::collect_part_trafo_matrices(std::vector<Transform3d> &trafo_matrices, std::vector<Transform3d> &trafo_matrices_not_translate) const
+{
+    trafo_matrices.clear();
+    trafo_matrices_not_translate.clear();
+
+    const Selection   &selection = m_parent.get_selection();
+    const ModelObject *mo        = m_c->selection_info()->model_object();
+    const ModelInstance *mi        = mo->instances[selection.get_instance_idx()];
+    const Transform3d instance_trafo = m_parent.get_canvas_type() == GLCanvas3D::CanvasAssembleView ?
+        mi->get_assemble_transformation().get_matrix() :
+        mi->get_transformation().get_matrix();
+    const Transform3d instance_trafo_not_translate = m_parent.get_canvas_type() == GLCanvas3D::CanvasAssembleView ?
+        mi->get_assemble_transformation().get_matrix_no_offset() :
+        mi->get_transformation().get_matrix_no_offset();
+
+    for (const ModelVolume *mv : mo->volumes) {
+        if (!mv->is_model_part())
+            continue;
+        Transform3d temp = instance_trafo * mv->get_matrix();
+        if (m_parent.get_canvas_type() == GLCanvas3D::CanvasAssembleView)
+            temp.translate(mv->get_transformation().get_offset() * (GLVolume::explosion_ratio - 1.0) +
+                           mi->get_offset_to_assembly() * (GLVolume::explosion_ratio - 1.0));
+        trafo_matrices.emplace_back(temp);
+        trafo_matrices_not_translate.emplace_back(instance_trafo_not_translate * mv->get_matrix_no_offset());
+    }
+}
+
+bool GLGizmoPainterBase::try_snap_lasso_point(const Vec2d &mouse_position, LassoPoint &out) const
+{
+    out.screen     = mouse_position;
+    out.volume     = Vec3f::Zero();
+    out.mesh_idx   = -1;
+    out.on_surface = false;
+
+    std::vector<Transform3d> trafo_matrices;
+    std::vector<Transform3d> trafo_matrices_not_translate;
+    collect_part_trafo_matrices(trafo_matrices, trafo_matrices_not_translate);
+
+    const Camera &camera = wxGetApp().plater()->get_camera();
+    update_raycast_cache(mouse_position, camera, trafo_matrices);
+    if (m_rr.mesh_id < 0)
+        return false;
+
+    out.mesh_idx   = m_rr.mesh_id;
+    out.volume     = m_rr.hit;
+    out.on_surface = true;
+    return true;
+}
+
+Vec2d GLGizmoPainterBase::lasso_point_screen_position(const LassoPoint &lp, const std::vector<Transform3d> &trafo_matrices) const
+{
+    if (lp.on_surface && lp.mesh_idx >= 0 && lp.mesh_idx < int(trafo_matrices.size())) {
+        const Camera &camera = wxGetApp().plater()->get_camera();
+        const Point   sp     = CameraUtils::project(camera, trafo_matrices[lp.mesh_idx] * lp.volume.cast<double>());
+        return Vec2d(double(sp.x()), double(sp.y()));
+    }
+    return lp.screen;
+}
+
+Polygon GLGizmoPainterBase::build_lasso_screen_polygon(const std::vector<Transform3d> &trafo_matrices) const
+{
+    Polygon polygon;
+    if (m_lasso_points.size() < LassoMinPoints)
+        return polygon;
+
+    const size_t segment_count = m_lasso_closed ? m_lasso_points.size() : m_lasso_points.size() - 1;
+    polygon.points.reserve(m_lasso_points.size() * 8);
+
+    auto append_screen_point = [&](const Vec2d &screen_pt) {
+        const Point pt(coord_t(std::lround(screen_pt.x())), coord_t(std::lround(screen_pt.y())));
+        if (polygon.points.empty() || polygon.points.back() != pt)
+            polygon.points.emplace_back(pt);
+    };
+
+    for (size_t seg = 0; seg < segment_count; ++seg) {
+        const LassoPoint &a = m_lasso_points[seg];
+        const LassoPoint &b = m_lasso_points[(seg + 1) % m_lasso_points.size()];
+        const Vec2d       sa = lasso_point_screen_position(a, trafo_matrices);
+        const Vec2d       sb = lasso_point_screen_position(b, trafo_matrices);
+
+        append_screen_point(sa);
+
+        const double segment_len = (sb - sa).norm();
+        const int    steps       = std::max(1, int(std::ceil(segment_len / double(LassoSurfaceStepPx))));
+        for (int step = 1; step < steps; ++step) {
+            const Vec2d interp = sa + (sb - sa) * (double(step) / double(steps));
+            LassoPoint  snap;
+            if (try_snap_lasso_point(interp, snap))
+                append_screen_point(lasso_point_screen_position(snap, trafo_matrices));
+            else
+                append_screen_point(interp);
+        }
+    }
+
+    return polygon;
+}
+
+void GLGizmoPainterBase::clear_lasso()
+{
+    m_lasso_points.clear();
+    m_lasso_closed = false;
+    m_lasso_overlay.reset();
+    for (auto &triangle_selector : m_triangle_selectors) {
+        triangle_selector->seed_fill_unselect_all_triangles();
+        triangle_selector->request_update_render_data();
+    }
+    m_parent.set_as_dirty();
+}
+
+bool GLGizmoPainterBase::is_near_first_lasso_point(const Vec2d &pos) const
+{
+    if (m_lasso_points.empty())
+        return false;
+
+    std::vector<Transform3d> trafo_matrices;
+    std::vector<Transform3d> trafo_matrices_not_translate;
+    collect_part_trafo_matrices(trafo_matrices, trafo_matrices_not_translate);
+    const Vec2d first_pt = lasso_point_screen_position(m_lasso_points.front(), trafo_matrices);
+    return (pos - first_pt).norm() <= LassoCloseTolerance;
+}
+
+void GLGizmoPainterBase::apply_lasso_selection()
+{
+    if (m_lasso_points.size() < LassoMinPoints || m_triangle_selectors.empty())
+        return;
+
+    std::vector<Transform3d> trafo_matrices;
+    std::vector<Transform3d> trafo_matrices_not_translate;
+    collect_part_trafo_matrices(trafo_matrices, trafo_matrices_not_translate);
+
+    const Polygon     screen_polygon = build_lasso_screen_polygon(trafo_matrices);
+    if (screen_polygon.points.size() < 3)
+        return;
+
+    const Camera      &camera    = wxGetApp().plater()->get_camera();
+    const ModelObject *mo        = m_c->selection_info()->model_object();
+    const ClippingPlane *world_clp = m_c->object_clipper()->get_clipping_plane();
+
+    const auto project_world_point = [&camera](const Vec3d &world_point) { return CameraUtils::project(camera, world_point); };
+
+    for (auto &triangle_selector : m_triangle_selectors)
+        triangle_selector->seed_fill_unselect_all_triangles();
+
+    int mesh_idx = -1;
+    for (const ModelVolume *mv : mo->volumes) {
+        if (!mv->is_model_part())
+            continue;
+        ++mesh_idx;
+
+        const Transform3d trafo_matrix = trafo_matrices[mesh_idx];
+        const Transform3d trafo_matrix_not_translate = trafo_matrices_not_translate[mesh_idx];
+        const Vec3f camera_pos_mesh = trafo_matrix.inverse().cast<float>() * camera.get_position().cast<float>();
+        const TriangleSelector::ClippingPlane volume_clp = this->get_clipping_plane_in_volume_coordinates(trafo_matrix);
+
+        const MeshRaycaster *raycaster = m_c->raycaster()->raycasters()[mesh_idx];
+        auto include_facet = [&](int facet_idx, const Vec3f &centroid_mesh) {
+            if (!m_lasso_visible_only)
+                return true;
+            Vec3f hit;
+            Vec3f normal;
+            size_t hit_facet = 0;
+            const Point screen_pt = CameraUtils::project(camera, trafo_matrix * centroid_mesh.cast<double>());
+            const Vec2d screen_pt_d(double(screen_pt.x()), double(screen_pt.y()));
+            if (!raycaster->closest_hit(screen_pt_d, trafo_matrix, camera, hit, normal, world_clp, &hit_facet))
+                return false;
+            return int(hit_facet) == facet_idx;
+        };
+
+        m_triangle_selectors[mesh_idx]->lasso_select_triangles(
+            screen_polygon, trafo_matrix, trafo_matrix_not_translate, volume_clp,
+            m_paint_on_overhangs_only ? m_highlight_by_angle_threshold_deg : 0.f,
+            project_world_point, m_lasso_visible_only, camera_pos_mesh, include_facet, false);
+        m_triangle_selectors[mesh_idx]->request_update_render_data();
+    }
+}
+
+void GLGizmoPainterBase::close_lasso_polygon()
+{
+    if (m_lasso_points.size() < LassoMinPoints)
+        return;
+
+    m_lasso_closed = true;
+    apply_lasso_selection();
+    update_lasso_overlay();
+    m_parent.set_as_dirty();
+}
+
+void GLGizmoPainterBase::apply_lasso_paint(bool shift_down)
+{
+    if (!m_lasso_closed || m_triangle_selectors.empty())
+        return;
+
+    const EnforcerBlockerType new_state = shift_down ? EnforcerBlockerType::NONE : this->get_left_button_state_type();
+    wxString action_name = this->handle_snapshot_action_name(shift_down, Button::Left);
+    Plater::TakeSnapshot snapshot(wxGetApp().plater(), std::string(action_name.ToUTF8().data()), UndoRedo::SnapshotType::GizmoAction);
+
+    if (m_lasso_smooth_edges) {
+        std::vector<Transform3d> trafo_matrices;
+        std::vector<Transform3d> trafo_matrices_not_translate;
+        collect_part_trafo_matrices(trafo_matrices, trafo_matrices_not_translate);
+
+        const Polygon  screen_polygon = build_lasso_screen_polygon(trafo_matrices);
+        const Camera  &camera         = wxGetApp().plater()->get_camera();
+        const ModelObject *mo         = m_c->selection_info()->model_object();
+        const ClippingPlane *world_clp  = m_c->object_clipper()->get_clipping_plane();
+
+        const auto project_world_point = [&camera](const Vec3d &world_point) { return CameraUtils::project(camera, world_point); };
+
+        int mesh_idx = -1;
+        for (const ModelVolume *mv : mo->volumes) {
+            if (!mv->is_model_part())
+                continue;
+            ++mesh_idx;
+
+            const Transform3d trafo_matrix = trafo_matrices[mesh_idx];
+            const Transform3d trafo_matrix_not_translate = trafo_matrices_not_translate[mesh_idx];
+            const Vec3f camera_pos_mesh = trafo_matrix.inverse().cast<float>() * camera.get_position().cast<float>();
+            const TriangleSelector::ClippingPlane volume_clp = this->get_clipping_plane_in_volume_coordinates(trafo_matrix);
+            const MeshRaycaster *raycaster = m_c->raycaster()->raycasters()[mesh_idx];
+
+            m_triangle_selectors[mesh_idx]->seed_fill_unselect_all_triangles();
+
+            auto include_facet = [&](int facet_idx, const Vec3f &centroid_mesh) {
+                if (!m_lasso_visible_only)
+                    return true;
+                Vec3f hit;
+                Vec3f normal;
+                size_t hit_facet = 0;
+                const Point screen_pt = CameraUtils::project(camera, trafo_matrix * centroid_mesh.cast<double>());
+                const Vec2d screen_pt_d(double(screen_pt.x()), double(screen_pt.y()));
+                if (!raycaster->closest_hit(screen_pt_d, trafo_matrix, camera, hit, normal, world_clp, &hit_facet))
+                    return false;
+                return int(hit_facet) == facet_idx;
+            };
+
+            Vec3f view_ref = Vec3f::Zero();
+            for (const LassoPoint &lp : m_lasso_points) {
+                if (lp.on_surface && lp.mesh_idx == mesh_idx) {
+                    view_ref = lp.volume;
+                    break;
+                }
+            }
+            if (view_ref.isZero(0.f)) {
+                for (const LassoPoint &lp : m_lasso_points) {
+                    if (lp.on_surface) {
+                        view_ref = lp.volume;
+                        break;
+                    }
+                }
+            }
+
+            m_triangle_selectors[mesh_idx]->lasso_select_patch(
+                screen_polygon, trafo_matrix, trafo_matrix_not_translate, volume_clp, new_state, true,
+                m_paint_on_overhangs_only ? m_highlight_by_angle_threshold_deg : 0.f,
+                camera_pos_mesh, view_ref, project_world_point, include_facet);
+            m_triangle_selectors[mesh_idx]->request_update_render_data(true);
+        }
+    } else {
+        for (auto &triangle_selector : m_triangle_selectors) {
+            triangle_selector->seed_fill_apply_on_triangles(new_state);
+            triangle_selector->request_update_render_data(true);
+        }
+    }
+    update_model_object();
+    clear_lasso();
+}
+
+void GLGizmoPainterBase::update_lasso_overlay()
+{
+    m_lasso_overlay.reset();
+
+    if (m_lasso_points.empty())
+        return;
+
+    const Size cnv_size = m_parent.get_canvas_size();
+    const float cnv_width  = float(cnv_size.get_width());
+    const float cnv_height = float(cnv_size.get_height());
+    if (cnv_width == 0.0f || cnv_height == 0.0f)
+        return;
+
+    const float cnv_inv_width  = 1.0f / cnv_width;
+    const float cnv_inv_height = 1.0f / cnv_height;
+
+    std::vector<Vec2d> polyline;
+    polyline.reserve(m_lasso_points.size() + 1);
+    std::vector<Transform3d> trafo_matrices;
+    std::vector<Transform3d> trafo_matrices_not_translate;
+    collect_part_trafo_matrices(trafo_matrices, trafo_matrices_not_translate);
+
+    for (const LassoPoint &lp : m_lasso_points)
+        polyline.push_back(lasso_point_screen_position(lp, trafo_matrices));
+
+    if (!m_lasso_closed) {
+        LassoPoint mouse_snap;
+        mouse_snap.screen = m_lasso_mouse_pos;
+        if (try_snap_lasso_point(m_lasso_mouse_pos, mouse_snap))
+            polyline.push_back(lasso_point_screen_position(mouse_snap, trafo_matrices));
+        else
+            polyline.push_back(m_lasso_mouse_pos);
+    }
+    else if (polyline.size() >= 2)
+        polyline.push_back(polyline.front());
+
+    GLModel::Geometry init_data;
+    init_data.format = { GLModel::Geometry::EPrimitiveType::LineStrip, GLModel::Geometry::EVertexLayout::P2 };
+    init_data.color  = { 0.0f, 0.59f, 0.53f, 1.0f };
+    init_data.reserve_vertices(polyline.size());
+    init_data.reserve_indices(polyline.size());
+
+    for (const Vec2d &pt : polyline) {
+        init_data.add_vertex(Vec2f(2.0f * (float(pt.x()) * cnv_inv_width - 0.5f),
+                                   2.0f * (0.5f - float(pt.y()) * cnv_inv_height)));
+    }
+    for (unsigned int i = 0; i < polyline.size(); ++i)
+        init_data.add_index(i);
+
+    if (!init_data.is_empty())
+        m_lasso_overlay.init_from(std::move(init_data));
+}
+
+void GLGizmoPainterBase::render_lasso_overlay()
+{
+    if (!m_lasso_overlay.is_initialized())
+        return;
+
+    glsafe(::glLineWidth(2.0f));
+    glsafe(::glDisable(GL_DEPTH_TEST));
+    auto *shader = wxGetApp().get_shader("flat");
+    if (shader != nullptr) {
+        shader->start_using();
+        shader->set_uniform("view_model_matrix", Transform3d::Identity());
+        shader->set_uniform("projection_matrix", Transform3d::Identity());
+        m_lasso_overlay.render();
+        shader->stop_using();
+    }
+    glsafe(::glEnable(GL_DEPTH_TEST));
+}
+
+bool GLGizmoPainterBase::handle_lasso_gizmo_event(SLAGizmoEventType action, const Vec2d &mouse_position, bool shift_down, bool control_down)
+{
+    if (m_tool_type != ToolType::POLYGON_LASSO)
+        return false;
+
+    if (control_down && action != SLAGizmoEventType::LeftUp && action != SLAGizmoEventType::RightUp)
+        return false;
+
+    m_lasso_mouse_pos = mouse_position;
+
+    if (action == SLAGizmoEventType::Moving) {
+        if (m_lasso_closed)
+            apply_lasso_selection();
+        update_lasso_overlay();
+        m_parent.set_as_dirty();
+        return false;
+    }
+
+    if (action == SLAGizmoEventType::LeftDown) {
+        if (m_lasso_closed) {
+            apply_lasso_paint(shift_down);
+            return true;
+        }
+
+        if (m_lasso_points.size() >= LassoMinPoints && is_near_first_lasso_point(mouse_position)) {
+            close_lasso_polygon();
+            return true;
+        }
+
+        m_lasso_points.push_back(LassoPoint{});
+        try_snap_lasso_point(mouse_position, m_lasso_points.back());
+        if (!m_lasso_points.back().on_surface)
+            m_lasso_points.back().screen = mouse_position;
+        update_lasso_overlay();
+        m_parent.set_as_dirty();
+        return true;
+    }
+
+    if (action == SLAGizmoEventType::RightDown) {
+        if (!m_lasso_points.empty()) {
+            m_lasso_points.pop_back();
+            m_lasso_closed = false;
+            for (auto &triangle_selector : m_triangle_selectors) {
+                triangle_selector->seed_fill_unselect_all_triangles();
+                triangle_selector->request_update_render_data();
+            }
+        } else {
+            clear_lasso();
+        }
+        update_lasso_overlay();
+        m_parent.set_as_dirty();
+        return true;
+    }
+
+    return false;
+}
+
 // Following function is called from GLCanvas3D to inform the gizmo about a mouse/keyboard event.
 // The gizmo has an opportunity to react - if it does, it should return true so that the Canvas3D is
 // aware that the event was reacted to and stops trying to make different sense of it. If the gizmo
@@ -588,6 +988,16 @@ std::vector<GLGizmoPainterBase::ProjectedHeightRange> GLGizmoPainterBase::get_pr
 bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_position, bool shift_down, bool alt_down, bool control_down)
 {
     Vec2d _mouse_position = mouse_position;
+
+    if (m_tool_type == ToolType::POLYGON_LASSO) {
+        if (handle_lasso_gizmo_event(action, _mouse_position, shift_down, control_down))
+            return true;
+        if (action == SLAGizmoEventType::Moving)
+            return false;
+        if (action == SLAGizmoEventType::LeftDown || action == SLAGizmoEventType::RightDown)
+            return true;
+    }
+
     if (action == SLAGizmoEventType::MouseWheelUp
      || action == SLAGizmoEventType::MouseWheelDown) {
         if (control_down) {
@@ -921,6 +1331,15 @@ bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
         return false;
     }
 
+    if (mouse_event.LeftDClick() && m_tool_type == ToolType::POLYGON_LASSO && !m_lasso_closed) {
+        if (m_lasso_points.size() >= LassoMinPoints) {
+            // The second click of a double-click adds a vertex via LeftDown; remove it before closing.
+            m_lasso_points.pop_back();
+            close_lasso_polygon();
+        }
+        return true;
+    }
+
     // when control is down we allow scene pan and rotation even when clicking
     // over some object
     bool control_down           = mouse_event.CmdDown();
@@ -1086,6 +1505,7 @@ void GLGizmoPainterBase::on_set_state()
         m_old_mo_id = -1;
         //m_iva.release_geometry();
         m_triangle_selectors.clear();
+        clear_lasso();
 
         //Camera& camera = wxGetApp().plater()->get_camera();
         //camera.look_at(camera.get_position(), m_previous_target, Vec3d::UnitZ());

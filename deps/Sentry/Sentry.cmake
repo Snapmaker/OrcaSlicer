@@ -22,7 +22,11 @@ if (WIN32)
     -DCMAKE_SHARED_LINKER_FLAGS:STRING=/DEBUG
   )
   if (MSVC)
-    set(_sentry_cmake_generator -G "Visual Studio 17 2022")
+    if (CMAKE_GENERATOR MATCHES "Ninja")
+      set(_sentry_cmake_generator -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl)
+    else ()
+      set(_sentry_cmake_generator -G "Visual Studio 17 2022")
+    endif ()
   endif()
 elseif (APPLE)
   # macOS: build shared libs so we get libsentry.dylib

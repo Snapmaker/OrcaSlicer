@@ -1020,16 +1020,41 @@ SnapmakerOrcaPre_uninst_launch_failed:
 
 SnapmakerOrcaPre_finish:
 ]=])
-set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
-    CreateShortCut \\\"$DESKTOP\\\\Snapmaker Orca.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
-")
+# URL protocol registration (CPACK_NSIS_INSTALL_SCRIPT is not expanded by CMake's NSIS template).
+set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [=[
+  SetRegView 64
+  WriteRegStr HKLM "Software\Classes\snapmaker-orca" "" "URL:Snapmaker Orca"
+  WriteRegStr HKLM "Software\Classes\snapmaker-orca" "URL Protocol" ""
+  WriteRegStr HKLM "Software\Classes\snapmaker-orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
+  WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "" "URL:Snapmaker Orca"
+  WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "URL Protocol" ""
+  WriteRegStr HKLM "Software\Classes\Snapmaker_Orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
+  SetRegView 32
+]=])
+set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [=[
+  SetRegView 64
+  DeleteRegKey HKLM "Software\Classes\snapmaker-orca"
+  DeleteRegKey HKLM "Software\Classes\Snapmaker_Orca"
+  SetRegView 32
+]=])
+# Desktop shortcut inside MUI_STARTMENU_WRITE_BEGIN: respects "do not create shortcuts" on the start menu page.
+set(CPACK_NSIS_CREATE_ICONS_EXTRA [=[
+  SetShellVarContext current
+  CreateShortCut "$DESKTOP\Snapmaker Orca.lnk" "$INSTDIR\snapmaker-orca.exe" "" "$INSTDIR\snapmaker-orca.exe" 0
+  SetShellVarContext all
+]=])
+set(CPACK_NSIS_DELETE_ICONS_EXTRA [=[
+  SetShellVarContext current
+  Delete "$DESKTOP\Snapmaker Orca.lnk"
+  SetShellVarContext all
+]=])
 set (CPACK_PACKAGE_CHECKSUM SHA256)
 set (CPACK_PACKAGE_INSTALL_REGISTRY_KEY "Snapmaker_Orca")
 set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-# set (CPACK_NSIS_MODIFY_PATH "ON")
+# Install-options page (PATH). Desktop shortcut is created via CPACK_NSIS_CREATE_ICONS_EXTRA above.
+set (CPACK_NSIS_MODIFY_PATH "ON")
 set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;Snapmaker Orca")
-set(CPACK_CREATE_DESKTOP_LINKS "snapmaker-orca")
 set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also include in install command
 
 set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")

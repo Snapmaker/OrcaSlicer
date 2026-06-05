@@ -190,6 +190,7 @@ if (WIN32)
         target_link_options(Snapmaker_Orca_app_gui PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")
     endif()
     target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
+    add_dependencies(Snapmaker_Orca gettext_po_to_mo)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
     

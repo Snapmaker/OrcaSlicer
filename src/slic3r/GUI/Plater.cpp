@@ -14636,10 +14636,7 @@ bool Plater::check_filament_temp_mixing()
         }
     };
 
-    // Collect from full_config first (global defaults for wall/infill/etc.)
-    collect_from_cfg(full_cfg);
-
-    // Collect from current plate's config only (per-plate overrides)
+    // Collect from current plate's config only
     PartPlate* curr_plate = p->partplate_list.get_curr_plate();
     if (curr_plate)
         collect_from_cfg(*curr_plate->config());

@@ -5519,7 +5519,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing z-gap and save print time. "
                      "This option will be invalid when the prime tower is enabled.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("support_threshold_angle", coInt);
     def->label = L("Threshold angle");

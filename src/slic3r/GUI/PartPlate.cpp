@@ -4527,6 +4527,8 @@ int PartPlateList::add_to_plate(int obj_id, int instance_id, int plate_id)
 	}
 	ret = plate->add_instance(obj_id, instance_id, true);
 
+	wxGetApp().plater()->sync_filament_temp_mixing_notification();
+
 	return ret;
 }
 

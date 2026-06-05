@@ -6043,6 +6043,8 @@ void Plater::priv::remove_curr_plate_all()
     SingleSnapshot ss(q);
     view3D->remove_curr_plate_all();
     this->sidebar->obj_list()->update_selections();
+
+    q->sync_filament_temp_mixing_notification();
 }
 
 void Plater::priv::select_all()
@@ -14622,7 +14624,7 @@ bool Plater::check_filament_temp_mixing()
 
     // Helper: collect used filament slots from a single config
     auto collect_from_cfg = [&](const DynamicPrintConfig& cfg) {
-        static const char* keys_1based[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+        static const char* keys_1based[] = {"wall_filament", "solid_infill_filament"};
         for (auto key : keys_1based) {
             auto* opt = cfg.option<ConfigOptionInt>(key);
             if (opt && opt->value >= 1 && opt->value <= num_filaments)
@@ -14636,7 +14638,11 @@ bool Plater::check_filament_temp_mixing()
         }
     };
 
-    // Collect from current plate's config only
+    // Collect from the Plater's working config for global Process settings.
+    // Defaults are 0 (skipped by the >= 1 check).
+    collect_from_cfg(*this->config());
+
+    // Also collect from current plate's config for any plate-level overrides
     PartPlate* curr_plate = p->partplate_list.get_curr_plate();
     if (curr_plate)
         collect_from_cfg(*curr_plate->config());
@@ -14672,6 +14678,7 @@ bool Plater::check_filament_temp_mixing()
     // (the edited preset config hasn't been committed yet).
     PresetBundle* bundle = wxGetApp().preset_bundle;
     bool has_high = false, has_low = false;
+
     for (int slot : used_slots) {
         if (slot < (int)bundle->filament_presets.size()) {
             const Preset* preset = bundle->filaments.find_preset(

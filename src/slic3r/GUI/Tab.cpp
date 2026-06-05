@@ -3110,6 +3110,9 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
         notify_changed(config.first);
     }
     wxGetApp().params_panel()->notify_object_config_changed();
+
+    // Real-time high/low temperature filament mixing check after object-level config change
+    wxGetApp().plater()->sync_filament_temp_mixing_notification();
 }
 
 void TabPrintModel::reload_config()

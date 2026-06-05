@@ -1557,13 +1557,23 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
                                        << print_in_rsrc.string();
         }
 
-        // Rules file is not a slicer preset; deploy even when full vendor dir sync was skipped above.
+        // Rules files are not slicer presets; deploy even when full vendor dir sync was skipped above.
         if (bundle == PresetBundle::SM_BUNDLE) {
-            fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
-            fs::path rules_dst = vendor_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
-            if (fs::exists(rules_src)) {
-                fs::create_directories(rules_dst.parent_path());
-                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+            {
+                fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
+                fs::path rules_dst = vendor_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
+                if (fs::exists(rules_src)) {
+                    fs::create_directories(rules_dst.parent_path());
+                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+                }
+            }
+            {
+                fs::path rules_src = rsrc_path / bundle / "filament" / "filament_compatibility.json";
+                fs::path rules_dst = vendor_path / bundle / "filament" / "filament_compatibility.json";
+                if (fs::exists(rules_src)) {
+                    fs::create_directories(rules_dst.parent_path());
+                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+                }
             }
         }
 	}
@@ -1791,15 +1801,25 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                                                      "", "",
                                                      should_skip_file, force_update, true, legal);
 
-                        // Rules file is not a slicer preset; ensure it is always deployed next to system filament JSON.
+                        // Rules files are not slicer presets; ensure they are always deployed next to system filament JSON.
                         if (vendor_name == PresetBundle::SM_BUNDLE) {
-                            fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
-                            fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
-                            if (fs::exists(rules_src)) {
-                                // Ensure target directory exists
-                                fs::create_directories(rules_dst.parent_path());
-                                updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
-                                                             force_update, false, legal);
+                            {
+                                fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                                fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
+                                if (fs::exists(rules_src)) {
+                                    fs::create_directories(rules_dst.parent_path());
+                                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
+                                                                 force_update, false, legal);
+                                }
+                            }
+                            {
+                                fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_compatibility.json";
+                                fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_compatibility.json";
+                                if (fs::exists(rules_src)) {
+                                    fs::create_directories(rules_dst.parent_path());
+                                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
+                                                                 force_update, false, legal);
+                                }
                             }
                         }
                 }

@@ -2,6 +2,7 @@
 #include "I18N.hpp"
 
 #include <atomic>
+#include <cstdlib>
 #include <locale>
 #include <mutex>
 #include <ctime>
@@ -61,6 +62,7 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/nowide/convert.hpp>
+#include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/cstdio.hpp>
 
 // We are using quite an old TBB 2017 U7, which does not support global control API officially.
@@ -341,7 +343,7 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 	//BBS log file at C:\\Users\\[yourname]\\AppData\\Roaming\\Snapmaker_Orca\\log\\[log_filename].log
 	auto log_folder = boost::filesystem::path(g_data_dir) / "log";
 	if (!boost::filesystem::exists(log_folder)) {
-		boost::filesystem::create_directory(log_folder);
+		boost::filesystem::create_directories(log_folder);
 	}
 	auto full_path = (log_folder / file).make_preferred();
 
@@ -1163,7 +1165,8 @@ std::string string_printf(const char *format, ...)
 
 std::string header_slic3r_generated()
 {
-	return std::string(SLIC3R_APP_NAME " " Snapmaker_VERSION);
+    // Keep generated G-code branded like Snapmaker Orca for printer-side compatibility.
+    return std::string("Snapmaker Orca ") + Snapmaker_VERSION;
 }
 
 std::string header_gcodeviewer_generated()

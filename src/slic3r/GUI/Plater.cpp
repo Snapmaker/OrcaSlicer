@@ -14707,13 +14707,9 @@ bool Plater::sync_filament_temp_mixing_notification()
             NotificationType::ValidateWarning,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
             _u8L("WARNING:") + "\n" +
-            _u8L("Detected both high and low temperature materials. Mixed printing may "
-                 "result in extruder clogging, nozzle damage, or layer adhesion issues."));
+            _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues."));
     } else {
-        err.string = _u8L("Detected both high and low temperature materials. Mixed printing may "
-                          "result in extruder clogging, nozzle damage, or layer adhesion issues. "
-                          "To continue printing, enable \"Allow mixed printing of high and low "
-                          "temperature materials\" in Preferences.");
+        err.string = _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences.");
         get_notification_manager()->push_validate_error_notification(err);
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
     }

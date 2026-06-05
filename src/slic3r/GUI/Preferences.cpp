@@ -1241,14 +1241,14 @@ wxWindow* PreferencesDialog::create_general_page()
             if (!new_val)
                 return false;
 
-            wxString msg = _L("混合使用打印温度差异较大的耗材，可能导致：\n"
-                              "· 喷嘴阻塞\n"
-                              "· 喷嘴损坏\n"
-                              "· 层间粘附问题\n\n"
-                              "仍要启用高/低温耗材混合打印吗？");
-            MessageDialog dlg(this, msg, _L("高/低温材料混打风险"), wxICON_WARNING | wxOK | wxCANCEL);
-            dlg.SetButtonLabel(wxID_OK, _L("确认"));
-            dlg.SetButtonLabel(wxID_CANCEL, _L("取消"));
+            wxString msg = _L("Mixing materials with significantly different printing temperatures may result in:\n"
+                              "· Extruder clogging\n"
+                              "· Nozzle damage\n"
+                              "· Layer adhesion issues\n\n"
+                              "Do you want to enable this feature?");
+            MessageDialog dlg(this, msg, _L("High and Low Temperature Material Mixing Risk"), wxICON_WARNING | wxOK | wxCANCEL);
+            dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
+            dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
             return dlg.ShowModal() == wxID_OK;
         });
     auto camera_orbit_mult = create_camera_orbit_mult_input(_L("Orbit speed multiplier"), page, _L("Multiplies the orbit speed for finer or coarser camera movement."));

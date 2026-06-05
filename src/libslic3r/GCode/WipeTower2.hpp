@@ -400,8 +400,6 @@ private:
     Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
 
     WipeTowerInfo::ToolChange set_toolchange(int old_tool, int new_tool, float layer_height, float wipe_volume);
-
-    size_t get_out_wall_tool_for_all_layer();
 };
 
 

@@ -2804,7 +2804,6 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 
     m_old_temperature = -1; // reset last temperature written in the gcode
 
-    size_t wall_tool = get_out_wall_tool_for_all_layer();
     for (const WipeTower2::WipeTowerInfo& layer : m_plan) {
         std::vector<WipeTower::ToolChangeResult> layer_result;
         std::vector<WipeTower::ToolChangeResult> local_z_layer_result;
@@ -2834,28 +2833,21 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
             finish_layer_tcr = finish_layer();
         }
 
-        int insert_finish_layer_idx = -1;
         for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
-            if (i == 0 && (layer.tool_changes[i].old_tool == wall_tool)) {
-                finish_layer_tcr = finish_layer();
-            }
-            //layer_result.emplace_back(tool_change(layer.tool_changes[i].new_tool));
             layer_result.emplace_back(emit_planned_tool_change(&layer.tool_changes[i]));
-            if (i == 0 && (layer.tool_changes[i].old_tool == wall_tool)) {
-            } else if (layer.tool_changes[i].new_tool == wall_tool) {
+            if (i == idx) // finish_layer will be called after this toolchange
                 finish_layer_tcr = finish_layer();
-                insert_finish_layer_idx = i;
-            }
         }
+
         if (layer_result.empty()) {
             // there is nothing to merge finish_layer with
             layer_result.emplace_back(std::move(finish_layer_tcr));
         } else {
-            if (insert_finish_layer_idx == -1) {
+            if (idx == -1) {
                 layer_result[0]              = merge_tcr(finish_layer_tcr, layer_result[0]);
                 layer_result[0].force_travel = true;
             } else
-                layer_result[insert_finish_layer_idx] = merge_tcr(layer_result[insert_finish_layer_idx], finish_layer_tcr);
+                layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
         }
 
         result.emplace_back(std::move(layer_result));
@@ -2996,22 +2988,6 @@ WipeTower2::WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, i
         m_perimeter_width, m_extra_flow, m_extra_spacing_wipe, width);
 
     return WipeTowerInfo::ToolChange(old_tool, new_tool, ramming_depth + wiping_depth, ramming_depth, first_wipe_line, wipe_volume);
-}
-
-size_t WipeTower2::get_out_wall_tool_for_all_layer()
-{ 
-    std::set<size_t> filament_set;
-    for (const auto& layer : m_plan) {
-        for (const auto& tc : layer.tool_changes) {
-            if (tc.old_tool < m_filpar.size() && !m_filpar[tc.old_tool].is_soluble) {
-                filament_set.insert(tc.old_tool);
-            } 
-            if (tc.new_tool < m_filpar.size() && !m_filpar[tc.new_tool].is_soluble) {
-                filament_set.insert(tc.new_tool);
-            }
-        }
-    }
-    return filament_set.empty() ? 0 : *filament_set.begin();
 }
 
 Polylines get_fill_first_brim_layer_line(const Polygon& wall_polygon, const WipeTower::box_coordinates& wt_box) 

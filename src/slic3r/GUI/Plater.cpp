@@ -304,6 +304,42 @@ public:
     }
     void on_dpi_changed(const wxRect& suggested_rect) override {}
 };
+
+// Resolve a machine filament name to a matching local filament preset.
+// Filament presets follow the convention "BaseName @Model nozzle",
+// e.g. "Generic PA-CF @U1 0.4 nozzle".  Split by '@' to extract the
+// base name, trim, and compare exactly — so "Generic PA" does NOT
+// accidentally match "Generic PA-CF".
+Preset* resolve_filament_preset(PresetBundle* preset_bundle, const std::string& filament_name)
+{
+    if (!preset_bundle || filament_name.empty())
+        return nullptr;
+
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s;
+    };
+
+    for (auto& preset : preset_bundle->filaments) {
+        if (!preset.is_compatible)
+            continue;
+
+        // Split by '@' to get the base name, then trim
+        std::string base = preset.name;
+        auto at_pos = preset.name.find('@');
+        if (at_pos != std::string::npos) {
+            base = preset.name.substr(0, at_pos);
+            base.erase(0, base.find_first_not_of(" \t\n\r"));
+            base.erase(base.find_last_not_of(" \t\n\r") + 1);
+        }
+
+        if (to_lower(base) == to_lower(filament_name))
+            return &preset;
+    }
+
+    return nullptr;
+}
+
 } // namespace
 
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
@@ -7984,7 +8020,6 @@ void Sidebar::show_sync_filament_dialog()
         }
     }
 
-    // ---- Show dialog ----
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
     if (dlg.ShowModal() == wxID_OK && preset_bundle) {
@@ -7992,24 +8027,33 @@ void Sidebar::show_sync_filament_dialog()
         bool addToSoftwareList = dlg.isAddToSoftwareList();
 
         ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-        if (co) {
-            int idx = 0;
-            for (const auto& sd : syncedData) {
-                if (idx >= static_cast<int>(co->values.size()))
-                    break;
-                wxColour c(sd.m_color_r, sd.m_color_g, sd.m_color_b);
-                co->values[idx] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
-                ++idx;
+
+        for (const auto& sd : syncedData) {
+            Preset* matched = resolve_filament_preset(preset_bundle, sd.m_name);
+            if (matched) {
+                preset_bundle->set_filament_preset(sd.m_index, matched->name);
             }
-            wxGetApp().plater()->force_filament_colors_update();
-            wxGetApp().plater()->update_filament_colors_in_full_config();
-            wxGetApp().plater()->update_project_dirty_from_presets();
-            for (auto* combo : p->combos_filament)
-                if (combo) combo->update();
-            Layout();
+
+            if (co && sd.m_index < co->values.size()) {
+                wxColour c(sd.m_color_r, sd.m_color_g, sd.m_color_b);
+                co->values[sd.m_index] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
+            }
         }
 
-        // TODO: if addToSoftwareList, add remaining filaments to the software filament list
+        const size_t num_filaments = p->combos_filament.size();
+        wxGetApp().plater()->on_filaments_change(num_filaments);
+        wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
+        preset_bundle->export_selections(*wxGetApp().app_config);
+
+        for (auto* combo : p->combos_filament) {
+            if (combo)
+                combo->update();
+        }
+
+        // Auto calculation of flushing volumes for synced filaments
+        for (const auto& sd : syncedData) {
+            auto_calc_flushing_volumes(sd.m_index);
+        }
     }
 }
 

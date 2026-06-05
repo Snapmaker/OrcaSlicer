@@ -23,10 +23,10 @@ class FilamentColorMapBoxGroup : public wxPanel
 {
 public:
     FilamentColorMapBoxGroup(wxWindow* parent,
-                             const std::list<FilamentData>& designDataList,
-                             const std::list<FilamentData>& machineDataList);
+                             const std::vector<FilamentData>& designDataList,
+                             const std::vector<FilamentData>& machineDataList);
 
-    std::list<FilamentData> getCurFilamentList() const;
+    std::vector<FilamentData> getCurFilamentList() const;
 
     void setGroupBoxEnable(bool bEnable, FilamentColorMapBox::ButtonType type);
     void showMachineFilamentPicker(int boxIndex);
@@ -38,9 +38,9 @@ public:
 private:
     void updateBoxFilament(int boxIndex, const FilamentData& machineData);
 
-    std::list<std::unique_ptr<FilamentColorMapBox>> m_boxList;
-    std::list<FilamentData> m_designDataList;
-    std::list<FilamentData> m_machineDataList;
+    std::vector<std::unique_ptr<FilamentColorMapBox>> m_boxList;
+    std::vector<FilamentData> m_designDataList;
+    std::vector<FilamentData> m_machineDataList;
 
     MachineFilamentPicker* m_pPicker = nullptr;
 

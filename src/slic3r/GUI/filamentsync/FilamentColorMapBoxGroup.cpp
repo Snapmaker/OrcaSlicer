@@ -33,8 +33,8 @@ namespace GUI
 {
 
 FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
-                                                   const std::list<FilamentData>& designDataList,
-                                                   const std::list<FilamentData>& machineDataList)
+                                                   const std::vector<FilamentData>& designDataList,
+                                                   const std::vector<FilamentData>& machineDataList)
     : wxPanel(parent, wxID_ANY)
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
@@ -59,12 +59,11 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     Layout();
 }
 
-std::list<FilamentData> FilamentColorMapBoxGroup::getCurFilamentList() const
+std::vector<FilamentData> FilamentColorMapBoxGroup::getCurFilamentList() const
 {
-    std::list<FilamentData> result;
+    std::vector<FilamentData> result;
     for (const auto& box : m_boxList) {
         FilamentData data = box->getBelowData();
-        data.m_index = box->getAboveData().m_index;
         result.push_back(data);
     }
     return result;
@@ -105,10 +104,8 @@ void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
     });
 
     // Position the popup near the target box.
-    auto boxIt = m_boxList.begin();
-    std::advance(boxIt, boxIndex);
-    wxPoint screenPos = (*boxIt)->GetScreenPosition();
-    screenPos.y += (*boxIt)->GetSize().y;
+    wxPoint screenPos = m_boxList[boxIndex]->GetScreenPosition();
+    screenPos.y += m_boxList[boxIndex]->GetSize().y;
 
     m_pPicker = picker;
     picker->popupAt(screenPos);
@@ -134,9 +131,7 @@ void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentDat
     if (boxIndex < 0 || boxIndex >= m_boxList.size())
         return;
 
-    auto it = m_boxList.begin();
-    std::advance(it, boxIndex);
-    (*it)->updateBelowData(machineData);
+    m_boxList[boxIndex]->updateBelowData(machineData);
 
     if (m_mappingChangedCallback)
         m_mappingChangedCallback();

@@ -21,7 +21,7 @@ class MachineFilamentPicker : public wxPopupTransientWindow
 {
 public:
     MachineFilamentPicker(wxWindow* parent,
-                          const std::list<FilamentData>& dataList,
+                          const std::vector<FilamentData>& dataList,
                           unsigned int curIndex);
 
     FilamentData getSelectedData() const;
@@ -40,7 +40,7 @@ private:
     void onRadioClicked(const FilamentData& data);
     void deselectAllExcept(const FilamentData& currentData);
 
-    std::list<std::shared_ptr<FilamentColorRadio>> m_radioList;
+    std::vector<std::shared_ptr<FilamentColorRadio>> m_radioList;
     FilamentData m_currentSelectedData;
 
     wxSizer* m_pWrapSizer = nullptr;

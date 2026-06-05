@@ -56,8 +56,8 @@ namespace GUI
 {
 
 SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
-                                                 const std::list<FilamentData>& designDataList,
-                                                 const std::list<FilamentData>& machineDataList)
+                                                 const std::vector<FilamentData>& designDataList,
+                                                 const std::vector<FilamentData>& machineDataList)
     : wxDialog(parent, wxID_ANY, _L("Device Filament Sync"), wxDefaultPosition, wxDefaultSize,
                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
     , m_designDataList(designDataList)
@@ -126,10 +126,10 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     sep4->SetLineColour("#CECECE");
     mainSizer->Add(sep4, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
 
-    // ---- Add to software list checkbox ----
-    m_pAddToSoftwareListCheck = new wxCheckBox(this, wxID_ANY,
+    // ---- Add un-used machine filaments checkbox ----
+    m_pAddUnUsedMachineFilaments = new wxCheckBox(this, wxID_ANY,
         _L("Add remaining printhead filaments to the software filament list"));
-    mainSizer->Add(m_pAddToSoftwareListCheck, 0, wxEXPAND | wxLEFT | wxRIGHT,
+    mainSizer->Add(m_pAddUnUsedMachineFilaments, 0, wxEXPAND | wxLEFT | wxRIGHT,
                    FromDIP(g_sectionMargin));
 
     // ---- Separator ----
@@ -159,22 +159,38 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
     SetSizer(mainSizer);
     Layout();
-    CentreOnParent();
+    Centre(wxBOTH);
 
     initPlatePreview();
     onAutoMatch();
 }
 
-std::list<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
+std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
 {
-    if (m_pFilamentColorMapBoxGroup)
-        return m_pFilamentColorMapBoxGroup->getCurFilamentList();
-    return {};
+    std::vector<FilamentData> dataList;
+    if (!m_pFilamentColorMapBoxGroup)
+        return dataList;
+
+    dataList = m_pFilamentColorMapBoxGroup->getCurFilamentList();
+
+    if (isAddUnUsedMachineFilaments()) {
+        std::set<unsigned int> usedMachineIndices;
+        for (const auto& data : dataList) {
+            usedMachineIndices.insert(data.m_index);
+        }
+        for (const auto& machineData : m_machineDataList) {
+            if (usedMachineIndices.find(machineData.m_index) == usedMachineIndices.end()) {
+                dataList.push_back(machineData);
+            }
+        }
+    }
+
+    return dataList;
 }
 
-bool SyncFilamentColorDialog::isAddToSoftwareList() const
+bool SyncFilamentColorDialog::isAddUnUsedMachineFilaments() const
 {
-    return m_pAddToSoftwareListCheck && m_pAddToSoftwareListCheck->GetValue();
+    return m_pAddUnUsedMachineFilaments && m_pAddUnUsedMachineFilaments->GetValue();
 }
 
 void SyncFilamentColorDialog::onReset()
@@ -301,7 +317,7 @@ void SyncFilamentColorDialog::loadCoverPreview()
     if (!plate || !plate->thumbnail_data.is_valid())
         return;
 
-    std::list<FilamentData> filamentMapping;
+    std::vector<FilamentData> filamentMapping;
     if (m_pFilamentColorMapBoxGroup)
         filamentMapping = m_pFilamentColorMapBoxGroup->getCurFilamentList();
 
@@ -317,7 +333,7 @@ void SyncFilamentColorDialog::loadCoverPreview()
 
 wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thumb,
                                                         const ThumbnailData& noLightThumb,
-                                                        const std::list<FilamentData>& filamentMapping)
+                                                        const std::vector<FilamentData>& filamentMapping)
 {
     if (thumb.width != noLightThumb.width || thumb.height != noLightThumb.height)
         return thumbnailToBitmap(thumb);
@@ -329,10 +345,9 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
     // Use sequential list position as the key — it matches the
     // extruder-to-alpha encoding: alpha = 256 - extruder_id, 255 - alpha = extruder_id - 1.
     std::map<int, wxColour> colorMap;
-    int idx = 0;
-    for (const auto& fd : filamentMapping) {
+    for (size_t idx = 0, size = filamentMapping.size(); idx < size; ++idx) {
+        const FilamentData& fd = filamentMapping[idx];
         colorMap[idx] = wxColour(fd.m_color_r, fd.m_color_g, fd.m_color_b);
-        ++idx;
     }
 
     for (unsigned int r = 0; r < thumb.height; ++r) {

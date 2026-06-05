@@ -7902,6 +7902,7 @@ void Sidebar::show_sync_filament_dialog()
         MessageDialog dlg(this,
             _L("Please connect to a device first before synchronizing filament information."),
             _L("Device not connected"), wxOK);
+        dlg.Centre(wxBOTH);
         dlg.ShowModal();
         return;
     }
@@ -7911,7 +7912,7 @@ void Sidebar::show_sync_filament_dialog()
         return;
 
     // ---- Build design (software) filament list ----
-    std::list<FilamentData> designFilamentList;
+    std::vector<FilamentData> designFilamentList;
     {
         const auto& filament_presets = preset_bundle->filament_presets;
         const auto* colors_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
@@ -7942,7 +7943,7 @@ void Sidebar::show_sync_filament_dialog()
     }
 
     // ---- Build machine (device) filament list ----
-    std::list<FilamentData> machineFilamentList;
+    std::vector<FilamentData> machineFilamentList;
     {
         // Primary path: Snapmaker / WCP machine_filaments
         const auto& mf = preset_bundle->machine_filaments;
@@ -8023,20 +8024,19 @@ void Sidebar::show_sync_filament_dialog()
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
     if (dlg.ShowModal() == wxID_OK && preset_bundle) {
-        std::list<FilamentData> syncedData = dlg.getSyncDataList();
-        bool addToSoftwareList = dlg.isAddToSoftwareList();
+        std::vector<FilamentData> syncedData = dlg.getSyncDataList();
 
         ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-
-        for (const auto& sd : syncedData) {
-            Preset* matched = resolve_filament_preset(preset_bundle, sd.m_name);
+        
+        for (size_t i = 0, size = syncedData.size(); i < size; ++i) {
+            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name);
             if (matched) {
-                preset_bundle->set_filament_preset(sd.m_index, matched->name);
+                preset_bundle->set_filament_preset(i, matched->name);
             }
 
-            if (co && sd.m_index < co->values.size()) {
-                wxColour c(sd.m_color_r, sd.m_color_g, sd.m_color_b);
-                co->values[sd.m_index] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
+            if (co && i < co->values.size()) {
+                wxColour c(syncedData[i].m_color_r, syncedData[i].m_color_g, syncedData[i].m_color_b);
+                co->values[i] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
             }
         }
 
@@ -8051,8 +8051,8 @@ void Sidebar::show_sync_filament_dialog()
         }
 
         // Auto calculation of flushing volumes for synced filaments
-        for (const auto& sd : syncedData) {
-            auto_calc_flushing_volumes(sd.m_index);
+        for (size_t i = 0, size = syncedData.size(); i < size; ++i) {
+            auto_calc_flushing_volumes(i);
         }
     }
 }

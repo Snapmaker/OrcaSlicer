@@ -22,7 +22,7 @@ namespace GUI
 {
 
 MachineFilamentPicker::MachineFilamentPicker(wxWindow* parent,
-                                             const std::list<FilamentData>& dataList,
+                                             const std::vector<FilamentData>& dataList,
                                              unsigned int curIndex)
     : wxPopupTransientWindow(parent)
 {

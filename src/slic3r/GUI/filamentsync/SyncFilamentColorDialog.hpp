@@ -26,11 +26,11 @@ class SyncFilamentColorDialog : public wxDialog
 {
 public:
     SyncFilamentColorDialog(wxWindow* parent,
-                            const std::list<FilamentData>& designDataList,
-                            const std::list<FilamentData>& machineDataList);
+                            const std::vector<FilamentData>& designDataList,
+                            const std::vector<FilamentData>& machineDataList);
 
-    std::list<FilamentData> getSyncDataList() const;
-    bool isAddToSoftwareList() const;
+    std::vector<FilamentData> getSyncDataList() const;
+    bool isAddUnUsedMachineFilaments() const;
 
 private:
     void onReset();
@@ -47,7 +47,7 @@ private:
 
     wxBitmap generateCoverPreview(const ThumbnailData& thumb,
                                    const ThumbnailData& noLightThumb,
-                                   const std::list<FilamentData>& filamentMapping);
+                                   const std::vector<FilamentData>& filamentMapping);
 
     static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
 
@@ -58,15 +58,15 @@ private:
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
     PlaterPreview* m_pPlaterPreview = nullptr;
     wxStaticText* m_pHintLabel = nullptr;
-    wxCheckBox* m_pAddToSoftwareListCheck = nullptr;
+    wxCheckBox* m_pAddUnUsedMachineFilaments = nullptr;
 
     wxButton* m_pResetBtn = nullptr;
     wxButton* m_pCancelBtn = nullptr;
     wxButton* m_pSyncBtn  = nullptr;
 
     // Data
-    std::list<FilamentData> m_designDataList;
-    std::list<FilamentData> m_machineDataList;
+    std::vector<FilamentData> m_designDataList;
+    std::vector<FilamentData> m_machineDataList;
     bool m_bMappingMode = true;
 };
 

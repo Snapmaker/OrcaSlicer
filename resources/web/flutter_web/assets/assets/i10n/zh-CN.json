@@ -650,6 +650,7 @@
   "Display Area": "展示区域",
   "nozzle_mismatch_tip": "喷嘴直径与预设均不一致，请确认匹配后再发起打印。",
   "Next": "下一步",
+  "File stream error. Please resend.": "文件流错误，请重新发送。",
 
   "Error Code": "错误码",
   "default_exception_title": "异常",

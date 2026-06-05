@@ -1241,38 +1241,15 @@ wxWindow* PreferencesDialog::create_general_page()
             if (!new_val)
                 return false;
 
-            wxDialog dlg(this, wxID_ANY, _L("高/低温材料混打风险"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
-            dlg.SetBackgroundColour(*wxWHITE);
-
-            auto* main_sizer = new wxBoxSizer(wxVERTICAL);
-
             wxString msg = _L("混合使用打印温度差异较大的耗材，可能导致：\n"
                               "· 喷嘴阻塞\n"
                               "· 喷嘴损坏\n"
                               "· 层间粘附问题\n\n"
                               "仍要启用高/低温耗材混合打印吗？");
-            auto* text = new wxStaticText(&dlg, wxID_ANY, msg);
-            text->Wrap(FromDIP(400));
-            main_sizer->Add(text, 0, wxALL, FromDIP(20));
-
-            auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
-            auto* btn_yes = new wxButton(&dlg, wxID_YES, _L("是"));
-            btn_yes->SetBackgroundColour(wxColour(0, 255, 0));
-            auto* btn_no  = new wxButton(&dlg, wxID_NO, _L("否"));
-
-            btn_yes->Bind(wxEVT_BUTTON, [&dlg](wxCommandEvent&) { dlg.EndModal(wxID_YES); });
-            btn_no->Bind(wxEVT_BUTTON,  [&dlg](wxCommandEvent&) { dlg.EndModal(wxID_NO); });
-
-            btn_sizer->AddStretchSpacer();
-            btn_sizer->Add(btn_yes, 0, wxALL, FromDIP(5));
-            btn_sizer->Add(btn_no, 0, wxALL, FromDIP(5));
-
-            main_sizer->Add(btn_sizer, 0, wxEXPAND | wxALL, FromDIP(10));
-            dlg.SetSizer(main_sizer);
-            dlg.Fit();
-            dlg.CenterOnParent();
-
-            return dlg.ShowModal() == wxID_YES;
+            MessageDialog dlg(this, msg, _L("高/低温材料混打风险"), wxICON_WARNING | wxOK | wxCANCEL);
+            dlg.SetButtonLabel(wxID_OK, _L("确认"));
+            dlg.SetButtonLabel(wxID_CANCEL, _L("取消"));
+            return dlg.ShowModal() == wxID_OK;
         });
     auto camera_orbit_mult = create_camera_orbit_mult_input(_L("Orbit speed multiplier"), page, _L("Multiplies the orbit speed for finer or coarser camera movement."));
 

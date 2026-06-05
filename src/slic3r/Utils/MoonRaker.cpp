@@ -3031,7 +3031,9 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
     }
 
     int64_t id = body["id"].get<int64_t>();
-    auto [cb, passthrough] = get_request_callback(id);
+    auto cb_result = get_request_callback(id);
+    auto cb         = cb_result.first;
+    auto passthrough = cb_result.second;
     delete_response_target(id);
 
     if (!cb) {

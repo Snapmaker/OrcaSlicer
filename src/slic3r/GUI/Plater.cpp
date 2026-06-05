@@ -14639,15 +14639,25 @@ bool Plater::check_filament_temp_mixing()
     // Collect from full_config first (global defaults for wall/infill/etc.)
     collect_from_cfg(full_cfg);
 
-    // Collect from every plate's config (per-plate overrides)
-    for (int i = 0; i < p->partplate_list.get_plate_count(); ++i) {
-        PartPlate* plate = p->partplate_list.get_plate(i);
-        if (plate)
-            collect_from_cfg(*plate->config());
-    }
+    // Collect from current plate's config only (per-plate overrides)
+    PartPlate* curr_plate = p->partplate_list.get_curr_plate();
+    if (curr_plate)
+        collect_from_cfg(*curr_plate->config());
 
-    // Collect from ModelVolume painting extruders (multi-material coloring)
-    for (const ModelObject* mo : wxGetApp().model().objects) {
+    // Collect from ModelVolume painting extruders for objects on the current plate
+    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+        const ModelObject* mo = wxGetApp().model().objects[obj_idx];
+        bool on_curr_plate = false;
+        if (curr_plate) {
+            for (int inst_idx = 0; inst_idx < (int)mo->instances.size(); ++inst_idx) {
+                if (curr_plate->contain_instance((int)obj_idx, inst_idx)) {
+                    on_curr_plate = true;
+                    break;
+                }
+            }
+        }
+        if (!on_curr_plate)
+            continue;
         for (const ModelVolume* mv : mo->volumes) {
             for (int eid : mv->get_extruders()) {
                 if (eid >= 1 && eid <= num_filaments)

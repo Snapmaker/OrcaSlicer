@@ -466,6 +466,9 @@ private:
     // Request device to start local file print
     void sw_StartLocalPrint();
 
+    // Request device heartbeat
+    void sw_MachineHeartbeat();
+
     // 设备耗材同步
     void sw_UpdateMachineFilamentInfo();
 

@@ -547,6 +547,220 @@ void TriangleSelector::bucket_fill_select_triangles(const Vec3f& hit, int facet_
     }
 }
 
+void TriangleSelector::select_facet_tree_for_seed_fill(int facet_idx)
+{
+    if (facet_idx < 0 || facet_idx >= int(m_triangles.size()))
+        return;
+
+    Triangle &tr = m_triangles[facet_idx];
+    if (!tr.valid())
+        return;
+
+    if (tr.is_split()) {
+        const int num_of_children = tr.number_of_split_sides() + 1;
+        for (int i = 0; i < num_of_children; ++i) {
+            assert(i < int(tr.children.size()));
+            if (tr.children[i] >= 0)
+                this->select_facet_tree_for_seed_fill(tr.children[i]);
+        }
+    } else
+        tr.select_by_seed_fill();
+}
+
+void TriangleSelector::lasso_select_triangles(const Polygon &screen_polygon,
+                                              const Transform3d &volume_to_world_trafo,
+                                              const Transform3d &trafo_no_translate,
+                                              const ClippingPlane &clp,
+                                              float highlight_by_angle_deg,
+                                              const std::function<Point(const Vec3d &world_point)> &project_world_point,
+                                              const bool visible_only,
+                                              const Vec3f &camera_pos_mesh,
+                                              const std::function<bool(int facet_idx, const Vec3f &centroid_mesh)> &include_facet,
+                                              const bool force_reselection)
+{
+    if (screen_polygon.points.size() < 3)
+        return;
+
+    if (force_reselection)
+        this->seed_fill_unselect_all_triangles();
+
+    const float  highlight_angle_limit = -cos(Geometry::deg2rad(highlight_by_angle_deg));
+    const Matrix3f normal_matrix = static_cast<Matrix3f>(trafo_no_translate.matrix().block(0, 0, 3, 3).inverse().transpose().cast<float>());
+    const Vec3d    camera_world   = volume_to_world_trafo * camera_pos_mesh.cast<double>();
+
+    for (int facet_idx = 0; facet_idx < m_orig_size_indices; ++facet_idx) {
+        if (is_facet_clipped(facet_idx, clp))
+            continue;
+
+        if (highlight_by_angle_deg != 0.f) {
+            const Vec3f &facet_normal = m_face_normals[m_triangles[facet_idx].source_triangle];
+            const float  world_normal_z = (normal_matrix * facet_normal).normalized().z();
+            if (world_normal_z >= highlight_angle_limit)
+                continue;
+        }
+
+        const Vec3i32 verts_idxs = { m_triangles[facet_idx].verts_idxs[0],
+                                     m_triangles[facet_idx].verts_idxs[1],
+                                     m_triangles[facet_idx].verts_idxs[2] };
+        Vec3f centroid_mesh = Vec3f::Zero();
+        for (int i = 0; i < 3; ++i)
+            centroid_mesh += m_vertices[verts_idxs(i)].v;
+        centroid_mesh /= 3.f;
+
+        const Vec3d centroid_world = volume_to_world_trafo * centroid_mesh.cast<double>();
+
+        if (visible_only) {
+            const Vec3f &facet_normal = m_face_normals[m_triangles[facet_idx].source_triangle];
+            const Vec3f  world_normal = (normal_matrix * facet_normal).normalized();
+            const Vec3d  view_dir     = (centroid_world - camera_world).normalized();
+            if (world_normal.dot(view_dir.cast<float>()) >= 0.f)
+                continue;
+        }
+
+        if (include_facet && !include_facet(facet_idx, centroid_mesh))
+            continue;
+
+        if (!screen_polygon.contains(project_world_point(centroid_world)))
+            continue;
+
+        this->select_facet_tree_for_seed_fill(facet_idx);
+    }
+}
+
+TriangleSelector::ScreenPolygon::ScreenPolygon(const Polygon &screen_polygon,
+                                               const Vec3f   &camera_pos_mesh,
+                                               const Vec3f   &view_reference_mesh,
+                                               const Transform3d &volume_to_world_trafo,
+                                               const Transform3d &mesh_trafo,
+                                               const ClippingPlane &clipping_plane,
+                                               const std::function<Point(const Vec3d &)> &project_world_point)
+    : Cursor(camera_pos_mesh, 0.05f, mesh_trafo, clipping_plane)
+    , m_screen_polygon(screen_polygon)
+    , m_volume_to_world(volume_to_world_trafo)
+    , m_project_world_point(project_world_point)
+{
+    dir = (view_reference_mesh - source).normalized();
+}
+
+Point TriangleSelector::ScreenPolygon::project_mesh_point(const Vec3f &mesh_point) const
+{
+    return m_project_world_point(m_volume_to_world * mesh_point.cast<double>());
+}
+
+bool TriangleSelector::ScreenPolygon::is_mesh_point_inside(const Vec3f &point) const
+{
+    if (clipping_plane.is_active() && clipping_plane.is_mesh_point_clipped(point))
+        return false;
+    return m_screen_polygon.contains(project_mesh_point(point));
+}
+
+bool TriangleSelector::ScreenPolygon::is_pointer_in_triangle(const Vec3f &p1, const Vec3f &p2, const Vec3f &p3) const
+{
+    if (is_mesh_point_inside(p1) || is_mesh_point_inside(p2) || is_mesh_point_inside(p3))
+        return true;
+
+    const Point centroid = project_mesh_point((p1 + p2 + p3) / 3.f);
+    return m_screen_polygon.contains(centroid);
+}
+
+bool TriangleSelector::ScreenPolygon::is_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &vertices) const
+{
+    std::array<Vec3f, 3> pts;
+    for (int i = 0; i < 3; ++i)
+        pts[i] = vertices[tr.verts_idxs[i]].v;
+
+    for (int side = 0; side < 3; ++side) {
+        const Vec3f &a = pts[side];
+        const Vec3f &b = pts[side < 2 ? side + 1 : 0];
+        if (is_mesh_point_inside(a) || is_mesh_point_inside(b))
+            return true;
+
+        for (int step = 1; step < 4; ++step) {
+            const float t = float(step) / 4.f;
+            if (is_mesh_point_inside(a + t * (b - a)))
+                return true;
+        }
+    }
+    return false;
+}
+
+void TriangleSelector::lasso_select_patch(const Polygon &screen_polygon,
+                                          const Transform3d &volume_to_world_trafo,
+                                          const Transform3d &trafo_no_translate,
+                                          const ClippingPlane &clp,
+                                          const EnforcerBlockerType new_state,
+                                          const bool triangle_splitting,
+                                          const float highlight_by_angle_deg,
+                                          const Vec3f &camera_pos_mesh,
+                                          const Vec3f &view_reference_mesh,
+                                          const std::function<Point(const Vec3d &world_point)> &project_world_point,
+                                          const std::function<bool(int facet_idx, const Vec3f &centroid_mesh)> &include_facet)
+{
+    if (screen_polygon.points.size() < 3)
+        return;
+
+    m_cursor = std::make_unique<ScreenPolygon>(screen_polygon, camera_pos_mesh, view_reference_mesh, volume_to_world_trafo,
+                                                 volume_to_world_trafo, clp, project_world_point);
+    set_edge_limit(0.05f);
+    m_old_cursor_radius_sqr = m_cursor->radius_sqr;
+
+    const float highlight_angle_limit = -cos(Geometry::deg2rad(highlight_by_angle_deg));
+    const Matrix3f normal_matrix = static_cast<Matrix3f>(trafo_no_translate.matrix().block(0, 0, 3, 3).inverse().transpose().cast<float>());
+
+    std::vector<int> start_facets;
+    start_facets.reserve(64);
+    for (int facet_id = 0; facet_id < m_orig_size_indices; ++facet_id) {
+        if (is_facet_clipped(facet_id, clp))
+            continue;
+
+        const Triangle &tr = m_triangles[facet_id];
+        if (highlight_by_angle_deg != 0.f) {
+            const Vec3f &facet_normal = m_face_normals[tr.source_triangle];
+            const float  world_normal_z = (normal_matrix * facet_normal).normalized().z();
+            if (world_normal_z >= highlight_angle_limit)
+                continue;
+        }
+
+        Vec3f centroid_mesh = Vec3f::Zero();
+        for (int i = 0; i < 3; ++i)
+            centroid_mesh += m_vertices[tr.verts_idxs[i]].v;
+        centroid_mesh /= 3.f;
+
+        if (include_facet && !include_facet(facet_id, centroid_mesh))
+            continue;
+
+        if (m_cursor->is_edge_inside_cursor(tr, m_vertices) || m_cursor->is_pointer_in_triangle(tr, m_vertices))
+            start_facets.push_back(facet_id);
+    }
+
+    std::vector<bool> visited(m_orig_size_indices, false);
+    for (int start_facet_id : start_facets) {
+        if (visited[start_facet_id])
+            continue;
+
+        std::vector<int> facets_to_check;
+        facets_to_check.reserve(16);
+        facets_to_check.emplace_back(start_facet_id);
+
+        int facet_idx = 0;
+        while (facet_idx < int(facets_to_check.size())) {
+            int facet = facets_to_check[facet_idx];
+            const Vec3f &facet_normal = m_face_normals[m_triangles[facet].source_triangle];
+            Matrix3f     normal_matrix_f = static_cast<Matrix3f>(trafo_no_translate.matrix().block(0, 0, 3, 3).inverse().transpose().cast<float>());
+            float        world_normal_z = (normal_matrix_f * facet_normal).normalized().z();
+            if (!visited[facet] && (highlight_by_angle_deg == 0.f || world_normal_z < highlight_angle_limit)) {
+                if (select_triangle(facet, new_state, triangle_splitting)) {
+                    for (int neighbor_idx : m_neighbors[facet])
+                        if (neighbor_idx >= 0 && m_cursor->is_facet_visible(neighbor_idx, m_face_normals))
+                            facets_to_check.push_back(neighbor_idx);
+                }
+            }
+            visited[facet] = true;
+            ++facet_idx;
+        }
+    }
+}
+
 // Selects either the whole triangle (discarding any children it had), or divides
 // the triangle recursively, selecting just subtriangles truly inside the circle.
 // This is done by an actual recursive call. Returns false if the triangle is

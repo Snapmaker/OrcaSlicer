@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orca Build <build@local>
+Date: Fri, 5 Jun 2026 00:00:00 +0000
+Subject: [PATCH] Support VS 2026 MSVC 19.50.x
+
+---
+ cmake/OpenCVDetectCXXCompiler.cmake | 2 ++
+ cmake/templates/OpenCVConfig.root-WIN32.cmake.in | 14 ++++++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/cmake/OpenCVDetectCXXCompiler.cmake b/cmake/OpenCVDetectCXXCompiler.cmake
+index 448afd46ea..a1b2c3d4e5 100644
+--- a/cmake/OpenCVDetectCXXCompiler.cmake
++++ b/cmake/OpenCVDetectCXXCompiler.cmake
+@@ -174,6 +174,8 @@ elseif(MSVC)
+   elseif(MSVC_VERSION MATCHES "^19[34][0-9]$")
+     set(OpenCV_RUNTIME vc17)
++  elseif(MSVC_VERSION MATCHES "^195[0-9]$")
++    set(OpenCV_RUNTIME vc17)
+   else()
+     message(WARNING "OpenCV does not recognize MSVC_VERSION \"${MSVC_VERSION}\". Cannot set OpenCV_RUNTIME")
+   endif()
+diff --git a/cmake/templates/OpenCVConfig.root-WIN32.cmake.in b/cmake/templates/OpenCVConfig.root-WIN32.cmake.in
+index 62e36272f3..b2c3d4e5f6 100644
+--- a/cmake/templates/OpenCVConfig.root-WIN32.cmake.in
++++ b/cmake/templates/OpenCVConfig.root-WIN32.cmake.in
+@@ -151,6 +151,20 @@ elseif(MSVC)
+        endif()
+      endif()
+     endif()
++  elseif(MSVC_VERSION MATCHES "^195[0-9]$")
++    set(OpenCV_RUNTIME vc17)
++    check_one_config(has_VS2022)
++    if(NOT has_VS2022)
++     set(OpenCV_RUNTIME vc16)
++     check_one_config(has_VS2019)
++     if(NOT has_VS2019)
++       set(OpenCV_RUNTIME vc15)
++       check_one_config(has_VS2017)
++       if(NOT has_VS2017)
++         set(OpenCV_RUNTIME vc14)
++       endif()
++     endif()
++    endif()
+   endif()
+ elseif(MINGW)
+   set(OpenCV_RUNTIME mingw)

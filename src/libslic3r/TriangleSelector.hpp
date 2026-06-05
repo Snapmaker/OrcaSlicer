@@ -6,7 +6,10 @@
 
 #include <cfloat>
 #include "Point.hpp"
+#include "Polygon.hpp"
 #include "TriangleMesh.hpp"
+
+#include <functional>
 
 namespace Slic3r {
 
@@ -207,6 +210,37 @@ public:
         float m_height;
     };
 
+    // Screen-space polygon cursor for polygon lasso painting with optional triangle splitting.
+    class ScreenPolygon : public Cursor
+    {
+    public:
+        ScreenPolygon()           = delete;
+        ~ScreenPolygon() override = default;
+
+        ScreenPolygon(const Polygon &screen_polygon,
+                      const Vec3f   &camera_pos_mesh,
+                      const Vec3f   &view_reference_mesh,
+                      const Transform3d &volume_to_world_trafo,
+                      const Transform3d &mesh_trafo,
+                      const ClippingPlane &clipping_plane,
+                      const std::function<Point(const Vec3d &)> &project_world_point);
+
+        bool is_pointer_in_triangle(const Vec3f &p1, const Vec3f &p2, const Vec3f &p3) const override;
+        bool is_mesh_point_inside(const Vec3f &point) const override;
+        bool is_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &vertices) const override;
+        bool is_facet_visible(int facet_idx, const std::vector<Vec3f> &face_normals) const override
+        {
+            return TriangleSelector::Cursor::is_facet_visible(*this, facet_idx, face_normals);
+        }
+
+    private:
+        Point project_mesh_point(const Vec3f &mesh_point) const;
+
+        Polygon                               m_screen_polygon;
+        Transform3d                           m_volume_to_world;
+        std::function<Point(const Vec3d &)>   m_project_world_point;
+    };
+
     class Capsule3D : public DoublePointCursor
     {
     public:
@@ -325,6 +359,31 @@ public:
                                       float                seed_fill_angle,            // BBS: the maximal angle between two facets to be painted by the same color
                                       bool                 propagate,                  // if bucket fill is propagated to neighbor faces or if it fills the only facet of the modified mesh that the hit point belongs to.
                                       bool                 force_reselection = false); // force reselection of the triangle mesh even in cases that mouse is pointing on the selected triangle
+
+    // Select all mesh facets whose screen-space centroid lies inside the given polygon.
+    void lasso_select_triangles(const Polygon &screen_polygon,
+                                const Transform3d &volume_to_world_trafo,
+                                const Transform3d &trafo_no_translate,
+                                const ClippingPlane &clp,
+                                float highlight_by_angle_deg,
+                                const std::function<Point(const Vec3d &world_point)> &project_world_point,
+                                bool visible_only,
+                                const Vec3f &camera_pos_mesh,
+                                const std::function<bool(int facet_idx, const Vec3f &centroid_mesh)> &include_facet,
+                                bool force_reselection = false);
+
+    // Paint all mesh facets inside the screen polygon, optionally splitting triangles at the border.
+    void lasso_select_patch(const Polygon &screen_polygon,
+                            const Transform3d &volume_to_world_trafo,
+                            const Transform3d &trafo_no_translate,
+                            const ClippingPlane &clp,
+                            EnforcerBlockerType new_state,
+                            bool triangle_splitting,
+                            float highlight_by_angle_deg,
+                            const Vec3f &camera_pos_mesh,
+                            const Vec3f &view_reference_mesh,
+                            const std::function<Point(const Vec3d &world_point)> &project_world_point,
+                            const std::function<bool(int facet_idx, const Vec3f &centroid_mesh)> &include_facet);
 
     bool                 has_facets(EnforcerBlockerType state) const;
     static bool          has_facets(const TriangleSplittingData &data, EnforcerBlockerType test_state);
@@ -520,6 +579,8 @@ private:
     void get_facets_split_by_tjoints(const Vec3i32 &vertices, const Vec3i32 &neighbors, std::vector<stl_triangle_vertex_indices> &out_triangles) const;
 
     void get_seed_fill_contour_recursive(int facet_idx, const Vec3i32 &neighbors, const Vec3i32 &neighbors_propagated, std::vector<Vec2i32> &edges_out) const;
+
+    void select_facet_tree_for_seed_fill(int facet_idx);
 
     int m_free_triangles_head { -1 };
     int m_free_vertices_head { -1 };

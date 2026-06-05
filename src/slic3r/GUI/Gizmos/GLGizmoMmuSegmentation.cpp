@@ -218,6 +218,11 @@ bool GLGizmoMmuSegmentation::on_init()
     m_desc["tool_brush"]           = _L("Brush");
     m_desc["tool_smart_fill"]      = _L("Smart fill");
     m_desc["tool_bucket_fill"]     = _L("Bucket fill");
+    m_desc["tool_lasso"]           = _L("Polygon lasso");
+    m_desc["lasso_help"]           = _L("Click on the model to place points on the visible surface. Double-click or click the first point to close, then paint the selection.");
+    m_desc["lasso_apply"]          = _L("Paint selection");
+    m_desc["lasso_visible_only"]   = _L("Visible surface only");
+    m_desc["lasso_smooth_edges"]   = _L("Smooth edges");
 
     m_desc["smart_fill_angle_caption"] = ctrl + _L("Mouse wheel");
     m_desc["smart_fill_angle"]     = _L("Smart fill angle");
@@ -256,6 +261,7 @@ void GLGizmoMmuSegmentation::render_painter_gizmo()
     m_c->object_clipper()->render_cut();
     m_c->instances_hider()->render_cut();
     render_cursor();
+    render_lasso_overlay();
 
     glsafe(::glDisable(GL_BLEND));
 }
@@ -322,6 +328,9 @@ bool GLGizmoMmuSegmentation::on_key_down_select_tool_type(int keyCode) {
         break;
     case 'G':
         m_current_tool = ImGui::GapFillIcon;
+        break;
+    case 'L':
+        m_current_tool = ImGui::LassoButtonIcon;
         break;
     default:
         return false;
@@ -416,6 +425,9 @@ void GLGizmoMmuSegmentation::show_tooltip_information(float caption_max, float x
                 break;
             case ToolType::GAP_FILL:
                 tip_items = {"gap_area", "toggle_wireframe"};
+                break;
+            case ToolType::POLYGON_LASSO:
+                tip_items = {"paint", "erase", "clipping_of_view", "toggle_wireframe"};
                 break;
             default:
                 break;
@@ -666,14 +678,14 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
     m_imgui->text(m_desc.at("tool_type"));
 
-    std::array<wchar_t, 6> tool_ids;
-    tool_ids = { ImGui::CircleButtonIcon, ImGui::SphereButtonIcon, ImGui::TriangleButtonIcon, ImGui::HeightRangeIcon, ImGui::FillButtonIcon, ImGui::GapFillIcon };
-    std::array<wchar_t, 6> icons;
+    std::array<wchar_t, 7> tool_ids;
+    tool_ids = { ImGui::CircleButtonIcon, ImGui::SphereButtonIcon, ImGui::TriangleButtonIcon, ImGui::HeightRangeIcon, ImGui::FillButtonIcon, ImGui::GapFillIcon, ImGui::LassoButtonIcon };
+    std::array<wchar_t, 7> icons;
     if (m_is_dark_mode)
-        icons = { ImGui::CircleButtonDarkIcon, ImGui::SphereButtonDarkIcon, ImGui::TriangleButtonDarkIcon, ImGui::HeightRangeDarkIcon, ImGui::FillButtonDarkIcon, ImGui::GapFillDarkIcon };
+        icons = { ImGui::CircleButtonDarkIcon, ImGui::SphereButtonDarkIcon, ImGui::TriangleButtonDarkIcon, ImGui::HeightRangeDarkIcon, ImGui::FillButtonDarkIcon, ImGui::GapFillDarkIcon, ImGui::LassoButtonDarkIcon };
     else
-        icons = { ImGui::CircleButtonIcon, ImGui::SphereButtonIcon, ImGui::TriangleButtonIcon, ImGui::HeightRangeIcon, ImGui::FillButtonIcon, ImGui::GapFillIcon };
-    std::array<wxString, 6> tool_tips = { _L("Circle"), _L("Sphere"), _L("Triangle"), _L("Height Range"), _L("Fill"), _L("Gap Fill") };
+        icons = { ImGui::CircleButtonIcon, ImGui::SphereButtonIcon, ImGui::TriangleButtonIcon, ImGui::HeightRangeIcon, ImGui::FillButtonIcon, ImGui::GapFillIcon, ImGui::LassoButtonIcon };
+    std::array<wxString, 7> tool_tips = { _L("Circle"), _L("Sphere"), _L("Triangle"), _L("Height Range"), _L("Fill"), _L("Gap Fill"), _L("Polygon lasso") };
     for (int i = 0; i < tool_ids.size(); i++) {
         std::string  str_label = std::string("");
         std::wstring btn_name  = icons[i] + boost::nowide::widen(str_label);
@@ -701,6 +713,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
         if (btn_clicked && m_current_tool != tool_ids[i]) {
             m_current_tool = tool_ids[i];
+            clear_lasso();
             for (auto &triangle_selector : m_triangle_selectors) {
                 triangle_selector->seed_fill_unselect_all_triangles();
                 triangle_selector->request_update_render_data();
@@ -878,6 +891,35 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         ImGui::PushItemWidth(1.5 * slider_icon_width);
         ImGui::BBLDragFloat("##gap_area_input", &TriangleSelectorPatch::gap_area, 0.05f, 0.0f, 0.0f, "%.2f");
     }
+    else if (m_current_tool == ImGui::LassoButtonIcon) {
+        m_tool_type = ToolType::POLYGON_LASSO;
+        m_imgui->text_wrapped(m_desc.at("lasso_help"), window_width);
+
+        if (m_c->object_clipper()->get_position() == 0.f) {
+            ImGui::AlignTextToFramePadding();
+            m_imgui->text(m_desc.at("clipping_of_view"));
+        } else {
+            if (m_imgui->button(m_desc.at("reset_direction"))) {
+                wxGetApp().CallAfter([this]() {
+                    m_c->object_clipper()->set_position_by_ratio(-1., false);
+                });
+            }
+        }
+
+        auto clp_dist = float(m_c->object_clipper()->get_position());
+        ImGui::SameLine(clipping_slider_left);
+        ImGui::PushItemWidth(sliders_width);
+        bool slider_clp_dist = m_imgui->bbl_slider_float_style("##clp_dist", &clp_dist, 0.f, 1.f, "%.2f", 1.0f, true);
+        ImGui::SameLine(drag_left_width + clipping_slider_left);
+        ImGui::PushItemWidth(1.5 * slider_icon_width);
+        bool b_clp_dist_input = ImGui::BBLDragFloat("##clp_dist_input", &clp_dist, 0.05f, 0.0f, 0.0f, "%.2f");
+
+        if (slider_clp_dist || b_clp_dist_input)
+            m_c->object_clipper()->set_position_by_ratio(clp_dist, true);
+
+        m_imgui->bbl_checkbox(m_desc.at("lasso_visible_only"), m_lasso_visible_only);
+        m_imgui->bbl_checkbox(m_desc.at("lasso_smooth_edges"), m_lasso_smooth_edges);
+    }
 
     ImGui::Separator();
     if(m_imgui->bbl_checkbox(_L("Vertical"), m_vertical_only)){
@@ -931,6 +973,15 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
                 ts_mm->request_update_render_data(true);
             }
             update_model_object();
+            m_parent.set_as_dirty();
+        }
+
+        ImGui::SameLine();
+    }
+
+    if (m_current_tool == ImGui::LassoButtonIcon && m_lasso_closed) {
+        if (m_imgui->button(m_desc.at("lasso_apply"))) {
+            apply_lasso_paint(false);
             m_parent.set_as_dirty();
         }
 

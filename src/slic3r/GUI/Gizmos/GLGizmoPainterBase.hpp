@@ -8,6 +8,7 @@
 #include "libslic3r/ObjectID.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Polygon.hpp"
 
 #include <cereal/types/vector.hpp>
 #include <GL/glew.h>
@@ -256,6 +257,7 @@ protected:
         SMART_FILL,
         // BBS
         GAP_FILL,
+        POLYGON_LASSO,
     };
 
     struct ProjectedMousePosition
@@ -290,6 +292,38 @@ protected:
     // Orca: paint behavior enchancement
     bool m_vertical_only = false;
     bool m_horizontal_only = false;
+
+    // Polygon lasso tool state.
+    struct LassoPoint {
+        Vec2d screen     = Vec2d::Zero();
+        Vec3f volume     = Vec3f::Zero();
+        int   mesh_idx   = -1;
+        bool  on_surface = false;
+    };
+
+    std::vector<LassoPoint> m_lasso_points;
+    bool                    m_lasso_closed = false;
+    Vec2d                   m_lasso_mouse_pos = Vec2d::Zero();
+    GLModel                 m_lasso_overlay;
+    bool                    m_lasso_visible_only = true;
+    bool                    m_lasso_smooth_edges = true;
+    static constexpr size_t LassoMinPoints       = 3;
+    static constexpr double LassoCloseTolerance  = 12.0;
+    static constexpr float  LassoSurfaceStepPx   = 8.f;
+
+    void collect_part_trafo_matrices(std::vector<Transform3d> &trafo_matrices, std::vector<Transform3d> &trafo_matrices_not_translate) const;
+    bool try_snap_lasso_point(const Vec2d &mouse_position, LassoPoint &out) const;
+    Polygon build_lasso_screen_polygon(const std::vector<Transform3d> &trafo_matrices) const;
+    Vec2d lasso_point_screen_position(const LassoPoint &lp, const std::vector<Transform3d> &trafo_matrices) const;
+
+    void clear_lasso();
+    void close_lasso_polygon();
+    void apply_lasso_selection();
+    void apply_lasso_paint(bool shift_down);
+    void update_lasso_overlay();
+    void render_lasso_overlay();
+    bool is_near_first_lasso_point(const Vec2d &pos) const;
+    bool handle_lasso_gizmo_event(SLAGizmoEventType action, const Vec2d &mouse_position, bool shift_down, bool control_down);
 
     // It stores the value of the previous mesh_id to which the seed fill was applied.
     // It is used to detect when the mouse has moved from one volume to another one.

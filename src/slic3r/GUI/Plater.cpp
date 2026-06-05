@@ -14701,16 +14701,19 @@ bool Plater::sync_filament_temp_mixing_notification()
 
     StringObjectException err;
     err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
-    err.string = _u8L("Cannot print multiple filaments which have large difference of "
-                      "temperature together. Otherwise, the extruder and nozzle may "
-                      "be blocked or damaged during printing.");
 
     if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")) {
         get_notification_manager()->push_notification(
             NotificationType::ValidateWarning,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
-            _u8L("WARNING:") + "\n" + err.string);
+            _u8L("WARNING:") + "\n" +
+            _u8L("Detected both high and low temperature materials. Mixed printing may "
+                 "result in extruder clogging, nozzle damage, or layer adhesion issues."));
     } else {
+        err.string = _u8L("Detected both high and low temperature materials. Mixed printing may "
+                          "result in extruder clogging, nozzle damage, or layer adhesion issues. "
+                          "To continue printing, enable \"Allow mixed printing of high and low "
+                          "temperature materials\" in Preferences.");
         get_notification_manager()->push_validate_error_notification(err);
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
     }

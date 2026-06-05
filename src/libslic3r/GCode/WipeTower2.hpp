@@ -394,7 +394,8 @@ private:
 		const WipeTower::box_coordinates& wt_box, 
 		double feedrate, 
 		bool infill_cone, 
-		float spacing);
+		float spacing,
+		const std::vector<Vec2f>& skip_points = {});
 
     Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
 

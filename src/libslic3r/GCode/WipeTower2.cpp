@@ -2324,7 +2324,8 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
                                           m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
         // outer contour (always)
         bool infill_cone = first_layer && m_wipe_tower_width > 2 * spacing && m_wipe_tower_depth > 2 * spacing;
-        poly             = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing);
+        std::vector<Vec2f> skip_points = get_wall_skip_points(m_layer_info - m_plan.begin());
+        poly             = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing, skip_points);
     } else {
         WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
         std::vector<Vec2f> skip_points = get_wall_skip_points(m_layer_info - m_plan.begin());
@@ -3108,7 +3109,7 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
 // This block creates the stabilization cone.
 // First define a lambda to draw the rectangle with stabilization.
 Polygon WipeTower2::generate_support_cone_wall(
-    WipeTowerWriter2& writer, const WipeTower::box_coordinates& wt_box, double feedrate, bool infill_cone, float spacing)
+    WipeTowerWriter2& writer, const WipeTower::box_coordinates& wt_box, double feedrate, bool infill_cone, float spacing, const std::vector<Vec2f>& skip_points)
 {
     const auto [R, support_scale] = get_wipe_tower_cone_base(m_wipe_tower_width, m_wipe_tower_height, m_wipe_tower_depth,
                                                              m_wipe_tower_cone_angle);
@@ -3175,41 +3176,34 @@ Polygon WipeTower2::generate_support_cone_wall(
         }
     }
 
-    // Find the closest corner and travel to it.
-    int    start_i  = 0;
-    double min_dist = std::numeric_limits<double>::max();
-    for (int i = 0; i < int(pts.size()); ++i) {
-        if (pts[i].second == Corner) {
-            double dist = (pts[i].first - Vec2f(writer.x(), writer.y())).squaredNorm();
-            if (dist < min_dist) {
-                min_dist = dist;
-                start_i  = i;
-            }
-        }
-    }
-    writer.travel(pts[start_i].first);
+    // Build result polylines: wall (with gap if requested) + infill
+    Polylines result_wall;
+    Polygon   insert_skip_polygon;
 
-    // Now actually extrude the boundary (and possibly infill):
-    int i = start_i + 1 == int(pts.size()) ? 0 : start_i + 1;
-    while (i != start_i) {
-        writer.extrude(pts[i].first, feedrate);
-        if (pts[i].second == ArcEnd) {
-            // Extrude the infill.
-            if (!polylines.empty()) {
-                // Extrude the infill and travel back to where we were.
-                bool mirror = ((pts[i].first.y() - center.y()) * (unscale(polylines.front().points.front()).y() - center.y())) < 0.;
-                for (const Polyline& line : polylines) {
-                    writer.travel(center - (mirror ? 1.f : -1.f) * (unscale(line.points.front()).cast<float>() - center));
-                    for (size_t i = 0; i < line.points.size(); ++i)
-                        writer.extrude(center - (mirror ? 1.f : -1.f) * (unscale(line.points[i]).cast<float>() - center));
-                }
-                writer.travel(pts[i].first);
-            }
-        }
-        if (++i == int(pts.size()))
-            i = 0;
+    if (!skip_points.empty()) {
+        result_wall = contrust_gap_for_skip_points(poly, skip_points, m_wipe_tower_width,
+                                                   2.5 * m_perimeter_width, insert_skip_polygon);
+    } else {
+        result_wall.push_back(to_polyline(poly));
+        insert_skip_polygon = poly;
     }
-    writer.extrude(pts[start_i].first, feedrate);
-    return poly;
+
+    // First layer cone infill (direct + mirrored = same behavior as two extrusions in original code)
+    if (infill_cone && !polylines.empty()) {
+        result_wall.insert(result_wall.end(), polylines.begin(), polylines.end());
+        for (const Polyline& line : polylines) {
+            Polyline mirrored;
+            for (const Point& p : line.points)
+                mirrored.points.push_back(
+                    Point::new_scale(center - (unscale(p).cast<float>() - center)));
+            result_wall.push_back(mirrored);
+        }
+    }
+
+    float retract_length = m_filpar[m_current_tool].retract_length;
+    float retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
+    writer.generate_path(result_wall, feedrate, retract_length, retract_speed, m_used_fillet);
+
+    return insert_skip_polygon;
 }
 } // namespace Slic3r

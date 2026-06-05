@@ -15267,3 +15267,9 @@ msgstr "检测到高温材料与低温材料同时使用。混合打印可能导
 
 msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
 msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+
+msgid "Allow high/low temperature filament mixing"
+msgstr "允许高/低温材料混合打印"
+
+msgid "If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."
+msgstr "启用后允许高温材料与低温材料同时打印"

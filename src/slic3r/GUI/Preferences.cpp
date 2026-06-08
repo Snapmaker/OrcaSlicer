@@ -762,6 +762,9 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
+        if (param == "allow_filament_temp_mixing" && wxGetApp().plater())
+            wxGetApp().plater()->notify_filament_usage_changed();
+
         if (param == PRIVACY_POLICY_FLAGS)
             {
             app_config->set("app", PRIVACY_POLICY_FLAGS, checkbox->GetValue());            

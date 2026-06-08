@@ -894,7 +894,6 @@ void GUI_App::log_version_info()
 
 static void generic_exception_handle()
 {
-    GUI_App::log_version_info();
     // Note: Some wxWidgets APIs use wxLogError() to report errors, eg. wxImage
     // - see https://docs.wxwidgets.org/3.1/classwx_image.html#aa249e657259fe6518d68a5208b9043d0
     //
@@ -2030,7 +2029,6 @@ GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
 
-    GUI_App::log_version_info();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy app_config");

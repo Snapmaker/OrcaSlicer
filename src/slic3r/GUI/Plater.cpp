@@ -305,6 +305,18 @@ public:
     void on_dpi_changed(const wxRect& suggested_rect) override {}
 };
 
+std::string extract_base_filament_name(const std::string& full_name)
+{
+    std::string base = full_name;
+    size_t at_pos = base.find('@');
+    if (at_pos != std::string::npos) {
+        base = base.substr(0, at_pos);
+        base.erase(0, base.find_first_not_of(" \t\n\r"));
+        base.erase(base.find_last_not_of(" \t\n\r") + 1);
+    }
+    return base;
+}
+
 // Resolve a machine filament name to a matching local filament preset.
 // Filament presets follow the convention "BaseName @Model nozzle",
 // e.g. "Generic PA-CF @U1 0.4 nozzle".  Split by '@' to extract the
@@ -324,20 +336,70 @@ Preset* resolve_filament_preset(PresetBundle* preset_bundle, const std::string& 
         if (!preset.is_compatible)
             continue;
 
-        // Split by '@' to get the base name, then trim
-        std::string base = preset.name;
-        auto at_pos = preset.name.find('@');
-        if (at_pos != std::string::npos) {
-            base = preset.name.substr(0, at_pos);
-            base.erase(0, base.find_first_not_of(" \t\n\r"));
-            base.erase(base.find_last_not_of(" \t\n\r") + 1);
-        }
-
+        std::string base = extract_base_filament_name(preset.name);
         if (to_lower(base) == to_lower(filament_name))
             return &preset;
     }
 
     return nullptr;
+}
+
+void build_design_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
+{
+    if (!preset_bundle)
+        return;
+
+    const auto& filament_presets = preset_bundle->filament_presets;
+    const auto* colors_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    
+    std::vector<std::string> empty_colors;
+    const std::vector<std::string>& colors = colors_opt ? colors_opt->values : empty_colors;
+
+    const unsigned char rgba[4] = {0, 0, 0, 255};
+    for (size_t i = 0; i < filament_presets.size(); ++i) {
+        FilamentData fd;
+        fd.m_index = i;
+
+        Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
+        if (preset) {
+            fd.m_name = preset->label(false);
+        } else {
+            fd.m_name = extract_base_filament_name(filament_presets[i]);
+        }
+
+        if (i < colors.size()) {
+            if (BitmapCache::parse_color4(colors[i], rgba)) {
+                fd.m_color_r = rgba[0];
+                fd.m_color_g = rgba[1];
+                fd.m_color_b = rgba[2];
+            }
+        }
+
+        out_list.push_back(std::move(fd));
+    }
+}
+
+void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
+{
+    if (!preset_bundle)
+        return;
+
+    const unsigned char rgba[4] = {0, 0, 0, 255};
+    for (const auto& info : preset_bundle->m_connect_machine_info_list) {
+        FilamentData fd;
+        fd.m_index = info.index;
+        fd.m_name  = info.filament_info;
+
+        if (!info.color_info.empty()) {
+            if (BitmapCache::parse_color4(info.color_info, rgba)) {
+                fd.m_color_r = rgba[0];
+                fd.m_color_g = rgba[1];
+                fd.m_color_b = rgba[2];
+            }
+        }
+
+        out_list.push_back(std::move(fd));
+    }
 }
 
 } // namespace
@@ -7911,115 +7973,11 @@ void Sidebar::show_sync_filament_dialog()
     if (!preset_bundle)
         return;
 
-    // ---- Build design (software) filament list ----
     std::vector<FilamentData> designFilamentList;
-    {
-        const auto& filament_presets = preset_bundle->filament_presets;
-        const auto* colors_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-        std::vector<std::string> colors;
-        if (colors_opt)
-            colors = colors_opt->values;
+    build_design_filament_list(preset_bundle, designFilamentList);
 
-        for (size_t i = 0; i < filament_presets.size(); ++i) {
-            FilamentData fd;
-            fd.m_index = static_cast<unsigned int>(i);
-
-            Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
-            if (preset)
-                fd.m_name = preset->label(false);
-            else
-                fd.m_name = filament_presets[i];
-
-            if (i < colors.size()) {
-                unsigned char rgba[4];
-                BitmapCache::parse_color4(colors[i], rgba);
-                fd.m_color_r = rgba[0];
-                fd.m_color_g = rgba[1];
-                fd.m_color_b = rgba[2];
-            }
-
-            designFilamentList.push_back(std::move(fd));
-        }
-    }
-
-    // ---- Build machine (device) filament list ----
     std::vector<FilamentData> machineFilamentList;
-    {
-        // Primary path: Snapmaker / WCP machine_filaments
-        const auto& mf = preset_bundle->machine_filaments;
-        if (!mf.empty()) {
-            for (const auto& entry : mf) {
-                const auto& name  = entry.second.first;
-                const auto& color = entry.second.second; // "#RRGGBBAA"
-                if (color.empty())
-                    continue;
-
-                unsigned char rgba[4] = {0, 0, 0, 0};
-                BitmapCache::parse_color4(color, rgba);
-                FilamentData fd;
-                fd.m_index   = entry.first;
-                fd.m_name    = name;
-                fd.m_color_r = rgba[0];
-                fd.m_color_g = rgba[1];
-                fd.m_color_b = rgba[2];
-                machineFilamentList.push_back(fd);
-            }
-        }
-
-        if (machineFilamentList.empty()) {
-            auto* dev_mgr = wxGetApp().getDeviceManager();
-            auto* obj = dev_mgr ? dev_mgr->get_selected_machine() : nullptr;
-            if (obj && obj->is_online()) {
-                for (const auto& ams_pair : obj->amsList) {
-                    Ams* ams = ams_pair.second;
-                    if (!ams)
-                        continue;
-                    for (const auto& tray_pair : ams->trayList) {
-                        AmsTray* tray = tray_pair.second;
-                        if (!tray || !tray->is_exists)
-                            continue;
-                        std::string displayName = tray->type;
-                        if (displayName.empty())
-                            displayName = tray->sub_brands;
-                        if (displayName.empty())
-                            displayName = tray->setting_id;
-                        if (displayName.empty())
-                            continue;
-                        wxColour tc = tray->wx_color;
-                        if (!tc.IsOk())
-                            tc = tray->get_color();
-                        FilamentData fd;
-                        fd.m_index   = static_cast<unsigned int>(machineFilamentList.size());
-                        fd.m_name    = displayName;
-                        fd.m_color_r = tc.Red();
-                        fd.m_color_g = tc.Green();
-                        fd.m_color_b = tc.Blue();
-                        machineFilamentList.push_back(fd);
-                    }
-                }
-                const auto& vt = obj->vt_tray;
-                if (vt.is_exists) {
-                    std::string vtName = vt.type;
-                    if (vtName.empty())
-                        vtName = vt.sub_brands;
-                    if (vtName.empty())
-                        vtName = vt.setting_id;
-                    if (!vtName.empty()) {
-                        wxColour tc = vt.wx_color;
-                        if (!tc.IsOk())
-                            tc = AmsTray::decode_color(vt.color);
-                        FilamentData fd;
-                        fd.m_index   = static_cast<unsigned int>(machineFilamentList.size());
-                        fd.m_name    = vtName;
-                        fd.m_color_r = tc.Red();
-                        fd.m_color_g = tc.Green();
-                        fd.m_color_b = tc.Blue();
-                        machineFilamentList.push_back(fd);
-                    }
-                }
-            }
-        }
-    }
+    build_machine_filament_list(preset_bundle, machineFilamentList);
 
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);

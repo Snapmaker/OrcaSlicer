@@ -355,7 +355,6 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
     std::vector<std::string> empty_colors;
     const std::vector<std::string>& colors = colors_opt ? colors_opt->values : empty_colors;
 
-    const unsigned char rgba[4] = {0, 0, 0, 255};
     for (size_t i = 0; i < filament_presets.size(); ++i) {
         FilamentData fd;
         fd.m_index = i;
@@ -368,6 +367,7 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
         }
 
         if (i < colors.size()) {
+            unsigned char rgba[4] = {0, 0, 0, 255};
             if (BitmapCache::parse_color4(colors[i], rgba)) {
                 fd.m_color_r = rgba[0];
                 fd.m_color_g = rgba[1];
@@ -384,13 +384,13 @@ void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<Filame
     if (!preset_bundle)
         return;
 
-    const unsigned char rgba[4] = {0, 0, 0, 255};
     for (const auto& info : preset_bundle->m_connect_machine_info_list) {
         FilamentData fd;
         fd.m_index = info.index;
         fd.m_name  = info.filament_info;
 
         if (!info.color_info.empty()) {
+            unsigned char rgba[4] = {0, 0, 0, 255};
             if (BitmapCache::parse_color4(info.color_info, rgba)) {
                 fd.m_color_r = rgba[0];
                 fd.m_color_g = rgba[1];

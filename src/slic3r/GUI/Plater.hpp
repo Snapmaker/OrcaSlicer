@@ -104,6 +104,7 @@ wxDECLARE_EVENT(EVT_GLCANVAS_COLOR_MODE_CHANGED,   SimpleEvent);
 wxDECLARE_EVENT(EVT_PRINT_FROM_SDCARD_VIEW,   SimpleEvent);
 wxDECLARE_EVENT(EVT_CREATE_FILAMENT, SimpleEvent);
 wxDECLARE_EVENT(EVT_MODIFY_FILAMENT, SimpleEvent);
+wxDECLARE_EVENT(EVT_FILAMENT_USAGE_CHANGED, SimpleEvent);
 wxDECLARE_EVENT(EVT_ADD_FILAMENT, SimpleEvent);
 wxDECLARE_EVENT(EVT_DEL_FILAMENT, SimpleEvent);
 using ColorEvent = Event<wxColour>;
@@ -231,6 +232,11 @@ class Plater: public wxPanel
 {
 public:
     using fs_path = boost::filesystem::path;
+    enum class FilamentTempMixingState {
+        Compatible,
+        AllowedWarning,
+        BlockedError
+    };
 
     Plater(wxWindow *parent, MainFrame *main_frame);
     Plater(Plater &&) = delete;
@@ -510,9 +516,13 @@ public:
     /// Check whether high-temperature and low-temperature filaments are mixed on the current plate.
     /// Returns true if compatible (no mixing), false if mixing is detected and error notification is shown.
     bool check_filament_temp_mixing();
+    FilamentTempMixingState get_filament_temp_mixing_state();
     /// Sync notification state with current filament temp mixing status.
-    /// Returns true if compatible (no mixing), false if mixing detected.
+    /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    bool confirm_filament_temp_mixing_before_slice();
+    /// Queue a single UI sync after filament preset/assignment/plate usage changes.
+    void notify_filament_usage_changed();
     void force_filament_colors_update();
     void force_print_bed_update();
     // On activating the parent window.

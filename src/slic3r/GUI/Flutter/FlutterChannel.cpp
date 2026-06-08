@@ -79,17 +79,9 @@ FlutterChannel::handler(FlutterViewHost* view) {
     auto middleware = std::make_shared<std::vector<std::shared_ptr<Middleware>>>(
         m_middleware);
 
-    auto replied = std::make_shared<bool>(false);
-    return [routes = std::move(routes), middleware, replied](
+    return [routes = std::move(routes), middleware](
                const std::string& method, const std::string& args,
-               FlutterViewHost::Reply rawReply) {
-
-        FlutterViewHost::Reply reply = [replied, rawReply = std::move(rawReply)]
-            (const std::string& r) {
-            if (*replied) return;
-            *replied = true;
-            rawReply(r);
-        };
+               FlutterViewHost::Reply reply) {
 
         auto& mws = *middleware;
 
@@ -99,10 +91,15 @@ FlutterChannel::handler(FlutterViewHost* view) {
                 mws[j]->onOutbound(m, a);
         };
 
-        auto executeChain = [&](const std::string& m, const std::string& a,
-                                FlutterViewHost::Reply r, size_t startIdx = 0) {
+        std::function<void(const std::string&, const std::string&, FlutterViewHost::Reply, size_t)> executeChain;
+        executeChain = [&](const std::string& m, const std::string& a,
+                           FlutterViewHost::Reply r, size_t startIdx = 0) {
             for (size_t i = startIdx; i < mws.size(); ++i) {
                 if (!mws[i]->onInbound(m, a, r)) {
+                    if (auto guard = std::dynamic_pointer_cast<ThreadGuardMiddleware>(mws[i])) {
+                        guard->CallAfter([=]() { executeChain(m, a, r, i); });
+                        return;
+                    }
                     rollbackOnOutbound(m, a, i - 1);
                     return;
                 }
@@ -116,28 +113,7 @@ FlutterChannel::handler(FlutterViewHost* view) {
                 mws[i]->onOutbound(m, a);
         };
 
-        for (size_t i = 0; i < mws.size(); ++i) {
-            if (!mws[i]->onInbound(method, args, reply)) {
-                // ThreadGuardMiddleware defers execution to UI thread via CallAfter.
-                if (auto guard = std::dynamic_pointer_cast<ThreadGuardMiddleware>(mws[i])) {
-                    guard->CallAfter([executeChain, method, args, reply, i]() {
-                        executeChain(method, args, reply, i);
-                    });
-                    return;
-                }
-                rollbackOnOutbound(method, args, i - 1);
-                return;
-            }
-        }
-
-        // All middlewares passed — run handler + onOutbound
-        auto it = routes.find(method);
-        if (it != routes.end())
-            it->second(args, reply);
-        else
-            reply("");
-        for (int i = static_cast<int>(mws.size()) - 1; i >= 0; --i)
-            mws[i]->onOutbound(method, args);
+        executeChain(method, args, reply, 0);
     };
 }
 

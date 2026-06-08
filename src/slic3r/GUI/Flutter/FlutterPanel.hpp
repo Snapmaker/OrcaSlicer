@@ -1,78 +1,43 @@
 #pragma once
 #include <wx/wx.h>
 #include <memory>
-#include <functional>
-#include <unordered_map>
-#include "flutter_host.h"
-
-// Simple dispatch table for Dart↔C++ MethodChannel communication.
-// @deprecated Use FlutterChannel instead (namespace + middleware + view binding).
-class Dispatcher {
-public:
-    using Fn = std::function<void(
-        const std::string& args, FlutterViewHost::Reply reply)>;
-
-    Dispatcher& on(const std::string& method, Fn fn) {
-        m_map[method] = std::move(fn);
-        return *this;
-    }
-
-    FlutterViewHost::MethodCallHandler handler() {
-        auto map = m_map;
-        return [map](const std::string& method,
-                     const std::string& args,
-                     FlutterViewHost::Reply reply) {
-            auto it = map.find(method);
-            if (it != map.end()) {
-                try {
-                    it->second(args, reply);
-                } catch (const std::exception& e) {
-                    reply(std::string("Error: ") + e.what());
-                } catch (...) {
-                    reply("Error: unknown");
-                }
-            } else {
-                reply("");
-            }
-        };
-    }
-
-private:
-    std::unordered_map<std::string, Fn> m_map;
-};
+#include "FlutterChannel.h"
 
 class FlutterPanel : public wxWindow {
 public:
     FlutterPanel(wxWindow* parent);
+
+    /// Creates the FlutterChannel with the given name. Must be called BEFORE
+    /// startView() so that handlers registered via on() are captured when
+    /// the channel is bound to the view.
+    FlutterChannel& channel(const std::string& name);
+
+    /// Creates the FlutterView and binds the channel.  Handlers must be
+    /// registered via channel().on(...) before calling startView().
     bool startView(FlutterEngineHost* engine,
                    const std::string& entrypoint,
-                   const std::string& channelName,
-                   FlutterViewHost::MethodCallHandler handler = {});
-    FlutterViewHost* view() { return m_view.get(); }
-    void setHandler(FlutterViewHost::MethodCallHandler handler);
+                   const std::string& channelName);
+
+    /// Access the already-created channel (asserts if not yet created).
+    FlutterChannel& channel();
+
+    void resizeView(int width, int height);
 
     void onSize(wxSizeEvent& event);
     void onShow(wxShowEvent& event);
     void onSetFocus(wxFocusEvent& event);
 
-    // Override SetFocus to transfer keyboard focus to the Flutter child
-    // HWND immediately, rather than relying on the CallAfter deferral in
-    // onSetFocus (which races with wxWidgets' internal focus bookkeeping).
-    // Keeping onSetFocus + CallAfter as a fallback for non-SetFocus paths
-    // (keyboard navigation, WM_SETFOCUS from the OS).
     virtual void SetFocus() override;
 
-    // Panel is a transparent wrapper; only the Flutter child accepts focus.
-    // Prevents wxWidgets from reclaiming focus via mouse-click auto-focus
-    // (MSWWindowProc calls SetFocus on WM_LBUTTONDOWN for IsFocusable windows).
     bool AcceptsFocus() const override { return false; }
 
-    // Attempt deferred embed if it hasn't happened yet.
     void tryEmbed();
 
 protected:
+    // Declaration order sets destruction order (reverse): m_channel dies AFTER m_view.
+    std::unique_ptr<FlutterChannel>  m_channel;
     std::unique_ptr<FlutterViewHost> m_view;
-    bool m_embedded = false;   // true after the first successful embedInto
+    bool m_embedded = false;
 
 #ifdef __WXMSW__
     virtual WXHWND MSWGetFocusHWND() const override;

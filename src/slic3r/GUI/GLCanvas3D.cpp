@@ -4823,6 +4823,8 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
 
     reset_sequential_print_clearance();
 
+    wxGetApp().plater()->sync_filament_temp_mixing_notification();
+
     m_dirty = true;
 }
 

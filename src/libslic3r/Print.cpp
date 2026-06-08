@@ -1556,10 +1556,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     if (extruders.empty())
         return { L("No extrusions under current settings.") };
 
-    if (nozzles < 2 && extruders.size() > 1 && m_config.print_sequence != PrintSequence::ByObject) {
+    // Check for high/low temperature filament mixing. The check uses
+    // filament_is_high_temperature from each filament preset. This guard
+    // works for both single-nozzle and multi-nozzle printers.
+    if (extruders.size() > 1) {
         auto ret = check_multi_filament_valid(*this);
-        if (!ret.string.empty())
-        {
+        if (!ret.string.empty()) {
             ret.type = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
             return ret;
         }

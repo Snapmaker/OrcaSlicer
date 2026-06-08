@@ -15242,4 +15242,34 @@ msgid "\nMerging this filament will invalidate these mixed filament configuratio
 msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续？"
 
 msgid "Filament %d ratio is too high. Mix may be affected."
-msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
+msgstr ""
+
+msgid "High and Low Temperature Material Mixing Risk"
+msgstr "高/低温材料混打风险"
+
+msgid ""
+"Mixing materials with significantly different printing temperatures may result in:\n"
+"· Extruder clogging\n"
+"· Nozzle damage\n"
+"· Layer adhesion issues\n"
+"\n"
+"Do you want to enable this feature?"
+msgstr ""
+"混合使用打印温度差异较大的材料，可能导致：\n"
+"· 挤出机堵塞\n"
+"· 喷嘴损坏\n"
+"· 层间粘附问题\n"
+"\n"
+"确认启用此功能吗？"
+
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。"
+
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+
+msgid "Allow high/low temperature filament mixing"
+msgstr "允许高/低温材料混合打印"
+
+msgid "If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."
+msgstr "启用后允许高温材料与低温材料同时打印"

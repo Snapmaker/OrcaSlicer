@@ -159,7 +159,6 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
     SetSizer(mainSizer);
     Layout();
-    Centre(wxBOTH);
 
     initPlatePreview();
     onAutoMatch();

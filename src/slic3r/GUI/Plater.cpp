@@ -7964,7 +7964,7 @@ void Sidebar::show_sync_filament_dialog()
         MessageDialog dlg(this,
             _L("Please connect to a device first before synchronizing filament information."),
             _L("Device not connected"), wxOK);
-        dlg.Centre(wxBOTH);
+        dlg.CentreOnScreen();
         dlg.ShowModal();
         return;
     }
@@ -7981,6 +7981,7 @@ void Sidebar::show_sync_filament_dialog()
 
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
+    dlg.CentreOnScreen();
     if (dlg.ShowModal() == wxID_OK && preset_bundle) {
         std::vector<FilamentData> syncedData = dlg.getSyncDataList();
 

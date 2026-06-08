@@ -7266,15 +7266,15 @@ void GLCanvas3D::_render_background()
         m_background.reset();
 
         GLModel::Geometry init_data;
-        init_data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P2T2 };
+        init_data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P2 };
         init_data.reserve_vertices(4);
         init_data.reserve_indices(6);
 
         // vertices
-        init_data.add_vertex(Vec2f(-1.0f, -1.0f), Vec2f(0.0f, 0.0f));
-        init_data.add_vertex(Vec2f(1.0f, -1.0f),  Vec2f(1.0f, 0.0f));
-        init_data.add_vertex(Vec2f(1.0f, 1.0f),   Vec2f(1.0f, 1.0f));
-        init_data.add_vertex(Vec2f(-1.0f, 1.0f),  Vec2f(0.0f, 1.0f));
+        init_data.add_vertex(Vec2f(-1.0f, -1.0f)/*, Vec2f(0.0f, 0.0f)*/);
+        init_data.add_vertex(Vec2f(1.0f, -1.0f)/*, Vec2f(1.0f, 0.0f)*/);
+        init_data.add_vertex(Vec2f(1.0f, 1.0f)/*, Vec2f(1.0f, 1.0f)*/);
+        init_data.add_vertex(Vec2f(-1.0f, 1.0f)/*, Vec2f(0.0f, 1.0f)*/);
 
         // indices
         init_data.add_triangle(0, 1, 2);

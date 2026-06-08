@@ -4998,30 +4998,15 @@ LayerResult GCode::process_layer(const Print& print,
     auto configured_filament_id_1based = [&layer_tools](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
                                                         const ExtrusionEntityCollection&                    entities,
                                                         const PrintRegion&                                  region) -> unsigned int {
-        auto raw_sparse_infill_filament_id_1based = [&layer_tools, &region]() -> unsigned int {
-            const PrintRegionConfig &config = region.config();
-            if (!config.enable_infill_filament_override.value)
-                return unsigned(config.wall_filament.value);
-            if (layer_tools.object_layer_count <= 0)
-                return unsigned(config.sparse_infill_filament.value);
-
-            const int first_layers = std::max(0, config.infill_filament_use_base_first_layers.value);
-            const int last_layers  = std::max(0, config.infill_filament_use_base_last_layers.value);
-            return (layer_tools.layer_index < first_layers ||
-                    layer_tools.layer_index >= layer_tools.object_layer_count - last_layers)
-                ? unsigned(config.wall_filament.value)
-                : unsigned(config.sparse_infill_filament.value);
-        };
-
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
             if (layer_tools.extruder_override != 0)
                 return layer_tools.extruder_override;
             const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
             if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
-                return raw_sparse_infill_filament_id_1based();
+                return unsigned(region.config().sparse_infill_filament.value);
             if (is_solid_infill(role))
                 return unsigned(region.config().solid_infill_filament.value);
-            return raw_sparse_infill_filament_id_1based();
+            return unsigned(region.config().sparse_infill_filament.value);
         }
         return layer_tools.extruder_override == 0 ? unsigned(region.config().wall_filament.value) : layer_tools.extruder_override;
     };

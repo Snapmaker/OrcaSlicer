@@ -201,6 +201,16 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 namespace Slic3r {
 namespace GUI {
 
+static std::string filament_temp_mixing_warning_text()
+{
+    return _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues.");
+}
+
+static std::string filament_temp_mixing_error_text()
+{
+    return _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences.");
+}
+
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 wxDEFINE_EVENT(EVT_SLICING_UPDATE,                  SlicingStatusEvent);
 wxDEFINE_EVENT(EVT_SLICING_COMPLETED,               wxCommandEvent);
@@ -231,6 +241,7 @@ wxDEFINE_EVENT(EVT_PRINT_FROM_SDCARD_VIEW,          SimpleEvent);
 
 wxDEFINE_EVENT(EVT_CREATE_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_MODIFY_FILAMENT, SimpleEvent);
+wxDEFINE_EVENT(EVT_FILAMENT_USAGE_CHANGED, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_DEL_FILAMENT, SimpleEvent);
 wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
@@ -2869,8 +2880,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
         update_dynamic_filament_list();
 
-        // Real-time high/low temperature filament mixing check after filament preset change
-        p->plater->sync_filament_temp_mixing_notification();
+        p->plater->notify_filament_usage_changed();
 
         break;
     }
@@ -8409,6 +8419,7 @@ struct Plater::priv
     // PIMPL back pointer ("Q-Pointer")
     Plater *q;
     MainFrame *main_frame;
+    bool filament_usage_sync_pending = false;
 
     MenuFactory menus;
 
@@ -9057,6 +9068,10 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     this->q->Bind(EVT_CREATE_FILAMENT, &priv::on_create_filament, this);
     this->q->Bind(EVT_MODIFY_FILAMENT, &priv::on_modify_filament, this);
     this->q->Bind(EVT_ADD_CUSTOM_FILAMENT, &priv::on_add_custom_filament, this);
+    this->q->Bind(EVT_FILAMENT_USAGE_CHANGED, [this](SimpleEvent&) {
+        filament_usage_sync_pending = false;
+        this->q->sync_filament_temp_mixing_notification();
+    });
     main_frame->m_tabpanel->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, &priv::on_tab_selection_changing, this);
 
     auto* panel_3d = new wxPanel(q);
@@ -11250,7 +11265,7 @@ void Plater::priv::remove_curr_plate_all()
     view3D->remove_curr_plate_all();
     this->sidebar->obj_list()->update_selections();
 
-    q->sync_filament_temp_mixing_notification();
+    q->notify_filament_usage_changed();
 }
 
 void Plater::priv::select_all()
@@ -11282,6 +11297,7 @@ void Plater::priv::remove(size_t obj_idx)
     // Delete object from Sidebar list. Do it after update, so that the GLScene selection is updated with the modified model.
     sidebar->obj_list()->delete_object_from_list(obj_idx);
     object_list_changed();
+    q->notify_filament_usage_changed();
 }
 
 
@@ -11320,6 +11336,8 @@ bool Plater::priv::delete_object_from_model(size_t obj_idx, bool refresh_immedia
         object_list_changed();
     }
 
+    q->notify_filament_usage_changed();
+
     return true;
 }
 
@@ -11352,6 +11370,7 @@ void Plater::priv::delete_all_objects_from_model()
     //BBS
     model.calib_pa_pattern.reset();
     model.plates_custom_gcodes.clear();
+    q->notify_filament_usage_changed();
 }
 
 void Plater::priv::reset(bool apply_presets_change)
@@ -11731,6 +11750,10 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": validate err=%1%, warning=%2%")%err.string%warning.string;
 
         if (err.string.empty()) {
+            // Pass a warning from validation and either show a notification,
+            // or hide the old one.
+            process_validation_warning(warning);
+
             // Validate passed, but also check filament temp mixing as a final
             // guard. check_filament_temp_mixing() reads directly from preset
             // configs and catches cases that Print::validate() may miss (e.g.
@@ -11744,9 +11767,6 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             if (invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
                 return_state |= UPDATE_BACKGROUND_PROCESS_RESTART;
 
-            // Pass a warning from validation and either show a notification,
-            // or hide the old one.
-            process_validation_warning(warning);
             if (printer_technology == ptFFF) {
                 view3D->get_canvas3d()->reset_sequential_print_clearance();
                 view3D->get_canvas3d()->set_as_dirty();
@@ -13656,14 +13676,8 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
         Model::setPrintSpeedTable(config, print_config);
         m_slice_all = false;
 
-        // Pre-slice confirmation for high/low temp filament mixing
-        if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")
-            && !q->check_filament_temp_mixing()) {
-            wxMessageDialog dlg(q, _L("该组合可能导致风险，是否继续"),
-                                _L("确认"), wxYES_NO | wxICON_WARNING);
-            if (dlg.ShowModal() != wxID_YES)
-                return;
-        }
+        if (!q->confirm_filament_temp_mixing_before_slice())
+            return;
 
         q->reslice();
         q->select_view_3D("Preview");
@@ -13684,14 +13698,8 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
 
-        // Pre-slice confirmation for high/low temp filament mixing
-        if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")
-            && !q->check_filament_temp_mixing()) {
-            wxMessageDialog dlg(q, _L("该组合可能导致风险，是否继续"),
-                                _L("确认"), wxYES_NO | wxICON_WARNING);
-            if (dlg.ShowModal() != wxID_YES)
-                return;
-        }
+        if (!q->confirm_filament_temp_mixing_before_slice())
+            return;
 
         m_slice_all = true;
         m_slice_all_only_has_gcode = true;
@@ -17152,7 +17160,10 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     p->m_slice_all_only_has_gcode = false;
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
-    return p->load_files(input_files, strategy, ask_multi);
+    std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
+    if (!loaded.empty())
+        notify_filament_usage_changed();
+    return loaded;
 }
 
 // To be called when providing a list of files to the GUI slic3r on command line.
@@ -17162,7 +17173,7 @@ std::vector<size_t> Plater::load_files(const std::vector<std::string>& input_fil
     paths.reserve(input_files.size());
     for (const std::string& path : input_files)
         paths.emplace_back(path);
-    return p->load_files(paths, strategy, ask_multi);
+    return load_files(paths, strategy, ask_multi);
 }
 
 bool Plater::preview_zip_archive(const boost::filesystem::path& archive_path)
@@ -18049,8 +18060,10 @@ void Plater::remove_selected()
     //BBS delete current selected
     // p->view3D->delete_selected();
     GLCanvas3D* canvas = p->get_current_canvas3D();
-    if (canvas)
+    if (canvas) {
         canvas->delete_selected();
+        notify_filament_usage_changed();
+    }
 }
 
 void Plater::increase_instances(size_t num)
@@ -20100,6 +20113,27 @@ bool Plater::check_filament_temp_mixing()
     int num_filaments = (int)ft_opt->values.size();
     std::set<int> used_slots;
 
+    PartPlate* curr_plate = p->partplate_list.get_curr_plate();
+    auto object_is_on_curr_plate = [curr_plate](size_t obj_idx, const ModelObject* mo) {
+        if (!curr_plate)
+            return true;
+        for (int inst_idx = 0; inst_idx < (int)mo->instances.size(); ++inst_idx) {
+            if (curr_plate->contain_instance((int)obj_idx, inst_idx))
+                return true;
+        }
+        return false;
+    };
+
+    bool has_object_on_curr_plate = false;
+    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+        if (object_is_on_curr_plate(obj_idx, wxGetApp().model().objects[obj_idx])) {
+            has_object_on_curr_plate = true;
+            break;
+        }
+    }
+    if (!has_object_on_curr_plate)
+        return true;
+
     auto collect_from_cfg = [&](const DynamicPrintConfig& cfg) {
         static const char* keys_1based[] = {"wall_filament", "solid_infill_filament"};
         for (auto key : keys_1based) {
@@ -20120,23 +20154,13 @@ bool Plater::check_filament_temp_mixing()
     collect_from_cfg(*this->config());
 
     // Also collect from current plate's config for any plate-level overrides
-    PartPlate* curr_plate = p->partplate_list.get_curr_plate();
     if (curr_plate)
         collect_from_cfg(*curr_plate->config());
 
     // Collect from ModelVolume painting extruders for objects on the current plate
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
         const ModelObject* mo = wxGetApp().model().objects[obj_idx];
-        bool on_curr_plate = false;
-        if (curr_plate) {
-            for (int inst_idx = 0; inst_idx < (int)mo->instances.size(); ++inst_idx) {
-                if (curr_plate->contain_instance((int)obj_idx, inst_idx)) {
-                    on_curr_plate = true;
-                    break;
-                }
-            }
-        }
-        if (!on_curr_plate)
+        if (!object_is_on_curr_plate(obj_idx, mo))
             continue;
         for (const ModelVolume* mv : mo->volumes) {
             for (int eid : mv->get_extruders()) {
@@ -20174,30 +20198,62 @@ bool Plater::check_filament_temp_mixing()
     return compatible;
 }
 
+Plater::FilamentTempMixingState Plater::get_filament_temp_mixing_state()
+{
+    if (check_filament_temp_mixing())
+        return FilamentTempMixingState::Compatible;
+
+    return wxGetApp().app_config->get_bool("allow_filament_temp_mixing") ?
+        FilamentTempMixingState::AllowedWarning :
+        FilamentTempMixingState::BlockedError;
+}
+
 bool Plater::sync_filament_temp_mixing_notification()
 {
-    if (check_filament_temp_mixing()) {
-        get_notification_manager()->close_notification_of_type(NotificationType::ValidateError);
-        get_notification_manager()->close_notification_of_type(NotificationType::ValidateWarning);
+    switch (get_filament_temp_mixing_state()) {
+    case FilamentTempMixingState::Compatible:
+        get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
+        get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
         return true;
-    }
-
-    StringObjectException err;
-    err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
-
-    if (wxGetApp().app_config->get_bool("allow_filament_temp_mixing")) {
+    case FilamentTempMixingState::AllowedWarning:
+        get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
+        get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
         get_notification_manager()->push_notification(
             NotificationType::ValidateWarning,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
-            _u8L("WARNING:") + "\n" +
-            _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues."));
-    } else {
-        err.string = _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences.");
+            _u8L("WARNING:") + "\n" + filament_temp_mixing_warning_text());
+        return true;
+    case FilamentTempMixingState::BlockedError: {
+        StringObjectException err;
+        err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
+        err.string = filament_temp_mixing_error_text();
+        get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
         get_notification_manager()->push_validate_error_notification(err);
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
+        return false;
     }
-    return false;
+    }
+
+    return true;
+}
+
+bool Plater::confirm_filament_temp_mixing_before_slice()
+{
+    if (get_filament_temp_mixing_state() != FilamentTempMixingState::AllowedWarning)
+        return true;
+
+    wxMessageDialog dlg(this, _L("该组合可能导致风险，是否继续"), _L("确认"), wxYES_NO | wxICON_WARNING);
+    return dlg.ShowModal() == wxID_YES;
+}
+
+void Plater::notify_filament_usage_changed()
+{
+    if (p->filament_usage_sync_pending)
+        return;
+
+    p->filament_usage_sync_pending = true;
+    wxQueueEvent(this, new SimpleEvent(EVT_FILAMENT_USAGE_CHANGED, this));
 }
 
 void Plater::on_config_change(const DynamicPrintConfig &config)
@@ -20289,7 +20345,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         update_title_dirty_status();
     }
 
-    sync_filament_temp_mixing_notification();
+    notify_filament_usage_changed();
 }
 
 void Plater::set_bed_shape() const

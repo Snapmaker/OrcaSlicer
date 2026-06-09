@@ -141,8 +141,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
         m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(block, m_designDataList, m_machineDataList);
         m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
-            if (m_pPlaterPreview)
-                m_pPlaterPreview->onCoverPreview();
+            loadCoverPreview();
         });
         mappingRow->Add(m_pFilamentColorMapBoxGroup, 1, wxEXPAND | wxALL, FromDIP(g_blockPaddingV));
 

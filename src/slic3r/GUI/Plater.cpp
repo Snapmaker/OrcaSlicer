@@ -1,5 +1,6 @@
 #include "Plater.hpp"
 #include "MixedFilamentDialog.hpp"
+#include "MixedFilamentBatchDialog.hpp"
 #include "MixedGradientSelector.hpp"
 #include "MixedColorMatchPanel.hpp"
 #include "MixedFilamentBadge.hpp"
@@ -1002,6 +1003,7 @@ struct Sidebar::priv
     wxPanel* m_panel_project_title;
     ScalableButton* m_filament_icon = nullptr;
     Button * m_flushing_volume_btn = nullptr;
+    Button*  m_btn_batch_match      = nullptr;              // Batch color-match mapping
     TextInput* m_search_item = nullptr;
     StaticBox* m_search_bar = nullptr;
     Search::SearchObjectDialog* dia = nullptr;
@@ -2313,6 +2315,45 @@ Sidebar::Sidebar(Plater *parent)
     bSizer39->Add(p->m_flushing_volume_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
     bSizer39->Hide(p->m_flushing_volume_btn);
 
+    // Batch color-match mapping button
+    p->m_btn_batch_match = new Button(p->m_panel_filament_title, _L("Batch Match"));
+    p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
+    p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (!wxGetApp().preset_bundle) return;
+        ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
+        if (colors.size() < 2) {
+            show_error(this, _L("Please add at least 2 filaments to use batch color matching."));
+            return;
+        }
+        MixedFilamentBatchDialog dlg(this);
+        if (dlg.ShowModal() != wxID_OK) return;
+        const BatchMatchResult& result = dlg.GetResult();
+        if (!result.success) return;
+        auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+        std::vector<MixedFilamentBatchEntry> batch_entries;
+        batch_entries.reserve(result.mappings.size());
+        for (const auto& mapping : result.mappings) {
+            if (mapping.is_pure_recipe) continue;
+            MixedFilamentBatchEntry entry;
+            entry.component_a     = mapping.recipe.component_a;
+            entry.component_b     = mapping.recipe.component_b;
+            entry.mix_b_percent   = mapping.recipe.mix_b_percent;
+            entry.manual_pattern  = mapping.recipe.manual_pattern;
+            entry.gradient_component_ids     = mapping.recipe.gradient_component_ids;
+            entry.gradient_component_weights = mapping.recipe.gradient_component_weights;
+            entry.distribution_mode = mapping.recipe.gradient_component_ids.empty()
+                ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
+            entry.display_color = mapping.matched_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+            batch_entries.push_back(std::move(entry));
+        }
+        mgr.add_batch_custom_filaments(batch_entries, colors);
+        if (ConfigOptionString* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+            opt->value = mgr.serialize_custom_entries();
+        update_mixed_filament_panel(false);
+    });
+    bSizer39->Add(p->m_btn_batch_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
+
     ams_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "ams_fila_sync", wxEmptyString, wxDefaultSize, wxDefaultPosition,
                                                  wxBU_EXACTFIT | wxNO_BORDER, false, 16); // ORCA match icon size with other icons as 16x16
     ams_btn->SetToolTip(_L("Synchronize filament list from AMS"));
@@ -2584,7 +2625,7 @@ Sidebar::Sidebar(Plater *parent)
         m_scrolled_sizer->Layout();
     });
 
-    // Create horizontal sizer for title bar
+    // Create "Add Color" button
     wxBoxSizer* h_sizer_mixed_title = new wxBoxSizer(wxHORIZONTAL);
     h_sizer_mixed_title->Add(p->m_mixed_filaments_icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
     h_sizer_mixed_title->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
@@ -6832,7 +6873,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     });
     return;
 
-#if 0 // Mixed Filaments panel UI — hidden, preserved for potential future re-enablement
+#if 0 // DEAD CODE — Mixed Filaments panel UI, disabled. DO NOT add or modify code here.
+      //    All active Mixed Filament operations now live in:
+      //      - init_color_mix_panel()  (Color Mixing panel with Add/Delete buttons)
+      //      - Filament Management title bar (Batch Match, Flushing volumes, AMS sync, Settings)
     
     // Reset the max size in case it was collapsed
     p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});

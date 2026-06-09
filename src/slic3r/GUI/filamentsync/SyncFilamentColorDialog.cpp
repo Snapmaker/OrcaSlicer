@@ -1,9 +1,8 @@
 #include "SyncFilamentColorDialog.hpp"
 
-#include <wx/radiobut.h>
 #include <wx/stattext.h>
 #include <wx/checkbox.h>
-#include <wx/button.h>
+#include <wx/scrolwin.h>
 #include <wx/sizer.h>
 #include <wx/image.h>
 #include <wx/statbox.h>
@@ -21,25 +20,39 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
-#include "slic3r/GUI/Widgets/StaticLine.hpp"
+#include "slic3r/GUI/Widgets/Button.hpp"
+#include "slic3r/GUI/Widgets/SegmentedToggle.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/3DScene.hpp"
 
 namespace
 {
 
-// --- Dialog layout ---
-constexpr int g_dialogWidth        = 620; // DIP
-constexpr int g_dialogHeight       = 665; // DIP
-constexpr int g_sectionMargin      = 12;  // DIP — outer margin for major sections
-constexpr int g_separatorMargin    = 8;   // DIP — left/right of separators
-constexpr int g_radioButtonSpacing = 20;  // DIP — between mode radio buttons
-constexpr int g_buttonSpacing      = 8;   // DIP — between bottom buttons
-constexpr int g_hintLabelWrapWidth = 500; // DIP
+// --- Dialog layout (Figma specs) ---
+constexpr int g_dialogWidth  = 572; // DIP
+constexpr int g_dialogHeight = 677; // DIP
 
-// Sizer proportions (vertical)
-constexpr int g_mappingGroupProportion = 1;
-constexpr int g_platePreviewProportion = 2;
+// Block widths (Figma) — centered independently in dialog
+constexpr int g_block1W = 555; // Mode toggle
+constexpr int g_block1H = 40;
+constexpr int g_block2W = 571; // Filament mapping
+constexpr int g_block2H = 130;
+constexpr int g_block3W = 571; // Plate preview + hints
+constexpr int g_block3H = 386; // 677 - 4 - 40 - 12 - 130 - 12 - 81 - 12 = 386
+constexpr int g_block4W = 571; // Bottom buttons
+constexpr int g_block4H = 81;
+
+// Gaps between blocks
+constexpr int g_gap1_2 = 12;
+constexpr int g_gap2_3 = 12;
+constexpr int g_gap3_4 = 12;
+
+// Top padding: Block4 fills to bottom, no bottom padding
+constexpr int g_topPadding = 4; // DIP
+
+// Internal block padding
+constexpr int g_blockPaddingH = 20; // DIP — horizontal
+constexpr int g_blockPaddingV = 12; // DIP — vertical
 
 // --- Color processing ---
 constexpr int            g_colorMax      = 255; // max RGBA component value
@@ -48,6 +61,21 @@ constexpr int            g_alphaMax      = 255; // fully opaque
 constexpr int            g_alphaBkg      = 0;   // transparent background
 constexpr int            g_noLightMin    = 0;   // minimum noLight brightness to use ratio
 constexpr unsigned char  g_pixelTransparent = 0;
+
+// Segmented toggle mode indices
+constexpr int g_modeMapping   = 0;
+constexpr int g_modeOverwrite = 1;
+
+// --- Colors (matching color-mixing dialog style) ---
+constexpr const char* g_dialogBg        = "#F8F7F7";
+constexpr const char* g_blockBg         = "#FFFFFF";
+constexpr const char* g_labelColor      = "#242424";
+constexpr const char* g_secondaryBorder = "#D1D5DC";
+constexpr const char* g_secondaryText   = "#242424";
+constexpr const char* g_primaryBg       = "#019687";
+constexpr const char* g_primaryText     = "#FEFEFE";
+constexpr const char* g_disabledBg      = "#DFDFDF";
+constexpr const char* g_disabledText    = "#6B6A6A";
 
 } // namespace
 
@@ -60,104 +88,153 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
                                                  const std::vector<FilamentData>& designDataList,
                                                  const std::vector<FilamentData>& machineDataList)
     : wxDialog(parent, wxID_ANY, _L("Device Filament Sync"), wxDefaultPosition, wxDefaultSize,
-               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+               wxDEFAULT_DIALOG_STYLE)
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
 {
-    SetSize(FromDIP(wxSize(g_dialogWidth, g_dialogHeight)));
+    const wxSize dialogSize = FromDIP(wxSize(g_dialogWidth, g_dialogHeight));
+    SetSize(dialogSize);
+    SetMinSize(dialogSize);
+    SetMaxSize(dialogSize);
+    SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
 
-    auto* mainSizer = new wxBoxSizer(wxVERTICAL);
+    auto* topSizer = new wxBoxSizer(wxVERTICAL);
 
-    // ---- Mode selection ----
-    auto* modeSizer = new wxBoxSizer(wxHORIZONTAL);
-    m_pMappingModeRadio = new wxRadioButton(this, wxID_ANY, _L("Match Mapping"),
-                                             wxDefaultPosition, wxDefaultSize, wxRB_GROUP);
-    m_pMappingModeRadio->SetValue(true);
-    m_pMappingModeRadio->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) {
-        onModeChanged(true);
-    });
-    modeSizer->Add(m_pMappingModeRadio, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
-                   FromDIP(g_radioButtonSpacing));
+    topSizer->AddSpacer(FromDIP(g_topPadding));
 
-    m_pOverwriteModeRadio = new wxRadioButton(this, wxID_ANY, _L("Direct Overwrite"));
-    m_pOverwriteModeRadio->Bind(wxEVT_RADIOBUTTON, [this](wxCommandEvent&) {
-        onModeChanged(false);
-    });
-    modeSizer->Add(m_pOverwriteModeRadio, 0, wxALIGN_CENTER_VERTICAL);
+    // =====================================================================
+    // Block 1: Mode toggle  (555 × 40, centered)
+    // =====================================================================
+    {
+        auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
+        block->SetMinSize(FromDIP(wxSize(g_block1W, g_block1H)));
 
-    mainSizer->Add(modeSizer, 0, wxEXPAND | wxALL, FromDIP(g_sectionMargin));
+        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
 
-    // ---- Separator ----
-    auto* sep1 = new StaticLine(this);
-    sep1->SetLineColour("#CECECE");
-    mainSizer->Add(sep1, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
+        std::vector<wxString> modeOptions = { _L("Match Mapping"), _L("Direct Overwrite") };
+        m_pModeToggle = new SegmentedToggle(block, modeOptions, g_modeMapping);
+        m_pModeToggle->bindSelectionCallback([this](int index) {
+            onModeChanged(index);
+        });
 
-    // ---- Filament mapping group ----
-    m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(this, m_designDataList, m_machineDataList);
-    m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
-        loadCoverPreview();
-    });
-    mainSizer->Add(m_pFilamentColorMapBoxGroup, g_mappingGroupProportion, wxEXPAND | wxALL,
-                   FromDIP(g_separatorMargin));
+        blockSizer->AddStretchSpacer();
+        blockSizer->Add(m_pModeToggle, 0, wxALIGN_CENTER_HORIZONTAL);
+        blockSizer->AddStretchSpacer();
+        block->SetSizer(blockSizer);
 
-    // ---- Separator ----
-    auto* sep2 = new StaticLine(this);
-    sep2->SetLineColour("#CECECE");
-    mainSizer->Add(sep2, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
+        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+    }
 
-    // ---- Plate preview ----
-    m_pPlaterPreview = new PlaterPreview(this);
-    mainSizer->Add(m_pPlaterPreview, g_platePreviewProportion, wxEXPAND | wxALL,
-                   FromDIP(g_separatorMargin));
+    topSizer->AddSpacer(FromDIP(g_gap1_2));
 
-    // ---- Separator ----
-    auto* sep3 = new StaticLine(this);
-    sep3->SetLineColour("#CECECE");
-    mainSizer->Add(sep3, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
+    // =====================================================================
+    // Block 2: Filament mapping  (571 × 130)
+    // =====================================================================
+    {
+        auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
+        block->SetMinSize(FromDIP(wxSize(g_block2W, g_block2H)));
 
-    // ---- Hint label ----
-    m_pHintLabel = new wxStaticText(this, wxID_ANY,
-        _L("Note: Only filament type and color information are synchronized, nozzle order is not included."));
-    m_pHintLabel->Wrap(FromDIP(g_hintLabelWrapWidth));
-    mainSizer->Add(m_pHintLabel, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_sectionMargin));
+        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
+        auto* mappingRow = new wxBoxSizer(wxHORIZONTAL);
 
-    // ---- Separator ----
-    auto* sep4 = new StaticLine(this);
-    sep4->SetLineColour("#CECECE");
-    mainSizer->Add(sep4, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
+        m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(block, m_designDataList, m_machineDataList);
+        m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
+            if (m_pPlaterPreview)
+                m_pPlaterPreview->onCoverPreview();
+        });
+        mappingRow->Add(m_pFilamentColorMapBoxGroup, 1, wxEXPAND | wxALL, FromDIP(g_blockPaddingV));
 
-    // ---- Add un-used machine filaments checkbox ----
-    m_pAddUnUsedMachineFilaments = new wxCheckBox(this, wxID_ANY,
-        _L("Add remaining printhead filaments to the software filament list"));
-    mainSizer->Add(m_pAddUnUsedMachineFilaments, 0, wxEXPAND | wxLEFT | wxRIGHT,
-                   FromDIP(g_sectionMargin));
+        blockSizer->Add(mappingRow, 0, wxEXPAND);
+        block->SetSizer(blockSizer);
+        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+    }
 
-    // ---- Separator ----
-    auto* sep5 = new StaticLine(this);
-    sep5->SetLineColour("#CECECE");
-    mainSizer->Add(sep5, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_separatorMargin));
+    topSizer->AddSpacer(FromDIP(g_gap2_3));
 
-    // ---- Bottom buttons ----
-    auto* buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-    buttonSizer->AddStretchSpacer();
+    // =====================================================================
+    // Block 3: Plate preview + hints  (571 × 386)
+    // =====================================================================
+    {
+        auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
+        block->SetMinSize(FromDIP(wxSize(g_block3W, g_block3H)));
 
-    m_pResetBtn = new wxButton(this, wxID_ANY, _L("Reset"));
-    m_pResetBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onReset(); });
-    buttonSizer->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
-                     FromDIP(g_buttonSpacing));
+        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
 
-    m_pCancelBtn = new wxButton(this, wxID_CANCEL, _L("Cancel"));
-    m_pCancelBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onCancel(); });
-    buttonSizer->Add(m_pCancelBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
-                     FromDIP(g_buttonSpacing));
+        m_pPlaterPreview = new PlaterPreview(block);
+        blockSizer->Add(m_pPlaterPreview, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_blockPaddingH));
 
-    m_pSyncBtn = new wxButton(this, wxID_OK, _L("Sync Now"));
-    m_pSyncBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onSync(); });
-    buttonSizer->Add(m_pSyncBtn, 0, wxALIGN_CENTER_VERTICAL);
+        m_pHintLabel = new wxStaticText(block, wxID_ANY,
+            _L("Note: Only filament type and color information are synchronized, nozzle order is not included."));
+        m_pHintLabel->SetFont(Label::Body_12);
+        m_pHintLabel->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
+        m_pHintLabel->Wrap(FromDIP(460));
+        blockSizer->Add(m_pHintLabel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(g_blockPaddingH));
 
-    mainSizer->Add(buttonSizer, 0, wxEXPAND | wxALL, FromDIP(g_sectionMargin));
+        m_pAddUnUsedMachineFilaments = new wxCheckBox(block, wxID_ANY,
+            _L("Add remaining printhead filaments to the software filament list"));
+        m_pAddUnUsedMachineFilaments->SetFont(Label::Body_12);
+        m_pAddUnUsedMachineFilaments->SetForegroundColour(StateColor::darkModeColorFor(wxColour(g_labelColor)));
+        blockSizer->Add(m_pAddUnUsedMachineFilaments, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,
+                        FromDIP(g_blockPaddingH));
 
-    SetSizer(mainSizer);
+        block->SetSizer(blockSizer);
+        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+    }
+
+    topSizer->AddSpacer(FromDIP(g_gap3_4));
+
+    // =====================================================================
+    // Block 4: Bottom buttons  (571 × 61, centered)
+    // =====================================================================
+    {
+        auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
+        block->SetMinSize(FromDIP(wxSize(g_block4W, g_block4H)));
+
+        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
+
+        auto* btnRow = new wxBoxSizer(wxHORIZONTAL);
+
+        constexpr int g_btnW = 238; // ~237.5 DIP
+        constexpr int g_btnH = 36;
+
+        btnRow->AddStretchSpacer();
+
+        m_pResetBtn = new Button(block, _L("Reset"));
+        m_pResetBtn->SetMinSize(FromDIP(wxSize(g_btnW, g_btnH)));
+        m_pResetBtn->SetCornerRadius(FromDIP(4));
+        m_pResetBtn->SetBorderWidth(FromDIP(1));
+        m_pResetBtn->SetBorderColorNormal(wxColour(g_secondaryBorder));
+        m_pResetBtn->SetBackgroundColorNormal(wxColour(g_blockBg));
+        m_pResetBtn->SetTextColorNormal(wxColour(g_secondaryText));
+        m_pResetBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onReset(); });
+        btnRow->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+
+        m_pSyncBtn = new Button(block, _L("Sync Now"));
+        m_pSyncBtn->SetMinSize(FromDIP(wxSize(g_btnW, g_btnH)));
+        m_pSyncBtn->SetCornerRadius(FromDIP(4));
+        m_pSyncBtn->SetBorderWidth(0);
+        m_pSyncBtn->SetBackgroundColor(StateColor(
+            std::pair(wxColour(g_disabledBg), (int)StateColor::Disabled),
+            std::pair(wxColour(g_primaryBg), (int)StateColor::Normal)));
+        m_pSyncBtn->SetTextColor(StateColor(
+            std::pair(wxColour(g_disabledText), (int)StateColor::Disabled),
+            std::pair(wxColour(g_primaryText), (int)StateColor::Normal)));
+        m_pSyncBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onSync(); });
+        btnRow->Add(m_pSyncBtn, 0, wxALIGN_CENTER_VERTICAL);
+
+        btnRow->AddStretchSpacer();
+
+        blockSizer->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_blockPaddingH));
+        block->SetSizer(blockSizer);
+
+        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+    }
+
+    SetSizer(topSizer);
     Layout();
 
     initPlatePreview();
@@ -171,6 +248,10 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
         return dataList;
 
     dataList = m_pFilamentColorMapBoxGroup->getCurFilamentList();
+
+    // In overwrite mode, trim to machine filament count
+    if (!m_bMappingMode && dataList.size() > m_machineDataList.size())
+        dataList.resize(m_machineDataList.size());
 
     if (isAddUnUsedMachineFilaments()) {
         std::set<unsigned int> usedMachineIndices;
@@ -205,11 +286,6 @@ void SyncFilamentColorDialog::onReset()
         onCoverMatch();
 }
 
-void SyncFilamentColorDialog::onCancel()
-{
-    EndModal(wxID_CANCEL);
-}
-
 void SyncFilamentColorDialog::onSync()
 {
     if (m_hasMixedFilaments) {
@@ -226,10 +302,20 @@ void SyncFilamentColorDialog::onSync()
     EndModal(wxID_OK);
 }
 
-void SyncFilamentColorDialog::onModeChanged(bool bIsMappingMode)
+void SyncFilamentColorDialog::onModeChanged(int index)
 {
-    m_bMappingMode = bIsMappingMode;
-    if (bIsMappingMode)
+    m_bMappingMode = (index == g_modeMapping);
+
+    if (m_pFilamentColorMapBoxGroup) {
+        if (m_bMappingMode)
+            m_pFilamentColorMapBoxGroup->setVisibleCount(m_pFilamentColorMapBoxGroup->getBoxCount());
+        else
+            m_pFilamentColorMapBoxGroup->setVisibleCount(
+                std::min(m_pFilamentColorMapBoxGroup->getBoxCount(),
+                         static_cast<int>(m_machineDataList.size())));
+    }
+
+    if (m_bMappingMode)
         onAutoMatch();
     else
         onCoverMatch();
@@ -239,6 +325,9 @@ void SyncFilamentColorDialog::onAutoMatch()
 {
     if (!m_pFilamentColorMapBoxGroup)
         return;
+
+    // Mapping mode keeps filament count unchanged — no remap needed
+    m_filamentIdRemap.clear();
 
     std::vector<FilamentData> design_vec(m_designDataList.begin(), m_designDataList.end());
     std::vector<FilamentData> machine_vec(m_machineDataList.begin(), m_machineDataList.end());
@@ -263,13 +352,14 @@ void SyncFilamentColorDialog::onCoverMatch()
     if (!m_pFilamentColorMapBoxGroup)
         return;
 
-    std::vector<int> mapping = compute_direct_override(
-        m_designDataList.size(),
-        m_machineDataList.size());
+    size_t designCount  = m_designDataList.size();
+    size_t machineCount = m_machineDataList.size();
+
+    std::vector<int> mapping = compute_direct_override(designCount, machineCount);
 
     int idx = 0;
     for (int m_idx : mapping) {
-        if (m_idx >= 0 && m_idx < static_cast<int>(m_machineDataList.size())) {
+        if (m_idx >= 0 && m_idx < static_cast<int>(machineCount)) {
             auto it = m_machineDataList.begin();
             std::advance(it, m_idx);
             m_pFilamentColorMapBoxGroup->updateBoxBelowData(idx, *it);
@@ -277,6 +367,14 @@ void SyncFilamentColorDialog::onCoverMatch()
         ++idx;
     }
     m_pFilamentColorMapBoxGroup->setGroupBoxEnable(false, FilamentColorMapBox::ButtonType::Below);
+
+    // Build 1-based filament ID remap for overwrite mode:
+    // old_id -> ((old_id - 1) % machineCount) + 1
+    m_filamentIdRemap.assign(designCount + 1, 0);
+    if (machineCount > 0) {
+        for (size_t old_id = 1; old_id <= designCount; ++old_id)
+            m_filamentIdRemap[old_id] = static_cast<unsigned int>(((old_id - 1) % machineCount) + 1);
+    }
     Layout();
 }
 

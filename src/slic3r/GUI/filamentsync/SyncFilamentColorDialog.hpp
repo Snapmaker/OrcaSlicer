@@ -6,10 +6,10 @@
 
 #include "FilamentData.hpp"
 
-class wxRadioButton;
+#include "slic3r/GUI/Widgets/Button.hpp"
+
 class wxStaticText;
 class wxCheckBox;
-class wxButton;
 
 namespace Slic3r
 {
@@ -21,6 +21,7 @@ namespace GUI
 
 class FilamentColorMapBoxGroup;
 class PlaterPreview;
+class SegmentedToggle;
 
 class SyncFilamentColorDialog : public wxDialog
 {
@@ -31,14 +32,14 @@ public:
 
     std::vector<FilamentData> getSyncDataList() const;
     bool isAddUnUsedMachineFilaments() const;
+    const std::vector<unsigned int>& getFilamentIdRemap() const { return m_filamentIdRemap; }
 
     void setHasMixedFilaments(bool has);
 
 private:
     void onReset();
-    void onCancel();
     void onSync();
-    void onModeChanged(bool bIsMappingMode);
+    void onModeChanged(int index);
 
     void onAutoMatch();
     void onCoverMatch();
@@ -53,22 +54,22 @@ private:
 
     static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
 
-    // Mode selection
-    wxRadioButton* m_pMappingModeRadio   = nullptr;
-    wxRadioButton* m_pOverwriteModeRadio = nullptr;
+    // Mode selection (segmented toggle, same style as color-mixing)
+    SegmentedToggle* m_pModeToggle = nullptr;
 
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
-    PlaterPreview* m_pPlaterPreview = nullptr;
-    wxStaticText* m_pHintLabel = nullptr;
-    wxCheckBox* m_pAddUnUsedMachineFilaments = nullptr;
+    PlaterPreview*            m_pPlaterPreview            = nullptr;
 
-    wxButton* m_pResetBtn = nullptr;
-    wxButton* m_pCancelBtn = nullptr;
-    wxButton* m_pSyncBtn  = nullptr;
+    wxStaticText* m_pHintLabel = nullptr;
+    wxCheckBox*   m_pAddUnUsedMachineFilaments = nullptr;
+
+    Button* m_pResetBtn = nullptr;
+    Button* m_pSyncBtn  = nullptr;
 
     // Data
     std::vector<FilamentData> m_designDataList;
     std::vector<FilamentData> m_machineDataList;
+    std::vector<unsigned int> m_filamentIdRemap;
     bool m_bMappingMode        = true;
     bool m_hasMixedFilaments   = false;
 };

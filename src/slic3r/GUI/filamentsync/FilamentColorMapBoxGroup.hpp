@@ -30,7 +30,8 @@ public:
     void setGroupBoxEnable(bool bEnable, FilamentColorMapBox::ButtonType type);
     void showMachineFilamentPicker(int boxIndex);
     void updateBoxBelowData(int boxIndex, const FilamentData& machineData);
-    int getBoxCount() const;
+    int  getBoxCount() const;
+    void setVisibleCount(int count);
 
     void bindMappingChangedCallback(std::function<void()> cb);
 

@@ -496,6 +496,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Widgets/Scrollbar.hpp
     GUI/Widgets/ScrolledWindow.cpp
     GUI/Widgets/ScrolledWindow.hpp
+    GUI/Widgets/SegmentedToggle.cpp
+    GUI/Widgets/SegmentedToggle.hpp
     GUI/Widgets/SideButton.cpp
     GUI/Widgets/SideButton.hpp
     GUI/Widgets/SideMenuPopup.cpp

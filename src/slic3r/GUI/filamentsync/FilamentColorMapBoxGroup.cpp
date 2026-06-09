@@ -5,6 +5,7 @@
 #include <wx/sizer.h>
 
 #include "slic3r/GUI/Widgets/Label.hpp"
+#include "slic3r/GUI/I18N.hpp"
 #include "MachineFilamentPicker.hpp"
 
 namespace
@@ -72,7 +73,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     // ---- Left label column ----
     auto* labelSizer = new wxBoxSizer(wxVERTICAL);
 
-    m_pLabelDesign = new Label(this, "Design Filament");
+    m_pLabelDesign = new Label(this, _L("Design Filament"));
     m_pLabelDesign->SetFont(Label::Body_14);
     m_pLabelDesign->SetForegroundColour(g_labelTextColor);
     m_pLabelDesign->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
@@ -81,7 +82,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     labelSizer->Add(m_pLabelDesign, 0, wxEXPAND);
     labelSizer->AddStretchSpacer(1);
 
-    m_pLabelMachine = new Label(this, "Machine Filament");
+    m_pLabelMachine = new Label(this, _L("Machine Filament"));
     m_pLabelMachine->SetFont(Label::Body_14);
     m_pLabelMachine->SetForegroundColour(g_labelTextColor);
     m_pLabelMachine->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
@@ -203,6 +204,19 @@ void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentDat
 
     if (m_mappingChangedCallback)
         m_mappingChangedCallback();
+}
+
+void FilamentColorMapBoxGroup::setVisibleCount(int count)
+{
+    for (auto& box : m_boxList)
+        box->Show(true);
+
+    for (size_t i = count; i < m_boxList.size(); ++i)
+        m_boxList[i]->Show(false);
+
+    Layout();
+    if (GetParent())
+        GetParent()->Layout();
 }
 
 } // namespace GUI

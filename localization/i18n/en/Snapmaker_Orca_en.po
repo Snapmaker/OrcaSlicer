@@ -5875,6 +5875,51 @@ msgid ""
 "presets."
 msgstr ""
 
+msgid "Design Filament"
+msgstr ""
+
+msgid "Machine Filament"
+msgstr ""
+
+msgid "Device Filament Sync"
+msgstr ""
+
+msgid "Match Mapping"
+msgstr ""
+
+msgid "Direct Overwrite"
+msgstr ""
+
+msgid "Original Model"
+msgstr ""
+
+msgid "Matched Model"
+msgstr ""
+
+msgid "Sync Now"
+msgstr ""
+
+msgid "Note: Only filament type and color information are synchronized, nozzle order is not included."
+msgstr ""
+
+msgid "Add remaining printhead filaments to the software filament list"
+msgstr ""
+
+msgid "Synchronize filament information"
+msgstr ""
+
+msgid "Please connect to a device first before synchronizing filament information."
+msgstr ""
+
+msgid "Device not connected"
+msgstr ""
+
+msgid "Mixed filament configuration is detected in the current project. Syncing may affect the mixed filament settings. Do you want to continue?"
+msgstr ""
+
+msgid "Mixed Filament Warning"
+msgstr ""
+
 #, boost-format
 msgid "Do you want to save changes to \"%1%\"?"
 msgstr ""

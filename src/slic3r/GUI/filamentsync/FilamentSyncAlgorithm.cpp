@@ -141,14 +141,9 @@ std::vector<int> compute_direct_override(
     if (machine_count == 0)
         return result;
 
-    for (size_t i = 0; i < design_count; ++i) {
-        if (i < 4) {
-            if (i < machine_count)
-                result[i] = static_cast<int>(i);
-        } else {
-            result[i] = static_cast<int>((i - 4) % machine_count);
-        }
-    }
+    for (size_t i = 0; i < design_count; ++i)
+        result[i] = static_cast<int>(i % machine_count);
+
     return result;
 }
 

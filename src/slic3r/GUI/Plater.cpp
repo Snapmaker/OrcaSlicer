@@ -361,10 +361,9 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
 
         Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
         if (preset) {
-            fd.m_name = preset->label(false);
-            const auto* type_opt = preset->config.option<ConfigOptionStrings>("filament_type");
-            if (type_opt && !type_opt->values.empty())
-                fd.m_type = type_opt->values[0];
+            std::string type_name;
+            preset->get_filament_type(type_name);
+            fd.m_name = type_name.empty() ? preset->label(false) : type_name;
         } else {
             fd.m_name = extract_base_filament_name(filament_presets[i]);
         }
@@ -396,8 +395,7 @@ void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<Filame
     for (const auto& info : preset_bundle->m_connect_machine_info_list) {
         FilamentData fd;
         fd.m_index = info.index;
-        fd.m_name  = info.filament_info;
-        fd.m_type  = info.filament_type;
+        fd.m_name  = info.filament_type.empty() ? info.filament_info : info.filament_type;
 
         if (!info.color_info.empty()) {
             unsigned char rgba[4] = {0, 0, 0, 255};
@@ -8010,6 +8008,11 @@ void Sidebar::show_sync_filament_dialog()
                 wxColour    new_col   = Plater::get_next_color_for_filament();
                 std::string new_color = into_u8(new_col.GetAsString(wxC2S_HTML_SYNTAX));
                 preset_bundle->set_num_filaments(effective_size, new_color);
+
+                // Override remap with dialog's overwrite mapping (e.g. 8→4 with 5→1, 6→2, ...)
+                const auto& dlgRemap = dlg.getFilamentIdRemap();
+                if (!dlgRemap.empty())
+                    preset_bundle->set_filament_id_remap(dlgRemap);
             }
         }
 

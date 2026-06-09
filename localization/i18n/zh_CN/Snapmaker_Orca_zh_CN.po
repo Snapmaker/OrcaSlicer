@@ -5734,6 +5734,51 @@ msgstr "没有如任何兼容的材料，同步操作未执行。"
 msgid "There are some unknown filaments mapped to generic preset. Please update Snapmaker Orca or restart Snapmaker Orca to check if there is an update to system presets."
 msgstr "有一些未知型号的材料，映射到通用预设。请更新或者重启 Snapmaker Orca，以检查系统预设有没有更新。"
 
+msgid "Design Filament"
+msgstr "设计耗材"
+
+msgid "Machine Filament"
+msgstr "设备耗材"
+
+msgid "Device Filament Sync"
+msgstr "设备耗材信息同步"
+
+msgid "Match Mapping"
+msgstr "匹配映射"
+
+msgid "Direct Overwrite"
+msgstr "直接覆盖"
+
+msgid "Original Model"
+msgstr "原模型"
+
+msgid "Matched Model"
+msgstr "覆盖后模型"
+
+msgid "Sync Now"
+msgstr "立即同步"
+
+msgid "Note: Only filament type and color information are synchronized, nozzle order is not included."
+msgstr "注意：仅同步材料类型和颜色信息，不包含喷嘴顺序。"
+
+msgid "Add remaining printhead filaments to the software filament list"
+msgstr "将剩余打印头耗材添加到软件耗材列表"
+
+msgid "Synchronize filament information"
+msgstr "同步耗材信息"
+
+msgid "Please connect to a device first before synchronizing filament information."
+msgstr "请先连接设备，再进行耗材信息同步。"
+
+msgid "Device not connected"
+msgstr "设备未连接"
+
+msgid "Mixed filament configuration is detected in the current project. Syncing may affect the mixed filament settings. Do you want to continue?"
+msgstr "检测到当前项目存在混色耗材配置。同步操作可能会影响混色耗材设置。是否继续？"
+
+msgid "Mixed Filament Warning"
+msgstr "混色耗材警告"
+
 #, boost-format
 msgid "Do you want to save changes to \"%1%\"?"
 msgstr "是否保存修改到“%1%”？"

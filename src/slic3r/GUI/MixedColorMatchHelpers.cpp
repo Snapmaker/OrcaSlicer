@@ -14,6 +14,8 @@
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
 
 namespace Slic3r { namespace GUI {
 wxColour parse_mixed_color(const std::string& value)
@@ -1275,6 +1277,64 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
         out << 'F' << sorted[i].first << ' ' << pcts[i] << '%';
     }
     return out.str();
+}
+
+// ---- Batch Match Mapping (混色匹配映射) ----
+
+std::vector<ModelColorEntry> extract_model_colors(const Print& print)
+{
+    std::vector<ModelColorEntry> colors;
+    static constexpr int MAX_EXTRUDER_ID = 256;
+
+    auto& filament_colours = print.config().filament_colour.values;
+
+    for (const PrintObject* obj : print.objects()) {
+        if (!obj) continue;
+        const ModelObject* model_obj = obj->model_object();
+        if (!model_obj) continue;
+
+        for (const ModelVolume* vol : model_obj->volumes) {
+            if (!vol || vol->type() != ModelVolumeType::MODEL_PART) continue;
+
+            for (int eid : vol->get_extruders()) {
+                if (eid < 1 || eid > MAX_EXTRUDER_ID) continue;
+                size_t idx = size_t(eid - 1);
+                if (idx >= filament_colours.size()) continue;
+
+                const std::string& color_hex = filament_colours[idx];
+                if (color_hex.empty()) continue;
+
+                wxColour c;
+                if (!try_parse_color_match_hex(color_hex, c)) {
+                    BOOST_LOG_TRIVIAL(warning)
+                        << "extract_model_colors: invalid filament colour["
+                        << eid << "] = '" << color_hex << "', skipping";
+                    continue;
+                }
+
+                // Deduplicate by hex value
+                auto it = std::find_if(colors.begin(), colors.end(),
+                    [&](const ModelColorEntry& e) { return e.hex_value == color_hex; });
+                if (it != colors.end()) continue;
+
+                colors.push_back({
+                    (unsigned int)(colors.size() + 1),
+                    c,
+                    color_hex
+                });
+            }
+        }
+    }
+
+    if (colors.size() > 64) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "extract_model_colors: truncating " << colors.size() << " colors to 64";
+        colors.resize(64);
+    }
+
+    BOOST_LOG_TRIVIAL(info)
+        << "extract_model_colors: extracted " << colors.size() << " unique model colors";
+    return colors;
 }
 
 }} // namespace Slic3r::GUI

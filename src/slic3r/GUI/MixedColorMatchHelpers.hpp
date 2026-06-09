@@ -12,6 +12,11 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <functional>
+#include <memory>
+
+namespace Slic3r { class Print; }
 
 namespace Slic3r { namespace GUI {
 
@@ -136,5 +141,72 @@ CyclePatternParseResult parse_cycle_pattern(const std::string& normalized_patter
 std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
                                          const MixedFilament& entry,
                                          int num_physical);
+
+// ---- Batch Match Mapping (混色匹配映射) ----
+
+/// Represents one color extracted from a multi-color model.
+struct ModelColorEntry
+{
+    unsigned int color_index;    // 1-based
+    wxColour     color;          // parsed wxColour for GUI operations
+    std::string  hex_value;      // "#RRGGBB"
+};
+
+/// One model color → mixed filament recipe mapping.
+struct ColorMappingEntry
+{
+    unsigned int                  model_color_index;
+    wxColour                      source_color;
+    MixedColorMatchRecipeResult   recipe;
+    unsigned int                  target_filament_id = 0;
+    wxColour                      matched_color;
+    double                        delta_e          = std::numeric_limits<double>::infinity();
+    bool                          is_pure_recipe   = false;
+    double                        pure_delta_e     = std::numeric_limits<double>::infinity();
+    std::vector<unsigned int>     merged_model_indices;
+};
+
+/// Result of a full batch color-matching operation.
+struct BatchMatchResult
+{
+    std::vector<unsigned int>      selected_physical_ids;
+    std::vector<ColorMappingEntry> mappings;
+    std::vector<Slic3r::MixedFilament> mixed_filaments;
+    double                         avg_delta_e  = std::numeric_limits<double>::infinity();
+    bool                           success      = false;
+    std::string                    error_message;
+    int                            error_code   = 0; // 0=ok, 1=partial, 2=cancelled, 3=timeout
+};
+
+/// Extract all unique colors from a multi-color 3D model.
+/// Uses ModelVolume::get_extruders() → Print::config().filament_colour[].
+/// Caps at 64 colors. Logs and skips malformed colors.
+std::vector<ModelColorEntry> extract_model_colors(const Slic3r::Print& print);
+
+/// Main entry: batch-match all model colors to filament recipes.
+/// Callable from background thread (cancel_token checked per-color).
+BatchMatchResult batch_match_model_colors(
+    const std::vector<ModelColorEntry>&          model_colors,
+    const std::vector<std::string>&             physical_colors,
+    int                                          min_component_percent,
+    std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
+    std::function<void(int,int)>                 progress_callback = nullptr);
+
+/// Deduplicate mappings where matched colors are visually close (ΔE < 1.5).
+std::vector<ColorMappingEntry> deduplicate_batch_mappings(
+    const std::vector<ColorMappingEntry>& raw_mappings,
+    double                                 merge_threshold = 1.5);
+
+/// Assign 1-based filament IDs: pure recipes → physical IDs (1-4), mixed → virtual (5+).
+/// Pre: num_physical in [1,4], mappings non-empty.
+/// Post: every mapping.target_filament_id is set.
+void assign_batch_virtual_filament_ids(
+    BatchMatchResult& result,
+    size_t             num_physical);
+
+/// Populate result.mixed_filaments from result.mappings.
+void populate_mixed_filaments_from_mappings(
+    BatchMatchResult&                           result,
+    const Slic3r::MixedFilamentDisplayContext&  context);
 
 }} // namespace Slic3r::GUI

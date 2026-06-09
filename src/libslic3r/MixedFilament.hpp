@@ -200,6 +200,15 @@ public:
     // Add a custom mixed filament.
     void add_custom_filament(unsigned int component_a, unsigned int component_b, int mix_b_percent, const std::vector<std::string> &filament_colours);
 
+    // Batch-insert custom mixed filaments from a match-mapping operation.
+    // Each entry is fully specified except `stable_id`, which is allocated internally.
+    // Entries exceeding `MAXIMUM_FILAMENT_NUMBER` are silently dropped.
+    // All entries receive `ui_mode = 2` (MATCH), `custom = true`.
+    // Calls `refresh_display_colors()` exactly once after all inserts.
+    void add_batch_custom_filaments(
+        const std::vector<MixedFilamentBatchEntry>& entries,
+        const std::vector<std::string>&             filament_colours);
+
     // Remove all custom rows, keep auto-generated ones.
     void clear_custom_entries();
 
@@ -417,6 +426,26 @@ inline bool is_simple_gradient(const MixedFilament& mf)
         && MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty()
         && count_ids(mf.gradient_component_ids) < 3;
 }
+
+// ---- Batch Match Mapping (混色匹配映射) ----
+
+/// Lightweight wx-free entry for batch-inserting matched filaments.
+/// The GUI layer populates this from ColorMappingEntry, then passes
+/// to MixedFilamentManager::add_batch_custom_filaments().
+struct MixedFilamentBatchEntry
+{
+    unsigned int component_a     = 1;
+    unsigned int component_b     = 2;
+    int          mix_b_percent   = 50;
+    std::string  manual_pattern;
+    std::string  gradient_component_ids;
+    std::string  gradient_component_weights;
+    int          distribution_mode = int(MixedFilament::Simple);
+    bool         gradient_enabled  = false;
+    float        gradient_start    = MixedFilament::k_default_gradient_dominant;
+    float        gradient_end      = MixedFilament::k_default_gradient_minority;
+    std::string  display_color;   // pre-computed "#RRGGBB" hex
+};
 
 } // namespace Slic3r
 

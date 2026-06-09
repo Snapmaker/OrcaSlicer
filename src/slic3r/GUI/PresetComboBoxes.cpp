@@ -1026,7 +1026,7 @@ void PlaterPresetComboBox::ChangeExtruderColor()
         dialog_context.currentSku = CurrentSkuForMaterial(material, current_sku);
         dialog_context.currentMultiColors = current_multi_colors;
         dialog_context.currentMode = current_mode;
-        dialog_context.fallbackColor = current_color;
+        dialog_context.currentPrimaryColor = current_color;
 
         FilamentColorDialog dialog(this, material, dialog_context);
 

@@ -252,10 +252,8 @@ private:
     wxRect get_dropdown_rect() const;
 
     void SelectLegacyFilamentColor();
-    void ApplyFilamentColor(const std::string& primary_color,
-                            const std::vector<std::string>& colors,
-                            int mode,
-                            const std::string& sku);
+    void ApplyFilamentColor(const std::string& primary_color, const std::vector<std::string>& colors,
+                            int mode, const std::string& sku);
     std::string CurrentFilamentDisplayName() const;
     std::string CurrentFilamentId() const;
 };

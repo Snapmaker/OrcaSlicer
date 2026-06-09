@@ -549,11 +549,11 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
     const size_t num_physical = physical_colors.size();
 
     const Slic3r::DynamicPrintConfig* config = Slic3r::GUI::wxGetApp().preset_bundle != nullptr ?
-        &Slic3r::GUI::wxGetApp().preset_bundle->project_config : nullptr;
+                                               &Slic3r::GUI::wxGetApp().preset_bundle->project_config : nullptr;
     const Slic3r::ConfigOptionStrings* multi_color_option = config != nullptr && config->has("filament_multi_colors") ?
-        config->option<Slic3r::ConfigOptionStrings>("filament_multi_colors") : nullptr;
+                                                config->option<Slic3r::ConfigOptionStrings>("filament_multi_colors") : nullptr;
     const Slic3r::ConfigOptionInts* mode_option = config != nullptr && config->has("filament_colour_mode") ?
-        config->option<Slic3r::ConfigOptionInts>("filament_colour_mode") : nullptr;
+                                                config->option<Slic3r::ConfigOptionInts>("filament_colour_mode") : nullptr;
 
     int index = 0;
     for (const std::string &color : colors)
@@ -563,9 +563,8 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
 
         if (color_idx < num_physical) {
             const std::string multi_colors = multi_color_option != nullptr && multi_color_option->values.size() > color_idx ?
-                multi_color_option->values[color_idx] : std::string();
-            const int mode = mode_option != nullptr && mode_option->values.size() > color_idx ?
-                mode_option->values[color_idx] : 0;
+                                             multi_color_option->values[color_idx] : std::string();
+            const int mode = mode_option != nullptr && mode_option->values.size() > color_idx ? mode_option->values[color_idx] : 0;
             bmps.push_back(Slic3r::GUI::FilamentColorUtils::GetFilamentColorIcon(multi_colors, mode, color, label, icon_width, icon_height));
             continue;
         }

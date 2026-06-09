@@ -14,7 +14,6 @@ struct FilamentColor
     std::unordered_map<std::string, std::string> colorNames;
     std::string sku;
     int mode { 0 };
-    std::string primaryColor;
     std::vector<std::string> colors;
 };
 

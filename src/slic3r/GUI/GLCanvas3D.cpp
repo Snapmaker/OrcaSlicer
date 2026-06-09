@@ -114,7 +114,7 @@ float RetinaHelper::get_scale_factor() { return float(m_window->GetContentScaleF
 #undef Convex
 #endif
 
-static std::vector<unsigned int> GetUiOrderedFilamentIds(Plater *plater, size_t total_filaments)
+static std::vector<unsigned int> get_ui_ordered_filament_ids(Plater *plater, size_t total_filaments)
 {
     std::vector<unsigned int> ordered_ids;
     if (plater != nullptr)
@@ -3333,7 +3333,7 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
                 const int display_filament_id = keyCode - '0';
                 const size_t total_filaments = wxGetApp().plater()->get_extruder_colors_from_plater_config().size();
                 const std::vector<unsigned int> ordered_filament_ids =
-                    GetUiOrderedFilamentIds(wxGetApp().plater(), total_filaments);
+                    get_ui_ordered_filament_ids(wxGetApp().plater(), total_filaments);
                 if (display_filament_id >= 1 && size_t(display_filament_id) <= ordered_filament_ids.size())
                     obj_list->set_extruder_for_selected_items(int(ordered_filament_ids[size_t(display_filament_id - 1)]));
                 else
@@ -3882,7 +3882,7 @@ void GLCanvas3D::on_set_color_timer(wxTimerEvent& evt)
     auto obj_list = wxGetApp().obj_list();
     if (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation) {
         const std::vector<unsigned int> ordered_filament_ids =
-            GetUiOrderedFilamentIds(wxGetApp().plater(), wxGetApp().plater()->get_extruder_colors_from_plater_config().size());
+            get_ui_ordered_filament_ids(wxGetApp().plater(), wxGetApp().plater()->get_extruder_colors_from_plater_config().size());
         obj_list->set_extruder_for_selected_items(ordered_filament_ids.empty() ? 1 : int(ordered_filament_ids.front()));
     }
     m_timer_set_color.Stop();
@@ -8391,13 +8391,10 @@ void GLCanvas3D::_render_paint_toolbar() const
     int em_unit = wxGetApp().em_unit() / 10;
 
     const std::vector<std::string> actual_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config();
-    const std::vector<unsigned int> display_filament_ids =
-        GetUiOrderedFilamentIds(wxGetApp().plater(), actual_colors.size());
-    const std::vector<std::string> physical_colors =
-        wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
-    const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr
-        ? &wxGetApp().preset_bundle->project_config
-        : nullptr;
+    const std::vector<unsigned int> display_filament_ids = get_ui_ordered_filament_ids(wxGetApp().plater(), actual_colors.size());
+    const std::vector<std::string> physical_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
+    const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr ? 
+                                               &wxGetApp().preset_bundle->project_config : nullptr;
     std::vector<std::string> colors;
     std::vector<FilamentColorUtils::FilamentColorDisplay> toolbar_colors;
     colors.reserve(display_filament_ids.size());

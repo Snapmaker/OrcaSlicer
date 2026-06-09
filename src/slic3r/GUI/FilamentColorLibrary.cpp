@@ -275,16 +275,10 @@ bool FilamentColorLibrary::LoadIndex()
                 continue;
             }
 
-            if (color.mode == 1 && color.colors.size() < 2)
+            if ((color.mode == 1 && color.colors.size() < 2) || (color.mode == 0 && color.colors.size() > 2))
             {
-                BOOST_LOG_TRIVIAL(warning) << "Skip gradient color item with fewer than two colors: " << color.sku;
-                continue;
-            }
-
-            // Only dual-color (2 colors) is supported for non-gradient mode at this time.
-            if (color.mode == 0 && color.colors.size() > 2)
-            {
-                BOOST_LOG_TRIVIAL(warning) << "Skip unsupported multi color item: " << color.sku;
+                // Gradient requires at least 2 colors; non-gradient supports at most 2 colors (dual-color).
+                BOOST_LOG_TRIVIAL(warning) << "Skip color item with invalid color count: " << color.sku;
                 continue;
             }
 
@@ -294,7 +288,6 @@ bool FilamentColorLibrary::LoadIndex()
                 continue;
             }
 
-            color.primaryColor = color.colors.front();
             skus.emplace(color.sku);
             filament.colors.emplace_back(std::move(color));
         }

@@ -33,7 +33,7 @@ struct FilamentColorDialogContext
     std::string currentSku;
     std::string currentMultiColors;
     int currentMode { 0 };
-    std::string fallbackColor;
+    std::string currentPrimaryColor;
 };
 
 /**
@@ -45,9 +45,7 @@ public:
     /**
      * @brief Creates the filament color dialog.
      */
-    FilamentColorDialog(wxWindow* parent,
-        const FilamentMaterial& material,
-        const FilamentColorDialogContext& context);
+    FilamentColorDialog(wxWindow* parent, const FilamentMaterial& material, const FilamentColorDialogContext& context);
 
     /**
      * @brief Gets the selected color result.

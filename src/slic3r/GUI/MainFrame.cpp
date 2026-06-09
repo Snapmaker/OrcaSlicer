@@ -53,6 +53,7 @@
 #include <string_view>
 #include <iomanip>
 #include <sstream>
+#include <chrono>
 #include <ctime>
 
 #include "GUI_App.hpp"
@@ -68,6 +69,8 @@
 #include "Widgets/WebView.hpp"
 #include "DailyTips.hpp"
 #include "Flutter/FlutterPanel.hpp"
+#include "Flutter/flutter_platform.h"
+#include "FlutterPreprintDialog.hpp"
 
 #ifdef _WIN32
 #include <dbt.h>
@@ -840,7 +843,12 @@ void MainFrame::update_layout()
         m_plater->Reparent(m_tabpanel);
         m_tabpanel->InsertPage(tp3DEditor, m_plater, _L("Prepare"), std::string("tab_3d_active"), std::string("tab_3d_active"), false);
         m_tabpanel->InsertPage(tpPreview, m_plater, _L("Preview"), std::string("tab_preview_active"), std::string("tab_preview_active"), false);
-        m_main_sizer->Add(m_tabpanel, 1, wxEXPAND | wxTOP, 0);
+        m_main_sizer->Add(m_tabpanel, 0, wxEXPAND | wxTOP, 0);
+        if (m_flutter_panel) {
+            m_main_sizer->Add(m_flutter_panel, 1, wxEXPAND | wxTOP, 0);
+            m_main_sizer->Show(m_flutter_panel, false);
+            m_flutter_panel->Hide();
+        }
 
         m_tabpanel->Bind(wxCUSTOMEVT_NOTEBOOK_SEL_CHANGED, [this](wxCommandEvent& evt)
         {
@@ -894,6 +902,28 @@ void MainFrame::update_layout()
 
     Layout();
     Thaw();
+}
+
+void MainFrame::setFlutterPanelShown(bool show)
+{
+    if (!m_flutter_panel || !m_main_sizer || !m_tabpanel) return;
+
+    // Change notebook proportion: 0 (fixed) when panel shown, 1 (expand) when hidden
+    int nbProp = show ? 0 : 1;
+    m_main_sizer->Detach(m_tabpanel);
+    m_main_sizer->Insert(0, m_tabpanel, nbProp, wxEXPAND | wxTOP, 0);
+
+    if (show) {
+        int tabH = m_tabpanel->GetBtnsListCtrl()->GetSize().GetHeight() + 4;
+        m_tabpanel->SetMaxSize(wxSize(-1, tabH));
+        m_main_sizer->Show(m_flutter_panel, true);
+        m_flutter_panel->Show();
+    } else {
+        m_tabpanel->SetMaxSize(wxDefaultSize);
+        m_main_sizer->Show(m_flutter_panel, false);
+        m_flutter_panel->Hide();
+    }
+    Layout();
 }
 
 // Called when closing the application and when switching the application language.
@@ -970,8 +1000,7 @@ void MainFrame::shutdown(bool isRecreate)
 
     if (m_flutter_engine) {
         m_flutter_engine->stop();
-        delete m_flutter_engine;
-        m_flutter_engine = nullptr;
+        m_flutter_engine.reset();
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "MainFrame::shutdown exit";
@@ -1077,48 +1106,44 @@ void MainFrame::init_tabpanel() {
 
         // Send "inactive" to previous tab if leaving a monitored tab
         if (prev_monitored_tab == tpHome && sel != tpHome) {
-            // Leaving homepage
             if (m_webview) {
                 wxWebView* home_webview = m_webview->getWebView();
                 wxGetApp().page_state_notify_webview(home_webview, "inactive");
             }
+            if (m_flutter_panel && sel != tpMonitor)
+                setFlutterPanelShown(false);
         } else if (prev_monitored_tab == tpMonitor && sel != tpMonitor) {
-            // Leaving device page (PrinterWebView)
             if (m_printer_view) {
                 wxWebView* printer_webview = m_printer_view->get_browser();
                 wxGetApp().page_state_notify_webview(printer_webview, "inactive");
             }
-        } else if (prev_monitored_tab == tpFlutterTest && sel != tpFlutterTest) {
-            // Leaving Flutter test tab
-            if (m_flutter_test_panel && m_flutter_test_panel->view()) {
-                m_flutter_test_panel->view()->invokeMethod("onPageState", "inactive");
-            }
+            if (m_flutter_panel && sel != tpHome)
+                setFlutterPanelShown(false);
         }
 
         // Send "active" to current tab if entering a monitored tab
         if (sel == tpHome) {
-            // Entering homepage
             if (m_webview) {
                 wxWebView* home_webview = m_webview->getWebView();
                 wxGetApp().page_state_notify_webview(home_webview, "active");
             }
+            if (m_flutter_panel) {
+                m_flutter_panel->channel().invoke("switchPage", "home");
+                setFlutterPanelShown(true);
+            }
             prev_monitored_tab = tpHome;
         } else if (sel == tpMonitor) {
-            // Entering device page (PrinterWebView)
             if (m_printer_view) {
                 wxWebView* printer_webview = m_printer_view->get_browser();
                 wxGetApp().page_state_notify_webview(printer_webview, "active");
             }
-            prev_monitored_tab = tpMonitor;
-        } else if (sel == tpFlutterTest) {
-            // Entering Flutter test tab
-            if (m_flutter_test_panel && m_flutter_test_panel->view()) {
-                m_flutter_test_panel->view()->invokeMethod("onPageState", "active");
+            if (m_flutter_panel) {
+                m_flutter_panel->channel().invoke("switchPage", "device");
+                setFlutterPanelShown(true);
             }
-            prev_monitored_tab = tpFlutterTest;
+            prev_monitored_tab = tpMonitor;
         } else {
-            // Update prev_monitored_tab only when leaving a monitored tab
-            if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor && prev_monitored_tab != tpFlutterTest) {
+            if (prev_monitored_tab != tpHome && prev_monitored_tab != tpMonitor) {
                 prev_monitored_tab = -1;
             }
         }
@@ -1193,28 +1218,126 @@ void MainFrame::init_tabpanel() {
     m_calibration->SetBackgroundColour(*wxWHITE);
     m_tabpanel->AddPage(m_calibration, _L("Calibration"), std::string("tab_calibration_active"), std::string("tab_calibration_active"), false);
 
-    // Flutter test tab — simplest possible Flutter content
-    m_flutter_engine = createFlutterEngine("", "").release();
+    // Flutter panel — shown for Home/Device tabs
+    m_flutter_engine = FlutterPlatform::createEngine();
     m_flutter_engine->start();
-    m_flutter_test_panel = new FlutterPanel(m_tabpanel);
-    m_tabpanel->AddPage(m_flutter_test_panel, _L("Flutter Test"), std::string("tab_home_active"), std::string("tab_home_active"), false);
+    m_flutter_panel = new FlutterPanel(this);
+    m_flutter_panel->Hide();  // hidden by default, shown only on Home/Device tabs
+    auto& ch = m_flutter_panel->channel("snapmaker/orca");
 
-    CallAfter([this] {
-        Dispatcher d;
-        d.on("getVersion", [](auto, auto reply) {
-            reply("orca-test-1.0");
+    // Register business handlers BEFORE startView() so they are captured
+    ch.ns("device")
+        .on("scan", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":[]}");
         })
-        .on("sendMessage", [](auto args, auto reply) {
-            reply("[Orca] C++ received: " + args);
+        .on("connect", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":null}");
         })
-        .on("incrementCounter", [](auto args, auto reply) {
-            reply(std::to_string(std::stoi(args) + 1));
+        .on("disconnect", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":null}");
+        })
+        .on("getStatus", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":{\"status\":\"idle\"}}");
         });
-        if (!m_flutter_test_panel->startView(m_flutter_engine, "homeMain", "snapmaker/home", d.handler())) {
+
+    ch.ns("printer")
+        .on("getList", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":[]}");
+        })
+        .on("select", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":null}");
+        })
+        .on("getDetail", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":{}}");
+        });
+
+    ch.ns("device.config")
+        .on("getAll", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":{}}");
+        })
+        .on("set", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":null}");
+        });
+
+    // ── Home page demo handlers ─────────────────────────────────────
+    // Thread-safety: ThreadGuardMiddleware enforces UI-thread execution for all
+    // handlers. These statics are only accessed from handler callbacks.
+    static std::string s_demo_data;
+    static int s_ping_count = 0;
+
+    // FFI demo: pass a large buffer pointer to Dart
+    ch.ns("home").on("getDemoData", [](const std::string&, FlutterViewHost::Reply reply) {
+        if (s_demo_data.empty()) {
+            std::ostringstream oss;
+            static const int kDemoLineCount = 5000;
+            for (int i = 0; i < kDemoLineCount; i++)
+                oss << "G1 X" << (i % 200) << " Y" << (i % 150) << " E" << (i * 0.01) << "\n";
+            s_demo_data = oss.str();
+        }
+        auto addr = reinterpret_cast<uint64_t>(s_demo_data.data());
+        auto len  = s_demo_data.size();
+        reply("{\"ok\":true,\"data\":{\"ptr\":" + std::to_string(addr) +
+              ",\"len\":" + std::to_string(len) + "}}");
+    });
+
+    // Dart→C++ demo: ping/pong with counter
+    ch.ns("home").on("ping", [](const std::string& args, FlutterViewHost::Reply reply) {
+        s_ping_count++;
+        auto now = std::chrono::system_clock::now().time_since_epoch().count();
+        reply("{\"ok\":true,\"data\":{\"count\":" + std::to_string(s_ping_count) +
+              ",\"time\":" + std::to_string(now % 1000000) + "}}");
+    });
+
+    // C++→Dart demo: send push after a brief delay
+    ch.ns("home").on("requestPush", [](const std::string&, FlutterViewHost::Reply reply) {
+        reply("{\"ok\":true,\"data\":null}");
+        wxGetApp().CallAfter([] {
+            auto* f = wxGetApp().mainframe;
+            if (f && f->m_flutter_panel)
+                f->m_flutter_panel->channel().invoke("home.onPush",
+                    "{\"msg\":\"Hello from C++! Count=" + std::to_string(s_ping_count) + "\"}");
+        });
+    });
+
+    ch.ns("print")
+        .on("getFileInfo", [](const std::string&, FlutterViewHost::Reply reply) {
+            auto* dlg = wxGetApp().mainframe->m_active_flt_dialog;
+            std::string name = "unknown.gcode", display = "Print Job";
+            if (dlg) {
+                auto* pdlg = dynamic_cast<FlutterPreprintDialog*>(dlg);
+                if (pdlg) {
+                    name = pdlg->m_gcode_file_name;
+                    display = pdlg->m_display_file_name.empty() ? name : pdlg->m_display_file_name;
+                }
+            }
+            reply("{\"ok\":true,\"data\":{\"fileName\":\"" + name +
+                  "\",\"displayName\":\"" + display + "\"}}");
+        })
+        .on("confirm", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":null}");
+            wxGetApp().CallAfter([] {
+                auto* dlg = wxGetApp().mainframe->m_active_flt_dialog;
+                if (dlg) {
+                    auto* pdlg = dynamic_cast<FlutterPreprintDialog*>(dlg);
+                    if (pdlg) pdlg->m_print_confirmed = true;
+                    dlg->EndModal(wxID_OK);
+                }
+            });
+        })
+        .on("cancel", [](const std::string&, FlutterViewHost::Reply reply) {
+            reply("{\"ok\":true,\"data\":null}");
+            wxGetApp().CallAfter([] {
+                auto* dlg = wxGetApp().mainframe->m_active_flt_dialog;
+                if (dlg) dlg->EndModal(wxID_CANCEL);
+            });
+        });
+
+    wxGetApp().CallAfter([this] {
+        if (!m_flutter_panel->startView(m_flutter_engine.get(), "", "snapmaker/orca")) {
             BOOST_LOG_TRIVIAL(error) << "[Flutter] startView failed";
             return;
         }
-        BOOST_LOG_TRIVIAL(info) << "[Flutter] Test panel started";
+        BOOST_LOG_TRIVIAL(info) << "[Flutter] panel started";
     });
 
     if (m_plater) {
@@ -1677,7 +1800,7 @@ wxBoxSizer* MainFrame::create_side_tools()
     sizer->Layout();
 
     // m_publish_btn->Bind(wxEVT_BUTTON, [this](auto& e) {
-    //     CallAfter([this] {
+    //     wxGetApp().CallAfter([this] {
     //         wxGetApp().open_publish_page_dialog();
 
     //         if (!wxGetApp().getAgent()) {

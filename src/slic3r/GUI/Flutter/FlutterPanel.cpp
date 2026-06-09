@@ -65,8 +65,6 @@ void FlutterPanel::onShow(wxShowEvent& event) {
 
 void FlutterPanel::tryEmbed() {
     if (m_embedded || !m_view) return;
-    wxSize sz = GetSize();
-    if (sz.GetWidth() <= 1 || sz.GetHeight() <= 1) return;
     m_view->embedInto(GetHandle());
     m_embedded = true;
 }

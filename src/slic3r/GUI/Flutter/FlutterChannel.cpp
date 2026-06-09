@@ -8,7 +8,7 @@
 FlutterChannel::FlutterChannel(const std::string& name)
     : m_channelName(name), m_state(std::make_shared<State>())
 {
-    m_routes["system.ready"] = [state = m_state](const std::string&, FlutterViewHost::Reply) {
+    m_routes["system.ready"] = [state = m_state](const std::string&, FlutterViewHost::Reply reply) {
         if (!state->view) {
             BOOST_LOG_TRIVIAL(warning) << "[flutter] drain: view is null, dropping "
                                        << state->pendingMessages.size() << " messages";
@@ -16,6 +16,7 @@ FlutterChannel::FlutterChannel(const std::string& name)
             return;
         }
         state->dartReady = true;
+        reply("{\"ok\":true,\"data\":null}");
         while (!state->pendingMessages.empty()) {
             auto& msg = state->pendingMessages.front();
             state->view->invokeMethod(msg.first, msg.second);
@@ -61,13 +62,11 @@ FlutterChannel& FlutterChannel::use(std::shared_ptr<Middleware> m) {
 FlutterViewHost::MethodCallHandler
 FlutterChannel::handler(FlutterViewHost* view) {
     if (!view) {
-        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::handler: null view, returning no-op";
         return [](const std::string&, const std::string&, FlutterViewHost::Reply r) {
             r("Error: channel not bound — null view");
         };
     }
     if (m_handlerCalled) {
-        BOOST_LOG_TRIVIAL(error) << "[flutter] FlutterChannel::handler: already called, returning no-op";
         return [](const std::string&, const std::string&, FlutterViewHost::Reply r) {
             r("Error: handler already consumed");
         };

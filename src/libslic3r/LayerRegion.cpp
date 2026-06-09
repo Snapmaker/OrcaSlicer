@@ -81,18 +81,6 @@ unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionC
                                        object);
 }
 
-bool use_base_infill_filament(const PrintRegionConfig &config, int layer_index, int layer_count)
-{
-    if (!config.enable_infill_filament_override.value)
-        return true;
-    if (layer_count <= 0)
-        return false;
-
-    const int first_layers = std::max(0, config.infill_filament_use_base_first_layers.value);
-    const int last_layers  = std::max(0, config.infill_filament_use_base_last_layers.value);
-    return layer_index < first_layers || layer_index >= layer_count - last_layers;
-}
-
 } // namespace
 
 unsigned int LayerRegion::extruder(FlowRole role) const
@@ -100,9 +88,9 @@ unsigned int LayerRegion::extruder(FlowRole role) const
     const PrintRegionConfig &config = this->region().config();
     unsigned int             filament_id = 0;
     if (role == frInfill)
-        filament_id = use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament.value;
     else if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
-        filament_id = use_base_infill_filament(config, m_layer->id(), int(m_layer->object()->layers().size())) ? config.wall_filament.value : config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament.value;
     else
         filament_id = this->region().extruder(role);
 

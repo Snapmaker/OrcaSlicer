@@ -340,14 +340,6 @@ void PlaterPreview::updateNavigation()
     m_pArrowRight->Refresh();
 }
 
-void PlaterPreview::rescaleBitmaps()
-{
-    if (m_pPreviewLeft)
-        m_pPreviewLeft->Refresh();
-    if (m_pPreviewRight)
-        m_pPreviewRight->Refresh();
-}
-
 void PlaterPreview::paintPreview(wxWindow* win, const wxBitmap& bmp)
 {
     wxAutoBufferedPaintDC dc(win);

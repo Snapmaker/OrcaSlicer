@@ -36,7 +36,6 @@ private:
 
     void navigateTo(int index);
     void updateNavigation();
-    void rescaleBitmaps();
 
     void paintPreview(wxWindow* win, const wxBitmap& bmp);
 

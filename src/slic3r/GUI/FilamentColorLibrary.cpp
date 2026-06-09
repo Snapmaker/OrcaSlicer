@@ -20,7 +20,17 @@ namespace
 
 boost::filesystem::path FilamentsColoursPath()
 {
-    boost::filesystem::path path = boost::filesystem::path(Slic3r::resources_dir());
+    // Prefer the system copy (synced by PresetUpdater from resources on first launch),
+    // fall back to the bundled resources path so the file is still found on a fresh install.
+    boost::filesystem::path path = boost::filesystem::path(Slic3r::data_dir());
+    path /= "system";
+    path /= "Snapmaker";
+    path /= "filament";
+    path /= "filaments_colours.json";
+    if (boost::filesystem::exists(path))
+        return path.make_preferred();
+
+    path = boost::filesystem::path(Slic3r::resources_dir());
     path /= "profiles";
     path /= "Snapmaker";
     path /= "filament";

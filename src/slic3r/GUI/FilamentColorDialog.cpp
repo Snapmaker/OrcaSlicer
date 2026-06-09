@@ -92,7 +92,7 @@ std::string GetLocalizedColorName(const FilamentColor& color, const std::string&
     if (english_name != color.colorNames.end() && !english_name->second.empty())
         return english_name->second;
 
-    return primary_color;
+    return color.colors.size() > 1 ? (language_code == "zh_CN" ? "多色" : "Multiple Color") : primary_color;
 }
 
 /**
@@ -160,7 +160,12 @@ FilamentColorSelection MakeCustomColorSelection(const std::string& multi_colors,
     }
 
     selection.primaryColor = FilamentColorUtils::GetPrimaryColor(selection.colors, fallback_color);
-    selection.name = selection.primaryColor;
+    if (selection.colors.size() > 1) {
+        const std::string language_code = GetLanguageCode();
+        selection.name = language_code == "zh_CN" ? "多色" : "Multiple Color";
+    } else {
+        selection.name = selection.primaryColor;
+    }
     selection.mode = selection.colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(mode) : 0;
     selection.isCustom = true;
     return selection;

@@ -211,6 +211,72 @@ static std::string filament_temp_mixing_error_text()
     return _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences.");
 }
 
+static bool model_object_is_on_plate(PartPlate* plate, size_t obj_idx, const ModelObject* model_object)
+{
+    if (model_object == nullptr)
+        return false;
+
+    if (plate == nullptr)
+        return true;
+
+    const int object_index = static_cast<int>(obj_idx);
+    const int instance_count = static_cast<int>(model_object->instances.size());
+    for (int instance_index = 0; instance_index < instance_count; ++instance_index)
+    {
+        if (plate->contain_instance(object_index, instance_index))
+            return true;
+    }
+
+    return false;
+}
+
+static void collect_filament_slots_from_config(
+    const DynamicPrintConfig& config,
+    int num_filaments,
+    std::set<int>& used_slots)
+{
+    static const std::vector<const char*> keys_1based = {
+        "wall_filament",
+        "sparse_infill_filament",
+        "solid_infill_filament"
+    };
+    for (const char* key : keys_1based)
+    {
+        const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
+        if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+            used_slots.insert(option->value - 1);
+    }
+
+    static const std::vector<const char*> keys_0based = {
+        "support_filament",
+        "support_interface_filament",
+        "wipe_tower_filament"
+    };
+    for (const char* key : keys_0based)
+    {
+        const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
+        if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+            used_slots.insert(option->value - 1);
+    }
+
+    const ConfigOptionInt* extruder_option = config.option<ConfigOptionInt>("extruder");
+    if (extruder_option != nullptr && extruder_option->value >= 1 && extruder_option->value <= num_filaments)
+        used_slots.insert(extruder_option->value - 1);
+}
+
+static void collect_filament_slots_from_model_config(
+    const ModelConfigObject& config,
+    int num_filaments,
+    std::set<int>& used_slots)
+{
+    if (!config.has("extruder"))
+        return;
+
+    const int extruder_id = config.extruder();
+    if (extruder_id >= 1 && extruder_id <= num_filaments)
+        used_slots.insert(extruder_id - 1);
+}
+
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 wxDEFINE_EVENT(EVT_SLICING_UPDATE,                  SlicingStatusEvent);
 wxDEFINE_EVENT(EVT_SLICING_COMPLETED,               wxCommandEvent);
@@ -8420,6 +8486,9 @@ struct Plater::priv
     Plater *q;
     MainFrame *main_frame;
     bool filament_usage_sync_pending = false;
+    bool filament_temp_mixing_notification_initialized = false;
+    int filament_temp_mixing_notification_plate = -1;
+    FilamentTempMixingState filament_temp_mixing_notification_state = FilamentTempMixingState::Compatible;
 
     MenuFactory menus;
 
@@ -13594,7 +13663,11 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     else
     {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":slicing all, plate %1% finished, start next slice...")%m_cur_slice_plate;
-        m_cur_slice_plate++;
+        m_cur_slice_plate = q->find_next_sliceable_plate_for_slice_all(m_cur_slice_plate + 1);
+        if (m_cur_slice_plate < 0) {
+            m_is_slicing = false;
+            return;
+        }
 
         q->Freeze();
         q->select_plate(m_cur_slice_plate);
@@ -13698,12 +13771,16 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
 
-        if (!q->confirm_filament_temp_mixing_before_slice())
+        if (!q->confirm_filament_temp_mixing_before_slice_all())
             return;
 
         m_slice_all = true;
         m_slice_all_only_has_gcode = true;
-        m_cur_slice_plate = 0;
+        m_cur_slice_plate = q->find_next_sliceable_plate_for_slice_all(0);
+        if (m_cur_slice_plate < 0) {
+            m_slice_all = false;
+            return;
+        }
         //select plate
         q->select_plate(m_cur_slice_plate);
         q->reslice();
@@ -20103,69 +20180,52 @@ void Plater::config_change_notification(const DynamicPrintConfig &config, const 
     // notification for more options
 }
 
-bool Plater::check_filament_temp_mixing()
+bool Plater::check_filament_temp_mixing(int plate_index)
 {
-    const DynamicPrintConfig& full_cfg = wxGetApp().preset_bundle->full_config();
-    auto* ft_opt = full_cfg.option<ConfigOptionStrings>("filament_type");
-    if (!ft_opt || ft_opt->values.empty())
+    const int plate_count = p->partplate_list.get_plate_count();
+    if (plate_index < 0 || plate_index >= plate_count)
         return true;
 
-    int num_filaments = (int)ft_opt->values.size();
+    const DynamicPrintConfig& full_cfg = wxGetApp().preset_bundle->full_config();
+    const ConfigOptionStrings* filament_type_option = full_cfg.option<ConfigOptionStrings>("filament_type");
+    if (filament_type_option == nullptr || filament_type_option->values.empty())
+        return true;
+
+    const int num_filaments = static_cast<int>(filament_type_option->values.size());
     std::set<int> used_slots;
 
-    PartPlate* curr_plate = p->partplate_list.get_curr_plate();
-    auto object_is_on_curr_plate = [curr_plate](size_t obj_idx, const ModelObject* mo) {
-        if (!curr_plate)
-            return true;
-        for (int inst_idx = 0; inst_idx < (int)mo->instances.size(); ++inst_idx) {
-            if (curr_plate->contain_instance((int)obj_idx, inst_idx))
-                return true;
-        }
-        return false;
-    };
+    PartPlate* plate = p->partplate_list.get_plate(plate_index);
 
-    bool has_object_on_curr_plate = false;
+    bool has_object_on_plate = false;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
-        if (object_is_on_curr_plate(obj_idx, wxGetApp().model().objects[obj_idx])) {
-            has_object_on_curr_plate = true;
+        const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+        if (model_object_is_on_plate(plate, obj_idx, model_object)) {
+            has_object_on_plate = true;
             break;
         }
     }
-    if (!has_object_on_curr_plate)
+    if (!has_object_on_plate)
         return true;
-
-    auto collect_from_cfg = [&](const DynamicPrintConfig& cfg) {
-        static const char* keys_1based[] = {"wall_filament", "solid_infill_filament"};
-        for (auto key : keys_1based) {
-            auto* opt = cfg.option<ConfigOptionInt>(key);
-            if (opt && opt->value >= 1 && opt->value <= num_filaments)
-                used_slots.insert(opt->value - 1);
-        }
-        static const char* keys_0based[] = {"support_filament", "support_interface_filament", "wipe_tower_filament"};
-        for (auto key : keys_0based) {
-            auto* opt = cfg.option<ConfigOptionInt>(key);
-            if (opt && opt->value >= 1 && opt->value <= num_filaments)
-                used_slots.insert(opt->value - 1);
-        }
-    };
 
     // Collect from the Plater's working config for global Process settings.
     // Defaults are 0 (skipped by the >= 1 check).
-    collect_from_cfg(*this->config());
+    collect_filament_slots_from_config(*this->config(), num_filaments, used_slots);
 
     // Also collect from current plate's config for any plate-level overrides
-    if (curr_plate)
-        collect_from_cfg(*curr_plate->config());
+    if (plate)
+        collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);
 
     // Collect from ModelVolume painting extruders for objects on the current plate
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
-        const ModelObject* mo = wxGetApp().model().objects[obj_idx];
-        if (!object_is_on_curr_plate(obj_idx, mo))
+        const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+        if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
-        for (const ModelVolume* mv : mo->volumes) {
-            for (int eid : mv->get_extruders()) {
-                if (eid >= 1 && eid <= num_filaments)
-                    used_slots.insert(eid - 1);
+        collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots);
+        for (const ModelVolume* model_volume : model_object->volumes) {
+            collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots);
+            for (int extruder_id : model_volume->get_extruders()) {
+                if (extruder_id >= 1 && extruder_id <= num_filaments)
+                    used_slots.insert(extruder_id - 1);
             }
         }
     }
@@ -20181,11 +20241,11 @@ bool Plater::check_filament_temp_mixing()
     bool has_high = false, has_low = false;
 
     for (int slot : used_slots) {
-        if (slot < (int)bundle->filament_presets.size()) {
+        if (slot < static_cast<int>(bundle->filament_presets.size())) {
             const Preset* preset = bundle->filaments.find_preset(
                 bundle->filament_presets[slot], true);
-            if (preset) {
-                bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
+            if (preset != nullptr) {
+                const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
                 if (is_high)
                     has_high = true;
                 else
@@ -20193,14 +20253,19 @@ bool Plater::check_filament_temp_mixing()
             }
         }
     }
-    bool compatible = !(has_high && has_low);
+    const bool compatible = !(has_high && has_low);
 
     return compatible;
 }
 
-Plater::FilamentTempMixingState Plater::get_filament_temp_mixing_state()
+bool Plater::check_filament_temp_mixing()
 {
-    if (check_filament_temp_mixing())
+    return check_filament_temp_mixing(p->partplate_list.get_curr_plate_index());
+}
+
+Plater::FilamentTempMixingState Plater::get_filament_temp_mixing_state(int plate_index)
+{
+    if (check_filament_temp_mixing(plate_index))
         return FilamentTempMixingState::Compatible;
 
     return wxGetApp().app_config->get_bool("allow_filament_temp_mixing") ?
@@ -20208,42 +20273,125 @@ Plater::FilamentTempMixingState Plater::get_filament_temp_mixing_state()
         FilamentTempMixingState::BlockedError;
 }
 
+Plater::FilamentTempMixingState Plater::get_filament_temp_mixing_state()
+{
+    return get_filament_temp_mixing_state(p->partplate_list.get_curr_plate_index());
+}
+
+bool Plater::is_plate_blocked_by_filament_temp_mixing(int plate_index)
+{
+    return get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::BlockedError;
+}
+
+bool Plater::has_sliceable_plate_for_slice_all()
+{
+    return find_next_sliceable_plate_for_slice_all(0) >= 0;
+}
+
+int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
+{
+    const int plate_count = p->partplate_list.get_plate_count();
+    if (start_plate_index < 0)
+        start_plate_index = 0;
+
+    for (int plate_index = start_plate_index; plate_index < plate_count; ++plate_index)
+    {
+        PartPlate* plate = p->partplate_list.get_plate(plate_index);
+        if (plate != nullptr && plate->can_slice() && !is_plate_blocked_by_filament_temp_mixing(plate_index))
+            return plate_index;
+    }
+
+    return -1;
+}
+
 bool Plater::sync_filament_temp_mixing_notification()
 {
-    switch (get_filament_temp_mixing_state()) {
+    const int curr_plate_index = get_partplate_list().get_curr_plate_index();
+    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
+    const bool notification_state_changed =
+        !p->filament_temp_mixing_notification_initialized ||
+        p->filament_temp_mixing_notification_plate != curr_plate_index ||
+        p->filament_temp_mixing_notification_state != mixing_state;
+    bool slicing_allowed = true;
+
+    switch (mixing_state) {
     case FilamentTempMixingState::Compatible:
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
-        return true;
+        slicing_allowed = true;
+        break;
     case FilamentTempMixingState::AllowedWarning:
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
-        get_notification_manager()->push_notification(
-            NotificationType::ValidateWarning,
-            NotificationManager::NotificationLevel::WarningNotificationLevel,
-            _u8L("WARNING:") + "\n" + filament_temp_mixing_warning_text());
-        return true;
+        if (notification_state_changed) {
+            get_notification_manager()->push_notification(
+                NotificationType::ValidateWarning,
+                NotificationManager::NotificationLevel::WarningNotificationLevel,
+                _u8L("WARNING:") + "\n" + filament_temp_mixing_warning_text());
+        }
+        slicing_allowed = true;
+        break;
     case FilamentTempMixingState::BlockedError: {
         StringObjectException err;
         err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
         err.string = filament_temp_mixing_error_text();
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
-        get_notification_manager()->push_validate_error_notification(err);
+        if (notification_state_changed)
+            get_notification_manager()->push_validate_error_notification(err);
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
-        return false;
+        slicing_allowed = false;
+        break;
     }
     }
 
-    return true;
+    p->filament_temp_mixing_notification_initialized = true;
+    p->filament_temp_mixing_notification_plate = curr_plate_index;
+    p->filament_temp_mixing_notification_state = mixing_state;
+
+    const bool can_slice = curr_plate != nullptr && curr_plate->can_slice() && slicing_allowed;
+    p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, can_slice);
+    return slicing_allowed;
 }
 
 bool Plater::confirm_filament_temp_mixing_before_slice()
 {
-    if (get_filament_temp_mixing_state() != FilamentTempMixingState::AllowedWarning)
+    switch (get_filament_temp_mixing_state()) {
+    case FilamentTempMixingState::Compatible:
+        return true;
+    case FilamentTempMixingState::BlockedError:
+        sync_filament_temp_mixing_notification();
+        return false;
+    case FilamentTempMixingState::AllowedWarning:
+        break;
+    }
+
+    wxMessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
+                        _L("Confirm"), wxYES_NO | wxICON_WARNING);
+    return dlg.ShowModal() == wxID_YES;
+}
+
+bool Plater::confirm_filament_temp_mixing_before_slice_all()
+{
+    if (!has_sliceable_plate_for_slice_all())
+        return false;
+
+    bool has_allowed_warning = false;
+    for (int plate_index = 0; plate_index < p->partplate_list.get_plate_count(); ++plate_index)
+    {
+        if (get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::AllowedWarning)
+        {
+            has_allowed_warning = true;
+            break;
+        }
+    }
+
+    if (!has_allowed_warning)
         return true;
 
-    wxMessageDialog dlg(this, _L("该组合可能导致风险，是否继续"), _L("确认"), wxYES_NO | wxICON_WARNING);
+    wxMessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
+                        _L("Confirm"), wxYES_NO | wxICON_WARNING);
     return dlg.ShowModal() == wxID_YES;
 }
 
@@ -21090,6 +21238,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
 
     SimpleEvent event(EVT_GLCANVAS_PLATE_SELECT);
     p->on_plate_selected(event);
+    notify_filament_usage_changed();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%")%__LINE__ %plate_index %ret;
     return ret;

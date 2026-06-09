@@ -5,23 +5,18 @@
 #include <wx/panel.h>
 #include <wx/bitmap.h>
 
-class wxButton;
 class wxComboBox;
-class wxStaticBitmap;
-class wxStaticText;
+class Label;
 
 namespace Slic3r
 {
 namespace GUI
 {
 
-using PlateSwitchCallback  = std::function<void(unsigned int newPlateIndex)>;
-using CoverPreviewCallback = std::function<void()>;
-
 class PlaterPreview : public wxPanel
 {
 public:
-    PlaterPreview(wxWindow* parent);
+    PlaterPreview(wxWindow* parent, unsigned int totalPlateCount = 1);
 
     void setOriginalPreview(const wxBitmap& thumbnail);
     void setCoverPreview(const wxBitmap& thumbnail);
@@ -32,40 +27,36 @@ public:
 
     void setTotalPlateCount(unsigned int count);
 
-    void bindPlateSwitchCallback(PlateSwitchCallback cb);
-    void bindCoverPreviewCallback(CoverPreviewCallback cb);
-
-    void onCoverPreview();
+    void bindPlateSwitchCallback(std::function<void(unsigned int newPlateIndex)> cb);
 
 private:
-    void onPrePage();
-    void onNextPage();
-    void onPlateComboBoxChanged(int index);
-    void updateNavButtons();
+    void onLeftArrow(wxMouseEvent& event);
+    void onRightArrow(wxMouseEvent& event);
+    void onPlateComboBoxChanged(wxCommandEvent& event);
 
+    void navigateTo(int index);
+    void updateNavigation();
     void rescaleBitmaps();
-    void rescaleOriginalBitmap();
-    void rescaleCoverBitmap();
 
-    wxStaticBitmap* m_pOriginalThumbnail = nullptr;
-    wxStaticBitmap* m_pCoverThumbnail    = nullptr;
-    wxStaticText*   m_pOriginalLabel     = nullptr;
-    wxStaticText*   m_pCoverLabel        = nullptr;
+    void paintPreview(wxWindow* win, const wxBitmap& bmp);
 
-    wxButton*     m_pPrevPageBtn = nullptr;
-    wxButton*     m_pNextPageBtn = nullptr;
-    wxComboBox*   m_pPlateCombo  = nullptr;
-    wxStaticText* m_pPlateLabel  = nullptr;
+    unsigned int m_currentPlateIndex = 0;
+    unsigned int m_totalPlateCount   = 1;
 
     wxBitmap m_originalBitmap;
     wxBitmap m_coverBitmap;
     bool     m_isRescaling = false;
 
-    unsigned int m_currentPlateIndex = 0;
-    unsigned int m_totalPlateCount   = 1;
+    wxPanel* m_pPreviewLeft  = nullptr;
+    wxPanel* m_pPreviewRight = nullptr;
+    wxPanel* m_pArrowLeft    = nullptr;
+    wxPanel* m_pArrowRight   = nullptr;
+    wxComboBox* m_pPlateCombo = nullptr;
+    Label*   m_pDiskLabel    = nullptr;
+    Label*   m_pLabelLeft    = nullptr;
+    Label*   m_pLabelRight   = nullptr;
 
-    PlateSwitchCallback  m_plateSwitchCallback  = nullptr;
-    CoverPreviewCallback m_coverPreviewCallback = nullptr;
+    std::function<void(unsigned int)> m_plateSwitchCallback = nullptr;
 };
 
 } // namespace GUI

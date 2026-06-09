@@ -29,8 +29,8 @@ namespace
 {
 
 // --- Dialog layout ---
-constexpr int g_dialogWidth        = 700; // DIP
-constexpr int g_dialogHeight       = 600; // DIP
+constexpr int g_dialogWidth        = 620; // DIP
+constexpr int g_dialogHeight       = 665; // DIP
 constexpr int g_sectionMargin      = 12;  // DIP — outer margin for major sections
 constexpr int g_separatorMargin    = 8;   // DIP — left/right of separators
 constexpr int g_radioButtonSpacing = 20;  // DIP — between mode radio buttons
@@ -95,8 +95,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     // ---- Filament mapping group ----
     m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(this, m_designDataList, m_machineDataList);
     m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
-        if (m_pPlaterPreview)
-            m_pPlaterPreview->onCoverPreview();
+        loadCoverPreview();
     });
     mainSizer->Add(m_pFilamentColorMapBoxGroup, g_mappingGroupProportion, wxEXPAND | wxALL,
                    FromDIP(g_separatorMargin));
@@ -296,10 +295,6 @@ void SyncFilamentColorDialog::initPlatePreview()
 
     m_pPlaterPreview->bindPlateSwitchCallback([this](unsigned int newPlateIndex) {
         loadPlateThumbnail(newPlateIndex);
-    });
-
-    m_pPlaterPreview->bindCoverPreviewCallback([this]() {
-        loadCoverPreview();
     });
 
     loadPlateThumbnail(currentPlate);

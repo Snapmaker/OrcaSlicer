@@ -1,32 +1,97 @@
 #include "PlaterPreview.hpp"
 
-#include <wx/button.h>
 #include <wx/combobox.h>
-#include <wx/statbmp.h>
-#include <wx/stattext.h>
+#include <wx/dcbuffer.h>
+#include <wx/dcclient.h>
+#include <wx/dcgraph.h>
+#include <wx/dcmemory.h>
 #include <wx/sizer.h>
+#include <wx/panel.h>
 
-#include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/BitmapCache.hpp"
+#include "slic3r/GUI/Widgets/Label.hpp"
 
 namespace
 {
 
-// --- Thumbnail ---
-constexpr int g_thumbnailMinWidth  = 200; // DIP
-constexpr int g_thumbnailMinHeight = 150; // DIP
-constexpr int g_thumbnailMargin    = 6;   // DIP — around thumbnail
-constexpr int g_labelTopMargin     = 2;   // DIP — label top
+// ============================================================
+// Layout constants
+// ============================================================
+constexpr int g_platerWidth        = 530;
+constexpr int g_platerHeight       = 295;
+constexpr int g_platerPadding      = 16;
+constexpr int g_platerRadius       = 4;
+constexpr int g_platerBorderW      = 1;
+constexpr int g_previewGap         = 16;
+constexpr int g_leftPreviewW       = 220;
+constexpr int g_leftPreviewH       = 220;
+constexpr int g_rightPreviewW      = 263;
+constexpr int g_rightPreviewH      = 263;
+constexpr int g_previewRadius      = 8;
+constexpr int g_labelTopMargin     = 4;
 
-// --- Navigation bar ---
-constexpr int g_navSpacing = 4; // DIP — spacing between nav buttons
-constexpr int g_navMargin  = 6; // DIP — top/bottom margin of nav bar
+constexpr int g_arrowSize          = 20;
+constexpr int g_diskSelectorH      = 30;
 
-// --- Rescaling ---
-constexpr int g_rescaleInsetMargin  = 8;  // px — total inset (4px each side) for thumbnail rescaling
-constexpr int g_minClientSize       = 10; // px — minimum client area to attempt rescaling
+constexpr int g_navItemGap         = 12;
 
-// --- Outer margin of left/right panels ---
-constexpr int g_panelOuterMargin = 2; // DIP
+
+// ============================================================
+// Colours
+// ============================================================
+const wxColour g_previewBg(0xD9, 0xD9, 0xD9);
+const wxColour g_panelBg(0xFF, 0xFF, 0xFF);
+const wxColour g_diskLabelColor(0x4A, 0x4A, 0x4A);
+const wxColour g_platerBorderColor(0xF0, 0xF0, 0xF0);
+const wxColour g_labelTextColor(0x24, 0x24, 0x24);
+
+// ============================================================
+// Rescaling
+// ============================================================
+constexpr int g_rescaleInsetMargin = 8;
+constexpr int g_minClientSize      = 10;
+
+
+Slic3r::GUI::BitmapCache& getIconCache()
+{
+    static Slic3r::GUI::BitmapCache s_cache;
+    return s_cache;
+}
+
+const wxBitmap& getLeftArrowBitmap(int sizePx)
+{
+    static wxBitmap s_bmp;
+    static int      s_cachedPx = -1;
+    if (s_cachedPx != sizePx || !s_bmp.IsOk()) {
+        wxBitmap* loaded = getIconCache().load_svg("filament_picker_left_arrow", sizePx, sizePx);
+        if (loaded && loaded->IsOk()) {
+            s_bmp      = *loaded;
+            s_cachedPx = sizePx;
+        }
+    }
+    return s_bmp;
+}
+
+const wxBitmap& getRightArrowBitmap(int sizePx)
+{
+    static wxBitmap s_bmp;
+    static int      s_cachedPx = -1;
+    if (s_cachedPx != sizePx || !s_bmp.IsOk()) {
+        wxBitmap* loaded = getIconCache().load_svg("filament_picker_right_arrow", sizePx, sizePx);
+        if (loaded && loaded->IsOk()) {
+            s_bmp      = *loaded;
+            s_cachedPx = sizePx;
+        }
+    }
+    return s_bmp;
+}
+
+wxFont getMediumFont()
+{
+    wxFont f = Label::Body_14;
+    f.SetWeight(wxFONTWEIGHT_MEDIUM);
+    return f;
+}
 
 } // namespace
 
@@ -35,99 +100,156 @@ namespace Slic3r
 namespace GUI
 {
 
-PlaterPreview::PlaterPreview(wxWindow* parent)
-    : wxPanel(parent, wxID_ANY)
+PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
+    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+              wxFULL_REPAINT_ON_RESIZE)
+    , m_totalPlateCount(totalPlateCount > 0 ? totalPlateCount : 1)
 {
-    auto* mainSizer = new wxBoxSizer(wxHORIZONTAL);
-
-    // ---- Left panel: original thumbnail + navigation ----
-    auto* leftSizer = new wxBoxSizer(wxVERTICAL);
-
-    m_pOriginalLabel = new wxStaticText(this, wxID_ANY, _L("Original"));
-    m_pOriginalLabel->SetFont(m_pOriginalLabel->GetFont().MakeBold());
-    leftSizer->Add(m_pOriginalLabel, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP,
-                   FromDIP(g_labelTopMargin));
-
-    m_pOriginalThumbnail = new wxStaticBitmap(this, wxID_ANY, wxNullBitmap,
-                                               wxDefaultPosition, wxDefaultSize,
-                                               wxBORDER_SIMPLE);
-    m_pOriginalThumbnail->SetMinSize(wxSize(FromDIP(g_thumbnailMinWidth),
-                                            FromDIP(g_thumbnailMinHeight)));
-    leftSizer->Add(m_pOriginalThumbnail, 1, wxEXPAND | wxALL, FromDIP(g_thumbnailMargin));
-
-    // Navigation bar
-    auto* navSizer = new wxBoxSizer(wxHORIZONTAL);
-
-    m_pPrevPageBtn = new wxButton(this, wxID_ANY, wxString::FromUTF8("◀"),
-                                   wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-    m_pPrevPageBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onPrePage(); });
-    navSizer->Add(m_pPrevPageBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
-                  FromDIP(g_navSpacing));
-
-    m_pPlateLabel = new wxStaticText(this, wxID_ANY, _L("Plate"));
-    navSizer->Add(m_pPlateLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
-                  FromDIP(g_navSpacing));
-
-    m_pPlateCombo = new wxComboBox(this, wxID_ANY, wxEmptyString,
-                                    wxDefaultPosition, wxDefaultSize, 0, nullptr,
-                                    wxCB_READONLY);
-    m_pPlateCombo->Append("01");
-    m_pPlateCombo->SetSelection(0);
-    m_pPlateCombo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) {
-        onPlateComboBoxChanged(m_pPlateCombo->GetSelection());
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetBackgroundColour(g_panelBg);
+    Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+        wxAutoBufferedPaintDC dc(this);
+        dc.Clear();
+        wxSize sz = GetClientSize();
+        dc.SetPen(wxPen(g_platerBorderColor, FromDIP(g_platerBorderW)));
+        dc.SetBrush(wxBrush(g_panelBg));
+        dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, FromDIP(g_platerRadius));
     });
-    navSizer->Add(m_pPlateCombo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
-                  FromDIP(g_navSpacing));
 
-    m_pNextPageBtn = new wxButton(this, wxID_ANY, wxString::FromUTF8("▶"),
-                                   wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-    m_pNextPageBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onNextPage(); });
-    navSizer->Add(m_pNextPageBtn, 0, wxALIGN_CENTER_VERTICAL);
+    auto* outerSizer = new wxBoxSizer(wxVERTICAL);
 
-    leftSizer->Add(navSizer, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP | wxBOTTOM,
-                   FromDIP(g_navMargin));
+    // ---- Top row: two preview columns ----
+    auto* previewRow = new wxBoxSizer(wxHORIZONTAL);
 
-    mainSizer->Add(leftSizer, 1, wxEXPAND | wxALL, FromDIP(g_panelOuterMargin));
+    // Left preview column
+    auto* leftCol = new wxBoxSizer(wxVERTICAL);
 
-    // ---- Right panel: cover thumbnail ----
-    auto* rightSizer = new wxBoxSizer(wxVERTICAL);
+    m_pLabelLeft = new Label(this, "Original Model");
+    m_pLabelLeft->SetFont(getMediumFont());
+    m_pLabelLeft->SetForegroundColour(g_labelTextColor);
+    leftCol->Add(m_pLabelLeft, 0, wxEXPAND);
+    leftCol->AddSpacer(FromDIP(g_labelTopMargin));
 
-    m_pCoverLabel = new wxStaticText(this, wxID_ANY, _L("Matched"));
-    m_pCoverLabel->SetFont(m_pCoverLabel->GetFont().MakeBold());
-    rightSizer->Add(m_pCoverLabel, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP,
-                    FromDIP(g_labelTopMargin));
+    m_pPreviewLeft = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                                 FromDIP(wxSize(g_leftPreviewW, g_leftPreviewH)));
+    m_pPreviewLeft->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    m_pPreviewLeft->SetBackgroundColour(g_previewBg);
+    m_pPreviewLeft->SetMinSize(FromDIP(wxSize(g_leftPreviewW, g_leftPreviewH)));
+    m_pPreviewLeft->SetMaxSize(FromDIP(wxSize(g_leftPreviewW, g_leftPreviewH)));
+    m_pPreviewLeft->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+        paintPreview(m_pPreviewLeft, m_originalBitmap);
+    });
+    leftCol->Add(m_pPreviewLeft, 0, wxEXPAND);
 
-    m_pCoverThumbnail = new wxStaticBitmap(this, wxID_ANY, wxNullBitmap,
-                                            wxDefaultPosition, wxDefaultSize,
-                                            wxBORDER_SIMPLE);
-    m_pCoverThumbnail->SetMinSize(wxSize(FromDIP(g_thumbnailMinWidth),
-                                         FromDIP(g_thumbnailMinHeight)));
-    rightSizer->Add(m_pCoverThumbnail, 1, wxEXPAND | wxALL, FromDIP(g_thumbnailMargin));
+    // Stretch spacer: pushes navRow to the bottom so that
+    // left column height (label + 220 preview + nav) equals right column height (label + 263 preview)
+    leftCol->AddStretchSpacer(1);
 
-    mainSizer->Add(rightSizer, 1, wxEXPAND | wxALL, FromDIP(g_panelOuterMargin));
+    // ---- Navigation bar (justify-between: left arrow | "Plate" + selector | right arrow) ----
+    auto* navRow = new wxBoxSizer(wxHORIZONTAL);
 
-    SetSizer(mainSizer);
+    // Left arrow
+    m_pArrowLeft = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                               FromDIP(wxSize(g_arrowSize, g_arrowSize)));
+    m_pArrowLeft->SetMinSize(FromDIP(wxSize(g_arrowSize, g_arrowSize)));
+    m_pArrowLeft->SetMaxSize(FromDIP(wxSize(g_arrowSize, g_arrowSize)));
+    m_pArrowLeft->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+        wxPaintDC dc(m_pArrowLeft);
+        const wxBitmap& bmp = getLeftArrowBitmap(FromDIP(g_arrowSize));
+        if (bmp.IsOk()) dc.DrawBitmap(bmp, 0, 0);
+    });
+    m_pArrowLeft->Bind(wxEVT_LEFT_DOWN, &PlaterPreview::onLeftArrow, this);
+    navRow->Add(m_pArrowLeft, 0, wxALIGN_CENTER_VERTICAL);
+
+    navRow->AddStretchSpacer(1);
+
+    // Middle group: "Plate" label + 12px gap + disk selector
+    {
+        auto* middleGroup = new wxBoxSizer(wxHORIZONTAL);
+
+        m_pDiskLabel = new Label(this, "Plate");
+        m_pDiskLabel->SetFont(Label::Body_12);
+        m_pDiskLabel->SetForegroundColour(g_diskLabelColor);
+        middleGroup->Add(m_pDiskLabel, 0, wxALIGN_CENTER_VERTICAL);
+
+        middleGroup->AddSpacer(FromDIP(g_navItemGap));
+
+        m_pPlateCombo = new wxComboBox(this, wxID_ANY, wxEmptyString,
+                                       wxDefaultPosition, wxDefaultSize, 0, nullptr,
+                                       wxCB_READONLY);
+        m_pPlateCombo->SetBackgroundColour(g_panelBg);
+        m_pPlateCombo->SetMinSize(wxSize(-1, FromDIP(g_diskSelectorH)));
+        m_pPlateCombo->Bind(wxEVT_COMBOBOX, &PlaterPreview::onPlateComboBoxChanged, this);
+        middleGroup->Add(m_pPlateCombo, 0, wxALIGN_CENTER_VERTICAL);
+
+        navRow->Add(middleGroup, 0, wxALIGN_CENTER_VERTICAL);
+    }
+
+    navRow->AddStretchSpacer(1);
+
+    // Right arrow
+    m_pArrowRight = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                                FromDIP(wxSize(g_arrowSize, g_arrowSize)));
+    m_pArrowRight->SetMinSize(FromDIP(wxSize(g_arrowSize, g_arrowSize)));
+    m_pArrowRight->SetMaxSize(FromDIP(wxSize(g_arrowSize, g_arrowSize)));
+    m_pArrowRight->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+        wxPaintDC dc(m_pArrowRight);
+        const wxBitmap& bmp = getRightArrowBitmap(FromDIP(g_arrowSize));
+        if (bmp.IsOk()) dc.DrawBitmap(bmp, 0, 0);
+    });
+    m_pArrowRight->Bind(wxEVT_LEFT_DOWN, &PlaterPreview::onRightArrow, this);
+    navRow->Add(m_pArrowRight, 0, wxALIGN_CENTER_VERTICAL);
+
+    leftCol->Add(navRow, 0, wxEXPAND);
+
+    previewRow->Add(leftCol, 0, wxEXPAND);
+    previewRow->AddSpacer(FromDIP(g_previewGap));
+
+    // Right preview column
+    auto* rightCol = new wxBoxSizer(wxVERTICAL);
+
+    m_pLabelRight = new Label(this, "Matched Model");
+    m_pLabelRight->SetFont(getMediumFont());
+    m_pLabelRight->SetForegroundColour(g_labelTextColor);
+    rightCol->Add(m_pLabelRight, 0, wxEXPAND);
+    rightCol->AddSpacer(FromDIP(g_labelTopMargin));
+
+    m_pPreviewRight = new wxPanel(this, wxID_ANY, wxDefaultPosition,
+                                  FromDIP(wxSize(g_rightPreviewW, g_rightPreviewH)));
+    m_pPreviewRight->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    m_pPreviewRight->SetBackgroundColour(g_previewBg);
+    m_pPreviewRight->SetMinSize(FromDIP(wxSize(g_rightPreviewW, g_rightPreviewH)));
+    m_pPreviewRight->SetMaxSize(FromDIP(wxSize(g_rightPreviewW, g_rightPreviewH)));
+    m_pPreviewRight->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+        paintPreview(m_pPreviewRight, m_coverBitmap);
+    });
+    rightCol->Add(m_pPreviewRight, 0, wxEXPAND);
+
+    previewRow->Add(rightCol, 0, wxEXPAND);
+    outerSizer->Add(previewRow, 0, wxEXPAND);
+
+    // ---- Wrap with 16 DIP padding (top/left/right only, bottom = 0) ----
+    auto* padSizer = new wxBoxSizer(wxVERTICAL);
+    padSizer->Add(outerSizer, 1, wxEXPAND | wxTOP | wxLEFT | wxRIGHT, FromDIP(g_platerPadding));
+    SetSizer(padSizer);
+    SetMinSize(wxSize(FromDIP(g_platerWidth), FromDIP(g_platerHeight)));
     Layout();
 
-    updateNavButtons();
-
-    // Bind resize event for auto-scaling thumbnails
-    Bind(wxEVT_SIZE, [this](wxSizeEvent& e) {
-        e.Skip();
-        CallAfter([this]() { rescaleBitmaps(); });
-    });
+    updateNavigation();
 }
 
 void PlaterPreview::setOriginalPreview(const wxBitmap& thumbnail)
 {
     m_originalBitmap = thumbnail;
-    rescaleOriginalBitmap();
+    if (m_pPreviewLeft)
+        m_pPreviewLeft->Refresh();
 }
 
 void PlaterPreview::setCoverPreview(const wxBitmap& thumbnail)
 {
     m_coverBitmap = thumbnail;
-    rescaleCoverBitmap();
+    if (m_pPreviewRight)
+        m_pPreviewRight->Refresh();
 }
 
 void PlaterPreview::updateCoverPreview(const wxBitmap& thumbnail)
@@ -145,7 +267,7 @@ void PlaterPreview::setCurrentPlate(unsigned int plateIndex)
     if (m_pPlateCombo)
         m_pPlateCombo->SetSelection(plateIndex);
 
-    updateNavButtons();
+    updateNavigation();
 }
 
 unsigned int PlaterPreview::getCurrentPlate() const
@@ -157,174 +279,107 @@ void PlaterPreview::setTotalPlateCount(unsigned int count)
 {
     m_totalPlateCount = (count > 0) ? count : 1;
 
+    if (m_currentPlateIndex >= m_totalPlateCount)
+        m_currentPlateIndex = 0;
+
     if (m_pPlateCombo) {
         m_pPlateCombo->Clear();
         for (unsigned int i = 0; i < m_totalPlateCount; ++i)
             m_pPlateCombo->Append(wxString::Format("%02u", i + 1));
-
-        if (m_currentPlateIndex >= m_totalPlateCount)
-            m_currentPlateIndex = 0;
         m_pPlateCombo->SetSelection(m_currentPlateIndex);
     }
 
-    updateNavButtons();
+    updateNavigation();
 }
 
-void PlaterPreview::bindPlateSwitchCallback(PlateSwitchCallback cb)
+void PlaterPreview::bindPlateSwitchCallback(std::function<void(unsigned int newPlateIndex)> cb)
 {
     m_plateSwitchCallback = std::move(cb);
 }
 
-void PlaterPreview::bindCoverPreviewCallback(CoverPreviewCallback cb)
+void PlaterPreview::onLeftArrow(wxMouseEvent&)
 {
-    m_coverPreviewCallback = std::move(cb);
+    if (m_currentPlateIndex > 0)
+        navigateTo(m_currentPlateIndex - 1);
 }
 
-void PlaterPreview::onCoverPreview()
+void PlaterPreview::onRightArrow(wxMouseEvent&)
 {
-    if (m_coverPreviewCallback)
-        m_coverPreviewCallback();
+    if (m_currentPlateIndex + 1 < m_totalPlateCount)
+        navigateTo(m_currentPlateIndex + 1);
 }
 
-void PlaterPreview::onPrePage()
+void PlaterPreview::onPlateComboBoxChanged(wxCommandEvent&)
 {
-    if (m_currentPlateIndex == 0)
+    if (!m_pPlateCombo)
         return;
 
-    --m_currentPlateIndex;
-
-    if (m_pPlateCombo)
-        m_pPlateCombo->SetSelection(m_currentPlateIndex);
-
-    updateNavButtons();
-
-    if (m_plateSwitchCallback)
-        m_plateSwitchCallback(m_currentPlateIndex);
+    int sel = m_pPlateCombo->GetSelection();
+    if (sel >= 0 && sel < m_totalPlateCount)
+        navigateTo(sel);
 }
 
-void PlaterPreview::onNextPage()
-{
-    if (m_currentPlateIndex + 1 >= m_totalPlateCount)
-        return;
-
-    ++m_currentPlateIndex;
-
-    if (m_pPlateCombo)
-        m_pPlateCombo->SetSelection(m_currentPlateIndex);
-
-    updateNavButtons();
-
-    if (m_plateSwitchCallback)
-        m_plateSwitchCallback(m_currentPlateIndex);
-}
-
-void PlaterPreview::onPlateComboBoxChanged(int index)
+void PlaterPreview::navigateTo(int index)
 {
     if (index < 0 || index >= m_totalPlateCount)
         return;
 
     m_currentPlateIndex = index;
-
-    updateNavButtons();
+    updateNavigation();
 
     if (m_plateSwitchCallback)
         m_plateSwitchCallback(m_currentPlateIndex);
 }
 
-void PlaterPreview::updateNavButtons()
+void PlaterPreview::updateNavigation()
 {
-    if (m_pPrevPageBtn)
-        m_pPrevPageBtn->Enable(m_currentPlateIndex > 0);
+    m_pArrowLeft->Enable(m_currentPlateIndex > 0);
+    m_pArrowRight->Enable(m_currentPlateIndex + 1 < m_totalPlateCount);
 
-    if (m_pNextPageBtn)
-        m_pNextPageBtn->Enable(m_currentPlateIndex + 1 < m_totalPlateCount);
+    m_pArrowLeft->Refresh();
+    m_pArrowRight->Refresh();
 }
 
 void PlaterPreview::rescaleBitmaps()
 {
-    rescaleOriginalBitmap();
-    rescaleCoverBitmap();
+    if (m_pPreviewLeft)
+        m_pPreviewLeft->Refresh();
+    if (m_pPreviewRight)
+        m_pPreviewRight->Refresh();
 }
 
-void PlaterPreview::rescaleOriginalBitmap()
+void PlaterPreview::paintPreview(wxWindow* win, const wxBitmap& bmp)
 {
-    if (!m_pOriginalThumbnail || !m_originalBitmap.IsOk())
-        return;
-    if (m_isRescaling)
-        return;
+    wxAutoBufferedPaintDC dc(win);
+    wxSize sz = win->GetClientSize();
 
-    m_isRescaling = true;
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.SetBrush(wxBrush(g_panelBg));
+    dc.DrawRectangle(0, 0, sz.x, sz.y);
 
-    // GetClientSize() = inner area (excl. border); GetSize() = outer area.
-    wxSize outerSize = m_pOriginalThumbnail->GetSize();
-    wxSize availSize = m_pOriginalThumbnail->GetClientSize();
-    if (availSize.GetWidth() < g_minClientSize || availSize.GetHeight() < g_minClientSize) {
-        m_isRescaling = false;
-        return;
+    wxGCDC gdc(dc);
+
+    gdc.SetPen(*wxTRANSPARENT_PEN);
+    gdc.SetBrush(wxBrush(g_previewBg));
+    gdc.DrawRoundedRectangle(0, 0, sz.x, sz.y, FromDIP(g_previewRadius));
+
+    if (bmp.IsOk()) {
+        int insetW = sz.x - g_rescaleInsetMargin;
+        int insetH = sz.y - g_rescaleInsetMargin;
+        if (insetW >= g_minClientSize && insetH >= g_minClientSize) {
+            wxImage img = bmp.ConvertToImage();
+            wxSize imgSz = img.GetSize();
+            if (imgSz.GetWidth() > 0 && imgSz.GetHeight() > 0) {
+                double scale = std::min(
+                    static_cast<double>(insetW) / imgSz.GetWidth(),
+                    static_cast<double>(insetH) / imgSz.GetHeight());
+                int newW = std::max(1, static_cast<int>(imgSz.GetWidth() * scale));
+                int newH = std::max(1, static_cast<int>(imgSz.GetHeight() * scale));
+                img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
+                dc.DrawBitmap(wxBitmap(img), (sz.x - newW) / 2, (sz.y - newH) / 2);
+            }
+        }
     }
-
-    wxImage img = m_originalBitmap.ConvertToImage();
-    wxSize  imgSize = img.GetSize();
-    if (imgSize.GetWidth() <= 0 || imgSize.GetHeight() <= 0) {
-        m_isRescaling = false;
-        return;
-    }
-
-    // Maintain aspect ratio, fit within available area with an inset margin
-    double scaleX = static_cast<double>(availSize.GetWidth() - g_rescaleInsetMargin)
-                  / imgSize.GetWidth();
-    double scaleY = static_cast<double>(availSize.GetHeight() - g_rescaleInsetMargin)
-                  / imgSize.GetHeight();
-    double scale  = std::min(scaleX, scaleY);
-
-    int newW = std::max(1, static_cast<int>(imgSize.GetWidth() * scale));
-    int newH = std::max(1, static_cast<int>(imgSize.GetHeight() * scale));
-
-    img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
-    m_pOriginalThumbnail->SetBitmap(wxBitmap(img));
-    m_pOriginalThumbnail->SetSize(outerSize);
-
-    m_isRescaling = false;
-}
-
-void PlaterPreview::rescaleCoverBitmap()
-{
-    if (!m_pCoverThumbnail || !m_coverBitmap.IsOk())
-        return;
-    if (m_isRescaling)
-        return;
-
-    m_isRescaling = true;
-
-    wxSize outerSize = m_pCoverThumbnail->GetSize();
-    wxSize availSize = m_pCoverThumbnail->GetClientSize();
-    if (availSize.GetWidth() < g_minClientSize || availSize.GetHeight() < g_minClientSize) {
-        m_isRescaling = false;
-        return;
-    }
-
-    wxImage img = m_coverBitmap.ConvertToImage();
-    wxSize  imgSize = img.GetSize();
-    if (imgSize.GetWidth() <= 0 || imgSize.GetHeight() <= 0) {
-        m_isRescaling = false;
-        return;
-    }
-
-    // Maintain aspect ratio, fit within available area with an inset margin
-    double scaleX = static_cast<double>(availSize.GetWidth() - g_rescaleInsetMargin)
-                  / imgSize.GetWidth();
-    double scaleY = static_cast<double>(availSize.GetHeight() - g_rescaleInsetMargin)
-                  / imgSize.GetHeight();
-    double scale  = std::min(scaleX, scaleY);
-
-    int newW = std::max(1, static_cast<int>(imgSize.GetWidth() * scale));
-    int newH = std::max(1, static_cast<int>(imgSize.GetHeight() * scale));
-
-    img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
-    m_pCoverThumbnail->SetBitmap(wxBitmap(img));
-    m_pCoverThumbnail->SetSize(outerSize);
-
-    m_isRescaling = false;
 }
 
 } // namespace GUI

@@ -14,6 +14,7 @@ struct FilamentData
     // 0-based index from the filament list; used for matching with machine filaments
     unsigned int m_index   = 0;
     std::string  m_name;
+    std::string  m_type;
     uint8_t      m_color_r = 0;
     uint8_t      m_color_g = 0;
     uint8_t      m_color_b = 0;

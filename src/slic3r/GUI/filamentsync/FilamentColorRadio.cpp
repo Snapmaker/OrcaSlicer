@@ -99,7 +99,7 @@ FilamentColorRadio::FilamentColorRadio(wxWindow* parent, const FilamentData& dat
                    FromDIP(g_circleTopMargin));
 
     // ---- Name label ----
-    m_pNameLabel = new wxStaticText(this, wxID_ANY, m_machineData.m_name,
+    m_pNameLabel = new wxStaticText(this, wxID_ANY, m_machineData.m_type,
                                      wxDefaultPosition, wxDefaultSize,
                                      wxALIGN_CENTRE_HORIZONTAL);
     m_pNameLabel->Wrap(FromDIP(g_nameLabelWrapWidth));
@@ -153,7 +153,7 @@ void FilamentColorRadio::updateData(const FilamentData& data)
         cp->setColor(c);
     }
     if (m_pNameLabel)
-        m_pNameLabel->SetLabel(m_machineData.m_name);
+        m_pNameLabel->SetLabel(m_machineData.m_type);
     if (m_pRadioCircle) {
         auto* cp = static_cast<CirclePanel*>(m_pRadioCircle);
         cp->setColor(c);

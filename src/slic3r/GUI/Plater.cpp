@@ -362,8 +362,17 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
         Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
         if (preset) {
             fd.m_name = preset->label(false);
+            const auto* type_opt = preset->config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && !type_opt->values.empty())
+                fd.m_type = type_opt->values[0];
         } else {
             fd.m_name = extract_base_filament_name(filament_presets[i]);
+        }
+
+        if (fd.m_type.empty()) {
+            const auto* type_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && i < type_opt->values.size())
+                fd.m_type = type_opt->values[i];
         }
 
         if (i < colors.size()) {
@@ -388,6 +397,7 @@ void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<Filame
         FilamentData fd;
         fd.m_index = info.index;
         fd.m_name  = info.filament_info;
+        fd.m_type  = info.filament_type;
 
         if (!info.color_info.empty()) {
             unsigned char rgba[4] = {0, 0, 0, 255};

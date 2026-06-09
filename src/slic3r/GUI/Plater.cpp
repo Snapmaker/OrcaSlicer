@@ -185,6 +185,10 @@
 #include "StepMeshDialog.hpp"
 #include "CloneDialog.hpp"
 #include "WebPreprintDialog.hpp"
+#ifdef HAS_FLUTTER
+#include "FlutterPreprintDialog.hpp"
+#include "Flutter/FlutterPanel.hpp"
+#endif
 
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include <chrono>
@@ -19481,6 +19485,20 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         upload_job.upload_data.storage     = dlg.storage();
 
 
+#ifdef HAS_FLUTTER
+        FlutterPanel* flt_panel = wxGetApp().mainframe->m_flutter_panel;
+        if (flt_panel && flt_panel->GetHandle()) {
+            auto dialog = std::make_unique<FlutterPreprintDialog>(flt_panel);
+            dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
+            dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+            dialog->run();
+
+            if (dialog->m_print_confirmed && dlg.switch_to_device_tab()) {
+                wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
+            }
+            return;
+        }
+#endif
         WebPreprintDialog* dialog = new WebPreprintDialog();
         dialog->set_swtich_to_device(dlg.switch_to_device_tab());
         dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);

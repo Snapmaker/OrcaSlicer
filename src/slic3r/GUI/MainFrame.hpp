@@ -217,7 +217,6 @@ public:
         tpCalibration   = 6,
         tpAuxiliary     = 7,
         toDebugTool     = 8,
-        tpFlutterTest   = 9,
     };
 
     //BBS: add slice&&print status update logic
@@ -381,9 +380,11 @@ public:
     CalibrationPanel*     m_calibration{ nullptr };
     WebViewPanel*         m_webview { nullptr };
     PrinterWebView*       m_printer_view{nullptr};
-    // Flutter test
-    FlutterPanel*          m_flutter_test_panel{nullptr};
-    FlutterEngineHost*     m_flutter_engine{nullptr};
+    // Flutter panel — shown in place of notebook on Home/Device tabs
+    FlutterPanel*          m_flutter_panel{nullptr};
+    std::unique_ptr<FlutterEngineHost> m_flutter_engine;
+    wxDialog*              m_active_flt_dialog{nullptr};
+    void setFlutterPanelShown(bool show);
     wxLogWindow*          m_log_window { nullptr };
     // BBS
     //wxBookCtrlBase*       m_tabpanel { nullptr };

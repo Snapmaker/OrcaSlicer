@@ -537,6 +537,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/WebDeviceDialog.hpp
     GUI/WebPreprintDialog.hpp
     GUI/WebPreprintDialog.cpp
+    GUI/FlutterPreprintDialog.hpp
+    GUI/FlutterPreprintDialog.cpp
     GUI/WebUrlDialog.cpp
     GUI/WebUrlDialog.hpp
     pchheader.cpp

@@ -64,9 +64,9 @@ static void ensure_filament_color_fields_aligned(DynamicPrintConfig &config)
         return;
 
     const size_t target_count = filament_color->values.size();
-    auto *multi_colors = config.option<ConfigOptionStrings>("filament_multi_colors", true);
-    auto *modes        = config.option<ConfigOptionInts>("filament_colour_mode", true);
-    auto *skus         = config.option<ConfigOptionStrings>("filament_colour_sku", true);
+    ConfigOptionStrings *multi_colors = config.option<ConfigOptionStrings>("filament_multi_colors", true);
+    ConfigOptionInts *modes = config.option<ConfigOptionInts>("filament_colour_mode", true);
+    ConfigOptionStrings *skus = config.option<ConfigOptionStrings>("filament_colour_sku", true);
 
     const size_t old_multi_count = multi_colors->values.size();
     multi_colors->resize(target_count);
@@ -78,25 +78,32 @@ static void ensure_filament_color_fields_aligned(DynamicPrintConfig &config)
             modes->values[i] = 0;
         const bool has_sku = !skus->values[i].empty();
         const bool single_or_empty_multi = multi_colors->values[i].empty() || multi_colors->values[i].find('|') == std::string::npos;
-        if (i >= old_multi_count || multi_colors->values[i].empty() || (!has_sku && modes->values[i] == 0 && single_or_empty_multi))
+        const bool should_refresh_multi = i >= old_multi_count || multi_colors->values[i].empty() ||
+                                            (!has_sku && modes->values[i] == 0 && single_or_empty_multi);
+        if (should_refresh_multi)
             multi_colors->values[i] = filament_color->values[i];
     }
 }
 
-static void erase_filament_color_fields(DynamicPrintConfig &config, size_t index)
+static void EraseStringOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
 {
-    auto erase_string_at = [index](ConfigOptionStrings *opt) {
-        if (opt != nullptr && opt->values.size() > index)
-            opt->values.erase(opt->values.begin() + index);
-    };
-    auto erase_int_at = [index](ConfigOptionInts *opt) {
-        if (opt != nullptr && opt->values.size() > index)
-            opt->values.erase(opt->values.begin() + index);
-    };
+    ConfigOptionStrings *option = config.option<ConfigOptionStrings>(key, true);
+    if (option != nullptr && option->values.size() > index)
+        option->values.erase(option->values.begin() + index);
+}
 
-    erase_string_at(config.option<ConfigOptionStrings>("filament_multi_colors", true));
-    erase_int_at(config.option<ConfigOptionInts>("filament_colour_mode", true));
-    erase_string_at(config.option<ConfigOptionStrings>("filament_colour_sku", true));
+static void EraseIntOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+{
+    ConfigOptionInts *option = config.option<ConfigOptionInts>(key, true);
+    if (option != nullptr && option->values.size() > index)
+        option->values.erase(option->values.begin() + index);
+}
+
+static void EraseFilamentColorFields(DynamicPrintConfig &config, size_t index)
+{
+    EraseStringOptionAt(config, "filament_multi_colors", index);
+    EraseIntOptionAt(config, "filament_colour_mode", index);
+    EraseStringOptionAt(config, "filament_colour_sku", index);
     ensure_filament_color_fields_aligned(config);
 }
 
@@ -2042,7 +2049,7 @@ void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
         ams_multi_color_filment.resize(to_del_filament_id);
     }
 
-    erase_filament_color_fields(project_config, to_del_filament_id);
+    EraseFilamentColorFields(project_config, to_del_filament_id);
     update_multi_material_filament_presets(to_del_filament_id, old_filament_count);
 }
 
@@ -2109,7 +2116,7 @@ unsigned int PresetBundle::sync_ams_list(unsigned int &unknowns)
         auto filament_id = ams.opt_string("filament_id", 0u);
         auto filament_color = ams.opt_string("filament_colour", 0u);
         auto filament_changed = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
-        auto filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colors")->values;
+        std::vector<std::string> filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colors")->values;
         if (filament_id.empty()) continue;
         if (!filament_changed && this->filament_presets.size() > filament_presets.size()) {
             filament_presets.push_back(this->filament_presets[filament_presets.size()]);

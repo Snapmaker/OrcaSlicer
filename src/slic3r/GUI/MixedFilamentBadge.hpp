@@ -29,20 +29,17 @@ struct ColorBlockParams
     int height = 20;
 };
 
-// Linear interpolation across an ordered list of colours (0.0 → colors[0], 1.0 → colors.back()).
+// Linear interpolation across an ordered list of colours.
 wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 
 // Cached colour-block bitmap. The static BitmapCache lives inside the implementation.
-// Key format:  "solid:#RRGGBB:hH:wW:label"  or  "grad:#RRGGBB:#RRGGBBBT:hH:wW:label"
 wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
 
 class MixedFilamentBadge : public wxPanel
 {
 public:
-    MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id,
-                       const MixedFilament& mf,
-                       const MixedFilamentDisplayContext& display_context,
-                       bool show_number = true, int badge_size = 20);
+    MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id, const MixedFilament& mf,
+                       const MixedFilamentDisplayContext& display_context, bool show_number = true, int badge_size = 20);
 
 private:
     bool m_show_number = true;
@@ -55,10 +52,8 @@ private:
 
 // Create a menu/dropdown bitmap for a mixed filament.
 // Matches MixedFilamentBadge drawing style (font, border, gradient direction).
-// Returns a pointer into a static BitmapCache — caller must NOT delete it.
-wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament&               mf,
-                                            const MixedFilamentDisplayContext& ctx,
-                                            int  width, int  height,
-                                            const wxString& label);
+// Returns a pointer into a static BitmapCache - caller must not delete it.
+wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament& mf, const MixedFilamentDisplayContext& ctx,
+                                            int width, int height, const wxString& label);
 
 }} // namespace Slic3r::GUI

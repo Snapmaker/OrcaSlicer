@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <algorithm>
+#include <unordered_map>
 #include <vector>
 #include <string>
 #include <boost/algorithm/string.hpp>
@@ -32,7 +33,7 @@
 #include "GUI_App.hpp"
 #include "FilamentColorUtils.hpp"
 #include "NotificationManager.hpp"
-#include "OfficialFilamentColorDialog.hpp"
+#include "FilamentColorDialog.hpp"
 #include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
@@ -61,9 +62,10 @@ namespace GUI {
 
 #define BORDER_W 10
 
-namespace {
+namespace
+{
 
-std::string config_string_at(const DynamicPrintConfig& config, const std::string& key, int index)
+std::string ConfigStringAt(const DynamicPrintConfig& config, const std::string& key, int index)
 {
     if (index < 0 || !config.has(key))
         return {};
@@ -73,7 +75,7 @@ std::string config_string_at(const DynamicPrintConfig& config, const std::string
     return option != nullptr && option->values.size() > value_index ? option->values[value_index] : std::string();
 }
 
-int config_int_at(const DynamicPrintConfig& config, const std::string& key, int index)
+int ConfigIntAt(const DynamicPrintConfig& config, const std::string& key, int index)
 {
     if (index < 0 || !config.has(key))
         return 0;
@@ -83,42 +85,82 @@ int config_int_at(const DynamicPrintConfig& config, const std::string& key, int 
     return option != nullptr && option->values.size() > value_index ? option->values[value_index] : 0;
 }
 
-ConfigOptionStrings* clone_string_option(const DynamicPrintConfig& config, const std::string& key)
+ConfigOptionStrings* CloneStringOption(const DynamicPrintConfig& config, const std::string& key)
 {
     const ConfigOptionStrings* option = config.option<ConfigOptionStrings>(key);
     return option != nullptr ? static_cast<ConfigOptionStrings*>(option->clone()) : new ConfigOptionStrings{};
 }
 
-ConfigOptionInts* clone_int_option(const DynamicPrintConfig& config, const std::string& key)
+ConfigOptionInts* CloneIntOption(const DynamicPrintConfig& config, const std::string& key)
 {
     const ConfigOptionInts* option = config.option<ConfigOptionInts>(key);
     return option != nullptr ? static_cast<ConfigOptionInts*>(option->clone()) : new ConfigOptionInts{};
 }
 
-void resize_strings(ConfigOptionStrings* option, size_t size)
+void ResizeStrings(ConfigOptionStrings* option, size_t size)
 {
     if (option != nullptr && option->values.size() < size)
         option->values.resize(size);
 }
 
-void resize_ints(ConfigOptionInts* option, size_t size)
+void ResizeInts(ConfigOptionInts* option, size_t size)
 {
     if (option != nullptr && option->values.size() < size)
         option->values.resize(size);
 }
 
-std::string sku_matching_primary_color(const OfficialFilamentMaterial& material, const std::string& primary_color)
+std::string FilamentBaseName(std::string name)
 {
-    const std::string normalized_primary = FilamentColorUtils::normalize_hex_color(primary_color);
-    if (normalized_primary.empty())
+    name = Preset::remove_suffix_modified(name);
+    boost::algorithm::trim(name);
+
+    const size_t suffix_pos = name.find('@');
+    if (suffix_pos != std::string::npos)
+        name = name.substr(0, suffix_pos);
+
+    boost::algorithm::trim(name);
+    return name;
+}
+
+bool IsSnapmakerFilamentName(const std::string& name)
+{
+    return boost::algorithm::istarts_with(name, "Snapmaker");
+}
+
+std::string CurrentSkuForMaterial(const FilamentMaterial& material, const std::string& current_sku)
+{
+    if (current_sku.empty())
         return {};
 
-    for (const OfficialFilamentColor& color : material.colors) {
-        if (FilamentColorUtils::normalize_hex_color(color.primary_color) == normalized_primary)
-            return color.sku;
-    }
+    std::vector<FilamentColor>::const_iterator color_it = std::find_if(material.colors.begin(), material.colors.end(),
+                                                        [&current_sku](const FilamentColor& color)
+                                                        {
+                                                            return color.sku == current_sku;
+                                                        });
+    return color_it != material.colors.end() ? current_sku : std::string();
+}
 
-    return {};
+wxSize FilamentColorPickerBitmapSize(wxButton* picker)
+{
+    wxSize size = picker != nullptr ? picker->GetSize() : wxSize();
+    if (size.GetWidth() <= 0 || size.GetHeight() <= 0)
+        size = picker != nullptr ? picker->GetClientSize() : wxSize();
+    if (size.GetWidth() <= 0 || size.GetHeight() <= 0)
+        size = wxSize(20, 20);
+
+    return size;
+}
+
+wxBitmap* GetFilamentColorPickerBitmap(const DynamicPrintConfig& config,
+                                       int filament_idx,
+                                       const std::string& fallback_color,
+                                       const wxSize& size)
+{
+    const std::string multi_colors = ConfigStringAt(config, "filament_multi_colors", filament_idx);
+    const int mode = ConfigIntAt(config, "filament_colour_mode", filament_idx);
+    const std::string label = filament_idx >= 0 ? std::to_string(filament_idx + 1) : std::string();
+    return FilamentColorUtils::GetFilamentColorIcon(multi_colors, mode, fallback_color, label,
+                                                    std::max(1, size.GetWidth()), std::max(1, size.GetHeight()));
 }
 
 } // namespace
@@ -810,7 +852,7 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
 
             // BBS
             // Swallow the mouse click and open the color picker.
-            //change_extruder_color();
+            //ChangeExtruderColor();
         });
 #endif
     }
@@ -818,9 +860,10 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
     // BBS
     if (m_type == Preset::TYPE_FILAMENT) {
         clr_picker = new wxBitmapButton(parent, wxID_ANY, {}, wxDefaultPosition, wxSize(FromDIP(20), FromDIP(20)), wxBU_EXACTFIT | wxBU_AUTODRAW | wxBORDER_NONE);
+        clr_picker->SetBitmapMargins(0, 0);
         clr_picker->SetToolTip(_L("Click to select filament color"));
         clr_picker->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            change_extruder_color();
+            ChangeExtruderColor();
         });
     }
     else {
@@ -952,65 +995,60 @@ bool PlaterPresetComboBox::switch_to_tab()
     return true;
 }
 
-void PlaterPresetComboBox::change_extruder_color()
+void PlaterPresetComboBox::ChangeExtruderColor()
 {
     if (m_filament_idx < 0 || wxGetApp().preset_bundle == nullptr)
         return;
 
-    DynamicPrintConfig& config = wxGetApp().preset_bundle->project_config;
-    const std::string current_color = config_string_at(config, "filament_colour", m_filament_idx);
-    const std::string current_multi_colors = config_string_at(config, "filament_multi_colors", m_filament_idx);
-    const std::string current_sku = config_string_at(config, "filament_colour_sku", m_filament_idx);
-    const int current_mode = config_int_at(config, "filament_colour_mode", m_filament_idx);
-
-    OfficialFilamentColorLibrary& library = OfficialFilamentColorLibrary::instance();
-    OfficialFilamentMaterial material;
-    std::string selected_sku;
-
-    if (library.ensure_loaded()) {
-        OfficialFilamentColor official_color;
-        if (!current_sku.empty() && library.find_color_by_sku(current_sku, material, official_color)) {
-            selected_sku = official_color.sku;
-        } else if (current_sku.empty()) {
-            const std::string material_key = current_filament_material_key();
-            if (!material_key.empty() && library.find_material_by_key(material_key, material)) {
-                selected_sku = sku_matching_primary_color(material, current_color);
-                if (selected_sku.empty()) {
-                    select_legacy_filament_color();
-                    return;
-                }
-            }
-        }
-
-        if (!material.material_key.empty()) {
-            OfficialFilamentColorDialog dialog(this,
-                material,
-                selected_sku,
-                current_multi_colors,
-                current_mode,
-                current_color);
-
-            if (dialog.ShowModal() == wxID_OK) {
-                const OfficialFilamentColorSelection& selection = dialog.selection();
-                apply_filament_color(selection.primary_color,
-                    selection.colors,
-                    selection.mode,
-                    selection.is_custom ? std::string() : selection.sku);
-            }
-            return;
-        }
+    const std::string filament_display_name = CurrentFilamentDisplayName();
+    if (!IsSnapmakerFilamentName(FilamentBaseName(filament_display_name)))
+    {
+        SelectLegacyFilamentColor();
+        return;
     }
 
-    select_legacy_filament_color();
+    DynamicPrintConfig& config = wxGetApp().preset_bundle->project_config;
+    const std::string current_color = ConfigStringAt(config, "filament_colour", m_filament_idx);
+    const std::string current_multi_colors = ConfigStringAt(config, "filament_multi_colors", m_filament_idx);
+    const std::string current_sku = ConfigStringAt(config, "filament_colour_sku", m_filament_idx);
+    const int current_mode = ConfigIntAt(config, "filament_colour_mode", m_filament_idx);
+
+    FilamentColorLibrary& library = FilamentColorLibrary::Instance();
+    FilamentMaterial material;
+    const std::string filament_id = CurrentFilamentId();
+    const bool found_material = library.EnsureLoaded() &&
+        ((!filament_id.empty() && library.FindFilamentById(filament_id, material)) ||
+         (!filament_display_name.empty() && library.FindFilamentByName(filament_display_name, material)));
+
+    if (found_material && !material.colors.empty())
+    {
+        FilamentColorDialogContext dialog_context;
+        dialog_context.currentSku = CurrentSkuForMaterial(material, current_sku);
+        dialog_context.currentMultiColors = current_multi_colors;
+        dialog_context.currentMode = current_mode;
+        dialog_context.fallbackColor = current_color;
+
+        FilamentColorDialog dialog(this, material, dialog_context);
+
+        if (dialog.ShowModal() == wxID_OK)
+        {
+            const FilamentColorSelection& selection = dialog.Selection();
+            ApplyFilamentColor(selection.primaryColor, selection.colors, selection.mode,
+                                selection.isCustom ? std::string() : selection.sku);
+        }
+        return;
+    }
+
+    SelectLegacyFilamentColor();
 }
 
-void PlaterPresetComboBox::select_legacy_filament_color()
+void PlaterPresetComboBox::SelectLegacyFilamentColor()
 {
     if (m_filament_idx < 0 || wxGetApp().preset_bundle == nullptr)
         return;
 
     DynamicPrintConfig& config = wxGetApp().preset_bundle->project_config;
-    wxColour current_color(config_string_at(config, "filament_colour", m_filament_idx));
+    wxColour current_color(ConfigStringAt(config, "filament_colour", m_filament_idx));
     if (!current_color.IsOk())
         current_color = wxColour(0, 0, 0);
 
@@ -1040,10 +1078,10 @@ void PlaterPresetComboBox::select_legacy_filament_color()
         wxGetApp().app_config->save_custom_color_to_config(custom_colors);
 
     const std::string selected_color = m_clrData.GetColour().GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
-    apply_filament_color(selected_color, { selected_color }, 0, "");
+    ApplyFilamentColor(selected_color, { selected_color }, 0, "");
 }
 
-void PlaterPresetComboBox::apply_filament_color(const std::string& primary_color,
+void PlaterPresetComboBox::ApplyFilamentColor(const std::string& primary_color,
                                                 const std::vector<std::string>& colors,
                                                 int mode,
                                                 const std::string& sku)
@@ -1057,38 +1095,40 @@ void PlaterPresetComboBox::apply_filament_color(const std::string& primary_color
 
     std::vector<std::string> normalized_colors;
     normalized_colors.reserve(colors.size());
-    for (const std::string& color : colors) {
-        const std::string normalized = FilamentColorUtils::normalize_hex_color(color);
+    for (const std::string& color : colors)
+    {
+        const std::string normalized = FilamentColorUtils::NormalizeHexColor(color);
         if (!normalized.empty())
             normalized_colors.emplace_back(normalized);
     }
 
-    std::string normalized_primary = FilamentColorUtils::normalize_hex_color(primary_color);
+    std::string normalized_primary = FilamentColorUtils::NormalizeHexColor(primary_color);
     if (normalized_primary.empty())
-        normalized_primary = FilamentColorUtils::get_primary_color(normalized_colors, "#FFFFFF");
+        normalized_primary = FilamentColorUtils::GetPrimaryColor(normalized_colors, "#FFFFFF");
     if (normalized_colors.empty())
         normalized_colors.emplace_back(normalized_primary);
 
-    const int normalized_mode = normalized_colors.size() > 1 ? FilamentColorUtils::normalize_colour_mode(mode) : 0;
-    const std::string multi_colors = FilamentColorUtils::join_multi_colors(normalized_colors);
+    const int normalized_mode = normalized_colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(mode) : 0;
+    const std::string multi_colors = FilamentColorUtils::JoinMultiColors(normalized_colors);
 
-    auto* filament_colors = clone_string_option(*config, "filament_colour");
-    auto* filament_multi_colors = clone_string_option(*config, "filament_multi_colors");
-    auto* filament_colour_modes = clone_int_option(*config, "filament_colour_mode");
-    auto* filament_colour_skus = clone_string_option(*config, "filament_colour_sku");
+    ConfigOptionStrings* filament_colors = CloneStringOption(*config, "filament_colour");
+    ConfigOptionStrings* filament_multi_colors = CloneStringOption(*config, "filament_multi_colors");
+    ConfigOptionInts* filament_colour_modes = CloneIntOption(*config, "filament_colour_mode");
+    ConfigOptionStrings* filament_colour_skus = CloneStringOption(*config, "filament_colour_sku");
 
-    resize_strings(filament_colors, target_size);
-    resize_strings(filament_multi_colors, target_size);
-    resize_ints(filament_colour_modes, target_size);
-    resize_strings(filament_colour_skus, target_size);
+    ResizeStrings(filament_colors, target_size);
+    ResizeStrings(filament_multi_colors, target_size);
+    ResizeInts(filament_colour_modes, target_size);
+    ResizeStrings(filament_colour_skus, target_size);
 
     filament_colors->values[index] = normalized_primary;
     filament_multi_colors->values[index] = multi_colors;
     filament_colour_modes->values[index] = normalized_mode;
     filament_colour_skus->values[index] = sku;
 
-    if (wxGetApp().app_config != nullptr) {
-        auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+    if (wxGetApp().app_config != nullptr)
+    {
+        std::unordered_map<int, int>& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
         if (filament_extruder_map.count(m_filament_idx))
             filament_extruder_map.erase(m_filament_idx);
     }
@@ -1111,7 +1151,22 @@ void PlaterPresetComboBox::apply_filament_color(const std::string& primary_color
     wxQueueEvent(wxGetApp().plater(), event);
 }
 
-std::string PlaterPresetComboBox::current_filament_material_key() const
+std::string PlaterPresetComboBox::CurrentFilamentDisplayName() const
+{
+    if (GetSelection() != wxNOT_FOUND)
+        return Preset::remove_suffix_modified(GetString(GetSelection()).ToUTF8().data());
+
+    if (m_preset_bundle == nullptr || m_filament_idx < 0)
+        return {};
+
+    const size_t index = static_cast<size_t>(m_filament_idx);
+    if (m_preset_bundle->filament_presets.size() <= index)
+        return {};
+
+    return Preset::remove_suffix_modified(m_preset_bundle->filament_presets[index]);
+}
+
+std::string PlaterPresetComboBox::CurrentFilamentId() const
 {
     if (m_preset_bundle == nullptr || m_collection == nullptr || m_filament_idx < 0)
         return {};
@@ -1121,8 +1176,8 @@ std::string PlaterPresetComboBox::current_filament_material_key() const
         return {};
 
     const std::string& preset_name = m_preset_bundle->filament_presets[index];
-    const Preset* preset = m_collection->find_preset(preset_name);
-    return Preset::remove_suffix_modified(preset != nullptr ? preset->name : preset_name);
+    const Preset* preset = m_collection->find_preset(preset_name, false, true);
+    return preset != nullptr ? preset->filament_id : std::string();
 }
 
 void PlaterPresetComboBox::show_add_menu()
@@ -1148,7 +1203,7 @@ void PlaterPresetComboBox::show_edit_menu()
     // To edit extruder color from the sidebar
     if (m_type == Preset::TYPE_FILAMENT) {
         append_menu_item(menu, wxID_ANY, _devL("Change extruder color"), "",
-            [this](wxCommandEvent&) { this->change_extruder_color(); }, "blank_14", menu, []() { return true; }, wxGetApp().plater());
+            [this](wxCommandEvent&) { this->ChangeExtruderColor(); }, "blank_14", menu, []() { return true; }, wxGetApp().plater());
         wxGetApp().plater()->PopupMenu(menu);
         return;
     }
@@ -1188,8 +1243,14 @@ void PlaterPresetComboBox::update()
         //unsigned char rgb[3];
         filament_color = m_preset_bundle->project_config.opt_string("filament_colour", (unsigned int) m_filament_idx);
         wxColor clr(filament_color);
+        const int picker_size = std::max(1, 20 * m_em_unit / 10);
+        clr_picker->SetMinSize(wxSize(picker_size, picker_size));
+        clr_picker->SetSize(picker_size, picker_size);
         clr_picker->SetBackgroundColour(clr);
-        clr_picker->SetBitmap(*get_extruder_color_icons(true)[m_filament_idx]);
+        wxBitmap* color_bitmap = GetFilamentColorPickerBitmap(m_preset_bundle->project_config, m_filament_idx,
+                                                             filament_color, FilamentColorPickerBitmapSize(clr_picker));
+        if (color_bitmap != nullptr)
+            clr_picker->SetBitmap(*color_bitmap);
 #ifdef __WXOSX__
         clr_picker->SetLabel(clr_picker->GetLabel()); // Let setBezelStyle: be called
         clr_picker->Refresh();

@@ -566,12 +566,7 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
                 multi_color_option->values[color_idx] : std::string();
             const int mode = mode_option != nullptr && mode_option->values.size() > color_idx ?
                 mode_option->values[color_idx] : 0;
-            bmps.push_back(Slic3r::GUI::FilamentColorUtils::get_filament_color_icon(multi_colors,
-                mode,
-                color,
-                label,
-                icon_width,
-                icon_height));
+            bmps.push_back(Slic3r::GUI::FilamentColorUtils::GetFilamentColorIcon(multi_colors, mode, color, label, icon_width, icon_height));
             continue;
         }
 

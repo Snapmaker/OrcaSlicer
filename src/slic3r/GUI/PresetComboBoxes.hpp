@@ -176,7 +176,7 @@ public:
     wxColor get_color() { return m_color; }
 
     bool switch_to_tab();
-    void change_extruder_color();
+    void ChangeExtruderColor();
     void show_add_menu();
     void show_edit_menu();
 
@@ -251,12 +251,13 @@ private:
     wxRect get_edit_btn_rect() const;
     wxRect get_dropdown_rect() const;
 
-    void select_legacy_filament_color();
-    void apply_filament_color(const std::string& primary_color,
-                              const std::vector<std::string>& colors,
-                              int mode,
-                              const std::string& sku);
-    std::string current_filament_material_key() const;
+    void SelectLegacyFilamentColor();
+    void ApplyFilamentColor(const std::string& primary_color,
+                            const std::vector<std::string>& colors,
+                            int mode,
+                            const std::string& sku);
+    std::string CurrentFilamentDisplayName() const;
+    std::string CurrentFilamentId() const;
 };
 
 

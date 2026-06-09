@@ -31,6 +31,7 @@
 #include "NotificationManager.hpp"
 #include "format.hpp"
 #include "DailyTips.hpp"
+#include "FilamentColorUtils.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -113,7 +114,7 @@ float RetinaHelper::get_scale_factor() { return float(m_window->GetContentScaleF
 #undef Convex
 #endif
 
-static std::vector<unsigned int> get_ui_ordered_filament_ids(Plater *plater, size_t total_filaments)
+static std::vector<unsigned int> GetUiOrderedFilamentIds(Plater *plater, size_t total_filaments)
 {
     std::vector<unsigned int> ordered_ids;
     if (plater != nullptr)
@@ -3332,7 +3333,7 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
                 const int display_filament_id = keyCode - '0';
                 const size_t total_filaments = wxGetApp().plater()->get_extruder_colors_from_plater_config().size();
                 const std::vector<unsigned int> ordered_filament_ids =
-                    get_ui_ordered_filament_ids(wxGetApp().plater(), total_filaments);
+                    GetUiOrderedFilamentIds(wxGetApp().plater(), total_filaments);
                 if (display_filament_id >= 1 && size_t(display_filament_id) <= ordered_filament_ids.size())
                     obj_list->set_extruder_for_selected_items(int(ordered_filament_ids[size_t(display_filament_id - 1)]));
                 else
@@ -3881,7 +3882,7 @@ void GLCanvas3D::on_set_color_timer(wxTimerEvent& evt)
     auto obj_list = wxGetApp().obj_list();
     if (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation) {
         const std::vector<unsigned int> ordered_filament_ids =
-            get_ui_ordered_filament_ids(wxGetApp().plater(), wxGetApp().plater()->get_extruder_colors_from_plater_config().size());
+            GetUiOrderedFilamentIds(wxGetApp().plater(), wxGetApp().plater()->get_extruder_colors_from_plater_config().size());
         obj_list->set_extruder_for_selected_items(ordered_filament_ids.empty() ? 1 : int(ordered_filament_ids.front()));
     }
     m_timer_set_color.Stop();
@@ -8391,12 +8392,27 @@ void GLCanvas3D::_render_paint_toolbar() const
 
     const std::vector<std::string> actual_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config();
     const std::vector<unsigned int> display_filament_ids =
-        get_ui_ordered_filament_ids(wxGetApp().plater(), actual_colors.size());
+        GetUiOrderedFilamentIds(wxGetApp().plater(), actual_colors.size());
+    const std::vector<std::string> physical_colors =
+        wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
+    const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr
+        ? &wxGetApp().preset_bundle->project_config
+        : nullptr;
     std::vector<std::string> colors;
+    std::vector<FilamentColorUtils::FilamentColorDisplay> toolbar_colors;
     colors.reserve(display_filament_ids.size());
-    for (const unsigned int filament_id : display_filament_ids) {
+    toolbar_colors.reserve(display_filament_ids.size());
+    for (const unsigned int filament_id : display_filament_ids)
+    {
         if (filament_id >= 1 && filament_id <= actual_colors.size())
-            colors.emplace_back(actual_colors[filament_id - 1]);
+        {
+            const size_t color_index = size_t(filament_id - 1);
+            const DynamicPrintConfig* color_config = filament_id <= physical_colors.size() ? project_config : nullptr;
+            FilamentColorUtils::FilamentColorDisplay toolbar_color =
+                FilamentColorUtils::GetFilamentColorDisplay(color_config, color_index, actual_colors[color_index]);
+            colors.emplace_back(toolbar_color.primaryColor);
+            toolbar_colors.emplace_back(toolbar_color);
+        }
     }
 
     const int extruder_num = int(colors.size());
@@ -8482,6 +8498,8 @@ void GLCanvas3D::_render_paint_toolbar() const
                 wxPostEvent(m_canvas, IntEvent(EVT_GLTOOLBAR_FILLCOLOR, actual_filament_id));
             }
         }
+        if (i < int(toolbar_colors.size()))
+            FilamentColorUtils::DrawImGuiFilamentColorBlock(draw_list, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), toolbar_colors[size_t(i)]);
         if (ImGui::IsItemHovered() && i < 9) {
             if (!ImGui::IsMouseHoveringRect(left_arrow_button.Min, left_arrow_button.Max) && !ImGui::IsMouseHoveringRect(right_arrow_button.Min, right_arrow_button.Max)) {
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 20.0f * f_scale, 10.0f * f_scale });
@@ -8497,9 +8515,7 @@ void GLCanvas3D::_render_paint_toolbar() const
 
     const float text_offset_y = 4.0f * em_unit * f_scale;
     for (int i = 0; i < extruder_num; i++) {
-        decode_color(colors[i], rgba);
-        float  gray       = 0.299 * rgba.r_uchar() + 0.587 * rgba.g_uchar() + 0.114 * rgba.b_uchar();
-        ImVec4 text_color = gray < 80 ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0, 0, 0, 1.0f);
+        const ImVec4 text_color = i < int(toolbar_colors.size()) ? FilamentColorUtils::ImGuiTextColorFor(toolbar_colors[size_t(i)]) : ImVec4(0, 0, 0, 1.0f);
 
         imgui.push_bold_font();
         ImVec2 number_label_size = ImGui::CalcTextSize(std::to_string(i + 1).c_str());

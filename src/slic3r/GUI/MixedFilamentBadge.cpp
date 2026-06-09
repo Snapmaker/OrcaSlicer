@@ -13,23 +13,25 @@ namespace Slic3r { namespace GUI {
 
 wxColour interpolate_color(const std::vector<wxColour>& colors, double pos)
 {
-    if (colors.empty()) return *wxWHITE;
-    if (colors.size() == 1) return colors[0];
+    if (colors.empty())
+        return *wxWHITE;
+    if (colors.size() == 1)
+        return colors[0];
 
     pos = std::max(0.0, std::min(1.0, pos));
 
     double segment_size = 1.0 / (colors.size() - 1);
-    int segment = int(pos / segment_size);
-    segment = std::min(segment, int(colors.size()) - 2);
+    int segment = static_cast<int>(pos / segment_size);
+    segment = std::min(segment, static_cast<int>(colors.size()) - 2);
 
     double local_pos = (pos - segment * segment_size) / segment_size;
 
     const wxColour& c1 = colors[segment];
     const wxColour& c2 = colors[segment + 1];
 
-    int r = int(c1.Red()   * (1.0 - local_pos) + c2.Red()   * local_pos);
-    int g = int(c1.Green() * (1.0 - local_pos) + c2.Green() * local_pos);
-    int b = int(c1.Blue()  * (1.0 - local_pos) + c2.Blue()  * local_pos);
+    int r = static_cast<int>(c1.Red() * (1.0 - local_pos) + c2.Red() * local_pos);
+    int g = static_cast<int>(c1.Green() * (1.0 - local_pos) + c2.Green() * local_pos);
+    int b = static_cast<int>(c1.Blue() * (1.0 - local_pos) + c2.Blue() * local_pos);
 
     return wxColour(r, g, b);
 }
@@ -44,6 +46,14 @@ bool is_very_light_rgb(const wxColour& color)
 wxColour valid_or_fallback(const wxColour& color, const wxColour& fallback = wxColour("#808080"))
 {
     return color.IsOk() ? color : fallback;
+}
+
+wxColour PhysicalColorAt(const std::vector<std::string>& physical_colors, unsigned filament_id)
+{
+    if (filament_id == 0 || filament_id > physical_colors.size())
+        return wxColour("#26A69A");
+
+    return parse_mixed_color(physical_colors[filament_id - 1]);
 }
 
 ColorBlockParams::Mode effective_mode(const ColorBlockParams& params)
@@ -81,13 +91,13 @@ double color_block_text_luminance(const ColorBlockParams& params)
     double luminance = 0.0;
     for (const wxColour& color : colors)
         luminance += color.GetLuminance();
-    return colors.empty() ? 1.0 : luminance / double(colors.size());
+    return colors.empty() ? 1.0 : luminance / static_cast<double>(colors.size());
 }
 
 bool color_block_needs_border(const ColorBlockParams& params)
 {
-    const ColorBlockParams::Mode mode   = effective_mode(params);
-    const std::vector<wxColour>  colors = effective_color_list(params);
+    const ColorBlockParams::Mode mode = effective_mode(params);
+    const std::vector<wxColour> colors = effective_color_list(params);
 
     if (mode == ColorBlockParams::Segments) {
         for (const wxColour& color : colors)
@@ -106,8 +116,8 @@ bool color_block_needs_border(const ColorBlockParams& params)
 std::string color_block_cache_key(const ColorBlockParams& params)
 {
     std::ostringstream key;
-    key << "color-block:mode=" << int(effective_mode(params))
-        << ":dir=" << int(params.gradient_direction)
+    key << "color-block:mode=" << static_cast<int>(effective_mode(params))
+        << ":dir=" << static_cast<int>(params.gradient_direction)
         << ":h" << params.height
         << ":w" << params.width
         << ":label=" << params.label.ToStdString();
@@ -124,17 +134,25 @@ std::string color_block_cache_key(const ColorBlockParams& params)
 
 void draw_gradient_block(wxDC& dc, const wxRect& rect, const std::vector<wxColour>& colors, ColorBlockParams::GradientDirection direction)
 {
-    if (direction == ColorBlockParams::LeftToRight) {
-        for (int x = rect.GetLeft(); x <= rect.GetRight(); ++x) {
-            const double pos = double(x - rect.GetLeft()) / double(std::max(1, rect.GetWidth() - 1));
-            dc.SetPen(wxPen(interpolate_color(colors, pos)));
-            dc.DrawLine(x, rect.GetTop(), x, rect.GetBottom() + 1);
+    if (direction == ColorBlockParams::LeftToRight)
+    {
+        const int segment_count = static_cast<int>(colors.size()) - 1;
+        int left = rect.GetLeft();
+        for (int index = 0; index < segment_count; ++index)
+        {
+            const int right = index == segment_count - 1 ? rect.GetRight() + 1 : rect.GetLeft() + rect.GetWidth() * (index + 1) / segment_count;
+            const int width = right - left;
+            if (width > 0)
+                dc.GradientFillLinear( wxRect(left, rect.GetTop(), width, rect.GetHeight()), colors[index], colors[index + 1], wxEAST);
+            left = right;
         }
         return;
     }
 
-    for (int y = rect.GetBottom(); y >= rect.GetTop(); --y) {
-        const double pos = double(rect.GetBottom() - y) / double(std::max(1, rect.GetHeight() - 1));
+    for (int y = rect.GetBottom(); y >= rect.GetTop(); --y)
+    {
+        const double pos = static_cast<double>(rect.GetBottom() - y) /
+            static_cast<double>(std::max(1, rect.GetHeight() - 1));
         dc.SetPen(wxPen(interpolate_color(colors, pos)));
         dc.DrawLine(rect.GetLeft(), y, rect.GetRight() + 1, y);
     }
@@ -142,25 +160,28 @@ void draw_gradient_block(wxDC& dc, const wxRect& rect, const std::vector<wxColou
 
 void draw_segments_block(wxDC& dc, const wxRect& rect, const std::vector<wxColour>& colors)
 {
-    const size_t count = colors.size();
-    for (size_t idx = 0; idx < count; ++idx) {
-        const int x0 = rect.GetLeft() + int(std::floor(double(rect.GetWidth()) * double(idx) / double(count)));
-        const int x1 = rect.GetLeft() + int(std::ceil(double(rect.GetWidth()) * double(idx + 1) / double(count)));
+    const int count = static_cast<int>(colors.size());
+    int left = rect.GetLeft();
+    for (int index = 0; index < count; ++index)
+    {
+        const int right = index == count - 1
+            ? rect.GetRight() + 1
+            : rect.GetLeft() + rect.GetWidth() * (index + 1) / count;
+        const int width = right - left;
         dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.SetBrush(wxBrush(colors[idx]));
-        dc.DrawRectangle(x0, rect.GetTop(), std::max(1, x1 - x0), rect.GetHeight());
+        dc.SetBrush(wxBrush(colors[static_cast<size_t>(index)]));
+        if (width > 0)
+            dc.DrawRectangle(left, rect.GetTop(), width, rect.GetHeight());
+        left = right;
     }
 }
 
 void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& params)
 {
-    const ColorBlockParams::Mode mode   = effective_mode(params);
-    const std::vector<wxColour>  colors = effective_color_list(params);
+    const ColorBlockParams::Mode mode = effective_mode(params);
+    const std::vector<wxColour> colors = effective_color_list(params);
 
     dc.SetPen(*wxTRANSPARENT_PEN);
-    dc.SetBrush(wxBrush(colors.front()));
-    dc.DrawRectangle(rect);
-
     if (mode == ColorBlockParams::Gradient) {
         draw_gradient_block(dc, rect, colors, params.gradient_direction);
     } else if (mode == ColorBlockParams::Segments) {
@@ -184,10 +205,8 @@ void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& para
 
 } // namespace
 
-MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id,
-                                       const MixedFilament& mf,
-                                       const MixedFilamentDisplayContext& display_context,
-                                       bool show_number, int badge_size)
+MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id, const MixedFilament& mf,
+                                       const MixedFilamentDisplayContext& display_context, bool show_number, int badge_size)
     : wxPanel(parent, id, wxDefaultPosition, wxSize(badge_size, badge_size), wxBORDER_NONE)
     , m_show_number(show_number)
     , m_label(wxString::Format("%d", virtual_id))
@@ -202,20 +221,16 @@ MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virt
 
     SetFont(badge_size >= 20 ? Label::Body_12 : Label::Body_8);
 
-    m_color_block.width              = badge_size;
-    m_color_block.height             = badge_size;
-    m_color_block.label              = m_label;
+    m_color_block.width = badge_size;
+    m_color_block.height = badge_size;
+    m_color_block.label = m_label;
     m_color_block.gradient_direction = ColorBlockParams::BottomToTop;
-    m_color_block.mode               = ColorBlockParams::Solid;
-    m_color_block.solid_color        = parse_mixed_color(mf.display_color);
+    m_color_block.mode = ColorBlockParams::Solid;
+    m_color_block.solid_color = parse_mixed_color(mf.display_color);
 
     if (is_simple_gradient(mf)) {
-        auto get_color = [&](unsigned fid) -> wxColour {
-            if (fid == 0 || fid > display_context.physical_colors.size()) return wxColour("#26A69A");
-            return parse_mixed_color(display_context.physical_colors[fid - 1]);
-        };
-        const wxColour ca = get_color(mf.component_a);
-        const wxColour cb = get_color(mf.component_b);
+        const wxColour ca = PhysicalColorAt(display_context.physical_colors, mf.component_a);
+        const wxColour cb = PhysicalColorAt(display_context.physical_colors, mf.component_b);
         const bool a_to_b = mf.gradient_start >= mf.gradient_end;
         m_color_block.mode = ColorBlockParams::Gradient;
         m_color_block.colors.push_back(a_to_b ? ca : cb);
@@ -243,7 +258,7 @@ void MixedFilamentBadge::on_left_up(wxMouseEvent&)
 }
 
 // ---------------------------------------------------------------------------
-// get_color_block_bitmap_cached — unified cached bitmap factory
+// get_color_block_bitmap_cached - unified cached bitmap factory
 // ---------------------------------------------------------------------------
 
 wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
@@ -252,7 +267,7 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
     static BitmapCache cache;
 
     ColorBlockParams draw_params = params;
-    draw_params.width  = std::max(1, params.width);
+    draw_params.width = std::max(1, params.width);
     draw_params.height = std::max(1, params.height);
 
     const std::string key = color_block_cache_key(draw_params);
@@ -274,29 +289,22 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
 }
 
 // ---------------------------------------------------------------------------
-// Free function — shared between badge and merge menus
+// Free function - shared between badge and merge menus
 // ---------------------------------------------------------------------------
 
-wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament&               mf,
-                                           const MixedFilamentDisplayContext& ctx,
-                                           int  width, int  height,
-                                           const wxString& label)
+wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament& mf, const MixedFilamentDisplayContext& ctx,
+                                           int width, int height, const wxString& label)
 {
     ColorBlockParams params;
-    params.width  = width;
+    params.width = width;
     params.height = height;
-    params.label  = label;
+    params.label = label;
 
     const bool is_gradient = is_simple_gradient(mf);
 
     if (is_gradient) {
-        auto get_c = [&](unsigned fid) -> wxColour {
-            if (fid == 0 || fid > ctx.physical_colors.size())
-                return wxColour("#26A69A");
-            return parse_mixed_color(ctx.physical_colors[fid - 1]);
-        };
-        const wxColour ca = get_c(mf.component_a);
-        const wxColour cb = get_c(mf.component_b);
+        const wxColour ca = PhysicalColorAt(ctx.physical_colors, mf.component_a);
+        const wxColour cb = PhysicalColorAt(ctx.physical_colors, mf.component_b);
         const bool a_to_b = mf.gradient_start >= mf.gradient_end;
 
         params.mode = ColorBlockParams::Gradient;

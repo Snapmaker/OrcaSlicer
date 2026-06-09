@@ -2449,7 +2449,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
     new_volume->name = into_u8(name);
     // set a default extruder value, since user can't add it manually
     // BBS
-    new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
+    new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
     new_object->invalidate_bounding_box();
     new_object->translate(-bb.center());
 

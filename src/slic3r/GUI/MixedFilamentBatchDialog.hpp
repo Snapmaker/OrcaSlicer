@@ -32,9 +32,12 @@ public:
 
 private:
     void build_ui();
-    void on_method_changed(int method);
+    void on_method_changed(wxCommandEvent&);
     void on_manual_selection_changed();
     void update_prompt_text();
+
+    void update_orig_preview();
+    void update_match_preview();
 
     void start_batch_match();
     void cancel_batch_match();
@@ -43,7 +46,6 @@ private:
 
     void update_mapping_legend();
 
-    // Same error/warning pattern as MixedFilamentDialog
     void display_warning(const wxString& msg);
     void set_error(const wxString& msg);
 
@@ -63,26 +65,41 @@ private:
     std::vector<ModelColorEntry> m_model_colors;
     std::vector<std::string>     m_physical_colors;
 
-    bool  m_filament_enabled[4] = {true, true, false, false};
-    int   m_filament_selections[4] = {0, 1, -1, -1};
+    int   m_filament_selections[4] = {0, 1, 2, 3};
 
-    // Segmented method buttons (same as MixedFilamentDialog::build_ui §1)
-    int                       m_method_selected = 0;
-    std::vector<Button*>      m_method_buttons;
+    int m_tray_index = 1;
+    int m_tray_count = 1;
+
+    // Top row
+    wxComboBox*               m_method_combo = nullptr;
+    Button*                   m_btn_start_match = nullptr;
+    Button*                   m_btn_cancel_match = nullptr;
+    Button*                   m_btn_rematch      = nullptr;
+    Button*                   m_btn_confirm      = nullptr;
+
+    // Preview panels
+    wxPanel*                  m_preview_orig_panel = nullptr;
+    wxPanel*                  m_preview_match_panel = nullptr;
+    wxStaticBitmap*           m_preview_orig_bitmap = nullptr;
+    wxStaticBitmap*           m_preview_match_bitmap = nullptr;
+
+    // Tray controls (below original preview)
+    wxButton*                 m_btn_tray_prev = nullptr;
+    wxButton*                 m_btn_tray_next = nullptr;
+    ComboBox*                 m_tray_combo = nullptr;
 
     // Manual filament card
     wxWindow*                 m_manual_card = nullptr;
-    wxCheckBox*               m_enable_check[4] = {nullptr};
     ComboBox*                 m_filament_combo[4] = {nullptr};
 
-    // Legend card
+    // Legend
     wxScrolledWindow*         m_legend_scroller = nullptr;
     wxWrapSizer*              m_legend_sizer = nullptr;
 
     // Prompt
     Label*                    m_prompt_label = nullptr;
 
-    // Error / warning (same icon+label pattern as MixedFilamentDialog)
+    // Error / warning
     wxPanel*                  m_error_panel = nullptr;
     Label*                    m_error_text = nullptr;
     wxPanel*                  m_warning_panel = nullptr;
@@ -92,13 +109,6 @@ private:
     wxGauge*                  m_progress_bar = nullptr;
     Label*                    m_progress_label = nullptr;
 
-    // Buttons
-    Button*                   m_btn_start_match = nullptr;
-    Button*                   m_btn_cancel_match = nullptr;
-    Button*                   m_btn_rematch      = nullptr;
-    Button*                   m_btn_confirm      = nullptr;
-
-    // Scroll
     wxScrolledWindow*         m_scrolled_content = nullptr;
 };
 

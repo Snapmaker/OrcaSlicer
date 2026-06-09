@@ -1288,6 +1288,10 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 
     auto& filament_colours = print.config().filament_colour.values;
 
+    // Also read mixed-filament display colors for virtual ID lookup
+    auto* pb = wxGetApp().preset_bundle;
+    auto& mgr = pb ? pb->mixed_filaments : (MixedFilamentManager&)MixedFilamentManager();
+
     for (const PrintObject* obj : print.objects()) {
         if (!obj) continue;
         const ModelObject* model_obj = obj->model_object();
@@ -1299,16 +1303,25 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
             for (int eid : vol->get_extruders()) {
                 if (eid < 1 || eid > MAX_EXTRUDER_ID) continue;
                 size_t idx = size_t(eid - 1);
-                if (idx >= filament_colours.size()) continue;
 
-                const std::string& color_hex = filament_colours[idx];
+                std::string color_hex;
+                if (idx < filament_colours.size()) {
+                    // Physical filament color
+                    color_hex = filament_colours[idx];
+                } else {
+                    // Virtual mixed filament — look up its display_color
+                    const MixedFilament* mf = mgr.mixed_filament_from_id(
+                        (unsigned int)eid, filament_colours.size());
+                    if (mf && !mf->display_color.empty())
+                        color_hex = mf->display_color;
+                }
                 if (color_hex.empty()) continue;
 
                 wxColour c;
                 if (!try_parse_color_match_hex(color_hex, c)) {
                     BOOST_LOG_TRIVIAL(warning)
-                        << "extract_model_colors: invalid filament colour["
-                        << eid << "] = '" << color_hex << "', skipping";
+                        << "extract_model_colors: invalid color for extruder "
+                        << eid << " = '" << color_hex << "', skipping";
                     continue;
                 }
 

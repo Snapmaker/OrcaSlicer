@@ -14921,8 +14921,40 @@ bool Plater::priv::can_layers_editing() const
 
 void Plater::priv::on_action_layersediting(SimpleEvent&)
 {
-    view3D->enable_layers_editing(!view3D->is_layers_editing_enabled());
+    const bool enabling = !view3D->is_layers_editing_enabled();
+    view3D->enable_layers_editing(enabling);
     notification_manager->set_move_from_overlay(view3D->is_layers_editing_enabled());
+    if (enabling) {
+        bool has_local_z = false;
+        if (const auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
+            has_local_z = opt->value;
+        q->notify_vhl_dithering_conflict(has_local_z);
+    }
+}
+
+void Plater::notify_vhl_dithering_conflict(bool local_z_enabled)
+{
+    if (!local_z_enabled)
+        return;
+
+    bool has_adaptive = p->view3D->is_layers_editing_enabled();
+    if (!has_adaptive) {
+        for (const auto* obj : p->model.objects) {
+            if (!obj->layer_height_profile.empty()) {
+                has_adaptive = true;
+                break;
+            }
+        }
+    }
+
+    if (!has_adaptive)
+        return;
+
+    MessageDialog dialog(this,
+        _L("Variable Layer Height and Subdivide Mix Layer are both enabled. "
+           "Both features alter layer heights and may produce unexpected results."),
+        _L("Warning"), wxICON_WARNING | wxOK);
+    dialog.ShowModal();
 }
 
 void Plater::priv::on_create_filament(SimpleEvent &)

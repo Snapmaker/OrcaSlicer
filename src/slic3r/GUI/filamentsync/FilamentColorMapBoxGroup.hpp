@@ -6,9 +6,10 @@
 
 #include <wx/panel.h>
 
-#include "slic3r/GUI/Widgets/Label.hpp"
 #include "FilamentData.hpp"
 #include "FilamentColorMapBox.hpp"
+
+class Label;
 
 namespace Slic3r
 {

@@ -76,6 +76,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     m_pLabelDesign->SetFont(Label::Body_14);
     m_pLabelDesign->SetForegroundColour(g_labelTextColor);
     m_pLabelDesign->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    m_pLabelDesign->SetBackgroundColour(g_containerBg);
     labelSizer->AddSpacer(FromDIP(g_labelDesignTopMargin));
     labelSizer->Add(m_pLabelDesign, 0, wxEXPAND);
     labelSizer->AddStretchSpacer(1);
@@ -84,6 +85,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     m_pLabelMachine->SetFont(Label::Body_14);
     m_pLabelMachine->SetForegroundColour(g_labelTextColor);
     m_pLabelMachine->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    m_pLabelMachine->SetBackgroundColour(g_containerBg);
     labelSizer->Add(m_pLabelMachine, 0, wxEXPAND);
     labelSizer->AddSpacer(FromDIP(g_labelMachineBotMargin));
 
@@ -144,6 +146,7 @@ void FilamentColorMapBoxGroup::setGroupBoxEnable(bool bEnable, FilamentColorMapB
 {
     for (auto& box : m_boxList)
         box->setEnable(bEnable, type);
+    Layout();
 }
 
 void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)

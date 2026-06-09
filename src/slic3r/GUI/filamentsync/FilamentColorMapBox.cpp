@@ -46,6 +46,7 @@ constexpr int g_bodyBorderWidth  = 1;
 const wxColour g_bodyBorderColor(0xDB, 0xDB, 0xDA);
 const wxColour g_bodyTextColor(0x33, 0x33, 0x33);
 const wxColour g_disabledBodyBg(0xE8, 0xE8, 0xE8);
+const wxColour g_cardBg(0xFF, 0xFF, 0xFF);
 
 // ============================================================
 // Luminance helpers
@@ -108,6 +109,8 @@ FilamentColorMapBox::FilamentColorMapBox(wxWindow* parent,
     , m_aboveFilament(aboveData)
     , m_belowFilament(belowData)
 {
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetBackgroundColour(g_cardBg);
     updateSizing();
     Bind(wxEVT_PAINT, &FilamentColorMapBox::onPaint, this);
     Bind(wxEVT_LEFT_DOWN, &FilamentColorMapBox::onLeftDown, this);
@@ -130,8 +133,6 @@ void FilamentColorMapBox::setEnable(bool bEnable, ButtonType type)
     }
     updateSizing();
     Refresh();
-    if (auto* p = GetParent())
-        p->Layout();
 }
 
 void FilamentColorMapBox::updateAboveData(const FilamentData& data)
@@ -190,7 +191,7 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
 
     // ---- 1. Full card body (white bg, #DBDBDA border) ----
     gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
-    gdc.SetBrush(*wxWHITE_BRUSH);
+    gdc.SetBrush(g_cardBg);
     gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
 
     // ---- 2. Top bar (above colour, clipped to splitY) ----

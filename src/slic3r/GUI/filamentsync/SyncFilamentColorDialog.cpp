@@ -255,6 +255,7 @@ void SyncFilamentColorDialog::onAutoMatch()
         }
         ++idx;
     }
+    m_pFilamentColorMapBoxGroup->setGroupBoxEnable(true, FilamentColorMapBox::ButtonType::Below);
     Layout();
 }
 
@@ -276,6 +277,7 @@ void SyncFilamentColorDialog::onCoverMatch()
         }
         ++idx;
     }
+    m_pFilamentColorMapBoxGroup->setGroupBoxEnable(false, FilamentColorMapBox::ButtonType::Below);
     Layout();
 }
 

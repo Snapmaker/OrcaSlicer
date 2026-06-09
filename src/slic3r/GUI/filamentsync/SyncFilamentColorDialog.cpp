@@ -29,8 +29,8 @@ namespace
 {
 
 // --- Dialog layout (Figma specs) ---
-constexpr int g_dialogWidth  = 572; // DIP
-constexpr int g_dialogHeight = 677; // DIP
+constexpr int g_dialogWidth  = 620; // DIP
+constexpr int g_dialogHeight = 665; // DIP
 
 // Block widths (Figma) — centered independently in dialog
 constexpr int g_block1W = 555; // Mode toggle
@@ -141,7 +141,8 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
         m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(block, m_designDataList, m_machineDataList);
         m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
-            loadCoverPreview();
+            if (m_pPlaterPreview)
+                m_pPlaterPreview->onCoverPreview();
         });
         mappingRow->Add(m_pFilamentColorMapBoxGroup, 1, wxEXPAND | wxALL, FromDIP(g_blockPaddingV));
 

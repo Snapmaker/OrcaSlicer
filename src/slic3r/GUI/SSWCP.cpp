@@ -1642,7 +1642,6 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                         machineData.index = i;
                         machineData.color_info = str_color;
                         machineData.filament_info = name;
-                        machineData.filament_type = type;
                     } else {
                         if (j_value["filament_color"][i].is_number()) {
                             int                color = j_value["filament_color"][i].get<int>();
@@ -1655,14 +1654,12 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                             machineData.index         = i;
                             machineData.color_info    = str_color;
                             machineData.filament_info = name;
-                            machineData.filament_type = type;
                         } else {
                             std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
                             filaments.insert({int(i), {name, str_color}});
                             machineData.index         = i;
                             machineData.color_info    = str_color;
                             machineData.filament_info = name;
-                            machineData.filament_type = type;
                         }
                     }
                     if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())

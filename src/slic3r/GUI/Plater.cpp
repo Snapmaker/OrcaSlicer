@@ -360,10 +360,11 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
         fd.m_index = i;
 
         Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
-        if (preset) {
-            std::string type_name;
-            preset->get_filament_type(type_name);
-            fd.m_name = type_name.empty() ? preset->label(false) : type_name;
+         if (preset) {
+            fd.m_name = preset->label(false);
+            const auto* type_opt = preset->config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && !type_opt->values.empty())
+                fd.m_type = type_opt->values[0];
         } else {
             fd.m_name = extract_base_filament_name(filament_presets[i]);
         }
@@ -395,8 +396,9 @@ void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<Filame
     for (const auto& info : preset_bundle->m_connect_machine_info_list) {
         FilamentData fd;
         fd.m_index = info.index;
-        fd.m_name  = info.filament_type.empty() ? info.filament_info : info.filament_type;
-
+        fd.m_name  = info.filament_info;
+        fd.m_type  = info.filament_type;
+        
         if (!info.color_info.empty()) {
             unsigned char rgba[4] = {0, 0, 0, 255};
             if (BitmapCache::parse_color4(info.color_info, rgba)) {

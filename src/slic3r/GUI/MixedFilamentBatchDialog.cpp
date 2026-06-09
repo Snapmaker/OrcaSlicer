@@ -4,6 +4,7 @@
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "PresetBundle.hpp"
+#include "libslic3r/Preset.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
@@ -62,20 +63,34 @@ void MixedFilamentBatchDialog::load_model_colors()
     auto* pb = wxGetApp().preset_bundle;
     if (!pb) return;
 
+    // Read from filament_colour project config — these are the physical
+    // filament colors the user configured. Also try extract_model_colors
+    // to pick up any MMU-painted model colors, merging with dedup.
     ConfigOptionStrings* co = pb->project_config.option<ConfigOptionStrings>("filament_colour");
-    if (!co) return;
+    if (!co || co->values.empty()) return;
 
-    for (size_t i = 0; i < co->values.size(); ++i) {
-        wxColour color;
-        if (!try_parse_color_match_hex(co->values[i], color)) continue;
-        bool dup = false;
+    auto add_unique = [this](const wxColour& c, const std::string& hex) {
         for (const auto& e : m_model_colors) {
-            if (e.hex_value == co->values[i]) { dup = true; break; }
+            if (e.hex_value == hex || color_delta_e00(e.color, c) < 0.5) return;
         }
-        if (dup) continue;
-        m_model_colors.push_back({(unsigned int)(m_model_colors.size() + 1), color, co->values[i]});
+        m_model_colors.push_back({(unsigned int)(m_model_colors.size() + 1), c, hex});
+    };
+
+    for (const auto& hex : co->values) {
+        wxColour c;
+        if (!try_parse_color_match_hex(hex, c)) continue;
+        add_unique(c, hex);
     }
-    // TODO Phase 3: use extract_model_colors(const Print&) for MMU-painted models
+
+    // Also try to extract from MMU-painted model if available
+    if (wxGetApp().plater()) {
+        const Print& print = wxGetApp().plater()->fff_print();
+        if (!print.objects().empty()) {
+            auto mmu_colors = extract_model_colors(print);
+            for (const auto& mc : mmu_colors)
+                add_unique(mc.color, mc.hex_value);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,30 +212,60 @@ void MixedFilamentBatchDialog::build_ui()
         card->Hide();
         m_manual_card = card;
         auto* card_sizer = new wxBoxSizer(wxVERTICAL);
-        card_sizer->Add(new Label(m_manual_card, _L("Filament configuration (nozzles 1-4):")), 0, wxALL, M);
+        card_sizer->Add(new Label(card, _L("Filament configuration (nozzles 1-4):")), 0, wxALL, M);
+
+        PresetBundle* pb = wxGetApp().preset_bundle;
+        const std::vector<std::string>& filament_presets = pb ? pb->filament_presets : std::vector<std::string>();
 
         for (int i = 0; i < 4; ++i) {
             auto* row = new wxBoxSizer(wxHORIZONTAL);
-            m_enable_check[i] = new wxCheckBox(m_manual_card, wxID_ANY,
+
+            // Checkbox — same label pattern as MFDialog row label
+            m_enable_check[i] = new wxCheckBox(card, wxID_ANY,
                 wxString::Format(_L("Nozzle %d"), i + 1));
             m_enable_check[i]->SetValue(m_filament_enabled[i]);
+            m_enable_check[i]->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+            m_enable_check[i]->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             m_enable_check[i]->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { on_manual_selection_changed(); });
             row->Add(m_enable_check[i], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M);
 
-            m_filament_combo[i] = new ComboBox(m_manual_card, wxID_ANY, wxEmptyString,
-                wxDefaultPosition, wxSize(FromDIP(140), -1), 0, nullptr, wxCB_READONLY);
-            for (size_t j = 0; j < m_physical_colors.size(); ++j)
-                m_filament_combo[i]->Append(wxString::Format("F%zu", j + 1));
+            // Filament label — matches MFDialog::rebuild_filament_rows() label style
+            auto* row_lbl = new wxStaticText(card, wxID_ANY,
+                wxString::Format(_L("Filament %d"), i + 1),
+                wxDefaultPosition, wxSize(FromDIP(50), -1));
+            row_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+            row_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+            row->Add(row_lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
+
+            // Combo — matches MFDialog::rebuild_filament_rows()
+            auto* cb = new ComboBox(card, wxID_ANY, wxEmptyString,
+                                    wxDefaultPosition, wxSize(FromDIP(200), FromDIP(30)),
+                                    0, nullptr, wxCB_READONLY);
+            cb->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+
+            for (size_t j = 0; j < m_physical_colors.size(); ++j) {
+                wxString name;
+                if (pb && j < filament_presets.size()) {
+                    const Preset* preset = pb->filaments.find_preset(filament_presets[j]);
+                    if (preset) name = from_u8(preset->label(false));
+                }
+                if (name.empty()) name = wxString::Format("F%zu", j + 1);
+
+                wxBitmap* badge_icon = get_extruder_color_icon(
+                    m_physical_colors[j], std::to_string(j + 1), FromDIP(20), FromDIP(20));
+                cb->Append(name, badge_icon ? badge_icon->ConvertToImage() : wxNullImage);
+            }
             if (m_filament_selections[i] >= 0 && m_filament_selections[i] < (int)m_physical_colors.size())
-                m_filament_combo[i]->SetSelection(m_filament_selections[i]);
+                cb->SetSelection(m_filament_selections[i]);
             else if (!m_physical_colors.empty())
-                m_filament_combo[i]->SetSelection(0);
-            m_filament_combo[i]->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_manual_selection_changed(); });
-            row->Add(m_filament_combo[i], 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M);
+                cb->SetSelection(0);
+            cb->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_manual_selection_changed(); });
+            row->Add(cb, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M);
+            m_filament_combo[i] = cb;
             card_sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, M2);
         }
-        m_manual_card->SetSizer(card_sizer);
-        scroll_sizer->Add(m_manual_card, 0, wxEXPAND | wxLEFT | wxRIGHT, M);
+        card->SetSizer(card_sizer);
+        scroll_sizer->Add(card, 0, wxEXPAND | wxLEFT | wxRIGHT, M);
     }
 
     // ---- Card 3: Mapping legend ----
@@ -347,11 +392,18 @@ void MixedFilamentBatchDialog::on_method_changed(int method)
     m_match_completed = false;
     m_error_panel->Hide();
     m_warning_panel->Hide();
-    if (m_manual_card) m_manual_card->Show(m_matching_method == MANUAL);
+    if (m_manual_card) {
+        m_manual_card->Show(m_matching_method == MANUAL);
+        if (m_matching_method == MANUAL) {
+            m_manual_card->Layout();
+            m_manual_card->GetParent()->Layout();
+        }
+    }
     update_prompt_text();
     update_mapping_legend();
     set_match_buttons_state(false);
     m_btn_start_match->Enable(true);
+    m_scrolled_content->FitInside();
     Layout();
 }
 
@@ -395,15 +447,63 @@ void MixedFilamentBatchDialog::launch_background_match()
     if (m_worker_thread.joinable()) m_worker_thread.join();
     m_cancel_requested->store(false);
 
-    auto model_colors = m_model_colors;
-    auto physical_colors = m_physical_colors;
+    // Capture manual selections on UI thread before spawning worker
+    const auto model_colors = m_model_colors;
+    std::vector<std::string> active_colors;
+    if (m_matching_method == MANUAL) {
+        for (int i = 0; i < 4; ++i) {
+            if (!m_filament_enabled[i]) continue;
+            int sel = m_filament_combo[i] ? m_filament_combo[i]->GetSelection() : -1;
+            if (sel >= 0 && sel < (int)m_physical_colors.size())
+                active_colors.push_back(m_physical_colors[sel]);
+        }
+        if (active_colors.size() < 2)
+            active_colors = m_physical_colors;
+    }
+    const auto manual_colors = std::move(active_colors);
+    const auto all_physical  = m_physical_colors;
+
+    // Capture preset library colors on UI thread for recommended mode
+    std::vector<std::string> all_preset_colors;
+    if (m_matching_method == RECOMMENDED) {
+        auto* pb = wxGetApp().preset_bundle;
+        if (pb) {
+            for (const std::string& alias : pb->filament_presets) {
+                const Preset* preset = pb->filaments.find_preset(alias);
+                if (!preset) continue;
+                auto* opt = preset->config.option<ConfigOptionStrings>("filament_colour");
+                if (opt && !opt->values.empty())
+                    all_preset_colors.push_back(opt->values[0]);
+            }
+        }
+    }
+    const auto preset_colors  = std::move(all_preset_colors);
+    const auto matching_method = m_matching_method;
+
     auto destroyed = m_destroyed;
     auto cancel_token = m_cancel_requested;
     auto progress_bar = m_progress_bar;
 
-    m_worker_thread = std::thread([this, model_colors, physical_colors,
+    m_worker_thread = std::thread([this, model_colors, manual_colors, all_physical,
+                                    preset_colors, matching_method,
                                     destroyed, cancel_token, progress_bar]()
     {
+        // Resolve physical colors inside the worker thread
+        std::vector<std::string> physical_colors;
+        if (matching_method == MANUAL) {
+            physical_colors = manual_colors;
+        } else {
+            // Recommended: find best 4-color combo from preset library
+            if (preset_colors.size() >= 4) {
+                auto best = recommend_best_filament_combo(model_colors, preset_colors, 15, cancel_token);
+                physical_colors = best.empty()
+                    ? std::vector<std::string>(preset_colors.begin(), preset_colors.begin() + std::min<size_t>(4, preset_colors.size()))
+                    : std::move(best);
+            } else {
+                physical_colors = all_physical;
+            }
+        }
+
         BatchMatchResult result;
         try {
             result = batch_match_model_colors(model_colors, physical_colors, 15, cancel_token,
@@ -503,14 +603,10 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             tgt_params.solid_color = mapping.matched_color.IsOk() ? mapping.matched_color : wxColour(128,128,128);
             tgt_params.width       = FromDIP(16);
             tgt_params.height      = FromDIP(16);
-            tgt_params.label       = wxString::Format("F%u", mapping.target_filament_id);
+            tgt_params.label       = wxString::Format("%u", mapping.target_filament_id);
             auto* tgt_bmp = new wxStaticBitmap(item_panel, wxID_ANY,
                 *get_color_block_bitmap_cached(tgt_params));
             swatch_row->Add(tgt_bmp, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(3));
-
-            wxString type_label = mapping.is_pure_recipe ? _L("(pure)") : _L("(mixed)");
-            swatch_row->Add(new wxStaticText(item_panel, wxID_ANY, type_label), 0,
-                            wxALIGN_CENTER_VERTICAL);
 
             sizer->Add(swatch_row, 0, wxALL, FromDIP(4));
 

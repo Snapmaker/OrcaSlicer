@@ -1516,4 +1516,84 @@ void populate_mixed_filaments_from_mappings(
     }
 }
 
+std::vector<std::string> recommend_best_filament_combo(
+    const std::vector<ModelColorEntry>&  model_colors,
+    const std::vector<std::string>&      all_preset_colors,
+    int                                  min_component_percent,
+    std::shared_ptr<std::atomic<bool>>   cancel_token)
+{
+    if (model_colors.empty() || all_preset_colors.size() < 4)
+        return {};
+
+    // Step 1: Top-15 pre-filter by single-color ΔE
+    const size_t top_n = std::min<size_t>(15, all_preset_colors.size());
+    std::vector<std::pair<double, size_t>> ranked;
+    ranked.reserve(all_preset_colors.size());
+
+    // Average ΔE of each preset color against all model colors → quick filter
+    for (size_t fidx = 0; fidx < all_preset_colors.size(); ++fidx) {
+        wxColour fc;
+        if (!try_parse_color_match_hex(all_preset_colors[fidx], fc)) continue;
+        double sum_de = 0.0;
+        for (const auto& mc : model_colors)
+            sum_de += color_delta_e00(fc, mc.color);
+        ranked.emplace_back(sum_de / std::max(1.0, double(model_colors.size())), fidx);
+    }
+    std::sort(ranked.begin(), ranked.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+    ranked.resize(top_n);
+
+    // Step 2: Enumerate C(N,4) combos from top-15 candidates
+    struct ComboScore { size_t i0, i1, i2, i3; double score; };
+    std::vector<ComboScore> combos;
+    const size_t n = ranked.size();
+    for (size_t i0 = 0; i0 + 3 < n; ++i0) {
+        for (size_t i1 = i0 + 1; i1 + 2 < n; ++i1) {
+            for (size_t i2 = i1 + 1; i2 + 1 < n; ++i2) {
+                for (size_t i3 = i2 + 1; i3 < n; ++i3) {
+                    if (cancel_token && cancel_token->load()) return {};
+
+                    // Build 4-color palette from original indices
+                    std::vector<std::string> combo_colors = {
+                        all_preset_colors[ranked[i0].second],
+                        all_preset_colors[ranked[i1].second],
+                        all_preset_colors[ranked[i2].second],
+                        all_preset_colors[ranked[i3].second]
+                    };
+
+                    // Score: average batch match ΔE over model colors (single-threaded, small loop)
+                    double sum_de = 0.0;
+                    int matched = 0;
+                    for (const auto& mc : model_colors) {
+                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent);
+                        if (recipe.valid) {
+                            sum_de += recipe.delta_e;
+                            ++matched;
+                        }
+                    }
+                    if (matched == 0) continue;
+
+                    double avg_de = sum_de / double(matched);
+                    double score = 1.0 / (1.0 + avg_de); // lower ΔE → higher score
+                    combos.push_back({ranked[i0].second, ranked[i1].second,
+                                      ranked[i2].second, ranked[i3].second, score});
+                }
+            }
+        }
+    }
+
+    if (combos.empty()) return {};
+
+    // Step 3: Return best combo
+    std::sort(combos.begin(), combos.end(),
+        [](const auto& a, const auto& b) { return a.score > b.score; });
+
+    return {
+        all_preset_colors[combos[0].i0],
+        all_preset_colors[combos[0].i1],
+        all_preset_colors[combos[0].i2],
+        all_preset_colors[combos[0].i3]
+    };
+}
+
 }} // namespace Slic3r::GUI

@@ -209,4 +209,13 @@ void populate_mixed_filaments_from_mappings(
     BatchMatchResult&                           result,
     const Slic3r::MixedFilamentDisplayContext&  context);
 
+/// Recommend best 4-color filament combo from available presets.
+/// Pre-filters to Top-15 by single-color ΔE, then scores C(15,4)=1365 combos.
+/// Returns empty vector if fewer than 4 candidates available.
+std::vector<std::string> recommend_best_filament_combo(
+    const std::vector<ModelColorEntry>&  model_colors,
+    const std::vector<std::string>&      all_preset_colors,
+    int                                  min_component_percent = 15,
+    std::shared_ptr<std::atomic<bool>>   cancel_token = nullptr);
+
 }} // namespace Slic3r::GUI

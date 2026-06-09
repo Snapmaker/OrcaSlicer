@@ -1891,8 +1891,7 @@ bool MainFrame::get_enable_slice_status()
         {
             enable = false;
         }*/
-        //always enable slice_all button
-        enable = true;
+        enable = m_plater->has_sliceable_plate_for_slice_all();
     }
     else if (m_slice_select == eSlicePlate)
     {
@@ -1901,6 +1900,10 @@ bool MainFrame::get_enable_slice_status()
             enable = false;
         }
         else if (!current_plate->can_slice())
+        {
+            enable = false;
+        }
+        else if (m_plater->is_plate_blocked_by_filament_temp_mixing(part_plate_list.get_curr_plate_index()))
         {
             enable = false;
         }

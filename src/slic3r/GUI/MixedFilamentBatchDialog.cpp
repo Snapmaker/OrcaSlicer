@@ -1,4 +1,4 @@
-#include "MixedFilamentBatchDialog.hpp"
+﻿#include "MixedFilamentBatchDialog.hpp"
 #include "MixedFilamentBadge.hpp"
 #include "MixedColorMatchHelpers.hpp"
 #include "GUI_App.hpp"
@@ -23,7 +23,7 @@ namespace Slic3r { namespace GUI {
 // ---------------------------------------------------------------------------
 
 MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
-    : DPIDialog(parent, wxID_ANY, _L("混色匹配"),
+    : DPIDialog(parent, wxID_ANY, _L("Mixed Color Match"),
                 wxDefaultPosition, wxDefaultSize,
                 wxCAPTION | wxCLOSE_BOX)
 {
@@ -443,26 +443,26 @@ void MixedFilamentBatchDialog::build_ui()
         root->Add(m_warning_panel, 0, wxEXPAND);
     }
 
-    // ---- Row 1: 匹配方式 + 按钮 ----
+    // ---- Row 1: Match Mode + Buttons ----
     {
         auto* row = new wxBoxSizer(wxHORIZONTAL);
         {
-            auto* lbl = new wxStaticText(this, wxID_ANY, _L("匹配方式"));
+            auto* lbl = new wxStaticText(this, wxID_ANY, _L("Match Mode"));
             lbl->SetFont(Label::Body_14);
             lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M);
         }
         m_method_combo = new wxComboBox(this, wxID_ANY, wxEmptyString,
                                          wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-        m_method_combo->Append(_L("推荐匹配"));
-        m_method_combo->Append(_L("手动选择"));
+        m_method_combo->Append(_L("Auto Match"));
+        m_method_combo->Append(_L("Manual Select"));
         m_method_combo->SetSelection(0);
         m_method_combo->Bind(wxEVT_COMBOBOX, &MixedFilamentBatchDialog::on_method_changed, this);
         row->Add(m_method_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M);
 
         row->AddStretchSpacer();
 
-        m_btn_start_match = new Button(this, _L("开始匹配"));
+        m_btn_start_match = new Button(this, _L("Start Matching"));
         m_btn_start_match->SetMinSize(wxSize(-1, FromDIP(38)));
         m_btn_start_match->SetCornerRadius(FromDIP(4));
         m_btn_start_match->SetBorderWidth(0);
@@ -473,7 +473,7 @@ void MixedFilamentBatchDialog::build_ui()
             std::pair(wxColour("#6B6A6A"), static_cast<int>(StateColor::Disabled)),
             std::pair(wxColour("#FEFEFE"), static_cast<int>(StateColor::Normal))));
         row->Add(m_btn_start_match, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M2);
-        m_btn_rematch = new Button(this, _L("重新匹配"));
+        m_btn_rematch = new Button(this, _L("Re-match"));
         m_btn_rematch->SetMinSize(wxSize(-1, FromDIP(38)));
         m_btn_rematch->SetCornerRadius(FromDIP(4));
         m_btn_rematch->SetBorderWidth(0);
@@ -506,7 +506,7 @@ void MixedFilamentBatchDialog::build_ui()
         {
             auto* title_row = new wxBoxSizer(wxHORIZONTAL);
             {
-                auto* lbl = new wxStaticText(card, wxID_ANY, _L("耗材配置 (对应 1-4 号喷嘴)"));
+                auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Config (Nozzles 1-4)"));
                 lbl->SetFont(Label::Body_14);
                 lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
                 title_row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
@@ -559,7 +559,7 @@ void MixedFilamentBatchDialog::build_ui()
         for (int i = 0; i < 4; ++i) {
             auto* panel = new wxPanel(card, wxID_ANY);
             auto* row = new wxBoxSizer(wxHORIZONTAL);
-            row->Add(new wxStaticText(panel, wxID_ANY, wxString::Format(_L("耗材 %d"), i + 1),
+            row->Add(new wxStaticText(panel, wxID_ANY, wxString::Format(_L("Filament %d"), i + 1),
                                        wxDefaultPosition, wxSize(FromDIP(40), -1)),
                      0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
 
@@ -606,7 +606,7 @@ void MixedFilamentBatchDialog::build_ui()
 
         // Title
         {
-            auto* lbl = new wxStaticText(card, wxID_ANY, _L("耗材配置 (CMYG 四色)"));
+            auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Config (CMYG 4-Color)"));
             lbl->SetFont(Label::Body_14);
             lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             s->Add(lbl, 0, wxALL, M);
@@ -638,7 +638,7 @@ void MixedFilamentBatchDialog::build_ui()
         for (int i = 0; i < 4; ++i) {
             auto* panel = new wxPanel(card, wxID_ANY);
             auto* row = new wxBoxSizer(wxHORIZONTAL);
-            row->Add(new wxStaticText(panel, wxID_ANY, wxString::Format(_L("耗材 %d"), i + 1),
+            row->Add(new wxStaticText(panel, wxID_ANY, wxString::Format(_L("Filament %d"), i + 1),
                                        wxDefaultPosition, wxSize(FromDIP(40), -1)),
                      0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
 
@@ -671,10 +671,10 @@ void MixedFilamentBatchDialog::build_ui()
     {
         auto* prow = new wxBoxSizer(wxHORIZONTAL);
 
-        // Left: 原模型 (42%)
+        // Left: Original Model (42%)
         auto* lcol = new wxBoxSizer(wxVERTICAL);
         {
-            auto* lbl = new wxStaticText(this, wxID_ANY, _L("原模型"));
+            auto* lbl = new wxStaticText(this, wxID_ANY, _L("Original Model"));
             lbl->SetFont(Label::Body_14);
             lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             lcol->Add(lbl, 0, wxBOTTOM, FromDIP(6));
@@ -694,7 +694,7 @@ void MixedFilamentBatchDialog::build_ui()
                 if (m_tray_index > 1) { --m_tray_index; m_tray_combo->SetSelection(m_tray_index - 1); refresh_previews(); }
             });
             tray_row->Add(m_btn_tray_prev, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M2);
-            tray_row->Add(new wxStaticText(this, wxID_ANY, _L("盘号")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M2);
+            tray_row->Add(new wxStaticText(this, wxID_ANY, _L("Plate")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, M2);
             m_tray_combo = new ComboBox(this, wxID_ANY, wxEmptyString,
                                          wxDefaultPosition, wxSize(FromDIP(56), FromDIP(24)),
                                          0, nullptr, wxCB_READONLY);
@@ -716,10 +716,10 @@ void MixedFilamentBatchDialog::build_ui()
         }
         prow->Add(lcol, 3, wxEXPAND | wxRIGHT, FromDIP(16));
 
-        // Right: 混色匹配后 (58%)
+        // Right: After Match (58%)
         auto* rcol = new wxBoxSizer(wxVERTICAL);
         {
-            auto* lbl = new wxStaticText(this, wxID_ANY, _L("混色匹配后"));
+            auto* lbl = new wxStaticText(this, wxID_ANY, _L("After Match"));
             lbl->SetFont(Label::Body_14);
             lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             rcol->Add(lbl, 0, wxBOTTOM, FromDIP(6));
@@ -740,7 +740,7 @@ void MixedFilamentBatchDialog::build_ui()
     m_scrolled_content->Bind(wxEVT_CHILD_FOCUS, [](wxChildFocusEvent&) {});
     auto* scroll_sizer = new wxBoxSizer(wxVERTICAL);
 
-    // ---- 颜色映射 ----
+    // ---- Color Mapping ----
     {
         auto* card = new StaticBox(m_scrolled_content, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         card->SetCornerRadius(FromDIP(4));
@@ -749,7 +749,7 @@ void MixedFilamentBatchDialog::build_ui()
         card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
         auto* cs = new wxBoxSizer(wxVERTICAL);
         {
-            auto* lbl = new wxStaticText(card, wxID_ANY, _L("颜色映射"));
+            auto* lbl = new wxStaticText(card, wxID_ANY, _L("Color Mapping"));
             lbl->SetFont(Label::Body_14);
             lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
             cs->Add(lbl, 0, wxALL, M);
@@ -773,7 +773,7 @@ void MixedFilamentBatchDialog::build_ui()
         scroll_sizer->Add(card, 0, wxEXPAND | wxBOTTOM, M);
     }
 
-    // ---- 提示文案 ----
+    // ---- Hint Text ----
     m_prompt_label = new Label(m_scrolled_content, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
     scroll_sizer->Add(m_prompt_label, 0, wxEXPAND | wxLEFT | wxRIGHT, M);
 
@@ -794,7 +794,7 @@ void MixedFilamentBatchDialog::build_ui()
         root->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, M);
     }
 
-    // ---- 底部按钮: 取消 + 确定 ----
+    // ---- Bottom Buttons: Cancel + Confirm ----
     {
         auto* btn_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         btn_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -810,7 +810,7 @@ void MixedFilamentBatchDialog::build_ui()
 
         auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-        m_btn_cancel_match = new Button(btn_panel, _L("取消"));
+        m_btn_cancel_match = new Button(btn_panel, _L("Cancel"));
         m_btn_cancel_match->SetMinSize(wxSize(-1, FromDIP(38)));
         m_btn_cancel_match->SetCornerRadius(FromDIP(4));
         m_btn_cancel_match->SetBorderWidth(FromDIP(1));
@@ -818,7 +818,7 @@ void MixedFilamentBatchDialog::build_ui()
         m_btn_cancel_match->SetBackgroundColorNormal(wxColour("#FFFFFF"));
         m_btn_cancel_match->SetTextColorNormal(wxColour("#242424"));
 
-        m_btn_confirm = new Button(btn_panel, _L("确定"));
+        m_btn_confirm = new Button(btn_panel, _L("Confirm"));
         m_btn_confirm->SetMinSize(wxSize(-1, FromDIP(38)));
         m_btn_confirm->SetCornerRadius(FromDIP(4));
         m_btn_confirm->SetBorderWidth(0);
@@ -893,9 +893,9 @@ void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
 void MixedFilamentBatchDialog::update_prompt_text()
 {
     if (m_matching_method == RECOMMENDED)
-        m_prompt_label->SetLabel(_L("1-4号为主耗材。系统会自动选取耗材颜色及混色配方。点击确定后还可手动调整方案。"));
+        m_prompt_label->SetLabel(_L("Nozzles 1-4 are primary filaments. The system will automatically select filament colors and mixing recipes. You can still manually adjust after confirming."));
     else
-        m_prompt_label->SetLabel(_L("1-4号为主耗材。请选择耗材，系统会根据耗材进行混色匹配，点击确定后还可手动调整方案。"));
+        m_prompt_label->SetLabel(_L("Nozzles 1-4 are primary filaments. Please select filaments - the system will perform mixed color matching. You can still manually adjust after confirming."));
 }
 
 void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)

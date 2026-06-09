@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Shared declarations for color-match helpers used by both Plater.cpp and
 // MixedColorMatchPanel.cpp. Implementations live in Plater.cpp.
@@ -142,7 +142,7 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
                                          const MixedFilament& entry,
                                          int num_physical);
 
-// ---- Batch Match Mapping (混色匹配映射) ----
+// ---- Batch Match Mapping ----
 
 /// Represents one color extracted from a multi-color model.
 struct ModelColorEntry

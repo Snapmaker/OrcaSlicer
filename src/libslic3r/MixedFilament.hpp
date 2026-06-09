@@ -1,4 +1,4 @@
-#ifndef slic3r_MixedFilament_hpp_
+﻿#ifndef slic3r_MixedFilament_hpp_
 #define slic3r_MixedFilament_hpp_
 
 #include <string>
@@ -175,7 +175,7 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
 //
 // Virtual filament IDs are numbered starting at (num_physical + 1).  For a
 // 4-extruder printer the first mixed filament has ID 5, the second 6, etc.
-// ---- Batch Match Mapping (混色匹配映射) ----
+// ---- Batch Match Mapping ----
 
 /// Lightweight wx-free entry for batch-inserting matched filaments.
 /// The GUI layer populates this from ColorMappingEntry, then passes

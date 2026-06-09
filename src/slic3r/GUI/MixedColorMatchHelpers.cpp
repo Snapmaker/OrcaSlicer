@@ -1,4 +1,4 @@
-#include "MixedColorMatchHelpers.hpp"
+﻿#include "MixedColorMatchHelpers.hpp"
 #include "MixedGradientSelector.hpp"
 #include <unordered_set>
 #include <ColorSpaceConvert.hpp>
@@ -1280,7 +1280,7 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
     return out.str();
 }
 
-// ---- Batch Match Mapping (混色匹配映射) ----
+// ---- Batch Match Mapping ----
 
 std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 {

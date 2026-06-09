@@ -1854,19 +1854,16 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
 
         const float x    = volume_to_length(m_filpar[m_current_tool].ramming_speed[i] * time_step, line_width, m_layer_height);
         const float e    = m_filpar[m_current_tool].ramming_speed[i] * time_step / filament_area(); // transform volume per sec to E move;
-        // On the last ramming segment, stretch to cleaning_box edge so the nozzle ends predictably
-        float dist;
-        if (i == m_filpar[m_current_tool].ramming_speed.size() - 1 && remaining > x - e_done + WT_EPSILON)
-            dist = remaining;
-        else
-            dist = std::min(x - e_done, remaining);
+        //const float dist = std::min(x - e_done, remaining);
+        const float dist = remaining;
+
         const float actual_time = dist / x * time_step;
         writer.ram(writer.x(), writer.x() + (m_left_to_right ? 1.f : -1.f) * dist, 0.f, 0.f, e * (dist / x), dist / (actual_time / 60.f));
         remaining -= dist;
 
         if (remaining < WT_EPSILON) { // we reached a turning point
-            if (i == m_filpar[m_current_tool].ramming_speed.size() - 1)
-                break; // last segment already reached edge, skip unnecessary turnaround
+            //if (i == m_filpar[m_current_tool].ramming_speed.size() - 1)
+            //    break; // last segment already reached edge, skip unnecessary turnaround
             writer.travel(writer.x(), writer.y() + y_step, 7200);
             m_left_to_right = !m_left_to_right;
             remaining       = xr - xl;
@@ -2122,7 +2119,7 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
 
     // if there is less than 2.5*line_width to the edge, advance straightaway (there is likely a blob anyway)
     if ((m_left_to_right ? xr - writer.x() : writer.x() - xl) < 2.5f * line_width) {
-        writer.travel((m_left_to_right ? xr - line_width : xl + line_width), writer.y() + dy);
+        writer.travel((m_left_to_right ? xr - line_width : xl + line_width), writer.y() + dy * 2);
         m_left_to_right = !m_left_to_right;
     }
 

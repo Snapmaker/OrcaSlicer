@@ -147,9 +147,10 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
 /// Represents one color extracted from a multi-color model.
 struct ModelColorEntry
 {
-    unsigned int color_index;    // 1-based
-    wxColour     color;          // parsed wxColour for GUI operations
-    std::string  hex_value;      // "#RRGGBB"
+    unsigned int              color_index;    // 1-based
+    wxColour                  color;          // parsed wxColour for GUI operations
+    std::string               hex_value;      // "#RRGGBB"
+    std::vector<unsigned int> extruder_ids;   // extruder IDs (1-based) that use this color
 };
 
 /// One model color → mixed filament recipe mapping.
@@ -164,6 +165,7 @@ struct ColorMappingEntry
     bool                          is_pure_recipe   = false;
     double                        pure_delta_e     = std::numeric_limits<double>::infinity();
     std::vector<unsigned int>     merged_model_indices;
+    std::vector<unsigned int>     source_extruder_ids; // which model extruders need this mapping
 };
 
 /// Result of a full batch color-matching operation.
@@ -176,6 +178,8 @@ struct BatchMatchResult
     bool                           success      = false;
     std::string                    error_message;
     int                            error_code   = 0; // 0=ok, 1=partial, 2=cancelled, 3=timeout
+    bool                           is_recommended_mode       = false;
+    std::vector<std::string>       recommended_physical_colors;
 };
 
 /// Extract all unique colors from a multi-color 3D model.
@@ -192,22 +196,31 @@ BatchMatchResult batch_match_model_colors(
     std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
     std::function<void(int,int)>                 progress_callback = nullptr);
 
+#if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
 /// Deduplicate mappings where matched colors are visually close (ΔE < 1.5).
 std::vector<ColorMappingEntry> deduplicate_batch_mappings(
     const std::vector<ColorMappingEntry>& raw_mappings,
     double                                 merge_threshold = 1.5);
+#endif // 0
 
-/// Assign 1-based filament IDs: pure recipes → physical IDs (1-4), mixed → virtual (5+).
-/// Pre: num_physical in [1,4], mappings non-empty.
-/// Post: every mapping.target_filament_id is set.
+/// Assign 1-based filament IDs: pure recipes → physical IDs (1-4), mixed → virtual.
+/// Virtual IDs start at num_physical + existing_mixed_count + 1 to avoid colliding
+/// with pre-existing mixed filaments already painted on the model.
 void assign_batch_virtual_filament_ids(
     BatchMatchResult& result,
-    size_t             num_physical);
+    size_t             num_physical,
+    size_t             existing_mixed_count = 0);
 
 /// Populate result.mixed_filaments from result.mappings.
 void populate_mixed_filaments_from_mappings(
     BatchMatchResult&                           result,
     const Slic3r::MixedFilamentDisplayContext&  context);
+
+/// Apply matched recipes back to model painting data.
+/// Walks every volume's mmu_segmentation_facets and remaps original
+/// extruder_id→target_filament_id from the match result.
+void apply_batch_match_to_model(const BatchMatchResult& result,
+                                 Slic3r::Print&          print);
 
 /// Recommend best 4-color filament combo from available presets.
 /// Pre-filters to Top-15 by single-color ΔE, then scores C(15,4)=1365 combos.

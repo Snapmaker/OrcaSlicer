@@ -36,8 +36,11 @@ private:
     void on_manual_selection_changed();
     void update_prompt_text();
 
-    void update_orig_preview();
-    void update_match_preview();
+    // Preview lifecycle
+    void build_preview_panels();           // create wxStaticBitmaps once + render initial thumbnails
+    void refresh_previews();               // swap cached bitmaps for current tray; lazy-renders match thumb
+    void rebuild_match_thumb_cache();      // build m_match_colors from config + mappings, render current plate
+    void render_match_thumb_for_plate(int plate_idx); // render one plate's match thumbnail on demand
 
     void start_batch_match();
     void cancel_batch_match();
@@ -50,6 +53,7 @@ private:
     void set_error(const wxString& msg);
 
     void set_match_buttons_state(bool matching);
+    void update_recommended_card();
     void load_model_colors();
 
     enum MatchingMethod { RECOMMENDED = 0, MANUAL = 1 };
@@ -83,6 +87,14 @@ private:
     wxStaticBitmap*           m_preview_orig_bitmap = nullptr;
     wxStaticBitmap*           m_preview_match_bitmap = nullptr;
 
+    // Thumbnail cache: one wxBitmap per plate, shared by both previews
+    // m_thumb_cache:  original plate thumbnails (always available)
+    // m_match_cache:  matched-color thumbnails (populated lazily after match completes)
+    // m_match_colors: ColorRGBA vector built from config + mappings, used for lazy rendering
+    std::vector<wxBitmap>     m_thumb_cache;
+    std::vector<wxBitmap>     m_match_cache;
+    std::vector<ColorRGBA>    m_match_colors;
+
     // Tray controls (below original preview)
     wxButton*                 m_btn_tray_prev = nullptr;
     wxButton*                 m_btn_tray_next = nullptr;
@@ -90,7 +102,13 @@ private:
 
     // Manual filament card
     wxWindow*                 m_manual_card = nullptr;
+    wxWindow*                 m_recommended_card = nullptr;
+    // Recommended card: swatches + labels updated after DeltaE reorder
+    wxStaticBitmap*           m_recommended_swatches[4] = {nullptr};
+    wxStaticText*             m_recommended_labels[4]   = {nullptr};
     ComboBox*                 m_filament_combo[4] = {nullptr};
+    wxWindow*                 m_manual_row_panels[4] = {nullptr};
+    int                       m_manual_filament_count = 2;
 
     // Legend
     wxScrolledWindow*         m_legend_scroller = nullptr;

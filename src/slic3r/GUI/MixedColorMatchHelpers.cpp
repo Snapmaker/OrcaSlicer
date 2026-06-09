@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <fstream>
+#include <set>
 #include <queue>
 #include <sstream>
 #include <mutex>
@@ -1325,15 +1326,19 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
                     continue;
                 }
 
-                // Deduplicate by hex value
+                // Deduplicate by hex value — accumulate extruder IDs for this color
                 auto it = std::find_if(colors.begin(), colors.end(),
                     [&](const ModelColorEntry& e) { return e.hex_value == color_hex; });
-                if (it != colors.end()) continue;
+                if (it != colors.end()) {
+                    it->extruder_ids.push_back(static_cast<unsigned int>(eid));
+                    continue;
+                }
 
                 colors.push_back({
-                    (unsigned int)(colors.size() + 1),
+                    static_cast<unsigned int>(colors.size() + 1),
                     c,
-                    color_hex
+                    color_hex,
+                    {static_cast<unsigned int>(eid)}
                 });
             }
         }
@@ -1352,6 +1357,7 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 
 // ---- Batch Match Algorithm ----
 
+#if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
 std::vector<ColorMappingEntry> deduplicate_batch_mappings(
     const std::vector<ColorMappingEntry>& raw_mappings,
     double                                 merge_threshold)
@@ -1369,6 +1375,10 @@ std::vector<ColorMappingEntry> deduplicate_batch_mappings(
         for (auto& existing : result) {
             if (color_delta_e00(existing.matched_color, mapping.matched_color) < merge_threshold) {
                 existing.merged_model_indices.push_back(mapping.model_color_index);
+                existing.source_extruder_ids.insert(
+                    existing.source_extruder_ids.end(),
+                    mapping.source_extruder_ids.begin(),
+                    mapping.source_extruder_ids.end());
                 merged = true;
                 break;
             }
@@ -1382,17 +1392,19 @@ std::vector<ColorMappingEntry> deduplicate_batch_mappings(
         << " -> " << result.size() << " (threshold DeltaE<" << merge_threshold << ")";
     return result;
 }
+#endif // 0
 
 void assign_batch_virtual_filament_ids(
     BatchMatchResult& result,
-    size_t             num_physical)
+    size_t             num_physical,
+    size_t             existing_mixed_count)
 {
-    if (num_physical < 1 || num_physical > 4) {
+    if (num_physical < 1) {
         BOOST_LOG_TRIVIAL(error)
             << "assign_batch_virtual_filament_ids: invalid num_physical=" << num_physical;
         return;
     }
-    unsigned int next_virtual_id = unsigned(num_physical + 1);
+    unsigned int next_virtual_id = unsigned(num_physical + existing_mixed_count + 1);
 
     for (auto& mapping : result.mappings) {
         if (mapping.is_pure_recipe) {
@@ -1466,6 +1478,7 @@ BatchMatchResult batch_match_model_colors(
         mapping.is_pure_recipe       = (recipe.mix_b_percent == 0);
         mapping.pure_delta_e         = recipe.delta_e;
         mapping.merged_model_indices = {entry.color_index};
+        mapping.source_extruder_ids  = entry.extruder_ids;
         result.mappings.push_back(mapping);
 
         if (progress_callback)
@@ -1479,8 +1492,9 @@ BatchMatchResult batch_match_model_colors(
         return result;
     }
 
-    result.mappings = deduplicate_batch_mappings(result.mappings, 1.5);
-    assign_batch_virtual_filament_ids(result, physical_colors.size());
+    // Each model color always gets its own mapping entry — no deduplication.
+    // Merging by matched_color would lose distinct model-source colors whose
+    // recipes happen to produce similar output shades.
 
     double sum_de = 0.0;
     for (const auto& m : result.mappings)
@@ -1607,6 +1621,78 @@ std::vector<std::string> recommend_best_filament_combo(
         all_preset_colors[combos[0].i2],
         all_preset_colors[combos[0].i3]
     };
+}
+
+void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
+{
+    if (!result.success || result.mappings.empty()) return;
+
+    // Direct mapping: each mapping entry carries the model extruder IDs that
+    // need remapping to the target_filament_id.  No color hex comparison needed.
+    std::unordered_map<int, unsigned int> extruder_remap;
+    for (const auto& mapping : result.mappings) {
+        for (unsigned int src_eid : mapping.source_extruder_ids) {
+            if (mapping.target_filament_id != src_eid)
+                extruder_remap[static_cast<int>(src_eid)] = mapping.target_filament_id;
+        }
+    }
+    if (extruder_remap.empty()) return;
+
+    // Compute total filaments: physical + all mixed (including newly created).
+    // Use project_config filament_colour — same source as Plater callback `colors`.
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    if (!pb) return;
+    ConfigOptionStrings* co = pb->project_config.option<ConfigOptionStrings>("filament_colour");
+    if (!co || co->values.empty()) return;
+    const size_t num_physical    = co->values.size();
+    const size_t total_filaments = pb->mixed_filaments.total_filaments(num_physical);
+
+    // Build EnforcerBlockerStateMap: identity by default, remap where needed
+    constexpr size_t MAX_EBT = static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
+    EnforcerBlockerStateMap state_map;
+    for (size_t i = 0; i <= MAX_EBT; ++i)
+        state_map[i] = static_cast<EnforcerBlockerType>(i);
+    for (const auto& [eid, target] : extruder_remap) {
+        if (eid <= static_cast<int>(MAX_EBT) && target <= static_cast<unsigned int>(MAX_EBT)) {
+            state_map[static_cast<size_t>(eid)] = static_cast<EnforcerBlockerType>(target);
+        } else if (target > static_cast<unsigned int>(MAX_EBT)) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "apply_batch_match: cannot remap extruder " << eid
+                << " -> " << target << " (target exceeds EnforcerBlockerType::ExtruderMax="
+                << MAX_EBT << "), triangle-level remap skipped for this entry";
+        }
+    }
+
+    // Apply remap at two levels independently:
+    //   1) MMU-painted: triangle-level extruder data via remap_extruder_ids
+    //   2) Config-level: volume/object config extruder assignment
+    for (ModelObject* mo : wxGetApp().model().objects) {
+        for (ModelVolume* mv : mo->volumes) {
+            if (mv->type() != ModelVolumeType::MODEL_PART) continue;
+
+            // Level 1: triangle-level MMU data
+            if (!mv->mmu_segmentation_facets.empty())
+                mv->remap_extruder_ids(total_filaments, state_map);
+
+            // Level 2: config-level extruder (always needed — even for
+            // painted volumes, get_extruders() includes extruder_id())
+            int old_eid = mv->extruder_id();
+            if (old_eid <= 0) continue;
+            auto it = extruder_remap.find(old_eid);
+            if (it == extruder_remap.end()) continue;
+
+            const unsigned int new_eid = it->second;
+            const ConfigOption* vol_opt = mv->config.option("extruder");
+            if (vol_opt && vol_opt->getInt() > 0)
+                mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
+            else
+                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
+        }
+    }
+
+    BOOST_LOG_TRIVIAL(info)
+        << "apply_batch_match: remapped " << extruder_remap.size()
+        << " extruder IDs across all volumes (total_filaments=" << total_filaments << ")";
 }
 
 }} // namespace Slic3r::GUI

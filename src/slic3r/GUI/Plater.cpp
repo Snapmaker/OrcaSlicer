@@ -2330,6 +2330,35 @@ Sidebar::Sidebar(Plater *parent)
         if (dlg.ShowModal() != wxID_OK) return;
         const BatchMatchResult& result = dlg.GetResult();
         if (!result.success) return;
+
+        // For recommended mode, apply CMYG to the first 4 physical slots.
+        // < 4 filaments: expand to 4.  >= 4 filaments: keep all, only update
+        // the first 4 — don't delete extra physical filaments.
+        std::vector<std::string> colors_vec;
+        if (result.is_recommended_mode && result.recommended_physical_colors.size() >= 4) {
+            const auto& cm = result.recommended_physical_colors;
+            auto* pb = wxGetApp().preset_bundle;
+            auto* fc = pb->project_config.option<ConfigOptionStrings>("filament_colour");
+
+            const size_t current_count = pb->filament_presets.size();
+            const size_t target_count  = std::max<size_t>(4, current_count);
+
+            // Build full palette: CMYG in slots 1-4, original in 5+.
+            colors_vec = fc ? fc->values : std::vector<std::string>{};
+            colors_vec.resize(target_count);
+            for (size_t i = 0; i < 4 && i < cm.size(); ++i)
+                colors_vec[i] = cm[i];
+
+            // Write before set_num_filaments so auto_generate sees CMYG palette.
+            if (fc) fc->values = colors_vec;
+
+            pb->set_num_filaments((unsigned int)target_count, std::vector<std::string>{});
+            wxGetApp().plater()->on_filaments_change((int)target_count);
+        } else {
+            ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+            colors_vec = co ? co->values : std::vector<std::string>{};
+        }
+
         auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
         std::vector<MixedFilamentBatchEntry> batch_entries;
         batch_entries.reserve(result.mappings.size());
@@ -2347,10 +2376,41 @@ Sidebar::Sidebar(Plater *parent)
             entry.display_color = mapping.matched_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
             batch_entries.push_back(std::move(entry));
         }
-        mgr.add_batch_custom_filaments(batch_entries, colors);
+        mgr.add_batch_custom_filaments(batch_entries, colors_vec);
+
+        // For recommended mode: the dialog computed target_filament_id for mixed
+        // recipes assuming exactly 4 physical filaments (CMYG palette). When the
+        // project has >4 physical filaments and we preserve slots 5+, virtual
+        // filament IDs must start after ALL physical slots, not after slot 4.
+        // Recompute here using the actual post-add total_filaments count.
+        BatchMatchResult model_result = result; // mutable copy
+        if (result.is_recommended_mode && colors_vec.size() > 4) {
+            const size_t num_phys = colors_vec.size();
+            const size_t batch_count = batch_entries.size();
+            // batch entries were appended last → occupy the last N virtual slots
+            size_t next_vid = mgr.total_filaments(num_phys) - batch_count + 1;
+            for (auto& mapping : model_result.mappings) {
+                if (!mapping.is_pure_recipe)
+                    mapping.target_filament_id = (unsigned int)(next_vid++);
+            }
+        }
+        // Apply matched recipes to model painting data
+        apply_batch_match_to_model(model_result, const_cast<Print&>(wxGetApp().plater()->fff_print()));
+
         if (ConfigOptionString* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
         update_mixed_filament_panel(false);
+        // Refresh physical filament panel (combo boxes, color swatches)
+        update_ui_from_settings();
+        update_dynamic_filament_list();
+        // Force-refresh all physical filament combo boxes so their color
+        // swatches reflect the updated filament_colour config.  This is
+        // necessary when the filament count didn't change (Sidebar::on_filaments_change
+        // takes the early-return path and skips combo rebuild in that case).
+        std::vector<PlaterPresetComboBox*>& fcombos = combos_filament();
+        for (size_t i = 0; i < fcombos.size(); ++i) {
+            if (fcombos[i]) fcombos[i]->update();
+        }
     });
     bSizer39->Add(p->m_btn_batch_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
 

@@ -175,6 +175,26 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
 //
 // Virtual filament IDs are numbered starting at (num_physical + 1).  For a
 // 4-extruder printer the first mixed filament has ID 5, the second 6, etc.
+// ---- Batch Match Mapping (混色匹配映射) ----
+
+/// Lightweight wx-free entry for batch-inserting matched filaments.
+/// The GUI layer populates this from ColorMappingEntry, then passes
+/// to MixedFilamentManager::add_batch_custom_filaments().
+struct MixedFilamentBatchEntry
+{
+    unsigned int component_a     = 1;
+    unsigned int component_b     = 2;
+    int          mix_b_percent   = 50;
+    std::string  manual_pattern;
+    std::string  gradient_component_ids;
+    std::string  gradient_component_weights;
+    int          distribution_mode = int(MixedFilament::Simple);
+    bool         gradient_enabled  = false;
+    float        gradient_start    = MixedFilament::k_default_gradient_dominant;
+    float        gradient_end      = MixedFilament::k_default_gradient_minority;
+    std::string  display_color;   // pre-computed "#RRGGBB" hex
+};
+
 // ---------------------------------------------------------------------------
 class MixedFilamentManager
 {
@@ -426,26 +446,6 @@ inline bool is_simple_gradient(const MixedFilament& mf)
         && MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty()
         && count_ids(mf.gradient_component_ids) < 3;
 }
-
-// ---- Batch Match Mapping (混色匹配映射) ----
-
-/// Lightweight wx-free entry for batch-inserting matched filaments.
-/// The GUI layer populates this from ColorMappingEntry, then passes
-/// to MixedFilamentManager::add_batch_custom_filaments().
-struct MixedFilamentBatchEntry
-{
-    unsigned int component_a     = 1;
-    unsigned int component_b     = 2;
-    int          mix_b_percent   = 50;
-    std::string  manual_pattern;
-    std::string  gradient_component_ids;
-    std::string  gradient_component_weights;
-    int          distribution_mode = int(MixedFilament::Simple);
-    bool         gradient_enabled  = false;
-    float        gradient_start    = MixedFilament::k_default_gradient_dominant;
-    float        gradient_end      = MixedFilament::k_default_gradient_minority;
-    std::string  display_color;   // pre-computed "#RRGGBB" hex
-};
 
 } // namespace Slic3r
 

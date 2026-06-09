@@ -1931,6 +1931,66 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     refresh_display_colors(filament_colours);
 }
 
+void MixedFilamentManager::add_batch_custom_filaments(
+    const std::vector<MixedFilamentBatchEntry>& entries,
+    const std::vector<std::string>&             filament_colours)
+{
+    const size_t n = filament_colours.size();
+    if (n < 2) return;
+    if (entries.empty()) return;
+
+    size_t current_total = total_filaments(n);
+    const size_t kMax = MAXIMUM_FILAMENT_NUMBER;
+
+    for (const auto& e : entries) {
+        if (current_total >= kMax) break;
+
+        unsigned int a = std::max<unsigned int>(1, std::min<unsigned int>(e.component_a, (unsigned int)n));
+        unsigned int b = std::max<unsigned int>(1, std::min<unsigned int>(e.component_b, (unsigned int)n));
+        if (a == b) {
+            b = (a == 1) ? 2u : 1u;
+            if (a == b) continue;
+        }
+
+        MixedFilament mf;
+        mf.component_a     = a;
+        mf.component_b     = b;
+        mf.stable_id       = allocate_stable_id();
+        mf.mix_b_percent   = e.mix_b_percent;
+        mf.ratio_a         = 1;
+        mf.ratio_b         = 1;
+        mf.manual_pattern  = e.manual_pattern;
+        mf.gradient_component_ids     = e.gradient_component_ids;
+        mf.gradient_component_weights = e.gradient_component_weights;
+        mf.pointillism_all_filaments  = false;
+        mf.distribution_mode          = e.distribution_mode;
+        mf.local_z_max_sublayers      = 0;
+        mf.component_a_surface_offset = 0.f;
+        mf.component_b_surface_offset = 0.f;
+        mf.enabled        = true;
+        mf.deleted        = false;
+        mf.custom         = true;
+        mf.origin_auto    = false;
+        mf.ui_mode        = 2; // MATCH
+        mf.gradient_enabled = e.gradient_enabled;
+        mf.gradient_start   = e.gradient_start;
+        mf.gradient_end     = e.gradient_end;
+        mf.display_color    = e.display_color;
+
+        mf.manual_pattern = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+        mf.gradient_component_ids = MixedFilamentManager::normalize_gradient_component_ids(mf.gradient_component_ids);
+        if (mf.gradient_enabled &&
+            std::abs(mf.gradient_start - mf.gradient_end) < MixedFilament::k_min_gradient_difference) {
+            mf.gradient_enabled = false;
+        }
+
+        m_mixed.push_back(std::move(mf));
+        ++current_total;
+    }
+
+    refresh_display_colors(filament_colours);
+}
+
 void MixedFilamentManager::clear_custom_entries()
 {
     m_mixed.erase(std::remove_if(m_mixed.begin(), m_mixed.end(), [](const MixedFilament &mf) { return mf.custom; }), m_mixed.end());

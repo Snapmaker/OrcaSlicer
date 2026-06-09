@@ -1284,7 +1284,7 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
 std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 {
     std::vector<ModelColorEntry> colors;
-    static constexpr int MAX_EXTRUDER_ID = 256;
+    static constexpr int MAX_EXTRUDER_ID = int(MAXIMUM_EXTRUDER_NUMBER);
 
     auto& filament_colours = print.config().filament_colour.values;
 
@@ -1335,6 +1335,185 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
     BOOST_LOG_TRIVIAL(info)
         << "extract_model_colors: extracted " << colors.size() << " unique model colors";
     return colors;
+}
+
+// ---- Batch Match Algorithm ----
+
+std::vector<ColorMappingEntry> deduplicate_batch_mappings(
+    const std::vector<ColorMappingEntry>& raw_mappings,
+    double                                 merge_threshold)
+{
+    if (merge_threshold <= 0.0 || merge_threshold > 100.0) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "deduplicate_batch_mappings: invalid threshold " << merge_threshold
+            << ", returning unmodified";
+        return raw_mappings;
+    }
+    std::vector<ColorMappingEntry> result;
+
+    for (const auto& mapping : raw_mappings) {
+        bool merged = false;
+        for (auto& existing : result) {
+            if (color_delta_e00(existing.matched_color, mapping.matched_color) < merge_threshold) {
+                existing.merged_model_indices.push_back(mapping.model_color_index);
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            result.push_back(mapping);
+        }
+    }
+    BOOST_LOG_TRIVIAL(debug)
+        << "deduplicate_batch_mappings: " << raw_mappings.size()
+        << " -> " << result.size() << " (threshold DeltaE<" << merge_threshold << ")";
+    return result;
+}
+
+void assign_batch_virtual_filament_ids(
+    BatchMatchResult& result,
+    size_t             num_physical)
+{
+    if (num_physical < 1 || num_physical > 4) {
+        BOOST_LOG_TRIVIAL(error)
+            << "assign_batch_virtual_filament_ids: invalid num_physical=" << num_physical;
+        return;
+    }
+    unsigned int next_virtual_id = unsigned(num_physical + 1);
+
+    for (auto& mapping : result.mappings) {
+        if (mapping.is_pure_recipe) {
+            if (mapping.recipe.component_a < 1 || mapping.recipe.component_a > num_physical) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "assign_batch_virtual_filament_ids: component_a="
+                    << mapping.recipe.component_a << " out of range [1," << num_physical
+                    << "], treating as mixed";
+                mapping.target_filament_id = next_virtual_id++;
+                continue;
+            }
+            mapping.target_filament_id = mapping.recipe.component_a;
+        } else {
+            mapping.target_filament_id = next_virtual_id++;
+        }
+    }
+}
+
+BatchMatchResult batch_match_model_colors(
+    const std::vector<ModelColorEntry>&          model_colors,
+    const std::vector<std::string>&             physical_colors,
+    int                                          min_component_percent,
+    std::shared_ptr<std::atomic<bool>>           cancel_token,
+    std::function<void(int,int)>                 progress_callback)
+{
+    BatchMatchResult result;
+    result.success = true;
+
+    if (min_component_percent < 0 || min_component_percent > 50) {
+        result.success = false;
+        result.error_message = "min_component_percent must be in [0, 50]";
+        return result;
+    }
+    if (model_colors.empty()) {
+        result.success = false;
+        result.error_message = "No model colors to match";
+        return result;
+    }
+    if (physical_colors.size() < 2) {
+        result.success = false;
+        result.error_message = "Need at least 2 physical filaments";
+        return result;
+    }
+
+    const int total = int(model_colors.size());
+    for (int i = 0; i < total; ++i) {
+        if (cancel_token && cancel_token->load()) {
+            result.success = false;
+            result.error_message = "Cancelled by user";
+            result.error_code = 2;
+            return result;
+        }
+
+        const auto& entry = model_colors[i];
+        MixedColorMatchRecipeResult recipe =
+            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent);
+
+        if (!recipe.valid) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "batch_match: no valid recipe for color " << entry.color_index
+                << " (" << entry.hex_value << ")";
+            continue;
+        }
+
+        ColorMappingEntry mapping;
+        mapping.model_color_index   = entry.color_index;
+        mapping.source_color         = entry.color;
+        mapping.recipe               = recipe;
+        mapping.delta_e              = recipe.delta_e;
+        mapping.matched_color        = recipe.preview_color;
+        mapping.is_pure_recipe       = (recipe.mix_b_percent == 0);
+        mapping.pure_delta_e         = recipe.delta_e;
+        mapping.merged_model_indices = {entry.color_index};
+        result.mappings.push_back(mapping);
+
+        if (progress_callback)
+            progress_callback(i + 1, total);
+    }
+
+    if (result.mappings.empty()) {
+        result.success = false;
+        result.error_message = "No valid recipes found for any model color";
+        result.error_code = 1;
+        return result;
+    }
+
+    result.mappings = deduplicate_batch_mappings(result.mappings, 1.5);
+    assign_batch_virtual_filament_ids(result, physical_colors.size());
+
+    double sum_de = 0.0;
+    for (const auto& m : result.mappings)
+        sum_de += m.delta_e;
+    result.avg_delta_e = sum_de / double(result.mappings.size());
+
+    result.selected_physical_ids.clear();
+    for (size_t i = 1; i <= physical_colors.size(); ++i)
+        result.selected_physical_ids.push_back((unsigned int)i);
+
+    BOOST_LOG_TRIVIAL(info)
+        << "batch_match: " << total << " model colors -> "
+        << result.mappings.size() << " unique recipes, avg DeltaE=" << result.avg_delta_e;
+    return result;
+}
+
+void populate_mixed_filaments_from_mappings(
+    BatchMatchResult&                           result,
+    const MixedFilamentDisplayContext&          context)
+{
+    result.mixed_filaments.clear();
+
+    for (const auto& mapping : result.mappings) {
+        if (mapping.is_pure_recipe) continue;
+
+        MixedFilament mf;
+        mf.component_a    = mapping.recipe.component_a;
+        mf.component_b    = mapping.recipe.component_b;
+        mf.mix_b_percent  = mapping.recipe.mix_b_percent;
+        mf.manual_pattern = mapping.recipe.manual_pattern;
+        mf.stable_id      = 0; // filled by add_batch_custom_filaments
+        mf.ratio_a        = 1;
+        mf.ratio_b        = 1;
+        mf.distribution_mode = mapping.recipe.gradient_component_ids.empty()
+            ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
+        mf.gradient_component_ids     = mapping.recipe.gradient_component_ids;
+        mf.gradient_component_weights = mapping.recipe.gradient_component_weights;
+        mf.enabled        = true;
+        mf.deleted        = false;
+        mf.custom         = true;
+        mf.origin_auto    = false;
+        mf.ui_mode        = 2; // MATCH
+        mf.display_color  = mapping.matched_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+
+        result.mixed_filaments.push_back(std::move(mf));
+    }
 }
 
 }} // namespace Slic3r::GUI

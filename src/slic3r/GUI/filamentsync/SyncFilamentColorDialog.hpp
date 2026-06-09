@@ -32,6 +32,8 @@ public:
     std::vector<FilamentData> getSyncDataList() const;
     bool isAddUnUsedMachineFilaments() const;
 
+    void setHasMixedFilaments(bool has);
+
 private:
     void onReset();
     void onCancel();
@@ -67,7 +69,8 @@ private:
     // Data
     std::vector<FilamentData> m_designDataList;
     std::vector<FilamentData> m_machineDataList;
-    bool m_bMappingMode = true;
+    bool m_bMappingMode        = true;
+    bool m_hasMixedFilaments   = false;
 };
 
 } // namespace GUI

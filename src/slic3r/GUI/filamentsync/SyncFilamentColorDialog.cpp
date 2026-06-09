@@ -17,6 +17,7 @@
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
@@ -192,6 +193,11 @@ bool SyncFilamentColorDialog::isAddUnUsedMachineFilaments() const
     return m_pAddUnUsedMachineFilaments && m_pAddUnUsedMachineFilaments->GetValue();
 }
 
+void SyncFilamentColorDialog::setHasMixedFilaments(bool has)
+{
+    m_hasMixedFilaments = has;
+}
+
 void SyncFilamentColorDialog::onReset()
 {
     if (m_bMappingMode)
@@ -207,6 +213,17 @@ void SyncFilamentColorDialog::onCancel()
 
 void SyncFilamentColorDialog::onSync()
 {
+    if (m_hasMixedFilaments) {
+        MessageDialog dlg(this,
+            _L("Mixed filament configuration is detected in the current project. "
+               "Syncing may affect the mixed filament settings. "
+               "Do you want to continue?"),
+            _L("Mixed Filament Warning"),
+            wxYES_NO | wxICON_WARNING);
+        dlg.CentreOnScreen();
+        if (dlg.ShowModal() != wxID_YES)
+            return;
+    }
     EndModal(wxID_OK);
 }
 

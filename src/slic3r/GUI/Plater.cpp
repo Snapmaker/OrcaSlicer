@@ -7981,6 +7981,7 @@ void Sidebar::show_sync_filament_dialog()
 
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
+    dlg.setHasMixedFilaments(preset_bundle->mixed_filaments.enabled_count() > 0);
     dlg.CentreOnScreen();
     if (dlg.ShowModal() == wxID_OK && preset_bundle) {
         std::vector<FilamentData> syncedData = dlg.getSyncDataList();

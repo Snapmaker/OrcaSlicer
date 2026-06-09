@@ -4,7 +4,6 @@
 
 #include "FilamentData.hpp"
 
-class wxStaticText;
 namespace Slic3r
 {
 namespace GUI
@@ -31,21 +30,15 @@ public:
     const FilamentData& getBelowData() const;
 
 private:
-    void onAboveButtonClicked();
-    void onBelowButtonClicked();
-
-    void applyColors();
+    void onPaint(wxPaintEvent& event);
+    void onLeftDown(wxMouseEvent& event);
+    void updateSizing();
 
     FilamentData m_aboveFilament;
     FilamentData m_belowFilament;
 
     bool m_bAboveEnabled = true;
     bool m_bBelowEnabled = true;
-
-    wxPanel*      m_pAbovePanel = nullptr;
-    wxStaticText* m_pAboveLabel = nullptr;
-    wxPanel*      m_pBelowPanel = nullptr;
-    wxStaticText* m_pBelowLabel = nullptr;
 
     FilamentInfoCallback m_aboveCallback = nullptr;
     FilamentInfoCallback m_belowCallback = nullptr;

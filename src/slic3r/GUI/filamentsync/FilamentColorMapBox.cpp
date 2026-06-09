@@ -1,32 +1,59 @@
 #include "FilamentColorMapBox.hpp"
 
-#include <wx/sizer.h>
-#include <wx/stattext.h>
-#include <wx/panel.h>
+#include <wx/dcclient.h>
+#include <wx/dcgraph.h>
+#include <wx/dcmemory.h>
+#include <wx/settings.h>
 
+#include "slic3r/GUI/BitmapCache.hpp"
+#include "slic3r/GUI/Widgets/Label.hpp"
 
 namespace
 {
 
-// --- Layout ---
-constexpr int g_colorMapBoxWidth  = 100;
-constexpr int g_colorMapBoxHeight = 120;
-constexpr int g_aboveProportion   = 2; // 2/5 of total height
-constexpr int g_belowProportion   = 3; // 3/5 of total height
-constexpr int g_separatorHeight   = 1; // DIP
-constexpr int g_labelWrapWidth    = 90; // DIP
+// ============================================================
+// Layout constants
+// ============================================================
 
-// --- Colors ---
-constexpr int g_luminanceThreshold = 140; // perceived brightness threshold for white/black text
+constexpr int g_cardWidth = 67;
 
-// --- Luminance coefficients (ITU-R BT.601) ---
+constexpr int g_topBarHeight   = 26;
+constexpr int g_bodyOverlap    = 1;
+constexpr int g_bodyY          = g_topBarHeight - g_bodyOverlap; // 25
+
+constexpr int g_bodyHeightEnabled  = 60; // 25 + 60 = 85
+constexpr int g_bodyHeightDisabled = 46; // 25 + 46 = 71
+
+constexpr int g_cardHeightEnabled  = g_bodyY + g_bodyHeightEnabled;  // 85
+constexpr int g_cardHeightDisabled = g_bodyY + g_bodyHeightDisabled; // 71
+
+constexpr int g_cornerRadius = 6;
+
+constexpr int g_circleDiameter = 20;
+constexpr int g_circleYOffset  = 5;
+
+constexpr int g_arrowSize      = 14;
+constexpr int g_arrowBotMargin = 4;
+
+constexpr int g_topTextY = 7;
+
+constexpr int g_nameTextY        = 29;
+constexpr int g_bodyBorderWidth  = 1;
+
+// ============================================================
+// Colours
+// ============================================================
+const wxColour g_bodyBorderColor(0xDB, 0xDB, 0xDA);
+const wxColour g_bodyTextColor(0x33, 0x33, 0x33);
+const wxColour g_disabledBodyBg(0xE8, 0xE8, 0xE8);
+
+// ============================================================
+// Luminance helpers
+// ============================================================
 constexpr double g_lumR = 0.299;
 constexpr double g_lumG = 0.587;
 constexpr double g_lumB = 0.114;
-
-// --- Defaults ---
-constexpr const char* g_separatorColor("#999999");
-
+constexpr int    g_luminanceThreshold = 140;
 
 bool isDarkColour(const wxColour& c)
 {
@@ -38,13 +65,32 @@ wxColour getTextColour(const wxColour& bg)
     return isDarkColour(bg) ? *wxWHITE : *wxBLACK;
 }
 
-wxString formatLabel(const Slic3r::GUI::FilamentData& data)
+wxString formatTopLabel(const Slic3r::GUI::FilamentData& data)
 {
-    // Display as 1-based index (1, 2, …) regardless of internal storage.
     unsigned int displayIndex = data.m_index + 1;
-    if (data.m_name.empty())
-        return wxString::Format("%u", displayIndex);
-    return wxString::Format("%u  %s", displayIndex, data.m_name);
+    if (data.m_type.empty())
+        return wxString::Format("%u NONE", displayIndex);
+    return wxString::Format("%u %s", displayIndex, data.m_type);
+}
+
+Slic3r::GUI::BitmapCache& getIconCache()
+{
+    static Slic3r::GUI::BitmapCache s_cache;
+    return s_cache;
+}
+
+const wxBitmap& getDropdownArrowBitmap(int sizePxHasDpi)
+{
+    static wxBitmap s_bmp;
+    static int      s_cachedPx = -1;
+    if (s_cachedPx != sizePxHasDpi || !s_bmp.IsOk()) {
+        wxBitmap* loaded = getIconCache().load_svg("filament_dropdown_arrow", sizePxHasDpi, sizePxHasDpi);
+        if (loaded && loaded->IsOk()) {
+            s_bmp       = *loaded;
+            s_cachedPx = sizePxHasDpi;
+        }
+    }
+    return s_bmp;
 }
 
 } // namespace
@@ -57,65 +103,14 @@ namespace GUI
 FilamentColorMapBox::FilamentColorMapBox(wxWindow* parent,
                                          const FilamentData& aboveData,
                                          const FilamentData& belowData)
-    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_SIMPLE)
+    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+              wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
     , m_aboveFilament(aboveData)
     , m_belowFilament(belowData)
 {
-    SetMinSize(FromDIP(wxSize(g_colorMapBoxWidth, g_colorMapBoxHeight)));
-
-    auto* mainSizer = new wxBoxSizer(wxVERTICAL);
-
-    // ---- Above panel (2/5 logical filament) ----
-    m_pAbovePanel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-                                wxBORDER_NONE);
-
-    auto* aboveSizer = new wxBoxSizer(wxVERTICAL);
-    m_pAboveLabel = new wxStaticText(m_pAbovePanel, wxID_ANY, formatLabel(m_aboveFilament),
-                                      wxDefaultPosition, wxDefaultSize,
-                                      wxALIGN_CENTRE_HORIZONTAL);
-    m_pAboveLabel->Wrap(FromDIP(g_labelWrapWidth));
-    aboveSizer->AddStretchSpacer();
-    aboveSizer->Add(m_pAboveLabel, 0, wxALIGN_CENTER_HORIZONTAL);
-    aboveSizer->AddStretchSpacer();
-    m_pAbovePanel->SetSizer(aboveSizer);
-
-    m_pAbovePanel->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { onAboveButtonClicked(); });
-    m_pAboveLabel->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { onAboveButtonClicked(); });
-
-    mainSizer->Add(m_pAbovePanel, g_aboveProportion, wxEXPAND);
-
-    // ---- Separator line ----
-    auto* sepPanel = new wxPanel(this, wxID_ANY, wxDefaultPosition,
-                                 FromDIP(wxSize(-1, g_separatorHeight)));
-    sepPanel->SetBackgroundColour(wxColour(g_separatorColor));
-    mainSizer->Add(sepPanel, 0, wxEXPAND);
-
-    // ---- Below panel (3/5 machine filament) ----
-    m_pBelowPanel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
-                                wxBORDER_NONE);
-
-    auto* belowSizer = new wxBoxSizer(wxVERTICAL);
-    m_pBelowLabel = new wxStaticText(m_pBelowPanel, wxID_ANY,
-                                      m_belowFilament.m_name.empty()
-                                          ? wxString("--")
-                                          : wxString(m_belowFilament.m_name),
-                                      wxDefaultPosition, wxDefaultSize,
-                                      wxALIGN_CENTRE_HORIZONTAL);
-    m_pBelowLabel->Wrap(FromDIP(g_labelWrapWidth));
-    belowSizer->AddStretchSpacer();
-    belowSizer->Add(m_pBelowLabel, 0, wxALIGN_CENTER_HORIZONTAL);
-    belowSizer->AddStretchSpacer();
-    m_pBelowPanel->SetSizer(belowSizer);
-
-    m_pBelowPanel->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { onBelowButtonClicked(); });
-    m_pBelowLabel->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { onBelowButtonClicked(); });
-
-    mainSizer->Add(m_pBelowPanel, g_belowProportion, wxEXPAND);
-
-    SetSizer(mainSizer);
-    Layout();
-
-    applyColors();
+    updateSizing();
+    Bind(wxEVT_PAINT, &FilamentColorMapBox::onPaint, this);
+    Bind(wxEVT_LEFT_DOWN, &FilamentColorMapBox::onLeftDown, this);
 }
 
 void FilamentColorMapBox::bindButton(FilamentInfoCallback cb, ButtonType type)
@@ -130,32 +125,25 @@ void FilamentColorMapBox::setEnable(bool bEnable, ButtonType type)
 {
     if (type == ButtonType::Above) {
         m_bAboveEnabled = bEnable;
-        if (m_pAbovePanel)
-            m_pAbovePanel->Enable(bEnable);
     } else {
         m_bBelowEnabled = bEnable;
-        if (m_pBelowPanel)
-            m_pBelowPanel->Enable(bEnable);
     }
+    updateSizing();
+    Refresh();
+    if (auto* p = GetParent())
+        p->Layout();
 }
 
 void FilamentColorMapBox::updateAboveData(const FilamentData& data)
 {
     m_aboveFilament = data;
-    if (m_pAboveLabel)
-        m_pAboveLabel->SetLabel(formatLabel(m_aboveFilament));
-    applyColors();
+    Refresh();
 }
 
 void FilamentColorMapBox::updateBelowData(const FilamentData& data)
 {
     m_belowFilament = data;
-    if (m_pBelowLabel) {
-        m_pBelowLabel->SetLabel(m_belowFilament.m_name.empty()
-                                    ? wxString("--")
-                                    : wxString(m_belowFilament.m_name));
-    }
-    applyColors();
+    Refresh();
 }
 
 const FilamentData& FilamentColorMapBox::getAboveData() const
@@ -168,33 +156,124 @@ const FilamentData& FilamentColorMapBox::getBelowData() const
     return m_belowFilament;
 }
 
-void FilamentColorMapBox::applyColors()
+void FilamentColorMapBox::updateSizing()
 {
-    wxColour aboveBg(m_aboveFilament.m_color_r, m_aboveFilament.m_color_g, m_aboveFilament.m_color_b);
-    wxColour belowBg(m_belowFilament.m_color_r, m_belowFilament.m_color_g, m_belowFilament.m_color_b);
+    int totalH = m_bBelowEnabled ? g_cardHeightEnabled : g_cardHeightDisabled;
+    wxSize sz = FromDIP(wxSize(g_cardWidth, totalH));
+    SetMinSize(sz);
+    SetMaxSize(sz);
+}
 
-    if (m_pAbovePanel) {
-        m_pAbovePanel->SetBackgroundColour(aboveBg);
-        m_pAboveLabel->SetForegroundColour(getTextColour(aboveBg));
-        m_pAbovePanel->Refresh();
+void FilamentColorMapBox::onPaint(wxPaintEvent&)
+{
+    wxAutoBufferedPaintDC dc(this);
+    dc.Clear();
+
+    wxGCDC gdc(dc);
+
+    const wxSize sz    = GetClientSize();
+    const int    w     = sz.x;
+    const int    totalH = sz.y;
+    const int    splitY = FromDIP(g_topBarHeight);
+    const int    bodyH  = totalH - splitY;
+    const int    radius = FromDIP(g_cornerRadius);
+
+    const wxColour aboveColor(m_aboveFilament.m_color_r,
+                              m_aboveFilament.m_color_g,
+                              m_aboveFilament.m_color_b);
+    const wxColour belowColor(m_belowFilament.m_color_r,
+                              m_belowFilament.m_color_g,
+                              m_belowFilament.m_color_b);
+
+    const wxColour aboveBg = m_bAboveEnabled ? aboveColor : g_disabledBodyBg;
+    const int      borderW = FromDIP(g_bodyBorderWidth);
+
+    // ---- 1. Full card body (white bg, #DBDBDA border) ----
+    gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+    gdc.SetBrush(*wxWHITE_BRUSH);
+    gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
+
+    // ---- 2. Top bar (above colour, clipped to splitY) ----
+    {
+        wxDCClipper clip(gdc, wxRect(0, 0, w, splitY));
+        gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+        gdc.SetBrush(wxBrush(aboveBg));
+        gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
     }
-    if (m_pBelowPanel) {
-        m_pBelowPanel->SetBackgroundColour(belowBg);
-        m_pBelowLabel->SetForegroundColour(getTextColour(belowBg));
-        m_pBelowPanel->Refresh();
+
+    // ---- 3. Separator line ----
+    {
+        gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+        gdc.DrawLine(0, splitY, w, splitY);
+    }
+
+    // ---- 4. Top bar label ----
+    {
+        const wxColour textColour = m_bAboveEnabled
+                                        ? getTextColour(aboveColor)
+                                        : g_bodyTextColor;
+        gdc.SetTextForeground(textColour);
+        gdc.SetFont(Label::Body_10);
+        const wxString label = formatTopLabel(m_aboveFilament);
+        const wxSize   te    = gdc.GetTextExtent(label);
+        gdc.DrawText(label, (w - te.x) / 2, FromDIP(g_topTextY));
+    }
+
+    // ---- 5. Index circle (filled with machine filament colour, #DBDBDA border) ----
+    {
+        const int circleD = FromDIP(g_circleDiameter);
+        const int cx      = w / 2;
+        const int cy      = splitY + FromDIP(g_circleYOffset) + circleD / 2;
+        const int cr      = circleD / 2;
+
+        gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+        gdc.SetBrush(wxBrush(belowColor));
+        gdc.DrawCircle(cx, cy, cr);
+
+        gdc.SetTextForeground(getTextColour(belowColor));
+        gdc.SetFont(Label::Head_12);
+        const wxString num    = wxString::Format("%u", m_belowFilament.m_index + 1);
+        const wxSize   numExt = gdc.GetTextExtent(num);
+        gdc.DrawText(num, cx - numExt.x / 2, cy - numExt.y / 2);
+    }
+
+    // ---- 6. Below filament type / name ----
+    {
+        gdc.SetTextForeground(g_bodyTextColor);
+        gdc.SetFont(Label::Body_10);
+        const wxString type = m_belowFilament.m_type.empty()
+                                  ? wxString("NONE")
+                                  : wxString(m_belowFilament.m_type);
+        const wxSize te = gdc.GetTextExtent(type);
+        gdc.DrawText(type, (w - te.x) / 2,
+                     splitY + FromDIP(g_nameTextY));
+    }
+
+    // ---- 7. Dropdown arrow (SVG, only when Below enabled) ----
+    if (m_bBelowEnabled) {
+        const wxBitmap& arrowBmp = getDropdownArrowBitmap(FromDIP(g_arrowSize));
+        if (arrowBmp.IsOk()) {
+            const int arrowW = arrowBmp.GetWidth();
+            const int arrowH = arrowBmp.GetHeight();
+            const int ax     = (w - arrowW) / 2;
+            const int ay     = splitY + bodyH - arrowH - FromDIP(g_arrowBotMargin);
+            gdc.DrawBitmap(arrowBmp, ax, ay);
+        }
     }
 }
 
-void FilamentColorMapBox::onAboveButtonClicked()
+void FilamentColorMapBox::onLeftDown(wxMouseEvent& event)
 {
-    if (m_bAboveEnabled && m_aboveCallback)
-        m_aboveCallback(m_aboveFilament);
-}
+    int posY  = event.GetPosition().y;
+    int splitY = FromDIP(g_topBarHeight);
 
-void FilamentColorMapBox::onBelowButtonClicked()
-{
-    if (m_bBelowEnabled && m_belowCallback)
-        m_belowCallback(m_belowFilament);
+    if (posY < splitY) {
+        if (m_bAboveEnabled && m_aboveCallback)
+            m_aboveCallback(m_aboveFilament);
+    } else {
+        if (m_bBelowEnabled && m_belowCallback)
+            m_belowCallback(m_belowFilament);
+    }
 }
 
 } // namespace GUI

@@ -1,16 +1,14 @@
 #pragma once
 
 #include <functional>
-#include <list>
 #include <memory>
+#include <vector>
 
 #include <wx/panel.h>
 
+#include "slic3r/GUI/Widgets/Label.hpp"
 #include "FilamentData.hpp"
 #include "FilamentColorMapBox.hpp"
-
-
-class wxSizer;
 
 namespace Slic3r
 {
@@ -36,6 +34,7 @@ public:
     void bindMappingChangedCallback(std::function<void()> cb);
 
 private:
+    void onPaint(wxPaintEvent& event);
     void updateBoxFilament(int boxIndex, const FilamentData& machineData);
 
     std::vector<std::unique_ptr<FilamentColorMapBox>> m_boxList;
@@ -44,7 +43,8 @@ private:
 
     MachineFilamentPicker* m_pPicker = nullptr;
 
-    wxSizer* m_pWrapSizer = nullptr;
+    Label* m_pLabelDesign  = nullptr;
+    Label* m_pLabelMachine = nullptr;
 
     std::function<void()> m_mappingChangedCallback = nullptr;
 };

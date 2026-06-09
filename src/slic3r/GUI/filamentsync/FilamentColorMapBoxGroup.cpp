@@ -1,24 +1,47 @@
 #include "FilamentColorMapBoxGroup.hpp"
 
-#include <wx/wrapsizer.h>
-#include <algorithm>
+#include <wx/dcclient.h>
+#include <wx/dcmemory.h>
+#include <wx/sizer.h>
 
+#include "slic3r/GUI/Widgets/Label.hpp"
 #include "MachineFilamentPicker.hpp"
 
 namespace
 {
 
-// --- Layout ---
-constexpr int g_boxMargin = 4; // DIP — margin around each FilamentColorMapBox
+// ============================================================
+// Container layout
+// ============================================================
+constexpr int g_containerPadding   = 16; // padding inside container
+constexpr int g_containerRadius    = 4;  // border-radius
+constexpr int g_containerBorderW   = 1;  // border width
+constexpr int g_labelColumnWidth   = 56; // DIP — width for left label column
+constexpr int g_labelGap           = 12; // gap between labels and cards
+constexpr int g_cardGap            = 20; // gap between cards (Figma: gap-[20px])
 
-// --- Default below (placeholder) ---
+// Label vertical positioning: align with card top-bar text (y=7) and body center (y~44)
+constexpr int g_labelDesignTopMargin  = 6; // align "Design Filament" with top bar text
+constexpr int g_labelMachineBotMargin = 20; // bottom margin below "Machine Filament"
+
+// ============================================================
+// Colours
+// ============================================================
+const wxColour g_containerBg(0xFF, 0xFF, 0xFF);
+const wxColour g_containerBorder(0xF0, 0xF0, 0xF0);
+const wxColour g_labelTextColor(0x24, 0x24, 0x24);
+
+// ============================================================
+// Default below (placeholder)
+// ============================================================
 constexpr unsigned char g_placeholderGrey = 0xCC;
 
 Slic3r::GUI::FilamentData makeDefaultBelow(unsigned int index)
 {
     Slic3r::GUI::FilamentData d;
     d.m_index   = index;
-    d.m_name    = "--";
+    d.m_name    = "NONE";
+    d.m_type    = "NONE";
     d.m_color_r = g_placeholderGrey;
     d.m_color_g = g_placeholderGrey;
     d.m_color_b = g_placeholderGrey;
@@ -35,11 +58,39 @@ namespace GUI
 FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
                                                    const std::vector<FilamentData>& designDataList,
                                                    const std::vector<FilamentData>& machineDataList)
-    : wxPanel(parent, wxID_ANY)
+    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+              wxFULL_REPAINT_ON_RESIZE)
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
 {
-    m_pWrapSizer = new wxWrapSizer(wxHORIZONTAL);
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    Bind(wxEVT_PAINT, &FilamentColorMapBoxGroup::onPaint, this);
+
+    // ---- Outer horizontal sizer (after padding) ----
+    auto* rowSizer = new wxBoxSizer(wxHORIZONTAL);
+
+    // ---- Left label column ----
+    auto* labelSizer = new wxBoxSizer(wxVERTICAL);
+
+    m_pLabelDesign = new Label(this, "Design Filament");
+    m_pLabelDesign->SetFont(Label::Body_14);
+    m_pLabelDesign->SetForegroundColour(g_labelTextColor);
+    m_pLabelDesign->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    labelSizer->AddSpacer(FromDIP(g_labelDesignTopMargin));
+    labelSizer->Add(m_pLabelDesign, 0, wxEXPAND);
+    labelSizer->AddStretchSpacer(1);
+
+    m_pLabelMachine = new Label(this, "Machine Filament");
+    m_pLabelMachine->SetFont(Label::Body_14);
+    m_pLabelMachine->SetForegroundColour(g_labelTextColor);
+    m_pLabelMachine->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
+    labelSizer->Add(m_pLabelMachine, 0, wxEXPAND);
+    labelSizer->AddSpacer(FromDIP(g_labelMachineBotMargin));
+
+    rowSizer->Add(labelSizer, 0, wxEXPAND | wxRIGHT, FromDIP(g_labelGap));
+
+    // ---- Right card row ----
+    auto* cardSizer = new wxBoxSizer(wxHORIZONTAL);
 
     int boxIndex = 0;
     for (const auto& designData : m_designDataList) {
@@ -50,21 +101,41 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
             showMachineFilamentPicker(boxIndex);
         }, FilamentColorMapBox::ButtonType::Below);
 
-        m_pWrapSizer->Add(box.get(), 0, wxALL, FromDIP(g_boxMargin));
+        int itemFlags = (boxIndex == static_cast<int>(m_designDataList.size()) - 1)
+                            ? 0
+                            : wxRIGHT;
+        cardSizer->Add(box.get(), 0, itemFlags, FromDIP(g_cardGap));
         m_boxList.push_back(std::move(box));
         ++boxIndex;
     }
 
-    SetSizer(m_pWrapSizer);
+    rowSizer->Add(cardSizer, 0, wxEXPAND);
+
+    // ---- Padding around the row ----
+    auto* outerSizer = new wxBoxSizer(wxVERTICAL);
+    outerSizer->Add(rowSizer, 1, wxEXPAND | wxALL, FromDIP(g_containerPadding));
+    SetSizer(outerSizer);
     Layout();
+}
+
+void FilamentColorMapBoxGroup::onPaint(wxPaintEvent&)
+{
+    wxAutoBufferedPaintDC dc(this);
+    dc.Clear();
+
+    wxSize sz = GetClientSize();
+    int    radius = FromDIP(g_containerRadius);
+
+    dc.SetPen(wxPen(g_containerBorder, FromDIP(g_containerBorderW)));
+    dc.SetBrush(wxBrush(g_containerBg));
+    dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, radius);
 }
 
 std::vector<FilamentData> FilamentColorMapBoxGroup::getCurFilamentList() const
 {
     std::vector<FilamentData> result;
     for (const auto& box : m_boxList) {
-        FilamentData data = box->getBelowData();
-        result.push_back(data);
+        result.push_back(box->getBelowData());
     }
     return result;
 }
@@ -77,23 +148,18 @@ void FilamentColorMapBoxGroup::setGroupBoxEnable(bool bEnable, FilamentColorMapB
 
 void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
 {
-    if (boxIndex < 0 || boxIndex >= m_boxList.size())
+    if (boxIndex < 0 || boxIndex >= static_cast<int>(m_boxList.size()))
         return;
 
-    // Destroy any existing picker before opening a new one.
     if (m_pPicker) {
         m_pPicker->Destroy();
         m_pPicker = nullptr;
     }
 
-    // Determine the currently-mapped machine filament index for pre-selection.
-    auto it = m_boxList.begin();
-    std::advance(it, boxIndex);
-    unsigned int curMachineIndex = (*it)->getBelowData().m_index;
+    unsigned int curMachineIndex = m_boxList[boxIndex]->getBelowData().m_index;
 
     auto* picker = new MachineFilamentPicker(this, m_machineDataList, curMachineIndex);
 
-    // When user clicks a radio in the picker, update the target box.
     picker->bindSelectionCallback([this, boxIndex](const FilamentData& data) {
         updateBoxFilament(boxIndex, data);
         m_pPicker = nullptr;
@@ -103,7 +169,6 @@ void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
         m_pPicker = nullptr;
     });
 
-    // Position the popup near the target box.
     wxPoint screenPos = m_boxList[boxIndex]->GetScreenPosition();
     screenPos.y += m_boxList[boxIndex]->GetSize().y;
 

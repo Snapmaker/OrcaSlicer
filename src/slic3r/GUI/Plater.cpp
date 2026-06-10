@@ -4,11 +4,13 @@
 #include "MixedColorMatchPanel.hpp"
 #include "MixedFilamentBadge.hpp"
 #include "MixedFilamentColorMapPanel.hpp"
+#include "MixedColorMatchHelpers.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
 #include "common_func/common_func.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <array>
 #include <cctype>
@@ -8692,6 +8694,8 @@ struct Plater::priv
 
     void process_validation_warning(StringObjectException const &warning) const;
     void notify_filament_compatibility_after_apply();
+    bool has_incompatible_mixed_filament_in_use() const;
+    bool can_current_plate_be_sliced() const;
 
     bool background_processing_enabled() const {
 #ifdef SUPPORT_BACKGROUND_PROCESSING
@@ -8881,6 +8885,7 @@ struct Plater::priv
     PrintPrepareData            m_print_job_data;
     bool                        inside_snapshot_capture() { return m_prevent_snapshots != 0; }
     int                         process_completed_with_error { -1 }; //-1 means no error
+    mutable std::atomic<bool>   m_cached_incompatible_mixed{false};
 
     //BBS: project
     BBLProject                  project;
@@ -11225,7 +11230,8 @@ void Plater::priv::object_list_changed()
 
     // BBS
     //sidebar->enable_buttons(!model.objects.empty() && !export_in_progress && model_fits && part_plate->has_printable_instances());
-    bool can_slice = !model.objects.empty() && !export_in_progress && model_fits && part_plate->has_printable_instances();
+    bool can_slice = !model.objects.empty() && !export_in_progress && model_fits && part_plate->has_printable_instances()
+        && can_current_plate_be_sliced();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": can_slice %1%, model_fits= %2%, export_in_progress %3%, has_printable_instances %4% ")%can_slice %model_fits %export_in_progress %part_plate->has_printable_instances();
     main_frame->update_slice_print_status(MainFrame::eEventObjectUpdate, can_slice);
 
@@ -11638,10 +11644,70 @@ void Plater::priv::notify_filament_compatibility_after_apply()
         notification_manager->push_notification(into_u8(filamentMismatchNozzleWarning), 0);
 
     if (isPeiBedMatchTpu)
-    {            
+    {
         notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgTpu), 0);
     }
 
+    if (has_incompatible_mixed_filament_in_use()) {
+        notification_manager->push_notification(
+            NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::ErrorNotificationLevel,
+            into_u8(_L("Mixed filaments contain incompatible material types. "
+                       "Please correct the mixed filament settings before slicing.")));
+    }
+
+}
+
+
+bool Plater::priv::has_incompatible_mixed_filament_in_use() const
+{
+    // During drag operations the plate/model state is in flux;
+    // return the last known good result to avoid button flicker.
+    if (view3D && view3D->is_dragging())
+        return m_cached_incompatible_mixed;
+
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    if (!preset_bundle) return false;
+
+    const size_t num_physical = preset_bundle->filament_presets.size();
+    if (num_physical < 2) return false;
+
+    const PartPlate *part_plate = partplate_list.get_curr_plate();
+    if (!part_plate) return false;
+
+    auto &mgr = preset_bundle->mixed_filaments;
+    ModelObjectPtrs plate_objects = part_plate->get_objects_on_this_plate();
+
+    std::set<unsigned int> used_virtual_1based;
+    for (auto *obj : plate_objects) {
+        if (!obj) continue;
+        for (auto *vol : obj->volumes) {
+            if (!vol) continue;
+            for (int eid_1based : vol->get_extruders()) {
+                if (eid_1based > static_cast<int>(num_physical))
+                    used_virtual_1based.insert(static_cast<unsigned int>(eid_1based));
+            }
+        }
+    }
+
+    for (unsigned int fid : used_virtual_1based) {
+        const MixedFilament *mf = mgr.mixed_filament_from_id(fid, num_physical);
+        if (mf && !is_filament_compatible(*mf)) {
+            BOOST_LOG_TRIVIAL(info) << "Slicing blocked: incompatible mixed filament (virtual ID "
+                                    << fid << ") in use on current plate";
+            m_cached_incompatible_mixed = true;
+            return true;
+        }
+    }
+    m_cached_incompatible_mixed = false;
+    return false;
+}
+
+
+bool Plater::priv::can_current_plate_be_sliced() const
+{
+    const PartPlate *plate = partplate_list.get_curr_plate();
+    return plate && plate->can_slice() && !has_incompatible_mixed_filament_in_use();
 }
 
 
@@ -11816,7 +11882,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                                                  * when this function is called several times during calculations
                                                  * */
         {
-            if (cur_plate->can_slice()) {
+            if (can_current_plate_be_sliced()) {
                 //ready_to_slice = true;
                 this->main_frame->update_slice_print_status(MainFrame::eEventSliceUpdate, true);
                 process_completed_with_error = -1;
@@ -19171,6 +19237,16 @@ void Plater::reslice()
     if (state & priv::UPDATE_BACKGROUND_PROCESS_REFRESH_SCENE)
         this->p->view3D->reload_scene(false);
     // If the SLA processing of just a single object's supports is running, restart slicing for the whole object.
+    if (printer_technology() == ptFFF && p->has_incompatible_mixed_filament_in_use()) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": incompatible mixed filament in use, blocking slice";
+        p->notification_manager->push_notification(
+            NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::ErrorNotificationLevel,
+            into_u8(_L("Mixed filaments contain incompatible material types. "
+                       "Please correct the mixed filament settings before slicing.")));
+        reset_gcode_toolpaths();
+        return;
+    }
     this->p->background_process.set_task(PrintBase::TaskParams());
     // Only restarts if the state is valid.
     //BBS: jusdge the result
@@ -19323,6 +19399,15 @@ int Plater::start_next_slice()
         this->p->view3D->reload_scene(false);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": update_background_process returns %1%")%state;
+    if (printer_technology() == ptFFF && p->has_incompatible_mixed_filament_in_use()) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": incompatible mixed filament in use, blocking slice";
+        p->notification_manager->push_notification(
+            NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::ErrorNotificationLevel,
+            into_u8(_L("Mixed filaments contain incompatible material types. "
+                       "Please correct the mixed filament settings before slicing.")));
+        return -1;
+    }
     if (!p->partplate_list.get_curr_plate()->can_slice()) {
         p->process_completed_with_error = p->partplate_list.get_curr_plate_index();
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": found invalidated apply in update_background_process.");
@@ -20768,7 +20853,10 @@ void Plater::apply_background_progress()
     {
         part_plate->update_slice_result_valid_state(false);
         //p->ready_to_slice = true;
-        p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
+        if (p->can_current_plate_be_sliced())
+            p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
+        else
+            p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, false);
     }
 }
 
@@ -20838,7 +20926,10 @@ int Plater::select_plate(int plate_index, bool need_slice)
                     // BBS
                     //p->show_action_buttons(true);
                     //p->ready_to_slice = true;
-                    p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
+                    if (p->can_current_plate_be_sliced())
+                        p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
+                    else
+                        p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, false);
                 }
                 else
                 {
@@ -20900,7 +20991,8 @@ int Plater::select_plate(int plate_index, bool need_slice)
                 // BBS: don't show action buttons
                 //p->show_action_buttons(true);
                 //p->ready_to_slice = true;
-                if (model_fits && part_plate->has_printable_instances())
+                if (model_fits && part_plate->has_printable_instances()
+                    && p->can_current_plate_be_sliced())
                 {
                     //p->view3D->get_canvas3d()->post_event(Event<bool>(EVT_GLCANVAS_ENABLE_ACTION_BUTTONS, true));
                     p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
@@ -21124,7 +21216,10 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
                     // BBS
                     //p->show_action_buttons(true);
                     //p->ready_to_slice = true;
-                    p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
+                    if (p->can_current_plate_be_sliced())
+                        p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
+                    else
+                        p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, false);
                 }
                 else
                 {
@@ -21150,7 +21245,8 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
                 // BBS: don't show action buttons
                 //p->show_action_buttons(true);
                 //p->ready_to_slice = true;
-                if (model_fits && part_plate->has_printable_instances())
+                if (model_fits && part_plate->has_printable_instances()
+                    && p->can_current_plate_be_sliced())
                 {
                     //p->view3D->get_canvas3d()->post_event(Event<bool>(EVT_GLCANVAS_ENABLE_ACTION_BUTTONS, true));
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": will set can_slice to true");

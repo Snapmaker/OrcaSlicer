@@ -264,19 +264,6 @@ static void collect_filament_slots_from_config(
         used_slots.insert(extruder_option->value - 1);
 }
 
-static void collect_filament_slots_from_model_config(
-    const ModelConfigObject& config,
-    int num_filaments,
-    std::set<int>& used_slots)
-{
-    if (!config.has("extruder"))
-        return;
-
-    const int extruder_id = config.extruder();
-    if (extruder_id >= 1 && extruder_id <= num_filaments)
-        used_slots.insert(extruder_id - 1);
-}
-
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 wxDEFINE_EVENT(EVT_SLICING_UPDATE,                  SlicingStatusEvent);
 wxDEFINE_EVENT(EVT_SLICING_COMPLETED,               wxCommandEvent);
@@ -20245,27 +20232,44 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     if (!has_object_on_plate)
         return true;
 
-    // Collect from the Plater's working config for global Process settings.
-    // Defaults are 0 (skipped by the >= 1 check).
-    collect_filament_slots_from_config(*this->config(), num_filaments, used_slots);
-
     // Also collect from current plate's config for any plate-level overrides
     if (plate)
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);
 
-    // Collect from ModelVolume painting extruders for objects on the current plate
+    // Collect from ModelVolume painting extruders and object configs for
+    // objects on the current plate. Track whether any object relies on the
+    // global default extruder so we can resolve it at the end.
+    bool uses_default_extruder = false;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
-        collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots);
+
+        const int obj_extruder = model_object->config.extruder();
+        if (obj_extruder >= 1 && obj_extruder <= num_filaments)
+            used_slots.insert(obj_extruder - 1);
+        else if (obj_extruder == 0)
+            uses_default_extruder = true;
+
         for (const ModelVolume* model_volume : model_object->volumes) {
-            collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots);
+            if (model_volume->config.has("extruder")) {
+                const int vol_extruder = model_volume->config.extruder();
+                if (vol_extruder >= 1 && vol_extruder <= num_filaments)
+                    used_slots.insert(vol_extruder - 1);
+            }
             for (int extruder_id : model_volume->get_extruders()) {
                 if (extruder_id >= 1 && extruder_id <= num_filaments)
                     used_slots.insert(extruder_id - 1);
             }
         }
+    }
+
+    // Resolve the global default extruder if any object on this plate
+    // uses extruder=0 (meaning "inherit from global config").
+    if (uses_default_extruder) {
+        const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
+        if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
+            used_slots.insert(extruder_opt->value - 1);
     }
 
     if (used_slots.empty())

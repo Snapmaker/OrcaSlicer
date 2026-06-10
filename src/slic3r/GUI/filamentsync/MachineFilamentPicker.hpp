@@ -1,21 +1,16 @@
 #pragma once
 
-#include <list>
-#include <memory>
+#include <functional>
+#include <vector>
 
 #include <wx/popupwin.h>
 
 #include "FilamentData.hpp"
 
-
-class wxSizer;
-
 namespace Slic3r
 {
 namespace GUI
 {
-
-class FilamentColorRadio;
 
 class MachineFilamentPicker : public wxPopupTransientWindow
 {
@@ -37,15 +32,10 @@ public:
     void OnDismiss() override;
 
 private:
-    void onRadioClicked(const FilamentData& data);
-    void deselectAllExcept(const FilamentData& currentData);
+    std::vector<FilamentData> m_dataList;
+    unsigned int              m_selectedIndex = 0;
 
-    std::vector<std::shared_ptr<FilamentColorRadio>> m_radioList;
-    FilamentData m_currentSelectedData;
-
-    wxSizer* m_pWrapSizer = nullptr;
-
-    FilamentInfoCallback m_selectionCallback = nullptr;
+    FilamentInfoCallback  m_selectionCallback  = nullptr;
     std::function<void()> m_onDismissCallback = nullptr;
 };
 

@@ -221,6 +221,8 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
+                        // Persist the session so the user stays logged in across restarts.
+                        wxGetApp().sm_save_login_to_config();
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {

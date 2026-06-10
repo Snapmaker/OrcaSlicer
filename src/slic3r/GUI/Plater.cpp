@@ -264,6 +264,19 @@ static void collect_filament_slots_from_config(
         used_slots.insert(extruder_option->value - 1);
 }
 
+static void collect_filament_slots_from_model_config(
+    const ModelConfigObject& config,
+    int num_filaments,
+    std::set<int>& used_slots)
+{
+    if (!config.has("extruder"))
+        return;
+
+    const int extruder_id = config.extruder();
+    if (extruder_id >= 1 && extruder_id <= num_filaments)
+        used_slots.insert(extruder_id - 1);
+}
+
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 wxDEFINE_EVENT(EVT_SLICING_UPDATE,                  SlicingStatusEvent);
 wxDEFINE_EVENT(EVT_SLICING_COMPLETED,               wxCommandEvent);
@@ -8510,7 +8523,6 @@ struct Plater::priv
     PartPlateList partplate_list;
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
-    bool m_in_select_view_3D{false};
     bool m_slice_all{false};
     bool m_is_slicing {false};
     bool m_is_publishing {false};
@@ -9394,8 +9406,8 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
                     return;
                 }
                 if (q->is_plate_blocked_by_filament_temp_mixing(q->get_partplate_list().get_curr_plate_index())) {
-                    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
                     q->sync_filament_temp_mixing_notification();
+                    q->select_view_3D("Preview", true);
                     return;
                 }
             }
@@ -9691,10 +9703,6 @@ void Plater::priv::apply_free_camera_correction(bool apply/* = true*/)
 //BBS: add no slice option
 void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
 {
-    if (m_in_select_view_3D)
-        return;
-    m_in_select_view_3D = true;
-
     if (name == "3D") {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << "select view3D";
         if (q->only_gcode_mode() || q->using_exported_file()) {
@@ -9727,7 +9735,6 @@ void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
     selection_changed();
 
     apply_free_camera_correction(false);
-    m_in_select_view_3D = false;
 }
 
 void Plater::priv::select_next_view_3D()
@@ -20232,31 +20239,27 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     if (!has_object_on_plate)
         return true;
 
+    // Collect from the Plater's working config for global Process settings.
+    // Defaults are 0 (skipped by the >= 1 check).
+    collect_filament_slots_from_config(*this->config(), num_filaments, used_slots);
+
     // Also collect from current plate's config for any plate-level overrides
     if (plate)
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);
 
-    // Collect from ModelVolume painting extruders and object configs for
-    // objects on the current plate. Track whether any object relies on the
-    // global default extruder so we can resolve it at the end.
+    // Collect from ModelVolume painting extruders for objects on the
+    // current plate. Also track whether any object relies on the global
+    // default extruder (extruder=0) so we can resolve it at the end.
     bool uses_default_extruder = false;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
-
-        const int obj_extruder = model_object->config.extruder();
-        if (obj_extruder >= 1 && obj_extruder <= num_filaments)
-            used_slots.insert(obj_extruder - 1);
-        else if (obj_extruder == 0)
+        collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots);
+        if (model_object->config.extruder() == 0)
             uses_default_extruder = true;
-
         for (const ModelVolume* model_volume : model_object->volumes) {
-            if (model_volume->config.has("extruder")) {
-                const int vol_extruder = model_volume->config.extruder();
-                if (vol_extruder >= 1 && vol_extruder <= num_filaments)
-                    used_slots.insert(vol_extruder - 1);
-            }
+            collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots);
             for (int extruder_id : model_volume->get_extruders()) {
                 if (extruder_id >= 1 && extruder_id <= num_filaments)
                     used_slots.insert(extruder_id - 1);
@@ -20265,7 +20268,9 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     }
 
     // Resolve the global default extruder if any object on this plate
-    // uses extruder=0 (meaning "inherit from global config").
+    // uses extruder=0. p->config does not include the "extruder" key
+    // (it is not in the initializer list at priv constructor), so we
+    // must read it from full_config() instead.
     if (uses_default_extruder) {
         const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
         if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
@@ -20351,10 +20356,6 @@ bool Plater::sync_filament_temp_mixing_notification()
     const int curr_plate_index = get_partplate_list().get_curr_plate_index();
     PartPlate* curr_plate = get_partplate_list().get_curr_plate();
     const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
-    const bool notification_state_changed =
-        !p->filament_temp_mixing_notification_initialized ||
-        p->filament_temp_mixing_notification_plate != curr_plate_index ||
-        p->filament_temp_mixing_notification_state != mixing_state;
     bool slicing_allowed = true;
 
     switch (mixing_state) {
@@ -20367,12 +20368,10 @@ bool Plater::sync_filament_temp_mixing_notification()
     case FilamentTempMixingState::AllowedWarning:
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
-        if (notification_state_changed) {
-            get_notification_manager()->push_notification(
-                NotificationType::ValidateWarning,
-                NotificationManager::NotificationLevel::WarningNotificationLevel,
-                _u8L("WARNING:") + "\n" + filament_temp_mixing_warning_text());
-        }
+        get_notification_manager()->push_notification(
+            NotificationType::ValidateWarning,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            _u8L("WARNING:") + "\n" + filament_temp_mixing_warning_text());
         slicing_allowed = true;
         break;
     case FilamentTempMixingState::BlockedError: {
@@ -20380,8 +20379,7 @@ bool Plater::sync_filament_temp_mixing_notification()
         err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
         err.string = filament_temp_mixing_error_text();
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
-        if (notification_state_changed)
-            get_notification_manager()->push_validate_error_notification(err);
+        get_notification_manager()->push_validate_error_notification(err);
         get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
         slicing_allowed = false;
         break;

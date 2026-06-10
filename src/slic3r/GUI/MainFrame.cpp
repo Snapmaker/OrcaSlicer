@@ -1043,11 +1043,13 @@ void MainFrame::init_tabpanel() {
         m_last_selected_tab = m_tabpanel->GetSelection();
         if (panel == m_plater) {
             if (sel == tp3DEditor) {
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
+                if (!m_plater || !m_plater->is_view3D_shown())
+                    wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
                 m_param_panel->OnActivate();
             }
             else if (sel == tpPreview) {
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
+                if (!m_plater || m_plater->is_view3D_shown())
+                    wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
                 m_param_panel->OnActivate();
             }
         }

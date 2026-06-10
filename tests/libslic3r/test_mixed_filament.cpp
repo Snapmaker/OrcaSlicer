@@ -478,7 +478,6 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     PrintRegionConfig region_config = static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults());
     region_config.wall_filament.value                  = 3;
     region_config.wall_loops.value                     = 2;
-    region_config.enable_infill_filament_override.value = false;
     region_config.sparse_infill_density.value          = 15.;
     region_config.sparse_infill_filament.value         = 2;
     region_config.solid_infill_filament.value          = 3;
@@ -501,12 +500,11 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
 
     CHECK(layer0.wall_filament(region) == 0);
     CHECK(layer1.wall_filament(region) == 1);
-    CHECK(layer0.sparse_infill_filament(region) == 0);
-    CHECK(layer1.sparse_infill_filament(region) == 0);
+    CHECK(layer0.sparse_infill_filament(region) == 1);
+    CHECK(layer1.sparse_infill_filament(region) == 1);
     CHECK(layer0.solid_infill_filament(region) == 0);
     CHECK(layer1.solid_infill_filament(region) == 0);
 
-    region_config.enable_infill_filament_override.value = true;
     region_config.sparse_infill_filament.value          = 2;
     region_config.solid_infill_filament.value           = 2;
     PrintRegion overridden_region(region_config);

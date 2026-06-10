@@ -513,14 +513,40 @@ public:
     bool update_filament_colors_in_full_config();
     void config_change_notification(const DynamicPrintConfig &config, const std::string& key);
     void on_config_change(const DynamicPrintConfig &config);
-    /// Check whether high-temperature and low-temperature filaments are mixed on the current plate.
-    /// Returns true if compatible (no mixing), false if mixing is detected and error notification is shown.
+    /// @brief Check whether high-temperature and low-temperature filaments are mixed on the current plate.
+    /// @return True if compatible; false if high/low temperature materials are mixed.
     bool check_filament_temp_mixing();
+    /// @brief Check whether high-temperature and low-temperature filaments are mixed on a specific plate.
+    /// @param plate_index Plate index to check.
+    /// @return True if compatible or plate index is invalid; false if high/low temperature materials are mixed.
+    bool check_filament_temp_mixing(int plate_index);
+    /// @brief Get high/low temperature material mixing state for the current plate.
+    /// @return Current plate material mixing state.
     FilamentTempMixingState get_filament_temp_mixing_state();
+    /// @brief Get high/low temperature material mixing state for a specific plate.
+    /// @param plate_index Plate index to check.
+    /// @return Plate material mixing state.
+    FilamentTempMixingState get_filament_temp_mixing_state(int plate_index);
+    /// @brief Check whether a specific plate is blocked by high/low temperature material mixing.
+    /// @param plate_index Plate index to check.
+    /// @return True if slicing this plate is blocked; otherwise false.
+    bool is_plate_blocked_by_filament_temp_mixing(int plate_index);
+    /// @brief Check whether slice-all has at least one plate that can be sliced.
+    /// @return True if any plate can be sliced and is not blocked by material mixing.
+    bool has_sliceable_plate_for_slice_all();
+    /// @brief Find the next plate that can be sliced by slice-all.
+    /// @param start_plate_index First plate index to check.
+    /// @return Plate index if found; otherwise -1.
+    int find_next_sliceable_plate_for_slice_all(int start_plate_index);
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    bool guard_before_slice_plate();
+    bool guard_before_slice_all();
     bool confirm_filament_temp_mixing_before_slice();
+    /// @brief Confirm warning-level high/low temperature material mixing before slicing all plates.
+    /// @return True if slice-all can continue; otherwise false.
+    bool confirm_filament_temp_mixing_before_slice_all();
     /// Queue a single UI sync after filament preset/assignment/plate usage changes.
     void notify_filament_usage_changed();
     void force_filament_colors_update();

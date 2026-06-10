@@ -2293,6 +2293,14 @@ Sidebar::Sidebar(Plater *parent)
     h_physical_title->Add(physical_label, 0, wxALIGN_CENTER_VERTICAL);
     h_physical_title->AddStretchSpacer();
 
+    // Sync filament button
+    ScalableButton* sync_filament_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "sync_filament");
+    sync_filament_btn->SetToolTip(_L("Synchronize filament information"));
+    sync_filament_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+        show_sync_filament_dialog();
+    });
+    p->m_bpButton_sync_filament = sync_filament_btn;
+
     // Delete filament button — delegates to delete_filament for consistent remap behavior
     ScalableButton* del_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "delete_filament");
     del_btn->SetToolTip(_L("Remove last filament"));
@@ -2324,18 +2332,9 @@ Sidebar::Sidebar(Plater *parent)
     });
     p->m_bpButton_add_filament = add_btn;
 
-    // Sync filament button
-    // TODO: icon_nname
-    ScalableButton* sync_filament_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "add_filament", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER, false, 16);
-    sync_filament_btn->SetToolTip(_L("Synchronize filament information"));
-    sync_filament_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
-        show_sync_filament_dialog();
-    });
-    p->m_bpButton_sync_filament = sync_filament_btn;
-
+    h_physical_title->Add(sync_filament_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     h_physical_title->Add(del_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     h_physical_title->Add(add_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-    h_physical_title->Add(sync_filament_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     auto* white_right_f = new wxPanel(p->m_panel_physical_filaments_title, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(SidebarProps::ContentMargin()), -1));
     white_right_f->SetBackgroundColour(*wxWHITE);
     h_physical_title->Add(white_right_f, 0, wxEXPAND | wxTOP | wxBOTTOM, 0);

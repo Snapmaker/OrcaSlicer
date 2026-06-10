@@ -37,26 +37,28 @@ constexpr int g_dialogHeight = 665; // DIP
 constexpr int g_block1W = 555; // Mode toggle
 constexpr int g_block1H = 40;
 constexpr int g_block4W = 571; // Bottom buttons
-constexpr int g_block4H = 81;
+constexpr int g_block4H = 61;
 
 // Block 3 wrapper panel styling
-constexpr const char* g_block3BorderColor = "#F0F0F0";
 constexpr int g_block3BorderWidth = 1;
 constexpr int g_block3Radius      = 4;
 constexpr int g_block3Padding     = 16; // DIP — internal padding (all sides)
-constexpr const char* g_block3SeparatorColor = "#F3F4F6";
 constexpr int g_block3HintGap     = 12; // DIP — hint label / separator / checkbox spacing
 
-// Gaps between blocks
-constexpr int g_gap1_2 = 12;
-constexpr int g_gap2_3 = 12;
-constexpr int g_gap3_4 = 12;
+// Merged Block 2+3 wrapper margins
+constexpr int g_block23PaddingH = 20; // DIP — left/right
+constexpr int g_block23PaddingV = 12; // DIP — top/bottom
 
-// Top padding: Block4 fills to bottom, no bottom padding
-constexpr int g_topPadding = 4; // DIP
+// Button sizing
+constexpr int g_btnW = 237;
+constexpr int g_btnH = 36;
 
-// Internal block padding
-constexpr int g_blockPaddingH = 20; // DIP — horizontal
+// Block 4 wrapper margins
+constexpr int g_block4PaddingV = 12; // DIP — top/bottom
+constexpr int g_block4PaddingH = 42; // DIP — left/right
+
+// Top padding
+constexpr int g_topPadding = 0; // DIP
 
 // --- Color processing ---
 constexpr int            g_colorMax      = 255; // max RGBA component value
@@ -80,6 +82,8 @@ constexpr const char* g_primaryBg       = "#019687";
 constexpr const char* g_primaryText     = "#FEFEFE";
 constexpr const char* g_disabledBg      = "#DFDFDF";
 constexpr const char* g_disabledText    = "#6B6A6A";
+constexpr const char* g_block3BorderColor = "#F0F0F0";
+constexpr const char* g_block3SeparatorColor = "#F3F4F6";
 
 } // namespace
 
@@ -103,15 +107,13 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
     auto* topSizer = new wxBoxSizer(wxVERTICAL);
 
-    topSizer->AddSpacer(FromDIP(g_topPadding));
-
     // =====================================================================
     // Block 1: Mode toggle  (555 × 40, centered)
     // =====================================================================
     {
         auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
-        block->SetMinSize(FromDIP(wxSize(g_block1W, g_block1H)));
+        block->SetMinSize(wxSize(-1, FromDIP(g_block1H)));
 
         auto* blockSizer = new wxBoxSizer(wxVERTICAL);
 
@@ -126,48 +128,47 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         blockSizer->AddStretchSpacer();
         block->SetSizer(blockSizer);
 
-        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+        topSizer->Add(block, 0, wxEXPAND);
     }
 
-    topSizer->AddSpacer(FromDIP(g_gap1_2));
-
     // =====================================================================
-    // Block 2: Filament mapping
-    // =====================================================================
-    {
-        m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(this, m_designDataList, m_machineDataList);
-        m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
-            loadCoverPreview();
-        });
-        topSizer->Add(m_pFilamentColorMapBoxGroup, 0, wxALIGN_CENTER_HORIZONTAL);
-    }
-    topSizer->AddSpacer(FromDIP(g_gap2_3));
-
-    // =====================================================================
-    // Block 3: Preview + hint wrapper (rounded border, auto-height)
+    // Block 2+3: Filament mapping + Preview/hint wrapper (L/R 20px, T/B 12px)
     // =====================================================================
     {
         auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        block->SetBackgroundStyle(wxBG_STYLE_PAINT);
-        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
-        block->Bind(wxEVT_PAINT, [block, this](wxPaintEvent&) {
-            wxAutoBufferedPaintDC dc(block);
-            wxSize sz = block->GetClientSize();
+        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
+
+        auto* mergedSizer = new wxBoxSizer(wxVERTICAL);
+
+        // --- Filament mapping (was Block 2) ---
+        m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(block, m_designDataList, m_machineDataList);
+        m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
+            loadCoverPreview();
+        });
+        mergedSizer->Add(m_pFilamentColorMapBoxGroup, 0, wxEXPAND);
+
+        // --- Preview wrapper (was Block 3) ---
+        auto* previewWrapper = new wxPanel(block, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        previewWrapper->SetBackgroundStyle(wxBG_STYLE_PAINT);
+        previewWrapper->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
+        previewWrapper->Bind(wxEVT_PAINT, [previewWrapper](wxPaintEvent&) {
+            wxAutoBufferedPaintDC dc(previewWrapper);
+            wxSize sz = previewWrapper->GetClientSize();
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(g_dialogBg))));
             dc.DrawRectangle(0, 0, sz.x, sz.y);
             wxGCDC gdc(dc);
-            gdc.SetPen(wxPen(wxColour(g_block3BorderColor), FromDIP(g_block3BorderWidth)));
+            gdc.SetPen(wxPen(wxColour(g_block3BorderColor), previewWrapper->FromDIP(g_block3BorderWidth)));
             gdc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(g_blockBg))));
-            gdc.DrawRoundedRectangle(0, 0, sz.x, sz.y, FromDIP(g_block3Radius));
+            gdc.DrawRoundedRectangle(0, 0, sz.x, sz.y, previewWrapper->FromDIP(g_block3Radius));
         });
 
         auto* contentSizer = new wxBoxSizer(wxVERTICAL);
 
-        m_pPlaterPreview = new PlaterPreview(block);
+        m_pPlaterPreview = new PlaterPreview(previewWrapper);
         contentSizer->Add(m_pPlaterPreview, 0, wxEXPAND);
 
-        m_pHintCheckBoxPanel = new wxPanel(block, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        m_pHintCheckBoxPanel = new wxPanel(previewWrapper, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         m_pHintCheckBoxPanel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
 
         auto* hintSizer = new wxBoxSizer(wxVERTICAL);
@@ -198,28 +199,29 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         contentSizer->Add(m_pHintCheckBoxPanel, 0, wxEXPAND);
 
         // Wrap content with 16 DIP padding on all four sides
-        auto* padSizer = new wxBoxSizer(wxVERTICAL);
-        padSizer->Add(contentSizer, 1, wxEXPAND | wxALL, FromDIP(g_block3Padding));
-        block->SetSizer(padSizer);
-        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+        auto* innerPad = new wxBoxSizer(wxVERTICAL);
+        innerPad->Add(contentSizer, 1, wxEXPAND | wxALL, FromDIP(g_block3Padding));
+        previewWrapper->SetSizer(innerPad);
+        mergedSizer->Add(previewWrapper, 0, wxEXPAND | wxTOP, FromDIP(g_block23PaddingV));
+
+        // Wrap merged content with 20px L/R, 12px T/B
+        auto* vPad = new wxBoxSizer(wxVERTICAL);
+        vPad->Add(mergedSizer, 1, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(g_block23PaddingV));
+        auto* hPad = new wxBoxSizer(wxHORIZONTAL);
+        hPad->Add(vPad, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_block23PaddingH));
+        block->SetSizer(hPad);
+        topSizer->Add(block, 0, wxEXPAND);
     }
 
-    topSizer->AddSpacer(FromDIP(g_gap3_4));
-
     // =====================================================================
-    // Block 4: Bottom buttons  (571 × 61, centered)
+    // Block 4: Bottom buttons  (571 × 61, T/B 12, L/R 42)
     // =====================================================================
     {
         auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
-        block->SetMinSize(FromDIP(wxSize(g_block4W, g_block4H)));
-
-        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
+        block->SetMinSize(wxSize(-1, FromDIP(g_block4H)));
 
         auto* btnRow = new wxBoxSizer(wxHORIZONTAL);
-
-        constexpr int g_btnW = 238; // ~237.5 DIP
-        constexpr int g_btnH = 36;
 
         btnRow->AddStretchSpacer();
 
@@ -231,7 +233,10 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         m_pResetBtn->SetBackgroundColorNormal(wxColour(g_blockBg));
         m_pResetBtn->SetTextColorNormal(wxColour(g_secondaryText));
         m_pResetBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onReset(); });
-        btnRow->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        btnRow->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL);
+
+        // Spring between buttons
+        btnRow->AddStretchSpacer();
 
         m_pSyncBtn = new Button(block, _L("Sync Now"));
         m_pSyncBtn->SetMinSize(FromDIP(wxSize(g_btnW, g_btnH)));
@@ -248,10 +253,15 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
         btnRow->AddStretchSpacer();
 
-        blockSizer->Add(btnRow, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_blockPaddingH));
-        block->SetSizer(blockSizer);
+        // T/B = 12px margins
+        auto* vPad = new wxBoxSizer(wxVERTICAL);
+        vPad->Add(btnRow, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(g_block4PaddingV));
+        // L/R = 42px margins
+        auto* hPad = new wxBoxSizer(wxHORIZONTAL);
+        hPad->Add(vPad, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_block4PaddingH));
+        block->SetSizer(hPad);
 
-        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+        topSizer->Add(block, 0, wxEXPAND);
     }
 
     SetSizer(topSizer);
@@ -352,14 +362,15 @@ void SyncFilamentColorDialog::onModeChanged(int index)
     }
 
     // Hide hint label and checkbox in overwrite mode
-    if (m_pHintCheckBoxPanel) {
+    if (m_pHintCheckBoxPanel)
         m_pHintCheckBoxPanel->Show(m_bMappingMode);
-    }
 
     if (m_bMappingMode)
         onAutoMatch();
     else
         onCoverMatch();
+
+    Layout();
 }
 
 void SyncFilamentColorDialog::onAutoMatch()
@@ -385,7 +396,6 @@ void SyncFilamentColorDialog::onAutoMatch()
         ++idx;
     }
     m_pFilamentColorMapBoxGroup->setGroupBoxEnable(true, FilamentColorMapBox::ButtonType::Below);
-    Layout();
 }
 
 void SyncFilamentColorDialog::onCoverMatch()
@@ -416,7 +426,6 @@ void SyncFilamentColorDialog::onCoverMatch()
         for (size_t old_id = 1; old_id <= designCount; ++old_id)
             m_filamentIdRemap[old_id] = static_cast<unsigned int>(((old_id - 1) % machineCount) + 1);
     }
-    Layout();
 }
 
 void SyncFilamentColorDialog::initPlatePreview()

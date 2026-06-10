@@ -682,6 +682,8 @@ void Camera::look_at(const Vec3d& position, const Vec3d& target, const Vec3d& up
 void Camera::UpdateFrustum() 
 {
     // fast extraction of frustum planes from the view-projection matrix
+    // 1. plane equation: ax + by + cz + d = 0, vec3(a,b,c) is normal of plane, d is scalar of plane, distance to origin of world frame
+    // 2. -w' < x' < w'   -w' < y' < w' -w' < z' < w'
     const Matrix4d& vp = m_projection_matrix.matrix() * m_view_matrix.matrix();
     const Eigen::Matrix4d& vp_matrix = vp.eval();
     const double* vp_data = vp_matrix.data();

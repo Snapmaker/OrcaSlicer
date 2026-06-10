@@ -8523,6 +8523,7 @@ struct Plater::priv
     PartPlateList partplate_list;
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
+    bool m_in_select_view_3D{false};
     bool m_slice_all{false};
     bool m_is_slicing {false};
     bool m_is_publishing {false};
@@ -9703,12 +9704,17 @@ void Plater::priv::apply_free_camera_correction(bool apply/* = true*/)
 //BBS: add no slice option
 void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
 {
+    if (m_in_select_view_3D)
+        return;
+    m_in_select_view_3D = true;
+
     if (name == "3D") {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << "select view3D";
         if (q->only_gcode_mode() || q->using_exported_file()) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("goto preview page when loading gcode/exported_3mf");
         }
         set_current_panel(view3D, no_slice);
+        wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
     }
     else if (name == "Preview") {
         BOOST_LOG_TRIVIAL(info) << "select preview";
@@ -9721,10 +9727,12 @@ void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
         set_current_panel(preview, no_slice);
+        wxGetApp().mainframe->select_tab(size_t(MainFrame::tpPreview));
     }
     else if (name == "Assemble") {
         BOOST_LOG_TRIVIAL(info) << "select assemble view";
         set_current_panel(assemble_view, no_slice);
+        wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
     }
 
     //BBS update selection
@@ -9732,6 +9740,7 @@ void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
     selection_changed();
 
     apply_free_camera_correction(false);
+    m_in_select_view_3D = false;
 }
 
 void Plater::priv::select_next_view_3D()

@@ -565,7 +565,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             }
             return;}
 #endif
-        if (evt.CmdDown() && evt.GetKeyCode() == 'R') { if (m_slice_enable) { wxGetApp().plater()->update(true, true); wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE)); this->m_tabpanel->SetSelection(tpPreview); } return; }
+        if (evt.CmdDown() && evt.GetKeyCode() == 'R') { if (m_slice_enable) { wxGetApp().plater()->update(true, true); wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE)); } return; }
         if (evt.CmdDown() && evt.ShiftDown() && evt.GetKeyCode() == 'G') {
             m_plater->apply_background_progress();
             m_print_enable = get_enable_print_status();
@@ -1659,7 +1659,6 @@ wxBoxSizer* MainFrame::create_side_tools()
             else
                 wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
 
-            this->m_tabpanel->SetSelection(tpPreview);
         });
 
     m_print_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
@@ -2054,11 +2053,11 @@ void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_sl
 {
     bool enable_print = true, enable_slice = true;
 
-    if (!can_slice)
-    {
-        if (m_slice_select == eSlicePlate)
-            enable_slice = false;
-    }
+    if (event == eEventPlateUpdate)
+        enable_slice = get_enable_slice_status();
+    else if (!can_slice)
+        enable_slice = false;
+
     if (!can_print)
         enable_print = false;
 
@@ -2070,7 +2069,7 @@ void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_sl
     }
 
     //process slice logic
-    if (enable_slice)
+    if (event != eEventPlateUpdate && enable_slice)
     {
         enable_slice = get_enable_slice_status();
     }

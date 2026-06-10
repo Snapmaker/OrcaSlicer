@@ -541,6 +541,8 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    bool guard_before_slice_plate();
+    bool guard_before_slice_all();
     bool confirm_filament_temp_mixing_before_slice();
     /// @brief Confirm warning-level high/low temperature material mixing before slicing all plates.
     /// @return True if slice-all can continue; otherwise false.

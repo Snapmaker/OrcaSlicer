@@ -118,6 +118,7 @@ public:
     virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) {}
 
     virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) {}
 
@@ -299,6 +300,7 @@ public:
     virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) override;
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) override;
 
     virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) override;
 

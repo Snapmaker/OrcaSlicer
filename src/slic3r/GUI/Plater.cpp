@@ -9398,7 +9398,21 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         q->Bind(EVT_EXPORT_FINISHED, &priv::on_export_finished, this);
         q->Bind(EVT_GLVIEWTOOLBAR_3D, [q](SimpleEvent&) { q->select_view_3D("3D"); });
         //BBS: set on_slice to false
-        q->Bind(EVT_GLVIEWTOOLBAR_PREVIEW, [q](SimpleEvent&) { q->select_view_3D("Preview", false); });
+        q->Bind(EVT_GLVIEWTOOLBAR_PREVIEW, [q](SimpleEvent&) {
+            if (q->is_view3D_shown()) {
+                if (q->has_sliceable_plate_for_slice_all()) {
+                    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
+                    wxPostEvent(q, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
+                    return;
+                }
+                if (q->is_plate_blocked_by_filament_temp_mixing(q->get_partplate_list().get_curr_plate_index())) {
+                    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
+                    q->sync_filament_temp_mixing_notification();
+                    return;
+                }
+            }
+            q->select_view_3D("Preview", false);
+        });
         q->Bind(EVT_GLTOOLBAR_SLICE_PLATE, &priv::on_action_slice_plate, this);
         q->Bind(EVT_GLTOOLBAR_SLICE_ALL, &priv::on_action_slice_all, this);
         q->Bind(EVT_GLTOOLBAR_PRINT_PLATE, &priv::on_action_print_plate, this);
@@ -11833,7 +11847,10 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                 notification_manager->set_all_slicing_errors_gray(true);
                 notification_manager->close_notification_of_type(NotificationType::ValidateError);
             }
-            if (invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
+            else {
+                return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
+            }
+            if (filament_ok && invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
                 return_state |= UPDATE_BACKGROUND_PROCESS_RESTART;
 
             if (printer_technology == ptFFF) {
@@ -13749,7 +13766,7 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
         Model::setPrintSpeedTable(config, print_config);
         m_slice_all = false;
 
-        if (!q->confirm_filament_temp_mixing_before_slice())
+        if (!q->guard_before_slice_plate())
             return;
 
         q->reslice();
@@ -13771,7 +13788,7 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
 
-        if (!q->confirm_filament_temp_mixing_before_slice_all())
+        if (!q->guard_before_slice_all())
             return;
 
         m_slice_all = true;
@@ -19409,6 +19426,18 @@ int Plater::start_next_slice()
     // Stop arrange and (or) optimize rotation tasks.
     //this->stop_jobs();
 
+    if (is_plate_blocked_by_filament_temp_mixing(p->partplate_list.get_curr_plate_index())) {
+        sync_filament_temp_mixing_notification();
+        if (p->m_slice_all) {
+            SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
+                    SlicingProcessCompletedEvent::Finished, nullptr);
+            wxQueueEvent(this, evt.Clone());
+            return 0;
+        }
+        p->process_completed_with_error = p->partplate_list.get_curr_plate_index();
+        return -1;
+    }
+
     //FIXME Don't reslice if export of G-code or sending to OctoPrint is running.
     // bitmask of UpdateBackgroundProcessReturnState
     unsigned int state = this->p->update_background_process(true, false, false);
@@ -20355,6 +20384,17 @@ bool Plater::sync_filament_temp_mixing_notification()
     return slicing_allowed;
 }
 
+bool Plater::guard_before_slice_plate()
+{
+    sync_filament_temp_mixing_notification();
+    return confirm_filament_temp_mixing_before_slice();
+}
+
+bool Plater::guard_before_slice_all()
+{
+    return confirm_filament_temp_mixing_before_slice_all();
+}
+
 bool Plater::confirm_filament_temp_mixing_before_slice()
 {
     switch (get_filament_temp_mixing_state()) {
@@ -20380,7 +20420,9 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
     bool has_allowed_warning = false;
     for (int plate_index = 0; plate_index < p->partplate_list.get_plate_count(); ++plate_index)
     {
-        if (get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::AllowedWarning)
+        PartPlate* plate = p->partplate_list.get_plate(plate_index);
+        if (plate != nullptr && plate->can_slice() &&
+            get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::AllowedWarning)
         {
             has_allowed_warning = true;
             break;
@@ -21138,6 +21180,8 @@ int Plater::select_plate(int plate_index, bool need_slice)
                         p->process_completed_with_error = -1;
                         p->m_slice_all = false;
                         reset_gcode_toolpaths();
+                        if (!guard_before_slice_plate())
+                            return ret;
                         reslice();
                     }
                     else {
@@ -21192,8 +21236,11 @@ int Plater::select_plate(int plate_index, bool need_slice)
                     //p->process_completed_with_error = -1;
                     p->m_slice_all = false;
                     reset_gcode_toolpaths();
-                    if (model_fits && !validate_err)
+                    if (model_fits && !validate_err) {
+                        if (!guard_before_slice_plate())
+                            return ret;
                         reslice();
+                    }
                     else {
                         p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, false);
                         //sometimes the previous print's sliced result is still valid, but the newly added object is laid over the boundary
@@ -21238,6 +21285,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
 
     SimpleEvent event(EVT_GLCANVAS_PLATE_SELECT);
     p->on_plate_selected(event);
+    sync_filament_temp_mixing_notification();
     notify_filament_usage_changed();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%")%__LINE__ %plate_index %ret;

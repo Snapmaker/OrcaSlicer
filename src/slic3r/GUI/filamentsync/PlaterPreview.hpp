@@ -5,7 +5,7 @@
 #include <wx/panel.h>
 #include <wx/bitmap.h>
 
-class wxComboBox;
+class ComboBox;
 class Label;
 
 namespace Slic3r
@@ -50,7 +50,7 @@ private:
     wxPanel* m_pPreviewRight = nullptr;
     wxPanel* m_pArrowLeft    = nullptr;
     wxPanel* m_pArrowRight   = nullptr;
-    wxComboBox* m_pPlateCombo = nullptr;
+    ComboBox* m_pPlateCombo  = nullptr;
     Label*   m_pDiskLabel    = nullptr;
     Label*   m_pLabelLeft    = nullptr;
     Label*   m_pLabelRight   = nullptr;

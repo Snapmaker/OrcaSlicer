@@ -1,6 +1,5 @@
 #include "PlaterPreview.hpp"
 
-#include <wx/combobox.h>
 #include <wx/dcbuffer.h>
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
@@ -11,6 +10,7 @@
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/Widgets/Label.hpp"
+#include "slic3r/GUI/Widgets/ComboBox.hpp"
 
 namespace
 {
@@ -32,9 +32,12 @@ constexpr int g_previewRadius      = 8;
 constexpr int g_labelTopMargin     = 4;
 
 constexpr int g_arrowSize          = 20;
-constexpr int g_diskSelectorH      = 30;
-
 constexpr int g_navItemGap         = 12;
+
+constexpr int g_plateSelectorW        = 62;
+constexpr int g_plateSelectorH        = 30;
+constexpr int g_plateSelectorBorderW  = 1;
+constexpr int g_plateSelectorRadius   = 4;
 
 
 // ============================================================
@@ -175,11 +178,17 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
 
         middleGroup->AddSpacer(FromDIP(g_navItemGap));
 
-        m_pPlateCombo = new wxComboBox(this, wxID_ANY, wxEmptyString,
-                                       wxDefaultPosition, wxDefaultSize, 0, nullptr,
-                                       wxCB_READONLY);
-        m_pPlateCombo->SetBackgroundColour(g_panelBg);
-        m_pPlateCombo->SetMinSize(wxSize(-1, FromDIP(g_diskSelectorH)));
+        m_pPlateCombo = new ComboBox(this, wxID_ANY, wxEmptyString,
+                                     wxDefaultPosition, FromDIP(wxSize(g_plateSelectorW, g_plateSelectorH)), 0, nullptr,
+                                     wxCB_READONLY);
+        m_pPlateCombo->SetMinSize(FromDIP(wxSize(g_plateSelectorW, g_plateSelectorH)));
+        m_pPlateCombo->SetMaxSize(FromDIP(wxSize(g_plateSelectorW, g_plateSelectorH)));
+        m_pPlateCombo->SetCornerRadius(FromDIP(g_plateSelectorRadius));
+        m_pPlateCombo->SetBorderWidth(FromDIP(g_plateSelectorBorderW));
+        m_pPlateCombo->SetBorderColor(StateColor(g_platerBorderColor));
+        m_pPlateCombo->SetBackgroundColor(StateColor(g_panelBg));
+        m_pPlateCombo->GetDropDown().SetBorderColor(StateColor(g_platerBorderColor));
+        m_pPlateCombo->GetDropDown().SetBackgroundColour(g_panelBg);
         m_pPlateCombo->Bind(wxEVT_COMBOBOX, &PlaterPreview::onPlateComboBoxChanged, this);
         middleGroup->Add(m_pPlateCombo, 0, wxALIGN_CENTER_VERTICAL);
 
@@ -260,7 +269,7 @@ void PlaterPreview::updateCoverPreview(const wxBitmap& thumbnail)
 
 void PlaterPreview::setCurrentPlate(unsigned int plateIndex)
 {
-    if (plateIndex >= m_totalPlateCount)
+    if (plateIndex < 0 || plateIndex >= m_totalPlateCount)
         return;
 
     m_currentPlateIndex = plateIndex;
@@ -325,8 +334,7 @@ void PlaterPreview::navigateTo(int index)
     if (index < 0 || index >= m_totalPlateCount)
         return;
 
-    m_currentPlateIndex = index;
-    updateNavigation();
+    setCurrentPlate(index);
 
     if (m_plateSwitchCallback)
         m_plateSwitchCallback(m_currentPlateIndex);

@@ -100,9 +100,6 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
 {
-    const wxSize dialogSize = FromDIP(wxSize(g_dialogWidth, g_dialogHeight));
-    SetSize(dialogSize);
-    SetMinSize(dialogSize);
     SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
 
     auto* topSizer = new wxBoxSizer(wxVERTICAL);
@@ -265,10 +262,9 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     }
 
     SetSizer(topSizer);
-    Layout();
-
     initPlatePreview();
     onAutoMatch();
+    Layout();
 }
 
 bool SyncFilamentColorDialog::Layout()

@@ -18,7 +18,7 @@ constexpr int g_containerPadding   = 16; // padding inside container
 constexpr int g_containerRadius    = 4;  // border-radius
 constexpr int g_containerBorderW   = 1;  // border width
 constexpr int g_labelColumnWidth   = 56; // DIP — width for left label column
-constexpr int g_labelGap           = 12; // gap between labels and cards
+constexpr int g_labelGap           = 20; // gap between labels and cards
 constexpr int g_cardGap            = 20; // gap between cards (Figma: gap-[20px])
 constexpr int g_gridCols           = 5;  // max cards per row before wrapping
 

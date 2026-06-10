@@ -68,6 +68,7 @@
 #include <wx/fontutil.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
+#include <wx/secretstore.h>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -1104,6 +1105,11 @@ void GUI_App::post_init()
     CallAfter([this] {
             if (hms_query)
                 hms_query->check_hms_info();
+        });
+
+    // restore a previously persisted Snapmaker login (revalidates the stored token)
+    CallAfter([this] {
+            sm_restore_login_from_config();
         });
 
 
@@ -4143,6 +4149,140 @@ void GUI_App::sm_request_user_logout()
     } catch (std::exception&) {
         ;
     }
+    sm_clear_login_from_config();
+}
+
+// --- Snapmaker login persistence ---------------------------------------------
+// Goal: stop forcing a fresh OAuth login on every restart (issues #116/#226/#266).
+//
+// Only the bearer token is persisted, and only to the OS secret store via
+// wxSecretStore (libsecret on Linux, Credential Manager on Windows, Keychain on
+// macOS) -- never to plaintext config. On startup we revalidate the token
+// against accounts/current and re-fetch the profile (id/name/account/icon) from
+// the server, so no user data is written to disk. If no secret service is
+// available we simply do not persist the token and fall back to the previous
+// "log in again" behaviour, rather than writing a credential somewhere insecure.
+namespace {
+#if wxUSE_SECRETSTORE
+const wxString SM_LOGIN_SECRET_SERVICE = "Snapmaker_Orca/login";
+
+bool sm_secret_store_save(const std::string& account, const std::string& token)
+{
+    wxSecretStore store = wxSecretStore::GetDefault();
+    wxString errmsg;
+    if (!store.IsOk(&errmsg)) {
+        BOOST_LOG_TRIVIAL(warning) << "sm_login: secret store unavailable, token not persisted: " << errmsg.ToStdString();
+        return false;
+    }
+    const wxString user = account.empty() ? wxString("snapmaker") : wxString::FromUTF8(account.c_str());
+    return store.Save(SM_LOGIN_SECRET_SERVICE, user, wxSecretValue(wxString::FromUTF8(token.c_str())));
+}
+
+std::string sm_secret_store_load()
+{
+    wxSecretStore store = wxSecretStore::GetDefault();
+    wxString errmsg;
+    if (!store.IsOk(&errmsg)) {
+        BOOST_LOG_TRIVIAL(warning) << "sm_login: secret store unavailable: " << errmsg.ToStdString();
+        return std::string();
+    }
+    wxString       user;
+    wxSecretValue  value;
+    if (!store.Load(SM_LOGIN_SECRET_SERVICE, user, value))
+        return std::string();
+    return std::string(value.GetAsString(wxConvUTF8).ToUTF8());
+}
+
+void sm_secret_store_clear()
+{
+    wxSecretStore store = wxSecretStore::GetDefault();
+    if (store.IsOk())
+        store.Delete(SM_LOGIN_SECRET_SERVICE);
+}
+#else  // !wxUSE_SECRETSTORE
+// No OS secret store on this toolchain (e.g. MinGW, which lacks wincred.h).
+// Degrade gracefully: never persist the token, so the user logs in again each
+// launch -- but we never write the credential to plaintext.
+bool        sm_secret_store_save(const std::string&, const std::string&) { return false; }
+std::string sm_secret_store_load() { return std::string(); }
+void        sm_secret_store_clear() {}
+#endif // wxUSE_SECRETSTORE
+} // namespace
+
+void GUI_App::sm_save_login_to_config()
+{
+    const std::string token = m_login_userinfo.get_user_token();
+    if (token.empty()) {
+        sm_clear_login_from_config();
+        return;
+    }
+    // Only the token is persisted (to the OS secret store). Profile fields are
+    // re-fetched from the server on restore, so nothing lands in plaintext.
+    sm_secret_store_save(m_login_userinfo.get_user_account(), token);
+}
+
+void GUI_App::sm_clear_login_from_config()
+{
+    sm_secret_store_clear();
+    // Scrub any fields an older build may have written to plaintext config.
+    app_config->erase("sm_login", "user_id");
+    app_config->erase("sm_login", "user_name");
+    app_config->erase("sm_login", "user_account");
+    app_config->erase("sm_login", "user_icon_url");
+    app_config->erase("sm_login", "token");
+    app_config->save();
+}
+
+void GUI_App::sm_restore_login_from_config()
+{
+    const std::string token = sm_secret_store_load();
+    if (token.empty())
+        return;
+
+    const std::string region        = app_config->get_country_code();
+    const std::string user_info_url = (region == "CN")
+        ? "https://api.snapmaker.cn/api/common/accounts/current"
+        : "https://id.snapmaker.com/api/common/accounts/current";
+
+    auto http = Http::get(user_info_url);
+    http.header("Authorization", token);
+    // on_complete fires only for 2xx; an expired/invalid token (401/403) and any
+    // network failure route to on_error below, which clears the stored session.
+    http.on_complete([this, token](std::string body, unsigned /*status*/) {
+            // Parse on this worker thread, then apply all state changes on the
+            // main thread (SMUserInfo::set_user_login notifies the UI).
+            std::string user_id, user_name, user_icon_url, user_account;
+            try {
+                json response = json::parse(body);
+                if (response.count("data")) {
+                    json data = response["data"];
+                    if (data.count("id"))
+                        user_id = std::to_string(data["id"].get<int>());
+                    if (data.count("nickname"))
+                        user_name = data["nickname"].get<std::string>();
+                    if (data.count("icon"))
+                        user_icon_url = data["icon"].get<std::string>();
+                    if (data.count("account"))
+                        user_account = data["account"].get<std::string>();
+                }
+            } catch (std::exception&) {
+                CallAfter([this]() { sm_clear_login_from_config(); });
+                return;
+            }
+            CallAfter([this, token, user_id, user_name, user_icon_url, user_account]() {
+                    if (!user_id.empty())        m_login_userinfo.set_user_id(user_id);
+                    if (!user_name.empty())      m_login_userinfo.set_user_name(user_name);
+                    if (!user_icon_url.empty())  m_login_userinfo.set_user_icon_url(user_icon_url);
+                    if (!user_account.empty())   m_login_userinfo.set_user_account(user_account);
+                    m_login_userinfo.set_user_token(token);
+                    m_login_userinfo.set_user_login(true);
+                    sm_save_login_to_config();
+                });
+        })
+        .on_error([this](std::string, std::string, unsigned) {
+            CallAfter([this]() { sm_clear_login_from_config(); });
+        })
+        .perform();
 }
 
 //BBS

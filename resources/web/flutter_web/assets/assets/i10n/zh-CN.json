@@ -1,11 +1,6 @@
 {
   "dialog": {
     "http": {
-      "network_unavailable": "网络连接失败，请检查网络连接",
-      "network_lost": "网络连接丢失，请检查网络连接",
-      "network_timeout": "网络连接超时，请检查网络连接",
-      "server_error": "服务器错误，请稍后重试",
-      "client_error": "客户端错误，请稍后重试",
       "success": "请求成功",
       "bad_request": "请求参数错误，请检查输入",
       "unauthorized": "未授权或登录已过期，请重新登录",
@@ -644,11 +639,6 @@
   "Nozzle": "喷嘴",
   "Model Library": "模型库",
   "Recommended for You": "官方推荐",
-  "Sort by": "排序方式",
-  "Newest": "最新",
-  "Most Liked": "最多点赞",
-  "Most Downloaded": "最多下载",
-  "Most Collected": "最多收藏",
   "units": "个",
   "Total": "总量",
   "Filament List": "多色耗材清单",

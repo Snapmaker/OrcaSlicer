@@ -41,6 +41,7 @@ extern Slic3r::ColorRGBA              adjust_color_for_rendering(const Slic3r::C
 namespace Slic3r {
 namespace GUI {
     class Size;
+    class Camera;
 }
 
 class SLAPrintObject;
@@ -475,8 +476,7 @@ public:
     //BBS: add outline drawing logic
     void render(ERenderType                           type,
                 bool                                  disable_cullface,
-                const Transform3d &                   view_matrix,
-                const Transform3d&                    projection_matrix,
+                const GUI::Camera&                    camera,
                 const GUI::Size&                      cnv_size,
                 std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
                 bool                                  partly_inside_enable =true

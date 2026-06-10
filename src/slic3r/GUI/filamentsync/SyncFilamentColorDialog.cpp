@@ -6,6 +6,7 @@
 #include <wx/sizer.h>
 #include <wx/image.h>
 #include <wx/statbox.h>
+#include <wx/dcgraph.h>
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -35,10 +36,16 @@ constexpr int g_dialogHeight = 665; // DIP
 // Block widths (Figma) — centered independently in dialog
 constexpr int g_block1W = 555; // Mode toggle
 constexpr int g_block1H = 40;
-constexpr int g_block3W = 571; // Plate preview + hints
-constexpr int g_block3H = 386; // 677 - 4 - 40 - 12 - 130 - 12 - 81 - 12 = 386
 constexpr int g_block4W = 571; // Bottom buttons
 constexpr int g_block4H = 81;
+
+// Block 3 wrapper panel styling
+constexpr const char* g_block3BorderColor = "#F0F0F0";
+constexpr int g_block3BorderWidth = 1;
+constexpr int g_block3Radius      = 4;
+constexpr int g_block3Padding     = 16; // DIP — internal padding (all sides)
+constexpr const char* g_block3SeparatorColor = "#F3F4F6";
+constexpr int g_block3HintGap     = 12; // DIP — hint label / separator / checkbox spacing
 
 // Gaps between blocks
 constexpr int g_gap1_2 = 12;
@@ -137,33 +144,63 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     topSizer->AddSpacer(FromDIP(g_gap2_3));
 
     // =====================================================================
-    // Block 3: Plate preview + hints  (571 × 386)
+    // Block 3: Preview + hint wrapper (rounded border, auto-height)
     // =====================================================================
     {
         auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        block->SetBackgroundStyle(wxBG_STYLE_PAINT);
         block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
-        block->SetMinSize(FromDIP(wxSize(g_block3W, g_block3H)));
+        block->Bind(wxEVT_PAINT, [block, this](wxPaintEvent&) {
+            wxAutoBufferedPaintDC dc(block);
+            wxSize sz = block->GetClientSize();
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(g_dialogBg))));
+            dc.DrawRectangle(0, 0, sz.x, sz.y);
+            wxGCDC gdc(dc);
+            gdc.SetPen(wxPen(wxColour(g_block3BorderColor), FromDIP(g_block3BorderWidth)));
+            gdc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(g_blockBg))));
+            gdc.DrawRoundedRectangle(0, 0, sz.x, sz.y, FromDIP(g_block3Radius));
+        });
 
-        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
+        auto* contentSizer = new wxBoxSizer(wxVERTICAL);
 
         m_pPlaterPreview = new PlaterPreview(block);
-        blockSizer->Add(m_pPlaterPreview, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_blockPaddingH));
+        contentSizer->Add(m_pPlaterPreview, 0, wxEXPAND);
 
-        m_pHintLabel = new wxStaticText(block, wxID_ANY,
+        m_pHintCheckBoxPanel = new wxPanel(block, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        m_pHintCheckBoxPanel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
+
+        auto* hintSizer = new wxBoxSizer(wxVERTICAL);
+
+        m_pHintLabel = new wxStaticText(m_pHintCheckBoxPanel, wxID_ANY,
             _L("Note: Only filament type and color information are synchronized, nozzle order is not included."));
         m_pHintLabel->SetFont(Label::Body_12);
         m_pHintLabel->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
         m_pHintLabel->Wrap(FromDIP(460));
-        blockSizer->Add(m_pHintLabel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(g_blockPaddingH));
+        hintSizer->Add(m_pHintLabel, 0, wxEXPAND | wxTOP, FromDIP(g_block3HintGap));
 
-        m_pAddUnUsedMachineFilaments = new wxCheckBox(block, wxID_ANY,
+        // Separator: 1px horizontal line, color #F3F4F6, 12px gap on both sides
+        hintSizer->AddSpacer(FromDIP(g_block3HintGap));
+        auto* separator = new wxPanel(m_pHintCheckBoxPanel, wxID_ANY);
+        separator->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_block3SeparatorColor)));
+        separator->SetMinSize(wxSize(-1, FromDIP(1)));
+        separator->SetMaxSize(wxSize(-1, FromDIP(1)));
+        hintSizer->Add(separator, 0, wxEXPAND);
+        hintSizer->AddSpacer(FromDIP(g_block3HintGap));
+
+        m_pAddUnUsedMachineFilaments = new wxCheckBox(m_pHintCheckBoxPanel, wxID_ANY,
             _L("Add remaining printhead filaments to the software filament list"));
-        m_pAddUnUsedMachineFilaments->SetFont(Label::Body_12);
+        m_pAddUnUsedMachineFilaments->SetFont(Label::Body_14);
         m_pAddUnUsedMachineFilaments->SetForegroundColour(StateColor::darkModeColorFor(wxColour(g_labelColor)));
-        blockSizer->Add(m_pAddUnUsedMachineFilaments, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,
-                        FromDIP(g_blockPaddingH));
+        hintSizer->Add(m_pAddUnUsedMachineFilaments, 0, wxEXPAND | wxBOTTOM, FromDIP(g_block3HintGap));
 
-        block->SetSizer(blockSizer);
+        m_pHintCheckBoxPanel->SetSizer(hintSizer);
+        contentSizer->Add(m_pHintCheckBoxPanel, 0, wxEXPAND);
+
+        // Wrap content with 16 DIP padding on all four sides
+        auto* padSizer = new wxBoxSizer(wxVERTICAL);
+        padSizer->Add(contentSizer, 1, wxEXPAND | wxALL, FromDIP(g_block3Padding));
+        block->SetSizer(padSizer);
         topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
     }
 
@@ -267,6 +304,8 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
 
 bool SyncFilamentColorDialog::isAddUnUsedMachineFilaments() const
 {
+    if (!m_bMappingMode)
+        return false;
     return m_pAddUnUsedMachineFilaments && m_pAddUnUsedMachineFilaments->GetValue();
 }
 
@@ -310,6 +349,11 @@ void SyncFilamentColorDialog::onModeChanged(int index)
             m_pFilamentColorMapBoxGroup->setVisibleCount(
                 std::min(m_pFilamentColorMapBoxGroup->getBoxCount(),
                          static_cast<int>(m_machineDataList.size())));
+    }
+
+    // Hide hint label and checkbox in overwrite mode
+    if (m_pHintCheckBoxPanel) {
+        m_pHintCheckBoxPanel->Show(m_bMappingMode);
     }
 
     if (m_bMappingMode)

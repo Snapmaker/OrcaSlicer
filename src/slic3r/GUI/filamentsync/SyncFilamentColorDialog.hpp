@@ -10,6 +10,7 @@
 
 class wxStaticText;
 class wxCheckBox;
+class wxPanel;
 
 namespace Slic3r
 {
@@ -62,6 +63,7 @@ private:
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
     PlaterPreview*            m_pPlaterPreview            = nullptr;
 
+    wxPanel*      m_pHintCheckBoxPanel         = nullptr;
     wxStaticText* m_pHintLabel = nullptr;
     wxCheckBox*   m_pAddUnUsedMachineFilaments = nullptr;
 

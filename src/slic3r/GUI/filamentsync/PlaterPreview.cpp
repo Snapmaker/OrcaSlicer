@@ -18,11 +18,8 @@ namespace
 // ============================================================
 // Layout constants
 // ============================================================
-constexpr int g_platerWidth        = 530;
-constexpr int g_platerHeight       = 295;
-constexpr int g_platerPadding      = 16;
-constexpr int g_platerRadius       = 4;
-constexpr int g_platerBorderW      = 1;
+constexpr int g_platerWidth        = 499; // 220 + 16 + 263 (content width, no padding)
+constexpr int g_platerHeight       = 279;
 constexpr int g_previewGap         = 16;
 constexpr int g_leftPreviewW       = 220;
 constexpr int g_leftPreviewH       = 220;
@@ -109,16 +106,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
               wxFULL_REPAINT_ON_RESIZE)
     , m_totalPlateCount(totalPlateCount > 0 ? totalPlateCount : 1)
 {
-    SetBackgroundStyle(wxBG_STYLE_PAINT);
     SetBackgroundColour(g_panelBg);
-    Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
-        wxAutoBufferedPaintDC dc(this);
-        dc.Clear();
-        wxSize sz = GetClientSize();
-        dc.SetPen(wxPen(g_platerBorderColor, FromDIP(g_platerBorderW)));
-        dc.SetBrush(wxBrush(g_panelBg));
-        dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, FromDIP(g_platerRadius));
-    });
 
     auto* outerSizer = new wxBoxSizer(wxVERTICAL);
 
@@ -238,10 +226,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     previewRow->Add(rightCol, 0, wxEXPAND);
     outerSizer->Add(previewRow, 0, wxEXPAND);
 
-    // ---- Wrap with 16 DIP padding (top/left/right only, bottom = 0) ----
-    auto* padSizer = new wxBoxSizer(wxVERTICAL);
-    padSizer->Add(outerSizer, 1, wxEXPAND | wxTOP | wxLEFT | wxRIGHT, FromDIP(g_platerPadding));
-    SetSizer(padSizer);
+    SetSizer(outerSizer);
     SetMinSize(wxSize(FromDIP(g_platerWidth), FromDIP(g_platerHeight)));
     Layout();
 

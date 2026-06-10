@@ -20418,9 +20418,11 @@ bool Plater::confirm_filament_temp_mixing_before_slice()
         break;
     }
 
-    wxMessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
-                        _L("Confirm"), wxYES_NO | wxICON_WARNING);
-    return dlg.ShowModal() == wxID_YES;
+    MessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
+                      _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
+    dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
+    dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
+    return dlg.ShowModal() == wxID_OK;
 }
 
 bool Plater::confirm_filament_temp_mixing_before_slice_all()
@@ -20443,9 +20445,11 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
     if (!has_allowed_warning)
         return true;
 
-    wxMessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
-                        _L("Confirm"), wxYES_NO | wxICON_WARNING);
-    return dlg.ShowModal() == wxID_YES;
+    MessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
+                      _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
+    dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
+    dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
+    return dlg.ShowModal() == wxID_OK;
 }
 
 void Plater::notify_filament_usage_changed()

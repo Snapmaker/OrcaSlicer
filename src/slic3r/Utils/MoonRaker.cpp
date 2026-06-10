@@ -2033,6 +2033,20 @@ void Moonraker_Mqtt::async_controlPurifier(int                                  
     }
 }
 
+void Moonraker_Mqtt::async_controlPurifier(const nlohmann::json& params,
+                                            std::function<void(const nlohmann::json& response)> callback)
+{
+    if (!send_to_request("printer.control.purifier", params, true, callback,
+                         [callback]() {
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        callback(json::value_t::null);
+    }
+}
+
 
 void Moonraker_Mqtt::async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)> callback)
 {

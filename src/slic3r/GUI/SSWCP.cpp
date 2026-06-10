@@ -3635,31 +3635,22 @@ void SSWCP_MachineOption_Instance::sw_BedMesh_AbortProbeMesh()
 
 void SSWCP_MachineOption_Instance::sw_ControlPurifier()
 {
-    try {
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
 
-        int fan_speed = m_param_data.count("fan_speed") ? m_param_data["fan_speed"].get<int>() : -1;
-        int delay_time = m_param_data.count("delay_time") ? m_param_data["delay_time"].get<int>() : -1;
-        int work_time  = m_param_data.count("work_time") ? m_param_data["work_time"].get<int>() : -1;
-        
-
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail(-1, "Connection lost!");
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_controlPurifier(fan_speed, delay_time, work_time, [weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-    } catch (std::exception& e) {
-        handle_general_fail();
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_ControlPurifier: no active machine connected";
+        handle_general_fail(-1, "Connection lost!");
+        return;
     }
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_controlPurifier(m_param_data, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
 }
 
 void SSWCP_MachineOption_Instance::sw_ControlMainFan()

@@ -2826,6 +2826,9 @@ msgstr "AMS 材料设置"
 msgid "Confirm"
 msgstr "确定"
 
+msgid "Confirm slicing"
+msgstr "请确认是否切片"
+
 msgid "Close"
 msgstr "关闭"
 
@@ -15261,6 +15264,9 @@ msgstr "检测到高温材料与低温材料同时使用。混合打印可能导
 
 msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
 msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+
+msgid "This material combination may cause risks. Do you want to continue?"
+msgstr "此材料组合可能存在风险，是否继续？"
 
 msgid "Allow high/low temperature filament mixing"
 msgstr "允许高/低温材料混合打印"

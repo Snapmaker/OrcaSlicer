@@ -35,8 +35,6 @@ constexpr int g_dialogHeight = 665; // DIP
 // Block widths (Figma) — centered independently in dialog
 constexpr int g_block1W = 555; // Mode toggle
 constexpr int g_block1H = 40;
-constexpr int g_block2W = 571; // Filament mapping
-constexpr int g_block2H = 130;
 constexpr int g_block3W = 571; // Plate preview + hints
 constexpr int g_block3H = 386; // 677 - 4 - 40 - 12 - 130 - 12 - 81 - 12 = 386
 constexpr int g_block4W = 571; // Bottom buttons
@@ -52,7 +50,6 @@ constexpr int g_topPadding = 4; // DIP
 
 // Internal block padding
 constexpr int g_blockPaddingH = 20; // DIP — horizontal
-constexpr int g_blockPaddingV = 12; // DIP — vertical
 
 // --- Color processing ---
 constexpr int            g_colorMax      = 255; // max RGBA component value
@@ -95,7 +92,6 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     const wxSize dialogSize = FromDIP(wxSize(g_dialogWidth, g_dialogHeight));
     SetSize(dialogSize);
     SetMinSize(dialogSize);
-    SetMaxSize(dialogSize);
     SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
 
     auto* topSizer = new wxBoxSizer(wxVERTICAL);
@@ -129,27 +125,15 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     topSizer->AddSpacer(FromDIP(g_gap1_2));
 
     // =====================================================================
-    // Block 2: Filament mapping  (571 × 130)
+    // Block 2: Filament mapping
     // =====================================================================
     {
-        auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_blockBg)));
-        block->SetMinSize(FromDIP(wxSize(g_block2W, g_block2H)));
-
-        auto* blockSizer = new wxBoxSizer(wxVERTICAL);
-        auto* mappingRow = new wxBoxSizer(wxHORIZONTAL);
-
-        m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(block, m_designDataList, m_machineDataList);
+        m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(this, m_designDataList, m_machineDataList);
         m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
             loadCoverPreview();
         });
-        mappingRow->Add(m_pFilamentColorMapBoxGroup, 1, wxEXPAND | wxALL, FromDIP(g_blockPaddingV));
-
-        blockSizer->Add(mappingRow, 0, wxEXPAND);
-        block->SetSizer(blockSizer);
-        topSizer->Add(block, 0, wxALIGN_CENTER_HORIZONTAL);
+        topSizer->Add(m_pFilamentColorMapBoxGroup, 0, wxALIGN_CENTER_HORIZONTAL);
     }
-
     topSizer->AddSpacer(FromDIP(g_gap2_3));
 
     // =====================================================================
@@ -238,6 +222,20 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
     initPlatePreview();
     onAutoMatch();
+}
+
+bool SyncFilamentColorDialog::Layout()
+{
+    bool ret = wxDialog::Layout();
+
+    wxSize bestSize = GetBestSize();
+    wxSize minSize  = GetMinSize();
+    wxSize newSize(wxMax(bestSize.GetWidth(), minSize.GetWidth()),
+                   wxMax(bestSize.GetHeight(), minSize.GetHeight()));
+    if (newSize != GetSize()) {
+        SetSize(newSize);
+    }
+    return ret;
 }
 
 std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const

@@ -5875,7 +5875,7 @@ msgid ""
 "presets."
 msgstr ""
 
-msgid "Design Filament"
+msgid "Original Filament"
 msgstr ""
 
 msgid "Machine Filament"

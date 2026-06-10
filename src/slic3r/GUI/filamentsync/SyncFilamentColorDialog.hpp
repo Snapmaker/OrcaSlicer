@@ -36,6 +36,8 @@ public:
 
     void setHasMixedFilaments(bool has);
 
+    bool Layout() override;
+
 private:
     void onReset();
     void onSync();

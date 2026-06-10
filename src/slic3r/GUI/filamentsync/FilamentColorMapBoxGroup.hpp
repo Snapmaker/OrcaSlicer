@@ -35,6 +35,8 @@ public:
 
     void bindMappingChangedCallback(std::function<void()> cb);
 
+    bool Layout() override;
+
 private:
     void onPaint(wxPaintEvent& event);
     void updateBoxFilament(int boxIndex, const FilamentData& machineData);

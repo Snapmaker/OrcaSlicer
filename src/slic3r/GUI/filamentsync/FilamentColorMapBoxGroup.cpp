@@ -20,10 +20,11 @@ constexpr int g_containerBorderW   = 1;  // border width
 constexpr int g_labelColumnWidth   = 56; // DIP — width for left label column
 constexpr int g_labelGap           = 12; // gap between labels and cards
 constexpr int g_cardGap            = 20; // gap between cards (Figma: gap-[20px])
+constexpr int g_gridCols           = 5;  // max cards per row before wrapping
 
-// Label vertical positioning: align with card top-bar text (y=7) and body center (y~44)
-constexpr int g_labelDesignTopMargin  = 6; // align "Design Filament" with top bar text
-constexpr int g_labelMachineBotMargin = 20; // bottom margin below "Machine Filament"
+// Label vertical positioning: align with card top-bar text (y=7)
+constexpr int g_labelDesignTopMargin = 6;  // align "Design Filament" with top bar text
+constexpr int g_labelVerticalGap     = 24; // gap between "Design Filament" and "Machine Filament"
 
 // ============================================================
 // Colours
@@ -73,14 +74,14 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     // ---- Left label column ----
     auto* labelSizer = new wxBoxSizer(wxVERTICAL);
 
-    m_pLabelDesign = new Label(this, _L("Design Filament"));
+    m_pLabelDesign = new Label(this, _L("Original Filament"));
     m_pLabelDesign->SetFont(Label::Body_14);
     m_pLabelDesign->SetForegroundColour(g_labelTextColor);
     m_pLabelDesign->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
     m_pLabelDesign->SetBackgroundColour(g_containerBg);
     labelSizer->AddSpacer(FromDIP(g_labelDesignTopMargin));
     labelSizer->Add(m_pLabelDesign, 0, wxEXPAND);
-    labelSizer->AddStretchSpacer(1);
+    labelSizer->AddSpacer(FromDIP(g_labelVerticalGap));
 
     m_pLabelMachine = new Label(this, _L("Machine Filament"));
     m_pLabelMachine->SetFont(Label::Body_14);
@@ -88,12 +89,12 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     m_pLabelMachine->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
     m_pLabelMachine->SetBackgroundColour(g_containerBg);
     labelSizer->Add(m_pLabelMachine, 0, wxEXPAND);
-    labelSizer->AddSpacer(FromDIP(g_labelMachineBotMargin));
+    labelSizer->AddStretchSpacer(1);
 
     rowSizer->Add(labelSizer, 0, wxEXPAND | wxRIGHT, FromDIP(g_labelGap));
 
-    // ---- Right card row ----
-    auto* cardSizer = new wxBoxSizer(wxHORIZONTAL);
+    // ---- Right card grid — 5 columns, auto rows ----
+    auto* cardGridSizer = new wxFlexGridSizer(0, g_gridCols, FromDIP(g_cardGap), FromDIP(g_cardGap));
 
     int boxIndex = 0;
     for (const auto& designData : m_designDataList) {
@@ -104,21 +105,29 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
             showMachineFilamentPicker(boxIndex);
         }, FilamentColorMapBox::ButtonType::Below);
 
-        int itemFlags = (boxIndex == static_cast<int>(m_designDataList.size()) - 1)
-                            ? 0
-                            : wxRIGHT;
-        cardSizer->Add(box.get(), 0, itemFlags, FromDIP(g_cardGap));
+        cardGridSizer->Add(box.get(), 0, wxALIGN_TOP);
         m_boxList.push_back(std::move(box));
         ++boxIndex;
     }
 
-    rowSizer->Add(cardSizer, 0, wxEXPAND);
+    rowSizer->Add(cardGridSizer, 0, wxALIGN_TOP);
 
     // ---- Padding around the row ----
     auto* outerSizer = new wxBoxSizer(wxVERTICAL);
     outerSizer->Add(rowSizer, 1, wxEXPAND | wxALL, FromDIP(g_containerPadding));
     SetSizer(outerSizer);
     Layout();
+}
+
+bool FilamentColorMapBoxGroup::Layout()
+{
+    bool ret = wxPanel::Layout();
+
+    wxSize minSize = GetSizer()->CalcMin();
+    SetMinSize(minSize);
+    InvalidateBestSize();
+
+    return ret;
 }
 
 void FilamentColorMapBoxGroup::onPaint(wxPaintEvent&)

@@ -8,6 +8,7 @@
 #include <wx/sizer.h>
 #include <wx/panel.h>
 
+#include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/Widgets/Label.hpp"
 
@@ -124,7 +125,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     // Left preview column
     auto* leftCol = new wxBoxSizer(wxVERTICAL);
 
-    m_pLabelLeft = new Label(this, "Original Model");
+    m_pLabelLeft = new Label(this, _L("Original Model"));
     m_pLabelLeft->SetFont(getMediumFont());
     m_pLabelLeft->SetForegroundColour(g_labelTextColor);
     leftCol->Add(m_pLabelLeft, 0, wxEXPAND);
@@ -167,7 +168,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     {
         auto* middleGroup = new wxBoxSizer(wxHORIZONTAL);
 
-        m_pDiskLabel = new Label(this, "Plate");
+        m_pDiskLabel = new Label(this, _L("Plate"));
         m_pDiskLabel->SetFont(Label::Body_12);
         m_pDiskLabel->SetForegroundColour(g_diskLabelColor);
         middleGroup->Add(m_pDiskLabel, 0, wxALIGN_CENTER_VERTICAL);
@@ -208,7 +209,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     // Right preview column
     auto* rightCol = new wxBoxSizer(wxVERTICAL);
 
-    m_pLabelRight = new Label(this, "Matched Model");
+    m_pLabelRight = new Label(this, _L("Matched Model"));
     m_pLabelRight->SetFont(getMediumFont());
     m_pLabelRight->SetForegroundColour(g_labelTextColor);
     rightCol->Add(m_pLabelRight, 0, wxEXPAND);

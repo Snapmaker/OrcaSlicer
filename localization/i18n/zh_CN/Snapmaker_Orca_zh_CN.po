@@ -5734,8 +5734,8 @@ msgstr "没有如任何兼容的材料，同步操作未执行。"
 msgid "There are some unknown filaments mapped to generic preset. Please update Snapmaker Orca or restart Snapmaker Orca to check if there is an update to system presets."
 msgstr "有一些未知型号的材料，映射到通用预设。请更新或者重启 Snapmaker Orca，以检查系统预设有没有更新。"
 
-msgid "Design Filament"
-msgstr "设计耗材"
+msgid "Original Filament"
+msgstr "原耗材"
 
 msgid "Machine Filament"
 msgstr "设备耗材"

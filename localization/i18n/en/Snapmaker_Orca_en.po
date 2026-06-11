@@ -5923,6 +5923,9 @@ msgstr ""
 msgid "Later"
 msgstr ""
 
+msgid "Filament sync successful."
+msgstr ""
+
 msgid "Detected that consumables with color-mixing dependency will be replaced / removed. Performing this operation will update the color-mixing results. Proceed?"
 msgstr ""
 

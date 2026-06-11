@@ -177,7 +177,7 @@ private:
 
         // ---- Index number inside circle ----
         dc.SetFont(indexFont);
-        dc.SetTextForeground(*wxWHITE);
+        dc.SetTextForeground(getTextColour(fillColor));
         wxString idxStr = wxString::Format("%d", data.m_index + 1);
         wxSize   idxExtent = dc.GetTextExtent(idxStr);
         dc.DrawText(idxStr, circleCxPx - idxExtent.x / 2,

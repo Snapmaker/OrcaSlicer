@@ -48,24 +48,6 @@ const wxColour g_bodyTextColor(0x33, 0x33, 0x33);
 const wxColour g_disabledBodyBg(0xE8, 0xE8, 0xE8);
 const wxColour g_cardBg(0xFF, 0xFF, 0xFF);
 
-// ============================================================
-// Luminance helpers
-// ============================================================
-constexpr double g_lumR = 0.299;
-constexpr double g_lumG = 0.587;
-constexpr double g_lumB = 0.114;
-constexpr int    g_luminanceThreshold = 140;
-
-bool isDarkColour(const wxColour& c)
-{
-    return (c.Red() * g_lumR + c.Green() * g_lumG + c.Blue() * g_lumB) < g_luminanceThreshold;
-}
-
-wxColour getTextColour(const wxColour& bg)
-{
-    return isDarkColour(bg) ? *wxWHITE : *wxBLACK;
-}
-
 wxString formatTopLabel(const Slic3r::GUI::FilamentData& data)
 {
     unsigned int displayIndex = data.m_index + 1;

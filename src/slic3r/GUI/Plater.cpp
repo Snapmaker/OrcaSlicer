@@ -8081,6 +8081,11 @@ void Sidebar::show_sync_filament_dialog()
         for (size_t i = 0; i < effective_size; ++i) {
             auto_calc_flushing_volumes(i);
         }
+
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::RegularNotificationLevel,
+            _u8L("Filament sync successful."));
     }
 }
 

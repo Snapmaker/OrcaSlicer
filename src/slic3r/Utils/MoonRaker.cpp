@@ -2577,44 +2577,15 @@ void Moonraker_Mqtt::async_start_local_print(const nlohmann::json& targets,
 void Moonraker_Mqtt::async_machine_heartbeat(const nlohmann::json& targets,
                                               std::function<void(const nlohmann::json& response)> callback)
 {
-    if (!callback)
-        return;
-
-    if (!targets.count("id")) {
+    if (!send_to_request("machine.heartbeat", targets, true, callback,
+                         [callback]() {
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
         callback(json::value_t::null);
-        return;
     }
-    int64_t id = targets["id"].get<int64_t>();
-
-    if (!add_response_target(id, callback,
-                             [callback]() {
-                                 json res;
-                                 res["error"] = "timeout";
-                                 callback(res);
-                             }, true)) {
-        callback(json::value_t::null);
-        return;
-    }
-
-    if (!m_mqtt_client_tls) {
-        delete_response_target(id);
-        callback(json::value_t::null);
-        return;
-    }
-
-    m_sn_mtx.lock();
-    std::string main_layer = m_sn;
-    m_sn_mtx.unlock();
-
-    if (main_layer == "+" || main_layer == "") {
-        delete_response_target(id);
-        callback(json::value_t::null);
-        return;
-    }
-
-    std::string topic = main_layer + m_request_topic;
-    std::string pub_msg{};
-    m_mqtt_client_tls->Publish(topic, targets.dump(), 1, pub_msg);
 }
 
 // 请求设备开启云打印

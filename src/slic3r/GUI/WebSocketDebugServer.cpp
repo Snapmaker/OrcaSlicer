@@ -38,12 +38,6 @@ bool WebSocketDebugServer::start()
     // Start send worker thread
     m_send_thread = std::thread(&WebSocketDebugServer::send_worker, this);
 
-    if (!m_accept_thread || !m_send_thread)
-    {
-        BOOST_LOG_TRIVIAL(error) << "creathe thread task error";
-        return false;
-    }
-
     BOOST_LOG_TRIVIAL(info) << " WebSocket Debug Server started on ws://localhost:" << m_port;
     BOOST_LOG_TRIVIAL(info) << "   Waiting for Flutter Web client to connect...";
     return true;

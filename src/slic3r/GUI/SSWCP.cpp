@@ -970,39 +970,35 @@ void SSWCP_Instance::set_web_view(wxWebView* view) {
 // Send response to JavaScript
 void SSWCP_Instance::send_to_js()
 {
-    try {
-        if (is_Instance_illegal()) {
+    if (is_Instance_illegal()) 
+        return;
+        
+
+    json response, payload;
+    response["header"] = m_header;
+
+    payload["code"] = m_status;
+    payload["message"]  = m_msg;
+    payload["data"] = m_res_data;
+
+    response["payload"] = payload;
+
+    std::string json_str = response.dump(4, ' ', true);
+
+    WCP_Logger::getInstance().add_log(json_str, false, "", "WCP", "info");
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    wxGetApp().CallAfter([weak_self, json_str]() 
+    {            
+        auto self = weak_self.lock();
+        if (!self) 
             return;
-        }
+            
+        // Use WebSocket in debug mode, fall back to WebView postMessage in production mode
+        SSWCP::send_message_auto(json_str, self->m_webview);
 
-        json response, payload;
-        response["header"] = m_header;
+    });
 
-        payload["code"] = m_status;
-        payload["message"]  = m_msg;
-        payload["data"] = m_res_data;
-
-        response["payload"] = payload;
-
-        std::string json_str = response.dump(4, ' ', true);
-
-        WCP_Logger::getInstance().add_log(json_str, false, "", "WCP", "info");
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        wxGetApp().CallAfter([weak_self, json_str]() {
-            try {
-                auto self = weak_self.lock();
-                if (!self) {
-                    return;
-                }
-
-                // Use WebSocket in debug mode, fall back to WebView postMessage in production mode
-                SSWCP::send_message_auto(json_str, self->m_webview);
-            } catch (std::exception& e) {
-                WCP_Logger::getInstance().add_log(e.what(), false, "", "WCP", "info");
-            }
-        });
-    } catch (std::exception& e) {}
 }
 
 // Clean up instance
@@ -6291,11 +6287,10 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
 
 // Handle incoming web messages
 void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
-    try {
-        // WebSocket debug mode webview is nullptr，but still handle this msg
-        // if (!webview) {
-        //     return;
-        // }
+    try {        
+         if (!webview) {
+             return;
+         }
         WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
 
         json j_message = json::parse(message);

@@ -180,15 +180,10 @@ void Download::resume()
 Downloader::Downloader()
 	: wxEvtHandler()
 {
-	//Bind(EVT_DWNLDR_FILE_COMPLETE, [](const wxCommandEvent& evt) {});
-	//Bind(EVT_DWNLDR_FILE_PROGRESS, [](const wxCommandEvent& evt) {});
-	//Bind(EVT_DWNLDR_FILE_ERROR, [](const wxCommandEvent& evt) {});
-	//Bind(EVT_DWNLDR_FILE_NAME_CHANGE, [](const wxCommandEvent& evt) {});
-
 	Bind(EVT_DWNLDR_FILE_COMPLETE, &Downloader::on_complete, this);
 	Bind(EVT_DWNLDR_FILE_PROGRESS, &Downloader::on_progress, this);
 	Bind(EVT_DWNLDR_FILE_ERROR, &Downloader::on_error, this);
-	Bind(EVT_DWNLDR_FILE_NAME_CHANGE, &Downloader::on_name_change, this);
+	//Bind(EVT_DWNLDR_FILE_NAME_CHANGE, &Downloader::on_name_change, this); //not work
 	Bind(EVT_DWNLDR_FILE_PAUSED, &Downloader::on_paused, this);
 	Bind(EVT_DWNLDR_FILE_CANCELED, &Downloader::on_canceled, this);
 }

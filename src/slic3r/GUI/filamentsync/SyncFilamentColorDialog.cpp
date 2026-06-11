@@ -50,6 +50,9 @@ constexpr int g_block3HintGap     = 12; // DIP — hint label / separator / chec
 constexpr int g_block23PaddingH = 20; // DIP — left/right
 constexpr int g_block23PaddingV = 12; // DIP — top/bottom
 
+// Scrollbar
+constexpr int g_scrollBarWidth = 10; // DIP — track width
+
 // Button sizing
 constexpr int g_btnW = 237;
 constexpr int g_btnH = 36;
@@ -221,6 +224,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         m_pScrollViewport = new wxPanel(block, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                         wxBORDER_NONE | wxCLIP_CHILDREN);
         m_pScrollViewport->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
+        m_pScrollViewport->SetDoubleBuffered(true);
 
         // Place the group inside the viewport unconditionally
         m_pFilamentColorMapBoxGroup->Reparent(m_pScrollViewport);
@@ -243,8 +247,8 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
         // --- Scrollbar (always created) ---
         m_pScrollBar = new FilamentScrollBar(block, StateColor::darkModeColorFor(wxColour(g_dialogBg)));
-        m_pScrollBar->SetMinSize(wxSize(FromDIP(10), -1));
-        m_pScrollBar->SetMaxSize(wxSize(FromDIP(10), -1));
+        m_pScrollBar->SetMinSize(wxSize(FromDIP(g_scrollBarWidth), -1));
+        m_pScrollBar->SetMaxSize(wxSize(FromDIP(g_scrollBarWidth), -1));
         m_pScrollBar->setScrollRange(m_scrollContentHeight, m_maxViewportHeight);
         m_pScrollBar->setOnScroll([this](int offset) {
             applyScrollOffset(offset);
@@ -674,8 +678,8 @@ void SyncFilamentColorDialog::updateScrollState()
         m_pScrollViewport->SetMaxSize(wxSize(-1, m_maxViewportHeight));
 
         // Gap = 10 px + scrollbar 10 px = 20 px total right side
-        m_pScrollGap->SetMinSize(wxSize(FromDIP(10), 1));
-        m_pScrollGap->SetMaxSize(wxSize(FromDIP(10), 1));
+        m_pScrollGap->SetMinSize(wxSize(FromDIP(g_scrollBarWidth), 1));
+        m_pScrollGap->SetMaxSize(wxSize(FromDIP(g_scrollBarWidth), 1));
         m_pScrollGap->Show();
         m_pScrollBar->Show();
 
@@ -686,7 +690,7 @@ void SyncFilamentColorDialog::updateScrollState()
         m_pScrollViewport->SetMinSize(wxDefaultSize);
         m_pScrollViewport->SetMaxSize(wxDefaultSize);
 
-        // Gap = 20 px (full right margin), scrollbar hidden
+        // Gap = full right margin (20 px), scrollbar hidden
         m_pScrollGap->SetMinSize(wxSize(FromDIP(g_block23PaddingH), 1));
         m_pScrollGap->SetMaxSize(wxSize(FromDIP(g_block23PaddingH), 1));
         m_pScrollGap->Show();
@@ -717,6 +721,10 @@ void SyncFilamentColorDialog::applyScrollOffset(int offset)
 
     // Move the group up within the viewport (negative Y scrolls content up)
     m_pFilamentColorMapBoxGroup->SetPosition(wxPoint(0, -clamped));
+
+    // Force the viewport to repaint so the newly exposed area is filled
+    // with the background colour instead of showing ghost pixels.
+    m_pScrollViewport->Refresh();
 
     m_pScrollBar->setScrollOffset(clamped);
 }

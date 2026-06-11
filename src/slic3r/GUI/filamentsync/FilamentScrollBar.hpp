@@ -39,8 +39,7 @@ private:
     int m_scrollOffset     = 0;
     int m_thumbHeight      = 0;
     int m_thumbY           = 0;
-    bool m_dragging        = false;
-    int  m_dragStartY      = 0;
+    int m_dragStartY      = 0;
     int  m_dragStartOffset = 0;
 
     std::function<void(int)> m_onScroll;

@@ -11,9 +11,7 @@
 namespace
 {
 
-constexpr int g_scrollBarTrackW    = 10; // DIP — full track width
 constexpr int g_scrollBarThumbW    = 4;  // DIP — thumb width
-constexpr int g_scrollBarRadius    = 10; // DIP — thumb corner radius
 constexpr int g_scrollBarMinThumbH = 20; // DIP — minimum thumb height
 
 // Thumb colour
@@ -44,7 +42,7 @@ FilamentScrollBar::FilamentScrollBar(wxWindow* parent, const wxColour& bgColor, 
     Bind(wxEVT_LEFT_UP, &FilamentScrollBar::onMouseUp, this);
     Bind(wxEVT_MOTION, &FilamentScrollBar::onMouseMove, this);
     Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
-        m_dragging = false;
+        // Capture lost (e.g. another window took it) — drag aborted
     });
 }
 
@@ -168,7 +166,10 @@ void FilamentScrollBar::onMouseUp(wxMouseEvent&)
 
 void FilamentScrollBar::onMouseMove(wxMouseEvent& evt)
 {
-    if (!HasCapture() || !evt.Dragging())
+    // Only act while we own the mouse capture (set in onMouseDown, released in onMouseUp).
+    //   evt.Dragging() is not used because its button-state check may be unreliable
+    //   after CaptureMouse() on some platforms.
+    if (!HasCapture())
         return;
 
     int dy = evt.GetPosition().y - m_dragStartY;
@@ -189,13 +190,16 @@ void FilamentScrollBar::onMouseMove(wxMouseEvent& evt)
 
 void FilamentScrollBar::onScroll(int newOffset)
 {
-    int maxOffset   = std::max(0, m_contentHeight - m_viewportHeight);
-    m_scrollOffset = std::max(0, std::min(newOffset, maxOffset));
-    m_thumbY       = calcThumbY();
+    int maxOffset = std::max(0, m_contentHeight - m_viewportHeight);
+    newOffset     = std::max(0, std::min(newOffset, maxOffset));
 
+    // Notify callback BEFORE updating m_scrollOffset so the callback
+    // can still detect the change and move the content.
     if (m_onScroll)
-        m_onScroll(m_scrollOffset);
+        m_onScroll(newOffset);
 
+    m_scrollOffset = newOffset;
+    m_thumbY       = calcThumbY();
     Refresh();
 }
 

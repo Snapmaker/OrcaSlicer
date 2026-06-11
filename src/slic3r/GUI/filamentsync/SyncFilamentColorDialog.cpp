@@ -59,7 +59,7 @@ constexpr int g_block4PaddingV = 12; // DIP — top/bottom
 constexpr int g_block4PaddingH = 42; // DIP — left/right
 
 // Top padding
-constexpr int g_topPadding = 0; // DIP
+constexpr int g_topPadding = 12; // DIP
 
 // --- Color processing ---
 constexpr int            g_colorMax      = 255; // max RGBA component value
@@ -92,6 +92,10 @@ namespace Slic3r
 {
 namespace GUI
 {
+
+// =====================================================================
+// SyncFilamentColorDialog
+// =====================================================================
 
 SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
                                                  const std::vector<FilamentData>& designDataList,
@@ -130,20 +134,21 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
     }
 
     // =====================================================================
-    // Block 2+3: Filament mapping + Preview/hint wrapper (L/R 20px, T/B 12px)
+    // Block 2+3: Filament mapping + Preview/hint wrapper
+    //   No scroll : L/R 20px, T/B 12px
+    //   Scroll    : L 20px, R 10px (scrollbar in remaining 10px), T/B 12px
     // =====================================================================
     {
         auto* block = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         block->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
-
-        auto* mergedSizer = new wxBoxSizer(wxVERTICAL);
 
         // --- Filament mapping (was Block 2) ---
         m_pFilamentColorMapBoxGroup = new FilamentColorMapBoxGroup(block, m_designDataList, m_machineDataList);
         m_pFilamentColorMapBoxGroup->bindMappingChangedCallback([this]() {
             loadCoverPreview();
         });
-        mergedSizer->Add(m_pFilamentColorMapBoxGroup, 0, wxEXPAND);
+
+        m_bNeedScroll = m_pFilamentColorMapBoxGroup->exceedsRowCount(2);
 
         // --- Preview wrapper (was Block 3) ---
         auto* previewWrapper = new wxPanel(block, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
@@ -200,13 +205,94 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         auto* innerPad = new wxBoxSizer(wxVERTICAL);
         innerPad->Add(contentSizer, 1, wxEXPAND | wxALL, FromDIP(g_block3Padding));
         previewWrapper->SetSizer(innerPad);
-        mergedSizer->Add(previewWrapper, 0, wxEXPAND | wxTOP, FromDIP(g_block23PaddingV));
 
-        // Wrap merged content with 20px L/R, 12px T/B
+        // ============================================================
+        // Assemble: filament group (possibly inside scroll viewport)
+        //           + preview, with optional scrollbar
+        // ============================================================
+        auto* bodyVSizer = new wxBoxSizer(wxVERTICAL);
+
+        if (m_bNeedScroll) {
+            m_maxViewportHeight = m_pFilamentColorMapBoxGroup->getHeightForRowCount(2);
+
+            // Calculate total content height (all rows)
+            int boxCount   = m_pFilamentColorMapBoxGroup->getBoxCount();
+            int actualRows = (boxCount + 4) / 5; // 5 columns (g_gridCols), ceil division
+            m_scrollContentHeight = m_pFilamentColorMapBoxGroup->getHeightForRowCount(actualRows);
+
+            // --- Scroll viewport (fixed height, clips the group) ---
+            m_pScrollViewport = new wxPanel(block, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                            wxBORDER_NONE | wxCLIP_CHILDREN);
+            m_pScrollViewport->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(g_dialogBg)));
+            m_pScrollViewport->SetMinSize(wxSize(-1, m_maxViewportHeight));
+            m_pScrollViewport->SetMaxSize(wxSize(-1, m_maxViewportHeight));
+
+            // Reparent the group into the viewport
+            m_pFilamentColorMapBoxGroup->Reparent(m_pScrollViewport);
+            m_pFilamentColorMapBoxGroup->SetPosition(wxPoint(0, 0));
+            m_pFilamentColorMapBoxGroup->SetSize(-1, m_scrollContentHeight);
+
+            // Keep group width in sync with viewport on resize
+            m_pScrollViewport->Bind(wxEVT_SIZE, [this](wxSizeEvent& evt) {
+                wxSize vpSz = evt.GetSize();
+                if (m_pFilamentColorMapBoxGroup && vpSz.x > 0) {
+                    m_pFilamentColorMapBoxGroup->SetSize(vpSz.x, m_scrollContentHeight);
+                }
+                evt.Skip();
+            });
+
+            // Scroll wheel on viewport
+            m_pScrollViewport->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& evt) {
+                int lines  = evt.GetWheelRotation() / evt.GetWheelDelta();
+                int delta  = -lines * FilamentScrollBar::s_scrollStepLines;
+                int curOff = m_pScrollBar ? m_pScrollBar->getScrollOffset() : 0;
+                applyScrollOffset(curOff + delta);
+            });
+
+            // --- Scrollbar ---
+            m_pScrollBar = new FilamentScrollBar(block, StateColor::darkModeColorFor(wxColour(g_dialogBg)));
+            m_pScrollBar->SetMinSize(wxSize(FromDIP(10), -1));
+            m_pScrollBar->SetMaxSize(wxSize(FromDIP(10), -1));
+            m_pScrollBar->setScrollRange(m_scrollContentHeight, m_maxViewportHeight);
+            m_pScrollBar->setOnScroll([this](int offset) {
+                applyScrollOffset(offset);
+            });
+
+            // viewport | 10px gap | scrollbar — scrollbar sits at the far right,
+            // outside the 10px inner margin so it is adjacent to the block edge.
+            auto* viewportRow = new wxBoxSizer(wxHORIZONTAL);
+            viewportRow->Add(m_pScrollViewport, 1, wxEXPAND);
+            viewportRow->AddSpacer(FromDIP(10)); // right margin between content and scrollbar
+            viewportRow->Add(m_pScrollBar, 0, wxEXPAND);
+
+            bodyVSizer->Add(viewportRow, 0, wxEXPAND);
+        } else {
+            bodyVSizer->Add(m_pFilamentColorMapBoxGroup, 0, wxEXPAND);
+        }
+
+        // Preview row: when scrolling, the preview needs its own 20px right
+        // margin so its right edge aligns with the viewport's right edge.
+        if (m_bNeedScroll) {
+            auto* previewRow = new wxBoxSizer(wxHORIZONTAL);
+            previewRow->Add(previewWrapper, 1, wxEXPAND);
+            previewRow->AddSpacer(FromDIP(20)); // right margin = 20px
+            bodyVSizer->Add(previewRow, 0, wxEXPAND | wxTOP, FromDIP(g_block23PaddingV));
+        } else {
+            bodyVSizer->Add(previewWrapper, 0, wxEXPAND | wxTOP, FromDIP(g_block23PaddingV));
+        }
+
+        // T/B padding = 12px
         auto* vPad = new wxBoxSizer(wxVERTICAL);
-        vPad->Add(mergedSizer, 1, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(g_block23PaddingV));
+        vPad->Add(bodyVSizer, 1, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(g_block23PaddingV));
+
+        // L/R: left always 20. Right padding only when NO scrollbar (viewportRow
+        // and previewRow handle their own right-side spacing when scrolling).
         auto* hPad = new wxBoxSizer(wxHORIZONTAL);
-        hPad->Add(vPad, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(g_block23PaddingH));
+        hPad->AddSpacer(FromDIP(g_block23PaddingH)); // left margin = 20
+        hPad->Add(vPad, 1, wxEXPAND);
+        if (!m_bNeedScroll) {
+            hPad->AddSpacer(FromDIP(g_block23PaddingH)); // right margin = 20
+        }
         block->SetSizer(hPad);
         topSizer->Add(block, 0, wxEXPAND);
     }
@@ -575,6 +661,31 @@ wxBitmap SyncFilamentColorDialog::thumbnailToBitmap(const ThumbnailData& thumb)
         }
     }
     return wxBitmap(image);
+}
+
+void SyncFilamentColorDialog::setScrollViewport(int contentHeight, int viewportHeight)
+{
+    m_scrollContentHeight = contentHeight;
+    m_maxViewportHeight   = viewportHeight;
+
+    if (m_pScrollBar)
+        m_pScrollBar->setScrollRange(contentHeight, viewportHeight);
+}
+
+void SyncFilamentColorDialog::applyScrollOffset(int offset)
+{
+    if (!m_pScrollViewport || !m_pFilamentColorMapBoxGroup || !m_pScrollBar)
+        return;
+
+    int maxOffset = std::max(0, m_scrollContentHeight - m_maxViewportHeight);
+    int clamped   = std::max(0, std::min(offset, maxOffset));
+    if (clamped == m_pScrollBar->getScrollOffset())
+        return;
+
+    // Move the group up within the viewport (negative Y scrolls content up)
+    m_pFilamentColorMapBoxGroup->SetPosition(wxPoint(0, -clamped));
+
+    m_pScrollBar->setScrollOffset(clamped);
 }
 
 } // namespace GUI

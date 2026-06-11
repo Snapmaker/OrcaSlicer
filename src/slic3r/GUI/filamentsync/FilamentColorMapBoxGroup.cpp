@@ -199,6 +199,31 @@ int FilamentColorMapBoxGroup::getBoxCount() const
     return m_boxList.size();
 }
 
+bool FilamentColorMapBoxGroup::exceedsRowCount(int maxRows) const
+{
+    int visibleCount = 0;
+    for (const auto& box : m_boxList) {
+        if (box->IsShown())
+            ++visibleCount;
+    }
+    if (visibleCount == 0)
+        return false;
+    int totalRows = (visibleCount + g_gridCols - 1) / g_gridCols;
+    return totalRows > maxRows;
+}
+
+int FilamentColorMapBoxGroup::getHeightForRowCount(int rows) const
+{
+    if (rows <= 0 || m_boxList.empty())
+        return 0;
+
+    int cardH = m_boxList[0]->GetMinSize().y; // already DPI-scaled
+    int vGap  = FromDIP(g_cardGap);
+    int gridH = rows * cardH + std::max(0, rows - 1) * vGap;
+    int pad   = FromDIP(g_containerPadding);
+    return gridH + 2 * pad;
+}
+
 void FilamentColorMapBoxGroup::bindMappingChangedCallback(std::function<void()> cb)
 {
     m_mappingChangedCallback = std::move(cb);

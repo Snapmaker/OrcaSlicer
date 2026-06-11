@@ -1,16 +1,18 @@
 #pragma once
 
+#include <functional>
 #include <list>
 
 #include <wx/dialog.h>
+#include <wx/panel.h>
 
 #include "FilamentData.hpp"
+#include "FilamentScrollBar.hpp"
 
 #include "slic3r/GUI/Widgets/Button.hpp"
 
 class wxStaticText;
 class wxCheckBox;
-class wxPanel;
 
 namespace Slic3r
 {
@@ -57,18 +59,28 @@ private:
 
     static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
 
+    void setScrollViewport(int contentHeight, int viewportHeight);
+    void applyScrollOffset(int offset);
+
     // Mode selection (segmented toggle, same style as color-mixing)
     SegmentedToggle* m_pModeToggle = nullptr;
 
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
     PlaterPreview*            m_pPlaterPreview            = nullptr;
 
+    FilamentScrollBar*  m_pScrollBar      = nullptr;
+    wxPanel*            m_pScrollViewport = nullptr;
+
     wxPanel*      m_pHintCheckBoxPanel         = nullptr;
-    wxStaticText* m_pHintLabel = nullptr;
+    wxStaticText* m_pHintLabel                 = nullptr;
     wxCheckBox*   m_pAddUnUsedMachineFilaments = nullptr;
 
     Button* m_pResetBtn = nullptr;
     Button* m_pSyncBtn  = nullptr;
+
+    int                 m_scrollContentHeight = 0;
+    int                 m_maxViewportHeight   = 0;
+    bool                m_bNeedScroll         = false;
 
     // Data
     std::vector<FilamentData> m_designDataList;

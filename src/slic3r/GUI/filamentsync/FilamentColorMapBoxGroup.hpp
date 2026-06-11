@@ -33,6 +33,12 @@ public:
     int  getBoxCount() const;
     void setVisibleCount(int count);
 
+    // Returns true if the number of visible rows exceeds maxRows.
+    bool exceedsRowCount(int maxRows) const;
+    // Returns the total height (in physical pixels) the group would have
+    // if only `rows` rows of cards were displayed.
+    int  getHeightForRowCount(int rows) const;
+
     void bindMappingChangedCallback(std::function<void()> cb);
 
     bool Layout() override;

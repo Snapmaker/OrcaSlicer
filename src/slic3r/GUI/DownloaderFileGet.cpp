@@ -188,19 +188,21 @@ void FileGet::priv::get_perform()
 
 	wxString temp_path_wstring(m_tmp_path.wstring());
 	
-	//std::cout << "dest_path: " << dest_path.string() << std::endl;
-	//std::cout << "m_tmp_path: " << m_tmp_path.string() << std::endl;
-	
 	BOOST_LOG_TRIVIAL(info) << GUI::format("Starting download from %1% to %2%. Temp path is %3%",m_url, dest_path, m_tmp_path);
 
 	FILE* file;
 	// open file for writting
 	if (m_written == 0)
-		file = fopen(temp_path_wstring.c_str(), "wb");
+#ifndef __WIN32__
+        file = fopen(temp_path_wstring.c_str(), "wb");
 	else 
 		file = fopen(temp_path_wstring.c_str(), "ab");
+#else
+		file = _wfopen(temp_path_wstring.c_str(), L"wb");
+    else 
+		file = _wfopen(temp_path_wstring.c_str(), L"ab");
+#endif	
 
-	//assert(file != NULL);
 	if (file == NULL) {
 		wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
 		// TRN %1% = file path

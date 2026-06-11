@@ -475,7 +475,7 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
 
-    if (prime_multi_material) {
+    if (prime_multi_material && m_print_config_ptr->wipe_tower_filament == 0) {
         std::map<unsigned int, int> extrudeCount;
         for (const LayerTools& lt : m_layer_tools) {
             for (unsigned int currentExtruder : lt.extruders) {

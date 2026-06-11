@@ -6052,6 +6052,16 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("wipe_tower_filament", coInt);
+    def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
+    def->label = L("Wipe tower");
+    def->category = L("Extruders");
+    def->tooltip = L("The extruder to use when printing perimeter of the wipe tower. "
+                     "Set to 0 to use the one that is available (non-soluble would be preferred).");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def          = this->add("wipe_tower_wall_gap", coBool);
     def->label   = L("Wall gap");
     def->tooltip = L("Create small gaps in the wipe tower outer wall at tool change entry points. "

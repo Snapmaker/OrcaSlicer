@@ -2058,7 +2058,10 @@ void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_sl
     if (event == eEventPlateUpdate)
         enable_slice = get_enable_slice_status();
     else if (!can_slice)
-        enable_slice = false;
+        // Don't hard-disable the slice button; let get_enable_slice_status()
+        // decide. In eSliceAll mode other plates may still be sliceable even
+        // if the caller thinks the current plate isn't.
+        enable_slice = get_enable_slice_status();
 
     if (!can_print)
         enable_print = false;

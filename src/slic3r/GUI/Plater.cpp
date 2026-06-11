@@ -17258,8 +17258,24 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
     std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
-    if (!loaded.empty())
+    if (!loaded.empty()) {
+        // After loading a project, initialize the filament temp mixing state
+        // for ALL plates, not just the current one. This ensures each plate's
+        // m_apply_invalid flag is correct so that "Slice All" mode correctly
+        // detects which plates are sliceable.
+        PartPlateList& plate_list = get_partplate_list();
+        for (int i = 0; i < plate_list.get_plate_count(); ++i) {
+            FilamentTempMixingState state = get_filament_temp_mixing_state(i);
+            PartPlate* plate = plate_list.get_plate(i);
+            if (plate) {
+                plate->update_apply_result_invalid(
+                    state == FilamentTempMixingState::BlockedError);
+            }
+        }
         notify_filament_usage_changed();
+        // Force a sync for the current plate's notification display
+        sync_filament_temp_mixing_notification();
+    }
     return loaded;
 }
 

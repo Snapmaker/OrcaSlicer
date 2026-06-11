@@ -5770,17 +5770,20 @@ msgstr "将剩余打印头耗材添加到软件耗材列表"
 msgid "Synchronize filament information"
 msgstr "同步耗材信息"
 
-msgid "Please connect to a device first before synchronizing filament information."
-msgstr "请先连接设备，再进行耗材信息同步。"
+msgid "Synchronize printer information"
+msgstr "同步打印机信息"
 
-msgid "Device not connected"
-msgstr "设备未连接"
+msgid "The printer is not connected. Before synchronizing, please go to the device page to connect."
+msgstr "打印机未连接，在同步之前，请前往设备页连接。"
 
-msgid "Mixed filament configuration is detected in the current project. Syncing may affect the mixed filament settings. Do you want to continue?"
-msgstr "检测到当前项目存在混色耗材配置。同步操作可能会影响混色耗材设置。是否继续？"
+msgid "Connect Now"
+msgstr "立即连接"
 
-msgid "Mixed Filament Warning"
-msgstr "混色耗材警告"
+msgid "Later"
+msgstr "稍后再说"
+
+msgid "Detected that consumables with color-mixing dependency will be replaced / removed. Performing this operation will update the color-mixing results. Proceed?"
+msgstr "检测到混色依赖的耗材将被替换 / 移除，执行此操作会更新混色结果，确定继续？"
 
 #, boost-format
 msgid "Do you want to save changes to \"%1%\"?"

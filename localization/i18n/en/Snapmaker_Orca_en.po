@@ -5911,16 +5911,19 @@ msgstr ""
 msgid "Synchronize filament information"
 msgstr ""
 
-msgid "Please connect to a device first before synchronizing filament information."
+msgid "Synchronize printer information"
 msgstr ""
 
-msgid "Device not connected"
+msgid "The printer is not connected. Before synchronizing, please go to the device page to connect."
 msgstr ""
 
-msgid "Mixed filament configuration is detected in the current project. Syncing may affect the mixed filament settings. Do you want to continue?"
+msgid "Connect Now"
 msgstr ""
 
-msgid "Mixed Filament Warning"
+msgid "Later"
+msgstr ""
+
+msgid "Detected that consumables with color-mixing dependency will be replaced / removed. Performing this operation will update the color-mixing results. Proceed?"
 msgstr ""
 
 #, boost-format

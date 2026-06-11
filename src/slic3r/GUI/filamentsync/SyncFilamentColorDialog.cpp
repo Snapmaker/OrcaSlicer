@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "SyncConfirmDialog.hpp"
 #include "FilamentColorMapBoxGroup.hpp"
 #include "FilamentSyncAlgorithm.hpp"
 #include "PlaterPreview.hpp"
@@ -331,11 +332,9 @@ void SyncFilamentColorDialog::onReset()
 void SyncFilamentColorDialog::onSync()
 {
     if (m_hasMixedFilaments) {
-        MessageDialog dlg(this,
-            _L("Mixed filament configuration is detected in the current project. "
-               "Syncing may affect the mixed filament settings. "
-               "Do you want to continue?"),
-            _L("Mixed Filament Warning"),
+        SyncConfirmDialog dlg(this,
+            _L("Detected that consumables with color-mixing dependency will be replaced / removed. "
+                "Performing this operation will update the color-mixing results. Proceed?"),
             wxYES_NO | wxICON_WARNING);
         dlg.CentreOnScreen();
         if (dlg.ShowModal() != wxID_YES)

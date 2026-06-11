@@ -8,7 +8,6 @@
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
 #include "common_func/common_func.hpp"
-#include "filamentsync/SyncFilamentColorDialog.hpp"
 
 #include <cstddef>
 #include <array>
@@ -186,6 +185,9 @@
 #include "StepMeshDialog.hpp"
 #include "CloneDialog.hpp"
 #include "WebPreprintDialog.hpp"
+
+#include "filamentsync/SyncConfirmDialog.hpp"
+#include "filamentsync/SyncFilamentColorDialog.hpp"
 
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include <chrono>
@@ -7970,23 +7972,57 @@ void Sidebar::show_sync_filament_dialog()
     std::shared_ptr<PrintHost> host = nullptr;
     wxGetApp().get_connect_host(host);
     if (!host) {
-        MessageDialog dlg(this,
-            _L("Please connect to a device first before synchronizing filament information."),
-            _L("Device not connected"), wxOK);
+        SyncRichConfirmDialog dlg(this,
+            _L("The printer is not connected. Before synchronizing, please go to the device page to connect."),
+            wxYES_NO);
+        dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
         dlg.CentreOnScreen();
-        dlg.ShowModal();
+        if (dlg.ShowModal() == wxID_YES) {
+            // TODO: Implement the callback for connecting to U1
+        }
         return;
+    }
+
+    {
+        static const std::set<std::string> white_list_machine_types = {
+            "Snapmaker U1"
+        };
+        std::string machine_type;
+        std::string device_name;
+        std::vector<std::string> nozzle_diameters;
+        bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+        bool is_white_listed_type = white_list_machine_types.find(machine_type) != white_list_machine_types.end();
+
+        if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {
+            SyncRichConfirmDialog dlg(this,
+                _L("The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."),
+                wxYES_NO);
+            dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
+            dlg.CentreOnScreen();
+            if (dlg.ShowModal() == wxID_YES) {
+                // TODO: Implement the callback for connecting to U1
+            }
+            return;
+        }
     }
 
     PresetBundle* preset_bundle = wxGetApp().preset_bundle;
     if (!preset_bundle)
         return;
 
-    std::vector<FilamentData> designFilamentList;
-    build_design_filament_list(preset_bundle, designFilamentList);
-
     std::vector<FilamentData> machineFilamentList;
     build_machine_filament_list(preset_bundle, machineFilamentList);
+    if (machineFilamentList.empty()) {
+        SyncConfirmDialog dlg(this,
+            _L("There are no consumables on the printer. Please place the consumables on the machine first."),
+            wxOK);
+        dlg.CentreOnScreen();
+        dlg.ShowModal();
+        return;
+    }
+
+    std::vector<FilamentData> designFilamentList;
+    build_design_filament_list(preset_bundle, designFilamentList);
 
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);

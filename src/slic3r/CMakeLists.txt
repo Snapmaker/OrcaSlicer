@@ -124,6 +124,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/filamentsync/MachineFilamentPicker.hpp
     GUI/filamentsync/PlaterPreview.cpp
     GUI/filamentsync/PlaterPreview.hpp
+    GUI/filamentsync/SyncConfirmDialog.cpp
+    GUI/filamentsync/SyncConfirmDialog.hpp
     GUI/filamentsync/SyncFilamentColorDialog.cpp
     GUI/filamentsync/SyncFilamentColorDialog.hpp
     GUI/format.hpp

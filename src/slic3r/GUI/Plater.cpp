@@ -20239,10 +20239,6 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     if (!has_object_on_plate)
         return true;
 
-    // Collect from the Plater's working config for global Process settings.
-    // Defaults are 0 (skipped by the >= 1 check).
-    collect_filament_slots_from_config(*this->config(), num_filaments, used_slots);
-
     // Also collect from current plate's config for any plate-level overrides
     if (plate)
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);

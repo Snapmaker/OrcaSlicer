@@ -20297,6 +20297,45 @@ bool Plater::check_filament_temp_mixing(int plate_index)
         }
     }
 
+    // Collect from the Plater working config. The approach balances
+    // sensitivity against false positives:
+    // - Global features (wipe tower, support) always apply → always collected.
+    // - Feature-specific keys (wall_filament, infill) depend on the global
+    //   process defaults. They are only collected when at least one object
+    //   on the plate uses the default extruder (e=0), which means those
+    //   defaults WILL affect the actual slicing output.
+    {
+        // Always collect: features that cannot be overridden per-object.
+        static const std::vector<const char*> always_collect = {
+            "wipe_tower_filament",
+            "support_filament",
+            "support_interface_filament"
+        };
+        for (const char* key : always_collect)
+        {
+            const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
+            if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                used_slots.insert(option->value - 1);
+        }
+
+        // If any object uses e=0, the global process defaults for
+        // wall / infill extruders apply and must be collected.
+        if (uses_default_extruder)
+        {
+            static const std::vector<const char*> default_keys = {
+                "wall_filament",
+                "sparse_infill_filament",
+                "solid_infill_filament"
+            };
+            for (const char* key : default_keys)
+            {
+                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
+                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                    used_slots.insert(option->value - 1);
+            }
+        }
+    }
+
     // Resolve the global default extruder if any object on this plate
     // uses extruder=0. p->config does not include the "extruder" key
     // (it is not in the initializer list at priv constructor), so we

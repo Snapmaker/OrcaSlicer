@@ -1556,15 +1556,6 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     if (extruders.empty())
         return { L("No extrusions under current settings.") };
 
-    // Check for high/low temperature filament mixing.
-    if (extruders.size() > 1) {
-        auto ret = check_multi_filament_valid(*this);
-        if (!ret.string.empty()) {
-            ret.type = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
-            return ret;
-        }
-    }
-
     if (m_config.print_sequence == PrintSequence::ByObject) {
         if (m_config.timelapse_type == TimelapseType::tlSmooth)
             return {L("Smooth mode of timelapse is not supported when \"by object\" sequence is enabled.")};

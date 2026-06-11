@@ -6665,6 +6665,12 @@ msgstr "反轉滑鼠滾輪縮放方向"
 msgid "If enabled, reverses the direction of zoom with mouse wheel."
 msgstr "啟用後，改變滑鼠滾輪縮放方向。"
 
+msgid "Improve rendering performance by LOD"
+msgstr "透過LOD提升渲染效能"
+
+msgid "Improved rendering performance under the scene of multiple plates and many models. Takes effect after restart."
+msgstr "在多盤和多模型場景下提升渲染效能。重啟後生效。"
+
 msgid "Orbit speed multiplier"
 msgstr "視角旋轉速度倍率"
 

@@ -3167,13 +3167,6 @@ void Print::_make_wipe_tower()
         }
     }
 
-    if (bUseWipeTower2) {
-        // wipe_tower_filament will not show, this is replace for wipe_tower_filament
-        int wall_filament = AutoWipeTowerFilament();
-        const PrintConfig* config_ptr = &m_config;
-        const_cast<PrintConfig*>(config_ptr)->wipe_tower_filament.setInt(wall_filament + 1);
-    }
-
     // Let the ToolOrdering class know there will be initial priming extrusions at the start of the print.
     m_wipe_tower_data.tool_ordering = ToolOrdering(*this, (unsigned int) -1, bUseWipeTower2 ? true : false);
 
@@ -3456,18 +3449,6 @@ void Print::_make_wipe_tower()
                                                   {scale_(origin.x()), scale_(origin.y())});
         m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     }
-}
-
-int Print::AutoWipeTowerFilament() const 
-{ 
-    auto extruders = object_extruders();
-    append(extruders, support_material_extruders());
-    sort_remove_duplicates(extruders);
-    for (unsigned int e : extruders) {
-        if (!m_config.filament_soluble.get_at(e))
-            return int(e);
-    }
-    return -1;
 }
 
 // Generate a recommended G-code output file name based on the format template, default extension, and template parameters

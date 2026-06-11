@@ -43,7 +43,6 @@ public:
 			  const std::vector<std::vector<float>>& wiping_matrix,
 			  size_t initial_tool);
 
-
 	// Set the extruder properties.
     void set_extruder(size_t idx, const PrintConfig& config);
 
@@ -163,6 +162,7 @@ public:
         float               filament_area;
 		bool			    multitool_ramming;
 		float               multitool_ramming_time = 0.f;
+		float               multitool_ramming_volume = 0.f;
 		float               filament_minimal_purge_on_wipe_tower = 0.f;
         float               retract_length;
         float               retract_speed;
@@ -387,7 +387,7 @@ private:
     std::vector<Vec2f> get_wall_skip_points(size_t layer_id);
     // Predict nozzle X after toolchange_Unload ramming, matching its xl/xr and do_ramming logic.
     // old_tool: extruder index of the filament being unloaded
-    float predict_ramming_end_x(int old_tool) const;
+    float predict_ramming_end_x(int old_tool, float layer_height) const;
 
     Polygon generate_support_cone_wall(
         WipeTowerWriter2& writer, 

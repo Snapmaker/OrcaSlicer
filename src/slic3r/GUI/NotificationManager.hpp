@@ -901,9 +901,9 @@ private:
 		NotificationType::PlaterWarning,
 		NotificationType::ProgressBar,
 		NotificationType::PrintHostUpload,
-        NotificationType::ValidateError,
-        NotificationType::ValidateWarning,
-        NotificationType::SimplifySuggestion
+		NotificationType::ValidateError,
+		NotificationType::ValidateWarning,
+		NotificationType::SimplifySuggestion
 	};
 	//prepared (basic) notifications
 	// non-static so its not loaded too early. If static, the translations wont load correctly.

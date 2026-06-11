@@ -6292,7 +6292,7 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
 // Handle incoming web messages
 void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
     try {
-        // WebSocket 调试模式下 webview 为 nullptr，但仍需处理消息
+        // WebSocket debug mode webview is nullptr，but still handle this msg
         // if (!webview) {
         //     return;
         // }
@@ -6331,7 +6331,7 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
             instance->process();
         }
         //if (!m_func_map.count(cmd)) {
-        //    // todo:返回不支持处理
+        //    // todo:return and handle it later
         //}
 
         //m_func_map[cmd](sequenceId, data, callback_name, webview);
@@ -6501,7 +6501,7 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
 {
     if (!host) return false;
 
-    // 创建同步等待的条件变量和互斥锁
+    // Create condition variables and mutexes for synchronized waiting.
     std::condition_variable cv;
     std::shared_ptr<std::mutex> mutex(new std::mutex);
     std::weak_ptr<std::mutex>   cb_mutex = mutex;
@@ -6509,7 +6509,7 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
     bool timeout = false;
     json system_info;
 
-    // 发送查询请求
+    // send to check request
     host->async_get_system_info(
         [&, cb_mutex](const json& response) {
             if (cb_mutex.expired()) {
@@ -6524,7 +6524,7 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
         }
     );
 
-    // 等待响应
+    // wait response
     {
         std::unique_lock<std::mutex> lock(*mutex);
         auto predicate = [&received]() { return received; };
@@ -6532,7 +6532,7 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
     }
 
     if (!timeout && !system_info.is_null()) {
-        // 成功获取到信息
+        // success to get data
         if (system_info.count("data")) {
             system_info = system_info["data"];
         }
@@ -6542,17 +6542,17 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
             if(system_data.contains("product_info")){
                 auto& product_info = system_data["product_info"];
 
-                // 获取机型
+                // get the type for machine
                 if(product_info.contains("machine_type")){
                     out_model = product_info["machine_type"].get<std::string>();
                 }
 
-                // 获取喷嘴信息
+                // get diameter
                 if(product_info.contains("nozzle_diameter")){
                     try {
                         if (product_info["nozzle_diameter"].is_array()) {
                             for (const auto& nozzle : product_info["nozzle_diameter"]) {
-                                // todo 不一定是string
+                                // todo maybe not string
                                 if (nozzle.is_number()) {
                                     double temp = nozzle.get<double>();
                                     if (fabs(temp - 0.2) < 1e-6) {
@@ -6573,8 +6573,7 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
                                 }
 
                             }
-                        } else {
-                            // 如果是单个值
+                        } else {                
                             if (product_info["nozzle_diameter"].is_number()) {
                                 double temp = product_info["nozzle_diameter"].get<double>();
                                 if (fabs(temp - 0.2) < 1e-6) {
@@ -6625,13 +6624,13 @@ void SSWCP::enable_debug_mode(bool enable, unsigned short port)
     std::lock_guard<std::mutex> lock(m_debug_server_mutex);
 
     if (enable && !m_debug_server) {
-        BOOST_LOG_TRIVIAL(info) << "🔧 Enabling WebSocket debug mode on port " << port;
+        BOOST_LOG_TRIVIAL(info) << "Enabling WebSocket debug mode on port " << port;
 
         m_debug_server = std::make_unique<WebSocketDebugServer>(port);
 
         // Set message callback to handle messages from Flutter Web
         m_debug_server->set_message_callback([](const std::string& message) {
-            BOOST_LOG_TRIVIAL(debug) << "📥 Received message from Flutter Web via WebSocket";
+            BOOST_LOG_TRIVIAL(debug) << "Received message from Flutter Web via WebSocket";
 
             // Handle the message using existing logic (pass nullptr for webview in debug mode)
             wxGetApp().CallAfter([message]() {
@@ -6645,10 +6644,10 @@ void SSWCP::enable_debug_mode(bool enable, unsigned short port)
 
         if (m_debug_server->start()) {
             m_debug_mode_enabled = true;
-            BOOST_LOG_TRIVIAL(info) << "✅ WebSocket debug mode enabled successfully";
-            BOOST_LOG_TRIVIAL(info) << "   Flutter Web can connect to: ws://localhost:" << port;
+            BOOST_LOG_TRIVIAL(info) << " WebSocket debug mode enabled successfully";
+            BOOST_LOG_TRIVIAL(info) << " Flutter Web can connect to: ws://localhost:" << port;
         } else {
-            BOOST_LOG_TRIVIAL(error) << "❌ Failed to start WebSocket debug server";
+            BOOST_LOG_TRIVIAL(error) << "Failed to start WebSocket debug server";
             m_debug_server.reset();
             m_debug_mode_enabled = false;
         }
@@ -6688,14 +6687,14 @@ void SSWCP::send_message_auto(const std::string& message, wxWebView* webview)
 
     // Always send via postMessage if webview is available (production + debug mode)
     if (webview && webview->GetRefData()) {
-        BOOST_LOG_TRIVIAL(debug) << "📤 Sending message to Flutter via WebView postMessage";
+        BOOST_LOG_TRIVIAL(debug) << "Sending message to Flutter via WebView postMessage";
         std::string js_code = "window.postMessage(JSON.stringify(" + message + "), '*');";
         WebView::RunScript(webview, js_code);
     }
 
     // Additionally send via WebSocket if debug mode is enabled
     if (m_debug_mode_enabled && m_debug_server && m_debug_server->has_client()) {
-        BOOST_LOG_TRIVIAL(debug) << "📤 [DEBUG] Also sending message to Flutter via WebSocket";
+        BOOST_LOG_TRIVIAL(debug) << "[DEBUG] Also sending message to Flutter via WebSocket";
         m_debug_server->send_message(message);
     }
 

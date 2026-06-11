@@ -852,9 +852,9 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         if (param == "websocket_debug") {
             m_websocket_debug_def = app_config->get("websocket_debug");
             if (m_websocket_debug_def == "true") {
-                Slic3r::GUI::SSWCP::enable_debug_mode(true, 8766);
+                Slic3r::GUI::SSWCP::enable_debug_mode(true);
             } else {
-                Slic3r::GUI::SSWCP::enable_debug_mode(false, 8766);
+                Slic3r::GUI::SSWCP::enable_debug_mode(false);
             }
         }
 

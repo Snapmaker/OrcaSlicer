@@ -30,6 +30,7 @@ FilamentScrollBar::FilamentScrollBar(wxWindow* parent, const wxColour& bgColor, 
 {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
     SetBackgroundColour(bgColor);
+    SetDoubleBuffered(true);
     Bind(wxEVT_PAINT, &FilamentScrollBar::onPaint, this);
     Bind(wxEVT_SIZE, [this](wxSizeEvent&) {
         if (m_contentHeight > 0 && m_viewportHeight > 0) {

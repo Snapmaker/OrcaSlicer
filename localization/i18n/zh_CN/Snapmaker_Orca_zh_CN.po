@@ -5755,6 +5755,9 @@ msgstr "原模型"
 msgid "Matched Model"
 msgstr "覆盖后模型"
 
+msgid "Plate number"
+msgstr "盘号"
+
 msgid "Sync Now"
 msgstr "立即同步"
 

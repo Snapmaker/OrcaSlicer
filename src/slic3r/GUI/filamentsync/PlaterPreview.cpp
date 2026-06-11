@@ -159,7 +159,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     {
         auto* middleGroup = new wxBoxSizer(wxHORIZONTAL);
 
-        m_pDiskLabel = new Label(this, _L("Plate"));
+        m_pDiskLabel = new Label(this, _L("Plate number"));
         m_pDiskLabel->SetFont(Label::Body_12);
         m_pDiskLabel->SetForegroundColour(g_diskLabelColor);
         middleGroup->Add(m_pDiskLabel, 0, wxALIGN_CENTER_VERTICAL);

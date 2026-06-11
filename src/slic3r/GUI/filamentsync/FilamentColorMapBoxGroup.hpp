@@ -31,6 +31,7 @@ public:
     void showMachineFilamentPicker(int boxIndex);
     void updateBoxBelowData(int boxIndex, const FilamentData& machineData);
     int  getBoxCount() const;
+    int  getVisibleBoxCount() const;
     void setVisibleCount(int count);
 
     // Returns true if the number of visible rows exceeds maxRows.

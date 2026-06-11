@@ -61,6 +61,7 @@ private:
 
     void setScrollViewport(int contentHeight, int viewportHeight);
     void applyScrollOffset(int offset);
+    void updateScrollState();
 
     // Mode selection (segmented toggle, same style as color-mixing)
     SegmentedToggle* m_pModeToggle = nullptr;
@@ -68,8 +69,9 @@ private:
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
     PlaterPreview*            m_pPlaterPreview            = nullptr;
 
-    FilamentScrollBar*  m_pScrollBar      = nullptr;
+    FilamentScrollBar*  m_pScrollBar  = nullptr;
     wxPanel*            m_pScrollViewport = nullptr;
+    wxPanel*            m_pScrollGap     = nullptr; // dynamic spacer (10 or 20 px)
 
     wxPanel*      m_pHintCheckBoxPanel         = nullptr;
     wxStaticText* m_pHintLabel                 = nullptr;

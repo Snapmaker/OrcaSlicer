@@ -1,6 +1,7 @@
 #include "FilamentColorMapBoxGroup.hpp"
 
 #include <wx/dcclient.h>
+#include <wx/dcgraph.h>
 #include <wx/dcmemory.h>
 #include <wx/sizer.h>
 
@@ -30,6 +31,7 @@ constexpr int g_labelVerticalGap     = 24; // gap between "Design Filament" and 
 // Colours
 // ============================================================
 const wxColour g_containerBg(0xFF, 0xFF, 0xFF);
+const wxColour g_dialogBg(0xF8, 0xF7, 0xF7);
 const wxColour g_containerBorder(0xF0, 0xF0, 0xF0);
 const wxColour g_labelTextColor(0x24, 0x24, 0x24);
 
@@ -66,6 +68,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     , m_machineDataList(machineDataList)
 {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetBackgroundColour(g_containerBg);
     Bind(wxEVT_PAINT, &FilamentColorMapBoxGroup::onPaint, this);
 
     // ---- Outer horizontal sizer (after padding) ----
@@ -136,11 +139,19 @@ void FilamentColorMapBoxGroup::onPaint(wxPaintEvent&)
     dc.Clear();
 
     wxSize sz = GetClientSize();
+    int    w  = sz.x;
+    int    h  = sz.y;
+
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.SetBrush(wxBrush(g_dialogBg));
+    dc.DrawRectangle(0, 0, w, h);
+
+    wxGCDC gdc(dc);
     int    radius = FromDIP(g_containerRadius);
 
-    dc.SetPen(wxPen(g_containerBorder, FromDIP(g_containerBorderW)));
-    dc.SetBrush(wxBrush(g_containerBg));
-    dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, radius);
+    gdc.SetPen(wxPen(g_containerBorder, FromDIP(g_containerBorderW)));
+    gdc.SetBrush(wxBrush(g_containerBg));
+    gdc.DrawRoundedRectangle(0, 0, w, h, radius);
 }
 
 std::vector<FilamentData> FilamentColorMapBoxGroup::getCurFilamentList() const
@@ -199,13 +210,19 @@ int FilamentColorMapBoxGroup::getBoxCount() const
     return m_boxList.size();
 }
 
-bool FilamentColorMapBoxGroup::exceedsRowCount(int maxRows) const
+int FilamentColorMapBoxGroup::getVisibleBoxCount() const
 {
     int visibleCount = 0;
     for (const auto& box : m_boxList) {
         if (box->IsShown())
             ++visibleCount;
     }
+    return visibleCount;
+}
+
+bool FilamentColorMapBoxGroup::exceedsRowCount(int maxRows) const
+{
+    int visibleCount = getVisibleBoxCount();
     if (visibleCount == 0)
         return false;
     int totalRows = (visibleCount + g_gridCols - 1) / g_gridCols;

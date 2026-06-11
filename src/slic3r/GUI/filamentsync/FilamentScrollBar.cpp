@@ -141,25 +141,34 @@ void FilamentScrollBar::onMouseDown(wxMouseEvent& evt)
 
     if (y >= m_thumbY && y <= m_thumbY + m_thumbHeight) {
         // Click on thumb — start drag
-        m_dragging        = true;
         m_dragStartY      = y;
         m_dragStartOffset = m_scrollOffset;
         CaptureMouse();
+    } else {
+        // Click in track — page scroll
+        int trackH = GetClientSize().y;
+        if (m_contentHeight <= m_viewportHeight || trackH <= 0)
+            return;
+
+        int maxOffset = m_contentHeight - m_viewportHeight;
+        int pageStep  = m_viewportHeight;
+
+        if (y < m_thumbY)
+            onScroll(std::max(0, m_scrollOffset - pageStep));
+        else
+            onScroll(std::min(maxOffset, m_scrollOffset + pageStep));
     }
 }
 
 void FilamentScrollBar::onMouseUp(wxMouseEvent&)
 {
-    if (m_dragging) {
-        m_dragging = false;
-        if (HasCapture())
-            ReleaseMouse();
-    }
+    if (HasCapture())
+        ReleaseMouse();
 }
 
 void FilamentScrollBar::onMouseMove(wxMouseEvent& evt)
 {
-    if (!m_dragging)
+    if (!HasCapture() || !evt.Dragging())
         return;
 
     int dy = evt.GetPosition().y - m_dragStartY;

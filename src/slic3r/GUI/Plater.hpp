@@ -232,7 +232,8 @@ class Plater: public wxPanel
 {
 public:
     using fs_path = boost::filesystem::path;
-    enum class FilamentTempMixingState {
+    enum class FilamentTempMixingState
+    {
         Compatible,
         AllowedWarning,
         BlockedError
@@ -541,8 +542,12 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
+    /// Check and guard filament temp mixing before slicing all plates.
     bool guard_before_slice_all();
+    /// @brief Show confirmation dialog for allowed high/low temperature mixing before slice.
+    /// @return True if slicing can proceed; false if blocked or user cancelled.
     bool confirm_filament_temp_mixing_before_slice();
     /// @brief Confirm warning-level high/low temperature material mixing before slicing all plates.
     /// @return True if slice-all can continue; otherwise false.

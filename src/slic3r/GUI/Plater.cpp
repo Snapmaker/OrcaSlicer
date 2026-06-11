@@ -203,12 +203,18 @@ namespace GUI {
 
 static std::string filament_temp_mixing_warning_text()
 {
-    return _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues.");
+    return _u8L("Detected both high and low temperature materials. "
+                "Mixed printing may result in extruder clogging, "
+                "nozzle damage, or layer adhesion issues.");
 }
 
 static std::string filament_temp_mixing_error_text()
 {
-    return _u8L("Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences.");
+    return _u8L("Detected both high and low temperature materials. "
+                "Mixed printing may result in extruder clogging, "
+                "nozzle damage, or layer adhesion issues. "
+                "To continue printing, enable \"Allow mixed printing "
+                "of high and low temperature materials\" in Preferences.");
 }
 
 static bool model_object_is_on_plate(PartPlate* plate, size_t obj_idx, const ModelObject* model_object)
@@ -13684,7 +13690,8 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":slicing all, plate %1% finished, start next slice...")%m_cur_slice_plate;
         m_cur_slice_plate = q->find_next_sliceable_plate_for_slice_all(m_cur_slice_plate + 1);
-        if (m_cur_slice_plate < 0) {
+        if (m_cur_slice_plate < 0)
+        {
             m_is_slicing = false;
             return;
         }
@@ -13797,7 +13804,8 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         m_slice_all = true;
         m_slice_all_only_has_gcode = true;
         m_cur_slice_plate = q->find_next_sliceable_plate_for_slice_all(0);
-        if (m_cur_slice_plate < 0) {
+        if (m_cur_slice_plate < 0)
+        {
             m_slice_all = false;
             return;
         }
@@ -17258,16 +17266,19 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
     std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
-    if (!loaded.empty()) {
+    if (!loaded.empty())
+    {
         // After loading a project, initialize the filament temp mixing state
         // for ALL plates, not just the current one. This ensures each plate's
         // m_apply_invalid flag is correct so that "Slice All" mode correctly
         // detects which plates are sliceable.
         PartPlateList& plate_list = get_partplate_list();
-        for (int i = 0; i < plate_list.get_plate_count(); ++i) {
-            FilamentTempMixingState state = get_filament_temp_mixing_state(i);
+        for (int i = 0; i < plate_list.get_plate_count(); ++i)
+        {
+            const FilamentTempMixingState state = get_filament_temp_mixing_state(i);
             PartPlate* plate = plate_list.get_plate(i);
-            if (plate) {
+            if (plate)
+            {
                 plate->update_apply_result_invalid(
                     state == FilamentTempMixingState::BlockedError);
             }
@@ -19445,9 +19456,11 @@ int Plater::start_next_slice()
     // Stop arrange and (or) optimize rotation tasks.
     //this->stop_jobs();
 
-    if (is_plate_blocked_by_filament_temp_mixing(p->partplate_list.get_curr_plate_index())) {
+    if (is_plate_blocked_by_filament_temp_mixing(p->partplate_list.get_curr_plate_index()))
+    {
         sync_filament_temp_mixing_notification();
-        if (p->m_slice_all) {
+        if (p->m_slice_all)
+        {
             SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
                     SlicingProcessCompletedEvent::Finished, nullptr);
             wxQueueEvent(this, evt.Clone());
@@ -20245,9 +20258,11 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     PartPlate* plate = p->partplate_list.get_plate(plate_index);
 
     bool has_object_on_plate = false;
-    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
+    {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
-        if (model_object_is_on_plate(plate, obj_idx, model_object)) {
+        if (model_object_is_on_plate(plate, obj_idx, model_object))
+        {
             has_object_on_plate = true;
             break;
         }
@@ -20263,18 +20278,60 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     // current plate. Also track whether any object relies on the global
     // default extruder (extruder=0) so we can resolve it at the end.
     bool uses_default_extruder = false;
-    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
+    {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
         collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots);
         if (model_object->config.extruder() == 0)
             uses_default_extruder = true;
-        for (const ModelVolume* model_volume : model_object->volumes) {
+        for (const ModelVolume* model_volume : model_object->volumes)
+        {
             collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots);
-            for (int extruder_id : model_volume->get_extruders()) {
+            for (int extruder_id : model_volume->get_extruders())
+            {
                 if (extruder_id >= 1 && extruder_id <= num_filaments)
                     used_slots.insert(extruder_id - 1);
+            }
+        }
+    }
+
+    // Collect from the Plater working config. The approach balances
+    // sensitivity against false positives:
+    // - Global features (wipe tower, support) always apply → always collected.
+    // - Feature-specific keys (wall_filament, infill) depend on the global
+    //   process defaults. They are only collected when at least one object
+    //   on the plate uses the default extruder (e=0), which means those
+    //   defaults WILL affect the actual slicing output.
+    {
+        // Always collect: features that cannot be overridden per-object.
+        static const std::vector<const char*> always_collect = {
+            "wipe_tower_filament",
+            "support_filament",
+            "support_interface_filament"
+        };
+        for (const char* key : always_collect)
+        {
+            const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
+            if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                used_slots.insert(option->value - 1);
+        }
+
+        // If any object uses e=0, the global process defaults for
+        // wall / infill extruders apply and must be collected.
+        if (uses_default_extruder)
+        {
+            static const std::vector<const char*> default_keys = {
+                "wall_filament",
+                "sparse_infill_filament",
+                "solid_infill_filament"
+            };
+            for (const char* key : default_keys)
+            {
+                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
+                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                    used_slots.insert(option->value - 1);
             }
         }
     }
@@ -20283,7 +20340,8 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     // uses extruder=0. p->config does not include the "extruder" key
     // (it is not in the initializer list at priv constructor), so we
     // must read it from full_config() instead.
-    if (uses_default_extruder) {
+    if (uses_default_extruder)
+    {
         const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
         if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
             used_slots.insert(extruder_opt->value - 1);
@@ -20299,11 +20357,14 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     PresetBundle* bundle = wxGetApp().preset_bundle;
     bool has_high = false, has_low = false;
 
-    for (int slot : used_slots) {
-        if (slot < static_cast<int>(bundle->filament_presets.size())) {
+    for (int slot : used_slots)
+    {
+        if (slot < static_cast<int>(bundle->filament_presets.size()))
+        {
             const Preset* preset = bundle->filaments.find_preset(
                 bundle->filament_presets[slot], true);
-            if (preset != nullptr) {
+            if (preset != nullptr)
+            {
                 const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
                 if (is_high)
                     has_high = true;
@@ -20370,7 +20431,8 @@ bool Plater::sync_filament_temp_mixing_notification()
     const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
     bool slicing_allowed = true;
 
-    switch (mixing_state) {
+    switch (mixing_state)
+    {
     case FilamentTempMixingState::Compatible:
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
@@ -20420,7 +20482,8 @@ bool Plater::guard_before_slice_all()
 
 bool Plater::confirm_filament_temp_mixing_before_slice()
 {
-    switch (get_filament_temp_mixing_state()) {
+    switch (get_filament_temp_mixing_state())
+    {
     case FilamentTempMixingState::Compatible:
         return true;
     case FilamentTempMixingState::BlockedError:
@@ -21260,12 +21323,14 @@ int Plater::select_plate(int plate_index, bool need_slice)
                     //p->process_completed_with_error = -1;
                     p->m_slice_all = false;
                     reset_gcode_toolpaths();
-                    if (model_fits && !validate_err) {
+                    if (model_fits && !validate_err)
+                    {
                         if (!guard_before_slice_plate())
                             return ret;
                         reslice();
                     }
-                    else {
+                    else
+                    {
                         p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, false);
                         //sometimes the previous print's sliced result is still valid, but the newly added object is laid over the boundary
                         //then the print toolpath will be shown, so we should not refresh print here, only onload shell

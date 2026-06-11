@@ -10,8 +10,8 @@ namespace
 {
 
 // --- Popup layout ---
-constexpr int g_popupWidth   = 67;  // DIP — matches FilamentColorMapBox card width
-constexpr int g_popupHeight  = 106; // DIP
+constexpr int g_popupMinWidth = 67;  // DIP — minimum width (matches FilamentColorMapBox card width)
+constexpr int g_popupHeight   = 106; // DIP
 
 // --- Item row ---
 constexpr int g_itemRowH      = 16; // DIP — row height
@@ -30,11 +30,12 @@ constexpr int g_circleRadius = 7;  // DIP (design: 6.57143)
 constexpr int g_circleCx     = 30; // DIP from left edge
 
 // --- Text label ---
-constexpr int g_textX = 42; // DIP from left edge
+constexpr int g_textX = 42;           // DIP from left edge
+constexpr int g_textRightPadding = 6; // DIP — right margin after text
 
 // --- Colours (from design spec) ---
-const wxColour g_selectionBg(0xE7, 0xEF, 0xFC);  // #0C63E2 at 10% on white
-const wxColour g_checkmarkColor(0x00, 0x96, 0x88);   // #009688
+const wxColour g_selectionBg(0xBE, 0xE1, 0xDB);  // #BEE1DB
+const wxColour g_checkmarkColor(0x7B, 0x82, 0x82);   // #7B8282
 const wxColour g_textColor(0x33, 0x33, 0x33);         // #333333
 const wxColour g_circleStroke(0xDB, 0xDB, 0xDA);      // #DBDBDA
 // ============================================================
@@ -83,7 +84,23 @@ public:
         Bind(wxEVT_PAINT, &PickerContentPanel::onPaint, this);
         Bind(wxEVT_LEFT_DOWN, &PickerContentPanel::onLeftDown, this);
 
-        wxSize sz = FromDIP(wxSize(g_popupWidth, g_popupHeight));
+        int maxTextWidthPx = 0;
+        {
+            wxClientDC dc(this);
+            dc.SetFont(Label::Body_10);
+            for (const auto& data : m_dataList) {
+                wxString typeStr = wxString::FromUTF8(data.m_type);
+                int tw = dc.GetTextExtent(typeStr).x;
+                if (tw > maxTextWidthPx) {
+                    maxTextWidthPx = tw;
+                }
+            }
+        }
+        int minWidthPx = FromDIP(g_popupMinWidth);
+        int contentWidthPx = FromDIP(g_textX) + maxTextWidthPx + FromDIP(g_textRightPadding);
+        int actualWidthPx = std::max(minWidthPx, contentWidthPx);
+
+        wxSize sz(actualWidthPx, FromDIP(g_popupHeight));
         SetSize(sz);
         SetMinSize(sz);
         SetMaxSize(sz);
@@ -110,8 +127,9 @@ private:
 
     void render(wxDC& dc)
     {
-        int contentW = FromDIP(g_popupWidth);
-        int contentH = FromDIP(g_popupHeight);
+        wxSize panelSize = GetClientSize();
+        int contentW = panelSize.x;
+        int contentH = panelSize.y;
 
         // ---- Background fill (clear) ----
         dc.SetBackground(*wxWHITE);
@@ -133,11 +151,11 @@ private:
 
         for (int i = 0; i < itemCount; ++i) {
             int rowY = g_firstRowY + i * g_itemStepY;
-            drawRow(dc, i, rowY, indexFont, labelFont);
+            drawRow(dc, i, rowY, contentW, indexFont, labelFont);
         }
     }
 
-    void drawRow(wxDC& dc, int index, int rowYDip,
+    void drawRow(wxDC& dc, int index, int rowYDip, int contentWidthPx,
                  const wxFont& indexFont, const wxFont& labelFont)
     {
         const FilamentData& data = m_dataList[index];
@@ -151,7 +169,7 @@ private:
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(g_selectionBg));
             dc.DrawRectangle(FromDIP(x), FromDIP(y),
-                             FromDIP(g_popupWidth),
+                             contentWidthPx,
                              FromDIP(g_itemRowH));
         }
 
@@ -185,8 +203,9 @@ private:
 
         // ---- Filament type text ----
         dc.SetFont(labelFont);
-        dc.SetTextForeground(g_textColor);
-        wxString typeStr = wxString::FromUTF8(data.m_type);
+        bool isNone = data.m_type.empty() || data.m_type == "NONE";
+        dc.SetTextForeground(isNone ? wxColour(0x99, 0x99, 0x99) : g_textColor);
+        wxString typeStr = wxString::FromUTF8(data.m_type.empty() ? "NONE" : data.m_type);
         int textX = FromDIP(g_textX);
         int textY = FromDIP(y) + (FromDIP(g_itemRowH) - dc.GetTextExtent(typeStr).y) / 2;
         dc.DrawText(typeStr, textX, textY);
@@ -279,7 +298,14 @@ void MachineFilamentPicker::setSelectedIndex(unsigned int index)
 
 void MachineFilamentPicker::popupAt(const wxPoint& pos)
 {
-    SetPosition(pos);
+    int minWidthPx = FromDIP(g_popupMinWidth);
+    int actualWidthPx = minWidthPx;
+    const auto& children = GetChildren();
+    if (!children.empty()) {
+        actualWidthPx = children[0]->GetSize().x;
+    }
+    int offsetX = (actualWidthPx - minWidthPx) / 2;
+    SetPosition(wxPoint(pos.x - offsetX, pos.y));
     Popup();
 }
 

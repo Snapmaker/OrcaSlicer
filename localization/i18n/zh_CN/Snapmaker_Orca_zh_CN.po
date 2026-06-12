@@ -5788,8 +5788,8 @@ msgstr "立即连接"
 msgid "Later"
 msgstr "稍后再说"
 
-msgid "Filament sync successful."
-msgstr "耗材同步成功"
+msgid "Successfully synchronize the color and type of filaments with the printer."
+msgstr "成功从打印机同步耗材颜色和类型。"
 
 msgid "Detected that consumables with color-mixing dependency will be replaced / removed. Performing this operation will update the color-mixing results. Proceed?"
 msgstr "检测到混色依赖的耗材将被替换 / 移除，执行此操作会更新混色结果，确定继续？"

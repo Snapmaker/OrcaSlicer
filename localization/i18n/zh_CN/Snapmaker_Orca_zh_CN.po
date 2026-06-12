@@ -5776,6 +5776,12 @@ msgstr "同步打印机信息"
 msgid "The printer is not connected. Before synchronizing, please go to the device page to connect."
 msgstr "打印机未连接，在同步之前，请前往设备页连接。"
 
+msgid "The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."
+msgstr "设备页当前连接的打印机不是U1，无法同步，请切换成U1后再同步。"
+
+msgid "There are no filament on the printer. Please place the filaments on the machine first."
+msgstr "打印机上没有任何耗材，请先去机器上放置耗材。"
+
 msgid "Connect Now"
 msgstr "立即连接"
 

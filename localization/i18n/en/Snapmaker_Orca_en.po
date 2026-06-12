@@ -5917,6 +5917,12 @@ msgstr ""
 msgid "The printer is not connected. Before synchronizing, please go to the device page to connect."
 msgstr ""
 
+msgid "The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."
+msgstr ""
+
+msgid "There are no filament on the printer. Please place the filaments on the machine first."
+msgstr ""
+
 msgid "Connect Now"
 msgstr ""
 

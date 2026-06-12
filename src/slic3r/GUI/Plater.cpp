@@ -8015,14 +8015,14 @@ void Sidebar::show_sync_filament_dialog()
     auto nonEmptyFilaments = [](const std::vector<FilamentData>& filamentDatas) {
         for (const auto& filament : filamentDatas) {
             // Return true if one filament is not empty.
-            if (!filament.m_type.empty() && !filament.m_name.empty())
+            if (!filament.m_type.empty() || filament.m_type != "NONE")
                 return true;
         }
         return false;
     };
     if (machineFilamentList.empty() && nonEmptyFilaments(machineFilamentList)) {
         SyncConfirmDialog dlg(this,
-            _L("There are no consumables on the printer. Please place the consumables on the machine first."),
+            _L("There are no filament on the printer. Please place the filaments on the machine first."),
             wxOK);
         dlg.CentreOnScreen();
         dlg.ShowModal();

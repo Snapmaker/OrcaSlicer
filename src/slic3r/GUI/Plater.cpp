@@ -275,12 +275,32 @@ static void collect_filament_slots_from_model_config(
     int num_filaments,
     std::set<int>& used_slots)
 {
-    if (!config.has("extruder"))
-        return;
+    if (config.has("extruder"))
+    {
+        const int extruder_id = config.extruder();
+        if (extruder_id >= 1 && extruder_id <= num_filaments)
+            used_slots.insert(extruder_id - 1);
+    }
 
-    const int extruder_id = config.extruder();
-    if (extruder_id >= 1 && extruder_id <= num_filaments)
-        used_slots.insert(extruder_id - 1);
+    // Per-object feature-specific keys (wall_filament, etc.) may be
+    // overridden independently of the object's primary extruder.
+    static const std::vector<const char*> feature_keys = {
+        "wall_filament",
+        "sparse_infill_filament",
+        "solid_infill_filament",
+        "support_filament",
+        "support_interface_filament",
+        "wipe_tower_filament"
+    };
+    for (const char* key : feature_keys)
+    {
+        if (config.has(key))
+        {
+            const int val = config.opt_int(key);
+            if (val >= 1 && val <= num_filaments)
+                used_slots.insert(val - 1);
+        }
+    }
 }
 
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);

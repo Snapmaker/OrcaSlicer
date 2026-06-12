@@ -3203,17 +3203,17 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         
 
         // filament type
-        if (full_config.has("filament_type")) {
+        if (const auto* filament_type_opt = full_config.option<ConfigOptionStrings>("filament_type");
+            filament_type_opt != nullptr && !filament_type_opt->values.empty()) {
             std::vector<std::string> filament_types;
-            size_t                   filament_count = full_config.option<ConfigOptionStrings>("filament_type")->values.size();
-            if (full_config.has("filament_colour")) {
-                filament_count = std::max(filament_count, full_config.option<ConfigOptionStrings>("filament_colour")->values.size());
+            size_t                   filament_count = filament_type_opt->values.size();
+            if (const auto* filament_colour_opt = full_config.option<ConfigOptionStrings>("filament_colour")) {
+                filament_count = std::max(filament_count, filament_colour_opt->values.size());
             }
 
             filament_types.reserve(filament_count);
             for (size_t i = 0; i < filament_count; ++i) {
-                std::string displayed_filament_type;
-                std::string filament_type = full_config.get_filament_type(displayed_filament_type, int(i));
+                std::string filament_type = filament_type_opt->get_at(int(i));
                 boost::trim(filament_type);
                 filament_types.emplace_back(std::move(filament_type));
             }

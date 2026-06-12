@@ -7978,7 +7978,7 @@ void Sidebar::show_sync_filament_dialog()
         dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
         dlg.CentreOnScreen();
         if (dlg.ShowModal() == wxID_YES) {
-            // TODO: Implement the callback for connecting to U1
+            dlg.navigateToTab(MainFrame::tpMonitor);
         }
         return;
     }
@@ -8000,7 +8000,7 @@ void Sidebar::show_sync_filament_dialog()
             dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
             dlg.CentreOnScreen();
             if (dlg.ShowModal() == wxID_YES) {
-                // TODO: Implement the callback for connecting to U1
+                dlg.navigateToTab(MainFrame::tpMonitor);
             }
             return;
         }
@@ -8012,7 +8012,15 @@ void Sidebar::show_sync_filament_dialog()
 
     std::vector<FilamentData> machineFilamentList;
     build_machine_filament_list(preset_bundle, machineFilamentList);
-    if (machineFilamentList.empty()) {
+    auto nonEmptyFilaments = [](const std::vector<FilamentData>& filamentDatas) {
+        for (const auto& filament : filamentDatas) {
+            // Return true if one filament is not empty.
+            if (!filament.m_type.empty() && !filament.m_name.empty())
+                return true;
+        }
+        return false;
+    };
+    if (machineFilamentList.empty() && nonEmptyFilaments(machineFilamentList)) {
         SyncConfirmDialog dlg(this,
             _L("There are no consumables on the printer. Please place the consumables on the machine first."),
             wxOK);

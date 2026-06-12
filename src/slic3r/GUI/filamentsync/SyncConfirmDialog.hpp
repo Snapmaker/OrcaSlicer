@@ -1,6 +1,7 @@
 #pragma once
 
 #include "slic3r/GUI/MsgDialog.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 
 namespace Slic3r
 {
@@ -22,6 +23,9 @@ class SyncRichConfirmDialog : public RichMessageDialog
 public:
     SyncRichConfirmDialog(wxWindow* parent, const wxString& message, long style = wxOK);
     ~SyncRichConfirmDialog() override = default;
+
+    /// Navigate to the specified tab (e.g., MainFrame::tpMonitor, MainFrame::tpPreview).
+    void navigateToTab(MainFrame::TabPosition pos);
 };
 
 } // namespace GUI

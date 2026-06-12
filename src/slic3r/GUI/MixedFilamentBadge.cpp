@@ -113,7 +113,7 @@ bool color_block_needs_border(const ColorBlockParams& params)
     return !colors.empty();
 }
 
-std::string color_block_cache_key(const ColorBlockParams& params)
+std::string color_block_cache_key(const ColorBlockParams& params, const wxColour& lightBorderColor)
 {
     std::ostringstream key;
     key << "color-block:mode=" << static_cast<int>(effective_mode(params))
@@ -128,6 +128,9 @@ std::string color_block_cache_key(const ColorBlockParams& params)
         for (const wxColour& color : effective_color_list(params))
             key << ':' << color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
     }
+
+    if (lightBorderColor.IsOk())
+        key << ":border=" << lightBorderColor.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
 
     return key.str();
 }
@@ -176,7 +179,8 @@ void draw_segments_block(wxDC& dc, const wxRect& rect, const std::vector<wxColou
     }
 }
 
-void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& params)
+void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& params,
+                      const wxColour& lightBorderColor = wxNullColour)
 {
     const ColorBlockParams::Mode mode = effective_mode(params);
     const std::vector<wxColour> colors = effective_color_list(params);
@@ -191,8 +195,16 @@ void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& para
         dc.DrawRectangle(rect);
     }
 
-    if (color_block_needs_border(params)) {
-        dc.SetPen(*wxGREY_PEN);
+    if (color_block_needs_border(params))
+    {
+        if (lightBorderColor.IsOk())
+        {
+            dc.SetPen(wxPen(lightBorderColor, 1));
+        }
+        else
+        {
+            dc.SetPen(*wxGREY_PEN);
+        }
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
         dc.DrawRectangle(rect);
     }
@@ -261,7 +273,7 @@ void MixedFilamentBadge::on_left_up(wxMouseEvent&)
 // get_color_block_bitmap_cached - unified cached bitmap factory
 // ---------------------------------------------------------------------------
 
-wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
+wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params, const wxColour& lightBorderColor)
 {
     wxASSERT(wxIsMainThread());
     static BitmapCache cache;
@@ -270,7 +282,7 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
     draw_params.width = std::max(1, params.width);
     draw_params.height = std::max(1, params.height);
 
-    const std::string key = color_block_cache_key(draw_params);
+    const std::string key = color_block_cache_key(draw_params, lightBorderColor);
 
     wxBitmap* cached = cache.find(key);
     if (cached != nullptr)
@@ -282,7 +294,7 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
     const bool use_small_font = std::min(draw_params.width, draw_params.height) < 20;
     dc.SetFont(use_small_font ? ::Label::Body_8 : ::Label::Body_12);
 
-    draw_color_block(dc, wxRect(0, 0, draw_params.width, draw_params.height), draw_params);
+    draw_color_block(dc, wxRect(0, 0, draw_params.width, draw_params.height), draw_params, lightBorderColor);
     dc.SelectObject(wxNullBitmap);
 
     return cache.insert(key, bmp);

@@ -25,6 +25,7 @@ namespace Slic3r {
 namespace GUI {
 
 class BitmapCache;
+struct FilamentColorData;
 
 // ---------------------------------
 // ***  PresetComboBox  ***
@@ -252,9 +253,8 @@ private:
     wxRect get_dropdown_rect() const;
 
     void SelectLegacyFilamentColor();
-    void ApplyFilamentColor(const std::string& primary_color, const std::vector<std::string>& colors,
-                            int mode, const std::string& sku);
-    std::string CurrentFilamentDisplayName() const;
+    void ApplyFilamentColor(const FilamentColorData& colorData);
+    std::string CurrentFilamentPresetName() const;
     std::string CurrentFilamentId() const;
 };
 

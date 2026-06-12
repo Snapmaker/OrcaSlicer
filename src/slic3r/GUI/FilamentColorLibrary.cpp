@@ -145,33 +145,41 @@ void FilamentColorLibrary::Reload()
     EnsureLoaded();
 }
 
-bool FilamentColorLibrary::FindFilamentById(const std::string& filament_id, FilamentMaterial& out_material)
+bool FilamentColorLibrary::FindFilamentById(const std::string& filamentId, FilamentMaterial& outMaterial)
 {
     if (!EnsureLoaded())
         return false;
 
-    std::unordered_map<std::string, FilamentMaterial>::const_iterator filament_it = _filamentsById.find(filament_id);
-    if (filament_it == _filamentsById.end())
+    std::unordered_map<std::string, size_t>::const_iterator filamentIt = _filamentIndexById.find(filamentId);
+    if (filamentIt == _filamentIndexById.end())
         return false;
 
-    out_material = filament_it->second;
-    return true;
+    return FindFilamentByIndex(filamentIt->second, outMaterial);
 }
 
-bool FilamentColorLibrary::FindFilamentByName(const std::string& filament_name, FilamentMaterial& out_material)
+bool FilamentColorLibrary::FindFilamentByName(const std::string& filamentName, FilamentMaterial& outMaterial)
 {
     if (!EnsureLoaded())
         return false;
 
-    std::unordered_map<std::string, std::string>::const_iterator id_it = _filamentIdByName.find(filament_name);
-    if (id_it == _filamentIdByName.end())
+    std::unordered_map<std::string, size_t>::const_iterator nameIt = _filamentIndexByName.find(filamentName);
+    if (nameIt != _filamentIndexByName.end())
+        return FindFilamentByIndex(nameIt->second, outMaterial);
+
+    const std::string matchName = FilamentColorUtils::GetFilamentMatchName(filamentName);
+    if (matchName.empty())
         return false;
 
-    std::unordered_map<std::string, FilamentMaterial>::const_iterator filament_it = _filamentsById.find(id_it->second);
-    if (filament_it == _filamentsById.end())
+    std::unordered_map<std::string, size_t>::const_iterator matchIt = _filamentIndexByMatchName.find(matchName);
+    return matchIt != _filamentIndexByMatchName.end() ? FindFilamentByIndex(matchIt->second, outMaterial) : false;
+}
+
+bool FilamentColorLibrary::FindFilamentByIndex(size_t index, FilamentMaterial& outMaterial) const
+{
+    if (index >= _filaments.size())
         return false;
 
-    out_material = filament_it->second;
+    outMaterial = _filaments[index];
     return true;
 }
 
@@ -189,8 +197,10 @@ bool FilamentColorLibrary::LoadIndex()
         return false;
     }
 
-    std::unordered_map<std::string, FilamentMaterial> filaments_by_id;
-    std::unordered_map<std::string, std::string> filament_id_by_name;
+    std::vector<FilamentMaterial> filaments;
+    std::unordered_map<std::string, size_t> filamentIndexById;
+    std::unordered_map<std::string, size_t> filamentIndexByName;
+    std::unordered_map<std::string, size_t> filamentIndexByMatchName;
     std::unordered_set<std::string> skus;
 
     const std::string vendor = JsonString(root, "vendor");
@@ -219,17 +229,15 @@ bool FilamentColorLibrary::LoadIndex()
             continue;
         }
 
-        if (filaments_by_id.find(filament.filamentId) != filaments_by_id.end())
-        {
-            BOOST_LOG_TRIVIAL(warning) << "Skip duplicate official filament id: " << filament.filamentId;
-            continue;
-        }
-
-        if (filament_id_by_name.find(filament.filamentName) != filament_id_by_name.end())
+        if (filamentIndexByName.find(filament.filamentName) != filamentIndexByName.end())
         {
             BOOST_LOG_TRIVIAL(warning) << "Skip duplicate official filament name: " << filament.filamentName;
             continue;
         }
+
+        const bool duplicateFilamentId = filamentIndexById.find(filament.filamentId) != filamentIndexById.end();
+        if (duplicateFilamentId)
+            BOOST_LOG_TRIVIAL(warning) << "Official filament id already exists, keep name fallback only: " << filament.filamentId;
 
         nlohmann::json::const_iterator colors_it = filament_json.find("filament_color");
         if (colors_it == filament_json.end() || !colors_it->is_array())
@@ -298,25 +306,35 @@ bool FilamentColorLibrary::LoadIndex()
             continue;
         }
 
-        filament_id_by_name.emplace(filament.filamentName, filament.filamentId);
-        filaments_by_id.emplace(filament.filamentId, std::move(filament));
+        const size_t filamentIndex = filaments.size();
+        const std::string matchName = FilamentColorUtils::GetFilamentMatchName(filament.filamentName);
+        filamentIndexByName.emplace(filament.filamentName, filamentIndex);
+        if (!matchName.empty() && filamentIndexByMatchName.find(matchName) == filamentIndexByMatchName.end())
+            filamentIndexByMatchName.emplace(matchName, filamentIndex);
+        if (!duplicateFilamentId)
+            filamentIndexById.emplace(filament.filamentId, filamentIndex);
+        filaments.emplace_back(std::move(filament));
     }
 
-    if (filaments_by_id.empty())
+    if (filaments.empty())
     {
         BOOST_LOG_TRIVIAL(warning) << "Official filament color file has no valid filaments: " << file_path.string();
         return false;
     }
 
-    _filamentsById = std::move(filaments_by_id);
-    _filamentIdByName = std::move(filament_id_by_name);
+    _filaments = std::move(filaments);
+    _filamentIndexById = std::move(filamentIndexById);
+    _filamentIndexByName = std::move(filamentIndexByName);
+    _filamentIndexByMatchName = std::move(filamentIndexByMatchName);
     return true;
 }
 
 void FilamentColorLibrary::Clear()
 {
-    _filamentsById.clear();
-    _filamentIdByName.clear();
+    _filaments.clear();
+    _filamentIndexById.clear();
+    _filamentIndexByName.clear();
+    _filamentIndexByMatchName.clear();
 }
 
 } // namespace GUI

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -13,7 +14,7 @@ struct FilamentColor
 {
     std::unordered_map<std::string, std::string> colorNames;
     std::string sku;
-    int mode { 0 };
+    int mode { 0 }; // 0 = solid/averaged, 1 = gradient
     std::vector<std::string> colors;
 };
 
@@ -36,18 +37,21 @@ public:
     bool EnsureLoaded();
     void Reload();
 
-    bool FindFilamentById(const std::string& filament_id, FilamentMaterial& out_material);
-    bool FindFilamentByName(const std::string& filament_name, FilamentMaterial& out_material);
+    bool FindFilamentById(const std::string& filamentId, FilamentMaterial& outMaterial);
+    bool FindFilamentByName(const std::string& filamentName, FilamentMaterial& outMaterial);
 
 private:
     bool LoadIndex();
+    bool FindFilamentByIndex(size_t index, FilamentMaterial& outMaterial) const;
     void Clear();
 
 private:
     bool _loaded { false };
 
-    std::unordered_map<std::string, FilamentMaterial> _filamentsById;
-    std::unordered_map<std::string, std::string> _filamentIdByName;
+    std::vector<FilamentMaterial> _filaments;
+    std::unordered_map<std::string, size_t> _filamentIndexById;
+    std::unordered_map<std::string, size_t> _filamentIndexByName;
+    std::unordered_map<std::string, size_t> _filamentIndexByMatchName;
 };
 
 } // namespace GUI

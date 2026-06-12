@@ -73,10 +73,73 @@ std::vector<std::string> NormalizedColorsOrFallback(const std::vector<std::strin
     return normalized;
 }
 
+void AddFallbackToNormalizedColors(std::vector<std::string>& colors, const std::string& fallbackColor)
+{
+    if (!colors.empty())
+        return;
+
+    const std::string fallback = NormalizeHexColor(fallbackColor, "#FFFFFF");
+    colors.emplace_back(fallback.empty() ? "#FFFFFF" : fallback);
+}
+
 wxColour WxColorFromHex(const std::string& color)
 {
     wxColour parsed(color);
     return parsed.IsOk() ? parsed : wxColour("#FFFFFF");
+}
+
+bool EndsWithCaseInsensitive(const std::string& value, const std::string& suffix)
+{
+    if (value.size() < suffix.size())
+        return false;
+
+    const size_t offset = value.size() - suffix.size();
+    for (size_t index = 0; index < suffix.size(); ++index)
+    {
+        const unsigned char left = static_cast<unsigned char>(value[offset + index]);
+        const unsigned char right = static_cast<unsigned char>(suffix[index]);
+        if (std::tolower(left) != std::tolower(right))
+            return false;
+    }
+
+    return true;
+}
+
+wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& normalizedColors, int mode,
+                                             const std::string& label, int iconWidth, int iconHeight,
+                                             const wxColour& lightBorderColor)
+{
+    iconWidth = std::max(1, iconWidth);
+    iconHeight = std::max(1, iconHeight);
+
+    std::vector<wxColour> wx_colors;
+    wx_colors.reserve(normalizedColors.size());
+    for (const std::string& color : normalizedColors)
+        wx_colors.emplace_back(WxColorFromHex(color));
+
+    ColorBlockParams params;
+    params.width = iconWidth;
+    params.height = iconHeight;
+    params.label = wxString::FromUTF8(label.c_str());
+
+    if (wx_colors.size() <= 1)
+    {
+        params.mode = ColorBlockParams::Solid;
+        params.solid_color = wx_colors.empty() ? wxColour("#FFFFFF") : wx_colors.front();
+    }
+    else if (NormalizeColourMode(mode) == 1)
+    {
+        params.mode = ColorBlockParams::Gradient;
+        params.gradient_direction = ColorBlockParams::LeftToRight;
+        params.colors = wx_colors;
+    }
+    else
+    {
+        params.mode = ColorBlockParams::Segments;
+        params.colors = wx_colors;
+    }
+
+    return get_color_block_bitmap_cached(params, lightBorderColor);
 }
 
 } // namespace
@@ -162,6 +225,21 @@ int NormalizeColourMode(int mode)
     return mode == 1 ? 1 : 0;
 }
 
+std::string GetFilamentMatchName(const std::string& name)
+{
+    std::string matchName = TrimCopy(name);
+    const std::string nozzleSuffix = " nozzle";
+    if (EndsWithCaseInsensitive(matchName, nozzleSuffix))
+    {
+        matchName = TrimCopy(matchName.substr(0, matchName.size() - nozzleSuffix.size()));
+        const size_t nozzlePos = matchName.find_last_of(" \t\r\n");
+        if (nozzlePos != std::string::npos)
+            matchName = matchName.substr(0, nozzlePos);
+    }
+
+    return TrimCopy(matchName);
+}
+
 FilamentColorDisplay GetFilamentColorDisplay(const DynamicPrintConfig* config,
                                              size_t color_index,
                                              const std::string& fallback_color)
@@ -210,46 +288,19 @@ nlohmann::json BuildPreprintColorMultiItem(const std::string& multi_colors, int 
     return item;
 }
 
-wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, int mode, const std::string& label, int icon_width, int icon_height)
+wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, int mode, const std::string& label,
+                               int iconWidth, int iconHeight, const wxColour& lightBorderColor)
 {
-    icon_width = std::max(1, icon_width);
-    icon_height = std::max(1, icon_height);
-
     const std::vector<std::string> normalized = NormalizedColorsOrFallback(colors, "#FFFFFF");
-    std::vector<wxColour> wx_colors;
-    wx_colors.reserve(normalized.size());
-    for (const std::string& color : normalized)
-        wx_colors.emplace_back(WxColorFromHex(color));
-
-    ColorBlockParams params;
-    params.width = icon_width;
-    params.height = icon_height;
-    params.label = wxString::FromUTF8(label.c_str());
-
-    if (wx_colors.size() <= 1)
-    {
-        params.mode = ColorBlockParams::Solid;
-        params.solid_color = wx_colors.empty() ? wxColour("#FFFFFF") : wx_colors.front();
-    }
-    else if (NormalizeColourMode(mode) == 1)
-    {
-        params.mode = ColorBlockParams::Gradient;
-        params.gradient_direction = ColorBlockParams::LeftToRight;
-        params.colors = wx_colors;
-    }
-    else
-    {
-        params.mode = ColorBlockParams::Segments;
-        params.colors = wx_colors;
-    }
-
-    return get_color_block_bitmap_cached(params);
+    return GetFilamentColorIconFromNormalized(normalized, mode, label, iconWidth, iconHeight, lightBorderColor);
 }
 
-wxBitmap* GetFilamentColorIcon(const std::string& multi_colors, int mode, const std::string& fallback_color,
-                               const std::string& label, int icon_width, int icon_height)
+wxBitmap* GetFilamentColorIcon(const std::string& multiColors, int mode, const std::string& fallbackColor,
+                               const std::string& label, int iconWidth, int iconHeight, const wxColour& lightBorderColor)
 {
-    return GetFilamentColorIcon(NormalizedColorsOrFallback(SplitMultiColors(multi_colors), fallback_color), mode, label, icon_width, icon_height);
+    std::vector<std::string> normalized = SplitMultiColors(multiColors);
+    AddFallbackToNormalizedColors(normalized, fallbackColor);
+    return GetFilamentColorIconFromNormalized(normalized, mode, label, iconWidth, iconHeight, lightBorderColor);
 }
 
 ImU32 ToImGuiColor(const std::string& color)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <wx/colour.h>
 #include <wx/panel.h>
 #include <wx/dcclient.h>
 #include <wx/bitmap.h>
@@ -33,7 +34,7 @@ struct ColorBlockParams
 wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 
 // Cached colour-block bitmap. The static BitmapCache lives inside the implementation.
-wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
+wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params, const wxColour& lightBorderColor = wxNullColour);
 
 class MixedFilamentBadge : public wxPanel
 {

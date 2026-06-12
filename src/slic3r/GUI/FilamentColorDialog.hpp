@@ -16,24 +16,13 @@ namespace GUI
 {
 
 /**
- * @brief Result selected from the filament color dialog.
+ * @brief Filament color data shared by the dialog input and selected result.
  */
-struct FilamentColorSelection
+struct FilamentColorData
 {
-    std::string name;
-    std::string sku;
-    int mode { 0 };
-    std::string primaryColor;
     std::vector<std::string> colors;
-    bool isCustom { false };
-};
-
-struct FilamentColorDialogContext
-{
-    std::string currentSku;
-    std::string currentMultiColors;
-    int currentMode { 0 };
-    std::string currentPrimaryColor;
+    int mode { 0 }; // 0 = solid/averaged, 1 = gradient
+    std::string sku;
 };
 
 /**
@@ -45,12 +34,12 @@ public:
     /**
      * @brief Creates the filament color dialog.
      */
-    FilamentColorDialog(wxWindow* parent, const FilamentMaterial& material, const FilamentColorDialogContext& context);
+    FilamentColorDialog(wxWindow* parent, const FilamentMaterial& material, const FilamentColorData& currentColor);
 
     /**
      * @brief Gets the selected color result.
      */
-    const FilamentColorSelection& Selection() const
+    const FilamentColorData& Selection() const
     {
         return _selection;
     }
@@ -63,17 +52,26 @@ private:
     void UpdateSwatchSelection();
     void OpenMoreColorDialog();
     void PlaceNearFilamentPanel();
+    void UpdateRoundedShape();
+    void BindDragWindow(wxWindow* window);
+    void StartDrag(wxMouseEvent& event);
+    void DragDialog(wxMouseEvent& event);
+    void EndDrag(wxMouseEvent& event);
     void on_dpi_changed(const wxRect& suggestedRect) override;
 
 private:
     FilamentMaterial _material;
     std::string _languageCode;
-    FilamentColorSelection _selection;
+    FilamentColorData _selection;
     std::string _highlightSku;
     std::vector<std::pair<wxWindow*, std::string>> _swatchBySku;
     wxStaticBitmap* _previewBitmap { nullptr };
     wxStaticText* _nameLabel { nullptr };
     wxStaticText* _skuLabel { nullptr };
+    bool _dragPending { false };
+    bool _isDragging { false };
+    wxPoint _dragStartMouse;
+    wxPoint _dragStartPosition;
 };
 
 } // namespace GUI

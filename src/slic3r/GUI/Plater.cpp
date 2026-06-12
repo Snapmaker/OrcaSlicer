@@ -20525,11 +20525,14 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
     if (!has_sliceable_plate_for_slice_all())
         return false;
 
+    // Only count plates that can be sliced AND haven't been sliced
+    // yet. Already-sliced plates don't need re-confirmation.
     bool has_allowed_warning = false;
     for (int plate_index = 0; plate_index < p->partplate_list.get_plate_count(); ++plate_index)
     {
         PartPlate* plate = p->partplate_list.get_plate(plate_index);
         if (plate != nullptr && plate->can_slice() &&
+            !plate->is_slice_result_valid() &&
             get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::AllowedWarning)
         {
             has_allowed_warning = true;

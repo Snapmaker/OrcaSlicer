@@ -186,6 +186,15 @@ Run individual test suites:
 
 ## Development Workflow
 
+### Exploration Archival
+After completing any exploration/research/analysis task, follow the archival workflow defined in [[exploration-archival-workflow]]:
+1. Short conclusions/insights/pointers → write to memory (reference or project type)
+2. Rules/conventions/commands → append to this CLAUDE.md
+3. Large analysis documents → write as standalone .md + reference memory entry
+Do not wait for the user to ask — archive proactively.
+
+When fixing a bug, additionally check if related reference docs/memories exist and append a revision record (versioned, with problem/root-cause/reproduction/fix/verification/branch fields). See the full rules in the workflow memory.
+
 ### Code Style and Standards
 - **C++17 standard** with selective C++20 features
 - **Naming conventions**: PascalCase for classes, snake_case for functions/variables

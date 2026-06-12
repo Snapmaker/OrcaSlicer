@@ -91,6 +91,7 @@ public:
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         Bind(wxEVT_PAINT, &PickerContentPanel::onPaint, this);
         Bind(wxEVT_LEFT_DOWN, &PickerContentPanel::onLeftDown, this);
+        Bind(wxEVT_MOUSEWHEEL, &PickerContentPanel::onMouseWheel, this);
 
         int maxTextWidthPx = 0;
         {
@@ -254,6 +255,14 @@ private:
         }
     }
 
+    void onMouseWheel(wxMouseEvent&)
+    {
+        auto* popup = static_cast<wxPopupTransientWindow*>(GetParent());
+        if (popup) {
+            popup->Dismiss();
+        }
+    }
+
     std::vector<FilamentData> m_dataList;
     unsigned int              m_selectedIndex = 0;
     std::function<void(unsigned int)> m_selectionCallback = nullptr;
@@ -279,6 +288,10 @@ MachineFilamentPicker::MachineFilamentPicker(wxWindow* parent,
             m_selectionCallback(m_dataList[idx]);
         }
 
+        Dismiss();
+    });
+
+    Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent&) {
         Dismiss();
     });
 

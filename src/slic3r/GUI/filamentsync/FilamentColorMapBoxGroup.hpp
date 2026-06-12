@@ -42,6 +42,11 @@ public:
 
     void bindMappingChangedCallback(std::function<void()> cb);
 
+    // Dismiss the currently-open machine filament picker popup, if any.
+    // Returns true if a popup was dismissed.
+    bool dismissOpenPicker();
+    bool hasOpenPicker() const;
+
     bool Layout() override;
 
 private:

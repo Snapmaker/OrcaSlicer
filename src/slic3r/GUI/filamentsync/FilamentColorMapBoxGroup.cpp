@@ -246,6 +246,20 @@ void FilamentColorMapBoxGroup::bindMappingChangedCallback(std::function<void()> 
     m_mappingChangedCallback = std::move(cb);
 }
 
+bool FilamentColorMapBoxGroup::dismissOpenPicker()
+{
+    if (m_pPicker) {
+        m_pPicker->Dismiss();
+        return true;
+    }
+    return false;
+}
+
+bool FilamentColorMapBoxGroup::hasOpenPicker() const
+{
+    return m_pPicker != nullptr;
+}
+
 void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentData& machineData)
 {
     if (boxIndex < 0 || boxIndex >= m_boxList.size())

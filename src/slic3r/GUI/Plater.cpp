@@ -8032,6 +8032,78 @@ void Sidebar::show_sync_filament_dialog()
     std::vector<FilamentData> designFilamentList;
     build_design_filament_list(preset_bundle, designFilamentList);
 
+    // No models in project: sync directly with overwrite mode, skip dialog
+    if (wxGetApp().plater()->model().objects.empty()) {
+        std::vector<FilamentData> syncedData;
+        for (const auto& d : machineFilamentList) {
+            if (!d.m_type.empty())
+                syncedData.push_back(d);
+        }
+
+        size_t designCount   = designFilamentList.size();
+        size_t machineCount  = machineFilamentList.size();
+        size_t effective_size = syncedData.size();
+        size_t combo_Size    = p->combos_filament.size();
+
+        // Build remap: 1:1 positional mapping with NONE filtering
+        std::vector<unsigned int> remap(designCount + 1, 0);
+        {
+            std::vector<unsigned int> machinePosToNewId(machineCount, 0);
+            unsigned int runningId = 0;
+            for (size_t j = 0; j < machineCount; ++j) {
+                if (!machineFilamentList[j].m_type.empty()) {
+                    ++runningId;
+                    machinePosToNewId[j] = runningId;
+                }
+            }
+            for (size_t old_id = 1; old_id <= designCount; ++old_id) {
+                size_t machine_pos = (old_id - 1) % machineCount;
+                remap[old_id] = machinePosToNewId[machine_pos];
+            }
+        }
+
+        if (effective_size != combo_Size) {
+            if (effective_size > combo_Size &&
+                (effective_size > MAXIMUM_EXTRUDER_NUMBER ||
+                 preset_bundle->mixed_filaments.total_filaments(effective_size) >= MAXIMUM_FILAMENT_NUMBER)) {
+                effective_size = combo_Size;
+            }
+            if (effective_size != combo_Size) {
+                wxColour    new_col   = Plater::get_next_color_for_filament();
+                std::string new_color = into_u8(new_col.GetAsString(wxC2S_HTML_SYNTAX));
+                preset_bundle->set_num_filaments(effective_size, new_color);
+                preset_bundle->set_filament_id_remap(remap);
+            }
+        }
+
+        ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        for (size_t i = 0; i < effective_size; ++i) {
+            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name);
+            if (matched)
+                preset_bundle->set_filament_preset(i, matched->name);
+            if (co && i < co->values.size()) {
+                wxColour c(syncedData[i].m_color_r, syncedData[i].m_color_g, syncedData[i].m_color_b);
+                co->values[i] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
+            }
+        }
+
+        wxGetApp().plater()->on_filaments_change(effective_size);
+        wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
+        preset_bundle->export_selections(*wxGetApp().app_config);
+
+        for (auto* combo : p->combos_filament) {
+            if (combo) combo->update();
+        }
+        for (size_t i = 0; i < effective_size; ++i)
+            auto_calc_flushing_volumes(i);
+
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::RegularNotificationLevel,
+            _u8L("Filament sync successful."));
+        return;
+    }
+
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
     dlg.setHasMixedFilaments(preset_bundle->mixed_filaments.enabled_count() > 0);

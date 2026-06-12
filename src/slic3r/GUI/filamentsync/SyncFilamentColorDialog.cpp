@@ -239,6 +239,10 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         });
 
         m_pScrollViewport->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& evt) {
+            if (m_pFilamentColorMapBoxGroup && m_pFilamentColorMapBoxGroup->hasOpenPicker()) {
+                m_pFilamentColorMapBoxGroup->dismissOpenPicker();
+                m_pScrollViewport->SetFocus();
+            }
             int lines  = evt.GetWheelRotation() / evt.GetWheelDelta();
             int delta  = -lines * FilamentScrollBar::s_scrollStepLines;
             int curOff = m_pScrollBar ? m_pScrollBar->getScrollOffset() : 0;
@@ -367,9 +371,15 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
 
     dataList = m_pFilamentColorMapBoxGroup->getCurFilamentList();
 
-    // In overwrite mode, trim to machine filament count
-    if (!m_bMappingMode && dataList.size() > m_machineDataList.size())
-        dataList.resize(m_machineDataList.size());
+    // In overwrite mode, first trim to machine filament count,
+    // then remove NONE (empty) entries from the result.
+    if (!m_bMappingMode) {
+        if (dataList.size() > m_machineDataList.size())
+            dataList.resize(m_machineDataList.size());
+        dataList.erase(std::remove_if(dataList.begin(), dataList.end(),
+            [](const FilamentData& d) { return d.m_type.empty(); }),
+            dataList.end());
+    }
 
     if (isAddUnUsedMachineFilaments()) {
         std::set<unsigned int> usedMachineIndices;
@@ -479,6 +489,7 @@ void SyncFilamentColorDialog::onCoverMatch()
     size_t designCount  = m_designDataList.size();
     size_t machineCount = m_machineDataList.size();
 
+    // 1:1 positional mapping — UI faithfully shows NONE at empty machine slots
     std::vector<int> mapping = compute_direct_override(designCount, machineCount);
 
     int idx = 0;
@@ -492,12 +503,27 @@ void SyncFilamentColorDialog::onCoverMatch()
     }
     m_pFilamentColorMapBoxGroup->setGroupBoxEnable(false, FilamentColorMapBox::ButtonType::Below);
 
-    // Build 1-based filament ID remap for overwrite mode:
-    // old_id -> ((old_id - 1) % machineCount) + 1
-    m_filamentIdRemap.assign(designCount + 1, 0);
-    if (machineCount > 0) {
-        for (size_t old_id = 1; old_id <= designCount; ++old_id)
-            m_filamentIdRemap[old_id] = static_cast<unsigned int>(((old_id - 1) % machineCount) + 1);
+    // Count valid (non-NONE) machine filaments for filament ID remap
+
+    // Build 1-based filament ID remap for overwrite mode.
+    // 1:1 positional mapping: design[i] → machine[i % machineCount].
+    // If machine[pos] is NONE, that design filament is removed (new_id = 0).
+    // Otherwise, new_id = 1 + number of valid machine filaments before pos.
+    {
+        std::vector<unsigned int> machinePosToNewId(machineCount, 0);
+        unsigned int runningId = 0;
+        for (size_t j = 0; j < machineCount; ++j) {
+            if (!m_machineDataList[j].m_type.empty()) {
+                ++runningId;
+                machinePosToNewId[j] = runningId;
+            }
+        }
+
+        m_filamentIdRemap.assign(designCount + 1, 0);
+        for (size_t old_id = 1; old_id <= designCount; ++old_id) {
+            size_t machine_pos = (old_id - 1) % machineCount;
+            m_filamentIdRemap[old_id] = machinePosToNewId[machine_pos];
+        }
     }
 }
 
@@ -554,6 +580,27 @@ void SyncFilamentColorDialog::loadCoverPreview()
     std::vector<FilamentData> filamentMapping;
     if (m_pFilamentColorMapBoxGroup)
         filamentMapping = m_pFilamentColorMapBoxGroup->getCurFilamentList();
+
+    // In overwrite mode, replace NONE colors with valid machine filament colors
+    // so the preview doesn't show grey for empty machine slots.
+    if (!m_bMappingMode && !filamentMapping.empty()) {
+        std::vector<const FilamentData*> validMachine;
+        for (const auto& d : m_machineDataList) {
+            if (!d.m_type.empty())
+                validMachine.push_back(&d);
+        }
+        if (!validMachine.empty()) {
+            for (size_t i = 0; i < filamentMapping.size(); ++i) {
+                FilamentData& fd = filamentMapping[i];
+                if (fd.m_type.empty()) {
+                    const FilamentData& vm = *validMachine[i % validMachine.size()];
+                    fd.m_color_r = vm.m_color_r;
+                    fd.m_color_g = vm.m_color_g;
+                    fd.m_color_b = vm.m_color_b;
+                }
+            }
+        }
+    }
 
     if (plate->no_light_thumbnail_data.is_valid() && !filamentMapping.empty()) {
         wxBitmap coverBmp = generateCoverPreview(plate->thumbnail_data,

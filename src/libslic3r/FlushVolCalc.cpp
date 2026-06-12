@@ -10,7 +10,7 @@ namespace Slic3r {
 const int g_min_flush_volume_from_support = 420.f;
 const int g_flush_volume_to_support = 230;
 
-const int g_max_flush_volume = 800;
+const int g_max_flush_volume = 350;
 
 static float to_radians(float degree)
 {
@@ -36,7 +36,7 @@ static float DeltaHS_BBS(float h1, float s1, float v1, float h2, float s2, float
     float dx = std::cos(h1_rad) * s1 * v1 - cos(h2_rad) * s2 * v2;
     float dy = std::sin(h1_rad) * s1 * v1 - sin(h2_rad) * s2 * v2;
     float dxy = std::sqrt(dx * dx + dy * dy);
-    return std::min(1.2f, dxy);
+    return std::min(1.0f, dxy);
 }
 
 FlushVolCalculator::FlushVolCalculator(int min, int max, float multiplier)
@@ -77,21 +77,21 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     float to_lumi = get_luminance(dst_r_f, dst_g_f, dst_b_f);
     float lumi_flush = 0.f;
     if (to_lumi >= from_lumi) {
-        lumi_flush = std::pow(to_lumi - from_lumi, 0.7f) * 560.f;
+        lumi_flush = std::pow(to_lumi - from_lumi, 1.10f) * 110.f;
     }
     else {
-        lumi_flush = (from_lumi - to_lumi) * 80.f;
+        lumi_flush = (from_lumi - to_lumi) * 20.f;
 
-        float inter_hsv_v = 0.67 * to_hsv_v + 0.33 * from_hsv_v;
+        float inter_hsv_v = 0.90f * to_hsv_v + 0.10f * from_hsv_v;
         hs_dist = std::min(inter_hsv_v, hs_dist);
     }
-    float hs_flush = 230.f * hs_dist;
+    float hs_flush = 60.f * hs_dist;
 
-    float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 120.f);
-    flush_volume = std::max(flush_volume, 60.f);
+    float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 117.f);
+    flush_volume = std::max(flush_volume, 35.f);
 
     //float flush_multiplier = std::atof(m_flush_multiplier_ebox->GetValue().c_str());
-    flush_volume += m_min_flush_vol;
+    // flush_volume += m_min_flush_vol;
     return std::min((int)flush_volume, m_max_flush_vol);
 }
 

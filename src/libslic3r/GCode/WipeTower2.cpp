@@ -782,23 +782,9 @@ public:
     }
 
     // Travel to a new XY position. f=0 means use the current value.
-    WipeTowerWriter2& travel(float x, float y, float f = 0.f, bool need_lift = true) {
-        float dx = x - m_current_pos.x();
-        float dy = y - m_current_pos.y();
-        float len = std::sqrt(dx * dx + dy * dy);
-        if (len > m_minimum_travel_lift && need_lift) {
-            z_hop(m_default_lift_length);
-        }
-        extrude_explicit(x, y, 0.f, f); 
-        if (len > m_minimum_travel_lift && need_lift) {
-            z_hop_reset();
-        }
-        return *this;
-    }
+    WipeTowerWriter2& travel(float x, float y, float f = 0.f) { return extrude_explicit(x, y, 0.f, f); }
 
-    WipeTowerWriter2& travel(const Vec2f& dest, float f = 0.f, bool need_lift = true) {
-        return travel(dest.x(), dest.y(), f, need_lift);
-    }
+    WipeTowerWriter2& travel(const Vec2f& dest, float f = 0.f) { return extrude_explicit(dest.x(), dest.y(), 0.f, f); }
 
     // Extrude a line from current position to x, y with the extrusion amount given by m_extrusion_flow.
     WipeTowerWriter2& extrude(float x, float y, float f = 0.f)
@@ -1201,10 +1187,10 @@ public:
         if (n <= 0)
             return;
         while (n--) {
-            travel(box_max.x(), m_current_pos.y(), feedrate, false);
-            travel(m_current_pos.x(), box_max.y(), feedrate, false);
-            travel(box_min.x(), m_current_pos.y(), feedrate, false);
-            travel(m_current_pos.x(), box_min.y(), feedrate, false);
+            travel(box_max.x(), m_current_pos.y(), feedrate);
+            travel(m_current_pos.x(), box_max.y(), feedrate);
+            travel(box_min.x(), m_current_pos.y(), feedrate);
+            travel(m_current_pos.x(), box_min.y(), feedrate);
 
             box_max += Vec2f{step_length, step_length};
             box_min -= Vec2f{step_length, step_length};

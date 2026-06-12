@@ -338,11 +338,6 @@ private:
     float cumulative_toolchange_depth_before(const WipeTowerInfo::ToolChange *tool_change) const;
     WipeTower::ToolChangeResult emit_planned_tool_change(const WipeTowerInfo::ToolChange *tool_change);
 
-	// Ram old filament, retract into cooling tube, align nozzle at end_of_ramming.
-	// writer:     G-code writer
-	// cleaning_box: current TC work area (inset from outer walls)
-	// current_material: material name of old tool (A)
-	// old_temperature / new_temperature: temp values for temp change logic
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
@@ -350,28 +345,18 @@ private:
 		const int 				old_temperature,
 		const int 				new_temperature);
 
-    // Switch to new filament cartridge. No XY displacement.
-    // new_tool: index of B filament; new_material: B material name
     void toolchange_Change(WipeTowerWriter2 &writer, const size_t new_tool, 
         const std::string& new_material);
 
-	// First extrusion of B filament: horizontal back-and-forth within cleaning_box.
-	// Start position = writer.x() from Unload end (or gap edge when m_use_gap_wall).
 	void toolchange_Load(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box);
 
-	// Wipe B filament with alternating horizontal lines until colour is pure.
-	// wipe_volume: total volume to extrude during wiping
 	void toolchange_Wipe(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
 		float wipe_volume);
 
-
-	// Generate outer wall polygon with optional gap cutting for skip_points.
-	// skip_points: positions on the wall to cut gaps (from get_all_wall_skip_points).
-	//              Pass empty vector for old behaviour (no gaps).
     Polygon generate_support_rib_wall(WipeTowerWriter2&                 writer,
                                       const WipeTower::box_coordinates& wt_box,
                                       double                 feedrate,
@@ -380,8 +365,6 @@ private:
                                       bool                   extrude_perimeter,
                                       const std::vector<Vec2f>&         skip_points);
 
-    // Compute gap positions for all layers. Gap X = wall closest to ramming end;
-    // Gap Y = process_depth + ramming_depth + turnaround_step + A_half_width + B_half_width.
     void get_all_wall_skip_points();
     // Retrieve pre-computed gap points for a specific layer. Returns empty if layer_id out of bounds.
     std::vector<Vec2f> get_wall_skip_points(size_t layer_id);

@@ -39,6 +39,14 @@ const wxColour g_checkmarkColor(0x7B, 0x82, 0x82);   // #7B8282
 const wxColour g_textColor(0x33, 0x33, 0x33);         // #333333
 const wxColour g_circleStroke(0xDB, 0xDB, 0xDA);      // #DBDBDA
 // ============================================================
+// Helper: check whether a filament entry is the NONE placeholder
+// ============================================================
+bool isNoneEntry(const Slic3r::GUI::FilamentData& data)
+{
+    return data.m_type.empty() || data.m_type == "NONE";
+}
+
+// ============================================================
 // Helper: determine which row is under a mouse-y coordinate,
 //         returns -1 when the click is not on any row.
 // ============================================================
@@ -183,6 +191,8 @@ private:
             drawCheckmark(dc, cx, cy, cw, ch);
         }
 
+        bool isNone = isNoneEntry(data);
+
         // ---- Colour circle ----
         wxColour fillColor(data.m_color_r, data.m_color_g, data.m_color_b);
         int circleCxPx = FromDIP(g_circleCx);
@@ -190,12 +200,12 @@ private:
         int circleR    = FromDIP(g_circleRadius);
 
         dc.SetBrush(wxBrush(fillColor));
-        dc.SetPen(wxPen(g_circleStroke, FromDIP(1)));
+        dc.SetPen(wxPen(isNone ? wxColour(0xCC, 0xCC, 0xCC) : g_circleStroke, FromDIP(1)));
         dc.DrawCircle(circleCxPx, circleCyPx, circleR);
 
         // ---- Index number inside circle ----
         dc.SetFont(indexFont);
-        dc.SetTextForeground(getTextColour(fillColor));
+        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : getTextColour(fillColor));
         wxString idxStr = wxString::Format("%d", data.m_index + 1);
         wxSize   idxExtent = dc.GetTextExtent(idxStr);
         dc.DrawText(idxStr, circleCxPx - idxExtent.x / 2,
@@ -203,8 +213,7 @@ private:
 
         // ---- Filament type text ----
         dc.SetFont(labelFont);
-        bool isNone = data.m_type.empty() || data.m_type == "NONE";
-        dc.SetTextForeground(isNone ? wxColour(0x99, 0x99, 0x99) : g_textColor);
+        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : g_textColor);
         wxString typeStr = wxString::FromUTF8(data.m_type.empty() ? "NONE" : data.m_type);
         int textX = FromDIP(g_textX);
         int textY = FromDIP(y) + (FromDIP(g_itemRowH) - dc.GetTextExtent(typeStr).y) / 2;
@@ -229,6 +238,11 @@ private:
         int row = hitTestRow(evt.GetY() / GetDPIScaleFactor(),
                              static_cast<int>(m_dataList.size()));
         if (row < 0) {
+            return;
+        }
+
+        // Ignore clicks on NONE (empty slot) entries
+        if (isNoneEntry(m_dataList[row])) {
             return;
         }
 

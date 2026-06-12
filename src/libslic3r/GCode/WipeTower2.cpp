@@ -782,9 +782,23 @@ public:
     }
 
     // Travel to a new XY position. f=0 means use the current value.
-    WipeTowerWriter2& travel(float x, float y, float f = 0.f) { return extrude_explicit(x, y, 0.f, f); }
+    WipeTowerWriter2& travel(float x, float y, float f = 0.f, bool need_lift = true) {
+        float dx = x - m_current_pos.x();
+        float dy = y - m_current_pos.y();
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len > m_minimum_travel_lift && need_lift) {
+            z_hop(m_default_lift_length);
+        }
+        extrude_explicit(x, y, 0.f, f); 
+        if (len > m_minimum_travel_lift && need_lift) {
+            z_hop_reset();
+        }
+        return *this;
+    }
 
-    WipeTowerWriter2& travel(const Vec2f& dest, float f = 0.f) { return extrude_explicit(dest.x(), dest.y(), 0.f, f); }
+    WipeTowerWriter2& travel(const Vec2f& dest, float f = 0.f, bool need_lift = true) {
+        return travel(dest.x(), dest.y(), f, need_lift);
+    }
 
     // Extrude a line from current position to x, y with the extrusion amount given by m_extrusion_flow.
     WipeTowerWriter2& extrude(float x, float y, float f = 0.f)
@@ -1187,10 +1201,10 @@ public:
         if (n <= 0)
             return;
         while (n--) {
-            travel(box_max.x(), m_current_pos.y(), feedrate);
-            travel(m_current_pos.x(), box_max.y(), feedrate);
-            travel(box_min.x(), m_current_pos.y(), feedrate);
-            travel(m_current_pos.x(), box_min.y(), feedrate);
+            travel(box_max.x(), m_current_pos.y(), feedrate, false);
+            travel(m_current_pos.x(), box_max.y(), feedrate, false);
+            travel(box_min.x(), m_current_pos.y(), feedrate, false);
+            travel(m_current_pos.x(), box_min.y(), feedrate, false);
 
             box_max += Vec2f{step_length, step_length};
             box_min -= Vec2f{step_length, step_length};
@@ -1224,6 +1238,8 @@ private:
     const std::vector<WipeTower2::FilamentParameters>& m_filpar;
     std::string                                        m_printer_model;
     bool m_is_prime = false;
+    float m_minimum_travel_lift = 2.0f;
+    float m_default_lift_length = 0.4f;
 
     // 判断是否是 Snapmaker U1 打印机
     bool is_snapmaker_u1() const { return boost::icontains(m_printer_model, "Snapmaker") && boost::icontains(m_printer_model, "U1"); }
@@ -1996,16 +2012,6 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
     if (m_enable_filament_ramming)
         writer.append("; Ramming end\n");
 
-    //if (do_ramming && m_semm && m_enable_filament_ramming) {
-    //    // Backward wipe to shear off hanging filament before retraction
-    //    float wipe_back_dist = 0.5f * m_perimeter_width;
-    //    float wipe_back_x    = writer.x() + (m_left_to_right ? -1.f : 1.f) * wipe_back_dist;
-    //    writer.travel(wipe_back_x, writer.y(), 7200);
-
-    //    // Final retraction to prevent old filament oozing during subsequent gap travel
-    //    writer.retract(m_filpar[m_current_tool].retract_length, m_filpar[m_current_tool].retract_speed * 60.f);
-    //}
-
     // this is to align ramming and future wiping extrusions, so the future y-steps can be uniform from the start:
     // the perimeter_width will later be subtracted, it is there to not load while moving over just extruded material
     Vec2f pos = Vec2f(end_of_ramming.x(),
@@ -2224,7 +2230,6 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
         traversed_x -= writer.x();
         x_to_wipe -= std::abs(traversed_x);
         if (x_to_wipe < WT_EPSILON) {
-            writer.travel(m_left_to_right ? xl + 1.5f * line_width : xr - 1.5f * line_width, writer.y(), 7200);
             break;
         }
         // stepping to the next line:
@@ -2775,17 +2780,6 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
         return;
 
     plan_tower();
-#if 0
-// BBS: Disabled 5-iteration loop - matching Bambu Studio's approach
-// This loop causes instability in depth calculations which leads to out-of-bounds coordinates
-// The loop recalculates required_depth in save_on_last_wipe() and propagates it downward via plan_tower()
-// After multiple iterations, depth can exceed reasonable bounds, causing m_y_shift to change
-// This in turn causes the rotate() function to generate negative coordinates
-    for (int i = 0; i < 5; ++i) {
-        save_on_last_wipe();
-        plan_tower();
-    }
-#endif
 
     if (m_wall_type == int(WipeTowerWallType::wtwRib)) {
         float square_width = align_ceil(std::sqrt(std::fabs(m_wipe_tower_depth * m_wipe_tower_width)), m_perimeter_width);
@@ -3019,50 +3013,6 @@ WipeTower2::WipeTowerInfo::ToolChange WipeTower2::set_toolchange(int old_tool, i
     return WipeTowerInfo::ToolChange(old_tool, new_tool, ramming_depth + wiping_depth, ramming_depth, first_wipe_line, wipe_volume);
 }
 
-Polylines get_fill_first_brim_layer_line(const Polygon& wall_polygon, const WipeTower::box_coordinates& wt_box) 
-{
-    Polylines fill_first_layer_brim;
-    auto    max_point = wall_polygon.bounding_box().max;
-    auto    min_point = wall_polygon.bounding_box().min;
-    auto    min_x     = min_point.x();
-    auto    max_x     = max_point.x();
-    coord_t base_step = scale_(0.5f);
-    for (auto i = max_point.y(); i > min_point.y(); i -= base_step) {
-        Line horizontal_line(Point(min_x, i), Point(max_x, i));
-        Points intersect_points;
-        wall_polygon.intersections(horizontal_line, &intersect_points);
-        std::sort(intersect_points.begin(), intersect_points.end());
-        if (intersect_points.size() == 4) {
-            if (intersect_points[1].x() - intersect_points[0].x() > base_step) {
-                Polyline fill_line({intersect_points[0], intersect_points[1]});
-                fill_first_layer_brim.push_back(fill_line);
-            }
-            if (intersect_points[3].x() - intersect_points[2].x() > base_step) {
-                Polyline fill_line({intersect_points[2], intersect_points[3]});
-                fill_first_layer_brim.push_back(fill_line);
-            }
-        }
-        else if (intersect_points.size() == 2) {
-            auto len = intersect_points[1].x() - intersect_points[0].x();
-            if (len > scale_(wt_box.rd.x() - wt_box.ld.x()) + 2 * base_step) {
-                if (intersect_points[0].y() > scale_(wt_box.lu.y()) + base_step ||
-                    intersect_points[0].y() < scale_(wt_box.ld.y()) - base_step) {
-                    Polyline fill_line({intersect_points[0], intersect_points[1]});
-                    fill_first_layer_brim.push_back(fill_line);
-                } else {
-                    Point left_point(coord_t(scale_(wt_box.ld.x())) - base_step, intersect_points[0].y());
-                    Polyline fill_line1({intersect_points[0], left_point});
-                    Point right_point(coord_t(scale_(wt_box.rd.x())) + base_step, intersect_points[0].y());
-                    Polyline fill_line2({right_point, intersect_points[1]});
-                    fill_first_layer_brim.push_back(fill_line1);
-                    fill_first_layer_brim.push_back(fill_line2);
-                }
-            }
-        }
-    }
-    return fill_first_layer_brim;
-}
-
 Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 writer,
                                               const WipeTower::box_coordinates& wt_box,
                                               double                            feedrate,
@@ -3075,7 +3025,6 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
     float     retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
     Polygon   wall_polygon   = rib_wall ? generate_rib_polygon(wt_box) : generate_rectange_polygon(wt_box.ld, wt_box.ru);
     Polylines result_wall;
-    Polylines fill_first_layer_brim;
     Polygon   insert_skip_polygon;
     if (m_used_fillet) {
         if (!rib_wall && m_y_shift > EPSILON) // do nothing because the fillet will cause it to be suspended.
@@ -3086,9 +3035,6 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
             wall_polygon           = union_({wall_polygon, wt_box_polygon}).front();
         }
     }
-    if (first_layer && rib_wall) {
-        fill_first_layer_brim = get_fill_first_brim_layer_line(wall_polygon, wt_box);
-    }
     if (!extrude_perimeter)
         return wall_polygon;
 
@@ -3098,9 +3044,6 @@ Polygon WipeTower2::generate_support_rib_wall(WipeTowerWriter2&                 
     } else {
         result_wall.push_back(to_polyline(wall_polygon));
         insert_skip_polygon = wall_polygon;
-    }
-    if (!fill_first_layer_brim.empty() &&  rib_wall) {
-        result_wall.insert(result_wall.end(), fill_first_layer_brim.begin(), fill_first_layer_brim.end());
     }
     writer.generate_path(result_wall, feedrate, retract_length, retract_speed, m_used_fillet);
     // if (m_cur_layer_id == 0) {

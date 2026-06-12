@@ -441,7 +441,6 @@ void ObjectList::create_objects_ctrl()
         return m_objects_model->GetDefaultExtruderIdx(GetSelection());
     });
     bmp_choice_renderer->set_has_default_extruder([this]() {
-        return true;
         return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
                m_objects_model->GetItemType(GetSelection()) == itLayer;
     });

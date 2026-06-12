@@ -42,3 +42,4 @@ deps_src/build/
 .claude/
 .hermes/
 CLAUDE.md
+docs/architecture/

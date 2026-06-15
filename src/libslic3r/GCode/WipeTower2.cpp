@@ -1180,12 +1180,16 @@ public:
 
     void spiral_flat_ironing(const Vec2f& center, float area, float step_length, float feedrate)
     {
-        float edge_length = std::sqrt(area);
-        Vec2f box_max     = center + Vec2f{step_length, step_length};
-        Vec2f box_min     = center - Vec2f{step_length, step_length};
-        int   n           = std::ceil(edge_length / step_length / 2.f);
-        if (n <= 0)
+        if (step_length <= 0.f) {
             return;
+        }
+        float edge_length = std::sqrt(area);
+        Vec2f box_max = center + Vec2f{step_length, step_length};
+        Vec2f box_min = center - Vec2f{step_length, step_length};
+        int n = std::ceil(edge_length / step_length / 2.f);
+        if (n <= 0) {
+            return;
+        }
         while (n--) {
             travel(box_max.x(), m_current_pos.y(), feedrate);
             travel(m_current_pos.x(), box_max.y(), feedrate);

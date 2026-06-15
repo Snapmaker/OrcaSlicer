@@ -512,12 +512,12 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
         const ImVec2 button_size(max_filament_label_size.x + m_imgui->scaled(0.5f), 0.f);
         const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr ? &wxGetApp().preset_bundle->project_config : nullptr;
-        FilamentColorUtils::FilamentColorDisplay project_filament_color;
+        FilamentColor projectFilamentColor;
         if (actual_filament_id > 0 && actual_filament_id <= m_mixed_display_context.physical_colors.size())
         {
             const size_t color_index = size_t(actual_filament_id - 1);
-            project_filament_color = FilamentColorUtils::GetFilamentColorDisplay(project_config, color_index, 
-                                                                                m_mixed_display_context.physical_colors[color_index]);
+            const std::string& physicalColor = m_mixed_display_context.physical_colors[color_index];
+            projectFilamentColor = FilamentColorUtils::GetFilamentColorFromConfig(project_config, color_index, physicalColor);
         }
 
         // --- Gradient eligibility check ---
@@ -636,11 +636,11 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         color_button_high = ImGui::GetCursorPos().y - color_button - 2.0;
         if (color_picked) { m_selected_extruder_idx = extruder_idx; }
 
-        if (project_filament_color.colors.size() > 1)
+        if (projectFilamentColor.colors.size() > 1)
         {
             ImVec2 btn_min = ImGui::GetItemRectMin();
             ImVec2 btn_max = ImGui::GetItemRectMax();
-            FilamentColorUtils::DrawImGuiFilamentColorBlock(draw_list, btn_min, btn_max, project_filament_color, 2.5f);
+            FilamentColorUtils::DrawImGuiFilamentColorBlock(draw_list, btn_min, btn_max, projectFilamentColor, 2.5f);
         }
 
         if (ImGui::IsItemHovered()) {
@@ -653,8 +653,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         // draw filament id
         float gray = 0.299 * extruder_color.r() + 0.587 * extruder_color.g() + 0.114 * extruder_color.b();
         ImVec4 text_color = gray * 255.f < 80.f ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
-        if (project_filament_color.colors.size() > 1)
-            text_color = FilamentColorUtils::ImGuiTextColorFor(project_filament_color);
+        if (projectFilamentColor.colors.size() > 1)
+            text_color = FilamentColorUtils::ImGuiTextColorFor(projectFilamentColor);
         ImGui::SameLine(button_offset + (button_size.x - label_size.x) / 2.f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {10.0,15.0});
         ImGui::TextColored(text_color, "%s", item_text.c_str());

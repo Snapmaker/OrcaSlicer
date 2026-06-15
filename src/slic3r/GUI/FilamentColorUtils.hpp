@@ -1,5 +1,7 @@
 #pragma once
 
+#include "libslic3r/FilamentColorLibrary.hpp"
+
 #include <imgui/imgui.h>
 #include <nlohmann/json.hpp>
 #include <wx/bitmap.h>
@@ -19,13 +21,6 @@ namespace GUI
 namespace FilamentColorUtils
 {
 
-struct FilamentColorDisplay
-{
-    std::string primaryColor;
-    std::vector<std::string> colors;
-    int mode { 0 }; // 0 = solid/averaged, 1 = gradient
-};
-
 std::string NormalizeHexColor(const std::string& color);
 std::string NormalizeHexColor(const std::string& color, const std::string& fallback_color);
 
@@ -37,24 +32,26 @@ std::string JoinMultiColors(const std::vector<std::string>& colors);
 
 std::string GetPrimaryColor(const std::vector<std::string>& colors, const std::string& fallback_color);
 
-int NormalizeColourMode(int mode);
 std::string GetFilamentMatchName(const std::string& name);
 
-FilamentColorDisplay GetFilamentColorDisplay(const DynamicPrintConfig* config, size_t color_index, const std::string& fallback_color);
+FilamentColor GetFilamentColorFromConfig(const DynamicPrintConfig* config, size_t colorIndex, const std::string& fallbackColor);
 
-nlohmann::json BuildPreprintColorMultiItem(const std::string& multi_colors, int mode, const std::string& fallback_color);
+nlohmann::json BuildPreprintColorMultiItem(const std::string& multiColors, FilamentColorMode mode,
+                                           const std::string& fallbackColor);
 
-wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, int mode, const std::string& label, int iconWidth, int iconHeight,
-                               const wxColour& lightBorderColor = wxNullColour);
-
-wxBitmap* GetFilamentColorIcon(const std::string& multiColors, int mode, const std::string& fallbackColor, const std::string& label,
+wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, FilamentColorMode mode, const std::string& label,
                                int iconWidth, int iconHeight, const wxColour& lightBorderColor = wxNullColour);
 
-ImU32 ToImGuiColor(const std::string& color);
-float ImGuiAverageLuminance(const FilamentColorDisplay& color);
-ImVec4 ImGuiTextColorFor(const FilamentColorDisplay& color);
+wxBitmap* GetFilamentColorIcon(const std::string& multiColors, FilamentColorMode mode, const std::string& fallbackColor,
+                               const std::string& label, int iconWidth, int iconHeight,
+                               const wxColour& lightBorderColor = wxNullColour);
 
-void DrawImGuiFilamentColorBlock(ImDrawList* draw_list, const ImVec2& min, const ImVec2& max, const FilamentColorDisplay& color, float inset = 0.0f);
+ImU32 ToImGuiColor(const std::string& color);
+float ImGuiAverageLuminance(const FilamentColor& color);
+ImVec4 ImGuiTextColorFor(const FilamentColor& color);
+
+void DrawImGuiFilamentColorBlock(ImDrawList* draw_list, const ImVec2& min, const ImVec2& max, const FilamentColor& color,
+                                 float inset = 0.0f);
 
 } // namespace FilamentColorUtils
 } // namespace GUI

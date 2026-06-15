@@ -4,8 +4,6 @@
 #include "MixedFilamentBadge.hpp"
 
 #include <algorithm>
-#include <cctype>
-#include <sstream>
 
 namespace Slic3r
 {
@@ -15,42 +13,6 @@ namespace FilamentColorUtils
 {
 namespace
 {
-
-std::string TrimCopy(const std::string& value)
-{
-    std::string::const_iterator begin = std::find_if_not(value.begin(), value.end(),
-                                        [](unsigned char ch)
-                                        {
-                                            return std::isspace(ch);
-                                        });
-    std::string::const_iterator end = std::find_if_not(value.rbegin(), value.rend(),
-                                        [](unsigned char ch)
-                                        {
-                                            return std::isspace(ch);
-                                        }).base();
-    return begin < end ? std::string(begin, end) : std::string();
-}
-
-std::string NormalizeHexColorNoFallback(const std::string& color)
-{
-    std::string value = TrimCopy(color);
-    if (!value.empty() && value.front() == '#')
-        value.erase(value.begin());
-    if (value.size() == 8)
-        value = value.substr(0, 6);
-    if (value.size() != 6)
-        return {};
-
-    for (char& ch : value)
-    {
-        const unsigned char uch = static_cast<unsigned char>(ch);
-        if (!std::isxdigit(uch))
-            return {};
-        ch = static_cast<char>(std::toupper(uch));
-    }
-
-    return "#" + value;
-}
 
 std::vector<std::string> NormalizedColorsOrFallback(const std::vector<std::string>& colors,
                                                     const std::string& fallback_color)
@@ -88,24 +50,7 @@ wxColour WxColorFromHex(const std::string& color)
     return parsed.IsOk() ? parsed : wxColour("#FFFFFF");
 }
 
-bool EndsWithCaseInsensitive(const std::string& value, const std::string& suffix)
-{
-    if (value.size() < suffix.size())
-        return false;
-
-    const size_t offset = value.size() - suffix.size();
-    for (size_t index = 0; index < suffix.size(); ++index)
-    {
-        const unsigned char left = static_cast<unsigned char>(value[offset + index]);
-        const unsigned char right = static_cast<unsigned char>(suffix[index]);
-        if (std::tolower(left) != std::tolower(right))
-            return false;
-    }
-
-    return true;
-}
-
-wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& normalizedColors, int mode,
+wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& normalizedColors, FilamentColorMode mode,
                                              const std::string& label, int iconWidth, int iconHeight,
                                              const wxColour& lightBorderColor)
 {
@@ -127,7 +72,7 @@ wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& nor
         params.mode = ColorBlockParams::Solid;
         params.solid_color = wx_colors.empty() ? wxColour("#FFFFFF") : wx_colors.front();
     }
-    else if (NormalizeColourMode(mode) == 1)
+    else if (mode == FilamentColorMode::Gradient)
     {
         params.mode = ColorBlockParams::Gradient;
         params.gradient_direction = ColorBlockParams::LeftToRight;
@@ -146,18 +91,12 @@ wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& nor
 
 std::string NormalizeHexColor(const std::string& color)
 {
-    return NormalizeHexColorNoFallback(color);
+    return NormalizeFilamentHexColor(color);
 }
 
 std::string NormalizeHexColor(const std::string& color, const std::string& fallback_color)
 {
-    const std::string normalized = NormalizeHexColorNoFallback(color);
-    if (!normalized.empty())
-        return normalized;
-
-    if (color == fallback_color)
-        return {};
-    return NormalizeHexColorNoFallback(fallback_color);
+    return NormalizeFilamentHexColor(color, fallback_color);
 }
 
 std::string StripHashForPreprint(const std::string& color)
@@ -178,124 +117,71 @@ std::string StripHashForPreprint(const std::string& color, const std::string& fa
 
 std::vector<std::string> SplitMultiColors(const std::string& value)
 {
-    std::vector<std::string> colors;
-    std::stringstream stream(value);
-    std::string token;
-
-    while (std::getline(stream, token, '|'))
-    {
-        const std::string normalized = NormalizeHexColor(token);
-        if (!normalized.empty())
-            colors.emplace_back(normalized);
-    }
-
-    return colors;
+    return SplitFilamentMultiColors(value);
 }
 
 std::string JoinMultiColors(const std::vector<std::string>& colors)
 {
-    std::ostringstream out;
-    bool first = true;
-    for (const std::string& color : colors)
-    {
-        const std::string normalized = NormalizeHexColor(color);
-        if (normalized.empty())
-            continue;
-        if (!first)
-            out << '|';
-        out << normalized;
-        first = false;
-    }
-    return out.str();
+    return JoinFilamentMultiColors(colors);
 }
 
 std::string GetPrimaryColor(const std::vector<std::string>& colors, const std::string& fallback_color)
 {
-    for (const std::string& color : colors)
-    {
-        const std::string normalized = NormalizeHexColor(color);
-        if (!normalized.empty())
-            return normalized;
-    }
-    return NormalizeHexColor(fallback_color, "#FFFFFF");
-}
-
-int NormalizeColourMode(int mode)
-{
-    return mode == 1 ? 1 : 0;
+    const FilamentColor color = FilamentColor::FromColors(colors, FilamentColorMode::Segment, fallback_color);
+    return color.PrimaryColor(fallback_color);
 }
 
 std::string GetFilamentMatchName(const std::string& name)
 {
-    std::string matchName = TrimCopy(name);
-    const std::string nozzleSuffix = " nozzle";
-    if (EndsWithCaseInsensitive(matchName, nozzleSuffix))
-    {
-        matchName = TrimCopy(matchName.substr(0, matchName.size() - nozzleSuffix.size()));
-        const size_t nozzlePos = matchName.find_last_of(" \t\r\n");
-        if (nozzlePos != std::string::npos)
-            matchName = matchName.substr(0, nozzlePos);
-    }
-
-    return TrimCopy(matchName);
+    return Slic3r::GetFilamentMatchName(name);
 }
 
-FilamentColorDisplay GetFilamentColorDisplay(const DynamicPrintConfig* config,
-                                             size_t color_index,
-                                             const std::string& fallback_color)
+FilamentColor GetFilamentColorFromConfig(const DynamicPrintConfig* config, size_t colorIndex, const std::string& fallbackColor)
 {
-    FilamentColorDisplay display;
-    display.primaryColor = NormalizeHexColor(fallback_color, "#FFFFFF");
+    std::vector<std::string> colors;
+    FilamentColorMode mode = FilamentColorMode::Segment;
 
     if (config != nullptr && config->has("filament_multi_colors"))
     {
         const ConfigOptionStrings* option = config->option<ConfigOptionStrings>("filament_multi_colors");
-        if (option != nullptr && option->values.size() > color_index)
-            display.colors = SplitMultiColors(option->values[color_index]);
+        if (option != nullptr && option->values.size() > colorIndex)
+            colors = SplitMultiColors(option->values[colorIndex]);
     }
 
     if (config != nullptr && config->has("filament_colour_mode"))
     {
         const ConfigOptionInts* option = config->option<ConfigOptionInts>("filament_colour_mode");
-        if (option != nullptr && option->values.size() > color_index)
-            display.mode = option->values[color_index];
+        if (option != nullptr && option->values.size() > colorIndex)
+            mode = FilamentColorModeFromConfig(option->values[colorIndex]);
     }
 
-    if (display.colors.empty())
-        display.colors.emplace_back(display.primaryColor);
-
-    display.primaryColor = GetPrimaryColor(display.colors, display.primaryColor);
-    display.mode = display.colors.size() > 1 ? NormalizeColourMode(display.mode) : 0;
-    return display;
+    return FilamentColor::FromColors(colors, mode, fallbackColor);
 }
 
-nlohmann::json BuildPreprintColorMultiItem(const std::string& multi_colors, int mode, const std::string& fallback_color)
+nlohmann::json BuildPreprintColorMultiItem(const std::string& multiColors, FilamentColorMode mode,
+                                           const std::string& fallbackColor)
 {
-    std::vector<std::string> colors = SplitMultiColors(multi_colors);
-    if (colors.empty())
-        colors.emplace_back(NormalizeHexColor(fallback_color, "#FFFFFF"));
-
-    const int normalized_mode = colors.size() > 1 ? NormalizeColourMode(mode) : 0;
+    const FilamentColor color = FilamentColor::FromMultiColors(multiColors, mode, fallbackColor);
 
     nlohmann::json out_colors = nlohmann::json::array();
-    for (const std::string& color : colors)
-        out_colors.push_back(color.substr(1));
+    for (const std::string& item : color.colors)
+        out_colors.push_back(item.substr(1));
 
     nlohmann::json item;
-    item["mode"] = normalized_mode;
-    item["nums"] = colors.size();
+    item["mode"] = FilamentColorModeToConfig(color.NormalizedMode());
+    item["nums"] = color.colors.size();
     item["colors"] = out_colors;
     return item;
 }
 
-wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, int mode, const std::string& label,
+wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, FilamentColorMode mode, const std::string& label,
                                int iconWidth, int iconHeight, const wxColour& lightBorderColor)
 {
     const std::vector<std::string> normalized = NormalizedColorsOrFallback(colors, "#FFFFFF");
     return GetFilamentColorIconFromNormalized(normalized, mode, label, iconWidth, iconHeight, lightBorderColor);
 }
 
-wxBitmap* GetFilamentColorIcon(const std::string& multiColors, int mode, const std::string& fallbackColor,
+wxBitmap* GetFilamentColorIcon(const std::string& multiColors, FilamentColorMode mode, const std::string& fallbackColor,
                                const std::string& label, int iconWidth, int iconHeight, const wxColour& lightBorderColor)
 {
     std::vector<std::string> normalized = SplitMultiColors(multiColors);
@@ -309,7 +195,7 @@ ImU32 ToImGuiColor(const std::string& color)
     return IM_COL32(parsed.Red(), parsed.Green(), parsed.Blue(), 255);
 }
 
-float ImGuiAverageLuminance(const FilamentColorDisplay& color)
+float ImGuiAverageLuminance(const FilamentColor& color)
 {
     if (color.colors.empty())
         return 1.0f;
@@ -324,12 +210,15 @@ float ImGuiAverageLuminance(const FilamentColorDisplay& color)
     return total_luminance / float(color.colors.size());
 }
 
-ImVec4 ImGuiTextColorFor(const FilamentColorDisplay& color)
+ImVec4 ImGuiTextColorFor(const FilamentColor& color)
 {
-    return ImGuiAverageLuminance(color) < 80.0f / 255.0f ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0, 0, 0, 1.0f);
+    if (ImGuiAverageLuminance(color) < 80.0f / 255.0f)
+        return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    return ImVec4(0, 0, 0, 1.0f);
 }
 
-void DrawImGuiFilamentColorBlock(ImDrawList* draw_list, const ImVec2& min, const ImVec2& max, const FilamentColorDisplay& color, float inset)
+void DrawImGuiFilamentColorBlock(ImDrawList* draw_list, const ImVec2& min, const ImVec2& max,
+                                 const FilamentColor& color, float inset)
 {
     if (draw_list == nullptr || color.colors.size() <= 1)
         return;
@@ -341,7 +230,7 @@ void DrawImGuiFilamentColorBlock(ImDrawList* draw_list, const ImVec2& min, const
     if (width <= 1.0f || height <= 1.0f)
         return;
 
-    if (color.mode == 1)
+    if (color.IsGradient())
     {
         const size_t gradient_count = color.colors.size() - 1;
         for (size_t index = 0; index < gradient_count; ++index)

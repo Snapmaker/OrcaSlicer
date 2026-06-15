@@ -1658,7 +1658,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
                         json::const_iterator modeIt = multiColor.find("mode");
                         if (machineData.multiColors.size() > 1 && modeIt != multiColor.end() && modeIt->is_number_integer())
-                            machineData.colorMode = FilamentColorUtils::NormalizeColourMode(modeIt->get<int>());
+                            machineData.colorMode = FilamentColorModeFromConfig(modeIt->get<int>());
                     }
 
                     if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
@@ -1688,7 +1688,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     }
                     if (machineData.multiColors.empty() && !machineData.color_info.empty())
                         machineData.multiColors.emplace_back(machineData.color_info);
-                    machineData.colorMode = machineData.multiColors.size() > 1 ? machineData.colorMode : 0;
+                    if (machineData.multiColors.size() <= 1)
+                        machineData.colorMode = FilamentColorMode::Segment;
                     if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
                         machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
                     machine_nozzles.push_back(machineData);

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "GUI_Utils.hpp"
-#include "FilamentColorLibrary.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 
 #include <string>
 #include <utility>
@@ -16,15 +16,6 @@ namespace GUI
 {
 
 /**
- * @brief Filament color data shared by the dialog input and selected result.
- */
-struct FilamentColorData
-{
-    std::vector<std::string> colors;
-    int mode { 0 }; // 0 = solid/averaged, 1 = gradient
-};
-
-/**
  * @brief Dialog for choosing a built-in filament color or a custom color.
  */
 class FilamentColorDialog : public DPIDialog
@@ -33,19 +24,19 @@ public:
     /**
      * @brief Creates the filament color dialog.
      */
-    FilamentColorDialog(wxWindow* parent, const FilamentMaterial& material, const FilamentColorData& currentColor);
+    FilamentColorDialog(wxWindow* parent, const FilamentColorInfo& filament, const FilamentColor& currentColor);
 
     /**
      * @brief Gets the selected color result.
      */
-    const FilamentColorData& Selection() const
+    const FilamentColor& Selection() const
     {
         return _selection;
     }
 
 private:
     void BuildUi();
-    void SelectFilamentColor(const FilamentColor& color);
+    void SelectFilamentColor(const FilamentColorItem& colorItem);
     void SelectCustomColor(const std::string& color);
     void UpdatePreview();
     void UpdateSwatchSelection();
@@ -59,9 +50,9 @@ private:
     void on_dpi_changed(const wxRect& suggestedRect) override;
 
 private:
-    FilamentMaterial _material;
+    FilamentColorInfo _filament;
     std::string _languageCode;
-    FilamentColorData _selection;
+    FilamentColor _selection;
     std::string _selectedSku;
     std::string _highlightSku;
     std::vector<std::pair<wxWindow*, std::string>> _swatchBySku;

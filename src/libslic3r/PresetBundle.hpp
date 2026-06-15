@@ -3,6 +3,7 @@
 
 #include "Preset.hpp"
 #include "AppConfig.hpp"
+#include "FilamentColorLibrary.hpp"
 #include "enum_bitmask.hpp"
 #include "MixedFilament.hpp"
 
@@ -35,7 +36,7 @@ struct ConnectMachineInfo
     std::string nozzle_info {""};
     std::string color_info{""};
     std::vector<std::string> multiColors;
-    int colorMode {0};
+    Slic3r::FilamentColorMode colorMode { Slic3r::FilamentColorMode::Segment };
     int index {0};
 };
 

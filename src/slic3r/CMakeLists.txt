@@ -329,8 +329,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/ObjColorDialog.hpp
     GUI/FilamentColorDialog.cpp
     GUI/FilamentColorDialog.hpp
-    GUI/FilamentColorLibrary.cpp
-    GUI/FilamentColorLibrary.hpp
     GUI/ObjectDataViewModel.cpp
     GUI/ObjectDataViewModel.hpp
     GUI/OG_CustomCtrl.cpp

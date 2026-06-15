@@ -51,7 +51,7 @@ struct SortHsv
  */
 struct ColorSortItem
 {
-    const FilamentColor* color { nullptr };
+    const FilamentColorItem* colorItem { nullptr };
     std::vector<std::string> colors;
     std::vector<SortHsv> hsvColors;
     int typeOrder { 0 };
@@ -86,16 +86,17 @@ wxString FromStdString(const std::string& value)
 /**
  * @brief Gets a localized color name with English fallback.
  */
-std::string GetLocalizedColorName(const FilamentColor& color, const std::string& language_code,
+std::string GetLocalizedColorName(const FilamentColorItem& colorItem, const std::string& languageCode,
                                   const std::vector<std::string>& colors)
 {
-    std::unordered_map<std::string, std::string>::const_iterator localized_name = color.colorNames.find(language_code);
-    if (localized_name != color.colorNames.end() && !localized_name->second.empty())
-        return localized_name->second;
+    std::unordered_map<std::string, std::string>::const_iterator localizedName =
+        colorItem.colorNames.find(languageCode);
+    if (localizedName != colorItem.colorNames.end() && !localizedName->second.empty())
+        return localizedName->second;
 
-    std::unordered_map<std::string, std::string>::const_iterator english_name = color.colorNames.find("en");
-    if (english_name != color.colorNames.end() && !english_name->second.empty())
-        return english_name->second;
+    std::unordered_map<std::string, std::string>::const_iterator englishName = colorItem.colorNames.find("en");
+    if (englishName != colorItem.colorNames.end() && !englishName->second.empty())
+        return englishName->second;
 
     if (colors.size() > 1)
         return _L("Multiple Color").ToStdString(wxConvUTF8);
@@ -105,124 +106,58 @@ std::string GetLocalizedColorName(const FilamentColor& color, const std::string&
 /**
  * @brief Gets normalized colors already loaded by the filament color library.
  */
-std::vector<std::string> ColorListFromLibrary(const FilamentColor& color)
+std::vector<std::string> ColorListFromLibrary(const FilamentColorItem& colorItem)
 {
-    std::vector<std::string> colors;
-    colors.reserve(color.colors.size());
-    for (const std::string& item : color.colors)
-    {
-        if (!item.empty())
-            colors.emplace_back(item);
-    }
-
-    return colors;
-}
-
-/**
- * @brief Gets the primary color from normalized color data.
- */
-std::string PrimaryColorFromData(const FilamentColorData& colorData)
-{
-    return colorData.colors.empty() ? "#FFFFFF" : colorData.colors.front();
-}
-
-/**
- * @brief Normalizes shared filament color data and guarantees a non-empty color list.
- */
-FilamentColorData NormalizeFilamentColorData(const FilamentColorData& colorData, const std::string& fallbackColor)
-{
-    FilamentColorData normalizedData;
-    normalizedData.colors.reserve(colorData.colors.size());
-    for (const std::string& color : colorData.colors)
-    {
-        const std::string normalized = FilamentColorUtils::NormalizeHexColor(color);
-        if (!normalized.empty())
-            normalizedData.colors.emplace_back(normalized);
-    }
-
-    if (normalizedData.colors.empty())
-    {
-        const std::string fallback = FilamentColorUtils::NormalizeHexColor(fallbackColor, "#FFFFFF");
-        normalizedData.colors.emplace_back(fallback.empty() ? "#FFFFFF" : fallback);
-    }
-
-    normalizedData.mode = normalizedData.colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(colorData.mode) : 0;
-    return normalizedData;
+    return colorItem.colorData.colors;
 }
 
 /**
  * @brief Builds color data from a built-in color.
  */
-bool MakeFilamentColorData(const FilamentColor& color, FilamentColorData& colorData)
+bool MakeFilamentColor(const FilamentColorItem& colorItem, FilamentColor& colorData)
 {
-    FilamentColorData result;
-    result.colors = ColorListFromLibrary(color);
-    if (result.colors.empty())
+    if (colorItem.colorData.colors.empty())
     {
-        BOOST_LOG_TRIVIAL(error) << "Invalid official filament color without valid colors: " << color.sku;
+        BOOST_LOG_TRIVIAL(error) << "Invalid official filament color without valid colors: " << colorItem.sku;
         return false;
     }
 
-    result.mode = result.colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(color.mode) : 0;
-
-    colorData = result;
+    colorData = FilamentColor::FromColors(colorItem.colorData.colors, colorItem.colorData.mode);
     return true;
-}
-
-/**
- * @brief Builds color data from a custom color.
- */
-FilamentColorData MakeCustomColorData(const std::string& multiColors, int mode, const std::string& fallbackColor)
-{
-    FilamentColorData colorData;
-    colorData.colors = FilamentColorUtils::SplitMultiColors(multiColors);
-    colorData.mode = mode;
-    return NormalizeFilamentColorData(colorData, fallbackColor);
-}
-
-/**
- * @brief Gets the normalized display mode for a saved or official color list.
- */
-int GetColorDataMode(const FilamentColorData& colorData)
-{
-    return colorData.colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(colorData.mode) : 0;
 }
 
 /**
  * @brief Finds an official color item matching the saved colors and display mode.
  */
-std::vector<FilamentColor>::const_iterator FindColorBySavedColors(const FilamentMaterial& material,
-                                                                  const FilamentColorData& colorData)
+std::vector<FilamentColorItem>::const_iterator FindColorBySavedColors(const FilamentColorInfo& filament,
+                                                                      const FilamentColor& colorData)
 {
     if (colorData.colors.empty())
-        return material.colors.end();
+        return filament.colors.end();
 
-    const int normalizedMode = GetColorDataMode(colorData);
-    return std::find_if(material.colors.begin(), material.colors.end(),
-                        [&colorData, normalizedMode](const FilamentColor& item)
+    const FilamentColor normalizedColor = FilamentColor::FromColors(colorData.colors, colorData.mode);
+    return std::find_if(filament.colors.begin(), filament.colors.end(),
+                        [&normalizedColor](const FilamentColorItem& item)
                         {
-                            const std::vector<std::string> officialColors = ColorListFromLibrary(item);
-                            int officialMode = 0;
-                            if (officialColors.size() > 1)
-                                officialMode = FilamentColorUtils::NormalizeColourMode(item.mode);
-                            return officialColors == colorData.colors && officialMode == normalizedMode;
+                            return item.colorData.Matches(normalizedColor);
                         });
 }
 
 /**
  * @brief Gets the preview name for the current selected color data.
  */
-std::string GetSelectionDisplayName(const FilamentMaterial& material, const FilamentColorData& colorData,
+std::string GetSelectionDisplayName(const FilamentColorInfo& filament, const FilamentColor& colorData,
                                     const std::string& selectedSku, const std::string& languageCode)
 {
     if (!selectedSku.empty())
     {
-        std::vector<FilamentColor>::const_iterator colorIt = std::find_if(material.colors.begin(), material.colors.end(),
-                                                        [&selectedSku](const FilamentColor& color)
-                                                        {
-                                                            return color.sku == selectedSku;
-                                                        });
-        if (colorIt != material.colors.end())
+        std::vector<FilamentColorItem>::const_iterator colorIt =
+            std::find_if(filament.colors.begin(), filament.colors.end(),
+                         [&selectedSku](const FilamentColorItem& colorItem)
+                         {
+                             return colorItem.sku == selectedSku;
+                         });
+        if (colorIt != filament.colors.end())
         {
             const std::vector<std::string> officialColors = ColorListFromLibrary(*colorIt);
             const std::string name = GetLocalizedColorName(*colorIt, languageCode, officialColors);
@@ -233,7 +168,7 @@ std::string GetSelectionDisplayName(const FilamentMaterial& material, const Fila
 
     if (colorData.colors.size() > 1)
         return _L("Multiple Color").ToStdString(wxConvUTF8);
-    return PrimaryColorFromData(colorData);
+    return colorData.PrimaryColor("#FFFFFF");
 }
 
 /**
@@ -241,17 +176,13 @@ std::string GetSelectionDisplayName(const FilamentMaterial& material, const Fila
  */
 SortHsv MakeSortHsvFromHex(const std::string& color)
 {
-    wxColour wx_color(color);
-    if (!wx_color.IsOk())
+    wxColour wxColor(color);
+    if (!wxColor.IsOk())
         return SortHsv();
 
     SortHsv hsv;
-    RGB2HSV(static_cast<float>(wx_color.Red()) / 255.0f,
-        static_cast<float>(wx_color.Green()) / 255.0f,
-        static_cast<float>(wx_color.Blue()) / 255.0f,
-        &hsv.h,
-        &hsv.s,
-        &hsv.v);
+    RGB2HSV(static_cast<float>(wxColor.Red()) / 255.0f, static_cast<float>(wxColor.Green()) / 255.0f,
+            static_cast<float>(wxColor.Blue()) / 255.0f, &hsv.h, &hsv.s, &hsv.v);
     if (hsv.h < 0.0f)
         hsv.h += 360.0f;
     return hsv;
@@ -260,11 +191,11 @@ SortHsv MakeSortHsvFromHex(const std::string& color)
 /**
  * @brief Gets the display type order used by the color grid.
  */
-int GetColorTypeOrder(const std::vector<std::string>& colors, int mode)
+int GetColorTypeOrder(const std::vector<std::string>& colors, FilamentColorMode mode)
 {
     if (colors.size() <= 1)
         return 0;
-    return FilamentColorUtils::NormalizeColourMode(mode) == 1 ? 2 : 1;
+    return mode == FilamentColorMode::Gradient ? 2 : 1;
 }
 
 /**
@@ -284,26 +215,26 @@ int CompareHsv(const SortHsv& left, const SortHsv& right)
 /**
  * @brief Gets a language-specific name used as the final sort tie breaker.
  */
-std::string GetColorNameForSort(const FilamentColor& color, const std::string& language_code)
+std::string GetColorNameForSort(const FilamentColorItem& colorItem, const std::string& languageCode)
 {
-    std::unordered_map<std::string, std::string>::const_iterator name = color.colorNames.find(language_code);
-    return name != color.colorNames.end() ? name->second : std::string();
+    std::unordered_map<std::string, std::string>::const_iterator name = colorItem.colorNames.find(languageCode);
+    return name != colorItem.colorNames.end() ? name->second : std::string();
 }
 
 /**
  * @brief Builds a lightweight, precomputed sort key.
  */
-ColorSortItem MakeColorSortItem(const FilamentColor& color)
+ColorSortItem MakeColorSortItem(const FilamentColorItem& colorItem)
 {
     ColorSortItem item;
-    item.color = &color;
-    item.colors = ColorListFromLibrary(color);
-    item.typeOrder = GetColorTypeOrder(item.colors, color.mode);
+    item.colorItem = &colorItem;
+    item.colors = ColorListFromLibrary(colorItem);
+    item.typeOrder = GetColorTypeOrder(item.colors, colorItem.colorData.NormalizedMode());
     item.hsvColors.reserve(item.colors.size());
-    for (const std::string& hex_color : item.colors)
-        item.hsvColors.emplace_back(MakeSortHsvFromHex(hex_color));
-    item.enName = GetColorNameForSort(color, "en");
-    item.zhName = GetColorNameForSort(color, "zh_CN");
+    for (const std::string& hexColor : item.colors)
+        item.hsvColors.emplace_back(MakeSortHsvFromHex(hexColor));
+    item.enName = GetColorNameForSort(colorItem, "en");
+    item.zhName = GetColorNameForSort(colorItem, "zh_CN");
     return item;
 }
 
@@ -312,9 +243,9 @@ ColorSortItem MakeColorSortItem(const FilamentColor& color)
  */
 bool ColorSortItemLess(const ColorSortItem& left, const ColorSortItem& right)
 {
-    if (left.color == nullptr)
+    if (left.colorItem == nullptr)
         return false;
-    if (right.color == nullptr)
+    if (right.colorItem == nullptr)
         return true;
 
     if (left.typeOrder != right.typeOrder)
@@ -330,8 +261,8 @@ bool ColorSortItemLess(const ColorSortItem& left, const ColorSortItem& right)
 
     if (left.colors.size() != right.colors.size())
         return left.colors.size() < right.colors.size();
-    if (left.color->sku != right.color->sku)
-        return left.color->sku < right.color->sku;
+    if (left.colorItem->sku != right.colorItem->sku)
+        return left.colorItem->sku < right.colorItem->sku;
     if (left.enName != right.enName)
         return left.enName < right.enName;
     return left.zhName < right.zhName;
@@ -340,12 +271,12 @@ bool ColorSortItemLess(const ColorSortItem& left, const ColorSortItem& right)
 /**
  * @brief Builds sorted lightweight items without copying full color records.
  */
-std::vector<ColorSortItem> BuildSortedColorItems(const std::vector<FilamentColor>& colors)
+std::vector<ColorSortItem> BuildSortedColorItems(const std::vector<FilamentColorItem>& colorItems)
 {
     std::vector<ColorSortItem> items;
-    items.reserve(colors.size());
-    for (const FilamentColor& color : colors)
-        items.emplace_back(MakeColorSortItem(color));
+    items.reserve(colorItems.size());
+    for (const FilamentColorItem& colorItem : colorItems)
+        items.emplace_back(MakeColorSortItem(colorItem));
 
     std::stable_sort(items.begin(), items.end(), ColorSortItemLess);
     return items;
@@ -359,7 +290,7 @@ wxColour FilamentColorLightBorderColor()
     return StateColor::darkModeColorFor(wxColour(180, 180, 180));
 }
 
-wxBitmap MakePreviewBitmap(const FilamentColorData& colorData, int size);
+wxBitmap MakePreviewBitmap(const FilamentColor& colorData, int size);
 
 wxFont DialogFont(wxFontWeight weight)
 {
@@ -374,20 +305,18 @@ wxFont DialogFont(wxFontWeight weight)
 class FilamentColorSwatch : public wxPanel
 {
 public:
-    FilamentColorSwatch(wxWindow* parent,
-        const FilamentColor& color,
-        const std::string& language_code,
-        const wxSize& size)
+    FilamentColorSwatch(wxWindow* parent, const FilamentColorItem& colorItem,
+                        const std::string& languageCode, const wxSize& size)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, size)
-        , _color(&color)
-        , _languageCode(language_code)
+        , _colorItem(&colorItem)
+        , _languageCode(languageCode)
     {
         SetMinSize(size);
         SetMaxSize(size);
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         SetCursor(wxCursor(wxCURSOR_HAND));
-        const std::vector<std::string> colors = ColorListFromLibrary(color);
-        const std::string tooltip = GetLocalizedColorName(color, language_code, colors);
+        const std::vector<std::string> colors = ColorListFromLibrary(colorItem);
+        const std::string tooltip = GetLocalizedColorName(colorItem, languageCode, colors);
         if (!tooltip.empty())
             SetToolTip(FromStdString(tooltip));
         Bind(wxEVT_PAINT, &FilamentColorSwatch::OnPaint, this);
@@ -412,7 +341,7 @@ private:
         dc.SetBackground(wxBrush(StateColor::darkModeColorFor(wxColour("#FFFFFF"))));
         dc.Clear();
 
-        if (_color == nullptr)
+        if (_colorItem == nullptr)
             return;
 
         const int selectedBorderWidth = std::max(FromDIP(1), 2);
@@ -421,12 +350,15 @@ private:
         const int fillWidth = std::max(1, size.GetWidth() - fillInset * 2);
         const int fillHeight = std::max(1, size.GetHeight() - fillInset * 2);
         const wxRect fillRect(fillInset, fillInset, fillWidth, fillHeight);
-        FilamentColorData colorData;
-        if (!MakeFilamentColorData(*_color, colorData))
+        FilamentColor colorData;
+        if (!MakeFilamentColor(*_colorItem, colorData))
             return;
 
-        wxBitmap* bitmap = FilamentColorUtils::GetFilamentColorIcon(colorData.colors, colorData.mode, "", fillRect.GetWidth(),
-                                                                    fillRect.GetHeight(), FilamentColorLightBorderColor());
+        const int bitmapWidth = fillRect.GetWidth();
+        const int bitmapHeight = fillRect.GetHeight();
+        const wxColour borderColor = FilamentColorLightBorderColor();
+        wxBitmap* bitmap = FilamentColorUtils::GetFilamentColorIcon(colorData.colors, colorData.NormalizedMode(), "",
+                                                                    bitmapWidth, bitmapHeight, borderColor);
         if (bitmap != nullptr)
             dc.DrawBitmap(*bitmap, fillRect.GetLeft(), fillRect.GetTop(), true);
 
@@ -437,13 +369,14 @@ private:
             dc.SetBrush(wxBrush(wxColour("#019687")));
             dc.DrawRectangle(0, 0, size.GetWidth(), selectedBorderWidth);
             dc.DrawRectangle(0, selectedBorderWidth, selectedBorderWidth, middleHeight);
-            dc.DrawRectangle(size.GetWidth() - selectedBorderWidth, selectedBorderWidth, selectedBorderWidth, middleHeight);
+            dc.DrawRectangle(size.GetWidth() - selectedBorderWidth, selectedBorderWidth,
+                             selectedBorderWidth, middleHeight);
             dc.DrawRectangle(0, size.GetHeight() - selectedBorderWidth, size.GetWidth(), selectedBorderWidth);
         }
     }
 
 private:
-    const FilamentColor* _color { nullptr };
+    const FilamentColorItem* _colorItem { nullptr };
     std::string _languageCode;
     bool _selected { false };
 };
@@ -454,8 +387,9 @@ private:
 class MoreColorPanel : public wxPanel
 {
 public:
-    MoreColorPanel(wxWindow* parent, const wxSize& size) : wxPanel(parent, wxID_ANY, wxDefaultPosition, size)
-                                                                   , _icon(this, "filament_color_more", 16)
+    MoreColorPanel(wxWindow* parent, const wxSize& size)
+        : wxPanel(parent, wxID_ANY, wxDefaultPosition, size)
+        , _icon(this, "filament_color_more", 16)
     {
         SetMinSize(size);
         SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -493,8 +427,10 @@ private:
         else
         {
             dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#8A8A8A")), FromDIP(2)));
-            dc.DrawLine(iconX + iconWidth / 2, iconY + FromDIP(4), iconX + iconWidth / 2, iconY + iconHeight - FromDIP(4));
-            dc.DrawLine(iconX + FromDIP(4), iconY + iconHeight / 2, iconX + iconWidth - FromDIP(4), iconY + iconHeight / 2);
+            dc.DrawLine(iconX + iconWidth / 2, iconY + FromDIP(4),
+                        iconX + iconWidth / 2, iconY + iconHeight - FromDIP(4));
+            dc.DrawLine(iconX + FromDIP(4), iconY + iconHeight / 2,
+                        iconX + iconWidth - FromDIP(4), iconY + iconHeight / 2);
         }
         dc.DrawText(label, textX, textY);
     }
@@ -503,7 +439,7 @@ private:
     ScalableBitmap _icon;
 };
 
-wxBitmap MakePreviewBitmap(const FilamentColorData& colorData, int size)
+wxBitmap MakePreviewBitmap(const FilamentColor& colorData, int size)
 {
     size = std::max(1, size);
     wxBitmap output(size, size);
@@ -512,8 +448,10 @@ wxBitmap MakePreviewBitmap(const FilamentColorData& colorData, int size)
     dc.SetBackground(wxBrush(StateColor::darkModeColorFor(wxColour("#FFFFFF"))));
     dc.Clear();
 
-    wxBitmap* bitmap = FilamentColorUtils::GetFilamentColorIcon(colorData.colors, colorData.mode, "", size, size,
-                                                                FilamentColorLightBorderColor());
+    const wxColour borderColor = FilamentColorLightBorderColor();
+    const FilamentColorMode colorMode = colorData.NormalizedMode();
+    wxBitmap* bitmap = FilamentColorUtils::GetFilamentColorIcon(colorData.colors, colorMode, "",
+                                                                size, size, borderColor);
     if (bitmap != nullptr)
         dc.DrawBitmap(*bitmap, 0, 0, true);
 
@@ -572,16 +510,18 @@ wxRect WindowClientScreenRect(wxWindow* window)
 
 } // namespace
 
-FilamentColorDialog::FilamentColorDialog(wxWindow* parent, const FilamentMaterial& material,
-                                         const FilamentColorData& currentColor)
+FilamentColorDialog::FilamentColorDialog(wxWindow* parent, const FilamentColorInfo& filament,
+                                         const FilamentColor& currentColor)
     : DPIDialog(parent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxFRAME_SHAPED)
-    , _material(material)
+    , _filament(filament)
     , _languageCode(GetLanguageCode())
 {
-    const FilamentColorData normalizedCurrent = NormalizeFilamentColorData(currentColor, "#FFFFFF");
-    std::vector<FilamentColor>::const_iterator currentColorIt = FindColorBySavedColors(_material, normalizedCurrent);
+    const FilamentColor normalizedCurrent =
+        FilamentColor::FromColors(currentColor.colors, currentColor.mode, "#FFFFFF");
+    std::vector<FilamentColorItem>::const_iterator currentColorIt =
+        FindColorBySavedColors(_filament, normalizedCurrent);
 
-    if (currentColorIt != _material.colors.end() && MakeFilamentColorData(*currentColorIt, _selection))
+    if (currentColorIt != _filament.colors.end() && MakeFilamentColor(*currentColorIt, _selection))
     {
         _selectedSku = currentColorIt->sku;
         _highlightSku = currentColorIt->sku;
@@ -652,25 +592,27 @@ void FilamentColorDialog::BuildUi()
     const int swatchHGap = FromDIP(5);
     const int swatchVGap = 0;
     wxGridSizer* swatchSizer = new wxGridSizer(0, swatchColumns, swatchVGap, swatchHGap);
-    const std::vector<ColorSortItem> sortedItems = BuildSortedColorItems(_material.colors);
+    const std::vector<ColorSortItem> sortedItems = BuildSortedColorItems(_filament.colors);
     for (const ColorSortItem& item : sortedItems)
     {
-        if (item.color == nullptr)
+        if (item.colorItem == nullptr)
             continue;
 
-        const FilamentColor* color = item.color;
-        FilamentColorSwatch* swatch = new FilamentColorSwatch(swatchPanel, *color, _languageCode, swatchSize);
-        swatch->Bind(wxEVT_LEFT_UP, [this, color](wxMouseEvent&)
+        const FilamentColorItem* colorItem = item.colorItem;
+        FilamentColorSwatch* swatch = new FilamentColorSwatch(swatchPanel, *colorItem, _languageCode, swatchSize);
+        swatch->Bind(wxEVT_LEFT_UP, [this, colorItem](wxMouseEvent&)
         {
-            if (color != nullptr)
-                SelectFilamentColor(*color);
+            if (colorItem != nullptr)
+                SelectFilamentColor(*colorItem);
         });
         swatchSizer->Add(swatch, 0);
-        _swatchBySku.emplace_back(swatch, color->sku);
+        _swatchBySku.emplace_back(swatch, colorItem->sku);
     }
     const size_t swatchCount = _swatchBySku.size();
     const size_t swatchColumnCount = static_cast<size_t>(swatchColumns);
-    const int swatchRows = swatchCount == 0 ? 0 : static_cast<int>((swatchCount + swatchColumnCount - 1) / swatchColumnCount);
+    int swatchRows = 0;
+    if (swatchCount > 0)
+        swatchRows = static_cast<int>((swatchCount + swatchColumnCount - 1) / swatchColumnCount);
     const int swatchVisibleRows = std::max(2, swatchRows);
     const int swatchPanelHeight = swatchVisibleRows * swatchSize.GetHeight() + (swatchVisibleRows - 1) * swatchVGap;
     swatchPanel->SetMinSize(wxSize(contentWidth, swatchPanelHeight));
@@ -749,15 +691,15 @@ void FilamentColorDialog::BuildUi()
     PlaceNearFilamentPanel();
 }
 
-void FilamentColorDialog::SelectFilamentColor(const FilamentColor& color)
+void FilamentColorDialog::SelectFilamentColor(const FilamentColorItem& colorItem)
 {
-    FilamentColorData colorData;
-    if (!MakeFilamentColorData(color, colorData))
+    FilamentColor colorData;
+    if (!MakeFilamentColor(colorItem, colorData))
         return;
 
     _selection = colorData;
-    _selectedSku = color.sku;
-    _highlightSku = color.sku;
+    _selectedSku = colorItem.sku;
+    _highlightSku = colorItem.sku;
     UpdatePreview();
     UpdateSwatchSelection();
 }
@@ -765,7 +707,7 @@ void FilamentColorDialog::SelectFilamentColor(const FilamentColor& color)
 void FilamentColorDialog::SelectCustomColor(const std::string& color)
 {
     const std::string normalized = FilamentColorUtils::NormalizeHexColor(color, "#FFFFFF");
-    _selection = MakeCustomColorData(normalized, 0, normalized);
+    _selection = FilamentColor::FromMultiColors(normalized, FilamentColorMode::Segment, normalized);
     _selectedSku.clear();
     _highlightSku.clear();
     UpdatePreview();
@@ -779,7 +721,7 @@ void FilamentColorDialog::UpdatePreview()
 
     _previewBitmap->SetBitmap(MakePreviewBitmap(_selection, FromDIP(60)));
 
-    const wxString name = FromStdString(GetSelectionDisplayName(_material, _selection, _selectedSku, _languageCode));
+    const wxString name = FromStdString(GetSelectionDisplayName(_filament, _selection, _selectedSku, _languageCode));
     _nameLabel->SetLabel(name);
     _skuLabel->SetLabel(_selectedSku.empty() ? wxEmptyString : FromStdString("sku " + _selectedSku));
     _skuLabel->Show(!_selectedSku.empty());
@@ -938,7 +880,7 @@ void FilamentColorDialog::OpenMoreColorDialog()
     wxColourData data;
     data.SetChooseFull(true);
     data.SetChooseAlpha(false);
-    data.SetColour(wxColour(PrimaryColorFromData(_selection)));
+    data.SetColour(wxColour(_selection.PrimaryColor("#FFFFFF")));
 
     std::vector<std::string> custom_colors;
     if (wxGetApp().app_config != nullptr)

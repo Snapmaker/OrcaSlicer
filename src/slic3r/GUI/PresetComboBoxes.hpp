@@ -6,6 +6,7 @@
 #include <wx/gdicmn.h>
 #include <wx/clrpicker.h>
 
+#include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/Preset.hpp"
 #include "wxExtensions.hpp"
 #include "BitmapComboBox.hpp"
@@ -25,7 +26,6 @@ namespace Slic3r {
 namespace GUI {
 
 class BitmapCache;
-struct FilamentColorData;
 
 // ---------------------------------
 // ***  PresetComboBox  ***
@@ -253,7 +253,7 @@ private:
     wxRect get_dropdown_rect() const;
 
     void SelectLegacyFilamentColor();
-    void ApplyFilamentColor(const FilamentColorData& colorData);
+    void ApplyFilamentColor(const FilamentColor& colorData);
     std::string CurrentFilamentPresetName() const;
     std::string CurrentFilamentId() const;
 };

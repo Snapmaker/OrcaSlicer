@@ -5494,7 +5494,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing z-gap and save print time. "
                      "This option will be invalid when the prime tower is enabled.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("support_threshold_angle", coInt);
     def->label = L("Threshold angle");
@@ -6006,13 +6006,8 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(30.0));
     
     def = this->add("wipe_tower_max_purge_speed", coFloat);
-    def->label = L("Maximum wipe tower print speed");
-    def->tooltip = L("The maximum print speed when purging in the wipe tower and printing the wipe tower sparse layers. "
-                     "When purging, if the sparse infill speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n\n"
-                     "When printing the sparse layers, if the internal perimeter speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n\n"
-                     "Increasing this speed may affect the tower's stability as well as increase the force with which the nozzle collides with any blobs that may have formed on the wipe tower.\n\n"
-                     "Before increasing this parameter beyond the default of 90 mm/s, make sure your printer can reliably bridge at the increased speeds and that ooze when tool changing is well controlled.\n\n"
-                     "For the wipe tower external perimeters the internal perimeter speed is used regardless of this setting.");
+    def->label = L("Maximum wipe tower print speed of out wall");
+    def->tooltip = L("Maximum wipe tower print speed of out wall.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->mode = comAdvanced;
     def->min = 10;
@@ -6057,7 +6052,6 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
-
     def = this->add("wipe_tower_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Wipe tower");
@@ -6067,6 +6061,14 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
+
+    def          = this->add("wipe_tower_wall_gap", coBool);
+    def->label   = L("Wall gap");
+    def->tooltip = L("Create small gaps in the wipe tower outer wall at tool change entry points. "
+                     "The first extrusion path after a filament change will enter through the gap, "
+                     "leaving the filament blob on the gap edge instead of on the outer wall surface.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("wiping_volumes_extruders", coFloats);
     def->label = L("Purging volumes - load/unload volumes");
@@ -6144,6 +6146,14 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = max_temp;
     def->set_default_value(new ConfigOptionInts{0});
+
+    def = this->add("filament_tower_ironing_area", coFloats);
+    def->label = L("Tower ironing area");
+    def->tooltip = L("Ironing area for prime tower interface layer (where different materials meet).");
+    def->sidetext = L("mm²");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats{4.});
 
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");

@@ -767,7 +767,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "initial_layer_speed"
             || opt_key == "initial_layer_travel_speed"
             || opt_key == "slow_down_layers"
-            || opt_key == "idle_temperature"
+            || opt_key == "idle_temperature" 
+            || opt_key == "filament_tower_ironing_area"
             || opt_key == "wipe_tower_cone_angle"
             || opt_key == "wipe_tower_extra_spacing"
             || opt_key == "wipe_tower_max_purge_speed"
@@ -775,6 +776,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_extra_rib_length"
             || opt_key == "wipe_tower_rib_width"
             || opt_key == "wipe_tower_fillet_wall"
+            || opt_key == "wipe_tower_wall_gap"
             || opt_key == "wipe_tower_filament"
             || opt_key == "wiping_volumes_extruders"
             || opt_key == "dithering_local_z_infill"
@@ -3445,6 +3447,7 @@ void Print::_make_wipe_tower()
                                                   m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
                                                   config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
                                                   {scale_(origin.x()), scale_(origin.y())});
+        m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     }
 }
 
@@ -4909,6 +4912,42 @@ PrintRegion *PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_reg
 int PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region_id(const LayerRangeRegions &layer_range) const
 {
     return this->parent_print_object_region(layer_range)->print_object_region_id();
+}
+
+ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const 
+{ 
+    ExtrusionLayers wtels;
+    wtels.type = ExtrusionLayersType::WIPE_TOWER;
+    std::vector<float> layer_heights;
+    layer_heights.reserve(outer_wall.size());
+    auto pre = outer_wall.begin();
+    for (auto it = outer_wall.begin(); it != outer_wall.end(); ++it) {
+        if (it == outer_wall.begin())
+            layer_heights.push_back(it->first);
+        else {
+            layer_heights.push_back(it->first - pre->first);
+            ++pre;
+        }
+    }
+    Point trans = {scale_(pos.x()), scale_(pos.y())};
+    for (auto it = outer_wall.begin(); it != outer_wall.end(); ++it) {
+        int index = std::distance(outer_wall.begin(), it);
+        ExtrusionLayer el;
+        ExtrusionPaths paths;
+        paths.reserve(it->second.size());
+        for (auto& polyline : it->second) {
+            ExtrusionPath path(ExtrusionRole::erWipeTower, 0.0, 0.0, layer_heights[index]);
+            path.polyline = polyline;
+            for (auto& p : path.polyline.points)
+                p += trans;
+            paths.push_back(path);
+        }
+        el.paths = std::move(paths);
+        el.bottom_z = it->first - layer_heights[index];
+        el.layer = nullptr;
+        wtels.push_back(el);
+    }
+    return wtels;
 }
 
 } // namespace Slic3r

@@ -10,6 +10,10 @@ on:
         description: 'Only build dependencies (bypasses caching)'
         type: boolean
         default: false
+      force-build:
+        description: 'Force full rebuild (bypass dependency cache)'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

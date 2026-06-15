@@ -557,12 +557,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         toggle_field(el, have_perimeters);
 
     bool have_infill = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0;
-    const bool show_infill_filament_override_toggle = !is_global_config && have_infill && !bSEMM;
     // sparse_infill_filament uses the same logic as in Print::extruders()
     for (auto el : { "sparse_infill_pattern", "infill_combination",
         "minimum_sparse_infill_area", "infill_anchor_max","infill_shift_step","sparse_infill_rotate_template","symmetric_infill_y_axis"})
         toggle_line(el, have_infill);
-    toggle_line("enable_infill_filament_override", show_infill_filament_override_toggle);
 
     bool have_combined_infill = config->opt_bool("infill_combination") && have_infill;
     toggle_line("infill_combination_max_layer_height", have_combined_infill);
@@ -765,15 +763,9 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : {"wall_filament", "sparse_infill_filament", "solid_infill_filament", "wipe_tower_filament"})
         toggle_line(el, !bSEMM);
 
-    const bool show_sparse_infill_filament =
-        show_infill_filament_override_toggle && config->opt_bool("enable_infill_filament_override");
-    toggle_line("infill_filament_use_base_first_layers", show_sparse_infill_filament);
-    toggle_line("infill_filament_use_base_last_layers", show_sparse_infill_filament);
-    toggle_line("sparse_infill_filament", show_sparse_infill_filament);
-
     bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
 
-    for (auto el : {"wipe_tower_rotation_angle", "wipe_tower_cone_angle",
+    for (auto el : {"wipe_tower_cone_angle",
                     "wipe_tower_extra_spacing", "wipe_tower_max_purge_speed",
                     "wipe_tower_wall_type",
                     "wipe_tower_extra_rib_length","wipe_tower_rib_width","wipe_tower_fillet_wall",
@@ -802,9 +794,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
 
     for (auto el : {"flush_into_infill", "flush_into_support", "flush_into_objects"})
         toggle_field(el, have_prime_tower);
-
-    // BBS: MusangKing - Hide "Independent support layer height" option
-    toggle_line("independent_support_layer_height", have_support_material && !have_prime_tower);
 
     bool have_avoid_crossing_perimeters = config->opt_bool("reduce_crossing_wall");
     toggle_line("max_travel_detour_distance", have_avoid_crossing_perimeters);

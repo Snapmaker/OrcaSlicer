@@ -324,7 +324,8 @@ std::string extract_base_filament_name(const std::string& full_name)
 // e.g. "Generic PA-CF @U1 0.4 nozzle".  Split by '@' to extract the
 // base name, trim, and compare exactly — so "Generic PA" does NOT
 // accidentally match "Generic PA-CF".
-Preset* resolve_filament_preset(PresetBundle* preset_bundle, const std::string& filament_name)
+Preset* resolve_filament_preset(PresetBundle* preset_bundle, 
+    const std::string& filament_name, const std::string& filament_type)
 {
     if (!preset_bundle || filament_name.empty())
         return nullptr;
@@ -335,12 +336,28 @@ Preset* resolve_filament_preset(PresetBundle* preset_bundle, const std::string& 
     };
 
     for (auto& preset : preset_bundle->filaments) {
-        if (!preset.is_compatible)
+        if (!preset.is_compatible || !preset.is_system)
             continue;
 
         std::string base = extract_base_filament_name(preset.name);
-        if (to_lower(base) == to_lower(filament_name))
+        if (to_lower(base) == to_lower(filament_name)) {
             return &preset;
+        }
+    }
+
+    const std::string generic_prefix = "Generic ";
+    std::string generic_base = generic_prefix + filament_type;
+    for (auto& preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || !preset.is_system)
+            continue;
+
+        std::string base = extract_base_filament_name(preset.name);
+        std::string type = preset.config.opt_string("filament_type", static_cast<unsigned int>(0));
+
+        if ((to_lower(type) == to_lower(filament_type)) && 
+                (to_lower(base) == to_lower(generic_base))) {
+            return &preset;
+        }
     }
 
     return nullptr;
@@ -8077,7 +8094,7 @@ void Sidebar::show_sync_filament_dialog()
 
         ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         for (size_t i = 0; i < effective_size; ++i) {
-            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name);
+            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name, syncedData[i].m_type);
             if (matched)
                 preset_bundle->set_filament_preset(i, matched->name);
             if (co && i < co->values.size()) {
@@ -8132,7 +8149,7 @@ void Sidebar::show_sync_filament_dialog()
         ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
 
         for (size_t i = 0; i < effective_size; ++i) {
-            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name);
+            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name, syncedData[i].m_type);
             if (matched) {
                 preset_bundle->set_filament_preset(i, matched->name);
             }

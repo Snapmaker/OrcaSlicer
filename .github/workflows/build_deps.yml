@@ -19,14 +19,11 @@ on:
       build-deps-only:
         required: false
         type: boolean
-      force-build:
-        required: false
-        type: boolean
 
 jobs:
   build_deps:
     name: Build Deps
-    if: inputs.build-deps-only || inputs.force-build || inputs.valid-cache != true
+    if: inputs.build-deps-only || inputs.valid-cache != true
     runs-on: ${{ inputs.os }}
     env:
       date:
@@ -44,16 +41,13 @@ jobs:
           path: ${{ inputs.cache-path }}
           key: ${{ inputs.cache-key }}
 
-      - name: setup dev on Windows
-        if: inputs.os == 'windows-2022'
-        uses: microsoft/setup-msbuild@v2
-        with:
-          vs-version: '17.0'
-          msbuild-architecture: x64
-
       - uses: lukka/get-cmake@latest
         with:
           cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
+
+      - name: setup dev on Windows
+        if: inputs.os == 'windows-2022'
+        uses: microsoft/setup-msbuild@v2
 
       - name: Get the date on Ubuntu and macOS
         if: inputs.os != 'windows-2022'
@@ -145,7 +139,7 @@ jobs:
   build_orca:
     name: Build Snapmaker_Orca
     needs: [build_deps]
-    if: ${{ !cancelled() && !inputs.build-deps-only && inputs.force-build || (inputs.valid-cache == true && needs.build_deps.result == 'skipped') || (inputs.valid-cache != true && success()) }}
+    if: ${{ !cancelled() && (inputs.valid-cache == true && needs.build_deps.result == 'skipped') || (inputs.valid-cache != true && success()) }}
     uses: ./.github/workflows/build_orca.yml
     with:
       cache-key: ${{ inputs.cache-key }}

@@ -256,9 +256,6 @@ jobs:
       - name: setup MSVC
         if: inputs.os == 'windows-2022'
         uses: microsoft/setup-msbuild@v2
-        with:
-          vs-version: '17.0'
-          msbuild-architecture: x64
 
       - name: Install nsis
         if: inputs.os == 'windows-2022'

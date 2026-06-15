@@ -58,7 +58,7 @@ void startup_profile_log(const std::string& message)
         BOOST_LOG_TRIVIAL(warning) << "[StartupProfile] " << message;
 }
 
-static std::vector<std::string> SplitPrinterSetting(AppConfig &config, const std::string &printerName, const std::string &key)
+std::vector<std::string> SplitPrinterSetting(AppConfig &config, const std::string &printerName, const std::string &key)
 {
     std::vector<std::string> values;
     const std::string setting = config.get_printer_setting(printerName, key);
@@ -67,20 +67,22 @@ static std::vector<std::string> SplitPrinterSetting(AppConfig &config, const std
     return values;
 }
 
-static std::vector<int> LoadFilamentColourModes(AppConfig &config, const std::string &printerName)
+std::vector<FilamentColorMode> LoadFilamentColourModes(AppConfig &config, const std::string &printerName)
 {
-    std::vector<int> modes;
-    std::vector<std::string> modeValues = SplitPrinterSetting(config, printerName, "filament_colour_mode");
+    std::vector<FilamentColorMode> modes;
+    const std::vector<std::string> modeValues = SplitPrinterSetting(config, printerName, "filament_colour_mode");
     modes.reserve(modeValues.size());
     for (const std::string &modeValue : modeValues)
-        modes.emplace_back(std::atoi(modeValue.c_str()));
+    {
+        const bool isGradient = modeValue == std::to_string(FilamentColorModeToConfig(FilamentColorMode::Gradient));
+        modes.emplace_back(isGradient ? FilamentColorMode::Gradient : FilamentColorMode::Segment);
+    }
     return modes;
 }
 
-static std::vector<FilamentColor> BuildFilamentColors(const std::vector<std::string>& colors,
-                                                      const std::vector<std::string>& multiColors,
-                                                      const std::vector<int>& modes,
-                                                      size_t targetCount)
+std::vector<FilamentColor> BuildFilamentColors(const std::vector<std::string>& colors,
+                                               const std::vector<std::string>& multiColors,
+                                               const std::vector<FilamentColorMode>& modes, size_t targetCount)
 {
     std::vector<FilamentColor> filamentColors;
     filamentColors.reserve(targetCount);
@@ -91,22 +93,22 @@ static std::vector<FilamentColor> BuildFilamentColors(const std::vector<std::str
         const std::string multiColor = i < multiColors.size() ? multiColors[i] : std::string();
         FilamentColorMode colorMode = FilamentColorMode::Segment;
         if (i < modes.size())
-            colorMode = FilamentColorModeFromConfig(modes[i]);
+            colorMode = modes[i];
         filamentColors.emplace_back(FilamentColor::FromMultiColors(multiColor, colorMode, fallbackColor));
     }
 
     return filamentColors;
 }
 
-static std::vector<FilamentColor> LoadFilamentColors(AppConfig &config, const std::string &printerName, size_t targetCount)
+std::vector<FilamentColor> LoadFilamentColors(AppConfig &config, const std::string &printerName, size_t targetCount)
 {
     const std::vector<std::string> colors = SplitPrinterSetting(config, printerName, "filament_colors");
     const std::vector<std::string> multiColors = SplitPrinterSetting(config, printerName, "filament_multi_colors");
-    const std::vector<int> modes = LoadFilamentColourModes(config, printerName);
+    const std::vector<FilamentColorMode> modes = LoadFilamentColourModes(config, printerName);
     return BuildFilamentColors(colors, multiColors, modes, targetCount);
 }
 
-static void EnsureFilamentColorFieldsAligned(DynamicPrintConfig &config)
+void EnsureFilamentColorFieldsAligned(DynamicPrintConfig &config)
 {
     ConfigOptionStrings *filamentColor = config.option<ConfigOptionStrings>("filament_colour");
     if (filamentColor == nullptr)
@@ -122,18 +124,18 @@ static void EnsureFilamentColorFieldsAligned(DynamicPrintConfig &config)
 
     for (size_t i = 0; i < targetCount; ++i)
     {
-        if (modes->values[i] != 0 && modes->values[i] != 1)
-            modes->values[i] = 0;
+        const FilamentColorMode colorMode = FilamentColorModeFromConfig(modes->values[i]);
+        modes->values[i] = FilamentColorModeToConfig(colorMode);
         const bool singleOrEmptyMulti = multiColors->values[i].empty() ||
                                         multiColors->values[i].find('|') == std::string::npos;
         const bool shouldRefreshMulti = i >= oldMultiCount || multiColors->values[i].empty() ||
-                                        (modes->values[i] == 0 && singleOrEmptyMulti);
+                                        (colorMode == FilamentColorMode::Segment && singleOrEmptyMulti);
         if (shouldRefreshMulti)
             multiColors->values[i] = filamentColor->values[i];
     }
 }
 
-static void ApplyFilamentColors(DynamicPrintConfig &config, const std::vector<FilamentColor>& filamentColors)
+void ApplyFilamentColors(DynamicPrintConfig &config, const std::vector<FilamentColor>& filamentColors)
 {
     std::vector<std::string> colors;
     std::vector<std::string> multiColors;
@@ -155,21 +157,21 @@ static void ApplyFilamentColors(DynamicPrintConfig &config, const std::vector<Fi
     EnsureFilamentColorFieldsAligned(config);
 }
 
-static void EraseStringOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+void EraseStringOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
 {
     ConfigOptionStrings *option = config.option<ConfigOptionStrings>(key, true);
     if (option != nullptr && option->values.size() > index)
         option->values.erase(option->values.begin() + index);
 }
 
-static void EraseIntOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+void EraseIntOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
 {
     ConfigOptionInts *option = config.option<ConfigOptionInts>(key, true);
     if (option != nullptr && option->values.size() > index)
         option->values.erase(option->values.begin() + index);
 }
 
-static void EraseFilamentColorFields(DynamicPrintConfig &config, size_t index)
+void EraseFilamentColorFields(DynamicPrintConfig &config, size_t index)
 {
     EraseStringOptionAt(config, "filament_multi_colors", index);
     EraseIntOptionAt(config, "filament_colour_mode", index);
@@ -2064,11 +2066,15 @@ void PresetBundle::export_selections(AppConfig &config)
     CNumericLocalesSetter locales_setter;
     std::vector<std::string> projectColors = project_config.option<ConfigOptionStrings>("filament_colour")->values;
     std::vector<std::string> projectMultiColors;
-    std::vector<int> projectModes;
+    std::vector<FilamentColorMode> projectModes;
     if (ConfigOptionStrings *multiColors = project_config.option<ConfigOptionStrings>("filament_multi_colors"))
         projectMultiColors = multiColors->values;
     if (ConfigOptionInts *modes = project_config.option<ConfigOptionInts>("filament_colour_mode"))
-        projectModes = modes->values;
+    {
+        projectModes.reserve(modes->values.size());
+        for (const int modeValue : modes->values)
+            projectModes.emplace_back(FilamentColorModeFromConfig(modeValue));
+    }
 
     const std::vector<FilamentColor> projectFilamentColors =
         BuildFilamentColors(projectColors, projectMultiColors, projectModes, filament_presets.size());

@@ -511,13 +511,13 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         const ImVec2 label_size = ImGui::CalcTextSize(item_text.c_str(), NULL, true);
 
         const ImVec2 button_size(max_filament_label_size.x + m_imgui->scaled(0.5f), 0.f);
-        const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr ? &wxGetApp().preset_bundle->project_config : nullptr;
+        const DynamicPrintConfig* projectConfig = wxGetApp().preset_bundle != nullptr ? &wxGetApp().preset_bundle->project_config : nullptr;
         FilamentColor projectFilamentColor;
         if (actual_filament_id > 0 && actual_filament_id <= m_mixed_display_context.physical_colors.size())
         {
-            const size_t color_index = size_t(actual_filament_id - 1);
-            const std::string& physicalColor = m_mixed_display_context.physical_colors[color_index];
-            projectFilamentColor = FilamentColorUtils::GetFilamentColorFromConfig(project_config, color_index, physicalColor);
+            const size_t colorIndex = size_t(actual_filament_id - 1);
+            const std::string& physicalColor = m_mixed_display_context.physical_colors[colorIndex];
+            projectFilamentColor = FilamentColorUtils::GetFilamentColorFromConfig(projectConfig, colorIndex, physicalColor);
         }
 
         // --- Gradient eligibility check ---
@@ -638,9 +638,9 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
         if (projectFilamentColor.colors.size() > 1)
         {
-            ImVec2 btn_min = ImGui::GetItemRectMin();
-            ImVec2 btn_max = ImGui::GetItemRectMax();
-            FilamentColorUtils::DrawImGuiFilamentColorBlock(draw_list, btn_min, btn_max, projectFilamentColor, 2.5f);
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            FilamentColorUtils::DrawImGuiFilamentColorBlock(draw_list, btnMin, btnMax, projectFilamentColor, 2.5f);
         }
 
         if (ImGui::IsItemHovered()) {
@@ -652,12 +652,12 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
         // draw filament id
         float gray = 0.299 * extruder_color.r() + 0.587 * extruder_color.g() + 0.114 * extruder_color.b();
-        ImVec4 text_color = gray * 255.f < 80.f ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+        ImVec4 textColor = gray * 255.f < 80.f ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
         if (projectFilamentColor.colors.size() > 1)
-            text_color = FilamentColorUtils::ImGuiTextColorFor(projectFilamentColor);
+            textColor = FilamentColorUtils::ImGuiTextColorFor(projectFilamentColor);
         ImGui::SameLine(button_offset + (button_size.x - label_size.x) / 2.f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {10.0,15.0});
-        ImGui::TextColored(text_color, "%s", item_text.c_str());
+        ImGui::TextColored(textColor, "%s", item_text.c_str());
 
         ImGui::PopStyleVar();
         }

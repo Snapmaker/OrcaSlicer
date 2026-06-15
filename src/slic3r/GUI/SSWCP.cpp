@@ -3237,8 +3237,11 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 const bool has_multi_colors = filament_multi_colors != nullptr && filament_multi_colors->values.size() > i;
                 const bool has_mode = filament_colour_modes != nullptr && filament_colour_modes->values.size() > i;
                 const std::string multi_colors = has_multi_colors ? filament_multi_colors->values[i] : std::string();
-                const int mode = has_mode ? filament_colour_modes->values[i] : 0;
-                multi_color_res.push_back(FilamentColorUtils::BuildPreprintColorMultiItem(multi_colors, mode, filament_color[i]));
+                FilamentColorMode colorMode = FilamentColorMode::Segment;
+                if (has_mode)
+                    colorMode = FilamentColorModeFromConfig(filament_colour_modes->values[i]);
+                multi_color_res.push_back(
+                    FilamentColorUtils::BuildPreprintColorMultiItem(multi_colors, colorMode, filament_color[i]));
             }
 
             response["filament_color"] = number_res;

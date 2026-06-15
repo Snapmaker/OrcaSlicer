@@ -18,10 +18,10 @@ namespace Slic3r { namespace GUI {
 // Unified colour-block parameters used by solid, segmented, and gradient swatches.
 struct ColorBlockParams
 {
-    enum Mode { Solid, Segments, Gradient };
+    enum class Mode { Solid, Segment, Gradient };
     enum GradientDirection { LeftToRight, BottomToTop };
 
-    Mode mode = Solid;
+    Mode mode = Mode::Solid;
     GradientDirection gradient_direction = BottomToTop;
     wxColour solid_color;
     std::vector<wxColour> colors;

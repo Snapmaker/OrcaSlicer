@@ -38,12 +38,12 @@ wxColour interpolate_color(const std::vector<wxColour>& colors, double pos)
 
 namespace {
 
-bool is_very_light_rgb(const wxColour& color)
+bool IsVeryLightRgb(const wxColour& color)
 {
     return color.Red() > 224 && color.Green() > 224 && color.Blue() > 224;
 }
 
-wxColour valid_or_fallback(const wxColour& color, const wxColour& fallback = wxColour("#808080"))
+wxColour ValidOrFallback(const wxColour& color, const wxColour& fallback = wxColour("#808080"))
 {
     return color.IsOk() ? color : fallback;
 }
@@ -56,76 +56,76 @@ wxColour PhysicalColorAt(const std::vector<std::string>& physical_colors, unsign
     return parse_mixed_color(physical_colors[filament_id - 1]);
 }
 
-ColorBlockParams::Mode effective_mode(const ColorBlockParams& params)
+ColorBlockParams::Mode EffectiveMode(const ColorBlockParams& params)
 {
-    if (params.mode == ColorBlockParams::Gradient && params.colors.size() >= 2)
-        return ColorBlockParams::Gradient;
-    if (params.mode == ColorBlockParams::Segments && params.colors.size() >= 2)
-        return ColorBlockParams::Segments;
-    return ColorBlockParams::Solid;
+    if (params.mode == ColorBlockParams::Mode::Gradient && params.colors.size() >= 2)
+        return ColorBlockParams::Mode::Gradient;
+    if (params.mode == ColorBlockParams::Mode::Segment && params.colors.size() >= 2)
+        return ColorBlockParams::Mode::Segment;
+    return ColorBlockParams::Mode::Solid;
 }
 
-wxColour effective_solid_color(const ColorBlockParams& params)
+wxColour EffectiveSolidColor(const ColorBlockParams& params)
 {
     if (!params.colors.empty())
-        return valid_or_fallback(params.colors.front());
-    return valid_or_fallback(params.solid_color);
+        return ValidOrFallback(params.colors.front());
+    return ValidOrFallback(params.solid_color);
 }
 
-std::vector<wxColour> effective_color_list(const ColorBlockParams& params)
+std::vector<wxColour> EffectiveColorList(const ColorBlockParams& params)
 {
-    const ColorBlockParams::Mode mode = effective_mode(params);
-    if (mode == ColorBlockParams::Solid)
-        return {effective_solid_color(params)};
+    const ColorBlockParams::Mode mode = EffectiveMode(params);
+    if (mode == ColorBlockParams::Mode::Solid)
+        return {EffectiveSolidColor(params)};
 
     std::vector<wxColour> colors;
     colors.reserve(params.colors.size());
     for (const wxColour& color : params.colors)
-        colors.emplace_back(valid_or_fallback(color));
+        colors.emplace_back(ValidOrFallback(color));
     return colors;
 }
 
-double color_block_text_luminance(const ColorBlockParams& params)
+double ColorBlockTextLuminance(const ColorBlockParams& params)
 {
-    const std::vector<wxColour> colors = effective_color_list(params);
+    const std::vector<wxColour> colors = EffectiveColorList(params);
     double luminance = 0.0;
     for (const wxColour& color : colors)
         luminance += color.GetLuminance();
     return colors.empty() ? 1.0 : luminance / static_cast<double>(colors.size());
 }
 
-bool color_block_needs_border(const ColorBlockParams& params)
+bool ColorBlockNeedsBorder(const ColorBlockParams& params)
 {
-    const ColorBlockParams::Mode mode = effective_mode(params);
-    const std::vector<wxColour> colors = effective_color_list(params);
+    const ColorBlockParams::Mode mode = EffectiveMode(params);
+    const std::vector<wxColour> colors = EffectiveColorList(params);
 
-    if (mode == ColorBlockParams::Segments) {
+    if (mode == ColorBlockParams::Mode::Segment) {
         for (const wxColour& color : colors)
-            if (is_very_light_rgb(color))
+            if (IsVeryLightRgb(color))
                 return true;
         return false;
     }
 
     for (const wxColour& color : colors) {
-        if (!is_very_light_rgb(color))
+        if (!IsVeryLightRgb(color))
             return false;
     }
     return !colors.empty();
 }
 
-std::string color_block_cache_key(const ColorBlockParams& params, const wxColour& lightBorderColor)
+std::string ColorBlockCacheKey(const ColorBlockParams& params, const wxColour& lightBorderColor)
 {
     std::ostringstream key;
-    key << "color-block:mode=" << static_cast<int>(effective_mode(params))
+    key << "color-block:mode=" << static_cast<int>(EffectiveMode(params))
         << ":dir=" << static_cast<int>(params.gradient_direction)
         << ":h" << params.height
         << ":w" << params.width
         << ":label=" << params.label.ToStdString();
 
-    if (effective_mode(params) == ColorBlockParams::Solid) {
-        key << ':' << effective_solid_color(params).GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+    if (EffectiveMode(params) == ColorBlockParams::Mode::Solid) {
+        key << ':' << EffectiveSolidColor(params).GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
     } else {
-        for (const wxColour& color : effective_color_list(params))
+        for (const wxColour& color : EffectiveColorList(params))
             key << ':' << color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
     }
 
@@ -135,7 +135,7 @@ std::string color_block_cache_key(const ColorBlockParams& params, const wxColour
     return key.str();
 }
 
-void draw_gradient_block(wxDC& dc, const wxRect& rect, const std::vector<wxColour>& colors, ColorBlockParams::GradientDirection direction)
+void DrawGradientBlock(wxDC& dc, const wxRect& rect, const std::vector<wxColour>& colors, ColorBlockParams::GradientDirection direction)
 {
     if (direction == ColorBlockParams::LeftToRight)
     {
@@ -161,7 +161,7 @@ void draw_gradient_block(wxDC& dc, const wxRect& rect, const std::vector<wxColou
     }
 }
 
-void draw_segments_block(wxDC& dc, const wxRect& rect, const std::vector<wxColour>& colors)
+void DrawSegmentsBlock(wxDC& dc, const wxRect& rect, const std::vector<wxColour>& colors)
 {
     const int count = static_cast<int>(colors.size());
     int left = rect.GetLeft();
@@ -179,23 +179,23 @@ void draw_segments_block(wxDC& dc, const wxRect& rect, const std::vector<wxColou
     }
 }
 
-void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& params,
+void DrawColorBlock(wxDC& dc, const wxRect& rect, const ColorBlockParams& params,
                       const wxColour& lightBorderColor = wxNullColour)
 {
-    const ColorBlockParams::Mode mode = effective_mode(params);
-    const std::vector<wxColour> colors = effective_color_list(params);
+    const ColorBlockParams::Mode mode = EffectiveMode(params);
+    const std::vector<wxColour> colors = EffectiveColorList(params);
 
     dc.SetPen(*wxTRANSPARENT_PEN);
-    if (mode == ColorBlockParams::Gradient) {
-        draw_gradient_block(dc, rect, colors, params.gradient_direction);
-    } else if (mode == ColorBlockParams::Segments) {
-        draw_segments_block(dc, rect, colors);
+    if (mode == ColorBlockParams::Mode::Gradient) {
+        DrawGradientBlock(dc, rect, colors, params.gradient_direction);
+    } else if (mode == ColorBlockParams::Mode::Segment) {
+        DrawSegmentsBlock(dc, rect, colors);
     } else {
         dc.SetBrush(wxBrush(colors.front()));
         dc.DrawRectangle(rect);
     }
 
-    if (color_block_needs_border(params))
+    if (ColorBlockNeedsBorder(params))
     {
         if (lightBorderColor.IsOk())
         {
@@ -210,7 +210,7 @@ void draw_color_block(wxDC& dc, const wxRect& rect, const ColorBlockParams& para
     }
 
     if (!params.label.empty()) {
-        dc.SetTextForeground(color_block_text_luminance(params) < 0.51 ? *wxWHITE : *wxBLACK);
+        dc.SetTextForeground(ColorBlockTextLuminance(params) < 0.51 ? *wxWHITE : *wxBLACK);
         dc.DrawLabel(params.label, rect, wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL);
     }
 }
@@ -237,19 +237,19 @@ MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virt
     m_color_block.height = badge_size;
     m_color_block.label = m_label;
     m_color_block.gradient_direction = ColorBlockParams::BottomToTop;
-    m_color_block.mode = ColorBlockParams::Solid;
+    m_color_block.mode = ColorBlockParams::Mode::Solid;
     m_color_block.solid_color = parse_mixed_color(mf.display_color);
 
     if (is_simple_gradient(mf)) {
         const wxColour ca = PhysicalColorAt(display_context.physical_colors, mf.component_a);
         const wxColour cb = PhysicalColorAt(display_context.physical_colors, mf.component_b);
         const bool a_to_b = mf.gradient_start >= mf.gradient_end;
-        m_color_block.mode = ColorBlockParams::Gradient;
+        m_color_block.mode = ColorBlockParams::Mode::Gradient;
         m_color_block.colors.push_back(a_to_b ? ca : cb);
         m_color_block.colors.push_back(a_to_b ? cb : ca);
     }
 
-    SetForegroundColour(color_block_text_luminance(m_color_block) < 0.51 ? *wxWHITE : *wxBLACK);
+    SetForegroundColour(ColorBlockTextLuminance(m_color_block) < 0.51 ? *wxWHITE : *wxBLACK);
 }
 
 void MixedFilamentBadge::on_paint(wxPaintEvent&)
@@ -259,7 +259,7 @@ void MixedFilamentBadge::on_paint(wxPaintEvent&)
 
     ColorBlockParams params = m_color_block;
     params.label = m_show_number ? m_label : wxString();
-    draw_color_block(dc, GetClientRect(), params);
+    DrawColorBlock(dc, GetClientRect(), params);
 }
 
 void MixedFilamentBadge::on_left_up(wxMouseEvent&)
@@ -282,7 +282,7 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params, const wx
     draw_params.width = std::max(1, params.width);
     draw_params.height = std::max(1, params.height);
 
-    const std::string key = color_block_cache_key(draw_params, lightBorderColor);
+    const std::string key = ColorBlockCacheKey(draw_params, lightBorderColor);
 
     wxBitmap* cached = cache.find(key);
     if (cached != nullptr)
@@ -294,7 +294,7 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params, const wx
     const bool use_small_font = std::min(draw_params.width, draw_params.height) < 20;
     dc.SetFont(use_small_font ? ::Label::Body_8 : ::Label::Body_12);
 
-    draw_color_block(dc, wxRect(0, 0, draw_params.width, draw_params.height), draw_params, lightBorderColor);
+    DrawColorBlock(dc, wxRect(0, 0, draw_params.width, draw_params.height), draw_params, lightBorderColor);
     dc.SelectObject(wxNullBitmap);
 
     return cache.insert(key, bmp);
@@ -319,12 +319,12 @@ wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament& mf, const Mixed
         const wxColour cb = PhysicalColorAt(ctx.physical_colors, mf.component_b);
         const bool a_to_b = mf.gradient_start >= mf.gradient_end;
 
-        params.mode = ColorBlockParams::Gradient;
+        params.mode = ColorBlockParams::Mode::Gradient;
         params.gradient_direction = ColorBlockParams::BottomToTop;
         params.colors.push_back(a_to_b ? ca : cb);
         params.colors.push_back(a_to_b ? cb : ca);
     } else {
-        params.mode = ColorBlockParams::Solid;
+        params.mode = ColorBlockParams::Mode::Solid;
         params.solid_color = parse_mixed_color(mf.display_color.empty() ? "#808080" : mf.display_color);
     }
 

@@ -550,9 +550,9 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
 
     const Slic3r::DynamicPrintConfig* config = Slic3r::GUI::wxGetApp().preset_bundle != nullptr ?
                                                &Slic3r::GUI::wxGetApp().preset_bundle->project_config : nullptr;
-    const Slic3r::ConfigOptionStrings* multi_color_option = config != nullptr && config->has("filament_multi_colors") ?
+    const Slic3r::ConfigOptionStrings* multiColorOption = config != nullptr && config->has("filament_multi_colors") ?
                                                 config->option<Slic3r::ConfigOptionStrings>("filament_multi_colors") : nullptr;
-    const Slic3r::ConfigOptionInts* mode_option = config != nullptr && config->has("filament_colour_mode") ?
+    const Slic3r::ConfigOptionInts* modeOption = config != nullptr && config->has("filament_colour_mode") ?
                                                 config->option<Slic3r::ConfigOptionInts>("filament_colour_mode") : nullptr;
 
     int index = 0;
@@ -562,13 +562,13 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
         const size_t color_idx = size_t(index) - 1;
 
         if (color_idx < num_physical) {
-            const std::string multi_colors = multi_color_option != nullptr && multi_color_option->values.size() > color_idx ?
-                                             multi_color_option->values[color_idx] : std::string();
+            const std::string multiColors = multiColorOption != nullptr && multiColorOption->values.size() > color_idx ?
+                                             multiColorOption->values[color_idx] : std::string();
             int modeValue = 0;
-            if (mode_option != nullptr && mode_option->values.size() > color_idx)
-                modeValue = mode_option->values[color_idx];
+            if (modeOption != nullptr && modeOption->values.size() > color_idx)
+                modeValue = modeOption->values[color_idx];
             const Slic3r::FilamentColorMode colorMode = Slic3r::FilamentColorModeFromConfig(modeValue);
-            bmps.push_back(Slic3r::GUI::FilamentColorUtils::GetFilamentColorIcon(multi_colors, colorMode, color, label,
+            bmps.push_back(Slic3r::GUI::FilamentColorUtils::GetFilamentColorIcon(multiColors, colorMode, color, label,
                                                                                   icon_width, icon_height));
             continue;
         }
@@ -596,7 +596,7 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
                             const bool a_to_b = mf.gradient_start >= mf.gradient_end;
 
                             Slic3r::GUI::ColorBlockParams params;
-                            params.mode   = Slic3r::GUI::ColorBlockParams::Gradient;
+                            params.mode   = Slic3r::GUI::ColorBlockParams::Mode::Gradient;
                             params.width  = icon_width;
                             params.height = icon_height;
                             params.label  = label;

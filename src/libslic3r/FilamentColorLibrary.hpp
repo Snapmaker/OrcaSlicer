@@ -10,7 +10,7 @@ namespace Slic3r
 
 enum class FilamentColorMode
 {
-    Segment = 0,
+    Segment = 0, //Single colors or side by side segments
     Gradient = 1
 };
 

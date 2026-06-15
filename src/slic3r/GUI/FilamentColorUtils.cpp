@@ -69,18 +69,18 @@ wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& nor
 
     if (wx_colors.size() <= 1)
     {
-        params.mode = ColorBlockParams::Solid;
+        params.mode = ColorBlockParams::Mode::Solid;
         params.solid_color = wx_colors.empty() ? wxColour("#FFFFFF") : wx_colors.front();
     }
     else if (mode == FilamentColorMode::Gradient)
     {
-        params.mode = ColorBlockParams::Gradient;
+        params.mode = ColorBlockParams::Mode::Gradient;
         params.gradient_direction = ColorBlockParams::LeftToRight;
         params.colors = wx_colors;
     }
     else
     {
-        params.mode = ColorBlockParams::Segments;
+        params.mode = ColorBlockParams::Mode::Segment;
         params.colors = wx_colors;
     }
 

@@ -6,7 +6,6 @@
 			"filament_id": "1682237920",
 			"filament_name": "Snapmaker ABS @U1",
 			"filament_type": "ABS",
-			"filament_sub_type": "",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -135,7 +134,6 @@
 			"filament_id": "12471727060",
 			"filament_name": "Snapmaker ASA @U1",
 			"filament_type": "ASA",
-			"filament_sub_type": "",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -203,8 +201,7 @@
 		{
 			"filament_id": "GFG96",
 			"filament_name": "Snapmaker PETG HF @U1",
-			"filament_type": "PETG",
-			"filament_sub_type": "HF",
+			"filament_type": "PETG HF",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -380,8 +377,7 @@
 		{
 			"filament_id": "PETG_TRANSLUCENT_001",
 			"filament_name": "Snapmaker PETG Translucent @U1",
-			"filament_type": "PETG",
-			"filament_sub_type": "Translucent",
+			"filament_type": "PETG Translucent",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -486,7 +482,6 @@
 			"filament_id": "10425112260",
 			"filament_name": "Snapmaker PETG-CF @U1",
 			"filament_type": "PETG-CF",
-			"filament_sub_type": "",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -578,8 +573,7 @@
 		{
 			"filament_id": "14170311270",
 			"filament_name": "Snapmaker PLA Full Spectrum @U1",
-			"filament_type": "PLA",
-			"filament_sub_type": "Full Spectrum",
+			"filament_type": "PLA Full Spectrum",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -635,8 +629,7 @@
 		{
 			"filament_id": "141703112701",
 			"filament_name": "Snapmaker PLA Matte @U1",
-			"filament_type": "PLA",
-			"filament_sub_type": "Matte",
+			"filament_type": "PLA Matte",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -920,8 +913,7 @@
 		{
 			"filament_id": "11813638720",
 			"filament_name": "Snapmaker PLA Silk @U1",
-			"filament_type": "PLA",
-			"filament_sub_type": "Silk",
+			"filament_type": "PLA Silk",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -1133,8 +1125,7 @@
 		{
 			"filament_id": "141703112701",
 			"filament_name": "Snapmaker PLA SnapSpeed @U1",
-			"filament_type": "PLA",
-			"filament_sub_type": "SnapSpeed",
+			"filament_type": "PLA SnapSpeed",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -1430,8 +1421,7 @@
 		{
 			"filament_id": "SPTR001",
 			"filament_name": "Snapmaker PLA Translucent @U1",
-			"filament_type": "PLA",
-			"filament_sub_type": "Translucent",
+			"filament_type": "PLA Translucent",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -1560,7 +1550,6 @@
 			"filament_id": "17021473250",
 			"filament_name": "Snapmaker PLA-CF @U1",
 			"filament_type": "PLA-CF",
-			"filament_sub_type": "",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -1652,8 +1641,7 @@
 		{
 			"filament_id": "GFU99",
 			"filament_name": "Snapmaker TPU 90A @U1",
-			"filament_type": "TPU",
-			"filament_sub_type": "90A",
+			"filament_type": "TPU 90A",
 			"enabled": true,
 			"filament_color": [
 				{
@@ -1697,8 +1685,7 @@
 		{
 			"filament_id": "GFU99",
 			"filament_name": "Snapmaker TPU 95A HF @U1",
-			"filament_type": "TPU",
-			"filament_sub_type": "95A HF",
+			"filament_type": "TPU 95A HF",
 			"enabled": true,
 			"filament_color": [
 				{

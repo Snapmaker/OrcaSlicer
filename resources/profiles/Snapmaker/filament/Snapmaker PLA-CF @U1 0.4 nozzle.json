@@ -85,5 +85,7 @@
     ],
     "pressure_advance": [
         "0.01"
-    ]
+    ],
+  "graphic_effect_plate_temp": ["65"],
+  "graphic_effect_plate_temp_initial_layer": ["65"]
 }

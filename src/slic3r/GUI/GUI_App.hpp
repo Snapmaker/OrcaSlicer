@@ -246,6 +246,8 @@ public:
 
     static std::atomic<bool> m_app_alive; // 标记应用是否存活
 
+    static void log_version_info();
+
 private:
     bool            m_initialized { false };
     bool            m_post_initialized { false };

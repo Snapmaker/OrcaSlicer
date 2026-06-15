@@ -2377,12 +2377,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "strength_settings_infill#sparse-infill-pattern");
-        if (m_type >= Preset::TYPE_COUNT) {
-            optgroup->append_single_option_line("enable_infill_filament_override");
-            optgroup->append_single_option_line("infill_filament_use_base_first_layers");
-            optgroup->append_single_option_line("infill_filament_use_base_last_layers");
-            optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
-        }
         optgroup->append_single_option_line("infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("skin_infill_density", "strength_settings_patterns#locked-zag");
@@ -2572,6 +2566,7 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
@@ -2875,11 +2870,6 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
 static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
 {
     DynamicPrintConfig resolved(config);
-    const auto*        infill_override_opt = config.option<ConfigOptionBool>("enable_infill_filament_override");
-    const bool         infill_override_enabled = infill_override_opt != nullptr && infill_override_opt->value;
-
-    if (!infill_override_enabled && resolved.has("sparse_infill_filament"))
-        resolved.erase("sparse_infill_filament");
 
     if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
         const int extruder = extruder_opt->value;

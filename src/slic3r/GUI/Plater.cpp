@@ -8113,11 +8113,9 @@ void Sidebar::show_sync_filament_dialog()
         size_t effective_size = syncedData.size();
         size_t combo_Size = p->combos_filament.size();
         if (effective_size != combo_Size) {
-            if (effective_size > combo_Size && 
-                    (effective_size > MAXIMUM_EXTRUDER_NUMBER || 
+            if (effective_size > combo_Size &&
+                    (effective_size > MAXIMUM_EXTRUDER_NUMBER ||
                         preset_bundle->mixed_filaments.total_filaments(effective_size) >= MAXIMUM_FILAMENT_NUMBER)) {
-                // TODO We haven't decided yet how to handle the cases that exceed the limit. 
-                // For now, we'll just assume that no action will be taken.
                 effective_size = combo_Size;
             }
             if (effective_size != combo_Size) {
@@ -8125,7 +8123,6 @@ void Sidebar::show_sync_filament_dialog()
                 std::string new_color = into_u8(new_col.GetAsString(wxC2S_HTML_SYNTAX));
                 preset_bundle->set_num_filaments(effective_size, new_color);
 
-                // Override remap with dialog's overwrite mapping (e.g. 8→4 with 5→1, 6→2, ...)
                 const auto& dlgRemap = dlg.getFilamentIdRemap();
                 if (!dlgRemap.empty())
                     preset_bundle->set_filament_id_remap(dlgRemap);
@@ -8156,7 +8153,6 @@ void Sidebar::show_sync_filament_dialog()
                 combo->update();
         }
 
-        // Auto calculation of flushing volumes for synced filaments
         for (size_t i = 0; i < effective_size; ++i) {
             auto_calc_flushing_volumes(i);
         }

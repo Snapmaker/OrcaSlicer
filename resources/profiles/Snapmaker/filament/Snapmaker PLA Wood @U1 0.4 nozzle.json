@@ -66,5 +66,7 @@
     ],
     "slow_down_layer_time": [
         "4"
-    ]
+    ],
+    "graphic_effect_plate_temp": ["65"],
+    "graphic_effect_plate_temp_initial_layer": ["65"]
 }

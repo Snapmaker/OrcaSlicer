@@ -88,6 +88,7 @@ wxDEFINE_EVENT(EVT_HTTP_ERROR, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_IP_DIALOG, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_MACHINE_LIST, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_PRESET_CB, SimpleEvent);
+wxDEFINE_EVENT(EVT_NETWORK_TEST_LOG_UPDATE, wxCommandEvent);
 
 
 
@@ -253,7 +254,6 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
 		e.Skip();
 	});
 #endif
-
 #ifdef __APPLE__
     // Initialize the docker task bar icon.
     switch (wxGetApp().get_app_mode()) {
@@ -364,6 +364,9 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     });
 
     Bind(EVT_SYNC_CLOUD_PRESET, &MainFrame::on_select_default_preset, this);
+    Bind(EVT_NETWORK_TEST_LOG_UPDATE, [](wxCommandEvent& evt) {
+        BOOST_LOG_TRIVIAL(warning) << "[NetworkTest] " << into_u8(evt.GetString());
+    });
 
 //    Bind(wxEVT_MENU,
 //        [this](wxCommandEvent&)
@@ -4008,6 +4011,9 @@ void MainFrame::export_logs()
         return;
 
     wxString zip_path = dlg.GetPath();
+
+    // Write version info and flush to log file before zipping
+    GUI_App::log_version_info();
 
     // 4. Create ZIP file and add all logs
     try {

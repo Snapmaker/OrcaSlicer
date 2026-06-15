@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <locale>
+#include <mutex>
 #include <ctime>
 #include <cstdarg>
 #include <stdio.h>

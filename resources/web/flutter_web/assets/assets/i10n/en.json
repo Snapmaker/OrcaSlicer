@@ -1,6 +1,11 @@
 {
   "dialog": {
     "http": {
+      "network_unavailable": "Network connection failed, please check the network connection",
+      "network_lost": "Network lost, please check the network connection",
+      "network_timeout": "Network timeout, please check the network connection",
+      "server_error": "Server error, please try again later",
+      "client_error": "Client error, please try again later",
       "success": "Request successful",
       "bad_request": "Bad request, please check your input",
       "unauthorized": "Unauthorized or session expired, please login again",
@@ -443,6 +448,11 @@
   "Nozzle": "Nozzle",
   "Model Library": "Model Library",
   "Recommended for You": "Recommended for You",
+  "Sort by": "Sort by",
+  "Newest": "Newest",
+  "Most Liked": "Most Liked",
+  "Most Downloaded": "Most Downloaded",
+  "Most Collected": "Most Collected",
   "units": "units",
   "Total": "Total",
   "Filament List": "Filament List",

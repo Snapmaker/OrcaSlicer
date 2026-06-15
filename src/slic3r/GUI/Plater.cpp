@@ -7988,7 +7988,19 @@ void Sidebar::show_sync_filament_dialog()
 
     std::shared_ptr<PrintHost> host = nullptr;
     wxGetApp().get_connect_host(host);
-    if (!host) {
+    
+    MachineObject* device_machine = nullptr;
+    {
+        Slic3r::DeviceManager* dev = wxGetApp().getDeviceManager();
+        if (dev) {
+            MachineObject* obj = dev->get_selected_machine();
+            if (obj && obj->is_connected()) {
+                device_machine = obj;
+            }
+        }
+    }
+
+    if (!host && !device_machine) {
         SyncRichConfirmDialog dlg(this,
             _L("The printer is not connected. Before synchronizing, please go to the device page to connect."),
             wxYES_NO);
@@ -8007,7 +8019,19 @@ void Sidebar::show_sync_filament_dialog()
         std::string machine_type;
         std::string device_name;
         std::vector<std::string> nozzle_diameters;
-        bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+        bool got_machine_info = false;
+
+        if (host) {
+            got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+        }
+
+        if (!got_machine_info || machine_type.empty()) {
+            if (device_machine) {
+                machine_type = device_machine->printer_type;
+                got_machine_info = !machine_type.empty();
+            }
+        }
+
         bool is_white_listed_type = white_list_machine_types.find(machine_type) != white_list_machine_types.end();
 
         if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {

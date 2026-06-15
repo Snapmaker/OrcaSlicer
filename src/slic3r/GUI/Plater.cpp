@@ -8060,7 +8060,7 @@ void Sidebar::show_sync_filament_dialog()
         }
         return false;
     };
-    if (machineFilamentList.empty() && nonEmptyFilaments(machineFilamentList)) {
+    if (machineFilamentList.empty() || !nonEmptyFilaments(machineFilamentList)) {
         SyncConfirmDialog dlg(this,
             _L("There are no filament on the printer. Please place the filaments on the machine first."),
             wxOK);

@@ -593,7 +593,13 @@ private:
     void            sm_request_login(bool show_user_info = false);
     void            sm_ShowUserLogin(bool show  =  true);
     void            sm_request_user_logout();
-  
+    // Snapmaker login persistence across restarts. Non-secret profile fields are
+    // kept in AppConfig's [sm_login] section; the bearer token itself is stored in
+    // the OS secret store (never in plaintext). See GUI_App.cpp for details.
+    void            sm_save_login_to_config();
+    void            sm_clear_login_from_config();
+    void            sm_restore_login_from_config();
+
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
     std::string     handle_web_request(std::string cmd);

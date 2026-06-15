@@ -4754,6 +4754,24 @@ void SSWCP_UserLogin_Instance::sw_SubscribeUserLoginState()
     try {
         std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
         wxGetApp().m_user_login_subscribers[m_webview]  = weak_ptr;
+
+        // A persisted session is restored asynchronously at startup (the stored
+        // token is revalidated over the network). That can finish before the web
+        // UI subscribes here, in which case the one-shot notify() push already
+        // fired and was lost. So if we are already logged in at subscribe time,
+        // push the current state now; otherwise a later notify() will deliver it.
+        auto pInfo = wxGetApp().sm_get_userinfo();
+        if (pInfo && pInfo->is_user_login()) {
+            json data;
+            data["status"]   = "online";
+            data["nickname"] = pInfo->get_user_name();
+            data["icon"]     = pInfo->get_user_icon_url();
+            data["token"]    = pInfo->get_user_token();
+            data["userid"]   = pInfo->get_user_id();
+            data["account"]  = pInfo->get_user_account();
+            m_res_data       = data;
+            send_to_js();
+        }
     }
     catch (std::exception& e) {
         handle_general_fail();

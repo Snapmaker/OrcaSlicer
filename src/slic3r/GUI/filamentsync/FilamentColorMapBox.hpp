@@ -32,6 +32,9 @@ public:
 private:
     void onPaint(wxPaintEvent& event);
     void onLeftDown(wxMouseEvent& event);
+    void onMouseMove(wxMouseEvent& event);
+    void onMouseEnter(wxMouseEvent& event);
+    void onMouseLeave(wxMouseEvent& event);
     void updateSizing();
 
     FilamentData m_aboveFilament;
@@ -39,6 +42,9 @@ private:
 
     bool m_bAboveEnabled = true;
     bool m_bBelowEnabled = true;
+
+    // Hover tracking: -1=none, 0=above, 1=below
+    int m_hoveredZone = -1;
 
     FilamentInfoCallback m_aboveCallback = nullptr;
     FilamentInfoCallback m_belowCallback = nullptr;

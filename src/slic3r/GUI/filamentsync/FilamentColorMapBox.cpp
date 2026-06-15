@@ -44,6 +44,7 @@ constexpr int g_bodyBorderWidth  = 1;
 // Colours
 // ============================================================
 const wxColour g_bodyBorderColor(0xDB, 0xDB, 0xDA);
+const wxColour g_bodyBorderHoverColor(0xA0, 0xA0, 0xA0);
 const wxColour g_bodyTextColor(0x33, 0x33, 0x33);
 const wxColour g_disabledBodyBg(0xE8, 0xE8, 0xE8);
 const wxColour g_cardBg(0xFF, 0xFF, 0xFF);
@@ -96,6 +97,9 @@ FilamentColorMapBox::FilamentColorMapBox(wxWindow* parent,
     updateSizing();
     Bind(wxEVT_PAINT, &FilamentColorMapBox::onPaint, this);
     Bind(wxEVT_LEFT_DOWN, &FilamentColorMapBox::onLeftDown, this);
+    Bind(wxEVT_ENTER_WINDOW, &FilamentColorMapBox::onMouseEnter, this);
+    Bind(wxEVT_LEAVE_WINDOW, &FilamentColorMapBox::onMouseLeave, this);
+    Bind(wxEVT_MOTION, &FilamentColorMapBox::onMouseMove, this);
 }
 
 void FilamentColorMapBox::bindButton(FilamentInfoCallback cb, ButtonType type)
@@ -171,22 +175,27 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
     const wxColour aboveBg = m_bAboveEnabled ? aboveColor : g_disabledBodyBg;
     const int      borderW = FromDIP(g_bodyBorderWidth);
 
-    // ---- 1. Full card body (white bg, #DBDBDA border) ----
-    gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+    // Hover border: use hover color when mouse is over an enabled zone
+    bool hoverActive = m_hoveredZone >= 0
+        && ((m_hoveredZone == 0) ? m_bAboveEnabled : m_bBelowEnabled);
+    const wxColour& borderColour = hoverActive ? g_bodyBorderHoverColor : g_bodyBorderColor;
+
+    // ---- 1. Full card body (white bg) ----
+    gdc.SetPen(wxPen(borderColour, borderW));
     gdc.SetBrush(g_cardBg);
     gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
 
     // ---- 2. Top bar (above colour, clipped to splitY) ----
     {
         wxDCClipper clip(gdc, wxRect(0, 0, w, splitY));
-        gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+        gdc.SetPen(wxPen(borderColour, borderW));
         gdc.SetBrush(wxBrush(aboveBg));
         gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
     }
 
     // ---- 3. Separator line ----
     {
-        gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+        gdc.SetPen(wxPen(borderColour, borderW));
         gdc.DrawLine(0, splitY, w, splitY);
     }
 
@@ -202,14 +211,14 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
         gdc.DrawText(label, (w - te.x) / 2, FromDIP(g_topTextY));
     }
 
-    // ---- 5. Index circle (filled with machine filament colour, #DBDBDA border) ----
+    // ---- 5. Index circle (filled with machine filament colour) ----
     {
         const int circleD = FromDIP(g_circleDiameter);
         const int cx      = w / 2;
         const int cy      = splitY + FromDIP(g_circleYOffset) + circleD / 2;
         const int cr      = circleD / 2;
 
-        gdc.SetPen(wxPen(g_bodyBorderColor, borderW));
+        gdc.SetPen(wxPen(borderColour, borderW));
         gdc.SetBrush(wxBrush(belowColor));
         gdc.DrawCircle(cx, cy, cr);
 
@@ -257,6 +266,30 @@ void FilamentColorMapBox::onLeftDown(wxMouseEvent& event)
         if (m_bBelowEnabled && m_belowCallback)
             m_belowCallback(m_belowFilament);
     }
+}
+
+void FilamentColorMapBox::onMouseEnter(wxMouseEvent& event)
+{
+    onMouseMove(event);
+}
+
+void FilamentColorMapBox::onMouseLeave(wxMouseEvent&)
+{
+    if (m_hoveredZone == -1)
+        return;
+    m_hoveredZone = -1;
+    Refresh();
+}
+
+void FilamentColorMapBox::onMouseMove(wxMouseEvent& event)
+{
+    int posY    = event.GetPosition().y;
+    int splitY  = FromDIP(g_topBarHeight);
+    int newZone = (posY < splitY) ? 0 : 1;
+    if (newZone == m_hoveredZone)
+        return;
+    m_hoveredZone = newZone;
+    Refresh();
 }
 
 } // namespace GUI

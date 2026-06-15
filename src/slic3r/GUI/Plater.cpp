@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <numeric>
 #include <memory>
@@ -8511,7 +8512,7 @@ struct Plater::priv
     // PIMPL back pointer ("Q-Pointer")
     Plater *q;
     MainFrame *main_frame;
-    bool filament_usage_sync_pending = false;
+    std::atomic<bool> filament_usage_sync_pending{false};
     bool filament_temp_mixing_notification_initialized = false;
     int filament_temp_mixing_notification_plate = -1;
     FilamentTempMixingState filament_temp_mixing_notification_state = FilamentTempMixingState::Compatible;

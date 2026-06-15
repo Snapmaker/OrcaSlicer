@@ -4994,7 +4994,8 @@ int CLI::run(int argc, char **argv)
                         // CLI guard: check high/low temp filament mixing.
                         // The GUI has Plater::sync_filament_temp_mixing_notification()
                         // which respects user preferences. For CLI we always block.
-                        if (print_fff) {
+                        if (print_fff)
+                        {
                             const auto& pcfg = print_fff->config();
                             const auto& extruders = print_fff->extruders();
                             std::vector<std::string> ftypes;

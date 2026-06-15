@@ -83,11 +83,13 @@ constexpr const char* g_labelColor      = "#242424";
 constexpr const char* g_secondaryBorder = "#D1D5DC";
 constexpr const char* g_secondaryText   = "#242424";
 constexpr const char* g_primaryBg       = "#019687";
+constexpr const char* g_primaryHoverBg  = "#26A69A";
 constexpr const char* g_primaryText     = "#FEFEFE";
 constexpr const char* g_disabledBg      = "#DFDFDF";
 constexpr const char* g_disabledText    = "#6B6A6A";
 constexpr const char* g_block3BorderColor = "#F0F0F0";
 constexpr const char* g_block3SeparatorColor = "#F3F4F6";
+constexpr const char* g_secondaryHoverBg = "#F3F4F6";
 
 } // namespace
 
@@ -308,9 +310,14 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         m_pResetBtn->SetMinSize(FromDIP(wxSize(g_btnW, g_btnH)));
         m_pResetBtn->SetCornerRadius(FromDIP(4));
         m_pResetBtn->SetBorderWidth(FromDIP(1));
-        m_pResetBtn->SetBorderColorNormal(wxColour(g_secondaryBorder));
-        m_pResetBtn->SetBackgroundColorNormal(wxColour(g_blockBg));
-        m_pResetBtn->SetTextColorNormal(wxColour(g_secondaryText));
+
+        auto resetBg = StateColor(
+            std::make_pair(wxColour(g_secondaryHoverBg), (int)StateColor::Hovered),
+            std::make_pair(wxColour(g_blockBg), (int)StateColor::Normal));
+        resetBg.setTakeFocusedAsHovered(false);
+        m_pResetBtn->SetBackgroundColor(resetBg);
+        m_pResetBtn->SetBorderColor(StateColor(wxColour(g_secondaryBorder)));
+        m_pResetBtn->SetTextColor(StateColor(wxColour(g_secondaryText)));
         m_pResetBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onReset(); });
         btnRow->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL);
 
@@ -323,14 +330,13 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         m_pSyncBtn->SetBorderWidth(0);
         m_pSyncBtn->SetBackgroundColor(StateColor(
             std::pair(wxColour(g_disabledBg), (int)StateColor::Disabled),
+            std::pair(wxColour(g_primaryHoverBg), (int)StateColor::Hovered),
             std::pair(wxColour(g_primaryBg), (int)StateColor::Normal)));
         m_pSyncBtn->SetTextColor(StateColor(
             std::pair(wxColour(g_disabledText), (int)StateColor::Disabled),
             std::pair(wxColour(g_primaryText), (int)StateColor::Normal)));
         m_pSyncBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onSync(); });
         btnRow->Add(m_pSyncBtn, 0, wxALIGN_CENTER_VERTICAL);
-
-        btnRow->AddStretchSpacer();
 
         // T/B = 12px margins
         auto* vPad = new wxBoxSizer(wxVERTICAL);
@@ -443,9 +449,11 @@ void SyncFilamentColorDialog::onModeChanged(int index)
                          static_cast<int>(m_machineDataList.size())));
     }
 
-    // Hide hint label and checkbox in overwrite mode
+    // Hide hint label/checkbox and reset button in overwrite mode
     if (m_pHintCheckBoxPanel)
         m_pHintCheckBoxPanel->Show(m_bMappingMode);
+    if (m_pResetBtn)
+        m_pResetBtn->Show(m_bMappingMode);
 
     if (m_bMappingMode)
         onAutoMatch();

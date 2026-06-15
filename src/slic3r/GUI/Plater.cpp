@@ -8100,7 +8100,7 @@ void Sidebar::show_sync_filament_dialog()
         wxGetApp().plater()->get_notification_manager()->push_notification(
             NotificationType::CustomNotification,
             NotificationManager::NotificationLevel::RegularNotificationLevel,
-            _u8L("Filament sync successful."));
+            _u8L("Successfully synchronize the color and type of filaments with the printer."));
         return;
     }
 

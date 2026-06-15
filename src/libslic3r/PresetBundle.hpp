@@ -9,6 +9,7 @@
 #include <memory>
 #include <unordered_map>
 #include <array>
+#include <vector>
 #include <boost/filesystem/path.hpp>
 
 #define DEFAULT_USER_FOLDER_NAME "default"
@@ -33,6 +34,8 @@ struct ConnectMachineInfo
     std::string filament_info {""};
     std::string nozzle_info {""};
     std::string color_info{""};
+    std::vector<std::string> multiColors;
+    int colorMode {0};
     int index {0};
 };
 

@@ -109,8 +109,7 @@ void ResizeInts(ConfigOptionInts* option, size_t size)
         option->values.resize(size);
 }
 
-FilamentColorData BuildFilamentColorData(const std::string& multiColors, int mode,
-                                         const std::string& fallbackColor, const std::string& sku)
+FilamentColorData BuildFilamentColorData(const std::string& multiColors, int mode, const std::string& fallbackColor)
 {
     FilamentColorData colorData;
     colorData.colors = FilamentColorUtils::SplitMultiColors(multiColors);
@@ -121,7 +120,6 @@ FilamentColorData BuildFilamentColorData(const std::string& multiColors, int mod
     }
 
     colorData.mode = colorData.colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(mode) : 0;
-    colorData.sku = sku;
     return colorData;
 }
 
@@ -141,19 +139,6 @@ bool MaterialMatchesFilamentName(const FilamentMaterial& material, const std::st
     const std::string materialName = FilamentBaseName(material.filamentName);
     const std::string currentFilamentName = FilamentBaseName(filamentName);
     return !materialName.empty() && materialName == currentFilamentName;
-}
-
-std::string CurrentSkuForMaterial(const FilamentMaterial& material, const std::string& current_sku)
-{
-    if (current_sku.empty())
-        return {};
-
-    std::vector<FilamentColor>::const_iterator color_it = std::find_if(material.colors.begin(), material.colors.end(),
-                                                        [&current_sku](const FilamentColor& color)
-                                                        {
-                                                            return color.sku == current_sku;
-                                                        });
-    return color_it != material.colors.end() ? current_sku : std::string();
 }
 
 wxSize FilamentColorPickerBitmapSize(wxButton* picker)
@@ -356,10 +341,23 @@ int PresetComboBox::update_ams_color()
     int idx = selected_ams_filament();
 
     auto& filaments = wxGetApp().preset_bundle->machine_filaments;
+    const ConnectMachineInfo* machineInfo = nullptr;
+    if (idx >= 0)
+    {
+        const std::vector<ConnectMachineInfo>& machineInfoList = wxGetApp().preset_bundle->m_connect_machine_info_list;
+        const size_t machineInfoIndex = static_cast<size_t>(idx);
+        if (machineInfoIndex < machineInfoList.size())
+            machineInfo = &machineInfoList[machineInfoIndex];
+    }
 
     int real_idx = -1;
-    int tmp      = idx;
-    if (tmp >= 0) {
+    if (machineInfo != nullptr)
+    {
+        real_idx = machineInfo->index;
+    }
+    else if (idx >= 0)
+    {
+        int tmp = idx;
         for (auto iter = filaments.begin(); iter != filaments.end(); ++iter) {
             if (tmp == 0) {
                 real_idx = iter->first;
@@ -381,35 +379,81 @@ int PresetComboBox::update_ams_color()
     }
 
     std::string color;
-    if (idx < 0) {
+    std::vector<std::string> multiColors;
+    int colorMode = 0;
+    if (idx < 0)
+    {
         auto *preset = m_collection->find_preset(Preset::remove_suffix_modified(GetLabel().ToUTF8().data()));
         if (preset) color = preset->config.opt_string("default_filament_colour", 0u);
         if (color.empty()) return -1;
-    } else {
-        if (wxGetApp().preset_bundle->machine_filaments.size() > 0) {
+    }
+    else if (machineInfo != nullptr)
+    {
+        color = machineInfo->color_info;
+        multiColors = machineInfo->multiColors;
+        colorMode = machineInfo->colorMode;
+        if (color.empty() && !multiColors.empty())
+            color = multiColors.front();
+    }
+    else
+    {
+        if (wxGetApp().preset_bundle->machine_filaments.size() > 0)
+        {
             auto iter = wxGetApp().preset_bundle->machine_filaments.begin();
             for (size_t i = 0; iter != wxGetApp().preset_bundle->machine_filaments.end() && i < idx; ++i) {
                 ++iter;
             }
-            if (iter == wxGetApp().preset_bundle->machine_filaments.end()) {
+            if (iter == wxGetApp().preset_bundle->machine_filaments.end())
+            {
                 return -1;
             }
             color = iter->second.second;
-        } else {
+        }
+        else
+        {
             auto& ams_list = wxGetApp().preset_bundle->filament_ams_list;
             auto  iter     = ams_list.find(idx);
-            if (iter == ams_list.end()) {
+            if (iter == ams_list.end())
+            {
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": ams %1% out of range %2%") % idx % ams_list.size();
                 return -1;
             }
             color = iter->second.opt_string("filament_colour", 0u);
         }
     }
-    DynamicPrintConfig *cfg        = &wxGetApp().preset_bundle->project_config;
-    auto colors = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone());
-    colors->values[m_filament_idx] = color;
+    const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(color, "#FFFFFF");
+    if (machineInfo != nullptr && multiColors.empty() && !normalizedColor.empty())
+        multiColors.emplace_back(normalizedColor);
+    int normalizedMode = 0;
+    std::string joinedMultiColors;
+    if (machineInfo != nullptr)
+    {
+        joinedMultiColors = FilamentColorUtils::JoinMultiColors(multiColors);
+        if (multiColors.size() > 1)
+            normalizedMode = FilamentColorUtils::NormalizeColourMode(colorMode);
+    }
+
+    DynamicPrintConfig* cfg = &wxGetApp().preset_bundle->project_config;
+    const size_t targetSize = static_cast<size_t>(m_filament_idx) + 1;
+    const size_t index = static_cast<size_t>(m_filament_idx);
+    ConfigOptionStrings* filamentColors = CloneStringOption(*cfg, "filament_colour");
+    ResizeStrings(filamentColors, targetSize);
+
+    filamentColors->values[index] = normalizedColor.empty() ? color : normalizedColor;
     DynamicPrintConfig new_cfg;
-    new_cfg.set_key_value("filament_colour", colors);
+    new_cfg.set_key_value("filament_colour", filamentColors);
+    if (machineInfo != nullptr)
+    {
+        ConfigOptionStrings* filamentMultiColors = CloneStringOption(*cfg, "filament_multi_colors");
+        ConfigOptionInts* filamentColourModes = CloneIntOption(*cfg, "filament_colour_mode");
+        ResizeStrings(filamentMultiColors, targetSize);
+        ResizeInts(filamentColourModes, targetSize);
+
+        filamentMultiColors->values[index] = joinedMultiColors;
+        filamentColourModes->values[index] = normalizedMode;
+        new_cfg.set_key_value("filament_multi_colors", filamentMultiColors);
+        new_cfg.set_key_value("filament_colour_mode", filamentColourModes);
+    }
     cfg->apply(new_cfg);
     wxGetApp().plater()->on_config_change(new_cfg);
     //trigger the filament color changed
@@ -1027,7 +1071,6 @@ void PlaterPresetComboBox::ChangeExtruderColor()
     DynamicPrintConfig& config = wxGetApp().preset_bundle->project_config;
     const std::string current_color = ConfigStringAt(config, "filament_colour", m_filament_idx);
     const std::string current_multi_colors = ConfigStringAt(config, "filament_multi_colors", m_filament_idx);
-    const std::string current_sku = ConfigStringAt(config, "filament_colour_sku", m_filament_idx);
     const int current_mode = ConfigIntAt(config, "filament_colour_mode", m_filament_idx);
 
     FilamentColorLibrary& library = FilamentColorLibrary::Instance();
@@ -1044,9 +1087,7 @@ void PlaterPresetComboBox::ChangeExtruderColor()
 
     if (foundMaterial && !material.colors.empty())
     {
-        const std::string currentSku = CurrentSkuForMaterial(material, current_sku);
-        const FilamentColorData currentColor = BuildFilamentColorData(current_multi_colors, current_mode, current_color,
-                                                                      currentSku);
+        const FilamentColorData currentColor = BuildFilamentColorData(current_multi_colors, current_mode, current_color);
         FilamentColorDialog dialog(this, material, currentColor);
 
         if (dialog.ShowModal() == wxID_OK)
@@ -1095,7 +1136,7 @@ void PlaterPresetComboBox::SelectLegacyFilamentColor()
         wxGetApp().app_config->save_custom_color_to_config(custom_colors);
 
     const std::string selected_color = m_clrData.GetColour().GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
-    ApplyFilamentColor(BuildFilamentColorData("", 0, selected_color, ""));
+    ApplyFilamentColor(BuildFilamentColorData("", 0, selected_color));
 }
 
 void PlaterPresetComboBox::ApplyFilamentColor(const FilamentColorData& colorData)
@@ -1126,17 +1167,14 @@ void PlaterPresetComboBox::ApplyFilamentColor(const FilamentColorData& colorData
     ConfigOptionStrings* filament_colors = CloneStringOption(*config, "filament_colour");
     ConfigOptionStrings* filament_multi_colors = CloneStringOption(*config, "filament_multi_colors");
     ConfigOptionInts* filament_colour_modes = CloneIntOption(*config, "filament_colour_mode");
-    ConfigOptionStrings* filament_colour_skus = CloneStringOption(*config, "filament_colour_sku");
 
     ResizeStrings(filament_colors, target_size);
     ResizeStrings(filament_multi_colors, target_size);
     ResizeInts(filament_colour_modes, target_size);
-    ResizeStrings(filament_colour_skus, target_size);
 
     filament_colors->values[index] = normalized_primary;
     filament_multi_colors->values[index] = multi_colors;
     filament_colour_modes->values[index] = normalized_mode;
-    filament_colour_skus->values[index] = colorData.sku;
 
     if (wxGetApp().app_config != nullptr)
     {
@@ -1149,7 +1187,6 @@ void PlaterPresetComboBox::ApplyFilamentColor(const FilamentColorData& colorData
     new_config.set_key_value("filament_colour", filament_colors);
     new_config.set_key_value("filament_multi_colors", filament_multi_colors);
     new_config.set_key_value("filament_colour_mode", filament_colour_modes);
-    new_config.set_key_value("filament_colour_sku", filament_colour_skus);
 
     config->apply(new_config);
     wxGetApp().plater()->update_project_dirty_from_presets();
@@ -1426,9 +1463,15 @@ void PlaterPresetComboBox::update()
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
-                auto     color                             = machine_nozzles_list[i].color_info;
-                auto     name                              = std::to_string(i + 1);
-                wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
+                const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
+                std::vector<std::string> colors = machineInfo.multiColors;
+                if (colors.empty() && !machineInfo.color_info.empty())
+                    colors.emplace_back(machineInfo.color_info);
+                const std::string name = std::to_string(i + 1);
+                wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
+                if (icon == nullptr)
+                    icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
+                wxBitmap bmp(*icon);
                 Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
             }
         }
@@ -1991,9 +2034,15 @@ void TabPresetComboBox::update()
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
-                auto     color                             = machine_nozzles_list[i].color_info;
-                auto     name                              = std::to_string(i + 1);
-                wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
+                const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
+                std::vector<std::string> colors = machineInfo.multiColors;
+                if (colors.empty() && !machineInfo.color_info.empty())
+                    colors.emplace_back(machineInfo.color_info);
+                const std::string name = std::to_string(i + 1);
+                wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
+                if (icon == nullptr)
+                    icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
+                wxBitmap bmp(*icon);
                 Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
             }
         }

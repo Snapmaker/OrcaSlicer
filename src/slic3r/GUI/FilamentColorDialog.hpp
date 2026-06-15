@@ -22,7 +22,6 @@ struct FilamentColorData
 {
     std::vector<std::string> colors;
     int mode { 0 }; // 0 = solid/averaged, 1 = gradient
-    std::string sku;
 };
 
 /**
@@ -63,6 +62,7 @@ private:
     FilamentMaterial _material;
     std::string _languageCode;
     FilamentColorData _selection;
+    std::string _selectedSku;
     std::string _highlightSku;
     std::vector<std::pair<wxWindow*, std::string>> _swatchBySku;
     wxStaticBitmap* _previewBitmap { nullptr };

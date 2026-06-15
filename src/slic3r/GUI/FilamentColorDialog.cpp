@@ -132,7 +132,6 @@ std::string PrimaryColorFromData(const FilamentColorData& colorData)
 FilamentColorData NormalizeFilamentColorData(const FilamentColorData& colorData, const std::string& fallbackColor)
 {
     FilamentColorData normalizedData;
-    normalizedData.sku = colorData.sku;
     normalizedData.colors.reserve(colorData.colors.size());
     for (const std::string& color : colorData.colors)
     {
@@ -164,7 +163,6 @@ bool MakeFilamentColorData(const FilamentColor& color, FilamentColorData& colorD
         return false;
     }
 
-    result.sku = color.sku;
     result.mode = result.colors.size() > 1 ? FilamentColorUtils::NormalizeColourMode(color.mode) : 0;
 
     colorData = result;
@@ -215,15 +213,15 @@ std::vector<FilamentColor>::const_iterator FindColorBySavedColors(const Filament
  * @brief Gets the preview name for the current selected color data.
  */
 std::string GetSelectionDisplayName(const FilamentMaterial& material, const FilamentColorData& colorData,
-                                    const std::string& languageCode)
+                                    const std::string& selectedSku, const std::string& languageCode)
 {
-    if (!colorData.sku.empty())
+    if (!selectedSku.empty())
     {
         std::vector<FilamentColor>::const_iterator colorIt = std::find_if(material.colors.begin(), material.colors.end(),
-                                                                          [&colorData](const FilamentColor& color)
-                                                                          {
-                                                                              return color.sku == colorData.sku;
-                                                                          });
+                                                        [&selectedSku](const FilamentColor& color)
+                                                        {
+                                                            return color.sku == selectedSku;
+                                                        });
         if (colorIt != material.colors.end())
         {
             const std::vector<std::string> officialColors = ColorListFromLibrary(*colorIt);
@@ -581,26 +579,18 @@ FilamentColorDialog::FilamentColorDialog(wxWindow* parent, const FilamentMateria
     , _languageCode(GetLanguageCode())
 {
     const FilamentColorData normalizedCurrent = NormalizeFilamentColorData(currentColor, "#FFFFFF");
-    std::vector<FilamentColor>::const_iterator currentColorIt = std::find_if(_material.colors.begin(), _material.colors.end(),
-                                                                             [&normalizedCurrent](const FilamentColor& color)
-                                                                             {
-                                                                                 return !normalizedCurrent.sku.empty() &&
-                                                                                        color.sku == normalizedCurrent.sku;
-                                                                             });
-    if (currentColorIt == _material.colors.end())
-    {
-        currentColorIt = FindColorBySavedColors(_material, normalizedCurrent);
-    }
+    std::vector<FilamentColor>::const_iterator currentColorIt = FindColorBySavedColors(_material, normalizedCurrent);
 
     if (currentColorIt != _material.colors.end() && MakeFilamentColorData(*currentColorIt, _selection))
     {
+        _selectedSku = currentColorIt->sku;
         _highlightSku = currentColorIt->sku;
     }
     else
     {
+        _selectedSku.clear();
         _highlightSku.clear();
         _selection = normalizedCurrent;
-        _selection.sku.clear();
     }
 
     BuildUi();
@@ -766,6 +756,7 @@ void FilamentColorDialog::SelectFilamentColor(const FilamentColor& color)
         return;
 
     _selection = colorData;
+    _selectedSku = color.sku;
     _highlightSku = color.sku;
     UpdatePreview();
     UpdateSwatchSelection();
@@ -775,6 +766,7 @@ void FilamentColorDialog::SelectCustomColor(const std::string& color)
 {
     const std::string normalized = FilamentColorUtils::NormalizeHexColor(color, "#FFFFFF");
     _selection = MakeCustomColorData(normalized, 0, normalized);
+    _selectedSku.clear();
     _highlightSku.clear();
     UpdatePreview();
     UpdateSwatchSelection();
@@ -787,10 +779,10 @@ void FilamentColorDialog::UpdatePreview()
 
     _previewBitmap->SetBitmap(MakePreviewBitmap(_selection, FromDIP(60)));
 
-    const wxString name = FromStdString(GetSelectionDisplayName(_material, _selection, _languageCode));
+    const wxString name = FromStdString(GetSelectionDisplayName(_material, _selection, _selectedSku, _languageCode));
     _nameLabel->SetLabel(name);
-    _skuLabel->SetLabel(_selection.sku.empty() ? wxEmptyString : FromStdString("sku " + _selection.sku));
-    _skuLabel->Show(!_selection.sku.empty());
+    _skuLabel->SetLabel(_selectedSku.empty() ? wxEmptyString : FromStdString("sku " + _selectedSku));
+    _skuLabel->Show(!_selectedSku.empty());
     Layout();
 }
 

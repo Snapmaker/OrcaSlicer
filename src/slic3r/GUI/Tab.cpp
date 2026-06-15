@@ -27,6 +27,7 @@
 #include <sstream>
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/join.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include "libslic3r/libslic3r.h"
 #include "slic3r/GUI/OptionsGroup.hpp"
@@ -5620,21 +5621,47 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         // Orca: update presets for the selected printer
         if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
             if (preset_name.find("Snapmaker U1") != std::string::npos) {
-                // 在 update_selections() 改变耗材数量之前先保存旧数量和颜色
-                std::vector<std::string> old_filament_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
-                std::vector<std::string> old_filament_presets = m_preset_bundle->filament_presets;
+                DynamicPrintConfig& projectConfig = m_preset_bundle->project_config;
+                std::vector<std::string> oldFilamentColors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
+                std::vector<std::string> oldFilamentMultiColors;
+                std::vector<int> oldFilamentColourModes;
+                if (ConfigOptionStrings* multiColors = projectConfig.option<ConfigOptionStrings>("filament_multi_colors"))
+                    oldFilamentMultiColors = multiColors->values;
+                if (ConfigOptionInts* modes = projectConfig.option<ConfigOptionInts>("filament_colour_mode"))
+                    oldFilamentColourModes = modes->values;
+
+                std::vector<std::string> oldFilamentPresets = m_preset_bundle->filament_presets;
+                const size_t oldFilamentCount = oldFilamentPresets.size();
+                oldFilamentColors.resize(oldFilamentCount, "#26A69A");
+                oldFilamentMultiColors.resize(oldFilamentCount);
+                oldFilamentColourModes.resize(oldFilamentCount, 0);
+                for (size_t i = 0; i < oldFilamentCount; ++i)
+                {
+                    if (oldFilamentColors[i].empty())
+                        oldFilamentColors[i] = "#26A69A";
+                    if (oldFilamentMultiColors[i].empty())
+                        oldFilamentMultiColors[i] = oldFilamentColors[i];
+                    oldFilamentColourModes[i] = oldFilamentColourModes[i] == 1 ? 1 : 0;
+                }
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);
 
-                // 恢复耗材预设到原来的数量和预设名称（保持类型自适应）
-                m_preset_bundle->filament_presets = old_filament_presets;
+                m_preset_bundle->filament_presets = oldFilamentPresets;
 
-                // 恢复原来的颜色，保持用户设置的耗材颜色不变
-                wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values = old_filament_colors;
+                projectConfig.option<ConfigOptionStrings>("filament_colour")->values = oldFilamentColors;
+                projectConfig.option<ConfigOptionStrings>("filament_multi_colors", true)->values = oldFilamentMultiColors;
+                projectConfig.option<ConfigOptionInts>("filament_colour_mode", true)->values = oldFilamentColourModes;
 
-                // 重要：立即保存颜色到配置文件，这样下次切换时也会保持
-                std::string filament_colors_str = boost::algorithm::join(old_filament_colors, ",");
-                wxGetApp().app_config->set_printer_setting(preset_name, "filament_colors", filament_colors_str);
+                std::vector<std::string> filamentColourModeStrings;
+                filamentColourModeStrings.reserve(oldFilamentColourModes.size());
+                for (int mode : oldFilamentColourModes)
+                    filamentColourModeStrings.emplace_back(mode == 1 ? "1" : "0");
+                const std::string filamentColors = boost::algorithm::join(oldFilamentColors, ",");
+                const std::string filamentMultiColors = boost::algorithm::join(oldFilamentMultiColors, ",");
+                const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");
+                wxGetApp().app_config->set_printer_setting(preset_name, "filament_colors", filamentColors);
+                wxGetApp().app_config->set_printer_setting(preset_name, "filament_multi_colors", filamentMultiColors);
+                wxGetApp().app_config->set_printer_setting(preset_name, "filament_colour_mode", filamentColourModes);
 
                 wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
             } else {

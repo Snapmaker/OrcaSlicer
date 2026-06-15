@@ -15,6 +15,7 @@
 #include <regex>
 #include <thread>
 #include <string_view>
+#include <vector>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -50,7 +51,6 @@ namespace pt = boost::property_tree;
 using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
-
 
 // WCP_Logger
 WCP_Logger::WCP_Logger() {
@@ -1633,14 +1633,41 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     }
 
                     int extruder = j_value["extruder_map_table"][i].get<int>();
+                    machineData.index = static_cast<int>(i);
+                    machineData.filament_info = name;
+
+                    json::const_iterator multiColorIt = j_value.find("filament_color_multi");
+                    if (multiColorIt != j_value.end() && multiColorIt->is_array() && multiColorIt->size() > i &&
+                        (*multiColorIt)[i].is_object())
+                    {
+                        const json& multiColor = (*multiColorIt)[i];
+                        json::const_iterator colorsIt = multiColor.find("colors");
+                        if (colorsIt != multiColor.end() && colorsIt->is_array())
+                        {
+                            for (const json& colorJson : *colorsIt)
+                            {
+                                if (!colorJson.is_string())
+                                    continue;
+
+                                const std::string colorText = colorJson.get<std::string>();
+                                const std::string normalized = FilamentColorUtils::NormalizeHexColor(colorText);
+                                if (!normalized.empty())
+                                    machineData.multiColors.emplace_back(normalized);
+                            }
+                        }
+
+                        json::const_iterator modeIt = multiColor.find("mode");
+                        if (machineData.multiColors.size() > 1 && modeIt != multiColor.end() && modeIt->is_number_integer())
+                            machineData.colorMode = FilamentColorUtils::NormalizeColourMode(modeIt->get<int>());
+                    }
 
                     if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
                         j_value["filament_color_rgba"].size() != 0) {
                         std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                        filaments.insert({int(i), {name, str_color}});    
-                        machineData.index = i;
+                        const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(str_color, "#FFFFFF");
+                        str_color = normalizedColor.empty() ? str_color : normalizedColor;
+                        filaments.insert({int(i), {name, str_color}});
                         machineData.color_info = str_color;
-                        machineData.filament_info = name;
                     } else {
                         if (j_value["filament_color"][i].is_number()) {
                             int                color = j_value["filament_color"][i].get<int>();
@@ -1650,17 +1677,18 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
                             std::string str_color = oss.str();
                             filaments.insert({int(i), {name, str_color}});
-                            machineData.index         = i;
                             machineData.color_info    = str_color;
-                            machineData.filament_info = name;
                         } else {
                             std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
+                            const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(str_color, "#FFFFFF");
+                            str_color = normalizedColor.empty() ? str_color : normalizedColor;
                             filaments.insert({int(i), {name, str_color}});
-                            machineData.index         = i;
                             machineData.color_info    = str_color;
-                            machineData.filament_info = name;
                         }
                     }
+                    if (machineData.multiColors.empty() && !machineData.color_info.empty())
+                        machineData.multiColors.emplace_back(machineData.color_info);
+                    machineData.colorMode = machineData.multiColors.size() > 1 ? machineData.colorMode : 0;
                     if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
                         machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
                     machine_nozzles.push_back(machineData);

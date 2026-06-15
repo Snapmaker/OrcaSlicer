@@ -2076,13 +2076,6 @@ void PrintConfigDef::init_fff_params()
     def->max = 1;
     def->set_default_value(new ConfigOptionInts{ 0 });
 
-    def = this->add("filament_colour_sku", coStrings);
-    def->label = L("Filament color SKU");
-    def->tooltip = L("Official filament color SKU. Empty for custom colors.");
-    def->mode = comAdvanced;
-    def->cli = ConfigOptionDef::nocli;
-    def->set_default_value(new ConfigOptionStrings{ "" });
-
     def           = this->add("thumb0", coStrings);
     def->label    = L("small thumb");
     def->tooltip  = L("first small thumb");
@@ -6481,7 +6474,7 @@ void PrintConfigDef::init_filament_option_keys()
         "retraction_length", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "filament_colour",
-        "filament_multi_colors", "filament_colour_mode", "filament_colour_sku",
+        "filament_multi_colors", "filament_colour_mode",
         "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"/*,"filament_seam_gap"*/
     };
 

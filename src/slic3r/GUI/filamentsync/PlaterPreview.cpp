@@ -94,6 +94,26 @@ wxFont getMediumFont()
     return f;
 }
 
+void drawArrowBitmap(wxDC& dc, wxWindow* win, const wxBitmap& bmp)
+{
+    if (!bmp.IsOk()) 
+        return;
+
+    if (win->IsThisEnabled()) {
+        dc.DrawBitmap(bmp, 0, 0);
+    } else {
+        wxImage img = bmp.ConvertToImage();
+        if (!img.HasAlpha()) 
+            img.InitAlpha();
+        unsigned char* alpha = img.GetAlpha();
+        int px = img.GetWidth() * img.GetHeight();
+        for (int i = 0; i < px; ++i) {
+            alpha[i] = static_cast<unsigned char>(alpha[i] * 0.3);
+        }
+        dc.DrawBitmap(wxBitmap(img), 0, 0);
+    }
+}
+
 } // namespace
 
 namespace Slic3r
@@ -147,19 +167,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     m_pArrowLeft->SetMaxSize(FromDIP(wxSize(g_arrowSize, g_arrowSize)));
     m_pArrowLeft->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
         wxPaintDC dc(m_pArrowLeft);
-        const wxBitmap& bmp = getLeftArrowBitmap(FromDIP(g_arrowSize));
-        if (!bmp.IsOk()) return;
-        if (m_pArrowLeft->IsThisEnabled()) {
-            dc.DrawBitmap(bmp, 0, 0);
-        } else {
-            wxImage img = bmp.ConvertToImage();
-            if (!img.HasAlpha()) img.InitAlpha();
-            unsigned char* alpha = img.GetAlpha();
-            int px = img.GetWidth() * img.GetHeight();
-            for (int i = 0; i < px; ++i)
-                alpha[i] = static_cast<unsigned char>(alpha[i] * 0.3);
-            dc.DrawBitmap(wxBitmap(img), 0, 0);
-        }
+        drawArrowBitmap(dc, m_pArrowLeft, getLeftArrowBitmap(FromDIP(g_arrowSize)));
     });
     m_pArrowLeft->Bind(wxEVT_LEFT_DOWN, &PlaterPreview::onLeftArrow, this);
     navRow->Add(m_pArrowLeft, 0, wxALIGN_CENTER_VERTICAL);
@@ -203,19 +211,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     m_pArrowRight->SetMaxSize(FromDIP(wxSize(g_arrowSize, g_arrowSize)));
     m_pArrowRight->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
         wxPaintDC dc(m_pArrowRight);
-        const wxBitmap& bmp = getRightArrowBitmap(FromDIP(g_arrowSize));
-        if (!bmp.IsOk()) return;
-        if (m_pArrowRight->IsThisEnabled()) {
-            dc.DrawBitmap(bmp, 0, 0);
-        } else {
-            wxImage img = bmp.ConvertToImage();
-            if (!img.HasAlpha()) img.InitAlpha();
-            unsigned char* alpha = img.GetAlpha();
-            int px = img.GetWidth() * img.GetHeight();
-            for (int i = 0; i < px; ++i)
-                alpha[i] = static_cast<unsigned char>(alpha[i] * 0.3);
-            dc.DrawBitmap(wxBitmap(img), 0, 0);
-        }
+        drawArrowBitmap(dc, m_pArrowRight, getRightArrowBitmap(FromDIP(g_arrowSize)));
     });
     m_pArrowRight->Bind(wxEVT_LEFT_DOWN, &PlaterPreview::onRightArrow, this);
     navRow->Add(m_pArrowRight, 0, wxALIGN_CENTER_VERTICAL);

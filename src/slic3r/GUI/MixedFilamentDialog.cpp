@@ -803,10 +803,10 @@ void MixedFilamentDialog::build_ui()
                     }
                 }
                 m_match_min_pct = new_min;
-                if (visibility_changed) {
+                if (visibility_changed)
                     rebuild_swatch_sizer();
-                    if (m_match_panel) m_match_panel->set_min_component_percent(new_min);
-                }
+                if (m_match_panel)
+                    m_match_panel->set_min_component_percent(new_min);
             });
             m_match_range_row->SetSizer(range_sizer);
             m_match_ratio_card_sizer->Add(m_match_range_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));

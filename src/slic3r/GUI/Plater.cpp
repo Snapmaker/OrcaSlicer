@@ -8014,8 +8014,7 @@ void Sidebar::show_sync_filament_dialog()
     build_machine_filament_list(preset_bundle, machineFilamentList);
     auto nonEmptyFilaments = [](const std::vector<FilamentData>& filamentDatas) {
         for (const auto& filament : filamentDatas) {
-            // Return true if one filament is not empty.
-            if (!filament.m_type.empty() || filament.m_type != "NONE")
+            if (!is_none_filament(filament))
                 return true;
         }
         return false;
@@ -8036,7 +8035,7 @@ void Sidebar::show_sync_filament_dialog()
     if (wxGetApp().plater()->model().objects.empty()) {
         std::vector<FilamentData> syncedData;
         for (const auto& d : machineFilamentList) {
-            if (!d.m_type.empty())
+            if (!is_none_filament(d))
                 syncedData.push_back(d);
         }
 
@@ -8051,7 +8050,7 @@ void Sidebar::show_sync_filament_dialog()
             std::vector<unsigned int> machinePosToNewId(machineCount, 0);
             unsigned int runningId = 0;
             for (size_t j = 0; j < machineCount; ++j) {
-                if (!machineFilamentList[j].m_type.empty()) {
+                if (!is_none_filament(machineFilamentList[j])) {
                     ++runningId;
                     machinePosToNewId[j] = runningId;
                 }

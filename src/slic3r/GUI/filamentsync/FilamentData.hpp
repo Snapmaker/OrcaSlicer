@@ -40,6 +40,11 @@ struct FilamentData
     uint8_t      m_color_b = 0;
 };
 
+inline bool is_none_filament(const FilamentData& fd)
+{
+    return fd.m_type.empty() || fd.m_type == "NONE";
+}
+
 using FilamentInfoCallback = std::function<void(const FilamentData& data)>;
 
 } // namespace GUI

@@ -118,7 +118,7 @@ std::vector<int> compute_color_match(
         float bestDist = std::numeric_limits<float>::max();
         int   bestIdx  = -1;
         for (size_t j = 0; j < machineCount; ++j) {
-            if (machine_data[j].m_type.empty())
+            if (is_none_filament(machine_data[j]))
                 continue;
             float dL   = designL - machineLab[j].L;
             float dA   = designA - machineLab[j].a;

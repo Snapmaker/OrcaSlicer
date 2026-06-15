@@ -383,7 +383,7 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
         if (dataList.size() > m_machineDataList.size())
             dataList.resize(m_machineDataList.size());
         dataList.erase(std::remove_if(dataList.begin(), dataList.end(),
-            [](const FilamentData& d) { return d.m_type.empty(); }),
+            [](const FilamentData& d) { return is_none_filament(d); }),
             dataList.end());
     }
 
@@ -521,7 +521,7 @@ void SyncFilamentColorDialog::onCoverMatch()
         std::vector<unsigned int> machinePosToNewId(machineCount, 0);
         unsigned int runningId = 0;
         for (size_t j = 0; j < machineCount; ++j) {
-            if (!m_machineDataList[j].m_type.empty()) {
+            if (!is_none_filament(m_machineDataList[j])) {
                 ++runningId;
                 machinePosToNewId[j] = runningId;
             }
@@ -594,13 +594,13 @@ void SyncFilamentColorDialog::loadCoverPreview()
     if (!m_bMappingMode && !filamentMapping.empty()) {
         std::vector<const FilamentData*> validMachine;
         for (const auto& d : m_machineDataList) {
-            if (!d.m_type.empty())
+            if (!is_none_filament(d))
                 validMachine.push_back(&d);
         }
         if (!validMachine.empty()) {
             for (size_t i = 0; i < filamentMapping.size(); ++i) {
                 FilamentData& fd = filamentMapping[i];
-                if (fd.m_type.empty()) {
+                if (is_none_filament(fd)) {
                     const FilamentData& vm = *validMachine[i % validMachine.size()];
                     fd.m_color_r = vm.m_color_r;
                     fd.m_color_g = vm.m_color_g;

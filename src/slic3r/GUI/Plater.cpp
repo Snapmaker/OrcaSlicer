@@ -21259,6 +21259,11 @@ int Plater::delete_plate(int plate_index)
         index = p->partplate_list.get_curr_plate_index();
 
     take_snapshot("delete partplate");
+
+    // CRASH FIX: Clear fff_print reference before PartPlateList::delete_plate destroys the Print,
+    // preventing dangling pointer access during subsequent update calls.
+    p->background_process.set_fff_print(nullptr);
+
     ret = p->partplate_list.delete_plate(index);
 
     //BBS: update the current print to the current plate

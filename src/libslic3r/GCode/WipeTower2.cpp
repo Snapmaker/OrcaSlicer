@@ -1224,8 +1224,6 @@ private:
     const std::vector<WipeTower2::FilamentParameters>& m_filpar;
     std::string                                        m_printer_model;
     bool m_is_prime = false;
-    float m_minimum_travel_lift = 2.0f;
-    float m_default_lift_length = 0.4f;
 
     // 判断是否是 Snapmaker U1 打印机
     bool is_snapmaker_u1() const { return boost::icontains(m_printer_model, "Snapmaker") && boost::icontains(m_printer_model, "U1"); }
@@ -1513,8 +1511,8 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
 
         unsigned int tool = tools[idx_tool];
         m_left_to_right   = true;
-        toolchange_Change(writer, tool, m_filpar[tool].material); 
-        toolchange_Load(writer, cleaning_box);
+        toolchange_Change(writer, tool, m_filpar[tool].material); // Select the tool, set a speed override for soluble and flex materials.
+        toolchange_Load(writer, cleaning_box);                    // Prime the tool.
         if (idx_tool + 1 == tools.size()) {
             // Last tool should not be unloaded, but it should be wiped enough to become of a pure color.
             if (idx_tool == 0)
@@ -1576,12 +1574,10 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
     const size_t old_tool = m_current_tool;
     float wipe_area    = 0.f;
     float wipe_volume  = 0.f;
-    float ramming_depth = 0.f;
 
     if (tool_change != nullptr) {
         wipe_volume = tool_change->wipe_volume;
         wipe_area   = tool_change->required_depth;
-        ramming_depth = tool_change->ramming_depth;
     }
 
     WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width / 2.f, m_perimeter_width / 2.f), m_wipe_tower_width - m_perimeter_width,
@@ -1626,7 +1622,7 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
         toolchange_Unload(writer, cleaning_box, m_filpar[m_current_tool].material,
                           (is_first_layer() ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature),
                           new_tool_temp);
-        toolchange_Change(writer, tool, m_filpar[tool].material);
+        toolchange_Change(writer, tool, m_filpar[tool].material); // Change the tool, set a speed override for soluble and flex materials.
         toolchange_Load(writer, cleaning_box);
         writer.travel(writer.x(), writer.y() - m_perimeter_width); // cooling and loading were done a bit down the road
         toolchange_Wipe(writer, cleaning_box, wipe_volume); // Wipe the newly loaded filament until the end of the assigned wipe area.
@@ -1756,12 +1752,6 @@ WipeTower::ToolChangeResult WipeTower2::local_z_tool_change(size_t new_tool,
     return result;
 }
 
-// Predict the X position where the nozzle will be after ramming completes.
-// Must stay in sync with toolchange_Unload() behaviour directly below.
-// Ramming always starts from xl (L1644), m_left_to_right = true (L1649), first line goes right.
-// After N ramming lines: odd N → xr, even N → xl.
-// When ramming is disabled, nozzle stays at xl (set_position at ramming_start_pos, L1668).
-// L1677 may leave the nozzle at an intermediate X; gap width (~5×perimeter_width) tolerates this.
 float WipeTower2::predict_ramming_end_x(int old_tool, float layer_height) const
 {
     float line_width = m_perimeter_width * m_filpar[old_tool].ramming_line_width_multiplicator;
@@ -2011,8 +2001,7 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
 }
 
 // Change the tool, set a speed override for soluble and flex materials.
-void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_tool, 
-    const std::string& new_material)
+void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_tool, const std::string& new_material)
 {
     // Ask the writer about how much of the old filament we consumed:
     if (m_current_tool < m_used_filament_length.size())
@@ -2064,10 +2053,8 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
 
         // Gap travel: through gap into cleaning_box edge before Load
         writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
-    } else {
-        /*writer
-            .feedrate(m_travel_speed * 60.f)
-            .travel(box_edge_x, gap_y + m_perimeter_width / 2.f);*/
+    } 
+    else {
         writer
             .feedrate(m_travel_speed * 60.f)
             .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
@@ -2342,7 +2329,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
         // outer contour (always)
         bool infill_cone = first_layer && m_wipe_tower_width > 2 * spacing && m_wipe_tower_depth > 2 * spacing;
         std::vector<Vec2f> skip_points = get_wall_skip_points(m_layer_info - m_plan.begin());
-        poly             = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing, skip_points);
+        poly = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing, skip_points);
     } else {
         WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
         std::vector<Vec2f> skip_points = get_wall_skip_points(m_layer_info - m_plan.begin());

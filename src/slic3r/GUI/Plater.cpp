@@ -11682,10 +11682,25 @@ bool Plater::priv::has_incompatible_mixed_filament_in_use() const
     const size_t num_physical = preset_bundle->filament_presets.size();
     if (num_physical < 2) return false;
 
+    auto &mgr = preset_bundle->mixed_filaments;
+
+    // Early exit: if no incompatible mixed filament exists in the project,
+    // we can skip the per-object scan entirely.
+    bool any_incompatible = false;
+    for (const auto &mf : mgr.mixed_filaments()) {
+        if (mf.enabled && !mf.deleted && !is_filament_compatible(mf)) {
+            any_incompatible = true;
+            break;
+        }
+    }
+    if (!any_incompatible) {
+        m_cached_incompatible_mixed = false;
+        return false;
+    }
+
     const PartPlate *part_plate = partplate_list.get_curr_plate();
     if (!part_plate) return false;
 
-    auto &mgr = preset_bundle->mixed_filaments;
     ModelObjectPtrs plate_objects = part_plate->get_objects_on_this_plate();
 
     std::set<unsigned int> used_virtual_1based;

@@ -2894,16 +2894,12 @@ void MixedFilamentDialog::rebuild_swatch_sizer()
 {
     if (m_current_mode != MODE_MATCH) return;
     auto& children = m_swatch_grid_panel->GetChildren();
-    wxSizer* old_sizer = m_swatch_grid_panel->GetSizer();
-    if (old_sizer == nullptr) return;
 
-    while (old_sizer->GetItemCount() > 0)
-        old_sizer->Detach(0);
+    // Guard: the grid panel children must correspond 1:1 with swatch badges.
+    if (children.size() != m_swatch_min_weights.size()) return;
 
     const int cols = 10;
     auto* new_grid = new wxGridSizer(cols, FromDIP(6), FromDIP(6));
-    // Guard: the grid panel children must correspond 1:1 with swatch badges.
-    if (children.size() != m_swatch_min_weights.size()) return;
     for (size_t i = 0; i < children.size() && i < m_swatch_min_weights.size(); ++i) {
         bool visible = m_swatch_min_weights[i] >= m_match_min_pct;
         children[i]->Show(visible);
@@ -2911,6 +2907,8 @@ void MixedFilamentDialog::rebuild_swatch_sizer()
             new_grid->Add(children[i], 0, wxALIGN_CENTER);
     }
 
+    // SetSizer replaces and auto-deletes the old sizer.
+    // Windows survive because Add() defaults to no ownership.
     m_swatch_grid_panel->SetSizer(new_grid);
     m_swatch_grid_panel->Layout();
     m_swatch_card->Layout();

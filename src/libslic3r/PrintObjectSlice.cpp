@@ -423,7 +423,7 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                 // Pre-pass: accumulate per-layer XY area per print_object_region_id
                                 std::unordered_map<int, double> region_area_map;
                                 for (int i = 0; i < int(temp_slices.size()); ++i) {
-                                    const auto &ts = temp_slices[i];
+                                    const RegionSlice &ts = temp_slices[i];
                                     if (ts.region_id >= 0 && !ts.expolygons.empty())
                                         region_area_map[ts.region_id] += area(ts.expolygons);
                                 }
@@ -449,7 +449,7 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                                 double area_current = region_area_map[pid_current];
                                                 double area_other   = region_area_map[pid_other];
                                                 // Hysteresis guard: only switch carving direction if area ratio is significant
-                                                bool smaller_carves;
+                                                bool smaller_carves = false;
                                                 if (std::max(area_current, area_other) / std::min(area_current, area_other) < 1.5)
                                                     smaller_carves = (pid_current <= pid_other);
                                                 else

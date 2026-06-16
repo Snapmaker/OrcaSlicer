@@ -42,9 +42,6 @@ FilamentScrollBar::FilamentScrollBar(wxWindow* parent, const wxColour& bgColor, 
     Bind(wxEVT_LEFT_DOWN, &FilamentScrollBar::onMouseDown, this);
     Bind(wxEVT_LEFT_UP, &FilamentScrollBar::onMouseUp, this);
     Bind(wxEVT_MOTION, &FilamentScrollBar::onMouseMove, this);
-    Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) {
-        // Capture lost (e.g. another window took it) — drag aborted
-    });
 }
 
 void FilamentScrollBar::setScrollRange(int contentHeight, int viewportHeight)

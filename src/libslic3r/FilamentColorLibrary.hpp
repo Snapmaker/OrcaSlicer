@@ -30,14 +30,14 @@ struct FilamentColor
     bool Empty() const;
     FilamentColorMode NormalizedMode() const;
     bool IsGradient() const;
-    std::string PrimaryColor(const std::string& fallbackColor = "#FFFFFF") const;
+    std::string PrimaryColor(const std::string& fallbackColor = "#26A69A") const;
     std::string ToMultiColorsString() const;
     bool Matches(const FilamentColor& other) const;
 
     static FilamentColor FromColors(const std::vector<std::string>& colors, FilamentColorMode mode,
-                                    const std::string& fallbackColor = "#FFFFFF");
+                                    const std::string& fallbackColor = "#26A69A");
     static FilamentColor FromMultiColors(const std::string& multiColors, FilamentColorMode mode,
-                                         const std::string& fallbackColor = "#FFFFFF");
+                                         const std::string& fallbackColor = "#26A69A");
 };
 
 struct FilamentColorItem

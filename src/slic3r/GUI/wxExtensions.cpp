@@ -596,13 +596,12 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
                             const bool a_to_b = mf.gradient_start >= mf.gradient_end;
 
                             Slic3r::GUI::ColorBlockParams params;
-                            params.mode   = Slic3r::GUI::ColorBlockParams::Mode::Gradient;
+                            params.mode   = Slic3r::GUI::ColorBlockParams::Gradient;
                             params.width  = icon_width;
                             params.height = icon_height;
                             params.label  = label;
-                            params.gradient_direction = Slic3r::GUI::ColorBlockParams::BottomToTop;
-                            params.colors.push_back(a_to_b ? ca : cb);
-                            params.colors.push_back(a_to_b ? cb : ca);
+                            params.gradient_colors.push_back(a_to_b ? ca : cb);
+                            params.gradient_colors.push_back(a_to_b ? cb : ca);
 
                             bmps.push_back(Slic3r::GUI::get_color_block_bitmap_cached(params));
                         }

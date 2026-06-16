@@ -284,7 +284,7 @@ std::string FilamentColor::PrimaryColor(const std::string& fallbackColor) const
         if (!normalized.empty())
             return normalized;
     }
-    return NormalizeFilamentHexColor(fallbackColor, "#FFFFFF");
+    return NormalizeFilamentHexColor(fallbackColor, "#26A69A");
 }
 
 std::string FilamentColor::ToMultiColorsString() const
@@ -306,8 +306,8 @@ FilamentColor FilamentColor::FromColors(const std::vector<std::string>& colors, 
     filamentColor.colors = NormalizeColorList(colors);
     if (filamentColor.colors.empty())
     {
-        const std::string fallback = NormalizeFilamentHexColor(fallbackColor, "#FFFFFF");
-        filamentColor.colors.emplace_back(fallback.empty() ? "#FFFFFF" : fallback);
+        const std::string fallback = NormalizeFilamentHexColor(fallbackColor, "#26A69A");
+        filamentColor.colors.emplace_back(fallback.empty() ? "#26A69A" : fallback);
     }
 
     filamentColor.mode = filamentColor.colors.size() > 1 ? mode : FilamentColorMode::Segment;
@@ -415,7 +415,7 @@ bool FilamentColorLibrary::LoadIndex()
         FilamentColorInfo filament;
         filament.filamentId = JsonString(filamentJson, "filament_id");
         filament.filamentName = JsonString(filamentJson, "filament_name");
-        filament.type = JsonString(filamentJson, "type");
+        filament.type = JsonString(filamentJson, "filament_type");
 
         if (filament.filamentId.empty() || filament.filamentName.empty())
         {

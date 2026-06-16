@@ -1,6 +1,5 @@
 #pragma once
 
-#include <wx/colour.h>
 #include <wx/panel.h>
 #include <wx/dcclient.h>
 #include <wx/bitmap.h>
@@ -15,37 +14,44 @@ struct MixedFilamentDisplayContext;
 
 namespace Slic3r { namespace GUI {
 
-// Unified colour-block parameters used by solid, segmented, and gradient swatches.
+// Unified colour-block parameters used by both solid and gradient swatches.
 struct ColorBlockParams
 {
-    enum class Mode { Solid, Segment, Gradient };
-    enum GradientDirection { LeftToRight, BottomToTop };
-
-    Mode mode = Mode::Solid;
-    GradientDirection gradient_direction = BottomToTop;
+    enum Mode { Solid, Gradient };
+    Mode mode = Solid;
     wxColour solid_color;
-    std::vector<wxColour> colors;
+    std::vector<wxColour> gradient_colors; // 2-stop gradient, already sorted (bottom→top)
     wxString label;
     int width  = 20;
     int height = 20;
 };
 
-// Linear interpolation across an ordered list of colours.
+// Linear interpolation across an ordered list of colours (0.0 → colors[0], 1.0 → colors.back()).
 wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 
 // Cached colour-block bitmap. The static BitmapCache lives inside the implementation.
-wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params, const wxColour& lightBorderColor = wxNullColour);
+// Key format:  "solid:#RRGGBB:hH:wW:label"  or  "grad:#RRGGBB:#RRGGBBBT:hH:wW:label"
+wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
+
+// Cached bitmap for official filament colour blocks. Multiple colours are drawn left to right.
+wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, bool is_gradient,
+                                        int width, int height, const wxString& label,
+                                        const wxColour& lightBorderColor);
 
 class MixedFilamentBadge : public wxPanel
 {
 public:
-    MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id, const MixedFilament& mf,
-                       const MixedFilamentDisplayContext& display_context, bool show_number = true, int badge_size = 20);
+    MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id,
+                       const MixedFilament& mf,
+                       const MixedFilamentDisplayContext& display_context,
+                       bool show_number = true, int badge_size = 20);
 
 private:
+    wxColour m_solid_color;
+    bool m_is_gradient = false;
     bool m_show_number = true;
     wxString m_label;
-    ColorBlockParams m_color_block;
+    std::vector<wxColour> m_gradient_colors;
 
     void on_paint(wxPaintEvent&);
     void on_left_up(wxMouseEvent&);
@@ -53,8 +59,10 @@ private:
 
 // Create a menu/dropdown bitmap for a mixed filament.
 // Matches MixedFilamentBadge drawing style (font, border, gradient direction).
-// Returns a pointer into a static BitmapCache - caller must not delete it.
-wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament& mf, const MixedFilamentDisplayContext& ctx,
-                                            int width, int height, const wxString& label);
+// Returns a pointer into a static BitmapCache — caller must NOT delete it.
+wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament&               mf,
+                                            const MixedFilamentDisplayContext& ctx,
+                                            int  width, int  height,
+                                            const wxString& label);
 
 }} // namespace Slic3r::GUI

@@ -58,7 +58,7 @@ void startup_profile_log(const std::string& message)
         BOOST_LOG_TRIVIAL(warning) << "[StartupProfile] " << message;
 }
 
-std::vector<std::string> SplitPrinterSetting(AppConfig &config, const std::string &printerName, const std::string &key)
+std::vector<std::string> SplitPrinterSetting(const AppConfig &config, const std::string &printerName, const std::string &key)
 {
     std::vector<std::string> values;
     const std::string setting = config.get_printer_setting(printerName, key);
@@ -67,7 +67,7 @@ std::vector<std::string> SplitPrinterSetting(AppConfig &config, const std::strin
     return values;
 }
 
-std::vector<FilamentColorMode> LoadFilamentColourModes(AppConfig &config, const std::string &printerName)
+std::vector<FilamentColorMode> LoadFilamentColourModes(const AppConfig &config, const std::string &printerName)
 {
     std::vector<FilamentColorMode> modes;
     const std::vector<std::string> modeValues = SplitPrinterSetting(config, printerName, "filament_colour_mode");
@@ -100,7 +100,7 @@ std::vector<FilamentColor> BuildFilamentColors(const std::vector<std::string>& c
     return filamentColors;
 }
 
-std::vector<FilamentColor> LoadFilamentColors(AppConfig &config, const std::string &printerName, size_t targetCount)
+std::vector<FilamentColor> LoadFilamentColors(const AppConfig &config, const std::string &printerName, size_t targetCount)
 {
     const std::vector<std::string> colors = SplitPrinterSetting(config, printerName, "filament_colors");
     const std::vector<std::string> multiColors = SplitPrinterSetting(config, printerName, "filament_multi_colors");

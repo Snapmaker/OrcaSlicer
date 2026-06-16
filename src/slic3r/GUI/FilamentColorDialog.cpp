@@ -168,7 +168,7 @@ std::string GetSelectionDisplayName(const FilamentColorInfo& filament, const Fil
 
     if (colorData.colors.size() > 1)
         return _L("Multiple Color").ToStdString(wxConvUTF8);
-    return colorData.PrimaryColor("#FFFFFF");
+    return colorData.PrimaryColor("#26A69A");
 }
 
 /**
@@ -496,7 +496,7 @@ bool IsValidWindowRect(const wxRect& rect)
     return rect.GetWidth() > 0 && rect.GetHeight() > 0;
 }
 
-wxRect WindowClientScreenRect(wxWindow* window)
+wxRect WindowClientScreenRect(const wxWindow* window)
 {
     if (window == nullptr)
         return wxRect();
@@ -517,7 +517,7 @@ FilamentColorDialog::FilamentColorDialog(wxWindow* parent, const FilamentColorIn
     , _languageCode(GetLanguageCode())
 {
     const FilamentColor normalizedCurrent =
-        FilamentColor::FromColors(currentColor.colors, currentColor.mode, "#FFFFFF");
+        FilamentColor::FromColors(currentColor.colors, currentColor.mode, "#26A69A");
     std::vector<FilamentColorItem>::const_iterator currentColorIt =
         FindColorBySavedColors(_filament, normalizedCurrent);
 
@@ -706,7 +706,7 @@ void FilamentColorDialog::SelectFilamentColor(const FilamentColorItem& colorItem
 
 void FilamentColorDialog::SelectCustomColor(const std::string& color)
 {
-    const std::string normalized = FilamentColorUtils::NormalizeHexColor(color, "#FFFFFF");
+    const std::string normalized = FilamentColorUtils::NormalizeHexColor(color, "#26A69A");
     _selection = FilamentColor::FromMultiColors(normalized, FilamentColorMode::Segment, normalized);
     _selectedSku.clear();
     _highlightSku.clear();
@@ -880,7 +880,7 @@ void FilamentColorDialog::OpenMoreColorDialog()
     wxColourData data;
     data.SetChooseFull(true);
     data.SetChooseAlpha(false);
-    data.SetColour(wxColour(_selection.PrimaryColor("#FFFFFF")));
+    data.SetColour(wxColour(_selection.PrimaryColor("#26A69A")));
 
     std::vector<std::string> custom_colors;
     if (wxGetApp().app_config != nullptr)

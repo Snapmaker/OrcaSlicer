@@ -1,9 +1,7 @@
 #include "FilamentColorUtils.hpp"
 
-#include "libslic3r/PrintConfig.hpp"
 #include "MixedFilamentBadge.hpp"
-
-#include <algorithm>
+#include "libslic3r/PrintConfig.hpp"
 
 namespace Slic3r
 {
@@ -28,8 +26,8 @@ std::vector<std::string> NormalizedColorsOrFallback(const std::vector<std::strin
 
     if (normalized.empty())
     {
-        const std::string fallback = NormalizeHexColor(fallback_color, "#FFFFFF");
-        normalized.emplace_back(fallback.empty() ? "#FFFFFF" : fallback);
+        const std::string fallback = NormalizeHexColor(fallback_color, "#26A69A");
+        normalized.emplace_back(fallback.empty() ? "#26A69A" : fallback);
     }
 
     return normalized;
@@ -40,51 +38,28 @@ void AddFallbackToNormalizedColors(std::vector<std::string>& colors, const std::
     if (!colors.empty())
         return;
 
-    const std::string fallback = NormalizeHexColor(fallbackColor, "#FFFFFF");
-    colors.emplace_back(fallback.empty() ? "#FFFFFF" : fallback);
+    const std::string fallback = NormalizeHexColor(fallbackColor, "#26A69A");
+    colors.emplace_back(fallback.empty() ? "#26A69A" : fallback);
 }
 
 wxColour WxColorFromHex(const std::string& color)
 {
     wxColour parsed(color);
-    return parsed.IsOk() ? parsed : wxColour("#FFFFFF");
+    return parsed.IsOk() ? parsed : wxColour("#26A69A");
 }
 
 wxBitmap* GetFilamentColorIconFromNormalized(const std::vector<std::string>& normalizedColors, FilamentColorMode mode,
                                              const std::string& label, int iconWidth, int iconHeight,
                                              const wxColour& lightBorderColor)
 {
-    iconWidth = std::max(1, iconWidth);
-    iconHeight = std::max(1, iconHeight);
-
-    std::vector<wxColour> wx_colors;
-    wx_colors.reserve(normalizedColors.size());
+    std::vector<wxColour> wxColors;
+    wxColors.reserve(normalizedColors.size());
     for (const std::string& color : normalizedColors)
-        wx_colors.emplace_back(WxColorFromHex(color));
+        wxColors.emplace_back(WxColorFromHex(color));
 
-    ColorBlockParams params;
-    params.width = iconWidth;
-    params.height = iconHeight;
-    params.label = wxString::FromUTF8(label.c_str());
-
-    if (wx_colors.size() <= 1)
-    {
-        params.mode = ColorBlockParams::Mode::Solid;
-        params.solid_color = wx_colors.empty() ? wxColour("#FFFFFF") : wx_colors.front();
-    }
-    else if (mode == FilamentColorMode::Gradient)
-    {
-        params.mode = ColorBlockParams::Mode::Gradient;
-        params.gradient_direction = ColorBlockParams::LeftToRight;
-        params.colors = wx_colors;
-    }
-    else
-    {
-        params.mode = ColorBlockParams::Mode::Segment;
-        params.colors = wx_colors;
-    }
-
-    return get_color_block_bitmap_cached(params, lightBorderColor);
+    const bool isGradient = normalizedColors.size() > 1 && mode == FilamentColorMode::Gradient;
+    return get_color_block_bitmap_cached(wxColors, isGradient, iconWidth, iconHeight, wxString::FromUTF8(label.c_str()),
+                                         lightBorderColor);
 }
 
 } // namespace
@@ -177,7 +152,7 @@ nlohmann::json BuildPreprintColorMultiItem(const std::string& multiColors, Filam
 wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, FilamentColorMode mode, const std::string& label,
                                int iconWidth, int iconHeight, const wxColour& lightBorderColor)
 {
-    const std::vector<std::string> normalized = NormalizedColorsOrFallback(colors, "#FFFFFF");
+    const std::vector<std::string> normalized = NormalizedColorsOrFallback(colors, "#26A69A");
     return GetFilamentColorIconFromNormalized(normalized, mode, label, iconWidth, iconHeight, lightBorderColor);
 }
 
@@ -191,7 +166,7 @@ wxBitmap* GetFilamentColorIcon(const std::string& multiColors, FilamentColorMode
 
 ImU32 ToImGuiColor(const std::string& color)
 {
-    const wxColour parsed = WxColorFromHex(NormalizeHexColor(color, "#FFFFFF"));
+    const wxColour parsed = WxColorFromHex(NormalizeHexColor(color, "#26A69A"));
     return IM_COL32(parsed.Red(), parsed.Green(), parsed.Blue(), 255);
 }
 
@@ -203,7 +178,7 @@ float ImGuiAverageLuminance(const FilamentColor& color)
     float total_luminance = 0.0f;
     for (const std::string& item : color.colors)
     {
-        const wxColour parsed = WxColorFromHex(NormalizeHexColor(item, "#FFFFFF"));
+        const wxColour parsed = WxColorFromHex(NormalizeHexColor(item, "#26A69A"));
         total_luminance += (0.299f * parsed.Red() + 0.587f * parsed.Green() + 0.114f * parsed.Blue()) / 255.0f;
     }
 

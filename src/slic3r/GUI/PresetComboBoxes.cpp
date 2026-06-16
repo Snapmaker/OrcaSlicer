@@ -127,7 +127,7 @@ bool FilamentMatchesPresetName(const FilamentColorInfo& filament, const std::str
     return !filamentName.empty() && filamentName == currentFilamentName;
 }
 
-wxSize FilamentColorPickerBitmapSize(wxButton* picker)
+wxSize FilamentColorPickerBitmapSize(const wxButton* picker)
 {
     wxSize size = picker != nullptr ? picker->GetSize() : wxSize();
     if (size.GetWidth() <= 0 || size.GetHeight() <= 0)
@@ -408,7 +408,7 @@ int PresetComboBox::update_ams_color()
             color = iter->second.opt_string("filament_colour", 0u);
         }
     }
-    const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(color, "#FFFFFF");
+    const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(color, "#26A69A");
     if (machineInfo != nullptr && multiColors.empty() && !normalizedColor.empty())
         multiColors.emplace_back(normalizedColor);
     int normalizedMode = FilamentColorModeToConfig(FilamentColorMode::Segment);
@@ -1066,10 +1066,10 @@ void PlaterPresetComboBox::ChangeExtruderColor()
     bool foundFilament = false;
     if (library.EnsureLoaded())
     {
-        foundFilament = !filamentId.empty() && library.FindFilamentById(filamentId, filament) &&
-                        FilamentMatchesPresetName(filament, filamentPresetName);
+        foundFilament = !filamentPresetName.empty() && library.FindFilamentByName(filamentPresetName, filament);
         if (!foundFilament)
-            foundFilament = !filamentPresetName.empty() && library.FindFilamentByName(filamentPresetName, filament);
+            foundFilament = !filamentId.empty() && library.FindFilamentById(filamentId, filament) &&
+                            FilamentMatchesPresetName(filament, filamentPresetName);
     }
 
     if (foundFilament && !filament.colors.empty())
@@ -1137,7 +1137,7 @@ void PlaterPresetComboBox::ApplyFilamentColor(const FilamentColor& colorData)
     const size_t target_size = index + 1;
 
     const FilamentColor normalizedColor = FilamentColor::FromColors(colorData.colors, colorData.mode);
-    const std::string normalizedPrimary = normalizedColor.PrimaryColor("#FFFFFF");
+    const std::string normalizedPrimary = normalizedColor.PrimaryColor("#26A69A");
     const std::string multiColors = normalizedColor.ToMultiColorsString();
     const int normalizedMode = FilamentColorModeToConfig(normalizedColor.NormalizedMode());
 

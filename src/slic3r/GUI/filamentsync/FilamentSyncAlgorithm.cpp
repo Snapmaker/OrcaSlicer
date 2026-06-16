@@ -137,14 +137,22 @@ std::vector<int> compute_color_match(
 
 std::vector<int> compute_direct_override(
     size_t design_count,
-    size_t machine_count)
+    const std::vector<GUI::FilamentData>& machine_data)
 {
     std::vector<int> result(design_count, -1);
-    if (machine_count == 0)
+
+    std::vector<size_t> validPos;
+    for (size_t j = 0; j < machine_data.size(); ++j) {
+        if (!is_none_filament(machine_data[j]))
+            validPos.push_back(j);
+    }
+
+    size_t validCount = validPos.size();
+    if (validCount == 0)
         return result;
 
     for (size_t i = 0; i < design_count; ++i)
-        result[i] = static_cast<int>(i % machine_count);
+        result[i] = static_cast<int>(validPos[i % validCount]);
 
     return result;
 }

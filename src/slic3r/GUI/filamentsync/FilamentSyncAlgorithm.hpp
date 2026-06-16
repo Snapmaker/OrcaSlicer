@@ -14,10 +14,10 @@ std::vector<int> compute_color_match(
     const std::vector<GUI::FilamentData>& design_data,
     const std::vector<GUI::FilamentData>& machine_data);
 
-// Sequential 1:1 override: design[i] -> machine[i] until either list is exhausted.
+// Sequential 1:1 override: design[i] -> valid machine[i % validCount], skipping NONE slots.
 std::vector<int> compute_direct_override(
     size_t design_count,
-    size_t machine_count);
+    const std::vector<GUI::FilamentData>& machine_data);
 
 // CIE76 perceptual color distance between two sRGB colors.
 // Lower value = perceptually closer.

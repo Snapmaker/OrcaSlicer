@@ -393,7 +393,8 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
             usedMachineIndices.insert(data.m_index);
         }
         for (const auto& machineData : m_machineDataList) {
-            if (usedMachineIndices.find(machineData.m_index) == usedMachineIndices.end()) {
+            if (usedMachineIndices.find(machineData.m_index) == usedMachineIndices.end()
+                && !is_none_filament(machineData)) {
                 dataList.push_back(machineData);
             }
         }
@@ -504,8 +505,8 @@ void SyncFilamentColorDialog::onCoverMatch()
     size_t designCount  = m_designDataList.size();
     size_t machineCount = m_machineDataList.size();
 
-    // 1:1 positional mapping — UI faithfully shows NONE at empty machine slots
-    std::vector<int> mapping = compute_direct_override(designCount, machineCount);
+    // 1:1 positional mapping — cycle through non-NONE machine filaments only
+    std::vector<int> mapping = compute_direct_override(designCount, m_machineDataList);
 
     int idx = 0;
     for (int m_idx : mapping) {
@@ -518,13 +519,16 @@ void SyncFilamentColorDialog::onCoverMatch()
     }
     m_pFilamentColorMapBoxGroup->setGroupBoxEnable(false, FilamentColorMapBox::ButtonType::Below);
 
-    // Count valid (non-NONE) machine filaments for filament ID remap
-
     // Build 1-based filament ID remap for overwrite mode.
-    // 1:1 positional mapping: design[i] → machine[i % machineCount].
-    // If machine[pos] is NONE, that design filament is removed (new_id = 0).
-    // Otherwise, new_id = 1 + number of valid machine filaments before pos.
+    // Cycle through non-NONE machine filaments only.
     {
+        std::vector<size_t> validPos;
+        for (size_t j = 0; j < machineCount; ++j) {
+            if (!is_none_filament(m_machineDataList[j]))
+                validPos.push_back(j);
+        }
+        size_t validCount = validPos.size();
+
         std::vector<unsigned int> machinePosToNewId(machineCount, 0);
         unsigned int runningId = 0;
         for (size_t j = 0; j < machineCount; ++j) {
@@ -536,7 +540,7 @@ void SyncFilamentColorDialog::onCoverMatch()
 
         m_filamentIdRemap.assign(designCount + 1, 0);
         for (size_t old_id = 1; old_id <= designCount; ++old_id) {
-            size_t machine_pos = (old_id - 1) % machineCount;
+            size_t machine_pos = validPos[(old_id - 1) % validCount];
             m_filamentIdRemap[old_id] = machinePosToNewId[machine_pos];
         }
     }

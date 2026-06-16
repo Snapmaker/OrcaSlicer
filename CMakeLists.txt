@@ -948,8 +948,6 @@ set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
-set(CPACK_NSIS_INSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh")
-set(CPACK_NSIS_UNINSTALL_SCRIPT "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh")
 # Preinstall guard in one place:
 # 1) Block while app is running.
 # 2) If old version exists, uninstall it with clear failure reason.
@@ -1024,19 +1022,126 @@ SnapmakerOrcaPre_uninst_launch_failed:
 
 SnapmakerOrcaPre_finish:
 ]=])
-set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
-    CreateShortCut \\\"$DESKTOP\\\\Snapmaker Orca.lnk\\\" \\\"$INSTDIR\\\\snapmaker-orca.exe\\\"
-")
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS)
+# Desktop shortcut inside MUI_STARTMENU_WRITE_BEGIN: respects "do not create shortcuts" on the start menu page.
+set(CPACK_NSIS_CREATE_ICONS_EXTRA [=[
+  SetShellVarContext current
+  CreateShortCut "$DESKTOP\Snapmaker Orca.lnk" "$INSTDIR\snapmaker-orca.exe" "" "$INSTDIR\snapmaker-orca.exe" 0
+  SetShellVarContext all
+]=])
+set(CPACK_NSIS_DELETE_ICONS_EXTRA [=[
+  SetShellVarContext current
+  Delete "$DESKTOP\Snapmaker Orca.lnk"
+  SetShellVarContext all
+]=])
 set (CPACK_PACKAGE_CHECKSUM SHA256)
 set (CPACK_PACKAGE_INSTALL_REGISTRY_KEY "Snapmaker_Orca")
 set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-# set (CPACK_NSIS_MODIFY_PATH "ON")
 set(CPACK_PACKAGE_EXECUTABLES "snapmaker-orca;Snapmaker Orca")
-set(CPACK_CREATE_DESKTOP_LINKS "snapmaker-orca")
 set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt) # must also include in install command
 
 set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")
 set(CPACK_GENERATOR NSIS)
 set(CPACK_VERBATIM_VARIABLES ON)
+# Strip CPack "Install Options" page; shortcuts follow the start-menu checkbox only.
+if (WIN32)
+    file(READ "${CMAKE_ROOT}/Modules/Internal/CPack/NSIS.template.in" _snapmaker_nsis_tpl)
+    string(REPLACE "\r\n" "\n" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    string(REPLACE "\r" "\n" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    set(_snapmaker_nsis_old_registry [=[
+  ;Read a value from an InstallOptions INI file
+  !insertmacro MUI_INSTALLOPTIONS_READ $DO_NOT_ADD_TO_PATH "NSIS.InstallOptions.ini" "Field 2" "State"
+  !insertmacro MUI_INSTALLOPTIONS_READ $ADD_TO_PATH_ALL_USERS "NSIS.InstallOptions.ini" "Field 3" "State"
+  !insertmacro MUI_INSTALLOPTIONS_READ $ADD_TO_PATH_CURRENT_USER "NSIS.InstallOptions.ini" "Field 4" "State"
+
+  ; Write special uninstall registry entries
+  Push "StartMenu"
+  Push "$STARTMENU_FOLDER"
+  Call ConditionalAddToRegistry
+  Push "DoNotAddToPath"
+  Push "$DO_NOT_ADD_TO_PATH"
+  Call ConditionalAddToRegistry
+  Push "AddToPathAllUsers"
+  Push "$ADD_TO_PATH_ALL_USERS"
+  Call ConditionalAddToRegistry
+  Push "AddToPathCurrentUser"
+  Push "$ADD_TO_PATH_CURRENT_USER"
+  Call ConditionalAddToRegistry
+  Push "InstallToDesktop"
+  Push "$INSTALL_DESKTOP"
+  Call ConditionalAddToRegistry
+
+]=])
+    set(_snapmaker_nsis_new_registry [=[
+  ; Write special uninstall registry entries
+  Push "StartMenu"
+  Push "$STARTMENU_FOLDER"
+  Call ConditionalAddToRegistry
+
+]=])
+    string(REPLACE "${_snapmaker_nsis_old_registry}" "${_snapmaker_nsis_new_registry}" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    foreach(_snapmaker_nsis_erase IN ITEMS
+        [=[  Var DO_NOT_ADD_TO_PATH
+  Var ADD_TO_PATH_ALL_USERS
+  Var ADD_TO_PATH_CURRENT_USER
+  Var INSTALL_DESKTOP
+]=]
+        [=[  ReserveFile "NSIS.InstallOptions.ini"
+  !insertmacro MUI_RESERVEFILE_INSTALLOPTIONS
+
+]=]
+        [=[  Page custom InstallOptionsPage
+]=]
+        [=[  !insertmacro MUI_INSTALLOPTIONS_READ $INSTALL_DESKTOP "NSIS.InstallOptions.ini" "Field 5" "State"
+]=]
+        [=[Section "-Add to path"
+  Push $INSTDIR\bin
+  StrCmp "@CPACK_NSIS_MODIFY_PATH@" "ON" 0 doNotAddToPath
+  StrCmp $DO_NOT_ADD_TO_PATH "1" doNotAddToPath 0
+    Call AddToPath
+  doNotAddToPath:
+SectionEnd
+
+]=]
+        [=[;--------------------------------
+; Create custom pages
+Function InstallOptionsPage
+  !insertmacro MUI_HEADER_TEXT "Install Options" "Choose options for installing @CPACK_NSIS_PACKAGE_NAME@"
+  !insertmacro MUI_INSTALLOPTIONS_DISPLAY "NSIS.InstallOptions.ini"
+
+FunctionEnd
+
+]=]
+        [=[  ReadRegStr $DO_NOT_ADD_TO_PATH SHCTX \
+    "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@" "DoNotAddToPath"
+  ReadRegStr $ADD_TO_PATH_ALL_USERS SHCTX \
+    "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@" "AddToPathAllUsers"
+  ReadRegStr $ADD_TO_PATH_CURRENT_USER SHCTX \
+    "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@" "AddToPathCurrentUser"
+  ;MessageBox MB_OK "Add to path: $DO_NOT_ADD_TO_PATH all users: $ADD_TO_PATH_ALL_USERS"
+  ReadRegStr $INSTALL_DESKTOP SHCTX \
+    "Software\Microsoft\Windows\CurrentVersion\Uninstall\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@" "InstallToDesktop"
+  ;MessageBox MB_OK "Install to desktop: $INSTALL_DESKTOP "
+
+]=]
+        [=[  Push $INSTDIR\bin
+  StrCmp $DO_NOT_ADD_TO_PATH_ "1" doNotRemoveFromPath 0
+    Call un.RemoveFromPath
+  doNotRemoveFromPath:
+]=]
+        [=[  StrCmp "@CPACK_NSIS_MODIFY_PATH@" "ON" 0 noOptionsPage
+    !insertmacro MUI_INSTALLOPTIONS_EXTRACT "NSIS.InstallOptions.ini"
+
+  noOptionsPage:
+]=]
+    )
+        string(REPLACE "${_snapmaker_nsis_erase}" "" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    endforeach()
+    set(_snapmaker_nsis_tpl_dir "${CMAKE_BINARY_DIR}/cmake/cpack")
+    file(MAKE_DIRECTORY "${_snapmaker_nsis_tpl_dir}")
+    file(WRITE "${_snapmaker_nsis_tpl_dir}/NSIS.template.in" "${_snapmaker_nsis_tpl}")
+    list(PREPEND CMAKE_MODULE_PATH "${_snapmaker_nsis_tpl_dir}")
+endif ()
 include(CPack)

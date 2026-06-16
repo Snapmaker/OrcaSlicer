@@ -9099,7 +9099,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         "brim_width", "wall_loops", "wall_filament", "sparse_infill_density", "sparse_infill_filament", "solid_infill_filament", "top_shell_layers",
         "enable_support", "support_filament", "support_interface_filament",
         "support_top_z_distance", "support_bottom_z_distance", "raft_layers",
-        "wipe_tower_rotation_angle", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "local_z_wipe_tower_purge_lines", "wipe_tower_max_purge_speed",
+        "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "local_z_wipe_tower_purge_lines", "wipe_tower_max_purge_speed",
         "wipe_tower_wall_type", "wipe_tower_extra_rib_length","wipe_tower_rib_width","wipe_tower_fillet_wall",
         "wipe_tower_filament",
         "best_object_pos"
@@ -21773,6 +21773,11 @@ int Plater::delete_plate(int plate_index)
         index = p->partplate_list.get_curr_plate_index();
 
     take_snapshot("delete partplate");
+
+    // CRASH FIX: Clear fff_print reference before PartPlateList::delete_plate destroys the Print,
+    // preventing dangling pointer access during subsequent update calls.
+    p->background_process.set_fff_print(nullptr);
+
     ret = p->partplate_list.delete_plate(index);
 
     //BBS: update the current print to the current plate

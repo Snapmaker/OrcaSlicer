@@ -272,7 +272,7 @@ void PlaterPreview::updateCoverPreview(const wxBitmap& thumbnail)
 
 void PlaterPreview::setCurrentPlate(unsigned int plateIndex)
 {
-    if (plateIndex < 0 || plateIndex >= m_totalPlateCount)
+    if (plateIndex >= m_totalPlateCount)
         return;
 
     m_currentPlateIndex = plateIndex;

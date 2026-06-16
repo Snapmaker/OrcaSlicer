@@ -128,7 +128,6 @@ bool FilamentColorMapBoxGroup::Layout()
 
     wxSize minSize = GetSizer()->CalcMin();
     SetMinSize(minSize);
-    InvalidateBestSize();
 
     return ret;
 }

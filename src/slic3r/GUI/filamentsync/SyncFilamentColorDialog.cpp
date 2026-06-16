@@ -218,7 +218,8 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         m_maxViewportHeight  = m_pFilamentColorMapBoxGroup->getHeightForRowCount(2);
         {
             int boxCount   = m_pFilamentColorMapBoxGroup->getVisibleBoxCount();
-            int actualRows = (boxCount + 4) / 5; // 5 columns (g_gridCols), ceil division
+            int gridCols   = FilamentColorMapBoxGroup::GetGridCols();
+            int actualRows = (boxCount + gridCols - 1) / gridCols;
             m_scrollContentHeight = m_pFilamentColorMapBoxGroup->getHeightForRowCount(actualRows);
         }
 
@@ -725,7 +726,8 @@ void SyncFilamentColorDialog::updateScrollState()
     m_maxViewportHeight  = m_pFilamentColorMapBoxGroup->getHeightForRowCount(2);
     {
         int boxCount   = m_pFilamentColorMapBoxGroup->getVisibleBoxCount();
-        int actualRows = (boxCount + 4) / 5;
+        int gridCols   = FilamentColorMapBoxGroup::GetGridCols();
+        int actualRows = (boxCount + gridCols - 1) / gridCols;
         m_scrollContentHeight = m_pFilamentColorMapBoxGroup->getHeightForRowCount(actualRows);
     }
     m_pFilamentColorMapBoxGroup->SetSize(-1, m_scrollContentHeight);

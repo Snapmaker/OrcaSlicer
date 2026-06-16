@@ -1,5 +1,7 @@
 #include "FilamentColorMapBoxGroup.hpp"
 
+#include <algorithm>
+
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
 #include <wx/dcmemory.h>
@@ -7,6 +9,7 @@
 
 #include "slic3r/GUI/Widgets/Label.hpp"
 #include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/GUI_App.hpp"
 #include "MachineFilamentPicker.hpp"
 
 namespace
@@ -18,10 +21,8 @@ namespace
 constexpr int g_containerPadding   = 16; // padding inside container
 constexpr int g_containerRadius    = 4;  // border-radius
 constexpr int g_containerBorderW   = 1;  // border width
-constexpr int g_labelColumnWidth   = 56; // DIP — width for left label column
 constexpr int g_labelGap           = 20; // gap between labels and cards
 constexpr int g_cardGap            = 20; // gap between cards (Figma: gap-[20px])
-constexpr int g_gridCols           = 5;  // max cards per row before wrapping
 
 // Label vertical positioning: align with card top-bar text (y=7)
 constexpr int g_labelDesignTopMargin = 6;  // align "Design Filament" with top bar text
@@ -59,6 +60,14 @@ namespace Slic3r
 namespace GUI
 {
 
+int FilamentColorMapBoxGroup::GetGridCols()
+{
+    const wxString lang = wxGetApp().app_config->get_language_code();
+    if (lang.StartsWith("zh") || lang.StartsWith("ja") || lang.StartsWith("ko"))
+        return 5;
+    return 4;
+}
+
 FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
                                                    const std::vector<FilamentData>& designDataList,
                                                    const std::vector<FilamentData>& machineDataList)
@@ -92,12 +101,22 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     m_pLabelMachine->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
     m_pLabelMachine->SetBackgroundColour(g_containerBg);
     labelSizer->Add(m_pLabelMachine, 0, wxEXPAND);
+
+    // Constrain both labels to the same width so the label column has a
+    // predictable size regardless of which translation ends up longer.
+    {
+        int w1 = m_pLabelDesign->GetTextExtent(m_pLabelDesign->GetLabel()).GetWidth();
+        int w2 = m_pLabelMachine->GetTextExtent(m_pLabelMachine->GetLabel()).GetWidth();
+        int maxW = std::max(w1, w2);
+        m_pLabelDesign->SetMinSize(wxSize(maxW, -1));
+        m_pLabelMachine->SetMinSize(wxSize(maxW, -1));
+    }
     labelSizer->AddStretchSpacer(1);
 
     rowSizer->Add(labelSizer, 0, wxEXPAND | wxRIGHT, FromDIP(g_labelGap));
 
     // ---- Right card grid — 5 columns, auto rows ----
-    auto* cardGridSizer = new wxFlexGridSizer(0, g_gridCols, FromDIP(g_cardGap), FromDIP(g_cardGap));
+    auto* cardGridSizer = new wxFlexGridSizer(0, GetGridCols(), FromDIP(g_cardGap), FromDIP(g_cardGap));
 
     int boxIndex = 0;
     for (const auto& designData : m_designDataList) {
@@ -224,7 +243,7 @@ bool FilamentColorMapBoxGroup::exceedsRowCount(int maxRows) const
     int visibleCount = getVisibleBoxCount();
     if (visibleCount == 0)
         return false;
-    int totalRows = (visibleCount + g_gridCols - 1) / g_gridCols;
+    int totalRows = (visibleCount + GetGridCols() - 1) / GetGridCols();
     return totalRows > maxRows;
 }
 

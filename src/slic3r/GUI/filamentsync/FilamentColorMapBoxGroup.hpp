@@ -47,6 +47,8 @@ public:
     bool dismissOpenPicker();
     bool hasOpenPicker() const;
 
+    static int GetGridCols();
+
     bool Layout() override;
 
 private:

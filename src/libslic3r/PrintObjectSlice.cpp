@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <unordered_map>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -419,24 +420,49 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                     temp_slices[idx_region + 1].expolygons = std::move(source);
                             } else if ((region.model_volume->is_model_part() && clip_multipart_objects) || region.model_volume->is_negative_volume()) {
                                 // Clip every non-zero region preceding it.
+                                // Pre-pass: accumulate per-layer XY area per print_object_region_id
+                                std::unordered_map<int, double> region_area_map;
+                                for (int i = 0; i < int(temp_slices.size()); ++i) {
+                                    const auto &ts = temp_slices[i];
+                                    if (ts.region_id >= 0 && !ts.expolygons.empty())
+                                        region_area_map[ts.region_id] += area(ts.expolygons);
+                                }
                                 for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2)
                                     if (! temp_slices[idx_region2].expolygons.empty()) {
                                         // Skip trim_overlap for now, because it slow down the performace so much for some special cases
-#if 1
+#if 0
                                         if (const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
                                             !region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
                                             temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
 #else
                                         const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
                                         if (!region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
-                                            //BBS: handle negative_volume seperately, always minus the negative volume and don't need to trim overlap
-                                            if (!region.model_volume->is_negative_volume())
-                                                trim_overlap(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-                                            else
+                                            //BBS: handle negative_volume, same-region trim, or cross-region carve by print_region_id
+                                            if (region.model_volume->is_negative_volume()) {
                                                 temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
+                                            } else if (!region.region || !region2.region || region.region->print_object_region_id() == region2.region->print_object_region_id()) {
+                                                trim_overlap(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
+                                            } else {
+                                                // Different print regions: smaller per-layer XY area carves larger
+                                                int pid_current = region.region->print_object_region_id();
+                                                int pid_other   = region2.region->print_object_region_id();
+                                                double area_current = region_area_map[pid_current];
+                                                double area_other   = region_area_map[pid_other];
+                                                // Hysteresis guard: only switch carving direction if area ratio is significant
+                                                bool smaller_carves;
+                                                if (std::max(area_current, area_other) / std::min(area_current, area_other) < 1.5)
+                                                    smaller_carves = (pid_current <= pid_other);
+                                                else
+                                                    smaller_carves = (area_current <= area_other);
+                                                if (smaller_carves)
+                                                    temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
+                                                else
+                                                    temp_slices[idx_region].expolygons = diff_ex(temp_slices[idx_region].expolygons, temp_slices[idx_region2].expolygons);
+                                            }
 #endif
                                     }
                             }
+
                         }
                     // Sort by region_id, push empty slices to the end.
                     std::sort(temp_slices.begin(), temp_slices.end());

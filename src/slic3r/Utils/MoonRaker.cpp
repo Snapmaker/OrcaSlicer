@@ -3026,6 +3026,7 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
         return;
     }
 
+    // ID 20252025 is reserved for WCP testing only and is not used in production business logic.
     if (passthrough || id == 20252025) {
         cb(body);
     } else {

@@ -1,22 +1,49 @@
 name: Build all
 
 on:
-  schedule:
-    - cron: '0 18 * * *' # everyday 2:00(beijing time UTC+8)
+  push:
+    branches:
+     - main
+     - 2.2.0
+     - release/*
+    paths:
+     - 'deps/**'
+     - 'src/**'
+     - '**/CMakeLists.txt'
+     - 'version.inc'
+     - 'localization/**'
+     - 'resources/**'
+     - ".github/workflows/build_*.yml"
+     - 'scripts/flatpak/**'
 
-  workflow_dispatch:
+  pull_request:
+    branches:
+     - main
+     - 2.2.0
+     - release/*
+    paths:
+     - 'deps/**'
+     - 'src/**'
+     - '**/CMakeLists.txt'
+     - 'version.inc'
+     - ".github/workflows/build_*.yml"
+     - 'build_linux.sh'
+     - 'build_release_vs2022.bat'
+     - 'build_release_macos.sh'
+     - 'scripts/flatpak/**'
+
+  schedule:
+      - cron: '35 7 * * *' # run once a day near midnight US Pacific time
+
+  workflow_dispatch: # allows for manual dispatch
     inputs:
       build-deps-only:
         description: 'Only build dependencies (bypasses caching)'
         type: boolean
         default: false
-      force-build:
-        description: 'Force full rebuild (bypass dependency cache)'
-        type: boolean
-        default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
   
 
@@ -30,7 +57,7 @@ jobs:
           # Deprecate 20.04appimage
           # - os: ubuntu-20.04
           - os: ubuntu-24.04
-          - os: windows-2022
+          - os: windows-latest
           - os: macos-14
             arch: arm64
     uses: ./.github/workflows/build_check_cache.yml
@@ -38,15 +65,15 @@ jobs:
       os: ${{ matrix.os }}
       arch: ${{ matrix.arch }}
       build-deps-only: ${{ inputs.build-deps-only || false }}
-      force-build: ${{ github.event_name == 'schedule' || inputs.force-build || false }}
+      force-build: ${{ github.event_name == 'schedule' }}
     secrets: inherit
   flatpak:
     name: "Flatpak"
     concurrency:
-      group: flatpak-${{ matrix.variant.arch }}-${{ github.ref }}
+      group: flatpak-${{ matrix.variant.arch }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
       volumes:
         - /usr/local/lib/android:/usr/local/lib/android

@@ -115,8 +115,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/filamentsync/FilamentColorMapBox.hpp
     GUI/filamentsync/FilamentColorMapBoxGroup.cpp
     GUI/filamentsync/FilamentColorMapBoxGroup.hpp
-    GUI/filamentsync/FilamentColorRadio.cpp
-    GUI/filamentsync/FilamentColorRadio.hpp
     GUI/filamentsync/FilamentData.hpp
     GUI/filamentsync/FilamentScrollBar.cpp
     GUI/filamentsync/FilamentScrollBar.hpp

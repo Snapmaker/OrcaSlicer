@@ -2245,7 +2245,8 @@ void GUI_App::copy_web_resources() {
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
         auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
         auto target_path = data_web_path / "flutter_web";
-        copy_directory_recursively(source_path, target_path);
+        if (!copy_directory_recursively(source_path, target_path))
+            BOOST_LOG_TRIVIAL(error) << "Failed to copy bundled flutter_web to " << target_path.string();
         profiler.mark("copy flutter_web (missing target)");
     } else {
         auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
@@ -2261,7 +2262,8 @@ void GUI_App::copy_web_resources() {
             if (source_build_number_str > target_build_number_str) {
                 auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
                 auto target_path = data_web_path / "flutter_web";
-                copy_directory_recursively(source_path, target_path);
+                if (!copy_directory_recursively(source_path, target_path))
+                    BOOST_LOG_TRIVIAL(error) << "Failed to copy bundled flutter_web to " << target_path.string();
                 profiler.mark("copy flutter_web (version upgrade)");
             } else {
                 profiler.note("flutter_web already up to date");

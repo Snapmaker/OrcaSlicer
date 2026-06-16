@@ -24,6 +24,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/format.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "common_func/common_func.hpp"
 #include "slic3r/GUI/GUI.hpp"
@@ -161,14 +162,39 @@ struct Update
 	{}
 
 	//BBS: add directory support
-	void install() const
+	bool install() const
 	{
 	    if (is_directory) {
-            copy_directory_recursively(source, target, file_filter);
+            auto validate_staging = [this](const fs::path &staging) -> bool {
+                if (vendor == "flutter_web") {
+                    if (!fs::exists(staging / "version.json")) {
+                        BOOST_LOG_TRIVIAL(error) << "Web resource staging is missing version.json";
+                        return false;
+                    }
+                    return true;
+                }
+                if (vendor.empty())
+                    return true;
+
+                const bool has_preset_tree = fs::exists(staging / PRESET_PRINTER_NAME) || fs::exists(staging / PRESET_FILAMENT_NAME) ||
+                                             fs::exists(staging / PRESET_PRINT_NAME);
+                if (!has_preset_tree) {
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging for %1% is missing preset subdirectories", vendor);
+                    return false;
+                }
+
+                const fs::path vendor_json = target.parent_path() / (vendor + ".json");
+                if (!fs::exists(vendor_json)) {
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging: %1%.json is not installed yet", vendor);
+                    return false;
+                }
+                return true;
+            };
+            return atomic_replace_directory(source, target, file_filter, validate_staging);
         }
-        else {
-            copy_file_fix(source, target);
-        }
+
+        copy_file_fix(source, target);
+        return true;
 	}
 
 	friend std::ostream& operator<<(std::ostream& os, const Update &self)
@@ -1828,9 +1854,10 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
         for (const auto &update : updates.updates) {
             BOOST_LOG_TRIVIAL(info) << '\t' << update;
 
-            if (update.can_install)
-                update.install();
-
+            if (update.can_install && !update.install()) {
+                BOOST_LOG_TRIVIAL(error) << "[Orca Updater] Update install failed: " << update;
+                return false;
+            }
         }
     }
 
@@ -2254,7 +2281,11 @@ void PresetUpdater::load_flutter_web(const std::string& resource_path, bool serv
             }
 
             if (res == wxID_OK) {
-                p->perform_updates(std::move(updates));
+                if (!p->perform_updates(std::move(updates))) {
+                    BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Failed to install web resources";
+                    GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+                    return;
+                }
             } else {
                 if (cleanup_temp)
                     boost::filesystem::remove_all(temp_path);
@@ -2441,7 +2472,12 @@ void PresetUpdater::import_system_profile()
             }
 
             if (res == wxID_OK) {
-                p->perform_updates(std::move(updates));
+                if (!p->perform_updates(std::move(updates))) {
+                    BOOST_LOG_TRIVIAL(error) << "[Orca Updater] Failed to install system profiles";
+                    GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+                    boost::filesystem::remove_all(temp_path);
+                    return;
+                }
                 // Use hot reload instead of restart
                 if (!reload_configs_update_gui()) {
                     BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:reload_configs_update_gui failed for system profiles";

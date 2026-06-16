@@ -2016,7 +2016,8 @@ void NotificationManager::close_notification_of_type(const NotificationType type
 
 void NotificationManager::close_notification_of_type_and_text(const NotificationType type, const std::string& text)
 {
-    for (std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
+    for (std::unique_ptr<PopNotification>& notification : m_pop_notifications)
+    {
         if (notification->get_type() == type && notification->compare_text(text))
             notification->close();
     }

@@ -783,8 +783,6 @@ void SyncFilamentColorDialog::applyScrollOffset(int offset)
     // Move the group up within the viewport (negative Y scrolls content up)
     m_pFilamentColorMapBoxGroup->SetPosition(wxPoint(0, -clamped));
 
-    // Force the viewport to repaint so the newly exposed area is filled
-    // with the background colour instead of showing ghost pixels.
     m_pScrollViewport->Refresh();
 
     m_pScrollBar->setScrollOffset(clamped);

@@ -71,9 +71,9 @@ private:
     FilamentColorMapBoxGroup* m_pFilamentColorMapBoxGroup = nullptr;
     PlaterPreview*            m_pPlaterPreview            = nullptr;
 
-    FilamentScrollBar*  m_pScrollBar  = nullptr;
-    wxPanel*            m_pScrollViewport = nullptr;
-    wxPanel*            m_pScrollGap     = nullptr; // dynamic spacer (10 or 20 px)
+    FilamentScrollBar* m_pScrollBar      = nullptr;
+    wxPanel*           m_pScrollViewport = nullptr;
+    wxPanel*           m_pScrollGap      = nullptr; // dynamic spacer (10 or 20 px)
 
     wxPanel*      m_pHintCheckBoxPanel         = nullptr;
     wxStaticText* m_pHintLabel                 = nullptr;

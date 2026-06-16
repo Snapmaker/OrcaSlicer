@@ -280,6 +280,7 @@ MachineFilamentPicker::MachineFilamentPicker(wxWindow* parent,
     , m_selectedIndex(curIndex)
 {
     auto* panel = new PickerContentPanel(this, m_dataList, curIndex);
+    m_contentPanel = panel;
 
     panel->bindSelectionCallback([this](unsigned int idx) {
         m_selectedIndex = idx;
@@ -315,22 +316,14 @@ unsigned int MachineFilamentPicker::getSelectedIndex() const
 void MachineFilamentPicker::setSelectedIndex(unsigned int index)
 {
     m_selectedIndex = index;
-    // Panel is a child — find and notify it
-    const auto& children = GetChildren();
-    if (!children.empty()) {
-        auto* panel = static_cast<PickerContentPanel*>(children[0]);
-        panel->setSelectedIndex(index);
-    }
+    if (m_contentPanel)
+        static_cast<PickerContentPanel*>(m_contentPanel)->setSelectedIndex(index);
 }
 
 void MachineFilamentPicker::popupAt(const wxPoint& pos)
 {
     int minWidthPx = FromDIP(g_popupMinWidth);
-    int actualWidthPx = minWidthPx;
-    const auto& children = GetChildren();
-    if (!children.empty()) {
-        actualWidthPx = children[0]->GetSize().x;
-    }
+    int actualWidthPx = m_contentPanel ? m_contentPanel->GetSize().x : minWidthPx;
     int offsetX = (actualWidthPx - minWidthPx) / 2;
     SetPosition(wxPoint(pos.x - offsetX, pos.y));
     Popup();

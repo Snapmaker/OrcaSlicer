@@ -35,6 +35,8 @@ private:
     std::vector<FilamentData> m_dataList;
     unsigned int              m_selectedIndex = 0;
 
+    wxPanel* m_contentPanel = nullptr; // owned by wxWindow parent-child, no delete
+
     FilamentInfoCallback  m_selectionCallback  = nullptr;
     std::function<void()> m_onDismissCallback = nullptr;
 };

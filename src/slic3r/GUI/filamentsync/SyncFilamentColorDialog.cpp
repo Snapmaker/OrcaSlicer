@@ -505,17 +505,12 @@ void SyncFilamentColorDialog::onCoverMatch()
     size_t designCount  = m_designDataList.size();
     size_t machineCount = m_machineDataList.size();
 
-    // 1:1 positional mapping — cycle through non-NONE machine filaments only
-    std::vector<int> mapping = compute_direct_override(designCount, m_machineDataList);
-
-    int idx = 0;
-    for (int m_idx : mapping) {
-        if (m_idx >= 0 && m_idx < static_cast<int>(machineCount)) {
-            auto it = m_machineDataList.begin();
-            std::advance(it, m_idx);
-            m_pFilamentColorMapBoxGroup->updateBoxBelowData(idx, *it);
-        }
-        ++idx;
+    // 1:1 positional mapping for UI display (includes NONE slots)
+    for (size_t i = 0; i < designCount; ++i) {
+        size_t m_idx = i % machineCount;
+        auto it = m_machineDataList.begin();
+        std::advance(it, m_idx);
+        m_pFilamentColorMapBoxGroup->updateBoxBelowData(static_cast<int>(i), *it);
     }
     m_pFilamentColorMapBoxGroup->setGroupBoxEnable(false, FilamentColorMapBox::ButtonType::Below);
 

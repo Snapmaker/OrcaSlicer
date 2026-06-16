@@ -402,6 +402,13 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
     return dataList;
 }
 
+void SyncFilamentColorDialog::setOverwriteMode()
+{
+    if (m_pModeToggle)
+        m_pModeToggle->setSelected(g_modeOverwrite);
+    onModeChanged(g_modeOverwrite);
+}
+
 bool SyncFilamentColorDialog::isAddUnUsedMachineFilaments() const
 {
     if (!m_bMappingMode)

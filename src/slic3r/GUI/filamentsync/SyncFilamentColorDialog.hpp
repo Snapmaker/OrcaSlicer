@@ -39,6 +39,8 @@ public:
 
     void setHasMixedFilaments(bool has);
 
+    void setOverwriteMode();
+
     bool Layout() override;
 
 private:

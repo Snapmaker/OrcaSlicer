@@ -480,10 +480,7 @@ void SyncFilamentColorDialog::onAutoMatch()
     // Mapping mode keeps filament count unchanged — no remap needed
     m_filamentIdRemap.clear();
 
-    std::vector<FilamentData> design_vec(m_designDataList.begin(), m_designDataList.end());
-    std::vector<FilamentData> machine_vec(m_machineDataList.begin(), m_machineDataList.end());
-
-    std::vector<int> mapping = compute_color_match(design_vec, machine_vec);
+    std::vector<int> mapping = compute_color_match(m_designDataList, m_machineDataList);
 
     int idx = 0;
     for (int m_idx : mapping) {

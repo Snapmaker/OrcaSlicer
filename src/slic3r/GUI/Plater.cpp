@@ -11913,7 +11913,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                                                  * when this function is called several times during calculations
                                                  * */
         {
-            if (can_current_plate_be_sliced()) {
+            if (cur_plate && cur_plate->can_slice() && !has_incompatible_mixed_filament_in_use()) {
                 //ready_to_slice = true;
                 this->main_frame->update_slice_print_status(MainFrame::eEventSliceUpdate, true);
                 process_completed_with_error = -1;
@@ -15039,6 +15039,8 @@ void Plater::notify_vhl_dithering_conflict(bool local_z_enabled)
 {
     if (!local_z_enabled)
         return;
+
+    if (!p) return;
 
     bool has_adaptive = p->view3D->is_layers_editing_enabled();
     if (!has_adaptive) {
@@ -21901,3 +21903,5 @@ SuppressBackgroundProcessingUpdate::~SuppressBackgroundProcessingUpdate()
 }
 
 }}    // namespace Slic3r::GUI
+
+

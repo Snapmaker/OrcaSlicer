@@ -2715,8 +2715,6 @@ void SSWCP_MachineOption_Instance::sw_StartLocalPrint()
         return;
     }
 
-    BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_StartLocalPrint params: " << m_param_data.dump();
-
     std::shared_ptr<PrintHost> host = nullptr;
     wxGetApp().get_connect_host(host);
 
@@ -2732,7 +2730,6 @@ void SSWCP_MachineOption_Instance::sw_StartLocalPrint()
     host->async_start_local_print(items, [weak_self](const json& response) {
         auto self = weak_self.lock();
         if (self) {
-            BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_StartLocalPrint response: " << response.dump();
             SSWCP_Instance::on_mqtt_msg_arrived(self, response);
         }
     });
@@ -2740,8 +2737,6 @@ void SSWCP_MachineOption_Instance::sw_StartLocalPrint()
 
 void SSWCP_MachineOption_Instance::sw_MachineHeartbeat()
 {
-    BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_MachineHeartbeat params: " << m_param_data.dump();
-
     std::shared_ptr<PrintHost> host = nullptr;
     wxGetApp().get_connect_host(host);
 
@@ -2755,7 +2750,6 @@ void SSWCP_MachineOption_Instance::sw_MachineHeartbeat()
     host->async_machine_heartbeat(m_param_data, [weak_self](const json& response) {
         auto self = weak_self.lock();
         if (self) {
-            BOOST_LOG_TRIVIAL(warning) << "[WCP] sw_MachineHeartbeat response: " << response.dump();
             SSWCP_Instance::on_mqtt_msg_arrived(self, response);
         }
     });

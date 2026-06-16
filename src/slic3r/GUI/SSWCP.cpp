@@ -1627,6 +1627,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     std::string type     = j_value["filament_type"][i].get<std::string>();
                     std::string sub_type = j_value["filament_sub_type"][i].get<std::string>();
 
+                    machineData.filament_type = type;
+
                     std::string name = "";
 
                     // 名称特殊处理
@@ -1647,7 +1649,7 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
                         j_value["filament_color_rgba"].size() != 0) {
                         std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                        filaments.insert({int(i), {name, str_color}});    
+                        filaments.insert({int(i), {name, str_color}});
                         machineData.index = i;
                         machineData.color_info = str_color;
                         machineData.filament_info = name;

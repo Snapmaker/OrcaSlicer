@@ -186,6 +186,9 @@
 #include "CloneDialog.hpp"
 #include "WebPreprintDialog.hpp"
 
+#include "filamentsync/SyncConfirmDialog.hpp"
+#include "filamentsync/SyncFilamentColorDialog.hpp"
+
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include <chrono>
 
@@ -303,6 +306,131 @@ public:
     }
     void on_dpi_changed(const wxRect& suggested_rect) override {}
 };
+
+std::string extract_base_filament_name(const std::string& full_name)
+{
+    std::string base = full_name;
+    size_t at_pos = base.find('@');
+    if (at_pos != std::string::npos) {
+        base = base.substr(0, at_pos);
+        base.erase(0, base.find_first_not_of(" \t\n\r"));
+        base.erase(base.find_last_not_of(" \t\n\r") + 1);
+    }
+    return base;
+}
+
+// Resolve a machine filament name to a matching local filament preset.
+// Filament presets follow the convention "BaseName @Model nozzle",
+// e.g. "Generic PA-CF @U1 0.4 nozzle".  Split by '@' to extract the
+// base name, trim, and compare exactly — so "Generic PA" does NOT
+// accidentally match "Generic PA-CF".
+Preset* resolve_filament_preset(PresetBundle* preset_bundle, 
+    const std::string& filament_name, const std::string& filament_type)
+{
+    if (!preset_bundle || filament_name.empty())
+        return nullptr;
+
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s;
+    };
+
+    for (auto& preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || !preset.is_system)
+            continue;
+
+        std::string base = extract_base_filament_name(preset.name);
+        if (to_lower(base) == to_lower(filament_name)) {
+            return &preset;
+        }
+    }
+
+    const std::string generic_prefix = "Generic ";
+    std::string generic_base = generic_prefix + filament_type;
+    for (auto& preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || !preset.is_system)
+            continue;
+
+        std::string base = extract_base_filament_name(preset.name);
+        std::string type = preset.config.opt_string("filament_type", static_cast<unsigned int>(0));
+
+        if ((to_lower(type) == to_lower(filament_type)) && 
+                (to_lower(base) == to_lower(generic_base))) {
+            return &preset;
+        }
+    }
+
+    return nullptr;
+}
+
+void build_design_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
+{
+    if (!preset_bundle)
+        return;
+
+    const auto& filament_presets = preset_bundle->filament_presets;
+    const auto* colors_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    
+    std::vector<std::string> empty_colors;
+    const std::vector<std::string>& colors = colors_opt ? colors_opt->values : empty_colors;
+
+    for (size_t i = 0; i < filament_presets.size(); ++i) {
+        FilamentData fd;
+        fd.m_index = i;
+
+        Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
+         if (preset) {
+            fd.m_name = preset->label(false);
+            const auto* type_opt = preset->config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && !type_opt->values.empty())
+                fd.m_type = type_opt->values[0];
+        } else {
+            fd.m_name = extract_base_filament_name(filament_presets[i]);
+        }
+
+        if (fd.m_type.empty()) {
+            const auto* type_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && i < type_opt->values.size())
+                fd.m_type = type_opt->values[i];
+        }
+
+        if (i < colors.size()) {
+            unsigned char rgba[4] = {0, 0, 0, 255};
+            if (BitmapCache::parse_color4(colors[i], rgba)) {
+                fd.m_color_r = rgba[0];
+                fd.m_color_g = rgba[1];
+                fd.m_color_b = rgba[2];
+            }
+        }
+
+        out_list.push_back(std::move(fd));
+    }
+}
+
+void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
+{
+    if (!preset_bundle)
+        return;
+
+    for (const auto& info : preset_bundle->m_connect_machine_info_list) {
+        FilamentData fd;
+        fd.m_index = info.index;
+        fd.m_name  = info.filament_info;
+        fd.m_type  = info.filament_type;
+        
+        if (!info.color_info.empty()) {
+            unsigned char rgba[4] = {0, 0, 0, 255};
+            if (BitmapCache::parse_color4(info.color_info, rgba)) {
+                fd.m_color_r = rgba[0];
+                fd.m_color_g = rgba[1];
+                fd.m_color_b = rgba[2];
+            }
+        }
+
+        out_list.push_back(std::move(fd));
+    }
+}
+
 } // namespace
 
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
@@ -726,6 +854,7 @@ struct Sidebar::priv
     ScalableButton *  m_bpButton_del_filament;
     ScalableButton *  m_bpButton_ams_filament;
     ScalableButton *  m_bpButton_set_filament;
+    ScalableButton *  m_bpButton_sync_filament = nullptr;
     int                         m_menu_filament_id = -1;
     wxPanel* m_panel_filament_content;
     wxScrolledWindow* m_scrolledWindow_filament_content;
@@ -2183,6 +2312,14 @@ Sidebar::Sidebar(Plater *parent)
     h_physical_title->Add(physical_label, 0, wxALIGN_CENTER_VERTICAL);
     h_physical_title->AddStretchSpacer();
 
+    // Sync filament button
+    ScalableButton* sync_filament_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "sync_filament");
+    sync_filament_btn->SetToolTip(_L("Synchronize filament information"));
+    sync_filament_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+        show_sync_filament_dialog();
+    });
+    p->m_bpButton_sync_filament = sync_filament_btn;
+
     // Delete filament button — delegates to delete_filament for consistent remap behavior
     ScalableButton* del_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "delete_filament");
     del_btn->SetToolTip(_L("Remove last filament"));
@@ -2214,6 +2351,7 @@ Sidebar::Sidebar(Plater *parent)
     });
     p->m_bpButton_add_filament = add_btn;
 
+    h_physical_title->Add(sync_filament_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
     h_physical_title->Add(del_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     h_physical_title->Add(add_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     auto* white_right_f = new wxPanel(p->m_panel_physical_filaments_title, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(SidebarProps::ContentMargin()), -1));
@@ -7841,6 +7979,164 @@ void Sidebar::sync_ams_list()
         }
     }
     Layout();
+}
+
+void Sidebar::show_sync_filament_dialog()
+{
+    if (!wxGetApp().plater())
+        return;
+
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+    
+    MachineObject* device_machine = nullptr;
+    {
+        Slic3r::DeviceManager* dev = wxGetApp().getDeviceManager();
+        if (dev) {
+            MachineObject* obj = dev->get_selected_machine();
+            if (obj && obj->is_connected()) {
+                device_machine = obj;
+            }
+        }
+    }
+
+    if (!host && !device_machine) {
+        SyncRichConfirmDialog dlg(this,
+            _L("The printer is not connected. Before synchronizing, please go to the device page to connect."),
+            wxYES_NO);
+        dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
+        dlg.CentreOnScreen();
+        if (dlg.ShowModal() == wxID_YES) {
+            dlg.navigateToTab(MainFrame::tpMonitor);
+        }
+        return;
+    }
+
+    {
+        static const std::set<std::string> white_list_machine_types = {
+            "Snapmaker U1"
+        };
+        std::string machine_type;
+        std::string device_name;
+        std::vector<std::string> nozzle_diameters;
+        bool got_machine_info = false;
+
+        if (host) {
+            got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+        }
+
+        if (!got_machine_info || machine_type.empty()) {
+            if (device_machine) {
+                machine_type = device_machine->printer_type;
+                got_machine_info = !machine_type.empty();
+            }
+        }
+
+        bool is_white_listed_type = white_list_machine_types.find(machine_type) != white_list_machine_types.end();
+
+        if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {
+            SyncRichConfirmDialog dlg(this,
+                _L("The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."),
+                wxYES_NO);
+            dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
+            dlg.CentreOnScreen();
+            if (dlg.ShowModal() == wxID_YES) {
+                dlg.navigateToTab(MainFrame::tpMonitor);
+            }
+            return;
+        }
+    }
+
+    PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+    if (!preset_bundle)
+        return;
+
+    std::vector<FilamentData> machineFilamentList;
+    build_machine_filament_list(preset_bundle, machineFilamentList);
+    auto nonEmptyFilaments = [](const std::vector<FilamentData>& filamentDatas) {
+        for (const auto& filament : filamentDatas) {
+            if (!is_none_filament(filament))
+                return true;
+        }
+        return false;
+    };
+    if (machineFilamentList.empty() || !nonEmptyFilaments(machineFilamentList)) {
+        SyncConfirmDialog dlg(this,
+            _L("There are no filament on the printer. Please place the filaments on the machine first."),
+            wxOK);
+        dlg.CentreOnScreen();
+        dlg.ShowModal();
+        return;
+    }
+
+    std::vector<FilamentData> designFilamentList;
+    build_design_filament_list(preset_bundle, designFilamentList);
+
+    wxGetApp().plater()->update_all_plate_thumbnails(true);
+    SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
+    dlg.setHasMixedFilaments(preset_bundle->mixed_filaments.enabled_count() > 0);
+    {
+        if (wxGetApp().plater()->model().objects.empty()) {
+            dlg.setOverwriteMode();
+        } else {
+            dlg.CentreOnScreen();
+            if (dlg.ShowModal() != wxID_OK)
+                return;
+        }
+        std::vector<FilamentData> syncedData = dlg.getSyncDataList();
+
+        size_t effective_size = syncedData.size();
+        size_t combo_Size = p->combos_filament.size();
+        if (effective_size != combo_Size) {
+            if (effective_size > combo_Size &&
+                    (effective_size > MAXIMUM_EXTRUDER_NUMBER ||
+                        preset_bundle->mixed_filaments.total_filaments(effective_size) >= MAXIMUM_FILAMENT_NUMBER)) {
+                effective_size = combo_Size;
+            }
+            if (effective_size != combo_Size) {
+                wxColour    new_col   = Plater::get_next_color_for_filament();
+                std::string new_color = into_u8(new_col.GetAsString(wxC2S_HTML_SYNTAX));
+                preset_bundle->set_num_filaments(effective_size, new_color);
+
+                const auto& dlgRemap = dlg.getFilamentIdRemap();
+                if (!dlgRemap.empty())
+                    preset_bundle->set_filament_id_remap(dlgRemap);
+            }
+        }
+
+        ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+
+        for (size_t i = 0; i < effective_size; ++i) {
+            Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name, syncedData[i].m_type);
+            if (matched) {
+                preset_bundle->set_filament_preset(i, matched->name);
+            }
+
+            if (co && i < co->values.size()) {
+                wxColour c(syncedData[i].m_color_r, syncedData[i].m_color_g, syncedData[i].m_color_b);
+                co->values[i] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
+            }
+        }
+
+        const size_t num_filaments = effective_size;
+        wxGetApp().plater()->on_filaments_change(num_filaments);
+        wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
+        preset_bundle->export_selections(*wxGetApp().app_config);
+
+        for (auto* combo : p->combos_filament) {
+            if (combo)
+                combo->update();
+        }
+
+        for (size_t i = 0; i < effective_size; ++i) {
+            auto_calc_flushing_volumes(i);
+        }
+
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::RegularNotificationLevel,
+            _u8L("Successfully synchronize the color and type of filaments with the printer."));
+    }
 }
 
 void Sidebar::show_SEMM_buttons(bool bshow)

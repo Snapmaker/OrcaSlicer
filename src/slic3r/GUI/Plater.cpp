@@ -20553,10 +20553,9 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
 
 void Plater::notify_filament_usage_changed()
 {
-    if (p->filament_usage_sync_pending)
+    if (p->filament_usage_sync_pending.exchange(true))
         return;
 
-    p->filament_usage_sync_pending = true;
     wxQueueEvent(this, new SimpleEvent(EVT_FILAMENT_USAGE_CHANGED, this));
 }
 
@@ -21402,7 +21401,6 @@ int Plater::select_plate(int plate_index, bool need_slice)
     SimpleEvent event(EVT_GLCANVAS_PLATE_SELECT);
     p->on_plate_selected(event);
     sync_filament_temp_mixing_notification();
-    notify_filament_usage_changed();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%")%__LINE__ %plate_index %ret;
     return ret;

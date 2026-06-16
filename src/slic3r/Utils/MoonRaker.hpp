@@ -118,6 +118,7 @@ public:
     virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) {}
 
     virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) {}
 
@@ -269,6 +270,10 @@ public:
 
     virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
+    virtual void async_start_local_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_machine_heartbeat(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
     virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
@@ -295,6 +300,7 @@ public:
     virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) override;
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) override;
 
     virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) override;
 
@@ -328,9 +334,10 @@ private:
     bool add_response_target(int64_t id,
                            std::function<void(const nlohmann::json&)> callback,
                            std::function<void()> timeout_callback = nullptr,
+                           bool passthrough = false,
                            std::chrono::milliseconds timeout = std::chrono::milliseconds(80000));
 
-    std::function<void(const nlohmann::json& response)> get_request_callback(int64_t id);
+    std::pair<std::function<void(const nlohmann::json&)>, bool> get_request_callback(int64_t id);
     void delete_response_target(int64_t id);
 
     bool wait_for_sn(int timeout_seconds = 6);
@@ -354,12 +361,15 @@ public:
     struct RequestCallback {
         std::function<void(const nlohmann::json&)> success_cb;  // Success callback
         std::function<void()> timeout_cb;                       // Timeout callback
+        bool passthrough{false};                                // If true, pass raw JSON-RPC body to callback
 
         RequestCallback(
             std::function<void(const nlohmann::json&)> success,
-            std::function<void()> timeout = nullptr)
+            std::function<void()> timeout = nullptr,
+            bool passthrough = false)
             : success_cb(std::move(success))
             , timeout_cb(std::move(timeout))
+            , passthrough(passthrough)
         {}
     };
 

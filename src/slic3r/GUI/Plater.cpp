@@ -11235,6 +11235,8 @@ void Plater::priv::object_list_changed()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": can_slice %1%, model_fits= %2%, export_in_progress %3%, has_printable_instances %4% ")%can_slice %model_fits %export_in_progress %part_plate->has_printable_instances();
     main_frame->update_slice_print_status(MainFrame::eEventObjectUpdate, can_slice);
 
+    notify_filament_compatibility_after_apply();
+
     wxGetApp().params_panel()->notify_object_config_changed();
 }
 
@@ -11647,18 +11649,26 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     {
         notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgTpu), 0);
     }
-
     if (has_incompatible_mixed_filament_in_use()) {
         notification_manager->push_notification(
-            NotificationType::CustomNotification,
+            NotificationType::FilamentIncompatibleMixed,
             NotificationManager::NotificationLevel::ErrorNotificationLevel,
-            into_u8(_L("Mixed filaments contain incompatible material types. "
-                       "Please correct the mixed filament settings before slicing.")));
+            into_u8(_L("Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing.")));
+    } else {
+        notification_manager->close_notification_of_type(NotificationType::FilamentIncompatibleMixed);
     }
 
 }
 
 
+/**
+ * Check whether the current plate uses any virtual (mixed) filament whose
+ * constituent materials are incompatible.
+ *
+ * During drag operations the result is cached (m_cached_incompatible_mixed)
+ * to prevent button state flicker.
+ * @return true if an incompatible mixed filament is in use on the current plate
+ */
 bool Plater::priv::has_incompatible_mixed_filament_in_use() const
 {
     // During drag operations the plate/model state is in flux;
@@ -11704,6 +11714,12 @@ bool Plater::priv::has_incompatible_mixed_filament_in_use() const
 }
 
 
+/**
+ * Centralized slice gate for the current plate.
+ * Returns false if the plate cannot be sliced or if an incompatible mixed
+ * filament is in use.
+ * @return true if the current plate is ready to be sliced
+ */
 bool Plater::priv::can_current_plate_be_sliced() const
 {
     const PartPlate *plate = partplate_list.get_curr_plate();
@@ -14998,6 +15014,12 @@ void Plater::priv::on_action_layersediting(SimpleEvent&)
     }
 }
 
+/**
+ * Show a warning when both Variable Layer Height and Subdivide Mix Layer
+ * (dithering_local_z_mode) are enabled, as both features alter layer
+ * heights and may produce unexpected results.
+ * @param local_z_enabled true if the Subdivide Mix Layer setting is active
+ */
 void Plater::notify_vhl_dithering_conflict(bool local_z_enabled)
 {
     if (!local_z_enabled)
@@ -15017,8 +15039,7 @@ void Plater::notify_vhl_dithering_conflict(bool local_z_enabled)
         return;
 
     MessageDialog dialog(this,
-        _L("Variable Layer Height and Subdivide Mix Layer are both enabled. "
-           "Both features alter layer heights and may produce unexpected results."),
+        _L("Cannot enable both Variable Layer Height and Subdivide Mix Layer."),
         _L("Warning"), wxICON_WARNING | wxOK);
     dialog.ShowModal();
 }
@@ -19240,10 +19261,9 @@ void Plater::reslice()
     if (printer_technology() == ptFFF && p->has_incompatible_mixed_filament_in_use()) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": incompatible mixed filament in use, blocking slice";
         p->notification_manager->push_notification(
-            NotificationType::CustomNotification,
+            NotificationType::FilamentIncompatibleMixed,
             NotificationManager::NotificationLevel::ErrorNotificationLevel,
-            into_u8(_L("Mixed filaments contain incompatible material types. "
-                       "Please correct the mixed filament settings before slicing.")));
+            into_u8(_L("Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing.")));
         reset_gcode_toolpaths();
         return;
     }
@@ -19402,10 +19422,10 @@ int Plater::start_next_slice()
     if (printer_technology() == ptFFF && p->has_incompatible_mixed_filament_in_use()) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": incompatible mixed filament in use, blocking slice";
         p->notification_manager->push_notification(
-            NotificationType::CustomNotification,
+            NotificationType::FilamentIncompatibleMixed,
             NotificationManager::NotificationLevel::ErrorNotificationLevel,
-            into_u8(_L("Mixed filaments contain incompatible material types. "
-                       "Please correct the mixed filament settings before slicing.")));
+            into_u8(_L("Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing.")));
+
         return -1;
     }
     if (!p->partplate_list.get_curr_plate()->can_slice()) {

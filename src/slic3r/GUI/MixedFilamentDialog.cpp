@@ -2869,11 +2869,13 @@ void MixedFilamentDialog::build_swatch_grid()
             update_compatibility_warning();
         });
 
-        int min_w = 50;
+        // Single-filament badges are always visible regardless of the min-mix slider.
+        int min_w = 100;
         if (cand.n_rows == 2)
             min_w = std::min(100 - cand.b_pct, cand.b_pct);
         else if (cand.n_rows == 3)
             min_w = (int)(std::min({cand.wx, cand.wy, cand.wz}) * 100.0 + 0.5);
+        // n_rows == 1 or unknown: badge is always visible (sentinel 100).
         m_swatch_min_weights.push_back(min_w);
 
         grid->Add(badge, 0, wxALIGN_CENTER);
@@ -2883,6 +2885,11 @@ void MixedFilamentDialog::build_swatch_grid()
     m_swatch_grid_panel->Layout();
 }
 
+/**
+ * Rebuild the swatch grid sizer in match mode without recreating widgets.
+ * Hides badges whose minimum component weight falls below m_match_min_pct
+ * and reflows the remaining visible badges into a new grid sizer.
+ */
 void MixedFilamentDialog::rebuild_swatch_sizer()
 {
     if (m_current_mode != MODE_MATCH) return;
@@ -2895,6 +2902,8 @@ void MixedFilamentDialog::rebuild_swatch_sizer()
 
     const int cols = 10;
     auto* new_grid = new wxGridSizer(cols, FromDIP(6), FromDIP(6));
+    // Guard: the grid panel children must correspond 1:1 with swatch badges.
+    if (children.size() != m_swatch_min_weights.size()) return;
     for (size_t i = 0; i < children.size() && i < m_swatch_min_weights.size(); ++i) {
         bool visible = m_swatch_min_weights[i] >= m_match_min_pct;
         children[i]->Show(visible);

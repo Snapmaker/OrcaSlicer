@@ -1,4 +1,5 @@
 #include <cmath>
+#include <algorithm>
 #include <assert.h>
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
 
@@ -26,6 +27,21 @@ static float get_luminance(float r, float g, float b)
 static float calc_triangle_3rd_edge(float edge_a, float edge_b, float degree_ab)
 {
     return std::sqrt(edge_a * edge_a + edge_b * edge_b - 2 * edge_a * edge_b * std::cos(to_radians(degree_ab)));
+}
+
+static float smoothstep(float edge0, float edge1, float x)
+{
+    if (edge0 == edge1)
+        return x < edge0 ? 0.f : 1.f;
+
+    float t = std::clamp((x - edge0) / (edge1 - edge0), 0.f, 1.f);
+    return t * t * (3.f - 2.f * t);
+}
+
+static float normalize_hue(float hue)
+{
+    hue = std::fmod(hue, 360.f);
+    return hue < 0.f ? hue + 360.f : hue;
 }
 
 static float DeltaHS_BBS(float h1, float s1, float v1, float h2, float s2, float v2)
@@ -69,6 +85,8 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     // Calculate color distance in HSV color space
     RGB2HSV(src_r_f, src_g_f,src_b_f, &from_hsv_h, &from_hsv_s, &from_hsv_v);
     RGB2HSV(dst_r_f, dst_g_f, dst_b_f, &to_hsv_h, &to_hsv_s, &to_hsv_v);
+    from_hsv_h = normalize_hue(from_hsv_h);
+    to_hsv_h = normalize_hue(to_hsv_h);
     float hs_dist = DeltaHS_BBS(from_hsv_h, from_hsv_s, from_hsv_v, to_hsv_h, to_hsv_s, to_hsv_v);
 
     // 1. Color difference is more obvious if the dest color has high luminance
@@ -88,6 +106,41 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     float hs_flush = 55.f * hs_dist;
 
     float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 115.f);
+
+    // Targeted residue compensation for measured high-risk transitions: saturated colors into light neutral targets and red into neutral midtones.
+    const float src_chroma = from_hsv_s * from_hsv_v;
+    const float neutral_target = 1.f - (std::max(dst_r_f, std::max(dst_g_f, dst_b_f)) - std::min(dst_r_f, std::min(dst_g_f, dst_b_f)));
+    const float cool_target = std::max(0.f, dst_b_f - dst_r_f);
+    const float lumi_gap = to_lumi - from_lumi;
+    const float white_risk = smoothstep(0.70f, 0.86f, to_lumi) *
+                             smoothstep(0.86f, 0.96f, neutral_target) *
+                             (1.f + 0.45f * smoothstep(0.00f, 0.06f, cool_target)) *
+                             (1.f - 0.75f * smoothstep(0.46f, 0.62f, from_lumi)) *
+                             smoothstep(0.45f, 0.75f, from_hsv_s) *
+                             smoothstep(0.32f, 0.80f, src_chroma) *
+                             smoothstep(0.34f, 0.58f, lumi_gap) *
+                             (1.f - 0.45f * smoothstep(0.25f, 0.55f, to_hsv_s));
+
+    const float red_hue = std::max(std::max(smoothstep(340.f, 360.f, from_hsv_h), smoothstep(0.f, 20.f, 20.f - from_hsv_h)),
+                                   0.55f * smoothstep(300.f, 340.f, from_hsv_h));
+    const float red_residue = red_hue *
+                              smoothstep(0.75f, 0.95f, from_hsv_s) *
+                              smoothstep(0.65f, 0.90f, from_hsv_v) *
+                              (1.f - 0.70f * smoothstep(0.48f, 0.62f, from_lumi)) *
+                              smoothstep(0.08f, 0.35f, lumi_gap) *
+                              smoothstep(0.50f, 0.82f, to_lumi) *
+                              (1.f - 0.25f * smoothstep(0.35f, 0.65f, to_hsv_s));
+    const float gray_residue = red_hue *
+                               smoothstep(0.75f, 0.95f, from_hsv_s) *
+                               smoothstep(0.65f, 0.90f, from_hsv_v) *
+                               smoothstep(0.48f, 0.60f, to_lumi) *
+                               (1.f - smoothstep(0.72f, 0.84f, to_lumi)) *
+                               smoothstep(0.70f, 0.92f, neutral_target) *
+                               (1.f - 0.85f * smoothstep(0.30f, 0.58f, to_hsv_s));
+
+    flush_volume += 210.f * white_risk * std::pow(std::max(0.f, lumi_gap + 0.18f), 0.65f);
+    flush_volume += 145.f * red_residue;
+    flush_volume += 180.f * gray_residue;
     flush_volume = std::max(flush_volume, 32.f);
 
     //float flush_multiplier = std::atof(m_flush_multiplier_ebox->GetValue().c_str());

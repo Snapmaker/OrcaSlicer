@@ -1203,7 +1203,7 @@ GLCanvas3D::GLCanvas3D(wxGLCanvas* canvas, Bed3D &bed)
 
 GLCanvas3D::~GLCanvas3D()
 {
-    reset_volumes();
+    reset_volumes(ResetVolumesMode::CanvasDestruction);
 
     m_sel_plate_toolbar.del_all_item();
     m_sel_plate_toolbar.del_stats_item();
@@ -1340,7 +1340,7 @@ unsigned int GLCanvas3D::get_volumes_count() const
     return (unsigned int)m_volumes.volumes.size();
 }
 
-void GLCanvas3D::reset_volumes()
+void GLCanvas3D::reset_volumes(ResetVolumesMode mode)
 {
     if (!m_initialized)
         return;
@@ -1350,9 +1350,12 @@ void GLCanvas3D::reset_volumes()
 
     _set_current();
 
-    m_selection.clear();
+    m_selection.clear(mode == ResetVolumesMode::Normal);
     m_volumes.clear();
     m_dirty = true;
+
+    if (mode == ResetVolumesMode::CanvasDestruction)
+        return;
 
     auto pLater = wxGetApp().plater();
     if (pLater) {
@@ -1541,7 +1544,7 @@ void GLCanvas3D::set_config(const DynamicPrintConfig* config)
     // Orca: Filament shrinkage compensation
     const Print *print = fff_print();
     if (print != nullptr)
-        m_layers_editing.set_shrinkage_compensation(fff_print()->shrinkage_compensation());
+        m_layers_editing.set_shrinkage_compensation(print->shrinkage_compensation());
 }
 
 void GLCanvas3D::set_process(BackgroundSlicingProcess *process)

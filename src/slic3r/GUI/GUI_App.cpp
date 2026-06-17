@@ -34,6 +34,7 @@
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <clocale>
 #include <regex>
 #include <thread>
 #include <string_view>
@@ -831,6 +832,65 @@ static void register_win32_device_notification_event()
 		});
 }
 #endif // WIN32
+
+// Windows 11 build number threshold: build >= 22000 = Windows 11
+constexpr int kWindows11BuildNumber = 22000;
+
+void GUI_App::log_version_info()
+{
+    // Cache OS description on first call so that subsequent calls from background
+    // threads (e.g. generic_exception_handle -> OnExceptionInMainLoop) do not
+    // invoke wxWidgets APIs, which are not thread-safe on Linux.
+    static std::string s_cached_os_desc;
+    static std::once_flag s_os_flag;
+    std::call_once(s_os_flag, []() {
+        std::string os_desc{};
+#if defined(__LINUX__) || defined(__linux__)
+        wxLinuxDistributionInfo distro = wxGetLinuxDistributionInfo();
+        if (!distro.Id.empty()) {
+            os_desc = distro.Id.ToStdString();
+            if (!distro.Release.empty())
+                os_desc += " " + distro.Release.ToStdString();
+        }
+#endif
+        if (os_desc.empty()) {
+            os_desc = wxGetOsDescription().ToStdString();
+        }
+
+#if defined(_WIN32)
+        // Append Windows version numbers (major.minor.build) for all Windows versions.
+        // Also correct "Windows 10" → "Windows 11" for builds >= 22000.
+        int major = 0, minor = 0, micro = 0;
+        wxGetOsVersion(&major, &minor, &micro);
+        if (micro >= kWindows11BuildNumber) {
+            size_t pos = os_desc.find("Windows 10");
+            if (pos != std::string::npos)
+                os_desc.replace(pos, 10, "Windows 11");
+        }
+        os_desc += " (" + std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(micro) + ")";
+#endif
+        s_cached_os_desc = os_desc;
+    });
+
+    BOOST_LOG_TRIVIAL(warning) << "========================================";
+    BOOST_LOG_TRIVIAL(warning) << "Snapmaker Orca Version Information";
+    BOOST_LOG_TRIVIAL(warning) << "========================================";
+
+    BOOST_LOG_TRIVIAL(warning) << "[Version] Snapmaker Orca: " << Snapmaker_VERSION
+                               << ", Build: " << SLIC3R_VERSION;
+
+    std::string flutter_ver = common::get_flutter_version();
+    BOOST_LOG_TRIVIAL(warning) << "[Version] Orca Web: " << (flutter_ver.empty() ? "N/A" : flutter_ver);
+
+    std::string profile_ver = common::get_profile_version();
+    BOOST_LOG_TRIVIAL(warning) << "[Version] Profile: " << (profile_ver.empty() ? "N/A" : profile_ver);
+
+    BOOST_LOG_TRIVIAL(warning) << "[Version] OS: " << s_cached_os_desc;
+
+    BOOST_LOG_TRIVIAL(warning) << "========================================";
+
+    flush_logs();
+}
 
 static void generic_exception_handle()
 {
@@ -2394,6 +2454,12 @@ class wxBoostLog : public wxLog
 
 bool GUI_App::on_init_inner()
 {
+#if defined(__linux__) || defined(__LINUX__)
+    // Set the C library locale from environment variables so that character
+    // encoding conversions work correctly for non-ASCII text (e.g. Chinese).
+    // This must be done early before any wxWidgets locale-sensitive operations.
+    std::setlocale(LC_ALL, "");
+#endif
     StartupProfiler profiler("GUI_App::on_init_inner");
 
     wxLog::SetActiveTarget(new wxBoostLog());
@@ -2457,6 +2523,7 @@ bool GUI_App::on_init_inner()
 #endif
 
     BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current Snapmaker_Orca Version %1%")%Snapmaker_VERSION;
+    GUI_App::log_version_info();
 
 #if defined(__WINDOWS__)
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
@@ -4693,12 +4760,10 @@ std::string detect_updater_os_info()
         description = wxGetOsDescription();
 
     //Orca: workaround: wxGetOsVersion can't recognize Windows 11
-    // For Windows, use actual version numbers to properly detect Windows 11
-    // Windows 11 starts at build 22000
 #if defined(_WIN32)
     int major = 0, minor = 0, micro = 0;
     wxGetOsVersion(&major, &minor, &micro);
-    if (micro >= 22000) {
+    if (micro >= kWindows11BuildNumber) {
         // replace Windows 10 with Windows 11
         description.Replace("Windows 10", "Windows 11");
     }

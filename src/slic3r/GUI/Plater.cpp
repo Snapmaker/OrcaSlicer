@@ -15035,6 +15035,11 @@ void Plater::priv::on_action_layersediting(SimpleEvent&)
  * heights and may produce unexpected results.
  * @param local_z_enabled true if the Subdivide Mix Layer setting is active
  */
+bool Plater::has_incompatible_mixed_filament_in_use() const
+{
+    return p && p->has_incompatible_mixed_filament_in_use();
+}
+
 void Plater::notify_vhl_dithering_conflict(bool local_z_enabled)
 {
     if (!local_z_enabled)

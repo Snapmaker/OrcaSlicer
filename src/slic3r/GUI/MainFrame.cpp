@@ -1907,6 +1907,10 @@ bool MainFrame::get_enable_slice_status()
         {
             enable = false;
         }
+        if (enable && m_plater->has_incompatible_mixed_filament_in_use())
+        {
+            enable = false;
+        }
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": m_slice_select %1%, enable= %2% ")%m_slice_select %enable;

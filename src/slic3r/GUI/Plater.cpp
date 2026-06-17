@@ -20637,6 +20637,10 @@ bool Plater::sync_filament_temp_mixing_notification()
         slicing_allowed = false;
         break;
     }
+    default:
+        BOOST_LOG_TRIVIAL(warning) << "[Plater] sync_filament_temp_mixing_notification: unknown mixing_state " << static_cast<int>(mixing_state);
+        slicing_allowed = true;
+        break;
     }
 
     p->filament_temp_mixing_notification_initialized = true;
@@ -20670,6 +20674,10 @@ bool Plater::confirm_filament_temp_mixing_before_slice()
         return false;
     case FilamentTempMixingState::AllowedWarning:
         break;
+    default:
+        BOOST_LOG_TRIVIAL(warning) << "[Plater] confirm_filament_temp_mixing_before_slice: unknown state "
+                                   << static_cast<int>(get_filament_temp_mixing_state());
+        return true;
     }
 
     MessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),

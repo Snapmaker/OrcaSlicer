@@ -31,7 +31,6 @@
 #include "NotificationManager.hpp"
 #include "format.hpp"
 #include "DailyTips.hpp"
-#include "FilamentColorUtils.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -8394,22 +8393,13 @@ void GLCanvas3D::_render_paint_toolbar() const
     int em_unit = wxGetApp().em_unit() / 10;
 
     const std::vector<std::string> actual_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config();
-    const std::vector<unsigned int> display_filament_ids = get_ui_ordered_filament_ids(wxGetApp().plater(), actual_colors.size());
-    const std::vector<std::string> physical_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
-    const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr ? 
-                                               &wxGetApp().preset_bundle->project_config : nullptr;
+    const std::vector<unsigned int> display_filament_ids =
+        get_ui_ordered_filament_ids(wxGetApp().plater(), actual_colors.size());
     std::vector<std::string> colors;
     colors.reserve(display_filament_ids.size());
-    for (const unsigned int filament_id : display_filament_ids)
-    {
+    for (const unsigned int filament_id : display_filament_ids) {
         if (filament_id >= 1 && filament_id <= actual_colors.size())
-        {
-            const size_t color_index = size_t(filament_id - 1);
-            const DynamicPrintConfig* color_config = filament_id <= physical_colors.size() ? project_config : nullptr;
-            FilamentColor toolbarColor =
-                FilamentColorUtils::GetFilamentColorFromConfig(color_config, color_index, actual_colors[color_index]);
-            colors.emplace_back(toolbarColor.PrimaryColor(actual_colors[color_index]));
-        }
+            colors.emplace_back(actual_colors[filament_id - 1]);
     }
 
     const int extruder_num = int(colors.size());
@@ -8510,10 +8500,9 @@ void GLCanvas3D::_render_paint_toolbar() const
 
     const float text_offset_y = 4.0f * em_unit * f_scale;
     for (int i = 0; i < extruder_num; i++) {
-        ColorRGBA textRgba;
-        decode_color(colors[i], textRgba);
-        const float gray = 0.299f * textRgba.r_uchar() + 0.587f * textRgba.g_uchar() + 0.114f * textRgba.b_uchar();
-        const ImVec4 text_color = gray < 80.0f ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0, 0, 0, 1.0f);
+        decode_color(colors[i], rgba);
+        float  gray       = 0.299 * rgba.r_uchar() + 0.587 * rgba.g_uchar() + 0.114 * rgba.b_uchar();
+        ImVec4 text_color = gray < 80 ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0, 0, 0, 1.0f);
 
         imgui.push_bold_font();
         ImVec2 number_label_size = ImGui::CalcTextSize(std::to_string(i + 1).c_str());

@@ -403,19 +403,15 @@ public:
         scale_bitmap(m_main_bitmap, m_scale);
 
         // init constant texts and scale fonts
-        m_constant_text.init(Label::Body_16);
+        m_constant_text.init();
 
 		// ORCA scale all fonts with monitor scale
-        scale_font(m_constant_text.version_font,	m_scale * 2);
-        scale_font(m_constant_text.based_on_font,	m_scale * 1.5f);
-        scale_font(m_constant_text.credits_font,	m_scale * 2);
-        scale_font(m_constant_text.brand_font,      m_scale * 1.5f);
-        scale_font(m_constant_text.tag_font,        m_scale * 1.5f);
-        scale_font(m_constant_text.beta_font,       m_scale * 1.5f);
-        scale_font(m_constant_text.loading_font,    m_scale * 1.5f);
+        scale_font(m_constant_text.titleFont,       m_scale * 1.5f);
+        scale_font(m_constant_text.versionFont,     m_scale * 1.5f);
+        scale_font(m_constant_text.loadingFont,     m_scale * 1.5f);
 
         // this font will be used for the action string
-        m_action_font = m_constant_text.loading_font;
+        m_action_font = m_constant_text.loadingFont;
 
         // draw logo and constant info text
         Decorate(m_main_bitmap);
@@ -463,49 +459,49 @@ public:
         auto scaleY = [height, designSize](int value) { return value * height / designSize; };
 
         // Logo icon: 140x140, centered horizontally, y=80
-        BitmapCache bmp_cache;
+        BitmapCache bmpCache;
         int logoSize = scaleX(140);
         int logoX    = scaleX(170);
         int logoY    = scaleY(80);
-        wxBitmap* logoBmp = bmp_cache.load_svg("splash_app_icon", logoSize, logoSize);
+        wxBitmap* logoBmp = bmpCache.load_svg("splash_app_icon", logoSize, logoSize);
         if (logoBmp != nullptr)
             memDc.DrawBitmap(*logoBmp, logoX, logoY, true);
 
         // Brand name: "Snapmaker Orca"
-        memDc.SetFont(m_constant_text.brand_font);
+        memDc.SetFont(m_constant_text.titleFont);
         memDc.SetTextForeground(wxColour(23, 23, 23));
-        wxSize brandExt = memDc.GetTextExtent(m_constant_text.brand_name);
+        wxSize brandExt = memDc.GetTextExtent(m_constant_text.title);
 
         // Version tag: "V" + current app version
-        memDc.SetFont(m_constant_text.tag_font);
+        memDc.SetFont(m_constant_text.versionFont);
         memDc.SetTextForeground(wxColour(143, 143, 143));
-        wxSize tagExt = memDc.GetTextExtent(m_constant_text.version_tag);
+        wxSize versionExt = memDc.GetTextExtent(m_constant_text.version);
 
         // Center brand + gap + tag as a group.
         int gap    = scaleX(10);
-        int totalW = brandExt.GetWidth() + gap + tagExt.GetWidth();
+        int totalW = brandExt.GetWidth() + gap + versionExt.GetWidth();
         int startX = (width - totalW) / 2;
         int brandY = scaleY(241);
         int tagY   = scaleY(251);
 
-        memDc.SetFont(m_constant_text.brand_font);
+        memDc.SetFont(m_constant_text.titleFont);
         memDc.SetTextForeground(wxColour(23, 23, 23));
-        memDc.DrawText(m_constant_text.brand_name, startX, brandY);
+        memDc.DrawText(m_constant_text.title, startX, brandY);
 
-        memDc.SetFont(m_constant_text.tag_font);
+        memDc.SetFont(m_constant_text.versionFont);
         memDc.SetTextForeground(wxColour(143, 143, 143));
-        memDc.DrawText(m_constant_text.version_tag,
+        memDc.DrawText(m_constant_text.version,
                        startX + brandExt.GetWidth() + gap,
                        tagY);
 
         // Beta text below brand, centered
         int betaY = scaleY(279);
-        memDc.SetFont(m_constant_text.beta_font);
+        memDc.SetFont(m_constant_text.versionFont);
         memDc.SetTextForeground(wxColour(143, 143, 143));
-        wxSize betaExt = memDc.GetTextExtent(m_constant_text.beta_text);
+        wxSize betaExt = memDc.GetTextExtent(m_constant_text.betaText);
         wxRect betaRect(wxPoint(0, betaY),
                         wxPoint(width, betaY + betaExt.GetHeight()));
-        memDc.DrawLabel(m_constant_text.beta_text, betaRect, wxALIGN_CENTER);
+        memDc.DrawLabel(m_constant_text.betaText, betaRect, wxALIGN_CENTER);
 
         // Dynamic text y position (for SetText)
         m_action_line_y_position = scaleY(384);
@@ -583,42 +579,21 @@ private:
     {
         wxString title;
         wxString version;
-        wxString brand_name;
-        wxString version_tag;
-        wxString beta_text;
-        wxString credits;
+        wxString betaText;
 
-        wxFont   title_font;
-        wxFont   version_font;
-        wxFont   credits_font;
-        wxFont   based_on_font;
-        wxFont   brand_font;
-        wxFont   tag_font;
-        wxFont   beta_font;
-        wxFont   loading_font;
+        wxFont   titleFont;
+        wxFont   versionFont;
+        wxFont   loadingFont;
 
-        void init(wxFont init_font)
+        void init()
         {
-            // title
-            //title = wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME;
+            title    = "Snapmaker Orca";
+            version  = std::string("V") + Snapmaker_VERSION;
+            betaText = _L("Beta version");
 
-            // dynamically get the version to display
-            version     = GUI_App::format_display_version();
-            brand_name  = "Snapmaker Orca";
-            version_tag = std::string("V") + Snapmaker_VERSION;
-            beta_text   = _L("Beta version");
-
-            // credits infornation
-            credits = "";
-
-            //title_font    = Label::Head_16;
-            version_font  = Label::Body_13;
-            based_on_font = Label::Body_8;
-            credits_font  = Label::Body_8;
-            brand_font    = Label::sysFont(20, false);
-            tag_font      = Label::Body_13;
-            beta_font     = Label::Body_13;
-            loading_font  = Label::Body_11;
+            titleFont   = Label::sysFont(20, false);
+            versionFont = Label::Body_13;
+            loadingFont = Label::Body_11;
         }
     }
     m_constant_text;

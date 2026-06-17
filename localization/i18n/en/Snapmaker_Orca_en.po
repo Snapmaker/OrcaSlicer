@@ -5932,7 +5932,10 @@ msgstr ""
 msgid "Successfully synchronize the color and type of filaments with the printer."
 msgstr ""
 
-msgid "Detected that consumables with color-mixing dependency will be replaced / removed. Performing this operation will update the color-mixing results. Proceed?"
+msgid "Detected that filament with color-mixing dependency will be replaced. Performing this operation will update the color-mixing results. Proceed?"
+msgstr ""
+
+msgid "Detected that filament with color-mixing dependency will be removed. Performing this operation will remove the color-mixing results. Proceed?"
 msgstr ""
 
 #, boost-format

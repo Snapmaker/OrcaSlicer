@@ -6,28 +6,16 @@
 
 #include <wx/colour.h>
 
+#include "libslic3r/MixedFilament.hpp"
+
 namespace Slic3r
 {
 namespace GUI
 {
-
-// ============================================================
-// Luminance helpers — determine text colour for a background
-// ============================================================
 constexpr double g_lumR = 0.299;
 constexpr double g_lumG = 0.587;
 constexpr double g_lumB = 0.114;
 constexpr int    g_luminanceThreshold = 140;
-
-inline bool isDarkColour(const wxColour& c)
-{
-    return (c.Red() * g_lumR + c.Green() * g_lumG + c.Blue() * g_lumB) < g_luminanceThreshold;
-}
-
-inline wxColour getTextColour(const wxColour& bg)
-{
-    return isDarkColour(bg) ? *wxWHITE : *wxBLACK;
-}
 
 struct FilamentData
 {
@@ -40,10 +28,27 @@ struct FilamentData
     uint8_t      m_color_b = 0;
 };
 
+struct MixedFilamentPreviewInfo
+{
+    int              m_virtual_filament_id = 0;
+    MixedFilament    m_config;
+};
+
+inline bool isDarkColour(const wxColour& c)
+{
+    return (c.Red() * g_lumR + c.Green() * g_lumG + c.Blue() * g_lumB) < g_luminanceThreshold;
+}
+
+inline wxColour getTextColour(const wxColour& bg)
+{
+    return isDarkColour(bg) ? *wxWHITE : *wxBLACK;
+}
+
 inline bool is_none_filament(const FilamentData& fd)
 {
     return fd.m_type.empty() || fd.m_type == "NONE";
 }
+
 
 using FilamentInfoCallback = std::function<void(const FilamentData& data)>;
 

@@ -218,9 +218,9 @@ void FilamentColorMapBoxGroup::showMachineFilamentPicker(int boxIndex)
     picker->popupAt(screenPos);
 }
 
-void FilamentColorMapBoxGroup::updateBoxBelowData(int boxIndex, const FilamentData& machineData)
+void FilamentColorMapBoxGroup::updateBoxBelowData(int boxIndex, const FilamentData& machineData, bool bTriggerCallback /* = true */)
 {
-    updateBoxFilament(boxIndex, machineData);
+    updateBoxFilament(boxIndex, machineData, bTriggerCallback);
 }
 
 int FilamentColorMapBoxGroup::getBoxCount() const
@@ -278,14 +278,14 @@ bool FilamentColorMapBoxGroup::hasOpenPicker() const
     return m_pPicker != nullptr;
 }
 
-void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentData& machineData)
+void FilamentColorMapBoxGroup::updateBoxFilament(int boxIndex, const FilamentData& machineData, bool bTriggerCallback /* = true */)
 {
     if (boxIndex < 0 || boxIndex >= m_boxList.size())
         return;
 
     m_boxList[boxIndex]->updateBelowData(machineData);
 
-    if (m_mappingChangedCallback)
+    if (m_mappingChangedCallback && bTriggerCallback)
         m_mappingChangedCallback();
 }
 

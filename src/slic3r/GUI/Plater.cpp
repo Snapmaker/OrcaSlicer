@@ -8072,9 +8072,26 @@ void Sidebar::show_sync_filament_dialog()
     std::vector<FilamentData> designFilamentList;
     build_design_filament_list(preset_bundle, designFilamentList);
 
+    std::vector<MixedFilamentPreviewInfo> mixedInfos;
+    int oldPhysicalCount = designFilamentList.size();
+    const auto& mixedFilaments = preset_bundle->mixed_filaments.mixed_filaments();
+    int enabledMixedIdx = 0;
+    for (size_t i = 0; i < mixedFilaments.size(); ++i) {
+        const auto& mf = mixedFilaments[i];
+        if (mf.deleted || !mf.enabled)
+            continue;
+
+        MixedFilamentPreviewInfo info;
+        info.m_virtual_filament_id = oldPhysicalCount + enabledMixedIdx;
+        info.m_config = mf;
+        mixedInfos.push_back(info);
+        ++enabledMixedIdx;
+    }
+
     wxGetApp().plater()->update_all_plate_thumbnails(true);
     SyncFilamentColorDialog dlg(this, designFilamentList, machineFilamentList);
     dlg.setHasMixedFilaments(preset_bundle->mixed_filaments.enabled_count() > 0);
+    dlg.setMixedFilamentInfos(mixedInfos);
     {
         if (wxGetApp().plater()->model().objects.empty()) {
             dlg.setOverwriteMode();
@@ -8120,6 +8137,17 @@ void Sidebar::show_sync_filament_dialog()
 
         const size_t num_filaments = effective_size;
         wxGetApp().plater()->on_filaments_change(num_filaments);
+
+        if (dlg.shouldDeleteMixedFilaments()) {
+            auto& mixedList = preset_bundle->mixed_filaments.mixed_filaments();
+            for (auto& mf : mixedList) {
+                if (mf.enabled && !mf.deleted) {
+                    mf.deleted = true;
+                    mf.enabled = false;
+                }
+            }
+        }
+
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         preset_bundle->export_selections(*wxGetApp().app_config);
 

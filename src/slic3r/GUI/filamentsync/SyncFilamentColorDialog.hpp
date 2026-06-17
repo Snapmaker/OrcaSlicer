@@ -39,6 +39,9 @@ public:
 
     void setHasMixedFilaments(bool has);
 
+    void setMixedFilamentInfos(const std::vector<MixedFilamentPreviewInfo>& infos);
+    bool shouldDeleteMixedFilaments() const;
+
     void setOverwriteMode();
 
     bool Layout() override;
@@ -57,7 +60,12 @@ private:
 
     wxBitmap generateCoverPreview(const ThumbnailData& thumb,
                                    const ThumbnailData& noLightThumb,
-                                   const std::vector<FilamentData>& filamentMapping);
+                                   const std::vector<FilamentData>& filamentMapping,
+                                   const std::vector<MixedFilamentPreviewInfo>& mixedFilamentInfos,
+                                   const std::vector<unsigned int>& filamentIdRemap,
+                                   int  oldPhysicalFilamentCount,
+                                   bool isMappingMode,
+                                   bool shouldDeleteMixedFilaments);
 
     static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
 
@@ -90,8 +98,10 @@ private:
     std::vector<FilamentData> m_designDataList;
     std::vector<FilamentData> m_machineDataList;
     std::vector<unsigned int> m_filamentIdRemap;
+    std::vector<MixedFilamentPreviewInfo> m_mixedFilamentInfos;
     bool m_bMappingMode        = true;
     bool m_hasMixedFilaments   = false;
+    bool m_shouldDeleteMixedFilaments = false;
 };
 
 } // namespace GUI

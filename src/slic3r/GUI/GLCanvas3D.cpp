@@ -8399,19 +8399,16 @@ void GLCanvas3D::_render_paint_toolbar() const
     const DynamicPrintConfig* project_config = wxGetApp().preset_bundle != nullptr ? 
                                                &wxGetApp().preset_bundle->project_config : nullptr;
     std::vector<std::string> colors;
-    std::vector<FilamentColor> toolbarColors;
     colors.reserve(display_filament_ids.size());
-    toolbarColors.reserve(display_filament_ids.size());
     for (const unsigned int filament_id : display_filament_ids)
     {
         if (filament_id >= 1 && filament_id <= actual_colors.size())
         {
             const size_t color_index = size_t(filament_id - 1);
             const DynamicPrintConfig* color_config = filament_id <= physical_colors.size() ? project_config : nullptr;
-            FilamentColor toolbarColor = FilamentColorUtils::GetFilamentColorFromConfig(color_config, color_index,
-                                                                                          actual_colors[color_index]);
+            FilamentColor toolbarColor =
+                FilamentColorUtils::GetFilamentColorFromConfig(color_config, color_index, actual_colors[color_index]);
             colors.emplace_back(toolbarColor.PrimaryColor(actual_colors[color_index]));
-            toolbarColors.emplace_back(toolbarColor);
         }
     }
 
@@ -8498,9 +8495,6 @@ void GLCanvas3D::_render_paint_toolbar() const
                 wxPostEvent(m_canvas, IntEvent(EVT_GLTOOLBAR_FILLCOLOR, actual_filament_id));
             }
         }
-        if (i < int(toolbarColors.size()))
-            FilamentColorUtils::DrawImGuiFilamentColorBlock(draw_list, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                                                            toolbarColors[size_t(i)]);
         if (ImGui::IsItemHovered() && i < 9) {
             if (!ImGui::IsMouseHoveringRect(left_arrow_button.Min, left_arrow_button.Max) && !ImGui::IsMouseHoveringRect(right_arrow_button.Min, right_arrow_button.Max)) {
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 20.0f * f_scale, 10.0f * f_scale });
@@ -8516,9 +8510,10 @@ void GLCanvas3D::_render_paint_toolbar() const
 
     const float text_offset_y = 4.0f * em_unit * f_scale;
     for (int i = 0; i < extruder_num; i++) {
-        ImVec4 text_color(0, 0, 0, 1.0f);
-        if (i < int(toolbarColors.size()))
-            text_color = FilamentColorUtils::ImGuiTextColorFor(toolbarColors[size_t(i)]);
+        ColorRGBA textRgba;
+        decode_color(colors[i], textRgba);
+        const float gray = 0.299f * textRgba.r_uchar() + 0.587f * textRgba.g_uchar() + 0.114f * textRgba.b_uchar();
+        const ImVec4 text_color = gray < 80.0f ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0, 0, 0, 1.0f);
 
         imgui.push_bold_font();
         ImVec2 number_label_size = ImGui::CalcTextSize(std::to_string(i + 1).c_str());

@@ -2,7 +2,6 @@
 
 #include "libslic3r/FilamentColorLibrary.hpp"
 
-#include <imgui/imgui.h>
 #include <nlohmann/json.hpp>
 #include <wx/bitmap.h>
 #include <wx/colour.h>
@@ -45,13 +44,6 @@ wxBitmap* GetFilamentColorIcon(const std::vector<std::string>& colors, FilamentC
 wxBitmap* GetFilamentColorIcon(const std::string& multiColors, FilamentColorMode mode, const std::string& fallbackColor,
                                const std::string& label, int iconWidth, int iconHeight,
                                const wxColour& lightBorderColor = wxNullColour);
-
-ImU32 ToImGuiColor(const std::string& color);
-float ImGuiAverageLuminance(const FilamentColor& color);
-ImVec4 ImGuiTextColorFor(const FilamentColor& color);
-
-void DrawImGuiFilamentColorBlock(ImDrawList* draw_list, const ImVec2& min, const ImVec2& max, const FilamentColor& color,
-                                 float inset = 0.0f);
 
 } // namespace FilamentColorUtils
 } // namespace GUI

@@ -20607,6 +20607,10 @@ bool Plater::sync_filament_temp_mixing_notification()
 {
     const int curr_plate_index = get_partplate_list().get_curr_plate_index();
     PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    if (curr_plate == nullptr) {
+        BOOST_LOG_TRIVIAL(warning) << "[Plater] sync_filament_temp_mixing_notification: curr_plate is null";
+        return true;
+    }
     const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
     bool slicing_allowed = true;
 
@@ -20615,12 +20619,12 @@ bool Plater::sync_filament_temp_mixing_notification()
     case FilamentTempMixingState::Compatible:
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
-        get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
+        curr_plate->update_apply_result_invalid(false);
         slicing_allowed = true;
         break;
     case FilamentTempMixingState::AllowedWarning:
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
-        get_partplate_list().get_curr_plate()->update_apply_result_invalid(false);
+        curr_plate->update_apply_result_invalid(false);
         get_notification_manager()->push_notification(
             NotificationType::ValidateWarning,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
@@ -20633,7 +20637,7 @@ bool Plater::sync_filament_temp_mixing_notification()
         err.string = filament_temp_mixing_error_text();
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
         get_notification_manager()->push_validate_error_notification(err);
-        get_partplate_list().get_curr_plate()->update_apply_result_invalid(true);
+        curr_plate->update_apply_result_invalid(true);
         slicing_allowed = false;
         break;
     }
@@ -20647,7 +20651,7 @@ bool Plater::sync_filament_temp_mixing_notification()
     p->filament_temp_mixing_notification_plate = curr_plate_index;
     p->filament_temp_mixing_notification_state = mixing_state;
 
-    const bool can_slice = curr_plate != nullptr && curr_plate->can_slice() && slicing_allowed;
+    const bool can_slice = curr_plate->can_slice() && slicing_allowed;
     p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, can_slice);
     return slicing_allowed;
 }

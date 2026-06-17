@@ -33,6 +33,11 @@ wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 // Key format:  "solid:#RRGGBB:hH:wW:label"  or  "grad:#RRGGBB:#RRGGBBBT:hH:wW:label"
 wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
 
+// Cached bitmap for official filament colour blocks. Multiple colours are drawn left to right.
+wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, bool is_gradient,
+                                        int width, int height, const wxString& label,
+                                        const wxColour& lightBorderColor);
+
 class MixedFilamentBadge : public wxPanel
 {
 public:

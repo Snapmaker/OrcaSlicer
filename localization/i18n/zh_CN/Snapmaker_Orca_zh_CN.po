@@ -15237,3 +15237,13 @@ msgstr "擦拭塔熨烫面积"
 
 msgid "Ironing area for prime tower interface layer (where different materials meet)."
 msgstr "擦拭塔的起始点熨烫面积"
+msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
+
+msgid "Official Filaments"
+msgstr "官方耗材"
+
+msgid "Other Colors"
+msgstr "其他颜色"
+
+msgid "Multiple Color"
+msgstr "多色"

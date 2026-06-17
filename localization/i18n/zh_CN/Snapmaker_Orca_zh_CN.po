@@ -12213,29 +12213,11 @@ msgstr "稳定锥体顶角"
 msgid "Angle at the apex of the cone that is used to stabilize the wipe tower. Larger angle means wider base."
 msgstr "塔锥体顶角的角度，用于稳定擦拭塔。角度越大，底座越宽。"
 
-msgid "Maximum wipe tower print speed"
-msgstr "擦拭塔最大打印速度"
+msgid "Maximum wipe tower print speed of out wall"
+msgstr "擦拭塔外墙最大打印速度"
 
-msgid ""
-"The maximum print speed when purging in the wipe tower and printing the wipe tower sparse layers. When purging, if the sparse infill speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n"
-"\n"
-"When printing the sparse layers, if the internal perimeter speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n"
-"\n"
-"Increasing this speed may affect the tower's stability as well as increase the force with which the nozzle collides with any blobs that may have formed on the wipe tower.\n"
-"\n"
-"Before increasing this parameter beyond the default of 90 mm/s, make sure your printer can reliably bridge at the increased speeds and that ooze when tool changing is well controlled.\n"
-"\n"
-"For the wipe tower external perimeters the internal perimeter speed is used regardless of this setting."
-msgstr ""
-"擦拭塔冲刷和稀疏层的最大打印速度。当冲刷时，如果稀疏填充速度或从耗材最大体积速度计算出的速度较低，则使用最低速度。\n"
-"\n"
-"当打印稀疏层时，如果内墙速度或从耗材最大体积速度计算出的速度较低，则使用最低速度。\n"
-"\n"
-"增加此速度可能会影响塔的稳定性，同时增加喷嘴与擦拭塔上可能形成的任何斑点碰撞的力。\n"
-"\n"
-"在将此参数增加到默认值90mm/sec之外之前，请确保您的打印机可以可靠地在增加的速度下桥接，并且换料时的滴漏得到了很好的控制。\n"
-"\n"
-"对于擦拭塔外墙，无论此设置如何，都使用内墙速度。"
+msgid "Maximum wipe tower print speed of out wall."
+msgstr "擦拭塔外墙最大打印速度"
 
 msgid "Wall type"
 msgstr "墙体类型"
@@ -12268,6 +12250,12 @@ msgstr "墙体加圆角"
 
 msgid "The wall of prime tower will fillet."
 msgstr "擦料塔的墙壁做倒角处理"
+
+msgid "Wall gap"
+msgstr "外墙缺口"
+
+msgid "Create small gaps in the wipe tower outer wall at tool change entry points. The first extrusion path after a filament change will enter through the gap, leaving the filament blob on the gap edge instead of on the outer wall surface."
+msgstr "在擦拭塔外墙换料入口处创建小缺口。换料后的第一条挤出路径将从缺口进入，将料丝残留留在缺口边缘而非外墙表面。"
 
 msgid "The extruder to use when printing perimeter of the wipe tower. Set to 0 to use the one that is available (non-soluble would be preferred)."
 msgstr "打印擦拭塔周长时使用的挤出机。设置为0将使用唯一的挤出机（尽量使用不可溶的材料）。"
@@ -15151,8 +15139,8 @@ msgstr "编辑混色"
 msgid "Order"
 msgstr "顺序"
 
-msgid "Target Color:"
-msgstr "目标色:"
+msgid "Target Color"
+msgstr "目标色"
 
 msgid "Swap filaments"
 msgstr "切换方向"
@@ -15205,6 +15193,9 @@ msgstr "参与混色耗材颜色一致，无法混出更多颜色，请选用不
 msgid "Full domain"
 msgstr "全域生效"
 
+msgid "Apply subdivision to infill"
+msgstr "应用到填充"
+
 msgid "Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."
 msgstr "包含无效字符。仅允许输入数字、方括号（[ 和]）和逗号（,）。"
 
@@ -15233,6 +15224,19 @@ msgid "\nMerging this filament will invalidate these mixed filament configuratio
 msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续？"
 
 msgid "Filament %d ratio is too high. Mix may be affected."
+msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
+
+msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
+msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
+
+msgid "Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing."
+msgstr "混色耗材中包含不兼容的材料类型，请切片前修改为兼容的混色耗材类型。"
+
+msgid "Tower ironing area"
+msgstr "擦拭塔熨烫面积"
+
+msgid "Ironing area for prime tower interface layer (where different materials meet)."
+msgstr "擦拭塔的起始点熨烫面积"
 msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
 
 msgid "Official Filaments"

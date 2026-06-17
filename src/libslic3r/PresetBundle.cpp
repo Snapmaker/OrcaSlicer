@@ -203,6 +203,12 @@ static std::vector<std::string> s_project_options {
     "mixed_filament_definitions",
     "mixed_color_layer_height_a",
     "mixed_color_layer_height_b",
+    "dithering_z_step_size",
+    "dithering_local_z_mode",
+    "dithering_local_z_whole_objects",
+    "dithering_local_z_infill",
+    "dithering_local_z_direct_multicolor",
+    "dithering_step_painted_zones_only",
 };
 
 // SM_FEATURE: add Snapmaker machine as default
@@ -3347,9 +3353,9 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
                 // Some system bundles only provide setting_id for filaments. Treat it as a stable fallback
                 // instead of aborting the entire vendor import and losing all dependent presets.
                 filament_id = setting_id;
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
-                                           << ": missing filament_id for " << preset_name
-                                           << ", falling back to setting_id " << setting_id;
+                // BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                //                            << ": missing filament_id for " << preset_name
+                //                            << ", falling back to setting_id " << setting_id;
             }
             //check whether it inherits other preset or not
             auto it1 = key_values.find(BBL_JSON_KEY_INHERITS);

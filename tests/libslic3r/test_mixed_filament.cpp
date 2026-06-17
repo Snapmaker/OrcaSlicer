@@ -4,7 +4,10 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <vector>
 
@@ -46,6 +49,57 @@ static unsigned int virtual_id_for_stable_id(const std::vector<MixedFilament> &m
         ++next_virtual_id;
     }
     return 0;
+}
+
+static std::string single_custom_mixed_definition(unsigned int component_a, unsigned int component_b, uint64_t stable_id)
+{
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    MixedFilamentManager           mgr;
+    mgr.add_custom_filament(component_a, component_b, 50, colors);
+
+    MixedFilament &row = mgr.mixed_filaments().front();
+    row.stable_id         = stable_id;
+    row.distribution_mode = int(MixedFilament::Simple);
+    row.manual_pattern.clear();
+
+    return mgr.serialize_custom_entries();
+}
+
+static DynamicPrintConfig mixed_region_print_config(const std::string &mixed_definitions)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(4);
+    config.set_num_filaments(4);
+    // Print::apply uses filament_diameter.size() as the physical filament count.
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.76, 1.77, 1.78};
+    config.option<ConfigOptionStrings>("filament_colour")->values = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    config.set("mixed_filament_definitions", mixed_definitions);
+    return config;
+}
+
+static std::vector<unsigned int> first_layer_range_painted_extruders(const Print &print)
+{
+    std::vector<unsigned int> extruders;
+    if (print.objects().empty())
+        return extruders;
+
+    const PrintObjectRegions *regions = print.objects().front()->shared_regions();
+    if (regions == nullptr || regions->layer_ranges.empty())
+        return extruders;
+
+    for (const PrintObjectRegions::PaintedRegion &painted_region : regions->layer_ranges.front().painted_regions)
+        extruders.emplace_back(painted_region.extruder_id);
+
+    std::sort(extruders.begin(), extruders.end());
+    extruders.erase(std::unique(extruders.begin(), extruders.end()), extruders.end());
+    return extruders;
+}
+
+static const PrintObjectRegions *first_print_object_regions(const Print &print)
+{
+    if (print.objects().empty())
+        return nullptr;
+    return print.objects().front()->shared_regions();
 }
 
 struct MixedAutoGenerateGuard
@@ -424,7 +478,6 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     PrintRegionConfig region_config = static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults());
     region_config.wall_filament.value                  = 3;
     region_config.wall_loops.value                     = 2;
-    region_config.enable_infill_filament_override.value = false;
     region_config.sparse_infill_density.value          = 15.;
     region_config.sparse_infill_filament.value         = 2;
     region_config.solid_infill_filament.value          = 3;
@@ -447,12 +500,11 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
 
     CHECK(layer0.wall_filament(region) == 0);
     CHECK(layer1.wall_filament(region) == 1);
-    CHECK(layer0.sparse_infill_filament(region) == 0);
-    CHECK(layer1.sparse_infill_filament(region) == 0);
+    CHECK(layer0.sparse_infill_filament(region) == 1);
+    CHECK(layer1.sparse_infill_filament(region) == 1);
     CHECK(layer0.solid_infill_filament(region) == 0);
     CHECK(layer1.solid_infill_filament(region) == 0);
 
-    region_config.enable_infill_filament_override.value = true;
     region_config.sparse_infill_filament.value          = 2;
     region_config.solid_infill_filament.value           = 2;
     PrintRegion overridden_region(region_config);
@@ -501,6 +553,49 @@ TEST_CASE("Mixed filament painted-region resolver preserves virtual channels for
     row.distribution_mode = int(MixedFilament::SameLayerPointillisme);
     CHECK(mgr.effective_painted_region_filament_id(3, 2, 0) == 3);
     CHECK_THAT(double(mgr.component_surface_offset(3, 2, 0)), WithinAbs(0.0, 0.0001));
+}
+
+TEST_CASE("Mixed filament component edits rebuild painted region targets", "[MixedFilament][PrintApply]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model model;
+    ModelObject *object = model.add_object();
+    object->name = "mixed-painted-object.stl";
+    ModelVolume *volume = object->add_volume(make_cube(20., 20., 20.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    constexpr unsigned int mixed_virtual_id = 5;
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(0, EnforcerBlockerType(mixed_virtual_id));
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    constexpr uint64_t stable_id = 4242;
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(1, 2, stable_id));
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    const PrintObjectRegions *initial_regions = first_print_object_regions(print);
+    REQUIRE(initial_regions != nullptr);
+    REQUIRE_FALSE(initial_regions->layer_ranges.empty());
+    const std::vector<unsigned int> expected_initial_extruders {1, 2, mixed_virtual_id};
+    CHECK(first_layer_range_painted_extruders(print) == expected_initial_extruders);
+
+    config.set("mixed_filament_definitions", single_custom_mixed_definition(3, 2, stable_id));
+    print.apply(model, config);
+    const PrintObjectRegions *updated_regions = first_print_object_regions(print);
+    REQUIRE(updated_regions != nullptr);
+    REQUIRE_FALSE(updated_regions->layer_ranges.empty());
+    const std::vector<unsigned int> expected_updated_extruders {2, 3, mixed_virtual_id};
+    CHECK(first_layer_range_painted_extruders(print) == expected_updated_extruders);
+
+    config.set("mixed_filament_definitions", single_custom_mixed_definition(3, 4, stable_id));
+    print.apply(model, config);
+    const std::vector<unsigned int> expected_updated_second_component_extruders {3, 4, mixed_virtual_id};
+    CHECK(first_layer_range_painted_extruders(print) == expected_updated_second_component_extruders);
 }
 
 TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
@@ -2789,4 +2884,33 @@ TEST_CASE("dithering_local_z_mode dirty tracking via is_dirty", "[MixedFilament]
     // Change edited to false → should be dirty
     edited.config.set_key_value("dithering_local_z_mode", new ConfigOptionBool(false));
     CHECK(PresetCollection::is_dirty(&edited, &reference));
+}
+
+TEST_CASE("Local Z whole object setting is available for 3MF project config", "[MixedFilament][Config]")
+{
+    const auto &print_options = Preset::print_options();
+    CHECK(std::find(print_options.begin(), print_options.end(), "dithering_local_z_whole_objects") != print_options.end());
+
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_whole_objects"));
+
+    bundle.project_config.set_key_value("dithering_local_z_whole_objects", new ConfigOptionBool(true));
+    DynamicPrintConfig full_config = DynamicPrintConfig::full_print_config();
+    full_config.apply(bundle.project_config);
+    REQUIRE(full_config.has("dithering_local_z_whole_objects"));
+    CHECK(full_config.opt_bool("dithering_local_z_whole_objects"));
+}
+
+TEST_CASE("Local Z infill subdivision defaults inactive when Subdivide Mix Layer is off", "[MixedFilament][Config]")
+{
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_mode"));
+    REQUIRE(bundle.project_config.has("dithering_local_z_infill"));
+    CHECK_FALSE(bundle.project_config.opt_bool("dithering_local_z_mode"));
+    CHECK_FALSE(bundle.project_config.opt_bool("dithering_local_z_infill"));
+
+    DynamicPrintConfig full_config = DynamicPrintConfig::full_print_config();
+    full_config.apply(bundle.project_config);
+    REQUIRE(full_config.has("dithering_local_z_infill"));
+    CHECK_FALSE(full_config.opt_bool("dithering_local_z_infill"));
 }

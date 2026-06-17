@@ -1529,17 +1529,40 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if(opt_key == "purge_in_prime_tower")
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
 
-    if (m_type == Preset::TYPE_PRINT &&
-        opt_key == "dithering_local_z_mode" &&
-        boost::any_cast<bool>(value) &&
-        m_config->has("dithering_local_z_infill") &&
-        !m_config->opt_bool("dithering_local_z_infill")) {
+    if (m_type == Preset::TYPE_PRINT && opt_key == "dithering_local_z_mode") {
+        const bool local_z_enabled = boost::any_cast<bool>(value);
         DynamicPrintConfig new_conf = *m_config;
-        new_conf.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
-        m_config_manipulation.apply(m_config, &new_conf);
-
+        bool dependent_config_changed = false;
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
-        project_cfg.set_key_value("dithering_local_z_infill", new ConfigOptionBool(true));
+
+        auto set_print_bool = [this, &new_conf, &dependent_config_changed](const char *key, bool enabled) {
+            if (!m_config->has(key) || m_config->option(key) == nullptr || m_config->opt_bool(key) == enabled)
+                return;
+            new_conf.set_key_value(key, new ConfigOptionBool(enabled));
+            dependent_config_changed = true;
+        };
+        auto set_project_bool = [&project_cfg](const char *key, bool enabled) {
+            project_cfg.set_key_value(key, new ConfigOptionBool(enabled));
+        };
+
+        if (local_z_enabled) {
+            set_print_bool("dithering_local_z_infill", true);
+        } else {
+            set_print_bool("dithering_local_z_whole_objects", false);
+            set_print_bool("dithering_local_z_infill", false);
+            set_project_bool("dithering_local_z_direct_multicolor", false);
+        }
+
+        if (dependent_config_changed)
+            m_config_manipulation.apply(m_config, &new_conf);
+
+        if (new_conf.has("dithering_local_z_whole_objects"))
+            set_project_bool("dithering_local_z_whole_objects", new_conf.opt_bool("dithering_local_z_whole_objects"));
+        if (new_conf.has("dithering_local_z_infill"))
+            set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
+
+        if (auto* plater = wxGetApp().plater())
+            plater->notify_vhl_dithering_conflict(local_z_enabled);
     }
 
     if (opt_key == "enable_prime_tower") {
@@ -2358,12 +2381,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "strength_settings_infill#sparse-infill-pattern");
-        if (m_type >= Preset::TYPE_COUNT) {
-            optgroup->append_single_option_line("enable_infill_filament_override");
-            optgroup->append_single_option_line("infill_filament_use_base_first_layers");
-            optgroup->append_single_option_line("infill_filament_use_base_last_layers");
-            optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
-        }
         optgroup->append_single_option_line("infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("skin_infill_density", "strength_settings_patterns#locked-zag");
@@ -2538,7 +2555,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("prime_tower_brim_width", "multimaterial_settings_prime_tower#brim-width");
         optgroup->append_single_option_line("prime_tower_brim_chamfer", "multimaterial_settings_prime_tower#brim-chamfer");
         optgroup->append_single_option_line("prime_tower_brim_chamfer_max_width", "multimaterial_settings_prime_tower#brim-chamfer-max-width");
-        optgroup->append_single_option_line("wipe_tower_rotation_angle", "multimaterial_settings_prime_tower#wipe-tower-rotation-angle");
+
         optgroup->append_single_option_line("wipe_tower_bridging", "multimaterial_settings_prime_tower#maximal-bridging-distance");
         optgroup->append_single_option_line("wipe_tower_extra_spacing", "multimaterial_settings_prime_tower#wipe-tower-purge-lines-spacing");
         optgroup->append_single_option_line("wipe_tower_extra_flow", "multimaterial_settings_prime_tower#extra-flow-for-purge");
@@ -2549,12 +2566,14 @@ void TabPrint::build()
         optgroup->append_single_option_line("wipe_tower_rib_width", "multimaterial_settings_prime_tower#rib-width");
         optgroup->append_single_option_line("wipe_tower_fillet_wall", "multimaterial_settings_prime_tower#fillet-wall");
         optgroup->append_single_option_line("wipe_tower_no_sparse_layers", "multimaterial_settings_prime_tower#no-sparse-layers");
+        optgroup->append_single_option_line("wipe_tower_wall_gap", "multimaterial_settings_prime_tower#wall-gap");
         optgroup->append_single_option_line("single_extruder_multi_material_priming", "multimaterial_settings_prime_tower");
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
-        optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
+        //optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
         optgroup = page->new_optgroup(L("Ooze prevention"), L"param_ooze_prevention");
         optgroup->append_single_option_line("ooze_prevention", "multimaterial_settings_ooze_prevention");
@@ -2856,11 +2875,6 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
 static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
 {
     DynamicPrintConfig resolved(config);
-    const auto*        infill_override_opt = config.option<ConfigOptionBool>("enable_infill_filament_override");
-    const bool         infill_override_enabled = infill_override_opt != nullptr && infill_override_opt->value;
-
-    if (!infill_override_enabled && resolved.has("sparse_infill_filament"))
-        resolved.erase("sparse_infill_filament");
 
     if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
         const int extruder = extruder_opt->value;
@@ -2876,6 +2890,18 @@ static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig
         resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament")));
 
     return resolved;
+}
+
+static void sync_plate_bed_type_to_global(DynamicPrintConfig& config)
+{
+    if (wxGetApp().preset_bundle == nullptr)
+        return;
+
+    DynamicConfig& global_cfg = wxGetApp().preset_bundle->project_config;
+    if (global_cfg.has("curr_bed_type")) {
+        BedType global_bed_type = global_cfg.opt_enum<BedType>("curr_bed_type");
+        config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(global_bed_type));
+    }
 }
 
 TabPrintModel::TabPrintModel(ParamsPanel* parent, std::vector<std::string> const & keys)
@@ -2942,6 +2968,9 @@ void TabPrintModel::update_model_config()
     m_config->apply(*m_parent_tab->m_config);
     if (m_type != Preset::TYPE_PLATE) {
         m_config->apply_only(*wxGetApp().plate_tab->get_config(), plate_keys);
+    } else {
+        sync_plate_bed_type_to_global(m_prints.get_selected_preset().config);
+        sync_plate_bed_type_to_global(*m_config);
     }
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
@@ -3135,10 +3164,9 @@ void TabPrintPlate::build()
     load_initial_data();
 
     m_config->option("curr_bed_type", true);
-    if (m_preset_bundle->project_config.has("curr_bed_type")) {
-        BedType global_bed_type = m_preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-        m_config->set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(global_bed_type));
-    }
+    m_prints.get_selected_preset().config.option("curr_bed_type", true);
+    sync_plate_bed_type_to_global(m_prints.get_selected_preset().config);
+    sync_plate_bed_type_to_global(*m_config);
     m_config->option("first_layer_sequence_choice", true);
     m_config->option("first_layer_print_sequence", true);
     m_config->option("other_layers_print_sequence", true);
@@ -3667,6 +3695,7 @@ void TabFilament::build()
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
         optgroup->append_single_option_line("idle_temperature");
+        optgroup->append_single_option_line("filament_tower_ironing_area");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };
         line.append_option(optgroup->get_option("nozzle_temperature_range_low"));
         line.append_option(optgroup->get_option("nozzle_temperature_range_high"));

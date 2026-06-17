@@ -226,7 +226,7 @@ static bool model_object_is_on_plate(PartPlate* plate, size_t obj_idx, const Mod
         return false;
 
     if (plate == nullptr)
-        return true;
+        return false;
 
     const int object_index = static_cast<int>(obj_idx);
     const int instance_count = static_cast<int>(model_object->instances.size());
@@ -20434,6 +20434,8 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     std::set<int> used_slots;
 
     PartPlate* plate = p->partplate_list.get_plate(plate_index);
+    if (plate == nullptr)
+        return true;
 
     bool has_object_on_plate = false;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
@@ -20449,8 +20451,7 @@ bool Plater::check_filament_temp_mixing(int plate_index)
         return true;
 
     // Also collect from current plate's config for any plate-level overrides
-    if (plate)
-        collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);
+    collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);
 
     // Collect from ModelVolume painting extruders for objects on the
     // current plate. Also track whether any object relies on the global

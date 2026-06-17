@@ -68,26 +68,21 @@ int GUI_Run(GUI_InitParams &params)
             wchar_t module_path[MAX_PATH + 1] = {0};
             GetModuleFileNameW(nullptr, module_path, MAX_PATH);
             char module_ansi[MAX_PATH * 2 + 1] = {0};
-            const int converted = WideCharToMultiByte(
-                CP_ACP, WC_NO_BEST_FIT_CHARS,
-                module_path, -1, module_ansi,
-                sizeof(module_ansi), nullptr, nullptr);
-            if (converted == 0)
-            {
+            auto  to_acp = [&](const wchar_t* src, DWORD flags = 0) {
+                return WideCharToMultiByte(CP_ACP, flags, src, -1,
+                                           module_ansi, sizeof(module_ansi),
+                                           nullptr, nullptr);
+            };
+            if (to_acp(module_path, WC_NO_BEST_FIT_CHARS) == 0) {
                 // Fallback: conversion failed, use ASCII-safe short path
                 wchar_t short_path[MAX_PATH + 1] = {0};
                 GetShortPathNameW(module_path, short_path, MAX_PATH);
-                if (GetLastError() == ERROR_INSUFFICIENT_BUFFER ||
-                    WideCharToMultiByte(CP_ACP, 0, short_path, -1,
-                                        module_ansi, sizeof(module_ansi),
-                                        nullptr, nullptr) == 0)
-                {
-                    // Both primary and fallback failed; keep empty string,
-                    // wxEntry will use its own default behavior.
-                }
+                to_acp(short_path);
+                // If the fallback also fails, module_ansi stays empty;
+                // wxEntry will use its own default behavior.
             }
             int   safe_argc = 1;
-            char* safe_argv[] = { const_cast<char*>(module_ansi), nullptr };
+            char* safe_argv[] = { module_ansi, nullptr };
             return wxEntry(safe_argc, safe_argv);
         }
 #else

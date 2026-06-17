@@ -1350,7 +1350,8 @@ void GLCanvas3D::reset_volumes(ResetVolumesMode mode)
 
     _set_current();
 
-    m_selection.clear(mode == ResetVolumesMode::Normal);
+    if (mode == ResetVolumesMode::Normal)
+        m_selection.clear();
     m_volumes.clear();
     m_dirty = true;
 

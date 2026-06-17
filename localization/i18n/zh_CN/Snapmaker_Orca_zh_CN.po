@@ -15279,7 +15279,6 @@ msgstr "擦拭塔熨烫面积"
 
 msgid "Ironing area for prime tower interface layer (where different materials meet)."
 msgstr "擦拭塔的起始点熨烫面积"
-msgstr "擦拭塔的起始点熨烫面积"
 
 msgid "High and Low Temperature Material Mixing Risk"
 msgstr "高/低温材料混打风险"

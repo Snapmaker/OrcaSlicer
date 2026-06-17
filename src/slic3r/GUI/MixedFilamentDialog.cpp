@@ -2874,7 +2874,7 @@ void MixedFilamentDialog::build_swatch_grid()
         if (cand.n_rows == 2)
             min_w = std::min(100 - cand.b_pct, cand.b_pct);
         else if (cand.n_rows == 3)
-            min_w = (int)(std::min({cand.wx, cand.wy, cand.wz}) * 100.0 + 0.5);
+            min_w = static_cast<int>(std::min({cand.wx, cand.wy, cand.wz}) * 100.0 + 0.5);
         // n_rows == 1 or unknown: badge is always visible (sentinel 100).
         m_swatch_min_weights.push_back(min_w);
 

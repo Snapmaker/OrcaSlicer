@@ -4039,7 +4039,7 @@ int PartPlateList::select_plate(int index)
 		return -1;
 	}
 
-	const int old_plate_index = m_current_plate;
+        const int old_plate_index = m_current_plate;
 
 	// BBS: erase unnecessary snapshot
 	if (get_curr_plate_index() != index && m_intialized) {
@@ -4054,8 +4054,8 @@ int PartPlateList::select_plate(int index)
 
 	m_current_plate = index;
 	m_plate_list[m_current_plate]->set_selected();
-	if (old_plate_index != m_current_plate && wxGetApp().plater())
-		wxGetApp().plater()->notify_filament_usage_changed();
+        if (old_plate_index != m_current_plate && wxGetApp().plater())
+            wxGetApp().plater()->notify_filament_usage_changed();
 
 	//BBS
 	if(m_model)
@@ -4531,7 +4531,7 @@ int PartPlateList::add_to_plate(int obj_id, int instance_id, int plate_id)
 	}
 	ret = plate->add_instance(obj_id, instance_id, true);
 
-	wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().plater()->notify_filament_usage_changed();
 
 	return ret;
 }

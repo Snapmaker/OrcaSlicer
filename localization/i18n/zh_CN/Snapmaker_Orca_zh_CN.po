@@ -8373,7 +8373,7 @@ msgid "Update firmware"
 msgstr "更新固件"
 
 msgid "Beta version"
-msgstr "Beta版本"
+msgstr "Beta 版"
 
 msgid "Updating"
 msgstr "更新中"

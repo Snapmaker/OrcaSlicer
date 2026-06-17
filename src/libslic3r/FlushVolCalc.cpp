@@ -52,7 +52,7 @@ static float DeltaHS_BBS(float h1, float s1, float v1, float h2, float s2, float
     float dx = std::cos(h1_rad) * s1 * v1 - cos(h2_rad) * s2 * v2;
     float dy = std::sin(h1_rad) * s1 * v1 - sin(h2_rad) * s2 * v2;
     float dxy = std::sqrt(dx * dx + dy * dy);
-    return std::min(0.30f, dxy);
+    return std::min(0.54f, dxy);
 }
 
 FlushVolCalculator::FlushVolCalculator(int min, int max, float multiplier)
@@ -93,17 +93,17 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     float to_lumi = get_luminance(dst_r_f, dst_g_f, dst_b_f);
     float lumi_flush = 0.f;
     if (to_lumi >= from_lumi) {
-        lumi_flush = std::pow(to_lumi - from_lumi, 0.80f) * 120.f;
+        lumi_flush = std::pow(to_lumi - from_lumi, 0.77f) * 220.f;
     }
     else {
-        lumi_flush = (from_lumi - to_lumi) * 30.f;
+        lumi_flush = (from_lumi - to_lumi) * 124.f;
 
-        float inter_hsv_v = 0.20f * to_hsv_v + 0.80f * from_hsv_v;
+        float inter_hsv_v = 0.97f * to_hsv_v + 0.03f * from_hsv_v;
         hs_dist = std::min(inter_hsv_v, hs_dist);
     }
-    float hs_flush = 220.f * hs_dist;
+    float hs_flush = 360.f * hs_dist;
 
-    float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 125.f);
+    float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 134.f);
     //flush_volume = std::max(flush_volume, 32.f);
 
     //float flush_multiplier = std::atof(m_flush_multiplier_ebox->GetValue().c_str());

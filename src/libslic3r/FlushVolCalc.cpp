@@ -109,6 +109,8 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
 
     // Targeted residue compensation for measured high-risk transitions: saturated colors into light neutral targets and red into neutral midtones.
     const float src_chroma = from_hsv_s * from_hsv_v;
+    const float dst_chroma = to_hsv_s * to_hsv_v;
+    const float dst_rgb_spread = std::max(dst_r_f, std::max(dst_g_f, dst_b_f)) - std::min(dst_r_f, std::min(dst_g_f, dst_b_f));
     const float neutral_target = 1.f - (std::max(dst_r_f, std::max(dst_g_f, dst_b_f)) - std::min(dst_r_f, std::min(dst_g_f, dst_b_f)));
     const float cool_target = std::max(0.f, dst_b_f - dst_r_f);
     const float lumi_gap = to_lumi - from_lumi;
@@ -141,6 +143,20 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     flush_volume += 210.f * white_risk * std::pow(std::max(0.f, lumi_gap + 0.18f), 0.65f);
     flush_volume += 145.f * red_residue;
     flush_volume += 180.f * gray_residue;
+
+    // Generic HSV/RGB stain risk for high-chroma sources into bright neutral targets, damped once existing compensation is already high.
+    const float warm_or_pink_target = std::max(smoothstep(330.f, 360.f, to_hsv_h), smoothstep(0.f, 70.f, 70.f - to_hsv_h));
+    const float warm_pastel = smoothstep(0.70f, 0.92f, to_lumi) *
+                              smoothstep(0.08f, 0.20f, to_hsv_s) *
+                              warm_or_pink_target;
+    const float stain_risk = smoothstep(0.30f, 0.55f, src_chroma) *
+                             smoothstep(0.32f, 0.48f, src_chroma - dst_chroma) *
+                             smoothstep(0.74f, 0.88f, to_lumi) *
+                             (1.f - smoothstep(0.04f, 0.12f, dst_rgb_spread)) *
+                             std::max(0.f, 1.f - 0.45f * warm_pastel);
+    const float existing_flush_damp = 1.f - smoothstep(180.f, 260.f, flush_volume);
+    const float high_flush_activation = std::max(smoothstep(40.f, 125.f, flush_volume), 0.75f * stain_risk) * existing_flush_damp;
+    flush_volume *= 1.f + 0.70f * high_flush_activation * stain_risk;
     flush_volume = std::max(flush_volume, 32.f);
 
     //float flush_multiplier = std::atof(m_flush_multiplier_ebox->GetValue().c_str());

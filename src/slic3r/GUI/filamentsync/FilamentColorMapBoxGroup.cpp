@@ -25,8 +25,8 @@ constexpr int g_labelGap           = 20; // gap between labels and cards
 constexpr int g_cardGap            = 20; // gap between cards (Figma: gap-[20px])
 
 // Label vertical positioning: align with card top-bar text (y=7)
-constexpr int g_labelDesignTopMargin = 6;  // align "Design Filament" with top bar text
-constexpr int g_labelVerticalGap     = 24; // gap between "Design Filament" and "Machine Filament"
+constexpr int g_labelDesignTopMargin = 6;  // align "Source Filament" with top bar text
+constexpr int g_labelVerticalGap     = 24; // gap between "Source Filament" and "Printer Filament"
 
 // ============================================================
 // Colours
@@ -86,7 +86,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     // ---- Left label column ----
     auto* labelSizer = new wxBoxSizer(wxVERTICAL);
 
-    m_pLabelDesign = new Label(this, _L("Original Filament"));
+    m_pLabelDesign = new Label(this, _L("Source Filament"));
     m_pLabelDesign->SetFont(Label::Body_14);
     m_pLabelDesign->SetForegroundColour(g_labelTextColor);
     m_pLabelDesign->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);
@@ -95,7 +95,7 @@ FilamentColorMapBoxGroup::FilamentColorMapBoxGroup(wxWindow* parent,
     labelSizer->Add(m_pLabelDesign, 0, wxEXPAND);
     labelSizer->AddSpacer(FromDIP(g_labelVerticalGap));
 
-    m_pLabelMachine = new Label(this, _L("Machine Filament"));
+    m_pLabelMachine = new Label(this, _L("Printer Filament"));
     m_pLabelMachine->SetFont(Label::Body_14);
     m_pLabelMachine->SetForegroundColour(g_labelTextColor);
     m_pLabelMachine->SetBackgroundStyle(wxBG_STYLE_TRANSPARENT);

@@ -1,6 +1,11 @@
 {
   "dialog": {
     "http": {
+      "network_unavailable": "网络连接失败，请检查网络连接",
+      "network_lost": "网络连接丢失，请检查网络连接",
+      "network_timeout": "网络连接超时，请检查网络连接",
+      "server_error": "服务器错误，请稍后重试",
+      "client_error": "客户端错误，请稍后重试",
       "success": "请求成功",
       "bad_request": "请求参数错误，请检查输入",
       "unauthorized": "未授权或登录已过期，请重新登录",
@@ -651,6 +656,18 @@
   "nozzle_mismatch_tip": "喷嘴直径与预设均不一致，请确认匹配后再发起打印。",
   "Next": "下一步",
   "File stream error. Please resend.": "文件流错误，请重新发送。",
+  "purifier_fan_outer_desc": "外排风扇风速",
+  "purifier_fan_inner_desc": "内循环风扇风速",
+  "purifier_current_mode": "当前模式",
+  "purifier_inner_mode_desc": "内循环模式",
+  "purifier_outer_mode_desc": "外循环模式",
+  "purifier_idle_mode_desc": "空闲",
+  "purifier": "顶盖",
+  "fan_speed_reduce_warning_inner": "降低内循环风扇转速可能导致净化效果变差，是否继续？",
+  "fan_speed_reduce_warning_exhaust": "降低风扇转速可能影响打印质量，是否继续？",
+  "exhaust_fan_forbidden_tip": "当前处于内循环保温模式，禁止开启外排风扇",
+  "top_cover_disconnected_tip": "检测到顶盖连接已断开。为确保打印质量，请检查顶盖连接后再继续使用。",
+
 
   "Error Code": "错误码",
   "default_exception_title": "异常",

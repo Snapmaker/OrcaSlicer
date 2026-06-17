@@ -2314,7 +2314,7 @@ Sidebar::Sidebar(Plater *parent)
 
     // Sync filament button
     ScalableButton* sync_filament_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "sync_filament");
-    sync_filament_btn->SetToolTip(_L("Synchronize filament information"));
+    sync_filament_btn->SetToolTip(_L("Sync Filament Information"));
     sync_filament_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
         show_sync_filament_dialog();
     });
@@ -8002,7 +8002,7 @@ void Sidebar::show_sync_filament_dialog()
 
     if (!host && !device_machine) {
         SyncRichConfirmDialog dlg(this,
-            _L("The printer is not connected. Before synchronizing, please go to the device page to connect."),
+            _L("No printer is connected. Please connect your U1 from the Device page before syncing."),
             wxYES_NO);
         dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
         dlg.CentreOnScreen();
@@ -8036,7 +8036,7 @@ void Sidebar::show_sync_filament_dialog()
 
         if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {
             SyncRichConfirmDialog dlg(this,
-                _L("The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."),
+                _L("The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."),
                 wxYES_NO);
             dlg.SetYesNoLabels(_L("Connect Now"), _L("Later"));
             dlg.CentreOnScreen();
@@ -8061,9 +8061,10 @@ void Sidebar::show_sync_filament_dialog()
         return false;
     };
     if (machineFilamentList.empty() || !nonEmptyFilaments(machineFilamentList)) {
-        SyncConfirmDialog dlg(this,
-            _L("There are no filament on the printer. Please place the filaments on the machine first."),
+        SyncRichConfirmDialog dlg(this,
+            _L("No filaments detected on the printer. Please preload the filaments before syncing."),
             wxOK);
+        dlg.SetOKLabel(_L("Got it"));
         dlg.CentreOnScreen();
         dlg.ShowModal();
         return;
@@ -8163,7 +8164,7 @@ void Sidebar::show_sync_filament_dialog()
         wxGetApp().plater()->get_notification_manager()->push_notification(
             NotificationType::CustomNotification,
             NotificationManager::NotificationLevel::RegularNotificationLevel,
-            _u8L("Successfully synchronize the color and type of filaments with the printer."));
+            _u8L("Filament types and colors have been successfully synced from the printer."));
     }
 }
 

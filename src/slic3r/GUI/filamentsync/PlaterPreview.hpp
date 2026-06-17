@@ -4,6 +4,7 @@
 
 #include <wx/panel.h>
 #include <wx/bitmap.h>
+#include <wx/string.h>
 
 class ComboBox;
 class Label;
@@ -21,6 +22,7 @@ public:
     void setOriginalPreview(const wxBitmap& thumbnail);
     void setCoverPreview(const wxBitmap& thumbnail);
     void updateCoverPreview(const wxBitmap& thumbnail);
+    void setCoverLabel(const wxString& label);
 
     void setCurrentPlate(unsigned int plateIndex);
     unsigned int getCurrentPlate() const;

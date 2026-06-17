@@ -178,7 +178,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     {
         auto* middleGroup = new wxBoxSizer(wxHORIZONTAL);
 
-        m_pDiskLabel = new Label(this, _L("Plate number"));
+        m_pDiskLabel = new Label(this, _CTX(L_CONTEXT("Plate", "FilamentSync"), "FilamentSync"));
         m_pDiskLabel->SetFont(Label::Body_12);
         m_pDiskLabel->SetForegroundColour(g_diskLabelColor);
         middleGroup->Add(m_pDiskLabel, 0, wxALIGN_CENTER_VERTICAL);
@@ -224,7 +224,7 @@ PlaterPreview::PlaterPreview(wxWindow* parent, unsigned int totalPlateCount)
     // Right preview column
     auto* rightCol = new wxBoxSizer(wxVERTICAL);
 
-    m_pLabelRight = new Label(this, _L("Matched Model"));
+    m_pLabelRight = new Label(this, _L("Mapped Model"));
     m_pLabelRight->SetFont(getMediumFont());
     m_pLabelRight->SetForegroundColour(g_labelTextColor);
     rightCol->Add(m_pLabelRight, 0, wxEXPAND);
@@ -268,6 +268,15 @@ void PlaterPreview::setCoverPreview(const wxBitmap& thumbnail)
 void PlaterPreview::updateCoverPreview(const wxBitmap& thumbnail)
 {
     setCoverPreview(thumbnail);
+}
+
+void PlaterPreview::setCoverLabel(const wxString& label)
+{
+    if (!m_pLabelRight)
+        return;
+
+    m_pLabelRight->SetLabel(label);
+    Layout();
 }
 
 void PlaterPreview::setCurrentPlate(unsigned int plateIndex)

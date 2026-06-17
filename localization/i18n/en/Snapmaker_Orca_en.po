@@ -5875,52 +5875,53 @@ msgid ""
 "presets."
 msgstr ""
 
-msgid "Original Filament"
+msgid "Source Filament"
 msgstr ""
 
-msgid "Machine Filament"
+msgid "Printer Filament"
 msgstr ""
 
-msgid "Device Filament Sync"
+msgid "Sync Filament Information"
 msgstr ""
 
 msgid "Match Mapping"
 msgstr ""
 
-msgid "Direct Overwrite"
+msgid "Direct Override"
 msgstr ""
 
 msgid "Original Model"
 msgstr ""
 
-msgid "Matched Model"
+msgid "Mapped Model"
 msgstr ""
 
-msgid "Plate number"
+msgid "Overridden Model"
+msgstr ""
+
+msgctxt "FilamentSync"
+msgid "Plate"
 msgstr ""
 
 msgid "Sync Now"
 msgstr ""
 
-msgid "Note: Only filament type and color information are synchronized, nozzle order is not included."
+msgid "Note: Only filament types and colors are synchronized. Nozzle assignments are not included."
 msgstr ""
 
-msgid "Add remaining printhead filaments to the software filament list"
+msgid "Add filaments from the remaining toolheads to the software filament list"
 msgstr ""
 
-msgid "Synchronize filament information"
+msgid "No printer is connected. Please connect your U1 from the Device page before syncing."
 msgstr ""
 
-msgid "Synchronize printer information"
+msgid "The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."
 msgstr ""
 
-msgid "The printer is not connected. Before synchronizing, please go to the device page to connect."
+msgid "No filaments detected on the printer. Please preload the filaments before syncing."
 msgstr ""
 
-msgid "The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."
-msgstr ""
-
-msgid "There are no filament on the printer. Please place the filaments on the machine first."
+msgid "Got it"
 msgstr ""
 
 msgid "Connect Now"
@@ -5929,13 +5930,10 @@ msgstr ""
 msgid "Later"
 msgstr ""
 
-msgid "Successfully synchronize the color and type of filaments with the printer."
+msgid "Filament types and colors have been successfully synced from the printer."
 msgstr ""
 
-msgid "Detected that filament with color-mixing dependency will be replaced. Performing this operation will update the color-mixing results. Proceed?"
-msgstr ""
-
-msgid "Detected that filament with color-mixing dependency will be removed. Performing this operation will remove the color-mixing results. Proceed?"
+msgid "Some filaments used in color mixing will be replaced or removed. This will update the color mixing results. Continue?"
 msgstr ""
 
 #, boost-format

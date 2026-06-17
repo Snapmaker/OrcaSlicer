@@ -120,7 +120,7 @@ namespace GUI
 SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
                                                  const std::vector<FilamentData>& designDataList,
                                                  const std::vector<FilamentData>& machineDataList)
-    : wxDialog(parent, wxID_ANY, _L("Device Filament Sync"), wxDefaultPosition, wxDefaultSize,
+    : wxDialog(parent, wxID_ANY, _L("Sync Filament Information"), wxDefaultPosition, wxDefaultSize,
                wxDEFAULT_DIALOG_STYLE)
     , m_designDataList(designDataList)
     , m_machineDataList(machineDataList)
@@ -139,7 +139,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
         auto* blockSizer = new wxBoxSizer(wxVERTICAL);
 
-        std::vector<wxString> modeOptions = { _L("Match Mapping"), _L("Direct Overwrite") };
+        std::vector<wxString> modeOptions = { _L("Match Mapping"), _L("Direct Override") };
         m_pModeToggle = new SegmentedToggle(block, modeOptions, g_modeMapping);
         m_pModeToggle->bindSelectionCallback([this](int index) {
             onModeChanged(index);
@@ -197,7 +197,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         auto* hintSizer = new wxBoxSizer(wxVERTICAL);
 
         m_pHintLabel = new wxStaticText(m_pHintCheckBoxPanel, wxID_ANY,
-            _L("Note: Only filament type and color information are synchronized, nozzle order is not included."));
+            _L("Note: Only filament types and colors are synchronized. Nozzle assignments are not included."));
         m_pHintLabel->SetFont(Label::Body_12);
         m_pHintLabel->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#8F8F8F")));
         m_pHintLabel->Wrap(FromDIP(460));
@@ -213,7 +213,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         hintSizer->AddSpacer(FromDIP(g_block3HintGap));
 
         m_pAddUnUsedMachineFilaments = new wxCheckBox(m_pHintCheckBoxPanel, wxID_ANY,
-            _L("Add remaining printhead filaments to the software filament list"));
+            _L("Add filaments from the remaining toolheads to the software filament list"));
         m_pAddUnUsedMachineFilaments->SetFont(Label::Body_14);
         m_pAddUnUsedMachineFilaments->SetForegroundColour(StateColor::darkModeColorFor(wxColour(g_labelColor)));
         hintSizer->Add(m_pAddUnUsedMachineFilaments, 0, wxEXPAND | wxBOTTOM, FromDIP(g_block3HintGap));
@@ -443,11 +443,8 @@ void SyncFilamentColorDialog::onReset()
 void SyncFilamentColorDialog::onSync()
 {
     if (m_hasMixedFilaments) {
-        wxString msg = m_shouldDeleteMixedFilaments ? 
-            _L("Detected that filament with color-mixing dependency will be removed. "
-                "Performing this operation will remove the color-mixing results. Proceed?") :
-            _L("Detected that filament with color-mixing dependency will be replaced. "
-                "Performing this operation will update the color-mixing results. Proceed?");
+        wxString msg = _L("Some filaments used in color mixing will be replaced or removed. "
+                          "This will update the color mixing results. Continue?");
         SyncConfirmDialog dlg(this, msg, wxYES_NO | wxICON_WARNING);
         dlg.CentreOnScreen();
         if (dlg.ShowModal() != wxID_YES)
@@ -492,6 +489,8 @@ void SyncFilamentColorDialog::onAutoMatch()
     // Mapping mode keeps filament count unchanged — no remap needed
     m_filamentIdRemap.clear();
     m_shouldDeleteMixedFilaments = false;
+    if (m_pPlaterPreview)
+        m_pPlaterPreview->setCoverLabel(_L("Mapped Model"));
 
     std::vector<int> mapping = compute_color_match(m_designDataList, m_machineDataList);
 
@@ -563,6 +562,8 @@ void SyncFilamentColorDialog::onCoverMatch()
 
     // Overwrite mode: mark mixed filaments for deletion
     m_shouldDeleteMixedFilaments = true;
+    if (m_pPlaterPreview)
+        m_pPlaterPreview->setCoverLabel(_L("Overridden Model"));
 
     loadCoverPreview();
 }

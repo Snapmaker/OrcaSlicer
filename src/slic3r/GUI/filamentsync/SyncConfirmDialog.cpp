@@ -9,12 +9,12 @@ namespace GUI
 {
 
 SyncConfirmDialog::SyncConfirmDialog(wxWindow* parent, const wxString& message, long style)
-    : MessageDialog(parent, message, _L("Synchronize printer information"), style)
+    : MessageDialog(parent, message, _L("Sync Filament Information"), style)
 {
 }
 
 SyncRichConfirmDialog::SyncRichConfirmDialog(wxWindow* parent, const wxString& message, long style)
-    : RichMessageDialog(parent, message, _L("Synchronize printer information"), style)
+    : RichMessageDialog(parent, message, _L("Sync Filament Information"), style)
 {
 }
 

@@ -4,6 +4,7 @@
 #include "Layer.hpp"
 #include "ClipperUtils.hpp"
 #include "ParameterUtils.hpp"
+#include <boost/multiprecision/cpp_int.hpp>
 
 // #define SLIC3R_DEBUG
 
@@ -1126,14 +1127,15 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
             wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->prime_volume));
     }
 
+    using uint128_t = boost::multiprecision::uint128_t;
     auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,
-                                    std::optional<unsigned int>      initial_extruder_id) -> uint32_t {
-        uint32_t hash_key = 0;
-        // high 16 bit define initial extruder ,low 16 bit define extruder set
+                                    std::optional<unsigned int> initial_extruder_id) -> uint128_t {
+        uint128_t hash_key = 0;
+        // high 16 bit define initial extruder ,others define extruder set
         if (initial_extruder_id)
-            hash_key |= (1 << (16 + *initial_extruder_id));
+            hash_key |= (uint128_t(1) << (16 + *initial_extruder_id));
         for (auto item : extruders)
-            hash_key |= (1 << item);
+            hash_key |= (uint128_t(1) << item);
         return hash_key;
     };
 
@@ -1158,6 +1160,7 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         return false;
     };
 
+    std::unordered_map<uint128_t, std::vector<unsigned int>> caches;
     std::optional<unsigned int> current_extruder_id;
     for (int i = 0; i < m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
@@ -1187,21 +1190,13 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         // The algorithm complexity is O(n2*2^n)
         if (i != 0) {
             auto hash_key = extruders_to_hash_key(lt.extruders, current_extruder_id);
-            auto iter = m_tool_order_cache.find(hash_key);
-            if (iter == m_tool_order_cache.end()) {
+            auto iter = caches.find(hash_key);
+            if (iter == caches.end()) {
                 lt.extruders = get_extruders_order(wipe_volumes, lt.extruders, current_extruder_id);
-                std::vector<uint8_t> hash_val;
-                hash_val.reserve(lt.extruders.size());
-                for (auto item : lt.extruders)
-                    hash_val.emplace_back(static_cast<uint8_t>(item));
-                m_tool_order_cache[hash_key] = hash_val;
+                caches[hash_key] = lt.extruders;
             }
             else {
-                std::vector<unsigned int>extruder_order;
-                extruder_order.reserve(iter->second.size());
-                for (auto item : iter->second)
-                    extruder_order.emplace_back(static_cast<unsigned int>(item));
-                lt.extruders = std::move(extruder_order);
+                lt.extruders = iter->second;
             }
         }
         current_extruder_id = lt.extruders.back();

@@ -175,8 +175,8 @@ public:
     // (print->config().print_sequence == PrintSequence::ByObject is false).
     ToolOrdering(const Print& print, unsigned int first_extruder, bool prime_multi_material = false);
 
-    void 				clear() {
-        m_layer_tools.clear(); m_tool_order_cache.clear(); 
+    void clear() {
+        m_layer_tools.clear();
     }
 
     // Only valid for non-sequential print:
@@ -239,7 +239,6 @@ private:
     unsigned int               m_last_printing_extruder  = (unsigned int)-1;
     // All extruders, which extrude some material over m_layer_tools.
     std::vector<unsigned int>  m_all_printing_extruders;
-    std::unordered_map<uint32_t, std::vector<uint8_t>> m_tool_order_cache;
     const DynamicPrintConfig*  m_print_full_config = nullptr;
     const PrintConfig*         m_print_config_ptr = nullptr;
     const PrintObject*         m_print_object_ptr = nullptr;

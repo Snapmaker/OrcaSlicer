@@ -1559,6 +1559,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             set_project_bool("dithering_local_z_whole_objects", new_conf.opt_bool("dithering_local_z_whole_objects"));
         if (new_conf.has("dithering_local_z_infill"))
             set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
+
+        if (auto* plater = wxGetApp().plater())
+            plater->notify_vhl_dithering_conflict(local_z_enabled);
     }
 
     if (opt_key == "enable_prime_tower") {
@@ -3110,6 +3113,8 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
         notify_changed(config.first);
     }
     wxGetApp().params_panel()->notify_object_config_changed();
+
+    wxGetApp().plater()->notify_filament_usage_changed();
 }
 
 void TabPrintModel::reload_config()
@@ -3690,6 +3695,7 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_cost");
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
+        optgroup->append_single_option_line("filament_is_high_temperature");
         optgroup->append_single_option_line("idle_temperature");
         optgroup->append_single_option_line("filament_tower_ironing_area");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };

@@ -780,11 +780,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             gcodegen.m_wipe.reset_path();                                           // We don't want wiping on the ramming lines.
         toolchange_gcode_str = gcodegen.set_extruder(new_extruder_id, tcr.print_z); // TODO: toolchange_z vs print_z
         if (gcodegen.config().enable_prime_tower) {
-            deretraction_str += gcodegen.unretract();
             deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
             Vec3d position{gcodegen.writer().get_position()};
             position.z() = z;
             gcodegen.writer().set_position(position);
+            deretraction_str += gcodegen.unretract();
         }
     }
 
@@ -2698,6 +2698,29 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             this->placeholder_parser().set("scan_first_layer", new ConfigOptionBool(false));
         }
     }
+
+    // Compute chamber cooling mode based on all filaments used on this plate.
+    constexpr int kChamberCoolingKeepWarm  = 0;
+    constexpr int kChamberCoolingWeak      = 1;
+    constexpr int kChamberCoolingStrong    = 2;
+    constexpr int kVitrificationStrongCool = 50;  // <= 50: trigger strong cooling
+    constexpr int kVitrificationWeakCool   = 70;  // <= 70: trigger weak cooling (and > 50)
+    {
+        int chamber_cooling_mode = kChamberCoolingKeepWarm;
+        for (unsigned int extruder : tool_ordering.all_extruders()) {
+            if (!m_config.filament_is_high_temperature.get_at(extruder)) {
+                int vitrification = m_config.temperature_vitrification.get_at(extruder);
+                if (vitrification <= kVitrificationStrongCool) {
+                    chamber_cooling_mode = kChamberCoolingStrong;
+                    break;
+                } else if (vitrification <= kVitrificationWeakCool) {
+                    chamber_cooling_mode = kChamberCoolingWeak;
+                }
+            }
+        }
+        this->placeholder_parser().set("chamber_cooling_mode", new ConfigOptionInt(chamber_cooling_mode));
+    }
+
     std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value,
                                                                        initial_extruder_id);
     if (print.config().gcode_flavor != gcfKlipper) {

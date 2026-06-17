@@ -1350,7 +1350,8 @@ void GLCanvas3D::reset_volumes(ResetVolumesMode mode)
 
     _set_current();
 
-    m_selection.clear(mode == ResetVolumesMode::Normal);
+    if (mode == ResetVolumesMode::Normal)
+        m_selection.clear();
     m_volumes.clear();
     m_dirty = true;
 
@@ -4826,6 +4827,8 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
 
     reset_sequential_print_clearance();
 
+    wxGetApp().plater()->notify_filament_usage_changed();
+
     m_dirty = true;
 }
 
@@ -7932,16 +7935,19 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     }
     if (m_sel_plate_toolbar.show_stats_item) {
         all_plates_stats_item->percent = 0.0f;
+        const std::vector<PartPlate*> nonempty_plate_list = plate_list.get_nonempty_plate_list();
+        const std::vector<const GCodeProcessorResult*> nonempty_plate_results = plate_list.get_nonempty_plates_slice_results();
 
-        for (auto plate : plate_list.get_nonempty_plate_list()) {
+        for (PartPlate* plate : nonempty_plate_list) {
             if (plate->is_slice_result_valid() && plate->is_slice_result_ready_for_print())
                 sliced_plates_cnt++;
         }
-        all_plates_stats_item->percent = (float)(sliced_plates_cnt) / (float)(plate_list.get_nonempty_plate_list().size()) * 100.0f;
+        if (!nonempty_plate_list.empty())
+            all_plates_stats_item->percent = static_cast<float>(sliced_plates_cnt) / static_cast<float>(nonempty_plate_list.size()) * 100.0f;
 
         if (all_plates_stats_item->percent == 0.0f)
             all_plates_stats_item->slice_state = IMToolbarItem::SliceState::UNSLICED;
-        else if (sliced_plates_cnt == plate_list.get_nonempty_plate_list().size())
+        else if (sliced_plates_cnt == nonempty_plate_list.size())
             all_plates_stats_item->slice_state = IMToolbarItem::SliceState::SLICED;
         else if (all_plates_stats_item->percent < 100.0f)
             all_plates_stats_item->slice_state = IMToolbarItem::SliceState::SLICING;
@@ -7956,17 +7962,18 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
 
         // Changing parameters does not invalid all plates, need extra logic to validate
         bool gcode_result_valid = true;
-        for (auto gcode_result : plate_list.get_nonempty_plates_slice_results()) {
-            if (gcode_result->moves.size() == 0) {
+        for (const GCodeProcessorResult* gcode_result : nonempty_plate_results) {
+            if (gcode_result == nullptr || gcode_result->moves.empty()) {
                 gcode_result_valid = false;
+                break;
             }
         }
         if (all_plates_stats_item->selected && all_plates_stats_item->slice_state == IMToolbarItem::SliceState::SLICED && gcode_result_valid) {
-            m_gcode_viewer.render_all_plates_stats(plate_list.get_nonempty_plates_slice_results());
+            m_gcode_viewer.render_all_plates_stats(nonempty_plate_results);
             m_render_preview = false;
         }
         else{
-            m_gcode_viewer.render_all_plates_stats(plate_list.get_nonempty_plates_slice_results(), false);
+            m_gcode_viewer.render_all_plates_stats(nonempty_plate_results, false);
             m_render_preview = true;
         }
     }else

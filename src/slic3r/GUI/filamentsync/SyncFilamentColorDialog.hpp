@@ -2,7 +2,9 @@
 
 #include <functional>
 #include <list>
+#include <vector>
 
+#include <wx/bitmap.h>
 #include <wx/dialog.h>
 #include <wx/panel.h>
 

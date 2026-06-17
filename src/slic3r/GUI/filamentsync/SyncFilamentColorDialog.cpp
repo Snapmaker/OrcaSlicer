@@ -92,6 +92,20 @@ constexpr const char* g_block3BorderColor = "#F0F0F0";
 constexpr const char* g_block3SeparatorColor = "#F3F4F6";
 constexpr const char* g_secondaryHoverBg = "#F3F4F6";
 
+std::vector<Slic3r::GUI::FilamentData> collectVisibleOverwriteMachineFilaments(
+    const std::vector<Slic3r::GUI::FilamentData>& machineDataList,
+    size_t designCount)
+{
+    std::vector<Slic3r::GUI::FilamentData> visibleMachine;
+    size_t visibleCount = std::min(designCount, machineDataList.size());
+    visibleMachine.reserve(visibleCount);
+    for (size_t i = 0; i < visibleCount; ++i) {
+        if (!Slic3r::GUI::is_none_filament(machineDataList[i]))
+            visibleMachine.push_back(machineDataList[i]);
+    }
+    return visibleMachine;
+}
+
 } // namespace
 
 namespace Slic3r
@@ -377,17 +391,11 @@ std::vector<FilamentData> SyncFilamentColorDialog::getSyncDataList() const
     if (!m_pFilamentColorMapBoxGroup)
         return dataList;
 
-    dataList = m_pFilamentColorMapBoxGroup->getCurFilamentList();
-
-    // In overwrite mode, first trim to machine filament count,
-    // then remove NONE (empty) entries from the result.
     if (!m_bMappingMode) {
-        if (dataList.size() > m_machineDataList.size())
-            dataList.resize(m_machineDataList.size());
-        dataList.erase(std::remove_if(dataList.begin(), dataList.end(),
-            [](const FilamentData& d) { return is_none_filament(d); }),
-            dataList.end());
+        return collectVisibleOverwriteMachineFilaments(m_machineDataList, m_designDataList.size());
     }
+
+    dataList = m_pFilamentColorMapBoxGroup->getCurFilamentList();
 
     if (isAddUnUsedMachineFilaments()) {
         std::set<unsigned int> usedMachineIndices;
@@ -508,6 +516,11 @@ void SyncFilamentColorDialog::onCoverMatch()
 
     size_t designCount  = m_designDataList.size();
     size_t machineCount = m_machineDataList.size();
+    size_t visibleCount = std::min(designCount, machineCount);
+    if (machineCount == 0) {
+        m_filamentIdRemap.clear();
+        return;
+    }
 
     // 1:1 positional mapping for UI display (includes NONE slots)
     for (size_t i = 0; i < designCount; ++i) {
@@ -522,15 +535,19 @@ void SyncFilamentColorDialog::onCoverMatch()
     // Cycle through non-NONE machine filaments only.
     {
         std::vector<size_t> validPos;
-        for (size_t j = 0; j < machineCount; ++j) {
+        for (size_t j = 0; j < visibleCount; ++j) {
             if (!is_none_filament(m_machineDataList[j]))
                 validPos.push_back(j);
         }
         size_t validCount = validPos.size();
+        if (validCount == 0) {
+            m_filamentIdRemap.clear();
+            return;
+        }
 
         std::vector<unsigned int> machinePosToNewId(machineCount, 0);
         unsigned int runningId = 0;
-        for (size_t j = 0; j < machineCount; ++j) {
+        for (size_t j = 0; j < visibleCount; ++j) {
             if (!is_none_filament(m_machineDataList[j])) {
                 ++runningId;
                 machinePosToNewId[j] = runningId;
@@ -601,28 +618,10 @@ void SyncFilamentColorDialog::loadCoverPreview()
         return;
 
     std::vector<FilamentData> filamentMapping;
-    if (m_pFilamentColorMapBoxGroup)
+    if (!m_bMappingMode) {
+        filamentMapping = collectVisibleOverwriteMachineFilaments(m_machineDataList, m_designDataList.size());
+    } else if (m_pFilamentColorMapBoxGroup) {
         filamentMapping = m_pFilamentColorMapBoxGroup->getCurFilamentList();
-
-    // In overwrite mode, replace NONE colors with valid machine filament colors
-    // so the preview doesn't show grey for empty machine slots.
-    if (!m_bMappingMode && !filamentMapping.empty()) {
-        std::vector<const FilamentData*> validMachine;
-        for (const auto& d : m_machineDataList) {
-            if (!is_none_filament(d))
-                validMachine.push_back(&d);
-        }
-        if (!validMachine.empty()) {
-            for (size_t i = 0; i < filamentMapping.size(); ++i) {
-                FilamentData& fd = filamentMapping[i];
-                if (is_none_filament(fd)) {
-                    const FilamentData& vm = *validMachine[i % validMachine.size()];
-                    fd.m_color_r = vm.m_color_r;
-                    fd.m_color_g = vm.m_color_g;
-                    fd.m_color_b = vm.m_color_b;
-                }
-            }
-        }
     }
 
     if (plate->no_light_thumbnail_data.is_valid() && !filamentMapping.empty()) {

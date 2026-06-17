@@ -34,7 +34,7 @@ std::string TrimCopy(const std::string& value)
 
 bool EndsWithCaseInsensitive(const std::string& value, const std::string& suffix)
 {
-    if (value.size() < suffix.size())
+    if (value.empty() || suffix.empty() || value.size() < suffix.size())
         return false;
 
     const size_t offset = value.size() - suffix.size();

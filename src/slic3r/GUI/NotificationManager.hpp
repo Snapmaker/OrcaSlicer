@@ -150,6 +150,7 @@ enum class NotificationType
 	BBLPreviewOnlyMode,
     BBLPrinterConfigUpdateAvailable,
 	BBLUserPresetExceedLimit,
+	FilamentIncompatibleMixed,
 };
 
 class NotificationManager

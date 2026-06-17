@@ -1559,6 +1559,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             set_project_bool("dithering_local_z_whole_objects", new_conf.opt_bool("dithering_local_z_whole_objects"));
         if (new_conf.has("dithering_local_z_infill"))
             set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
+
+        if (auto* plater = wxGetApp().plater())
+            plater->notify_vhl_dithering_conflict(local_z_enabled);
     }
 
     if (opt_key == "enable_prime_tower") {

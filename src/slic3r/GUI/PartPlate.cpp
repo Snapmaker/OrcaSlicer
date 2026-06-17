@@ -2019,7 +2019,7 @@ bool PartPlate::is_valid_gcode_file()
 	return true;
 }
 
-ModelObjectPtrs PartPlate::get_objects_on_this_plate() {
+ModelObjectPtrs PartPlate::get_objects_on_this_plate() const {
     ModelObjectPtrs objects_ptr;
     int obj_id;
     for (auto it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); it++) {

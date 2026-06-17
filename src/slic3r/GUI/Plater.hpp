@@ -572,6 +572,8 @@ public:
     wxString get_export_gcode_filename(const wxString& extension = wxEmptyString, bool only_filename = false, bool export_all = false) const;
     void set_project_filename(const wxString& filename);
     void update_print_error_info(int code, std::string msg, std::string extra);
+    void notify_vhl_dithering_conflict(bool local_z_enabled);
+    bool has_incompatible_mixed_filament_in_use() const;
 
     bool is_export_gcode_scheduled() const;
 

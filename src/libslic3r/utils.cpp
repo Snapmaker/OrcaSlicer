@@ -1608,11 +1608,10 @@ bool atomic_replace_directory(
         return false;
     }
 
-    const bool had_target = fs::exists(target);
-    if (had_target) {
+    {
         boost::system::error_code ec;
         fs::rename(target, backup, ec);
-        if (ec) {
+        if (ec && ec != boost::system::errc::no_such_file_or_directory) {
             BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to backup %1%: %2%", target, ec.message());
             remove_path(staging);
             return false;
@@ -1624,7 +1623,7 @@ bool atomic_replace_directory(
         fs::rename(staging, target, ec);
         if (ec) {
             BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to activate %1%: %2%", target, ec.message());
-            if (had_target) {
+            if (fs::exists(backup)) {
                 boost::system::error_code ec2;
                 fs::rename(backup, target, ec2);
                 if (ec2)

@@ -40,7 +40,7 @@ private:
     FilamentData m_aboveFilament;
     FilamentData m_belowFilament;
 
-    bool m_bAboveEnabled = true;
+    bool m_bAboveEnabled = false;
     bool m_bBelowEnabled = true;
 
     // Hover tracking: -1=none, 0=above, 1=below

@@ -172,7 +172,6 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
                               m_belowFilament.m_color_g,
                               m_belowFilament.m_color_b);
 
-    const wxColour aboveBg = m_bAboveEnabled ? aboveColor : g_disabledBodyBg;
     const int      borderW = FromDIP(g_bodyBorderWidth);
 
     // Hover border: use hover color when mouse is over an enabled zone
@@ -189,7 +188,7 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
     {
         wxDCClipper clip(gdc, wxRect(0, 0, w, splitY));
         gdc.SetPen(wxPen(borderColour, borderW));
-        gdc.SetBrush(wxBrush(aboveBg));
+        gdc.SetBrush(wxBrush(aboveColor));
         gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
     }
 

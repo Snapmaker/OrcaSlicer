@@ -611,7 +611,6 @@ void GuideFrame::OnError(wxWebViewEvent& event)
     }
 
     BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(":GuideFrame error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
-    flush_logs();
 }
 
 void GuideFrame::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))

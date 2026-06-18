@@ -461,7 +461,6 @@ void UpdateVersionDialog::OnError(wxWebViewEvent& event)
     case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
     BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(":UpdateVersionDialog error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e %event.GetString();
-    flush_logs();
     event.Skip();
 }
 

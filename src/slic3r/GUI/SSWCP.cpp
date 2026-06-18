@@ -933,12 +933,16 @@ void SSWCP_Instance::sw_GetFileStream() {
 void SSWCP_Instance::handle_general_fail(int code, const wxString& msg)
 {
     try {
-        m_status = code;
-        m_msg    = msg.ToUTF8();
+        {
+            std::lock_guard<std::mutex> lock(m_data_mtx);
+            m_status = code;
+            m_msg    = msg.ToUTF8();
+        }
         send_to_js();
+        m_job_finished.store(true);
         finish_job();
     } catch (std::exception& e) {}
-    
+
 }
 
 // Mark instance as invalid
@@ -976,11 +980,14 @@ void SSWCP_Instance::send_to_js()
         }
 
         json response, payload;
-        response["header"] = m_header;
-
-        payload["code"] = m_status;
-        payload["message"]  = m_msg;
-        payload["data"] = m_res_data;
+        {
+            // Snapshot shared fields under lock for consistent read
+            std::lock_guard<std::mutex> lock(m_data_mtx);
+            response["header"] = m_header;
+            payload["code"]    = m_status;
+            payload["message"] = m_msg;
+            payload["data"]    = m_res_data;
+        }
 
         response["payload"] = payload;
 
@@ -1005,7 +1012,7 @@ void SSWCP_Instance::send_to_js()
 
 // Clean up instance
 void SSWCP_Instance::finish_job() {
-    SSWCP::delete_target(this);
+    SSWCP::delete_target(shared_from_this());
 }
 
 // Asynchronous test implementation
@@ -1225,42 +1232,60 @@ void SSWCP_Instance::on_mqtt_status_msg_arrived(std::shared_ptr<SSWCP_Instance> 
     if (!obj) {
         return;
     }
-    if (response.is_null()) {
-        obj->m_status = -1;
-        obj->m_msg    = "failure";
-        obj->send_to_js();
-    } else if (response.count("error")) {
-        if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
-            obj->on_timeout();
+    bool is_timeout = false;
+    {
+        std::lock_guard<std::mutex> lock(obj->m_data_mtx);
+        // Check inside lock: atomic with on_mqtt_msg_arrived's write+store, closes TOCTOU window
+        if (obj->m_job_finished.load()) {
+            return;
+        }
+        if (response.is_null()) {
+            obj->m_status = -1;
+            obj->m_msg    = "failure";
+        } else if (response.count("error")) {
+            if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
+                is_timeout = true;
+            } else {
+                obj->m_res_data = response;
+            }
         } else {
             obj->m_res_data = response;
-            obj->send_to_js();
         }
-    } else {
-        obj->m_res_data = response;
-        obj->send_to_js();
     }
+    if (is_timeout) {
+        obj->on_timeout();  // called outside lock, avoids recursive locking
+        return;
+    }
+    obj->send_to_js();
 }
 
 void SSWCP_Instance::on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response) {
     if (!obj) {
         return;
     }
-    if (response.is_null()) {
-        obj->m_status = -1;
-        obj->m_msg    = "failure";
-        obj->send_to_js();
-    } else if (response.count("error")) {
-        if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
-            obj->on_timeout();
+    // CAS gate: only one terminal writer (on_mqtt_msg_arrived or on_timeout) proceeds
+    bool expected = false;
+    if (!obj->m_response_sent.compare_exchange_strong(expected, true)) {
+        return;  // winner is responsible for cleanup
+    }
+    {
+        std::lock_guard<std::mutex> lock(obj->m_data_mtx);
+        if (response.is_null()) {
+            obj->m_status = -1;
+            obj->m_msg    = "failure";
+        } else if (response.count("error")) {
+            if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
+                obj->m_status = -2;
+                obj->m_msg    = "time out";
+            } else {
+                obj->m_res_data = response;
+            }
         } else {
             obj->m_res_data = response;
-            obj->send_to_js();
         }
-    } else {
-        obj->m_res_data = response;
-        obj->send_to_js();
     }
+    obj->send_to_js();
+    obj->m_job_finished.store(true);
     obj->finish_job();
 }
 
@@ -1530,8 +1555,11 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
 
 // Handle timeout event
 void SSWCP_Instance::on_timeout() {
-    handle_general_fail(-2, "time out");
-    finish_job();
+    bool expected = false;
+    if (!m_response_sent.compare_exchange_strong(expected, true)) {
+        return;  // on_mqtt_msg_arrived already won the CAS race
+    }
+    handle_general_fail(-2, "time out");  // sets m_job_finished + finish_job internally
 }
 
 void SSWCP_Instance::update_filament_info(const json& objects, bool send_message)
@@ -6337,9 +6365,9 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
 }
 
 // Delete instance from list
-void SSWCP::delete_target(SSWCP_Instance* target) {
+void SSWCP::delete_target(std::shared_ptr<SSWCP_Instance> target) {
     wxGetApp().CallAfter([target]() {
-        m_instance_list.remove(target);
+        m_instance_list.remove(target.get());
     });
 }
 

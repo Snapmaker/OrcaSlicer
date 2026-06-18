@@ -2,6 +2,7 @@
 #ifndef SSWCP_HPP
 #define SSWCP_HPP
 
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <stack>
@@ -221,6 +222,9 @@ protected:
 private:
     bool m_illegal = false;      // Invalid flag
     std::mutex m_illegal_mtx;    // Mutex for illegal flag
+    std::mutex m_data_mtx;                      // Protects m_res_data, m_status, m_msg, m_header
+    std::atomic<bool> m_response_sent{false};   // CAS gate: exactly one terminal writer wins
+    std::atomic<bool> m_job_finished{false};    // Prevents double-send after finish_job
 };
 
 // Instance class for handling machine connection
@@ -598,7 +602,7 @@ public:
         std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview);
 
     // Delete instance
-    static void delete_target(SSWCP_Instance* target);
+    static void delete_target(std::shared_ptr<SSWCP_Instance> target);
 
     // Stop machine discovery
     static void stop_machine_find();
@@ -640,7 +644,7 @@ private:
     static std::unordered_set<std::string> m_page_state_cmd_list; // page state change commands;
 
     static TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> m_instance_list;  // Active instances
-    static constexpr std::chrono::milliseconds DEFAULT_INSTANCE_TIMEOUT{80000}; // Default timeout (8s)
+    static constexpr std::chrono::milliseconds DEFAULT_INSTANCE_TIMEOUT{80000}; // Default timeout (80s)
 
     static std::string m_active_gcode_filename; // name of the file which is pretend to be upload and print
     static std::string m_display_gcode_filename; // name for display

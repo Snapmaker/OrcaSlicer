@@ -15279,3 +15279,12 @@ msgstr "允许高/低温材料混合打印"
 
 msgid "If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."
 msgstr "启用后允许高温材料与低温材料同时打印"
+
+msgid "Official Filaments"
+msgstr "官方耗材"
+
+msgid "Other Colors"
+msgstr "其他颜色"
+
+msgid "Multiple Color"
+msgstr "多色"

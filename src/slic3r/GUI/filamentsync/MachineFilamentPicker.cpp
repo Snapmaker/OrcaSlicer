@@ -1,5 +1,7 @@
 #include "MachineFilamentPicker.hpp"
 
+#include <cmath>
+
 #include <wx/dcclient.h>
 #include <wx/dcmemory.h>
 #include <wx/dcgraph.h>
@@ -144,10 +146,10 @@ private:
         dc.SetBackground(*wxWHITE);
         dc.Clear();
 
-        // ---- White content area ----
+        // ---- White content area (inset 1px so border isn't clipped by popup edges on macOS) ----
         dc.SetPen(wxPen(wxColour(0xE0, 0xE0, 0xE0), 1));
         dc.SetBrush(wxBrush(*wxWHITE));
-        dc.DrawRectangle(0, 0, contentW, contentH);
+        dc.DrawRectangle(1, 1, contentW - 2, contentH - 2);
 
         // ---- Draw each row ----
         int itemCount = static_cast<int>(m_dataList.size());
@@ -204,20 +206,25 @@ private:
         dc.SetPen(wxPen(isNone ? wxColour(0xCC, 0xCC, 0xCC) : g_circleStroke, FromDIP(1)));
         dc.DrawCircle(circleCxPx, circleCyPx, circleR);
 
-        // ---- Index number inside circle ----
-        dc.SetFont(indexFont);
-        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : getTextColour(fillColor));
-        wxString idxStr = wxString::Format("%d", data.m_index + 1);
-        wxSize   idxExtent = dc.GetTextExtent(idxStr);
-        dc.DrawText(idxStr, circleCxPx - idxExtent.x / 2,
-                    circleCyPx - idxExtent.y / 2);
-
         // ---- Filament type text ----
         dc.SetFont(labelFont);
         dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : g_textColor);
         wxString typeStr = wxString::FromUTF8(data.m_type.empty() ? "NONE" : data.m_type);
         int textX = FromDIP(g_textX);
-        int textY = FromDIP(y) + (FromDIP(g_itemRowH) - dc.GetTextExtent(typeStr).y) / 2;
+        int textH = dc.GetTextExtent(typeStr).y;
+        int textY = FromDIP(y) + static_cast<int>(std::round((FromDIP(g_itemRowH) - textH) / 2.0));
+
+        // ---- Index number inside circle (vertically aligned with filament text) ----
+        dc.SetFont(indexFont);
+        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : getTextColour(fillColor));
+        wxString idxStr = wxString::Format("%d", data.m_index + 1);
+        wxSize   idxExtent = dc.GetTextExtent(idxStr);
+        int halfW = static_cast<int>(std::round(idxExtent.x / 2.0));
+        int halfH = static_cast<int>(std::round(idxExtent.y / 2.0));
+        dc.DrawText(idxStr, circleCxPx - halfW, circleCyPx - halfH);
+
+        dc.SetFont(labelFont);
+        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : g_textColor);
         dc.DrawText(typeStr, textX, textY);
     }
 

@@ -5734,65 +5734,66 @@ msgstr "没有如任何兼容的材料，同步操作未执行。"
 msgid "There are some unknown filaments mapped to generic preset. Please update Snapmaker Orca or restart Snapmaker Orca to check if there is an update to system presets."
 msgstr "有一些未知型号的材料，映射到通用预设。请更新或者重启 Snapmaker Orca，以检查系统预设有没有更新。"
 
-msgid "Original Filament"
+msgid "Source Filament"
 msgstr "原耗材"
 
-msgid "Machine Filament"
+msgid "Printer Filament"
 msgstr "设备耗材"
 
-msgid "Device Filament Sync"
-msgstr "设备耗材信息同步"
+msgid "Sync Filament Information"
+msgstr "同步耗材信息"
 
 msgid "Match Mapping"
 msgstr "匹配映射"
 
-msgid "Direct Overwrite"
+msgid "Direct Override"
 msgstr "直接覆盖"
 
 msgid "Original Model"
 msgstr "原模型"
 
-msgid "Matched Model"
+msgid "Mapped Model"
+msgstr "匹配后模型"
+
+msgid "Overridden Model"
 msgstr "覆盖后模型"
 
-msgid "Plate number"
+msgctxt "FilamentSync"
+msgid "Plate"
 msgstr "盘号"
 
 msgid "Sync Now"
 msgstr "立即同步"
 
-msgid "Note: Only filament type and color information are synchronized, nozzle order is not included."
-msgstr "注意：仅同步材料类型和颜色信息，不包含喷嘴顺序。"
+msgid "Note: Only filament types and colors are synchronized. Nozzle assignments are not included."
+msgstr "注意：仅同步耗材类型和颜色信息，不包含喷嘴顺序。"
 
-msgid "Add remaining printhead filaments to the software filament list"
-msgstr "将剩余打印头耗材添加到软件耗材列表"
+msgid "Add filaments from the remaining toolheads to the software filament list"
+msgstr "将其余打印头耗材添加到软件耗材列表"
 
-msgid "Synchronize filament information"
-msgstr "同步耗材信息"
+msgid "No printer is connected. Please connect your U1 from the Device page before syncing."
+msgstr "打印机未连接。请前往设备页连接 U1 后再同步。"
 
-msgid "Synchronize printer information"
-msgstr "同步打印机信息"
+msgid "The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."
+msgstr "当前连接的打印机不是 U1，无法同步耗材信息。请切换至 U1 后重试。"
 
-msgid "The printer is not connected. Before synchronizing, please go to the device page to connect."
-msgstr "打印机未连接，在同步之前，请前往设备页连接。"
+msgid "No filaments detected on the printer. Please preload the filaments before syncing."
+msgstr "打印机未检测到耗材，请完成耗材预载料后再同步。"
 
-msgid "The printer currently connected on the device page is not U1. Synchronization cannot be performed. Please switch to U1 and then try again."
-msgstr "设备页当前连接的打印机不是U1，无法同步，请切换成U1后再同步。"
-
-msgid "There are no filament on the printer. Please place the filaments on the machine first."
-msgstr "打印机上没有任何耗材，请先去机器上放置耗材。"
+msgid "Got it"
+msgstr "知道了"
 
 msgid "Connect Now"
-msgstr "立即连接"
+msgstr "前往连接"
 
 msgid "Later"
 msgstr "稍后再说"
 
-msgid "Successfully synchronize the color and type of filaments with the printer."
-msgstr "成功从打印机同步耗材颜色和类型。"
+msgid "Filament types and colors have been successfully synced from the printer."
+msgstr "已成功从打印机同步耗材类型和颜色信息。"
 
-msgid "Detected that consumables with color-mixing dependency will be replaced / removed. Performing this operation will update the color-mixing results. Proceed?"
-msgstr "检测到混色依赖的耗材将被替换 / 移除，执行此操作会更新混色结果，确定继续？"
+msgid "Some filaments used in color mixing will be replaced or removed. This will update the color mixing results. Continue?"
+msgstr "检测到参与混色的耗材将被替换或移除，执行此操作会更新混色结果。是否继续?"
 
 #, boost-format
 msgid "Do you want to save changes to \"%1%\"?"

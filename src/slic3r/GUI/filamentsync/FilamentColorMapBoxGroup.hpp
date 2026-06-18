@@ -29,7 +29,7 @@ public:
 
     void setGroupBoxEnable(bool bEnable, FilamentColorMapBox::ButtonType type);
     void showMachineFilamentPicker(int boxIndex);
-    void updateBoxBelowData(int boxIndex, const FilamentData& machineData);
+    void updateBoxBelowData(int boxIndex, const FilamentData& machineData, bool bTriggerCallback = true);
     int  getBoxCount() const;
     int  getVisibleBoxCount() const;
     void setVisibleCount(int count);
@@ -53,7 +53,7 @@ public:
 
 private:
     void onPaint(wxPaintEvent& event);
-    void updateBoxFilament(int boxIndex, const FilamentData& machineData);
+    void updateBoxFilament(int boxIndex, const FilamentData& machineData, bool bTriggerCallback = true);
 
     std::vector<std::unique_ptr<FilamentColorMapBox>> m_boxList;
     std::vector<FilamentData> m_designDataList;

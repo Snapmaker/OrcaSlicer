@@ -1869,7 +1869,7 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
 
         const float x    = volume_to_length(m_filpar[m_current_tool].ramming_speed[i] * time_step, line_width, m_layer_height);
         const float e    = m_filpar[m_current_tool].ramming_speed[i] * time_step / filament_area(); // transform volume per sec to E move;
-        float dist = remaining;
+        const float dist = std::min(x - e_done, remaining);
         const float actual_time = dist / x * time_step;
         writer.ram(writer.x(), writer.x() + (m_left_to_right ? 1.f : -1.f) * dist, 0.f, 0.f, e * (dist / x), dist / (actual_time / 60.f));
         remaining -= dist;
@@ -2020,50 +2020,10 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
         writer.switch_filament_monitoring(true);
 
     Vec2f current_pos = writer.pos_rotated();
-    float box_edge_x = m_perimeter_width / 2.f;
-    float gap_y      = 0.f;
-
-    // Always compute gap Y to position nozzle at ramming-wipe boundary, even without gap wall
-    float ramming_depth = 0.f;
-    if (m_layer_info != m_plan.end()) {
-        for (const auto& b : m_layer_info->tool_changes) {
-            if (b.new_tool == new_tool) {
-                ramming_depth = b.ramming_depth;
-                break;
-            }
-        }
-    }
-
-    float gap_x      = (predict_ramming_end_x((int) m_current_tool, m_layer_height) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
-    float ramming_lw = m_perimeter_width * m_filpar[m_current_tool].ramming_line_width_multiplicator;
-    gap_y            = m_depth_traversed + ramming_depth + ramming_lw / 2.f;
-    box_edge_x       = (gap_x == 0.f) ? ramming_lw / 2.f : m_wipe_tower_width - ramming_lw / 2.f;
-
-    if (m_use_gap_wall && !writer.get_is_prime()) {
-        float margin         = 5.f * m_perimeter_width;
-        float rib_protrusion = (m_wall_type == (int) wtwRib) ? m_rib_width / 2.f : 0.f;
-        float outer_dist     = margin + rib_protrusion + m_wipe_tower_brim_width;
-        float wall_outer_x   = (gap_x == 0.f) ? -outer_dist : m_wipe_tower_width + outer_dist;
-
-        current_pos = writer.rotate(Vec2f(wall_outer_x, gap_y + m_perimeter_width / 2.f));
-
-        // Travel to where we assume we are. Custom toolchange or some special T code handling (parking extruder etc)
-        // gcode could have left the extruder somewhere, we cannot just start extruding. We should also inform the
-        // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
-        writer
-            .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
-            .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
-                    Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
-
-        // Gap travel: through gap into cleaning_box edge before Load
-        writer.travel(box_edge_x, gap_y + m_perimeter_width / 2.f);
-    } 
-    else {
-        writer
-            .feedrate(m_travel_speed * 60.f)
-            .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
-                Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
-    }
+    writer
+        .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
+        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
+            Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
 
     writer.append("[deretraction_from_wipe_tower_generator]");
 

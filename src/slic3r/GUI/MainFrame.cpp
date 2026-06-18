@@ -568,7 +568,15 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             }
             return;}
 #endif
-        if (evt.CmdDown() && evt.GetKeyCode() == 'R') { if (m_slice_enable) { wxGetApp().plater()->update(true, true); wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE)); this->m_tabpanel->SetSelection(tpPreview); } return; }
+        if (evt.CmdDown() && evt.GetKeyCode() == 'R')
+        {
+            if (m_slice_enable)
+            {
+                wxGetApp().plater()->update(true, true);
+                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
+            }
+            return;
+        }
         if (evt.CmdDown() && evt.ShiftDown() && evt.GetKeyCode() == 'G') {
             m_plater->apply_background_progress();
             m_print_enable = get_enable_print_status();
@@ -1046,11 +1054,13 @@ void MainFrame::init_tabpanel() {
         m_last_selected_tab = m_tabpanel->GetSelection();
         if (panel == m_plater) {
             if (sel == tp3DEditor) {
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
+                if (!m_plater || !m_plater->is_view3D_shown())
+                    wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
                 m_param_panel->OnActivate();
             }
             else if (sel == tpPreview) {
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
+                if (!m_plater || m_plater->is_view3D_shown())
+                    wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
                 m_param_panel->OnActivate();
             }
         }
@@ -1662,7 +1672,6 @@ wxBoxSizer* MainFrame::create_side_tools()
             else
                 wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
 
-            this->m_tabpanel->SetSelection(tpPreview);
         });
 
     m_print_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
@@ -1894,8 +1903,7 @@ bool MainFrame::get_enable_slice_status()
         {
             enable = false;
         }*/
-        //always enable slice_all button
-        enable = true;
+        enable = m_plater->has_sliceable_plate_for_slice_all();
     }
     else if (m_slice_select == eSlicePlate)
     {
@@ -1904,6 +1912,10 @@ bool MainFrame::get_enable_slice_status()
             enable = false;
         }
         else if (!current_plate->can_slice())
+        {
+            enable = false;
+        }
+        else if (m_plater->is_plate_blocked_by_filament_temp_mixing(part_plate_list.get_curr_plate_index()))
         {
             enable = false;
         }
@@ -2054,11 +2066,14 @@ void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_sl
 {
     bool enable_print = true, enable_slice = true;
 
-    if (!can_slice)
-    {
-        if (m_slice_select == eSlicePlate)
-            enable_slice = false;
-    }
+    if (event == eEventPlateUpdate)
+        enable_slice = get_enable_slice_status();
+    else if (!can_slice)
+        // Don't hard-disable the slice button; let get_enable_slice_status()
+        // decide. In eSliceAll mode other plates may still be sliceable even
+        // if the caller thinks the current plate isn't.
+        enable_slice = get_enable_slice_status();
+
     if (!can_print)
         enable_print = false;
 
@@ -2070,7 +2085,7 @@ void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_sl
     }
 
     //process slice logic
-    if (enable_slice)
+    if (event != eEventPlateUpdate && enable_slice)
     {
         enable_slice = get_enable_slice_status();
     }

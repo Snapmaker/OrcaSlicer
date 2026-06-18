@@ -1573,13 +1573,22 @@ bool atomic_replace_directory(
     const fs::path staging = fs::path(target.string() + ".new");
     const fs::path backup  = fs::path(target.string() + ".old");
 
-    auto remove_path = [](const fs::path &p) {
+    auto remove_path = [](const fs::path &p) -> bool {
         boost::system::error_code ec;
-        if (fs::exists(p))
-            fs::remove_all(p, ec);
+        if (!fs::exists(p))
+            return true;
+        fs::remove_all(p, ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(warning) << Slic3r::format("atomic_replace_directory: failed to remove %1%: %2%", p, ec.message());
+            return false;
+        }
+        return true;
     };
 
-    remove_path(staging);
+    if (!remove_path(staging)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to clear staging %1%", staging);
+        return false;
+    }
 
     if (!copy_directory_recursively(source, staging, filter)) {
         BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to stage %1% -> %2%", source, staging);
@@ -1593,7 +1602,11 @@ bool atomic_replace_directory(
         return false;
     }
 
-    remove_path(backup);
+    if (!remove_path(backup)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to clear backup %1%", backup);
+        remove_path(staging);
+        return false;
+    }
 
     const bool had_target = fs::exists(target);
     if (had_target) {

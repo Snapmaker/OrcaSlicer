@@ -2850,6 +2850,12 @@ msgstr ""
 msgid "Confirm"
 msgstr ""
 
+msgid "Confirm slicing"
+msgstr ""
+
+msgid "This material combination may cause risks. Do you want to continue?"
+msgstr ""
+
 msgid "Close"
 msgstr ""
 

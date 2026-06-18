@@ -69,6 +69,7 @@
 #include <wx/fontutil.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
+#include <wx/thread.h>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -2271,9 +2272,7 @@ void GUI_App::copy_web_resources() {
 
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
-        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-        auto target_path = data_web_path / "flutter_web";
-        copy_directory_recursively(source_path, target_path);
+        copy_bundled_flutter_web(false);
         profiler.mark("copy flutter_web (missing target)");
     } else {
         auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
@@ -2287,9 +2286,7 @@ void GUI_App::copy_web_resources() {
             std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
 
             if (source_build_number_str > target_build_number_str) {
-                auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-                auto target_path = data_web_path / "flutter_web";
-                copy_directory_recursively(source_path, target_path);
+                copy_bundled_flutter_web(true);
                 profiler.mark("copy flutter_web (version upgrade)");
             } else {
                 profiler.note("flutter_web already up to date");
@@ -2299,6 +2296,64 @@ void GUI_App::copy_web_resources() {
             profiler.note(std::string("version check failed: ") + e.what());
         }
     }
+}
+
+bool GUI_App::copy_bundled_flutter_web(bool upgrade)
+{
+    auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+    auto target_path = boost::filesystem::path(data_dir()) / "web" / "flutter_web";
+    if (copy_directory_recursively(source_path, target_path))
+        return true;
+
+    BOOST_LOG_TRIVIAL(error) << "Failed to copy bundled flutter_web to " << target_path.string();
+    report_flutter_web_copy_failure(upgrade ? FlutterWebCopyStatus::UpgradeFailed : FlutterWebCopyStatus::InstallFailed);
+    return false;
+}
+
+void GUI_App::report_flutter_web_copy_failure(FlutterWebCopyStatus status)
+{
+    if (status == FlutterWebCopyStatus::InstallFailed)
+        m_flutter_web_copy_status = FlutterWebCopyStatus::InstallFailed;
+    else if (status == FlutterWebCopyStatus::UpgradeFailed &&
+             m_flutter_web_copy_status != FlutterWebCopyStatus::InstallFailed)
+        m_flutter_web_copy_status = FlutterWebCopyStatus::UpgradeFailed;
+    else 
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << status;
+}
+
+void GUI_App::do_notify_flutter_web_copy_failure()
+{
+    if (m_flutter_web_copy_notified || m_flutter_web_copy_status == FlutterWebCopyStatus::Ok)
+        return;
+
+    m_flutter_web_copy_notified = true;
+
+    switch (m_flutter_web_copy_status) {
+    case FlutterWebCopyStatus::InstallFailed:
+        show_error(mainframe,
+                   _L("Failed to install Web UI resources. Some features may not work correctly.\n"
+                      "Please check disk space and file permissions, then restart the application."));
+        break;
+    case FlutterWebCopyStatus::UpgradeFailed:
+        if (notification_manager()) {
+            notification_manager()->push_notification(
+                NotificationType::CustomNotification,
+                NotificationManager::NotificationLevel::WarningNotificationLevel,
+                _u8L("Failed to update Web UI resources. The application will continue using the previous version."));
+        }
+        break;
+    default: 
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus other status" << m_flutter_web_copy_status;
+        break;
+    }
+}
+
+void GUI_App::try_notify_flutter_web_copy_failure()
+{
+    if (wxThread::IsMain())
+        do_notify_flutter_web_copy_failure();
+    else
+        CallAfter([this]() { do_notify_flutter_web_copy_failure(); });
 }
 
 void GUI_App::copy_older_config()
@@ -3023,6 +3078,8 @@ bool GUI_App::on_init_inner()
                        "The Snapmaker Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker Orca has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
+
+    do_notify_flutter_web_copy_failure();
 
     profiler.mark("on_init_inner return");
 

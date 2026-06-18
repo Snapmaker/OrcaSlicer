@@ -35,6 +35,9 @@ wxString normalize_color_match_hex(const wxString& value)
     normalized.MakeUpper();
     if (!normalized.empty() && normalized[0] != '#')
         normalized.Prepend("#");
+    // #RRGGBBAA → #RRGGBB (drop alpha; only RGB is used for matching)
+    if (normalized.length() == 9)
+        normalized = normalized.Mid(0, 7);
     return normalized;
 }
 

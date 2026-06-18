@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "GUI_Utils.hpp"
 #include "MixedColorMatchHelpers.hpp"
@@ -55,6 +55,7 @@ private:
     void set_match_buttons_state(bool matching);
     void update_recommended_card();
     void load_model_colors();
+    void reset_match_preview();
 
     enum MatchingMethod { RECOMMENDED = 0, MANUAL = 1 };
 

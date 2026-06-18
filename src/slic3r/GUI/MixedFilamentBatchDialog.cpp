@@ -199,6 +199,15 @@ void MixedFilamentBatchDialog::refresh_previews()
     }
 }
 
+void MixedFilamentBatchDialog::reset_match_preview()
+{
+    // Reset after-match preview to the no-match state (original thumbnails).
+    m_match_colors.clear();
+    for (size_t i = 0; i < m_match_cache.size() && i < m_thumb_cache.size(); ++i)
+        m_match_cache[i] = m_thumb_cache[i];
+    refresh_previews();
+}
+
 void MixedFilamentBatchDialog::rebuild_match_thumb_cache()
 {
     if (!m_match_completed || m_result.mappings.empty()) return;
@@ -384,10 +393,8 @@ void MixedFilamentBatchDialog::update_recommended_card()
             wxBitmap* icon = get_extruder_color_icon(
                 colors[i], std::to_string(i + 1),
                 FromDIP(20), FromDIP(20));
-            if (icon) {
+            if (icon)
                 m_recommended_swatches[i]->SetBitmap(*icon);
-                delete icon;
-            }
         }
 
         // Update label text
@@ -902,8 +909,7 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
 {
     int sel = m_method_combo->GetSelection();
     m_matching_method = (sel == 1) ? MANUAL : RECOMMENDED;
-    m_result = BatchMatchResult{};
-    m_match_completed = false;
+    // Preserve the previous match result; only Start/Re-match clears it.
     m_error_panel->Hide();
     m_warning_panel->Hide();
     if (m_manual_card)
@@ -922,20 +928,13 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
     update_prompt_text();
     update_mapping_legend();
     set_match_buttons_state(false);
-    m_btn_start_match->Enable(true);
     Layout();
 }
 
 void MixedFilamentBatchDialog::on_manual_selection_changed()
 {
-    if (m_match_completed) {
-        m_result = BatchMatchResult{};
-        m_match_completed = false;
-        update_mapping_legend();
-    }
-    m_btn_start_match->Enable(true);
-    m_btn_rematch->Enable(false);
-    m_btn_confirm->Enable(false);
+    // Preserve the previous match result; only Start/Re-match clears it.
+    set_match_buttons_state(false);
 }
 
 // ---------------------------------------------------------------------------
@@ -957,6 +956,7 @@ void MixedFilamentBatchDialog::start_batch_match()
     m_match_completed = false;
     update_mapping_legend();
     m_legend_scroller->Layout();
+    reset_match_preview();
     set_match_buttons_state(true);
     launch_background_match();
 }
@@ -1240,11 +1240,9 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
 
 void MixedFilamentBatchDialog::update_mapping_legend()
 {
-    while (m_legend_sizer->GetItemCount() > 0) {
-        wxSizerItem* item = m_legend_sizer->GetItem(size_t(0));
-        if (item && item->GetWindow()) item->GetWindow()->Destroy();
-        m_legend_sizer->Remove(0);
-    }
+    // Clear(true) deletes row windows immediately (vs deferred Destroy), so their
+    // pixel regions are released before repaint — same pattern as rebuild_legend.
+    m_legend_sizer->Clear(true);
 
     if (m_result.mappings.empty()) {
         m_legend_sizer->Add(new Label(m_legend_scroller,

@@ -2242,34 +2242,77 @@ void GUI_App::copy_web_resources() {
     StartupProfiler profiler("GUI_App::copy_web_resources");
 
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
-    if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
-        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-        auto target_path = data_web_path / "flutter_web";
+    auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+    auto target_path = data_web_path / "flutter_web";
+    auto source_version_file = source_path / "version.json";
+    auto target_version_file = target_path / "version.json";
+
+    const auto copy_flutter_web = [&]() {
         copy_directory_recursively(source_path, target_path);
+    };
+
+    if (!boost::filesystem::exists(source_version_file)) {
+        BOOST_LOG_TRIVIAL(error) << "copy_web_resources: source version.json does not exist: " << source_version_file.string();
+        profiler.note("source version.json missing");
+        return;
+    }
+
+    if (!boost::filesystem::exists(target_path) || !boost::filesystem::exists(target_version_file)) {
+        copy_flutter_web();
         profiler.mark("copy flutter_web (missing target)");
+        return;
+    }
+
+    boost::property_tree::ptree source_config, target_config;
+    boost::property_tree::read_json(source_version_file.string(), source_config);
+    boost::property_tree::read_json(target_version_file.string(), target_config);
+
+    std::string source_version_str = source_config.get<std::string>("version", "");
+    std::string target_version_str = target_config.get<std::string>("version", "");
+    std::string source_build_number_str = source_config.get<std::string>("build_number", "");
+    std::string target_build_number_str = target_config.get<std::string>("build_number", "");
+
+    if (source_version_str.empty() || source_build_number_str.empty()) {
+        BOOST_LOG_TRIVIAL(error) << "copy_web_resources: source version.json is invalid, version or build_number is empty";
+        profiler.note("invalid source version.json");
+        return;
+    }
+
+    if (target_version_str.empty() || target_build_number_str.empty()) {
+        copy_flutter_web();
+        profiler.mark("copy flutter_web (invalid target version.json)");
+        return;
+    }
+
+    const auto source_version = Semver::parse(source_version_str);
+    const auto target_version = Semver::parse(target_version_str);
+    if (!source_version.has_value()) {
+        BOOST_LOG_TRIVIAL(error) << "copy_web_resources: failed to parse source version: " << source_version_str;
+        profiler.note("invalid source version");
+        return;
+    }
+    if (!target_version.has_value()) {
+        copy_flutter_web();
+        profiler.mark("copy flutter_web (invalid target version)");
+        return;
+    }
+
+    bool needs_update = false;
+    if (*source_version > *target_version) {
+        needs_update = true;
+    } else if (*source_version == *target_version && source_build_number_str > target_build_number_str) {
+        needs_update = true;
     } else {
-        auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
-        auto target_version_file = data_web_path / "flutter_web" / "version.json";
+        BOOST_LOG_TRIVIAL(info) << "copy_web_resources: no update needed, source version="
+                                << source_version_str << " build_number=" << source_build_number_str
+                                << ", target version=" << target_version_str << " build_number=" << target_build_number_str;
+    }
 
-        try {
-            boost::property_tree::ptree source_config, target_config;
-            boost::property_tree::read_json(source_version_file.string(), source_config);
-            boost::property_tree::read_json(target_version_file.string(), target_config);
-            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
-            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
-
-            if (source_build_number_str > target_build_number_str) {
-                auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-                auto target_path = data_web_path / "flutter_web";
-                copy_directory_recursively(source_path, target_path);
-                profiler.mark("copy flutter_web (version upgrade)");
-            } else {
-                profiler.note("flutter_web already up to date");
-            }
-        }
-        catch (std::exception& e) {
-            profiler.note(std::string("version check failed: ") + e.what());
-        }
+    if (needs_update) {
+        copy_flutter_web();
+        profiler.mark("copy flutter_web (version upgrade)");
+    } else {
+        profiler.note("flutter_web already up to date");
     }
 }
 

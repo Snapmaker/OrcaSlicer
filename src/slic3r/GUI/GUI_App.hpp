@@ -638,6 +638,12 @@ private:
     void            stop_page_http_server();
     /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
     boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
+
+    enum class FlutterWebCopyStatus { Ok, UpgradeFailed, InstallFailed, Other };
+    /// Copy bundled flutter_web into the user data directory. On failure, records status for deferred user notification.
+    bool            copy_bundled_flutter_web(bool upgrade);
+    void            report_flutter_web_copy_failure(FlutterWebCopyStatus status);
+    void            try_notify_flutter_web_copy_failure();
     void            switch_staff_pick(bool on);
     bool            check_privacy_update();
     
@@ -839,6 +845,7 @@ private:
     bool            check_older_app_config(Semver current_version, bool backup);
     void            copy_older_config();
     void                               copy_web_resources();
+    void            do_notify_flutter_web_copy_failure();
     void            window_pos_save(wxTopLevelWindow* window, const std::string &name);
     bool            window_pos_restore(wxTopLevelWindow* window, const std::string &name, bool default_maximized = false);
     void            window_pos_sanitize(wxTopLevelWindow* window);
@@ -853,6 +860,8 @@ private:
     std::string             m_older_data_dir_path;
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
+    FlutterWebCopyStatus    m_flutter_web_copy_status{ FlutterWebCopyStatus::Ok };
+    bool                    m_flutter_web_copy_notified{ false };
     std::string             m_open_method;
     SMUserInfo m_login_userinfo;
 

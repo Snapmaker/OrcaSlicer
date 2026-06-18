@@ -1099,6 +1099,7 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
 
     // update scene
     wxGetApp().plater()->update();
+    wxGetApp().plater()->notify_filament_usage_changed();
 }
 
 void ObjectList::update_name_in_model(const wxDataViewItem& item) const
@@ -5921,6 +5922,7 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
 
     // update scene
     wxGetApp().plater()->update();
+    wxGetApp().plater()->notify_filament_usage_changed();
 
     // BBS: update extruder/filament column
     Refresh();
@@ -5980,6 +5982,7 @@ void ObjectList::reload_all_plates(bool notify_partplate)
     wxGetApp().plater()->update();
     // update printable states on canvas
     wxGetApp().plater()->get_view3D_canvas3D()->update_instance_printable_state_for_objects(obj_idxs);
+    wxGetApp().plater()->notify_filament_usage_changed();
 }
 
 void ObjectList::on_plate_selected(int plate_index)

@@ -403,15 +403,15 @@ public:
         scale_bitmap(m_main_bitmap, m_scale);
 
         // init constant texts and scale fonts
-        m_constant_text.init(Label::Body_16);
+        m_constant_text.init();
 
 		// ORCA scale all fonts with monitor scale
-        scale_font(m_constant_text.version_font,	m_scale * 2);
-        scale_font(m_constant_text.based_on_font,	m_scale * 1.5f);
-        scale_font(m_constant_text.credits_font,	m_scale * 2);
+        scale_font(m_constant_text.titleFont,       m_scale * 1.5f);
+        scale_font(m_constant_text.versionFont,     m_scale * 1.5f);
+        scale_font(m_constant_text.loadingFont,     m_scale * 1.5f);
 
         // this font will be used for the action string
-        m_action_font = m_constant_text.credits_font;
+        m_action_font = m_constant_text.loadingFont;
 
         // draw logo and constant info text
         Decorate(m_main_bitmap);
@@ -427,7 +427,7 @@ public:
             wxMemoryDC memDC;
             memDC.SelectObject(bitmap);
             memDC.SetFont(m_action_font);
-            memDC.SetTextForeground(StateColor::darkModeColorFor(wxColour(144, 144, 144)));
+            memDC.SetTextForeground(wxColour(143, 143, 143));
             int width = bitmap.GetWidth();
             int text_height = memDC.GetTextExtent(text).GetHeight();
             int text_width = memDC.GetTextExtent(text).GetWidth();
@@ -448,41 +448,63 @@ public:
         if (!bmp.IsOk())
             return;
 
-		bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
-
         // use a memory DC to draw directly onto the bitmap
         wxMemoryDC memDc(bmp);
-        
-        int width = bmp.GetWidth();
-		int height = bmp.GetHeight();
 
-		// Logo
-        BitmapCache bmp_cache;
-        wxBitmap logo_bmp = *bmp_cache.load_svg(is_dark ? "splash_logo_dark" : "splash_logo", width, height);  // use with full width & height
-        memDc.DrawBitmap(logo_bmp, 0, 0, true);
+        int width  = bmp.GetWidth();
+        int height = bmp.GetHeight();
 
-        // Version
-        memDc.SetFont(m_constant_text.version_font);
-        memDc.SetTextForeground(StateColor::darkModeColorFor(wxColor(134, 134, 134)));
-        wxSize version_ext = memDc.GetTextExtent(m_constant_text.version);
-        wxRect version_rect(
-			wxPoint(0, int(height * 0.70)),
-			wxPoint(width, int(height * 0.70) + version_ext.GetHeight())
-		);
-        memDc.DrawLabel(m_constant_text.version, version_rect, wxALIGN_CENTER);
+        const int designSize = 480;
+        auto scaleX = [width, designSize](int value) { return value * width / designSize; };
+        auto scaleY = [height, designSize](int value) { return value * height / designSize; };
 
-        // Dynamic Text
-        m_action_line_y_position = int(height * 0.83);
+        // Logo icon: 140x140, centered horizontally, y=80
+        BitmapCache bmpCache;
+        int logoSize = scaleX(140);
+        int logoX    = scaleX(170);
+        int logoY    = scaleY(80);
+        wxBitmap* logoBmp = bmpCache.load_svg("splash_app_icon", logoSize, logoSize);
+        if (logoBmp != nullptr)
+            memDc.DrawBitmap(*logoBmp, logoX, logoY, true);
 
-		// Based on Text
-        memDc.SetFont(m_constant_text.based_on_font);
-        auto bs_version = wxString::Format("Based on Orca Slicer").ToStdString();
-        wxSize based_on_ext = memDc.GetTextExtent(bs_version);
-        wxRect based_on_rect(
-			wxPoint(0, height - based_on_ext.GetHeight() * 2),
-            wxPoint(width, height - based_on_ext.GetHeight())
-		);
-        memDc.DrawLabel(bs_version, based_on_rect, wxALIGN_CENTER);
+        // Brand name: "Snapmaker Orca"
+        memDc.SetFont(m_constant_text.titleFont);
+        memDc.SetTextForeground(wxColour(23, 23, 23));
+        wxSize brandExt = memDc.GetTextExtent(m_constant_text.title);
+
+        // Version tag: "V" + current app version
+        memDc.SetFont(m_constant_text.versionFont);
+        memDc.SetTextForeground(wxColour(143, 143, 143));
+        wxSize versionExt = memDc.GetTextExtent(m_constant_text.version);
+
+        // Center brand + gap + tag as a group.
+        int gap    = scaleX(10);
+        int totalW = brandExt.GetWidth() + gap + versionExt.GetWidth();
+        int startX = (width - totalW) / 2;
+        int brandY = scaleY(241);
+        int tagY   = scaleY(251);
+
+        memDc.SetFont(m_constant_text.titleFont);
+        memDc.SetTextForeground(wxColour(23, 23, 23));
+        memDc.DrawText(m_constant_text.title, startX, brandY);
+
+        memDc.SetFont(m_constant_text.versionFont);
+        memDc.SetTextForeground(wxColour(143, 143, 143));
+        memDc.DrawText(m_constant_text.version,
+                       startX + brandExt.GetWidth() + gap,
+                       tagY);
+
+        // Beta text below brand, centered
+        int betaY = scaleY(279);
+        memDc.SetFont(m_constant_text.versionFont);
+        memDc.SetTextForeground(wxColour(143, 143, 143));
+        wxSize betaExt = memDc.GetTextExtent(m_constant_text.betaText);
+        wxRect betaRect(wxPoint(0, betaY),
+                        wxPoint(width, betaY + betaExt.GetHeight()));
+        memDc.DrawLabel(m_constant_text.betaText, betaRect, wxALIGN_CENTER);
+
+        // Dynamic text y position (for SetText)
+        m_action_line_y_position = scaleY(384);
     }
 
     static wxBitmap MakeBitmap()
@@ -495,7 +517,7 @@ public:
 
         wxMemoryDC memDC;
         memDC.SelectObject(new_bmp);
-        memDC.SetBrush(StateColor::darkModeColorFor(*wxWHITE));
+        memDC.SetBrush(wxColour(255, 255, 255));
         memDC.DrawRectangle(-1, -1, width + 2, height + 2);
         memDC.DrawBitmap(new_bmp, 0, 0, true);
         return new_bmp;
@@ -557,28 +579,21 @@ private:
     {
         wxString title;
         wxString version;
-        wxString credits;
+        wxString betaText;
 
-        wxFont   title_font;
-        wxFont   version_font;
-        wxFont   credits_font;
-        wxFont   based_on_font;
+        wxFont   titleFont;
+        wxFont   versionFont;
+        wxFont   loadingFont;
 
-        void init(wxFont init_font)
+        void init()
         {
-            // title
-            //title = wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME;
+            title    = "Snapmaker Orca";
+            version  = std::string("V") + Snapmaker_VERSION;
+            betaText = _L("Beta version");
 
-            // dynamically get the version to display
-            version = GUI_App::format_display_version();
-
-            // credits infornation
-            credits = "";
-
-            //title_font    = Label::Head_16;
-            version_font  = Label::Body_13;
-            based_on_font = Label::Body_8;
-            credits_font  = Label::Body_8;
+            titleFont   = Label::sysFont(20, false);
+            versionFont = Label::Body_13;
+            loadingFont = Label::Body_11;
         }
     }
     m_constant_text;
@@ -2649,8 +2664,6 @@ bool GUI_App::on_init_inner()
         app_config->set("version", SLIC3R_VERSION);
     }
 
-    // temporarily cancel the loading window
-    /*
     SplashScreen * scrn = nullptr;
     if (app_config->get("show_splash_screen") == "true") {
         // make a bitmap with dark grey banner on the left side
@@ -2669,9 +2682,11 @@ bool GUI_App::on_init_inner()
         //BBS use BBL splashScreen
         scrn = new SplashScreen(bmp, wxSPLASH_CENTRE_ON_SCREEN | wxSPLASH_TIMEOUT, 1500, splashscreen_pos);
         wxYield();
-        scrn->SetText(_L("Loading configuration")+ dots);
+        wxString loadingText = _L("Loading configuration");
+        std::string languageCode = app_config->get_language_code();
+        loadingText += languageCode == "zh-cn" || languageCode == "zh" ? dots + dots : dots;
+        scrn->SetText(loadingText);
     }
-    */
     BOOST_LOG_TRIVIAL(info) << "loading systen presets...";
     preset_bundle = new PresetBundle();
 

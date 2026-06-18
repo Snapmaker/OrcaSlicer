@@ -430,19 +430,12 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                 for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2)
                                     if (! temp_slices[idx_region2].expolygons.empty()) {
                                         // Skip trim_overlap for now, because it slow down the performace so much for some special cases
-#if 0
-                                        if (const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
-                                            !region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
-                                            temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-#else
                                         const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
-                                        if (!region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
-                                            //BBS: handle negative_volume, same-region trim, or cross-region carve by print_region_id
+                                        if (!region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox)) {
                                             if (region.model_volume->is_negative_volume()) {
+                                                // Negative volume: always subtract with diff_ex
                                                 temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-                                            } else if (!region.region || !region2.region || region.region->print_object_region_id() == region2.region->print_object_region_id()) {
-                                                trim_overlap(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-                                            } else {
+                                            } else if (region.region && region2.region && region.region->print_object_region_id() != region2.region->print_object_region_id()) {
                                                 // Different print regions: smaller per-layer XY area carves larger
                                                 int pid_current = region.region->print_object_region_id();
                                                 int pid_other   = region2.region->print_object_region_id();
@@ -458,8 +451,12 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                                     temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
                                                 else
                                                     temp_slices[idx_region].expolygons = diff_ex(temp_slices[idx_region].expolygons, temp_slices[idx_region2].expolygons);
+                                            } else {
+                                                // Default path (same region, no region ptrs): simple diff_ex
+                                                // Preserves Bambu's #if 1 performance-safe behavior
+                                                temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
                                             }
-#endif
+                                        }
                                     }
                             }
 

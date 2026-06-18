@@ -74,9 +74,9 @@ private:
 private:
     bool _loaded { false };
 
-    std::vector<FilamentColorInfo> _filaments;
-    std::unordered_map<std::string, size_t> _filamentIndexById;
-    std::unordered_map<std::string, size_t> _filamentIndexByName;
+    std::vector<FilamentColorInfo> _filamentInfoVec;
+    std::unordered_map<std::string, size_t> _filamentIndexByIdMap;   // filament_id to index in _filamentInfoVec
+    std::unordered_map<std::string, size_t> _filamentIndexByNameMap; // normalized filament name to index in _filamentInfoVec
 };
 
 } // namespace Slic3r

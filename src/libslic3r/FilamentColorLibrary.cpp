@@ -353,8 +353,8 @@ bool FilamentColorLibrary::FindFilamentById(const std::string& filamentId, Filam
     if (!EnsureLoaded())
         return false;
 
-    std::unordered_map<std::string, size_t>::const_iterator filamentIt = _filamentIndexById.find(filamentId);
-    if (filamentIt == _filamentIndexById.end())
+    std::unordered_map<std::string, size_t>::const_iterator filamentIt = _filamentIndexByIdMap.find(filamentId);
+    if (filamentIt == _filamentIndexByIdMap.end())
         return false;
 
     return FindFilamentByIndex(filamentIt->second, outFilament);
@@ -369,16 +369,16 @@ bool FilamentColorLibrary::FindFilamentByName(const std::string& filamentName, F
     if (matchName.empty())
         return false;
 
-    std::unordered_map<std::string, size_t>::const_iterator nameIt = _filamentIndexByName.find(matchName);
-    return nameIt != _filamentIndexByName.end() ? FindFilamentByIndex(nameIt->second, outFilament) : false;
+    std::unordered_map<std::string, size_t>::const_iterator nameIt = _filamentIndexByNameMap.find(matchName);
+    return nameIt != _filamentIndexByNameMap.end() ? FindFilamentByIndex(nameIt->second, outFilament) : false;
 }
 
 bool FilamentColorLibrary::FindFilamentByIndex(size_t index, FilamentColorInfo& outFilament) const
 {
-    if (index >= _filaments.size())
+    if (index >= _filamentInfoVec.size())
         return false;
 
-    outFilament = _filaments[index];
+    outFilament = _filamentInfoVec[index];
     return true;
 }
 
@@ -522,17 +522,17 @@ bool FilamentColorLibrary::LoadIndex()
         return false;
     }
 
-    _filaments = std::move(filaments);
-    _filamentIndexById = std::move(filamentIndexById);
-    _filamentIndexByName = std::move(filamentIndexByName);
+    _filamentInfoVec = std::move(filaments);
+    _filamentIndexByIdMap = std::move(filamentIndexById);
+    _filamentIndexByNameMap = std::move(filamentIndexByName);
     return true;
 }
 
 void FilamentColorLibrary::Clear()
 {
-    _filaments.clear();
-    _filamentIndexById.clear();
-    _filamentIndexByName.clear();
+    _filamentInfoVec.clear();
+    _filamentIndexByIdMap.clear();
+    _filamentIndexByNameMap.clear();
 }
 
 } // namespace Slic3r

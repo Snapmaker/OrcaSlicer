@@ -932,13 +932,21 @@ void SSWCP_Instance::sw_GetFileStream() {
 
 void SSWCP_Instance::handle_general_fail(int code, const wxString& msg)
 {
+    // CAS gate: protects all callers (on_timeout, MQTT Agent worker CallAfter, etc.)
+    bool expected = false;
+    if (!m_response_sent.compare_exchange_strong(expected, true)) {
+        return;
+    }
     try {
+        std::unique_lock<std::mutex> lock(m_data_mtx);
         m_status = code;
         m_msg    = msg.ToUTF8();
+        m_job_finished.store(true);
+        lock.unlock();
         send_to_js();
         finish_job();
     } catch (std::exception& e) {}
-    
+
 }
 
 // Mark instance as invalid
@@ -976,11 +984,12 @@ void SSWCP_Instance::send_to_js()
         }
 
         json response, payload;
+        std::unique_lock<std::mutex> lock(m_data_mtx);
         response["header"] = m_header;
-
-        payload["code"] = m_status;
-        payload["message"]  = m_msg;
-        payload["data"] = m_res_data;
+        payload["code"]    = m_status;
+        payload["message"] = m_msg;
+        payload["data"]    = m_res_data;
+        lock.unlock();
 
         response["payload"] = payload;
 
@@ -1003,9 +1012,9 @@ void SSWCP_Instance::send_to_js()
     } catch (std::exception& e) {}
 }
 
-// Clean up instance
+// Clean up instance — requires SSWCP_Instance to be managed by std::shared_ptr
 void SSWCP_Instance::finish_job() {
-    SSWCP::delete_target(this);
+    SSWCP::delete_target(shared_from_this());
 }
 
 // Asynchronous test implementation
@@ -1225,42 +1234,57 @@ void SSWCP_Instance::on_mqtt_status_msg_arrived(std::shared_ptr<SSWCP_Instance> 
     if (!obj) {
         return;
     }
+    bool is_timeout = false;
+    std::unique_lock<std::mutex> lock(obj->m_data_mtx);
+    if (obj->m_job_finished.load()) {
+        return;
+    }
     if (response.is_null()) {
         obj->m_status = -1;
         obj->m_msg    = "failure";
-        obj->send_to_js();
     } else if (response.count("error")) {
         if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
-            obj->on_timeout();
+            is_timeout = true;
         } else {
             obj->m_res_data = response;
-            obj->send_to_js();
         }
     } else {
         obj->m_res_data = response;
-        obj->send_to_js();
     }
+    lock.unlock();
+    if (is_timeout) {
+        obj->on_timeout();
+        return;
+    }
+    obj->send_to_js();
 }
 
 void SSWCP_Instance::on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response) {
     if (!obj) {
         return;
     }
+    // CAS gate: only one terminal writer (on_mqtt_msg_arrived or on_timeout) proceeds
+    bool expected = false;
+    if (!obj->m_response_sent.compare_exchange_strong(expected, true)) {
+        return;  // winner is responsible for cleanup
+    }
+    std::unique_lock<std::mutex> lock(obj->m_data_mtx);
     if (response.is_null()) {
         obj->m_status = -1;
         obj->m_msg    = "failure";
-        obj->send_to_js();
     } else if (response.count("error")) {
         if (response["error"].is_string() && "timeout" == response["error"].get<std::string>()) {
-            obj->on_timeout();
+            obj->m_status = -2;
+            obj->m_msg    = "time out";
         } else {
             obj->m_res_data = response;
-            obj->send_to_js();
         }
     } else {
         obj->m_res_data = response;
-        obj->send_to_js();
     }
+    obj->m_job_finished.store(true);
+    lock.unlock();
+    obj->send_to_js();
     obj->finish_job();
 }
 
@@ -1530,8 +1554,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
 
 // Handle timeout event
 void SSWCP_Instance::on_timeout() {
-    handle_general_fail(-2, "time out");
-    finish_job();
+    handle_general_fail(-2, "time out");  // CAS gate is inside handle_general_fail
 }
 
 void SSWCP_Instance::update_filament_info(const json& objects, bool send_message)
@@ -6337,9 +6360,9 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
 }
 
 // Delete instance from list
-void SSWCP::delete_target(SSWCP_Instance* target) {
+void SSWCP::delete_target(std::shared_ptr<SSWCP_Instance> target) {
     wxGetApp().CallAfter([target]() {
-        m_instance_list.remove(target);
+        m_instance_list.remove(target.get());
     });
 }
 

@@ -659,7 +659,7 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
     for (size_t idx = 0; idx < filamentMapping.size(); ++idx) {
         const FilamentData& fd = filamentMapping[idx];
         physicalColorMap[static_cast<int>(idx)] =
-            wxColour(fd.m_color_r, fd.m_color_g, fd.m_color_b);
+            getMainColor(fd.m_color);
     }
 
     std::map<int, wxColour> mixedColorMap;
@@ -670,7 +670,7 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
         context.physical_colors.reserve(filamentMapping.size());
 
         for (const auto& fd : filamentMapping) {
-            wxColour c(fd.m_color_r, fd.m_color_g, fd.m_color_b);
+            wxColour c = getMainColor(fd.m_color);
             context.physical_colors.push_back(into_u8(c.GetAsString(wxC2S_HTML_SYNTAX)));
         }
 

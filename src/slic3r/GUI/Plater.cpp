@@ -476,9 +476,8 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
 
     const auto& filament_presets = preset_bundle->filament_presets;
     const auto* colors_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-    
-    std::vector<std::string> empty_colors;
-    const std::vector<std::string>& colors = colors_opt ? colors_opt->values : empty_colors;
+    const auto* multiColorsOpt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors");
+    const auto* colorModeOpt   = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode");
 
     for (size_t i = 0; i < filament_presets.size(); ++i) {
         FilamentData fd;
@@ -500,13 +499,19 @@ void build_design_filament_list(PresetBundle* preset_bundle, std::vector<Filamen
                 fd.m_type = type_opt->values[i];
         }
 
-        if (i < colors.size()) {
-            unsigned char rgba[4] = {0, 0, 0, 255};
-            if (BitmapCache::parse_color4(colors[i], rgba)) {
-                fd.m_color_r = rgba[0];
-                fd.m_color_g = rgba[1];
-                fd.m_color_b = rgba[2];
-            }
+        {
+            std::vector<std::string> filamentColors;
+            FilamentColorMode mode = FilamentColorMode::Segment;
+
+            if (multiColorsOpt && i < multiColorsOpt->values.size() && !multiColorsOpt->values[i].empty())
+                filamentColors = SplitFilamentMultiColors(multiColorsOpt->values[i]);
+            else if (colors_opt && i < colors_opt->values.size())
+                filamentColors = {colors_opt->values[i]};
+
+            if (colorModeOpt && i < colorModeOpt->values.size())
+                mode = FilamentColorModeFromConfig(colorModeOpt->values[i]);
+
+            fd.m_color = FilamentColor::FromColors(filamentColors, mode);
         }
 
         out_list.push_back(std::move(fd));
@@ -524,13 +529,8 @@ void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<Filame
         fd.m_name  = info.filament_info;
         fd.m_type  = info.filament_type;
         
-        if (!info.color_info.empty()) {
-            unsigned char rgba[4] = {0, 0, 0, 255};
-            if (BitmapCache::parse_color4(info.color_info, rgba)) {
-                fd.m_color_r = rgba[0];
-                fd.m_color_g = rgba[1];
-                fd.m_color_b = rgba[2];
-            }
+        if (!info.color_info.empty() || !info.multiColors.empty()) {
+            fd.m_color = FilamentColor::FromColors(info.multiColors, info.colorMode, info.color_info);
         }
 
         out_list.push_back(std::move(fd));
@@ -8230,6 +8230,8 @@ void Sidebar::show_sync_filament_dialog()
         }
 
         ConfigOptionStrings* co = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        ConfigOptionStrings* mco = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors");
+        ConfigOptionInts*    cmo = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode");
 
         for (size_t i = 0; i < effective_size; ++i) {
             Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name, syncedData[i].m_type);
@@ -8238,8 +8240,14 @@ void Sidebar::show_sync_filament_dialog()
             }
 
             if (co && i < co->values.size()) {
-                wxColour c(syncedData[i].m_color_r, syncedData[i].m_color_g, syncedData[i].m_color_b);
+                wxColour c = getMainColor(syncedData[i].m_color);
                 co->values[i] = into_u8(c.GetAsString(wxC2S_HTML_SYNTAX));
+            }
+            if (mco && i < mco->values.size()) {
+                mco->values[i] = syncedData[i].m_color.ToMultiColorsString();
+            }
+            if (cmo && i < cmo->values.size()) {
+                cmo->values[i] = FilamentColorModeToConfig(syncedData[i].m_color.NormalizedMode());
             }
         }
 

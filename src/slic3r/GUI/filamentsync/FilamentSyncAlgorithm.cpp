@@ -105,14 +105,17 @@ std::vector<int> compute_color_match(
 
     // Precompute Lab values for all machine filaments
     std::vector<Lab> machineLab(machineCount);
-    for (size_t j = 0; j < machineCount; ++j)
-        rgb_to_lab(machine_data[j].m_color_r, machine_data[j].m_color_g, machine_data[j].m_color_b,
+    for (size_t j = 0; j < machineCount; ++j) {
+        wxColour mc = GUI::getMainColor(machine_data[j].m_color);
+        rgb_to_lab(mc.Red(), mc.Green(), mc.Blue(),
                    machineLab[j].L, machineLab[j].a, machineLab[j].b);
+    }
 
     // For each design filament, find the perceptually closest machine filament
     for (size_t i = 0; i < designCount; ++i) {
         float designL, designA, designB;
-        rgb_to_lab(design_data[i].m_color_r, design_data[i].m_color_g, design_data[i].m_color_b,
+        wxColour dc = GUI::getMainColor(design_data[i].m_color);
+        rgb_to_lab(dc.Red(), dc.Green(), dc.Blue(),
                    designL, designA, designB);
 
         float bestDist = std::numeric_limits<float>::max();

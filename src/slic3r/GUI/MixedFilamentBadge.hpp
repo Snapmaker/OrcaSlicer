@@ -14,6 +14,21 @@ struct MixedFilamentDisplayContext;
 
 namespace Slic3r { namespace GUI {
 
+struct CornerRadius
+{
+    int top_left     = 0;
+    int top_right    = 0;
+    int bottom_left  = 0;
+    int bottom_right = 0;
+
+    static CornerRadius Uniform(int r) {
+        return {r, r, r, r};
+    }
+    bool IsZero() const {
+        return top_left == 0 && top_right == 0 && bottom_left == 0 && bottom_right == 0;
+    }
+};
+
 // Unified colour-block parameters used by both solid and gradient swatches.
 struct ColorBlockParams
 {
@@ -36,7 +51,8 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
 // Cached bitmap for official filament colour blocks. Multiple colours are drawn left to right.
 wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, bool is_gradient,
                                         int width, int height, const wxString& label,
-                                        const wxColour& lightBorderColor);
+                                        const wxColour& lightBorderColor,
+                                        const CornerRadius& radius = {});
 
 class MixedFilamentBadge : public wxPanel
 {

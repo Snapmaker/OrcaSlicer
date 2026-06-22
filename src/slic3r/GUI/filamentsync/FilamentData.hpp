@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <wx/colour.h>
 
 #include "libslic3r/MixedFilament.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 
 namespace Slic3r
 {
@@ -16,6 +18,7 @@ constexpr double g_lumR = 0.299;
 constexpr double g_lumG = 0.587;
 constexpr double g_lumB = 0.114;
 constexpr int    g_luminanceThreshold = 140;
+constexpr const char* g_defaultFilamentColor = "#26A69A";
 
 struct FilamentData
 {
@@ -23,9 +26,7 @@ struct FilamentData
     unsigned int m_index   = 0;
     std::string  m_name;
     std::string  m_type;
-    uint8_t      m_color_r = 0;
-    uint8_t      m_color_g = 0;
-    uint8_t      m_color_b = 0;
+    FilamentColor m_color;
 };
 
 struct MixedFilamentPreviewInfo
@@ -47,6 +48,24 @@ inline wxColour getTextColour(const wxColour& bg)
 inline bool is_none_filament(const FilamentData& fd)
 {
     return fd.m_type.empty() || fd.m_type == "NONE";
+}
+
+inline wxColour getMainColor(const FilamentColor& data)
+{
+    const std::string hex = data.PrimaryColor();
+    wxColour c(hex);
+    return c.IsOk() ? c : wxColour(g_defaultFilamentColor);
+}
+
+inline std::vector<wxColour> getAllColors(const FilamentColor& data)
+{
+    std::vector<wxColour> result;
+    result.reserve(data.colors.size());
+    for (const std::string& hex : data.colors) {
+        wxColour c(hex);
+        result.push_back(c.IsOk() ? c : wxColour(g_defaultFilamentColor));
+    }
+    return result;
 }
 
 

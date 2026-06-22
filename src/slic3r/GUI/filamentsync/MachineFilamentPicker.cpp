@@ -7,6 +7,7 @@
 #include <wx/dcgraph.h>
 
 #include "slic3r/GUI/Widgets/Label.hpp"
+#include "slic3r/GUI/MixedFilamentBadge.hpp"
 
 namespace
 {
@@ -196,14 +197,24 @@ private:
 
         bool isNone = isNoneEntry(data);
 
-        // ---- Colour circle ----
-        wxColour fillColor(data.m_color_r, data.m_color_g, data.m_color_b);
+        // ---- Colour circle (bitmap) ----
         int circleCxPx = FromDIP(g_circleCx);
         int circleCyPx = FromDIP(y + g_itemRowH / 2);
         int circleR    = FromDIP(g_circleRadius);
+        int circleD    = circleR * 2;
 
-        dc.SetBrush(wxBrush(fillColor));
-        dc.SetPen(wxPen(isNone ? wxColour(0xCC, 0xCC, 0xCC) : g_circleStroke, FromDIP(1)));
+        std::vector<wxColour> circleColors = getAllColors(data.m_color);
+        bool circleIsGradient = data.m_color.NormalizedMode() == FilamentColorMode::Gradient;
+        const wxColour circleBorder = isNone ? wxColour(0xCC, 0xCC, 0xCC) : g_circleStroke;
+        wxBitmap* circleBmp = get_color_block_bitmap_cached(circleColors, circleIsGradient,
+            circleD, circleD, wxEmptyString, circleBorder,
+            CornerRadius::Uniform(circleR));
+        if (circleBmp && circleBmp->IsOk())
+            dc.DrawBitmap(*circleBmp, circleCxPx - circleR, circleCyPx - circleR);
+
+        // Border circle on top
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.SetPen(wxPen(circleBorder, FromDIP(1)));
         dc.DrawCircle(circleCxPx, circleCyPx, circleR);
 
         // ---- Filament type text ----
@@ -216,7 +227,7 @@ private:
 
         // ---- Index number inside circle (vertically aligned with filament text) ----
         dc.SetFont(indexFont);
-        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : getTextColour(fillColor));
+        dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : getTextColour(getMainColor(data.m_color)));
         wxString idxStr = wxString::Format("%d", data.m_index + 1);
         wxSize   idxExtent = dc.GetTextExtent(idxStr);
         int halfW = static_cast<int>(std::round(idxExtent.x / 2.0));

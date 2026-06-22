@@ -7,6 +7,7 @@
 
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/Widgets/Label.hpp"
+#include "slic3r/GUI/MixedFilamentBadge.hpp"
 
 namespace
 {
@@ -165,14 +166,7 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
     const int    bodyH  = totalH - splitY;
     const int    radius = FromDIP(g_cornerRadius);
 
-    const wxColour aboveColor(m_aboveFilament.m_color_r,
-                              m_aboveFilament.m_color_g,
-                              m_aboveFilament.m_color_b);
-    const wxColour belowColor(m_belowFilament.m_color_r,
-                              m_belowFilament.m_color_g,
-                              m_belowFilament.m_color_b);
-
-    const int      borderW = FromDIP(g_bodyBorderWidth);
+    const int borderW = FromDIP(g_bodyBorderWidth);
 
     // Hover border: use hover color when mouse is over an enabled zone
     bool hoverActive = m_hoveredZone >= 0
@@ -184,11 +178,24 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
     gdc.SetBrush(g_cardBg);
     gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
 
-    // ---- 2. Top bar (above colour, clipped to splitY) ----
+    // ---- 2. Top bar (above filament colour bitmap, clipped to top half) ----
+    {
+        std::vector<wxColour> aboveColors = getAllColors(m_aboveFilament.m_color);
+        bool aboveIsGradient = m_aboveFilament.m_color.NormalizedMode() == FilamentColorMode::Gradient;
+        const int barR = radius;
+        CornerRadius topCorners = {barR, barR, 0, 0};
+        wxBitmap* aboveBmp = get_color_block_bitmap_cached(aboveColors, aboveIsGradient,
+            w, totalH, wxEmptyString, wxColour(), topCorners);
+        wxDCClipper clip(gdc, wxRect(0, 0, w, splitY));
+        if (aboveBmp && aboveBmp->IsOk())
+            gdc.DrawBitmap(*aboveBmp, 0, 0);
+    }
+
+    // Redraw card border over the bitmap so it stays visible
     {
         wxDCClipper clip(gdc, wxRect(0, 0, w, splitY));
         gdc.SetPen(wxPen(borderColour, borderW));
-        gdc.SetBrush(wxBrush(aboveColor));
+        gdc.SetBrush(*wxTRANSPARENT_BRUSH);
         gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
     }
 
@@ -201,7 +208,7 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
     // ---- 4. Top bar label ----
     {
         const wxColour textColour = m_bAboveEnabled
-                                        ? getTextColour(aboveColor)
+                                        ? getTextColour(getMainColor(m_aboveFilament.m_color))
                                         : g_bodyTextColor;
         gdc.SetTextForeground(textColour);
         gdc.SetFont(Label::Body_10);
@@ -210,18 +217,27 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
         gdc.DrawText(label, (w - te.x) / 2, FromDIP(g_topTextY));
     }
 
-    // ---- 5. Index circle (filled with machine filament colour) ----
+    // ---- 5. Index circle (filled with machine filament colour bitmap) ----
     {
         const int circleD = FromDIP(g_circleDiameter);
         const int cx      = w / 2;
         const int cy      = splitY + FromDIP(g_circleYOffset) + circleD / 2;
         const int cr      = circleD / 2;
 
+        std::vector<wxColour> belowColors = getAllColors(m_belowFilament.m_color);
+        bool belowIsGradient = m_belowFilament.m_color.NormalizedMode() == FilamentColorMode::Gradient;
+        wxBitmap* belowBmp = get_color_block_bitmap_cached(belowColors, belowIsGradient,
+            circleD, circleD, wxEmptyString, borderColour,
+            CornerRadius::Uniform(cr));
+        if (belowBmp && belowBmp->IsOk())
+            gdc.DrawBitmap(*belowBmp, cx - cr, cy - cr);
+
+        // Border circle drawn on top of bitmap
         gdc.SetPen(wxPen(borderColour, borderW));
-        gdc.SetBrush(wxBrush(belowColor));
+        gdc.SetBrush(*wxTRANSPARENT_BRUSH);
         gdc.DrawCircle(cx, cy, cr);
 
-        gdc.SetTextForeground(getTextColour(belowColor));
+        gdc.SetTextForeground(getTextColour(getMainColor(m_belowFilament.m_color)));
         gdc.SetFont(Label::Head_12);
         const wxString num    = wxString::Format("%u", m_belowFilament.m_index + 1);
         const wxSize   numExt = gdc.GetTextExtent(num);

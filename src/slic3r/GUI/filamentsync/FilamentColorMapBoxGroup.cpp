@@ -35,21 +35,19 @@ const wxColour g_containerBg(0xFF, 0xFF, 0xFF);
 const wxColour g_dialogBg(0xF8, 0xF7, 0xF7);
 const wxColour g_containerBorder(0xF0, 0xF0, 0xF0);
 const wxColour g_labelTextColor(0x24, 0x24, 0x24);
+constexpr const char* g_defaultCardColor = "#CCCCCC";
 
 // ============================================================
 // Default below (placeholder)
 // ============================================================
-constexpr unsigned char g_placeholderGrey = 0xCC;
-
 Slic3r::GUI::FilamentData makeDefaultBelow(unsigned int index)
 {
     Slic3r::GUI::FilamentData d;
     d.m_index   = index;
     d.m_name    = "NONE";
     d.m_type    = "NONE";
-    d.m_color_r = g_placeholderGrey;
-    d.m_color_g = g_placeholderGrey;
-    d.m_color_b = g_placeholderGrey;
+    std::vector<std::string> colors = { g_defaultCardColor };
+    d.m_color   = Slic3r::FilamentColor::FromColors(colors, Slic3r::FilamentColorMode::Segment);
     return d;
 }
 

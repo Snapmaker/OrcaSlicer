@@ -5,6 +5,9 @@
 #include "BitmapCache.hpp"
 #include "libslic3r/MixedFilament.hpp"
 
+#include <wx/image.h>
+#include <cstring>
+
 namespace Slic3r { namespace GUI {
 
 wxColour interpolate_color(const std::vector<wxColour>& colors, double pos)
@@ -28,6 +31,54 @@ wxColour interpolate_color(const std::vector<wxColour>& colors, double pos)
     int b = int(c1.Blue()  * (1.0 - local_pos) + c2.Blue()  * local_pos);
 
     return wxColour(r, g, b);
+}
+
+// Check whether a pixel lies inside a rounded rectangle.
+static inline bool PixelInRoundedRect(int x, int y, int w, int h, const CornerRadius& r)
+{
+    // --- Full-circle fast path --------------------------------------------
+    const bool isCircle = (w == h)
+        && (r.top_left == r.top_right)
+        && (r.top_left == r.bottom_right)
+        && (r.top_left == r.bottom_left)
+        && (r.top_left * 2 == w);
+
+    if (isCircle) {
+        // Pixel centre (x+½, y+½) against a circle centred at (w/2, h/2).
+        // Multiply the inequality by 4 to stay in integer arithmetic:
+        //   (2x+1 - 2r)² + (2y+1 - 2r)²  ≤  4r²
+        const int R  = r.top_left;
+        const int dx = 2 * x + 1 - 2 * R;
+        const int dy = 2 * y + 1 - 2 * R;
+        return dx * dx + dy * dy <= 4 * R * R;
+    }
+
+    // --- Rounded-rectangle path -------------------------------------------
+    // Top-left corner
+    if (x < r.top_left && y < r.top_left) {
+        int dx = x - r.top_left;
+        int dy = y - r.top_left;
+        return dx * dx + dy * dy <= r.top_left * r.top_left;
+    }
+    // Top-right corner
+    if (x >= w - r.top_right && y < r.top_right) {
+        int dx = (x + 1) - (w - r.top_right);
+        int dy = y - r.top_right;
+        return dx * dx + dy * dy <= r.top_right * r.top_right;
+    }
+    // Bottom-right corner
+    if (x >= w - r.bottom_right && y >= h - r.bottom_right) {
+        int dx = (x + 1) - (w - r.bottom_right);
+        int dy = (y + 1) - (h - r.bottom_right);
+        return dx * dx + dy * dy <= r.bottom_right * r.bottom_right;
+    }
+    // Bottom-left corner
+    if (x < r.bottom_left && y >= h - r.bottom_left) {
+        int dx = x - r.bottom_left;
+        int dy = (y + 1) - (h - r.bottom_left);
+        return dx * dx + dy * dy <= r.bottom_left * r.bottom_left;
+    }
+    return true;
 }
 
 MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virtual_id,
@@ -235,12 +286,15 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
 
 wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, bool is_gradient,
                                         int width, int height, const wxString& label,
-                                        const wxColour& lightBorderColor)
+                                        const wxColour& lightBorderColor,
+                                        const CornerRadius& radius)
 {
     wxASSERT(wxIsMainThread());
     static BitmapCache cache;
 
-    width = std::max(1, width);
+    const bool useRadius = !radius.IsZero();
+
+    width  = std::max(1, width);
     height = std::max(1, height);
 
     std::vector<wxColour> drawColors;
@@ -269,11 +323,20 @@ wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, boo
         key += lightBorderColor.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
     }
 
+    if (useRadius) {
+        key += ":r";
+        key += std::to_string(radius.top_left) + ",";
+        key += std::to_string(radius.top_right) + ",";
+        key += std::to_string(radius.bottom_left) + ",";
+        key += std::to_string(radius.bottom_right);
+    }
+
     wxBitmap* cached = cache.find(key);
     if (cached != nullptr)
         return cached;
 
-    wxBitmap bmp(width, height);
+    const int bmpDepth = useRadius ? 32 : -1;
+    wxBitmap bmp(width, height, bmpDepth);
     wxMemoryDC dc;
     dc.SelectObject(bmp);
     dc.SetPen(*wxTRANSPARENT_PEN);
@@ -366,6 +429,23 @@ wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, boo
     }
 
     dc.SelectObject(wxNullBitmap);
+
+    // Rounded corners: set alpha=0 for pixels outside the rounded rectangle
+    if (useRadius) {
+        wxImage img = bmp.ConvertToImage();
+        img.InitAlpha();
+        unsigned char* alpha = img.GetAlpha();
+        // Start with alpha=255 everywhere, then clear corners
+        memset(alpha, 255, static_cast<size_t>(width) * height);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                if (!PixelInRoundedRect(x, y, width, height, radius))
+                    alpha[y * width + x] = 0;
+            }
+        }
+        bmp = wxBitmap(img, 32);
+    }
+
     return cache.insert(key, bmp);
 }
 

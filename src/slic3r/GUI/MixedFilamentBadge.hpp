@@ -16,16 +16,16 @@ namespace Slic3r { namespace GUI {
 
 struct CornerRadius
 {
-    int top_left     = 0;
-    int top_right    = 0;
-    int bottom_left  = 0;
-    int bottom_right = 0;
+    int m_topLeft     = 0;
+    int m_topRight    = 0;
+    int m_bottomLeft  = 0;
+    int m_bottomRight = 0;
 
     static CornerRadius Uniform(int r) {
         return {r, r, r, r};
     }
     bool IsZero() const {
-        return top_left == 0 && top_right == 0 && bottom_left == 0 && bottom_right == 0;
+        return m_topLeft == 0 && m_topRight == 0 && m_bottomLeft == 0 && m_bottomRight == 0;
     }
 };
 

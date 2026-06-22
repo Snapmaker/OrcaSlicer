@@ -34,20 +34,20 @@ wxColour interpolate_color(const std::vector<wxColour>& colors, double pos)
 }
 
 // Check whether a pixel lies inside a rounded rectangle.
-static inline bool PixelInRoundedRect(int x, int y, int w, int h, const CornerRadius& r)
+static inline bool pixelInRoundedRect(int x, int y, int w, int h, const CornerRadius& r)
 {
     // --- Full-circle fast path --------------------------------------------
     const bool isCircle = (w == h)
-        && (r.top_left == r.top_right)
-        && (r.top_left == r.bottom_right)
-        && (r.top_left == r.bottom_left)
-        && (r.top_left * 2 == w);
+        && (r.m_topLeft == r.m_topRight)
+        && (r.m_topLeft == r.m_bottomRight)
+        && (r.m_topLeft == r.m_bottomLeft)
+        && (r.m_topLeft * 2 == w);
 
     if (isCircle) {
         // Pixel centre (x+½, y+½) against a circle centred at (w/2, h/2).
         // Multiply the inequality by 4 to stay in integer arithmetic:
         //   (2x+1 - 2r)² + (2y+1 - 2r)²  ≤  4r²
-        const int R  = r.top_left;
+        const int R  = r.m_topLeft;
         const int dx = 2 * x + 1 - 2 * R;
         const int dy = 2 * y + 1 - 2 * R;
         return dx * dx + dy * dy <= 4 * R * R;
@@ -55,28 +55,28 @@ static inline bool PixelInRoundedRect(int x, int y, int w, int h, const CornerRa
 
     // --- Rounded-rectangle path -------------------------------------------
     // Top-left corner
-    if (x < r.top_left && y < r.top_left) {
-        int dx = x - r.top_left;
-        int dy = y - r.top_left;
-        return dx * dx + dy * dy <= r.top_left * r.top_left;
+    if (x < r.m_topLeft && y < r.m_topLeft) {
+        int dx = x - r.m_topLeft;
+        int dy = y - r.m_topLeft;
+        return dx * dx + dy * dy <= r.m_topLeft * r.m_topLeft;
     }
     // Top-right corner
-    if (x >= w - r.top_right && y < r.top_right) {
-        int dx = (x + 1) - (w - r.top_right);
-        int dy = y - r.top_right;
-        return dx * dx + dy * dy <= r.top_right * r.top_right;
+    if (x >= w - r.m_topRight && y < r.m_topRight) {
+        int dx = (x + 1) - (w - r.m_topRight);
+        int dy = y - r.m_topRight;
+        return dx * dx + dy * dy <= r.m_topRight * r.m_topRight;
     }
     // Bottom-right corner
-    if (x >= w - r.bottom_right && y >= h - r.bottom_right) {
-        int dx = (x + 1) - (w - r.bottom_right);
-        int dy = (y + 1) - (h - r.bottom_right);
-        return dx * dx + dy * dy <= r.bottom_right * r.bottom_right;
+    if (x >= w - r.m_bottomRight && y >= h - r.m_bottomRight) {
+        int dx = (x + 1) - (w - r.m_bottomRight);
+        int dy = (y + 1) - (h - r.m_bottomRight);
+        return dx * dx + dy * dy <= r.m_bottomRight * r.m_bottomRight;
     }
     // Bottom-left corner
-    if (x < r.bottom_left && y >= h - r.bottom_left) {
-        int dx = x - r.bottom_left;
-        int dy = (y + 1) - (h - r.bottom_left);
-        return dx * dx + dy * dy <= r.bottom_left * r.bottom_left;
+    if (x < r.m_bottomLeft && y >= h - r.m_bottomLeft) {
+        int dx = x - r.m_bottomLeft;
+        int dy = (y + 1) - (h - r.m_bottomLeft);
+        return dx * dx + dy * dy <= r.m_bottomLeft * r.m_bottomLeft;
     }
     return true;
 }
@@ -325,10 +325,10 @@ wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, boo
 
     if (useRadius) {
         key += ":r";
-        key += std::to_string(radius.top_left) + ",";
-        key += std::to_string(radius.top_right) + ",";
-        key += std::to_string(radius.bottom_left) + ",";
-        key += std::to_string(radius.bottom_right);
+        key += std::to_string(radius.m_topLeft) + ",";
+        key += std::to_string(radius.m_topRight) + ",";
+        key += std::to_string(radius.m_bottomLeft) + ",";
+        key += std::to_string(radius.m_bottomRight);
     }
 
     wxBitmap* cached = cache.find(key);
@@ -439,7 +439,7 @@ wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, boo
         memset(alpha, 255, static_cast<size_t>(width) * height);
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
-                if (!PixelInRoundedRect(x, y, width, height, radius))
+                if (!pixelInRoundedRect(x, y, width, height, radius))
                     alpha[y * width + x] = 0;
             }
         }

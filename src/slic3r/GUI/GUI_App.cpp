@@ -2318,7 +2318,7 @@ void GUI_App::report_flutter_web_copy_failure(FlutterWebCopyStatus status)
              m_flutter_web_copy_status != FlutterWebCopyStatus::InstallFailed)
         m_flutter_web_copy_status = FlutterWebCopyStatus::UpgradeFailed;
     else 
-        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << status;
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << static_cast<int>(status);
 }
 
 void GUI_App::do_notify_flutter_web_copy_failure()

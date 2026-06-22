@@ -940,7 +940,7 @@ void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
         initial_extruder = config.has("extruder") ? config.extruder() : 0;
     }
 
-    for (size_t display_idx = 1; display_idx <= ordered_filament_ids.size(); ++display_idx)
+    for (size_t display_idx = 0; display_idx <= ordered_filament_ids.size(); ++display_idx)
     {
         const int actual_filament_id = display_idx == 0 ? 0 : int(ordered_filament_ids[display_idx - 1]);
         const bool is_active_extruder = actual_filament_id == initial_extruder;
@@ -2086,7 +2086,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
             initial_extruder = config.has("extruder") ? config.extruder() : 0;
     }
 
-    for (size_t display_idx = 1; display_idx <= ordered_filament_ids.size(); ++display_idx)
+    for (size_t display_idx = 0; display_idx <= ordered_filament_ids.size(); ++display_idx)
     {
         const int actual_filament_id = display_idx == 0 ? 0 : int(ordered_filament_ids[display_idx - 1]);
         bool is_active_extruder = false;

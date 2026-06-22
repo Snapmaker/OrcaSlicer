@@ -233,6 +233,142 @@ wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params)
     return cache.insert(key, bmp);
 }
 
+wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, bool is_gradient,
+                                        int width, int height, const wxString& label,
+                                        const wxColour& lightBorderColor)
+{
+    wxASSERT(wxIsMainThread());
+    static BitmapCache cache;
+
+    width = std::max(1, width);
+    height = std::max(1, height);
+
+    std::vector<wxColour> drawColors;
+    drawColors.reserve(colors.empty() ? 1 : colors.size());
+    if (colors.empty())
+    {
+        drawColors.emplace_back(wxColour("#26A69A"));
+    }
+    else
+    {
+        for (const wxColour& color : colors)
+            drawColors.emplace_back(color.IsOk() ? color : wxColour("#26A69A"));
+    }
+
+    const bool useGradient = is_gradient && drawColors.size() > 1;
+    std::string key = useGradient ? "official-grad:" : "official-seg:";
+    key += "h" + std::to_string(height) + ":w" + std::to_string(width) + ":" + label.ToStdString();
+    for (const wxColour& color : drawColors)
+    {
+        key += ":";
+        key += color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+    }
+    if (lightBorderColor.IsOk())
+    {
+        key += ":border:";
+        key += lightBorderColor.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+    }
+
+    wxBitmap* cached = cache.find(key);
+    if (cached != nullptr)
+        return cached;
+
+    wxBitmap bmp(width, height);
+    wxMemoryDC dc;
+    dc.SelectObject(bmp);
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    const bool useSmallFont = std::min(width, height) < 20;
+    dc.SetFont(useSmallFont ? ::Label::Body_8 : ::Label::Body_12);
+
+    if (drawColors.size() <= 1)
+    {
+        dc.SetBackground(wxBrush(drawColors.front()));
+        dc.Clear();
+        dc.SetBrush(wxBrush(drawColors.front()));
+        dc.DrawRectangle(0, 0, width, height);
+    }
+    else if (useGradient)
+    {
+        dc.SetBrush(wxBrush(drawColors.front()));
+        dc.DrawRectangle(0, 0, width, height);
+        const int segmentCount = static_cast<int>(drawColors.size()) - 1;
+        int left = 0;
+        for (int index = 0; index < segmentCount; ++index)
+        {
+            const int right = index == segmentCount - 1 ? width : width * (index + 1) / segmentCount;
+            const int segmentWidth = right - left;
+            if (segmentWidth > 0)
+                dc.GradientFillLinear(wxRect(left, 0, segmentWidth, height), drawColors[static_cast<size_t>(index)],
+                                      drawColors[static_cast<size_t>(index + 1)], wxEAST);
+            left = right;
+        }
+    }
+    else
+    {
+        const int colorCount = static_cast<int>(drawColors.size());
+        int left = 0;
+        for (int index = 0; index < colorCount; ++index)
+        {
+            const int right = index == colorCount - 1 ? width : width * (index + 1) / colorCount;
+            const int segmentWidth = right - left;
+            dc.SetBrush(wxBrush(drawColors[static_cast<size_t>(index)]));
+            if (segmentWidth > 0)
+                dc.DrawRectangle(left, 0, segmentWidth, height);
+            left = right;
+        }
+    }
+
+    auto colorIsVeryLight = [](const wxColour& color) -> bool
+    {
+        return color.Red() > 224 && color.Green() > 224 && color.Blue() > 224;
+    };
+
+    bool veryLight = true;
+    if (!useGradient && drawColors.size() > 1)
+    {
+        veryLight = false;
+        for (const wxColour& color : drawColors)
+        {
+            if (colorIsVeryLight(color))
+            {
+                veryLight = true;
+                break;
+            }
+        }
+    }
+    else
+    {
+        for (const wxColour& color : drawColors)
+        {
+            if (!colorIsVeryLight(color))
+            {
+                veryLight = false;
+                break;
+            }
+        }
+    }
+
+    if (veryLight)
+    {
+        dc.SetPen(lightBorderColor.IsOk() ? wxPen(lightBorderColor, 1) : *wxGREY_PEN);
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawRectangle(0, 0, width, height);
+    }
+
+    if (!label.empty())
+    {
+        double averageLuminance = 0.0;
+        for (const wxColour& color : drawColors)
+            averageLuminance += color.GetLuminance();
+        averageLuminance /= static_cast<double>(drawColors.size());
+        dc.SetTextForeground(averageLuminance < 0.51 ? *wxWHITE : *wxBLACK);
+        dc.DrawLabel(label, wxRect(0, 0, width, height), wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL);
+    }
+
+    dc.SelectObject(wxNullBitmap);
+    return cache.insert(key, bmp);
+}
+
 // ---------------------------------------------------------------------------
 // Free function — shared between badge and merge menus
 // ---------------------------------------------------------------------------

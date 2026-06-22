@@ -170,6 +170,7 @@ public:
     void load_ams_list(std::string const & device, MachineObject* obj);
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list();
+    void show_sync_filament_dialog();
     // Orca
     void show_SEMM_buttons(bool bshow);
     void update_dynamic_filament_list();

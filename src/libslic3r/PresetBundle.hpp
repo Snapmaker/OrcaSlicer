@@ -33,6 +33,7 @@ enum class VendorType {
 struct ConnectMachineInfo
 {
     std::string filament_info {""};
+    std::string filament_type {""};
     std::string nozzle_info {""};
     std::string color_info{""};
     std::vector<std::string> multiColors;

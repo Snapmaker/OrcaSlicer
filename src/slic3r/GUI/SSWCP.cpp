@@ -995,19 +995,27 @@ void SSWCP_Instance::send_to_js()
     response["payload"] = payload;
 
     std::string json_str = response.dump(4, ' ', true);
+    std::string str_res = "window.postMessage(JSON.stringify(" + json_str + "), '*');";
 
-    WCP_Logger::getInstance().add_log(json_str, false, "", "WCP", "info");
+    WCP_Logger::getInstance().add_log(str_res, false, "", "WCP", "info");
 
     auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-    wxGetApp().CallAfter([weak_self, json_str]() 
-    {            
-        auto self = weak_self.lock();
-        if (!self) 
-            return;
-            
-        // Use WebSocket in debug mode, fall back to WebView postMessage in production mode
-        SSWCP::send_message_auto(json_str, self->m_webview);
+    wxGetApp().CallAfter([weak_self, str_res, json_str]()
+    {
+        {
+            auto self = weak_self.lock();
+            if (!self)
+                return;
 
+            // Original communication path: send via WebView postMessage
+            if (self->m_webview && self->m_webview->GetRefData()) {
+                WebView::RunScript(self->m_webview, str_res);
+            }
+
+            // Flutter debug: copy message to Flutter debug interface via WebSocket
+            // This is independent of the original communication path above
+            SSWCP::send_message_to_flutter(json_str);
+        } 
     });
 
 }
@@ -6734,19 +6742,20 @@ void SSWCP::send_message_to_flutter(const std::string& message)
 
 void SSWCP::send_message_auto(const std::string& message, wxWebView* webview)
 {
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-
-    // Always send via postMessage if webview is available (production + debug mode)
+    // Original production path: send via WebView postMessage (unchanged, not affected by debug logic)
     if (webview && webview->GetRefData()) {
         BOOST_LOG_TRIVIAL(debug) << "Sending message to Flutter via WebView postMessage";
         std::string js_code = "window.postMessage(JSON.stringify(" + message + "), '*');";
         WebView::RunScript(webview, js_code);
     }
 
-    // Additionally send via WebSocket if debug mode is enabled
-    if (m_debug_mode_enabled && m_debug_server && m_debug_server->has_client()) {
-        BOOST_LOG_TRIVIAL(debug) << "[DEBUG] Also sending message to Flutter via WebSocket";
-        m_debug_server->send_message(message);
+    // Debug path: copy the message to Flutter debug interface via WebSocket (independent of original path)
+    {
+        std::lock_guard<std::mutex> lock(m_debug_server_mutex);
+        if (m_debug_mode_enabled && m_debug_server && m_debug_server->has_client()) {
+            BOOST_LOG_TRIVIAL(debug) << "[DEBUG] Sending message to Flutter via WebSocket";
+            m_debug_server->send_message(message);
+        }
     }
 
     // Warning if no channel is available

@@ -7439,8 +7439,10 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         if (path.role() != erBottomSurface)
             speed = m_config.get_abs_value("initial_layer_speed");
     } else if (m_config.slow_down_layers > 1) {
-        const auto _layer = layer_id();
-        if (_layer > 0 && _layer < m_config.slow_down_layers) {
+        // Subtract raft layers so the slow-down count starts from the first model layer
+        const int raft_layers = int(m_layer->object()->slicing_parameters().raft_layers());
+        const int _layer      = layer_id() - raft_layers;
+        if (_layer >= 0 && _layer < m_config.slow_down_layers) {
             const auto first_layer_speed = is_perimeter(path.role()) ? m_config.get_abs_value("initial_layer_speed") :
                                                                        m_config.get_abs_value("initial_layer_infill_speed");
             if (first_layer_speed < speed) {

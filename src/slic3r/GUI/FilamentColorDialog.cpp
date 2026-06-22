@@ -642,11 +642,11 @@ void FilamentColorDialog::BuildUi()
     wxBoxSizer* buttonPanelSizer = new wxBoxSizer(wxVERTICAL);
     wxBoxSizer* buttons = new wxBoxSizer(wxHORIZONTAL);
     Button* cancel = new Button(buttonPanel, _L("Cancel"), wxEmptyString, wxBORDER_NONE, 0, wxID_CANCEL);
-    cancel->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
     const wxSize buttonSize(FromDIP(166), FromDIP(38));
     cancel->SetMinSize(buttonSize);
     cancel->SetSize(buttonSize);
     cancel->SetCornerRadius(FromDIP(4));
+    cancel->SetBorderWidth(FromDIP(1));
     cancel->SetBackgroundColorNormal(wxColour("#FFFFFF"));
     cancel->SetBorderColorNormal(wxColour("#D1D5DC"));
     cancel->SetTextColorNormal(wxColour("#242424"));

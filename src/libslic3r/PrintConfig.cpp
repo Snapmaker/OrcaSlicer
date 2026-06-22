@@ -2060,6 +2060,22 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "#F2754E" });
 
+    def = this->add("filament_multi_colors", coStrings);
+    def->label = L("Filament multi colors");
+    def->tooltip = L("Serialized filament color sequence. Multiple colors are separated by '|'.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings{ "" });
+
+    def = this->add("filament_colour_mode", coInts);
+    def->label = L("Filament color display mode");
+    def->tooltip = L("Filament color display mode: 0 for split colors, 1 for gradient.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->min = 0;
+    def->max = 1;
+    def->set_default_value(new ConfigOptionInts{ 0 });
+
     def           = this->add("thumb0", coStrings);
     def->label    = L("small thumb");
     def->tooltip  = L("first small thumb");
@@ -2390,6 +2406,12 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Support material is commonly used to print supports and support interfaces.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBools { false });
+
+    def          = this->add("filament_is_high_temperature", coBools);
+    def->label   = L("Is high-temperature filament");
+    def->tooltip = L("Indicates whether this is a high-temperature filament that requires elevated printing temperatures.");
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionBools{false});
 
     // BBS
     def = this->add("temperature_vitrification", coInts);
@@ -6443,6 +6465,7 @@ void PrintConfigDef::init_filament_option_keys()
         "retraction_length", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "filament_colour",
+        "filament_multi_colors", "filament_colour_mode",
         "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"/*,"filament_seam_gap"*/
     };
 

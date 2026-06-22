@@ -2826,6 +2826,9 @@ msgstr "AMS 材料设置"
 msgid "Confirm"
 msgstr "确定"
 
+msgid "Confirm slicing"
+msgstr "请确认是否切片"
+
 msgid "Close"
 msgstr "关闭"
 
@@ -8373,7 +8376,7 @@ msgid "Update firmware"
 msgstr "更新固件"
 
 msgid "Beta version"
-msgstr "Beta版本"
+msgstr "Beta 版"
 
 msgid "Updating"
 msgstr "更新中"
@@ -10040,6 +10043,12 @@ msgstr "支撑材料"
 
 msgid "Support material is commonly used to print supports and support interfaces."
 msgstr "支撑材料通常用于打印支撑体和支撑接触面"
+
+msgid "Is high-temperature filament"
+msgstr "是否为高温耗材"
+
+msgid "Indicates whether this is a high-temperature filament that requires elevated printing temperatures."
+msgstr "指示此耗材是否为需要较高打印温度的高温耗材。"
 
 msgid "Softening temperature"
 msgstr "软化温度"
@@ -15232,8 +15241,50 @@ msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
 msgid "Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing."
 msgstr "混色耗材中包含不兼容的材料类型，请切片前修改为兼容的混色耗材类型。"
 
+msgid "High and Low Temperature Material Mixing Risk"
+msgstr "高/低温材料混打风险"
+
+msgid ""
+"Mixing materials with significantly different printing temperatures may result in:\n"
+"· Extruder clogging\n"
+"· Nozzle damage\n"
+"· Layer adhesion issues\n"
+"\n"
+"Do you want to enable this feature?"
+msgstr ""
+"混合使用打印温度差异较大的材料，可能导致：\n"
+"· 挤出机堵塞\n"
+"· 喷嘴损坏\n"
+"· 层间粘附问题\n"
+"\n"
+"确认启用此功能吗？"
+
 msgid "Tower ironing area"
 msgstr "擦拭塔熨烫面积"
 
 msgid "Ironing area for prime tower interface layer (where different materials meet)."
 msgstr "擦拭塔的起始点熨烫面积"
+
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。"
+
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+
+msgid "This material combination may cause risks. Do you want to continue?"
+msgstr "此材料组合可能存在风险，是否继续？"
+
+msgid "Allow high/low temperature filament mixing"
+msgstr "允许高/低温材料混合打印"
+
+msgid "If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."
+msgstr "启用后允许高温材料与低温材料同时打印"
+
+msgid "Official Filaments"
+msgstr "官方耗材"
+
+msgid "Other Colors"
+msgstr "其他颜色"
+
+msgid "Multiple Color"
+msgstr "多色"

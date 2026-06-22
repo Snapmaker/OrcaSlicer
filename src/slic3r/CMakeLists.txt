@@ -109,6 +109,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/ExtrusionCalibration.hpp
     GUI/Field.cpp
     GUI/Field.hpp
+    GUI/FilamentColorUtils.cpp
+    GUI/FilamentColorUtils.hpp
     GUI/FileArchiveDialog.cpp
     GUI/FileArchiveDialog.hpp
     GUI/format.hpp
@@ -325,6 +327,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/MixedFilamentBadge.hpp
     GUI/ObjColorDialog.cpp
     GUI/ObjColorDialog.hpp
+    GUI/FilamentColorDialog.cpp
+    GUI/FilamentColorDialog.hpp
     GUI/ObjectDataViewModel.cpp
     GUI/ObjectDataViewModel.hpp
     GUI/OG_CustomCtrl.cpp

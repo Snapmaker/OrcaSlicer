@@ -92,29 +92,16 @@ bool internal_solid_infill_uses_sparse_filament(const PrintRegion &region, Extru
     return role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON;
 }
 
-bool use_base_infill_filament(const LayerTools &layer_tools, const PrintRegion &region)
+unsigned int sparse_infill_filament_id_1based(const PrintRegion &region)
 {
-    const PrintRegionConfig &config = region.config();
-    if (!config.enable_infill_filament_override.value)
-        return true;
-    if (layer_tools.object_layer_count <= 0)
-        return false;
-
-    const int first_layers = std::max(0, config.infill_filament_use_base_first_layers.value);
-    const int last_layers  = std::max(0, config.infill_filament_use_base_last_layers.value);
-    return layer_tools.layer_index < first_layers || layer_tools.layer_index >= layer_tools.object_layer_count - last_layers;
-}
-
-unsigned int sparse_infill_filament_id_1based(const LayerTools &layer_tools, const PrintRegion &region)
-{
-    return use_base_infill_filament(layer_tools, region) ? region.config().wall_filament.value : region.config().sparse_infill_filament.value;
+    return region.config().sparse_infill_filament.value;
 }
 
 unsigned int infill_filament_id_1based(const LayerTools &layer_tools, const PrintRegion &region, ExtrusionRole role)
 {
     if (internal_solid_infill_uses_sparse_filament(region, role))
-        return sparse_infill_filament_id_1based(layer_tools, region);
-    return is_solid_infill(role) ? region.config().solid_infill_filament.value : sparse_infill_filament_id_1based(layer_tools, region);
+        return sparse_infill_filament_id_1based(region);
+    return is_solid_infill(role) ? region.config().solid_infill_filament.value : sparse_infill_filament_id_1based(region);
 }
 
 unsigned int grouped_manual_pattern_mixed_filament_id_for_layer(const LayerTools& layer_tools,
@@ -307,7 +294,7 @@ unsigned int LayerTools::wall_filament(const PrintRegion &region) const
 unsigned int LayerTools::sparse_infill_filament(const PrintRegion &region) const
 {
 	assert(region.config().wall_filament.value > 0);
-	unsigned int id = (this->extruder_override == 0) ? sparse_infill_filament_id_1based(*this, region) : this->extruder_override;
+	unsigned int id = (this->extruder_override == 0) ? sparse_infill_filament_id_1based(region) : this->extruder_override;
     const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
 	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
 }
@@ -487,6 +474,25 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
     }
 
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
+
+    /*if (prime_multi_material) {
+        std::map<unsigned int, int> extrudeCount;
+        for (const LayerTools& lt : m_layer_tools) {
+            for (unsigned int currentExtruder : lt.extruders) {
+                extrudeCount[currentExtruder]++;
+            }
+        }
+
+        unsigned int maxExtrude = -1;
+        int maxCount = 0;
+        for (auto& itPair : extrudeCount) {
+            if (itPair.second > maxCount && !m_print_config_ptr->filament_soluble.get_at(itPair.first)) {
+                maxCount = itPair.second;
+                maxExtrude = itPair.first;
+            }
+        }
+        const_cast<PrintConfig*>(m_print_config_ptr)->wipe_tower_filament.setInt(maxExtrude + 1);
+    }*/
 
     if (this->insert_wipe_tower_extruder()) {
         // Now convert the 0-based list to 1-based again, because that is what reorder_extruder expects.

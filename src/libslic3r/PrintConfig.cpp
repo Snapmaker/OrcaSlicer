@@ -2060,6 +2060,22 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "#F2754E" });
 
+    def = this->add("filament_multi_colors", coStrings);
+    def->label = L("Filament multi colors");
+    def->tooltip = L("Serialized filament color sequence. Multiple colors are separated by '|'.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings{ "" });
+
+    def = this->add("filament_colour_mode", coInts);
+    def->label = L("Filament color display mode");
+    def->tooltip = L("Filament color display mode: 0 for split colors, 1 for gradient.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->min = 0;
+    def->max = 1;
+    def->set_default_value(new ConfigOptionInts{ 0 });
+
     def           = this->add("thumb0", coStrings);
     def->label    = L("small thumb");
     def->tooltip  = L("first small thumb");
@@ -2390,6 +2406,12 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Support material is commonly used to print supports and support interfaces.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBools { false });
+
+    def          = this->add("filament_is_high_temperature", coBools);
+    def->label   = L("Is high-temperature filament");
+    def->tooltip = L("Indicates whether this is a high-temperature filament that requires elevated printing temperatures.");
+    def->mode    = comSimple;
+    def->set_default_value(new ConfigOptionBools{false});
 
     // BBS
     def = this->add("temperature_vitrification", coInts);
@@ -3378,31 +3400,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(100., true));
 
-    def = this->add("enable_infill_filament_override", coBool);
-    def->label = L("Override infill filament");
-    def->category = L("Extruders");
-    def->tooltip = L("Allow this print, object, or part to use a dedicated filament for sparse infill instead of inheriting its regular filament.");
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
-
-    def = this->add("infill_filament_use_base_first_layers", coInt);
-    def->label = L("Base infill on first layers");
-    def->category = L("Extruders");
-    def->tooltip = L("Keep using the regular object filament for this many bottom infill layers before switching to the infill override filament.");
-    def->sidetext = L("layers");
-    def->min = 0;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(0));
-
-    def = this->add("infill_filament_use_base_last_layers", coInt);
-    def->label = L("Base infill on last layers");
-    def->category = L("Extruders");
-    def->tooltip = L("Keep using the regular object filament for this many top infill layers after switching back from the infill override filament.");
-    def->sidetext = L("layers");
-    def->min = 0;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(0));
-
     def = this->add("sparse_infill_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Infill");
@@ -4362,7 +4359,7 @@ void PrintConfigDef::init_fff_params()
                      "This is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\n"
                      "It can improve internal color mixing, but may add toolchanges and affect infill behavior.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("dithering_local_z_direct_multicolor", coBool);
     def->label = L("Use direct multicolor Local-Z solver");
@@ -5519,7 +5516,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing z-gap and save print time. "
                      "This option will be invalid when the prime tower is enabled.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("support_threshold_angle", coInt);
     def->label = L("Threshold angle");
@@ -6031,13 +6028,8 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(30.0));
     
     def = this->add("wipe_tower_max_purge_speed", coFloat);
-    def->label = L("Maximum wipe tower print speed");
-    def->tooltip = L("The maximum print speed when purging in the wipe tower and printing the wipe tower sparse layers. "
-                     "When purging, if the sparse infill speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n\n"
-                     "When printing the sparse layers, if the internal perimeter speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n\n"
-                     "Increasing this speed may affect the tower's stability as well as increase the force with which the nozzle collides with any blobs that may have formed on the wipe tower.\n\n"
-                     "Before increasing this parameter beyond the default of 90 mm/s, make sure your printer can reliably bridge at the increased speeds and that ooze when tool changing is well controlled.\n\n"
-                     "For the wipe tower external perimeters the internal perimeter speed is used regardless of this setting.");
+    def->label = L("Maximum wipe tower print speed of out wall");
+    def->tooltip = L("Maximum wipe tower print speed of out wall.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->mode = comAdvanced;
     def->min = 10;
@@ -6082,7 +6074,6 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
-
     def = this->add("wipe_tower_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
     def->label = L("Wipe tower");
@@ -6092,6 +6083,14 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
+
+    def          = this->add("wipe_tower_wall_gap", coBool);
+    def->label   = L("Wall gap");
+    def->tooltip = L("Create small gaps in the wipe tower outer wall at tool change entry points. "
+                     "The first extrusion path after a filament change will enter through the gap, "
+                     "leaving the filament blob on the gap edge instead of on the outer wall surface.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("wiping_volumes_extruders", coFloats);
     def->label = L("Purging volumes - load/unload volumes");
@@ -6169,6 +6168,14 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = max_temp;
     def->set_default_value(new ConfigOptionInts{0});
+
+    def = this->add("filament_tower_ironing_area", coFloats);
+    def->label = L("Tower ironing area");
+    def->tooltip = L("Ironing area for prime tower interface layer (where different materials meet).");
+    def->sidetext = L("mm²");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats{4.});
 
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");
@@ -6458,6 +6465,7 @@ void PrintConfigDef::init_filament_option_keys()
         "retraction_length", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "filament_colour",
+        "filament_multi_colors", "filament_colour_mode",
         "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"/*,"filament_seam_gap"*/
     };
 
@@ -7404,13 +7412,6 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
         }
     }
 
-    if (!this->has("enable_infill_filament_override") && this->has("sparse_infill_filament")) {
-        const int wall_filament = this->has("wall_filament") ? this->option("wall_filament")->getInt() : 1;
-        const int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
-        if (sparse_infill_filament > 0 && sparse_infill_filament != wall_filament)
-            this->opt<ConfigOptionBool>("enable_infill_filament_override", true)->value = true;
-    }
-
     if (this->has("wipe_tower_filament")) {
         // If invalid, replace with 0.
         int extruder      = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
@@ -7490,13 +7491,6 @@ void DynamicPrintConfig::normalize_fdm_1()
             // if (!this->has("support_interface_filament"))
             //     this->option("support_interface_filament", true)->setInt(extruder);
         }
-    }
-
-    if (!this->has("enable_infill_filament_override") && this->has("sparse_infill_filament")) {
-        const int wall_filament = this->has("wall_filament") ? this->option("wall_filament")->getInt() : 1;
-        const int sparse_infill_filament = this->option("sparse_infill_filament")->getInt();
-        if (sparse_infill_filament > 0 && sparse_infill_filament != wall_filament)
-            this->opt<ConfigOptionBool>("enable_infill_filament_override", true)->value = true;
     }
 
     if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))

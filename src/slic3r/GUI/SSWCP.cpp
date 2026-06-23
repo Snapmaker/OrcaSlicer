@@ -1,10 +1,12 @@
 // Implementation of web communication protocol for Slicer Studio
 #include "SSWCP.hpp"
+#include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "DownloadManager.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
+#include "libslic3r/Model.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include <algorithm>
 #include <iterator>
@@ -14,6 +16,7 @@
 #include <regex>
 #include <thread>
 #include <string_view>
+#include <vector>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -49,7 +52,6 @@ namespace pt = boost::property_tree;
 using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
-
 
 // WCP_Logger
 WCP_Logger::WCP_Logger() {
@@ -688,78 +690,88 @@ void SSWCP_Instance::sw_Exit() {
 
 void SSWCP_Instance::sw_GetActiveFile()
 {
-    try {
-        std::string file_path = SSWCP::get_active_filename();
-        std::string file_name = SSWCP::get_display_filename();
-        if (file_path == "" || file_name == "") {
-            handle_general_fail();
-            return;
-        }
-        bool iszip = false;
-        if (m_param_data.count("is_zip")) {
-            iszip = m_param_data["is_zip"].get<bool>();
-        }
-
-        if (iszip) {
-            std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
-
-            if (m_work_thread.joinable())
-                m_work_thread.join();
-
-            m_work_thread          = std::thread([file_path, file_name, weak_self]() {
-                auto        self       = weak_self.lock();
-                std::string zipname    = generate_zip_path(file_path, file_name);
-                json        res        = get_or_create_zip_json(file_path, file_name, zipname);
-                size_t      name_index = file_name.find_last_of(".");
-                size_t      path_index = file_path.find_last_of(".");
-                if (!(name_index == std::string::npos || path_index == std::string::npos)) {
-                    self->m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
-                    self->m_res_data["file_path"] = wxString(zipname).ToUTF8();
-                    SSWCP::m_file_size_mutex.lock();
-                    self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
-                    std::string url_zip_path = std::string(wxString(zipname).ToUTF8());
-                    std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
-                    self->m_res_data["url"] = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_zip_path);
-                    SSWCP::m_file_size_mutex.unlock();
-
-                    // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
-                    self->m_res_data["checksum"] = calc_sha256_base64(file_path);
-
-                    wxGetApp().CallAfter([weak_self]() {
-                        if (weak_self.lock()) {
-                            weak_self.lock()->send_to_js();
-                            weak_self.lock()->finish_job();
-                        }
-                    });
-                } else {
-                    wxGetApp().CallAfter([weak_self]() {
-                        if (weak_self.lock()) {
-                            weak_self.lock()->handle_general_fail();
-                        }
-                    });
-                    return;
-                }
-            });
-            
-        } else {
-            m_res_data["file_name"] = file_name;
-            std::string url_path = file_path;
-            std::replace(url_path.begin(), url_path.end(), '\\', '/');
-            m_res_data["file_path"] = file_path;
-            m_res_data["origin_size"] = boost::filesystem::file_size(file_path);
-
-            // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
-            m_res_data["checksum"] = calc_sha256_base64(file_path);
-            m_res_data["url"]      = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_path);
-
-            send_to_js();
-            finish_job();
-        }
-
-    }
-    catch (std::exception& e) {
+    std::string file_path = SSWCP::get_active_filename();
+    std::string file_name = SSWCP::get_display_filename();
+    if (file_path == "" || file_name == "") {
         handle_general_fail();
+        return;
     }
+    bool iszip = false;
+    if (m_param_data.count("is_zip")) {
+        iszip = m_param_data["is_zip"].get<bool>();
+    }
+
+    json metadata_json = json::object();
+    if (wxGetApp().model().model_info) {
+        auto& items = wxGetApp().model().model_info->metadata_items;
+        auto lookup = [&](const std::string& key) {
+            auto it = items.find(key);
+            if (it != items.end())
+                metadata_json[key] = it->second;
+        };
+        // Currently only these three metadata fields are returned for business needs
+        lookup("DesignModelId");
+        lookup("DesignProfileId");
+        lookup("DesignRegion");
+    }
+    m_res_data["metadata"] = metadata_json;
+
+    if (iszip) {
+        std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+
+        if (m_work_thread.joinable())
+            m_work_thread.join();
+
+        m_work_thread          = std::thread([file_path, file_name, weak_self]() {
+            auto        self       = weak_self.lock();
+            std::string zipname    = generate_zip_path(file_path, file_name);
+            json        res        = get_or_create_zip_json(file_path, file_name, zipname);
+            size_t      name_index = file_name.find_last_of(".");
+            size_t      path_index = file_path.find_last_of(".");
+            if (!(name_index == std::string::npos || path_index == std::string::npos)) {
+                self->m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
+                self->m_res_data["file_path"] = wxString(zipname).ToUTF8();
+                SSWCP::m_file_size_mutex.lock();
+                self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
+                std::string url_zip_path = std::string(wxString(zipname).ToUTF8());
+                std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
+                self->m_res_data["url"] = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_zip_path);
+                SSWCP::m_file_size_mutex.unlock();
+
+                // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+                self->m_res_data["checksum"] = calc_sha256_base64(file_path);
+
+                wxGetApp().CallAfter([weak_self]() {
+                    if (weak_self.lock()) {
+                        weak_self.lock()->send_to_js();
+                        weak_self.lock()->finish_job();
+                    }
+                });
+            } else {
+                wxGetApp().CallAfter([weak_self]() {
+                    if (weak_self.lock()) {
+                        weak_self.lock()->handle_general_fail();
+                    }
+                });
+                return;
+            }
+        });
+
+    } else {
+        m_res_data["file_name"] = file_name;
+        std::string url_path = file_path;
+        std::replace(url_path.begin(), url_path.end(), '\\', '/');
+        m_res_data["file_path"] = file_path;
+        m_res_data["origin_size"] = boost::filesystem::file_size(file_path);
+
+        // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
+        m_res_data["checksum"] = calc_sha256_base64(file_path);
+        m_res_data["url"]      = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_path);
+
+        send_to_js();
+        finish_job();
+    }
+
 }
 
 void SSWCP_Instance::sw_LaunchConsole() {
@@ -1616,6 +1628,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     std::string type     = j_value["filament_type"][i].get<std::string>();
                     std::string sub_type = j_value["filament_sub_type"][i].get<std::string>();
 
+                    machineData.filament_type = type;
+
                     std::string name = "";
 
                     // 名称特殊处理
@@ -1632,14 +1646,41 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                     }
 
                     int extruder = j_value["extruder_map_table"][i].get<int>();
+                    machineData.index = static_cast<int>(i);
+                    machineData.filament_info = name;
+
+                    json::const_iterator multiColorIt = j_value.find("filament_color_multi");
+                    if (multiColorIt != j_value.end() && multiColorIt->is_array() && multiColorIt->size() > i &&
+                        (*multiColorIt)[i].is_object())
+                    {
+                        const json& multiColor = (*multiColorIt)[i];
+                        json::const_iterator colorsIt = multiColor.find("colors");
+                        if (colorsIt != multiColor.end() && colorsIt->is_array())
+                        {
+                            for (const json& colorJson : *colorsIt)
+                            {
+                                if (!colorJson.is_string())
+                                    continue;
+
+                                const std::string colorText = colorJson.get<std::string>();
+                                const std::string normalized = FilamentColorUtils::NormalizeHexColor(colorText);
+                                if (!normalized.empty())
+                                    machineData.multiColors.emplace_back(normalized);
+                            }
+                        }
+
+                        json::const_iterator modeIt = multiColor.find("mode");
+                        if (machineData.multiColors.size() > 1 && modeIt != multiColor.end() && modeIt->is_number_integer())
+                            machineData.colorMode = FilamentColorModeFromConfig(modeIt->get<int>());
+                    }
 
                     if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
                         j_value["filament_color_rgba"].size() != 0) {
                         std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                        filaments.insert({int(i), {name, str_color}});    
-                        machineData.index = i;
+                        const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(str_color, "#FFFFFF");
+                        str_color = normalizedColor.empty() ? str_color : normalizedColor;
+                        filaments.insert({int(i), {name, str_color}});
                         machineData.color_info = str_color;
-                        machineData.filament_info = name;
                     } else {
                         if (j_value["filament_color"][i].is_number()) {
                             int                color = j_value["filament_color"][i].get<int>();
@@ -1649,17 +1690,19 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
 
                             std::string str_color = oss.str();
                             filaments.insert({int(i), {name, str_color}});
-                            machineData.index         = i;
                             machineData.color_info    = str_color;
-                            machineData.filament_info = name;
                         } else {
                             std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
+                            const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(str_color, "#FFFFFF");
+                            str_color = normalizedColor.empty() ? str_color : normalizedColor;
                             filaments.insert({int(i), {name, str_color}});
-                            machineData.index         = i;
                             machineData.color_info    = str_color;
-                            machineData.filament_info = name;
                         }
                     }
+                    if (machineData.multiColors.empty() && !machineData.color_info.empty())
+                        machineData.multiColors.emplace_back(machineData.color_info);
+                    if (machineData.multiColors.size() <= 1)
+                        machineData.colorMode = FilamentColorMode::Segment;
                     if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
                         machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
                     machine_nozzles.push_back(machineData);
@@ -2162,6 +2205,10 @@ void SSWCP_MachineOption_Instance::process()
         sw_CancelPullCloudFile();
     } else if (m_cmd == "sw_StartCloudPrint") {
         sw_StartCloudPrint();
+    } else if (m_cmd == "sw_StartLocalPrint") {
+        sw_StartLocalPrint();
+    } else if (m_cmd == "sw_MachineHeartbeat") {
+        sw_MachineHeartbeat();
     } else if (m_cmd == "sw_SetDeviceName") {
         sw_SetDeviceName();
     } else if (m_cmd == "sw_ControlLed") {
@@ -2692,6 +2739,54 @@ void SSWCP_MachineOption_Instance::sw_StartCloudPrint()
     }
 }
 
+void SSWCP_MachineOption_Instance::sw_StartLocalPrint()
+{
+    if (!m_param_data.count("type") || !m_param_data.count("path")) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_StartLocalPrint: param [type] or [path] required!";
+        handle_general_fail(-1, "param [type] or [path] required!");
+        return;
+    }
+
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_StartLocalPrint: Can't find the active machine";
+        handle_general_fail(-1, "Can't find the active machine");
+        return;
+    }
+
+    json items = m_param_data;
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_start_local_print(items, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
+}
+
+void SSWCP_MachineOption_Instance::sw_MachineHeartbeat()
+{
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_MachineHeartbeat: Can't find the active machine";
+        handle_general_fail(-1, "Can't find the active machine");
+        return;
+    }
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_machine_heartbeat(m_param_data, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
+}
+
 void SSWCP_MachineOption_Instance::sw_MachineFilesRoots()
 {
     try {
@@ -3188,17 +3283,35 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 
         // filament colour
         if (config.has("filament_colour")) {
-            auto filament_color        = config.option<ConfigOptionStrings>("filament_colour")->values;
+            std::vector<std::string> filament_color = config.option<ConfigOptionStrings>("filament_colour")->values;
+            const ConfigOptionStrings* filament_multi_colors = nullptr;
+            if (config.has("filament_multi_colors"))
+                filament_multi_colors = config.option<ConfigOptionStrings>("filament_multi_colors");
+
+            const ConfigOptionInts* filament_colour_modes = nullptr;
+            if (config.has("filament_colour_mode"))
+                filament_colour_modes = config.option<ConfigOptionInts>("filament_colour_mode");
 
             std::vector<long long> number_res(filament_color.size(), 0);
             std::vector<std::string> str_res(filament_color.size());
-            for (int i = 0; i < filament_color.size(); ++i) {
+            json multi_color_res = json::array();
+            for (size_t i = 0; i < filament_color.size(); ++i) {
                 number_res[i] = color_to_int(filament_color[i]);
-                str_res[i]    = filament_color[i];
+                str_res[i] = filament_color[i];
+
+                const bool has_multi_colors = filament_multi_colors != nullptr && filament_multi_colors->values.size() > i;
+                const bool has_mode = filament_colour_modes != nullptr && filament_colour_modes->values.size() > i;
+                const std::string multi_colors = has_multi_colors ? filament_multi_colors->values[i] : std::string();
+                FilamentColorMode colorMode = FilamentColorMode::Segment;
+                if (has_mode)
+                    colorMode = FilamentColorModeFromConfig(filament_colour_modes->values[i]);
+                multi_color_res.push_back(
+                    FilamentColorUtils::BuildPreprintColorMultiItem(multi_colors, colorMode, filament_color[i]));
             }
 
             response["filament_color"] = number_res;
             response["filament_color_rgba"] = str_res;
+            response["filament_color_multi"] = multi_color_res;
         }
         
 
@@ -3635,31 +3748,22 @@ void SSWCP_MachineOption_Instance::sw_BedMesh_AbortProbeMesh()
 
 void SSWCP_MachineOption_Instance::sw_ControlPurifier()
 {
-    try {
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
 
-        int fan_speed = m_param_data.count("fan_speed") ? m_param_data["fan_speed"].get<int>() : -1;
-        int delay_time = m_param_data.count("delay_time") ? m_param_data["delay_time"].get<int>() : -1;
-        int work_time  = m_param_data.count("work_time") ? m_param_data["work_time"].get<int>() : -1;
-        
-
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail(-1, "Connection lost!");
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_controlPurifier(fan_speed, delay_time, work_time, [weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-    } catch (std::exception& e) {
-        handle_general_fail();
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_ControlPurifier: no active machine connected";
+        handle_general_fail(-1, "Connection lost!");
+        return;
     }
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_controlPurifier(m_param_data, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
 }
 
 void SSWCP_MachineOption_Instance::sw_ControlMainFan()
@@ -6206,6 +6310,8 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_PullCloudFile",
     "sw_CancelPullCloudFile",
     "sw_StartCloudPrint",
+    "sw_StartLocalPrint",
+    "sw_MachineHeartbeat",
     "sw_SetDeviceName",
     "sw_ControlLed",
     "sw_ControlPrintSpeed",

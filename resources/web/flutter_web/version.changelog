@@ -1,10 +1,6 @@
  #  Changelog
  
-## 2026-05-25
- 
-### Bugfix
-  * Fixed an issue on the "Print Preprocessing" page: when more than 4 preset filaments were available, users could not select the excess filaments to match with the mounted filaments on the device.
-  * Fixed an issue where printing could not be initiated normally when the preset filament density was set to 0.
-### 问题修复
-  * 修复了预设耗材超过 4 个时，超过部分无法在 "打印预处理页" 选择设备挂载耗材的问题
-  * 修复了打印预设耗材密度为 0 时，无法正常开始打印的问题
+## 2026-06-16
+### Features
+  * Add purifier control.
+

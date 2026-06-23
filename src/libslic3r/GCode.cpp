@@ -578,6 +578,8 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
             config.set_key_value("flush_length", new ConfigOptionFloat(purge_length));
 
             int   flush_count = std::min(g_max_flush_count, (int) std::round(purge_volume / g_purge_volume_one_time));
+            if (flush_count == 0 && purge_volume > 0)
+                flush_count = 1;
             float flush_unit  = purge_length / flush_count;
             int   flush_idx   = 0;
             for (; flush_idx < flush_count; flush_idx++) {
@@ -8549,6 +8551,8 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     dyn_config.set_key_value("flush_length", new ConfigOptionFloat(wipe_length));
 
     int   flush_count = std::min(g_max_flush_count, (int) std::round(wipe_volume / g_purge_volume_one_time));
+    if (flush_count == 0 && wipe_volume > 0)
+        flush_count = 1;
     float flush_unit  = wipe_length / flush_count;
     int   flush_idx   = 0;
     for (; flush_idx < flush_count; flush_idx++) {

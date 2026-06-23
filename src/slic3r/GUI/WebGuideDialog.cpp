@@ -610,8 +610,7 @@ void GuideFrame::OnError(wxWebViewEvent& event)
     case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
 
-    BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":GuideFrame error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
-    
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(":GuideFrame error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
 }
 
 void GuideFrame::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))

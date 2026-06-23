@@ -6,6 +6,7 @@
 #include <wx/sizer.h>
 #include <wx/image.h>
 #include <wx/statbox.h>
+#include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <cmath>
 #include <algorithm>
@@ -57,6 +58,7 @@ constexpr int g_scrollBarWidth = 10; // DIP — track width
 // Button sizing
 constexpr int g_btnW = 237;
 constexpr int g_btnH = 36;
+constexpr int g_btnRowGap = 12; // DIP — Reset / Sync button spacer width
 
 // Block 4 wrapper margins
 constexpr int g_block4PaddingV = 12; // DIP — top/bottom
@@ -320,8 +322,6 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
 
         auto* btnRow = new wxBoxSizer(wxHORIZONTAL);
 
-        btnRow->AddStretchSpacer();
-
         m_pResetBtn = new Button(block, _L("Reset"));
         m_pResetBtn->SetMinSize(FromDIP(wxSize(g_btnW, g_btnH)));
         m_pResetBtn->SetCornerRadius(FromDIP(4));
@@ -335,10 +335,15 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
         m_pResetBtn->SetBorderColor(StateColor(wxColour(g_secondaryBorder)));
         m_pResetBtn->SetTextColor(StateColor(wxColour(g_secondaryText)));
         m_pResetBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onReset(); });
-        btnRow->Add(m_pResetBtn, 0, wxALIGN_CENTER_VERTICAL);
+        btnRow->Add(m_pResetBtn, 0, wxEXPAND | wxALIGN_CENTER_VERTICAL);
 
-        // Spring between buttons
-        btnRow->AddStretchSpacer();
+        wxSizerItem* spacerItem = btnRow->AddSpacer(FromDIP(g_btnRowGap));
+        m_pResetBtn->Bind(wxEVT_SHOW, [this, spacerItem](wxShowEvent& event) {
+            if (spacerItem) {
+                spacerItem->Show(event.IsShown());
+                Layout();
+            }
+        });
 
         m_pSyncBtn = new Button(block, _L("Sync Now"));
         m_pSyncBtn->SetMinSize(FromDIP(wxSize(g_btnW, g_btnH)));
@@ -352,7 +357,7 @@ SyncFilamentColorDialog::SyncFilamentColorDialog(wxWindow* parent,
             std::pair(wxColour(g_disabledText), (int)StateColor::Disabled),
             std::pair(wxColour(g_primaryText), (int)StateColor::Normal)));
         m_pSyncBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { onSync(); });
-        btnRow->Add(m_pSyncBtn, 0, wxALIGN_CENTER_VERTICAL);
+        btnRow->Add(m_pSyncBtn, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
 
         // T/B = 12px margins
         auto* vPad = new wxBoxSizer(wxVERTICAL);

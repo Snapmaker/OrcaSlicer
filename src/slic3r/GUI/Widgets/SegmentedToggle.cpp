@@ -17,7 +17,7 @@ constexpr int g_buttonMinHeight  = 28;  // DIP
 constexpr int g_buttonPaddingW   = 6;   // DIP
 constexpr int g_buttonPaddingH   = 2;   // DIP
 constexpr int g_buttonRadius     = 4;   // DIP
-constexpr int g_buttonGap        = 24;  // DIP — gap between buttons
+constexpr int g_buttonGap        = 4;   // DIP — gap between buttons
 constexpr int g_buttonMarginV    = 0;   // DIP — vertical button margin (container already sized for button)
 constexpr int g_outerMargin      = 6;   // DIP — (block 40 - container 28) / 2
 

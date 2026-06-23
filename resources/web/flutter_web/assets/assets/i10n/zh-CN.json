@@ -551,7 +551,6 @@
   "dont_remind_again_desc": "不再提示",
   "Remind later": "稍后提示",
   "Could not get device version": "无法获取设备固件版本信息",
-  "The current device is currently processing the offline state, please check the device and try again.": "当前设备处于离线状态，请检查设备并重试",
   "Your account has been unbound from the device. Please reselect the device to initiate the connection.": "您的账户已被设备解绑，请重新选择设备发起连接",
   "The device failed to download the model file. Please check the device network and upload it again.": "设备下载模型文件失败，请检查设备网络并重新上传",
   "The current mode of the device is not available, please check the current LAN mode status.": "设备当前模式不可用，请检查当前局域网模式状态",

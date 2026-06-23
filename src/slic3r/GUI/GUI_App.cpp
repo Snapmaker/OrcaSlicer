@@ -1083,11 +1083,17 @@ void GUI_App::post_init()
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << "Found glcontext not ready, postpone the init";
         }
 //#endif
-        if (is_editor())
-            mainframe->select_tab(size_t(0));
-        if (app_config->get("default_page") == "1")
-            mainframe->select_tab(size_t(1));
         mainframe->Thaw();
+        // Defer the final tab selection to after pending events are
+        // processed. During GL init, the PAGE_CHANGED handler posts
+        // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
+        // select_tab(0) and switch back to the Prepare tab.
+        CallAfter([this] {
+            if (is_editor() && app_config->get("default_page") != "1")
+                mainframe->select_tab(size_t(0));
+            else if (app_config->get("default_page") == "1")
+                mainframe->select_tab(size_t(1));
+        });
         plater_->trigger_restore_project(1);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
@@ -1137,6 +1143,7 @@ void GUI_App::post_init()
     // Neither wxShowEvent nor wxWindowCreateEvent work reliably.
     if (this->preset_updater) { // G-Code Viewer does not initialize preset_updater.
         CallAfter([this] {
+            try {
             bool cw_showed = this->config_wizard_startup();
 
             SSWCP_MqttAgent_Instance::m_dialog = new WebPresetDialog(this);
@@ -1148,7 +1155,13 @@ void GUI_App::post_init()
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             this->preset_updater->sync_web_async(true);
             this->check_new_version_sf(false, false);
-     
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "CallAfter config wizard exception: " << e.what();
+                flush_logs();
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << "CallAfter config wizard unknown exception";
+                flush_logs();
+            }
         });
     }
 
@@ -2305,7 +2318,7 @@ void GUI_App::report_flutter_web_copy_failure(FlutterWebCopyStatus status)
              m_flutter_web_copy_status != FlutterWebCopyStatus::InstallFailed)
         m_flutter_web_copy_status = FlutterWebCopyStatus::UpgradeFailed;
     else 
-        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << status;
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << static_cast<int>(status);
 }
 
 void GUI_App::do_notify_flutter_web_copy_failure()
@@ -6897,7 +6910,16 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
                 start_page == ConfigWizard::SP_PRINTERS ? GuideFrame::BBL_MODELS_ONLY :
                 GuideFrame::BBL_MODELS;
     wizard.SetStartPage(page);
-    bool       res = wizard.run();
+    bool       res = false;
+    try {
+        res = wizard.run();
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "run_wizard exception: " << e.what();
+        flush_logs();
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "run_wizard unknown exception";
+        flush_logs();
+    }
 
     if (res) {
         load_current_presets();
@@ -7146,20 +7168,28 @@ void GUI_App::user_login_notify(const json& res)
 bool GUI_App::config_wizard_startup()
 {
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
-    user_update_privacy_notify(isAgree == "true");   
+    user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup changed the privacy policy with: " << (isAgree);
-    if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
-        BOOST_LOG_TRIVIAL(info) << "run wizard...";
-        run_wizard(ConfigWizard::RR_DATA_EMPTY);
-        BOOST_LOG_TRIVIAL(info) << "finished run wizard";
+    try {
+        if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
+            BOOST_LOG_TRIVIAL(info) << "run wizard...";
+            run_wizard(ConfigWizard::RR_DATA_EMPTY);
+            BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
-        return true;
-    }
+            return true;
+        }
 
-    if (isAgree.empty()) 
-    {
-        run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
-        return true;
+        if (isAgree.empty())
+        {
+            run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
+            return true;
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "config_wizard_startup exception: " << e.what();
+        flush_logs();
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "config_wizard_startup unknown exception";
+        flush_logs();
     }
 
     return false;

@@ -3,12 +3,14 @@
 
 #include "Preset.hpp"
 #include "AppConfig.hpp"
+#include "FilamentColorLibrary.hpp"
 #include "enum_bitmask.hpp"
 #include "MixedFilament.hpp"
 
 #include <memory>
 #include <unordered_map>
 #include <array>
+#include <vector>
 #include <boost/filesystem/path.hpp>
 
 #define DEFAULT_USER_FOLDER_NAME "default"
@@ -31,8 +33,11 @@ enum class VendorType {
 struct ConnectMachineInfo
 {
     std::string filament_info {""};
+    std::string filament_type {""};
     std::string nozzle_info {""};
     std::string color_info{""};
+    std::vector<std::string> multiColors;
+    Slic3r::FilamentColorMode colorMode { Slic3r::FilamentColorMode::Segment };
     int index {0};
 };
 

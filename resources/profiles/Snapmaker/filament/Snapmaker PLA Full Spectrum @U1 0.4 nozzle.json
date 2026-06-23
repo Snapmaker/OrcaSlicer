@@ -2,7 +2,7 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Snapmaker PLA Basic @U1",
+    "name": "Snapmaker PLA Full Spectrum @U1 0.4 nozzle",
     "setting_id": "1195313935011",
     "inherits": "Snapmaker PLA Basic @U1 base",
     "compatible_printers": [

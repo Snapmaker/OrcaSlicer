@@ -35,8 +35,9 @@
   "filament_multitool_ramming_volume": ["10"],
   "filament_retract_length_toolchange": ["10"],
   "filament_retraction_length": ["1"],
-  "filament_retraction_minimum_travel": ["1"],
+  "filament_retraction_minimum_travel": ["nil"],
   "filament_unloading_speed": ["90"],
   "filament_unloading_speed_start": ["100"],
-  "filament_z_hop_types": ["Slope Lift"]
+  "filament_z_hop_types": ["Slope Lift"],
+  "enable_pressure_advance": ["0"]
 }

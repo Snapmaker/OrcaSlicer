@@ -27,6 +27,7 @@
 #include <sstream>
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/join.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include "libslic3r/libslic3r.h"
 #include "slic3r/GUI/OptionsGroup.hpp"
@@ -1559,6 +1560,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             set_project_bool("dithering_local_z_whole_objects", new_conf.opt_bool("dithering_local_z_whole_objects"));
         if (new_conf.has("dithering_local_z_infill"))
             set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
+
+        if (auto* plater = wxGetApp().plater())
+            plater->notify_vhl_dithering_conflict(local_z_enabled);
     }
 
     if (opt_key == "enable_prime_tower") {
@@ -1836,7 +1840,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
     //Orca: sync filament num if it's a multi tool printer
     if (opt_key == "extruders_count" && !m_config->opt_bool("single_extruder_multi_material")){
-        auto num_extruder = boost::any_cast<size_t>(value);
+        auto num_extruder = static_cast<size_t>(boost::any_cast<int>(value));
         int         old_filament_size = wxGetApp().preset_bundle->filament_presets.size();
         std::vector<std::string> new_colors;
         for (int i = old_filament_size; i < num_extruder; ++i) {
@@ -2377,12 +2381,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
         optgroup->append_single_option_line("sparse_infill_pattern", "strength_settings_infill#sparse-infill-pattern");
-        if (m_type >= Preset::TYPE_COUNT) {
-            optgroup->append_single_option_line("enable_infill_filament_override");
-            optgroup->append_single_option_line("infill_filament_use_base_first_layers");
-            optgroup->append_single_option_line("infill_filament_use_base_last_layers");
-            optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
-        }
         optgroup->append_single_option_line("infill_direction", "strength_settings_infill#direction");
         optgroup->append_single_option_line("sparse_infill_rotate_template", "strength_settings_infill_rotation_template_metalanguage");
         optgroup->append_single_option_line("skin_infill_density", "strength_settings_patterns#locked-zag");
@@ -2557,7 +2555,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("prime_tower_brim_width", "multimaterial_settings_prime_tower#brim-width");
         optgroup->append_single_option_line("prime_tower_brim_chamfer", "multimaterial_settings_prime_tower#brim-chamfer");
         optgroup->append_single_option_line("prime_tower_brim_chamfer_max_width", "multimaterial_settings_prime_tower#brim-chamfer-max-width");
-        optgroup->append_single_option_line("wipe_tower_rotation_angle", "multimaterial_settings_prime_tower#wipe-tower-rotation-angle");
+
         optgroup->append_single_option_line("wipe_tower_bridging", "multimaterial_settings_prime_tower#maximal-bridging-distance");
         optgroup->append_single_option_line("wipe_tower_extra_spacing", "multimaterial_settings_prime_tower#wipe-tower-purge-lines-spacing");
         optgroup->append_single_option_line("wipe_tower_extra_flow", "multimaterial_settings_prime_tower#extra-flow-for-purge");
@@ -2568,10 +2566,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("wipe_tower_rib_width", "multimaterial_settings_prime_tower#rib-width");
         optgroup->append_single_option_line("wipe_tower_fillet_wall", "multimaterial_settings_prime_tower#fillet-wall");
         optgroup->append_single_option_line("wipe_tower_no_sparse_layers", "multimaterial_settings_prime_tower#no-sparse-layers");
+        optgroup->append_single_option_line("wipe_tower_wall_gap", "multimaterial_settings_prime_tower#wall-gap");
         optgroup->append_single_option_line("single_extruder_multi_material_priming", "multimaterial_settings_prime_tower");
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
@@ -2875,11 +2875,6 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
 static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
 {
     DynamicPrintConfig resolved(config);
-    const auto*        infill_override_opt = config.option<ConfigOptionBool>("enable_infill_filament_override");
-    const bool         infill_override_enabled = infill_override_opt != nullptr && infill_override_opt->value;
-
-    if (!infill_override_enabled && resolved.has("sparse_infill_filament"))
-        resolved.erase("sparse_infill_filament");
 
     if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
         const int extruder = extruder_opt->value;
@@ -3119,6 +3114,8 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
         notify_changed(config.first);
     }
     wxGetApp().params_panel()->notify_object_config_changed();
+
+    wxGetApp().plater()->notify_filament_usage_changed();
 }
 
 void TabPrintModel::reload_config()
@@ -3699,7 +3696,9 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_cost");
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
+        optgroup->append_single_option_line("filament_is_high_temperature");
         optgroup->append_single_option_line("idle_temperature");
+        optgroup->append_single_option_line("filament_tower_ironing_area");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };
         line.append_option(optgroup->get_option("nozzle_temperature_range_low"));
         line.append_option(optgroup->get_option("nozzle_temperature_range_high"));
@@ -4687,7 +4686,7 @@ if (is_marlin_flavor)
             // Otherwise, boost::any_cast<size_t> causes an "unhandled unknown exception"
             const auto v = optgroup_sh->get_value("extruders_count");
             if (v.empty()) return;
-            size_t extruders_count = size_t(boost::any_cast<int>(v));
+            size_t extruders_count = static_cast<size_t>(boost::any_cast<int>(v));
             wxTheApp->CallAfter([this, opt_key, value, extruders_count]() {
                 if (opt_key == "extruders_count" || opt_key == "single_extruder_multi_material") {
                     extruders_count_changed(extruders_count);
@@ -5654,21 +5653,47 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         // Orca: update presets for the selected printer
         if (m_type == Preset::TYPE_PRINTER && wxGetApp().app_config->get_bool("remember_printer_config")) {
             if (preset_name.find("Snapmaker U1") != std::string::npos) {
-                // 在 update_selections() 改变耗材数量之前先保存旧数量和颜色
-                std::vector<std::string> old_filament_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
-                std::vector<std::string> old_filament_presets = m_preset_bundle->filament_presets;
+                DynamicPrintConfig& projectConfig = m_preset_bundle->project_config;
+                std::vector<std::string> oldFilamentColors = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
+                std::vector<std::string> oldFilamentMultiColors;
+                std::vector<int> oldFilamentColourModes;
+                if (ConfigOptionStrings* multiColors = projectConfig.option<ConfigOptionStrings>("filament_multi_colors"))
+                    oldFilamentMultiColors = multiColors->values;
+                if (ConfigOptionInts* modes = projectConfig.option<ConfigOptionInts>("filament_colour_mode"))
+                    oldFilamentColourModes = modes->values;
+
+                std::vector<std::string> oldFilamentPresets = m_preset_bundle->filament_presets;
+                const size_t oldFilamentCount = oldFilamentPresets.size();
+                oldFilamentColors.resize(oldFilamentCount, "#26A69A");
+                oldFilamentMultiColors.resize(oldFilamentCount);
+                oldFilamentColourModes.resize(oldFilamentCount, 0);
+                for (size_t i = 0; i < oldFilamentCount; ++i)
+                {
+                    if (oldFilamentColors[i].empty())
+                        oldFilamentColors[i] = "#26A69A";
+                    if (oldFilamentMultiColors[i].empty())
+                        oldFilamentMultiColors[i] = oldFilamentColors[i];
+                    oldFilamentColourModes[i] = oldFilamentColourModes[i] == 1 ? 1 : 0;
+                }
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);
 
-                // 恢复耗材预设到原来的数量和预设名称（保持类型自适应）
-                m_preset_bundle->filament_presets = old_filament_presets;
+                m_preset_bundle->filament_presets = oldFilamentPresets;
 
-                // 恢复原来的颜色，保持用户设置的耗材颜色不变
-                wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values = old_filament_colors;
+                projectConfig.option<ConfigOptionStrings>("filament_colour")->values = oldFilamentColors;
+                projectConfig.option<ConfigOptionStrings>("filament_multi_colors", true)->values = oldFilamentMultiColors;
+                projectConfig.option<ConfigOptionInts>("filament_colour_mode", true)->values = oldFilamentColourModes;
 
-                // 重要：立即保存颜色到配置文件，这样下次切换时也会保持
-                std::string filament_colors_str = boost::algorithm::join(old_filament_colors, ",");
-                wxGetApp().app_config->set_printer_setting(preset_name, "filament_colors", filament_colors_str);
+                std::vector<std::string> filamentColourModeStrings;
+                filamentColourModeStrings.reserve(oldFilamentColourModes.size());
+                for (int mode : oldFilamentColourModes)
+                    filamentColourModeStrings.emplace_back(mode == 1 ? "1" : "0");
+                const std::string filamentColors = boost::algorithm::join(oldFilamentColors, ",");
+                const std::string filamentMultiColors = boost::algorithm::join(oldFilamentMultiColors, ",");
+                const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");
+                wxGetApp().app_config->set_printer_setting(preset_name, "filament_colors", filamentColors);
+                wxGetApp().app_config->set_printer_setting(preset_name, "filament_multi_colors", filamentMultiColors);
+                wxGetApp().app_config->set_printer_setting(preset_name, "filament_colour_mode", filamentColourModes);
 
                 wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
             } else {

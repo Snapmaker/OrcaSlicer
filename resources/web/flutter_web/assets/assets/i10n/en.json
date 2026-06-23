@@ -1,6 +1,11 @@
 {
   "dialog": {
     "http": {
+      "network_unavailable": "Network connection failed, please check the network connection",
+      "network_lost": "Network lost, please check the network connection",
+      "network_timeout": "Network timeout, please check the network connection",
+      "server_error": "Server error, please try again later",
+      "client_error": "Client error, please try again later",
       "success": "Request successful",
       "bad_request": "Bad request, please check your input",
       "unauthorized": "Unauthorized or session expired, please login again",
@@ -454,6 +459,18 @@
   "nozzle_mismatch_tip": "The nozzle diameter does not match the preset. Please confirm the match before starting the print.",
   "Next": "Next",
   "File stream error. Please resend.": "File stream error. Please resend.",
+  "purifier_fan_outer_desc": "Exhaust Fan Speed",
+  "purifier_fan_inner_desc": "Recirculation Fan Speed",
+  "purifier_current_mode": "Current Mode",
+  "purifier_inner_mode_desc": "Recirculation Mode",
+  "purifier_outer_mode_desc": "Exhaust Mode",
+  "purifier_idle_mode_desc": "Idle",
+  "exhaust_fan_forbidden_tip": "With internal insulation mode on, the external circulation fan cannot be enabled.",
+  "purifier": "Top Cover",
+  "fan_speed_reduce_warning_inner": "Reducing fan speed may reduce purification performance. Continue?",
+  "fan_speed_reduce_warning_exhaust": "Reducing the fan speed may affect print quality. Do you want to continue?",
+  "top_cover_disconnected_tip": "Top cover disconnected. To ensure optimal print quality, please reconnect the top cover before continuing.",
+
 
 
   "Error Code": "Error Code",

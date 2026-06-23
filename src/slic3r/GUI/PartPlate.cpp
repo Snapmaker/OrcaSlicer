@@ -77,38 +77,11 @@ class Bed3D;
 
 namespace {
 
-struct ResolvedInfillFilament
-{
-    int  wall_filament          = 1;
-    int  sparse_infill_filament = 1;
-    bool override_enabled       = false;
-};
-
 template <typename ConfigLike>
-ResolvedInfillFilament resolve_infill_filament(const ConfigLike &config, int inherited_wall_filament, bool inherited_override_enabled, int inherited_sparse_infill_filament)
+int resolve_sparse_infill_filament(const ConfigLike &config, int inherited_sparse_infill_filament)
 {
-    ResolvedInfillFilament resolved;
-    resolved.wall_filament          = inherited_wall_filament;
-    resolved.sparse_infill_filament = inherited_sparse_infill_filament;
-    resolved.override_enabled       = inherited_override_enabled;
-
-    if (const ConfigOption *wall_opt = config.option("wall_filament"); wall_opt != nullptr)
-        resolved.wall_filament = wall_opt->getInt();
-
-    const ConfigOption *sparse_opt   = config.option("sparse_infill_filament");
-    const ConfigOption *override_opt = config.option("enable_infill_filament_override");
-    if (override_opt != nullptr)
-        resolved.override_enabled = override_opt->getBool();
-    else if (sparse_opt != nullptr)
-        resolved.override_enabled = sparse_opt->getInt() != resolved.wall_filament;
-
-    if (sparse_opt != nullptr)
-        resolved.sparse_infill_filament = sparse_opt->getInt();
-
-    if (!resolved.override_enabled)
-        resolved.sparse_infill_filament = resolved.wall_filament;
-
-    return resolved;
+    const ConfigOption *sparse_opt = config.option("sparse_infill_filament");
+    return sparse_opt != nullptr && sparse_opt->getInt() > 0 ? sparse_opt->getInt() : inherited_sparse_infill_filament;
 }
 
 } // namespace
@@ -1398,8 +1371,7 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 	int glb_support_intf_extr = glb_config.opt_int("support_interface_filament");
 	int glb_support_extr = glb_config.opt_int("support_filament");
 	int glb_wall_extr = glb_config.opt_int("wall_filament");
-	const ResolvedInfillFilament global_infill { glb_wall_extr, glb_wall_extr, false };
-	int glb_sparse_infill_extr = glb_wall_extr;
+	int glb_sparse_infill_extr = glb_config.opt_int("sparse_infill_filament");
 	int glb_solid_infill_extr = glb_config.opt_int("solid_infill_filament");
 	bool glb_support = glb_config.opt_bool("enable_support");
     glb_support |= glb_config.opt_int("raft_layers") > 0;
@@ -1461,9 +1433,9 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 		if (obj_wall_extr != 1)
 			plate_extruders.push_back(obj_wall_extr);
 
-		const ResolvedInfillFilament object_infill = resolve_infill_filament(mo->config, glb_wall_extr, global_infill.override_enabled, glb_sparse_infill_extr);
-		if (object_infill.override_enabled && object_infill.sparse_infill_filament != 1)
-			plate_extruders.push_back(object_infill.sparse_infill_filament);
+		const int object_sparse_infill_extr = resolve_sparse_infill_filament(mo->config, glb_sparse_infill_extr);
+		if (object_sparse_infill_extr != 1)
+			plate_extruders.push_back(object_sparse_infill_extr);
 
 		int obj_solid_infill_extr = 1;
 		const ConfigOption* solid_infill_opt = mo->config.option("solid_infill_filament");
@@ -1511,10 +1483,9 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
 
     // if 3mf file
     int glb_support_intf_extr = full_config.opt_int("support_interface_filament");
-    int glb_support_extr = full_config.opt_int("support_filament");
+	int glb_support_extr = full_config.opt_int("support_filament");
 	int glb_wall_extr = full_config.opt_int("wall_filament");
-	const ResolvedInfillFilament global_infill { glb_wall_extr, glb_wall_extr, false };
-	int glb_sparse_infill_extr = glb_wall_extr;
+	int glb_sparse_infill_extr = full_config.opt_int("sparse_infill_filament");
 	int glb_solid_infill_extr = full_config.opt_int("solid_infill_filament");
 
     bool glb_support = full_config.opt_bool("enable_support");
@@ -1606,9 +1577,9 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
 			if (obj_wall_extr != 1)
 				plate_extruders.push_back(obj_wall_extr);
 
-			const ResolvedInfillFilament object_infill = resolve_infill_filament(object->config, glb_wall_extr, global_infill.override_enabled, glb_sparse_infill_extr);
-			if (object_infill.override_enabled && object_infill.sparse_infill_filament != 1)
-				plate_extruders.push_back(object_infill.sparse_infill_filament);
+			const int object_sparse_infill_extr = resolve_sparse_infill_filament(object->config, glb_sparse_infill_extr);
+			if (object_sparse_infill_extr != 1)
+				plate_extruders.push_back(object_sparse_infill_extr);
 
 			int obj_solid_infill_extr = 1;
 			const ConfigOption* solid_infill_opt = object->config.option("solid_infill_filament");
@@ -2048,7 +2019,7 @@ bool PartPlate::is_valid_gcode_file()
 	return true;
 }
 
-ModelObjectPtrs PartPlate::get_objects_on_this_plate() {
+ModelObjectPtrs PartPlate::get_objects_on_this_plate() const {
     ModelObjectPtrs objects_ptr;
     int obj_id;
     for (auto it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); it++) {
@@ -4068,6 +4039,8 @@ int PartPlateList::select_plate(int index)
 		return -1;
 	}
 
+        const int old_plate_index = m_current_plate;
+
 	// BBS: erase unnecessary snapshot
 	if (get_curr_plate_index() != index && m_intialized) {
 		if (m_plater)
@@ -4081,6 +4054,8 @@ int PartPlateList::select_plate(int index)
 
 	m_current_plate = index;
 	m_plate_list[m_current_plate]->set_selected();
+        if (old_plate_index != m_current_plate && wxGetApp().plater())
+            wxGetApp().plater()->notify_filament_usage_changed();
 
 	//BBS
 	if(m_model)
@@ -4555,6 +4530,8 @@ int PartPlateList::add_to_plate(int obj_id, int instance_id, int plate_id)
 		return -1;
 	}
 	ret = plate->add_instance(obj_id, instance_id, true);
+
+    wxGetApp().plater()->notify_filament_usage_changed();
 
 	return ret;
 }

@@ -5929,6 +5929,12 @@ void PrintConfigDef::init_fff_params()
     //def->sidetext = "";
     def->set_default_value(new ConfigOptionFloat(0.3));
 
+    def = this->add("nozzle_flush_dataset", coInts);
+    def->label = L("Flush dataset");
+    def->tooltip = L("Selects which flushing volume lookup table to use. 0 = standard flow table, 1 = high flow table.");
+    def->nullable = true;
+    def->set_default_value(new ConfigOptionIntsNullable{0});
+
     // BBS
     def = this->add("prime_volume", coFloat);
     def->label = L("Prime volume");

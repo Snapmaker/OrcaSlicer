@@ -1437,6 +1437,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     // BBS: wipe tower is only used for priming
     ((ConfigOptionFloat,              prime_volume))
     ((ConfigOptionFloat,              flush_multiplier))
+    ((ConfigOptionIntsNullable,       nozzle_flush_dataset))
     ((ConfigOptionFloat,              z_offset))
     // BBS: project filaments
     ((ConfigOptionFloats,             filament_colour_new))

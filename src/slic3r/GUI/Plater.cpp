@@ -8234,6 +8234,12 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
 
     const std::vector<int>&   min_flush_volumes= get_min_flush_volumes(full_config);
 
+    int nozzle_flush_dataset = static_cast<int>(FlushDataset::StandardFlow);
+    if (auto* flush_ds_opt = full_config.option<ConfigOptionIntsNullable>("nozzle_flush_dataset")) {
+        if (!flush_ds_opt->values.empty())
+            nozzle_flush_dataset = flush_ds_opt->values[0];
+    }
+
     ConfigOptionFloat* flush_multi_opt = project_config.option<ConfigOptionFloat>("flush_multiplier");
     float flush_multiplier = flush_multi_opt ? flush_multi_opt->getFloat() : 1.f;
     std::vector<double> matrix = init_matrix;
@@ -8266,7 +8272,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
             // from to modify
             int from_idx = i;
             if (from_idx != modify_id) {
-                Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], m_max_flush_volume);
+                Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], m_max_flush_volume, 1.0f, nozzle_flush_dataset);
                 int flushing_volume = 0;
                 bool is_from_support = is_support_filament(from_idx);
                 bool is_to_support = is_support_filament(modify_id);
@@ -8291,7 +8297,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
             // modify to to
             int to_idx = i;
             if (to_idx != modify_id) {
-                Slic3r::FlushVolCalculator calculator(min_flush_volumes[modify_id], m_max_flush_volume);
+                Slic3r::FlushVolCalculator calculator(min_flush_volumes[modify_id], m_max_flush_volume, 1.0f, nozzle_flush_dataset);
                 bool is_from_support = is_support_filament(modify_id);
                 bool is_to_support = is_support_filament(to_idx);
                 int flushing_volume = 0;

@@ -176,6 +176,8 @@ set(lisbslic3r_sources
     Flow.hpp
     FlushVolCalc.cpp
     FlushVolCalc.hpp
+    FlushVolPredictor.cpp
+    FlushVolPredictor.hpp
     Format/3mf.cpp
     Format/3mf.hpp
     Format/AMF.cpp

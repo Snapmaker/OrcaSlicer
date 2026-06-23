@@ -2846,6 +2846,12 @@ int CLI::run(int argc, char **argv)
 
             const std::vector<int>& min_flush_volumes = Slic3r::GUI::get_min_flush_volumes(m_print_config);
 
+            std::vector<int> nozzle_flush_dataset(project_filament_count, static_cast<int>(FlushDataset::StandardFlow));
+            if (auto* flush_ds_opt = m_print_config.option<ConfigOptionIntsNullable>("nozzle_flush_dataset", true)) {
+                nozzle_flush_dataset = flush_ds_opt->values;
+                nozzle_flush_dataset.resize(project_filament_count, static_cast<int>(FlushDataset::StandardFlow));
+            }
+
             if (filament_is_support->size() != project_filament_count)
             {
                 BOOST_LOG_TRIVIAL(error) << boost::format("filament_is_support's count %1% not equal to filament_colour's size %2%")%filament_is_support->size() %project_filament_count;
@@ -2883,7 +2889,7 @@ int CLI::run(int argc, char **argv)
                             //BOOST_LOG_TRIVIAL(info) << boost::format("src_rgba {%1%,%2%,%3%,%4%} dst_rgba {%5%,%6%,%7%,%8%}")%(unsigned int)(from_rgb[0]) %(unsigned int)(from_rgb[1]) %(unsigned int)(from_rgb[2]) %(unsigned int)(from_rgb[3])
                             //       %(unsigned int)(to_rgb[0]) %(unsigned int)(to_rgb[1]) %(unsigned int)(to_rgb[2]) %(unsigned int)(to_rgb[3]);
 
-                            Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], Slic3r::g_max_flush_volume);
+                            Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], Slic3r::g_max_flush_volume, 1.0f, nozzle_flush_dataset[from_idx]);
 
                             flushing_volume = calculator.calc_flush_vol(from_rgb[3], from_rgb[0], from_rgb[1], from_rgb[2], to_rgb[3], to_rgb[0], to_rgb[1], to_rgb[2]);
                             if (is_from_support) {

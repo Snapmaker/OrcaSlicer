@@ -659,9 +659,9 @@ WipingPanel::WipingPanel(wxWindow* parent, const std::vector<float>& matrix, con
     });
 }
 
-int WipingPanel::calc_flushing_volume(const wxColour& from_, const wxColour& to_ ,int min_flush_volume)
+int WipingPanel::calc_flushing_volume(const wxColour& from_, const wxColour& to_ ,int min_flush_volume, int flush_dataset)
 {
-    Slic3r::FlushVolCalculator calculator(min_flush_volume, m_max_flush_volume);
+    Slic3r::FlushVolCalculator calculator(min_flush_volume, m_max_flush_volume, 1.0f, flush_dataset);
 
     return calculator.calc_flush_vol(from_.Alpha(), from_.Red(), from_.Green(), from_.Blue(), to_.Alpha(), to_.Red(), to_.Green(), to_.Blue());
 }
@@ -713,6 +713,12 @@ void WipingPanel::update_warning_texts()
 void WipingPanel::calc_flushing_volumes()
 {
     auto& ams_multi_color_filament = wxGetApp().preset_bundle->ams_multi_color_filment;
+    auto& full_config = wxGetApp().preset_bundle->full_config();
+    int flush_dataset = static_cast<int>(FlushDataset::StandardFlow);
+    if (auto* flush_ds_opt = full_config.option<ConfigOptionIntsNullable>("nozzle_flush_dataset")) {
+        if (!flush_ds_opt->values.empty())
+            flush_dataset = flush_ds_opt->values[0];
+    }
     std::vector<std::vector<wxColour>> multi_colors;
 
     // Support for multi-color filament
@@ -749,7 +755,7 @@ void WipingPanel::calc_flushing_volumes()
                         const wxColour& from = multi_colors[from_idx][i];
                         for (int j = 0; j < multi_colors[to_idx].size(); ++j) {
                             const wxColour& to = multi_colors[to_idx][j];
-                            int volume = calc_flushing_volume(from, to, m_min_flush_volume[from_idx]);
+                            int volume = calc_flushing_volume(from, to, m_min_flush_volume[from_idx], flush_dataset);
                             flushing_volume = std::max(flushing_volume, volume);
                         }
                     }

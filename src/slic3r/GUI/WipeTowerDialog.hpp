@@ -2,6 +2,7 @@
 #define _WIPE_TOWER_DIALOG_H_
 
 #include "GUI_Utils.hpp"
+#include "libslic3r/FlushVolPredictor.hpp"
 
 #include <wx/sizer.h>
 #include <wx/spinctrl.h>
@@ -69,7 +70,7 @@ public:
 private:
     void fill_in_matrix();
     bool advanced_matches_simple();
-    int calc_flushing_volume(const wxColour& from, const wxColour& to,int min_flush_volume);
+    int calc_flushing_volume(const wxColour& from, const wxColour& to,int min_flush_volume, int flush_dataset = static_cast<int>(FlushDataset::StandardFlow));
     void update_warning_texts();
         
     std::vector<wxSpinCtrl*> m_old;

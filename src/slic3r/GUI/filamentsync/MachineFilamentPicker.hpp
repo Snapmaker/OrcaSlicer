@@ -3,6 +3,7 @@
 #include <functional>
 #include <vector>
 
+#include <wx/panel.h>
 #include <wx/popupwin.h>
 
 #include "FilamentData.hpp"

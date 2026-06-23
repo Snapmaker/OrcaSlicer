@@ -42,7 +42,7 @@ inline bool isDarkColour(const wxColour& c)
 
 inline wxColour getTextColour(const wxColour& bg)
 {
-    return isDarkColour(bg) ? *wxWHITE : *wxBLACK;
+    return isDarkColour(bg) ? wxColour(255, 255, 255) : wxColour(0, 0, 0);
 }
 
 inline bool is_none_filament(const FilamentData& fd)

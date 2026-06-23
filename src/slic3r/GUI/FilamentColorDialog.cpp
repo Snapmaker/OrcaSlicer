@@ -723,7 +723,7 @@ void FilamentColorDialog::UpdatePreview()
 
     const wxString name = FromStdString(GetSelectionDisplayName(_filament, _selection, _selectedSku, _languageCode));
     _nameLabel->SetLabel(name);
-    _skuLabel->SetLabel(_selectedSku.empty() ? wxEmptyString : FromStdString("sku " + _selectedSku));
+    _skuLabel->SetLabel(_selectedSku.empty() ? wxString(wxEmptyString) : FromStdString("sku " + _selectedSku));
     _skuLabel->Show(!_selectedSku.empty());
     Layout();
 }

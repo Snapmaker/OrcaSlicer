@@ -309,6 +309,40 @@ static void collect_filament_slots_from_model_config(
     }
 }
 
+static void resolve_mixed_filament_extruders(
+    std::vector<int>& extruder_ids,
+    int               num_filaments)
+{
+    if (num_filaments < 2)
+        return;
+
+    bool has_virtual = false;
+    for (int id : extruder_ids) {
+        if (id > num_filaments) {
+            has_virtual = true;
+            break;
+        }
+    }
+    if (!has_virtual)
+        return;
+
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (bundle == nullptr)
+        return;
+    const DynamicPrintConfig& full_cfg = bundle->full_config();
+    const auto* defs_opt = full_cfg.option<ConfigOptionString>("mixed_filament_definitions");
+    if (defs_opt == nullptr || defs_opt->value.empty())
+        return;
+    const auto* colors_opt = full_cfg.option<ConfigOptionStrings>("filament_colour");
+    std::vector<std::string> filament_colors;
+    if (colors_opt != nullptr)
+        filament_colors = colors_opt->values;
+
+    MixedFilamentManager mgr;
+    mgr.load_custom_entries(defs_opt->value, filament_colors);
+    mgr.expand_virtual_extruder_ids(extruder_ids, static_cast<size_t>(num_filaments));
+}
+
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 wxDEFINE_EVENT(EVT_SLICING_UPDATE,                  SlicingStatusEvent);
 wxDEFINE_EVENT(EVT_SLICING_COMPLETED,               wxCommandEvent);
@@ -20794,10 +20828,14 @@ bool Plater::check_filament_temp_mixing(int plate_index)
         for (const ModelVolume* model_volume : model_object->volumes)
         {
             collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots);
-            for (int extruder_id : model_volume->get_extruders())
-            {
-                if (extruder_id >= 1 && extruder_id <= num_filaments)
-                    used_slots.insert(extruder_id - 1);
+            std::vector<int> volume_extruders = model_volume->get_extruders();
+            if (!volume_extruders.empty()) {
+                resolve_mixed_filament_extruders(volume_extruders, num_filaments);
+                for (int extruder_id : volume_extruders)
+                {
+                    if (extruder_id >= 1 && extruder_id <= num_filaments)
+                        used_slots.insert(extruder_id - 1);
+                }
             }
         }
     }

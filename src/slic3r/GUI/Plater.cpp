@@ -12360,6 +12360,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             notification_manager->push_validate_error_notification(err);
             //also update the warnings
             process_validation_warning(warning);
+            q->sync_filament_temp_mixing_notification();
             return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
             if (printer_technology == ptFFF) {
                 const Print* print = background_process.fff_print();
@@ -12379,8 +12380,10 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
 
     //actualizate warnings
     if (invalidated != Print::APPLY_STATUS_UNCHANGED || background_process.empty()) {
-        if (background_process.empty())
+        if (background_process.empty()) {
             process_validation_warning({});
+            q->sync_filament_temp_mixing_notification();
+        }
         actualize_slicing_warnings(*this->background_process.current_print());
         actualize_object_warnings(*this->background_process.current_print());
         show_warning_dialog = false;
@@ -22012,6 +22015,8 @@ void Plater::validate_current_plate(bool& model_fits, bool& validate_error)
         else {
             p->notification_manager->close_plater_error_notification(plater_text);
         }
+
+        sync_filament_temp_mixing_notification();
     }
 
     PartPlate* part_plate = p->partplate_list.get_curr_plate();

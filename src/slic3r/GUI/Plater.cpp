@@ -20792,7 +20792,7 @@ bool Plater::check_filament_temp_mixing(int plate_index)
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
         collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots);
-        if (model_object->config.extruder() == 0)
+        if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
             uses_default_extruder = true;
         for (const ModelVolume* model_volume : model_object->volumes)
         {

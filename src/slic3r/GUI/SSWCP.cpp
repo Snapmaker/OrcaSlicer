@@ -3318,15 +3318,17 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         // filament type
         if (full_config.has("filament_type")) {
             std::vector<std::string> filament_types;
-            size_t                   filament_count = full_config.option<ConfigOptionStrings>("filament_type")->values.size();
+            const auto*              filament_type_opt = full_config.option<ConfigOptionStrings>("filament_type");
+            size_t                   filament_count    = filament_type_opt->values.size();
             if (full_config.has("filament_colour")) {
                 filament_count = std::max(filament_count, full_config.option<ConfigOptionStrings>("filament_colour")->values.size());
             }
 
             filament_types.reserve(filament_count);
             for (size_t i = 0; i < filament_count; ++i) {
-                std::string displayed_filament_type;
-                std::string filament_type = full_config.get_filament_type(displayed_filament_type, int(i));
+                // Use raw filament_type value to avoid get_filament_type() remapping
+                // "Generic Support For PLA" -> "PLA-S", which breaks filament matching in the web UI.
+                std::string filament_type = filament_type_opt->get_at(int(i));
                 boost::trim(filament_type);
                 filament_types.emplace_back(std::move(filament_type));
             }

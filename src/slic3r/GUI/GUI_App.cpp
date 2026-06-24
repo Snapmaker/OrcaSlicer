@@ -2343,7 +2343,7 @@ void GUI_App::do_notify_flutter_web_copy_failure()
         }
         break;
     default: 
-        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus other status" << m_flutter_web_copy_status;
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus other status" << static_cast<int>(m_flutter_web_copy_status);
         break;
     }
 }

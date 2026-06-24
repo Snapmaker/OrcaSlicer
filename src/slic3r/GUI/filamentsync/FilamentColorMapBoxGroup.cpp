@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <wx/dcclient.h>
+#include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/dcmemory.h>
 #include <wx/sizer.h>

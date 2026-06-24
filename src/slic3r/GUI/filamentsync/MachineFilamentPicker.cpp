@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include <wx/dcclient.h>
+#include <wx/dcbuffer.h>
 #include <wx/dcmemory.h>
 #include <wx/dcgraph.h>
 
@@ -21,6 +22,8 @@ constexpr int g_itemRowH      = 16; // DIP — row height
 constexpr int g_itemStepY     = 22; // DIP — vertical step between rows
 constexpr int g_firstRowY     = 12; // DIP — top of first row (after shadow)
 constexpr int g_itemGap       = 6;  // DIP — gap between rows
+constexpr int g_selectionInsetX = 3; // DIP — left/right inset for selected row background
+constexpr int g_contentOffsetX  = -2; // DIP — keep row content clear of the right edge
 
 // --- Checkmark (draw with path, roughly 8×8 DIP) ---
 constexpr int g_checkmarkX = 9;
@@ -109,7 +112,7 @@ public:
             }
         }
         int minWidthPx = FromDIP(g_popupMinWidth);
-        int contentWidthPx = FromDIP(g_textX) + maxTextWidthPx + FromDIP(g_textRightPadding);
+        int contentWidthPx = FromDIP(g_textX + g_contentOffsetX) + maxTextWidthPx + FromDIP(g_textRightPadding);
         int actualWidthPx = std::max(minWidthPx, contentWidthPx);
 
         wxSize sz(actualWidthPx, FromDIP(g_popupHeight));
@@ -180,14 +183,15 @@ private:
         if (isSelected) {
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(g_selectionBg));
-            dc.DrawRectangle(FromDIP(x), FromDIP(y),
-                             contentWidthPx,
+            const int insetX = FromDIP(g_selectionInsetX);
+            dc.DrawRectangle(FromDIP(x) + insetX, FromDIP(y),
+                             contentWidthPx - insetX * 2,
                              FromDIP(g_itemRowH));
         }
 
         // ---- Checkmark (selected only) ----
         if (isSelected) {
-            int cx = FromDIP(g_checkmarkX);
+            int cx = FromDIP(g_checkmarkX + g_contentOffsetX);
             int cy = FromDIP(y + g_checkmarkY);
             int cw = FromDIP(g_checkmarkW);
             int ch = FromDIP(g_checkmarkH);
@@ -198,7 +202,7 @@ private:
         bool isNone = isNoneEntry(data);
 
         // ---- Colour circle (bitmap) ----
-        int circleCxPx = FromDIP(g_circleCx);
+        int circleCxPx = FromDIP(g_circleCx + g_contentOffsetX);
         int circleCyPx = FromDIP(y + g_itemRowH / 2);
         int circleR    = FromDIP(g_circleRadius);
         int circleD    = circleR * 2;
@@ -221,7 +225,7 @@ private:
         dc.SetFont(labelFont);
         dc.SetTextForeground(isNone ? wxColour(0xBB, 0xBB, 0xBB) : g_textColor);
         wxString typeStr = wxString::FromUTF8(data.m_type.empty() ? "NONE" : data.m_type);
-        int textX = FromDIP(g_textX);
+        int textX = FromDIP(g_textX + g_contentOffsetX);
         int textH = dc.GetTextExtent(typeStr).y;
         int textY = FromDIP(y) + static_cast<int>(std::round((FromDIP(g_itemRowH) - textH) / 2.0));
 

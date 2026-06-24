@@ -3697,7 +3697,7 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_cost");
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
-        optgroup->append_single_option_line("filament_is_high_temperature");
+        // filament_is_high_temperature is controlled by preset data, not user-facing
         optgroup->append_single_option_line("idle_temperature");
         optgroup->append_single_option_line("filament_tower_ironing_area");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };

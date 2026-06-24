@@ -1,6 +1,7 @@
 #include "FilamentScrollBar.hpp"
 
 #include <wx/dcclient.h>
+#include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/settings.h>
 

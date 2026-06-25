@@ -7348,6 +7348,138 @@ void GUI_App::SMUserInfo::notify() {
     wxGetApp().user_login_notify(data);
 
 }
+//---------------------------------------------------------------------------
+// Extensible incompatible support-material pair detection.
+// Each entry: {interface_material, incompatible_model_material}.
+// When the interface filament equals the first type AND the plate
+// contains models of the second type, a parameter recommendation is
+// triggered. Add new pairs here — no other code changes needed.
+//---------------------------------------------------------------------------
+namespace {
+struct IncompatibleSupportPair {
+    const char *interface_type;
+    const char *model_type;
+};
+
+const IncompatibleSupportPair INCOMPATIBLE_SUPPORT_PAIRS[] = {
+    {"PETG", "PLA"},
+    {"PLA",  "PETG"},
+    // Future: {"PLA", "TPU"},
+    // Future: {"PLA", "TPU-AMS"},
+};
+} // anonymous namespace
+
+//---------------------------------------------------------------------------
+// Scans all model objects on all plates for any of the given filament_type
+// strings. Mixed-filament virtual slots are expanded to physical components
+// before checking.
+//---------------------------------------------------------------------------
+bool has_filaments(const std::vector<std::string> &filament_types)
+{
+    if (filament_types.empty())
+        return false;
+
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return false;
+
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return false;
+
+    const std::vector<std::string> &filament_presets = preset_bundle->filament_presets;
+    const PresetCollection         &filaments        = preset_bundle->filaments;
+    const size_t num_physical    = filament_presets.size();
+
+    // Resolve filament_type string for a 1-based extruder index.
+    auto resolve_filament_type = [&](int extruder_id_1based) -> std::string {
+        if (extruder_id_1based <= 0)
+            return std::string();
+        unsigned int idx = static_cast<unsigned int>(extruder_id_1based - 1);
+        if (idx >= filament_presets.size())
+            return std::string();
+        const Preset *preset = filaments.find_preset(filament_presets[idx]);
+        if (preset == nullptr)
+            return std::string();
+        const ConfigOptionStrings *opt = preset->config.option<ConfigOptionStrings>(
+            "filament_type");
+        if (opt == nullptr || opt->values.empty())
+            return std::string();
+        return opt->values[0];
+    };
+
+    // Collect 1-based extruder IDs from all model volumes on all plates.
+    std::vector<int> raw_extruder_ids;
+    const ModelObjectPtrs &model_objects = plater->model().objects;
+    for (const ModelObject *obj : model_objects) {
+        if (obj == nullptr) continue;
+        for (const ModelVolume *vol : obj->volumes) {
+            if (vol == nullptr) continue;
+            std::vector<int> extruders = vol->get_extruders();
+            raw_extruder_ids.insert(raw_extruder_ids.end(),
+                                    extruders.begin(), extruders.end());
+        }
+    }
+
+    // Expand mixed-filament virtual IDs to physical components.
+    // This expansion is for MODEL material detection only — mixed slots
+    // CANNOT be selected as support_interface_filament (ConfigManipulation
+    // clamping resets them to 0 when value exceeds filament_cnt).
+    MixedFilamentManager &mixed_mgr = preset_bundle->mixed_filaments;
+    if (num_physical > 0) {
+        mixed_mgr.expand_virtual_extruder_ids(raw_extruder_ids, num_physical);
+    }
+
+    // Match each expanded physical extruder against the target list.
+    for (int extruder_id : raw_extruder_ids) {
+        std::string filament_type = resolve_filament_type(extruder_id);
+        if (filament_type.empty()) continue;
+        for (const std::string &target : filament_types) {
+            if (filament_type == target)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+// Checks whether the filament at extruder_id forms an incompatible
+// PLA↔PETG support pair with any model material on the plate.
+// Returns true if a recommendation dialog should be shown.
+bool check_pla_petg_support_pair(int extruder_id)
+{
+    PresetBundle *preset_bundle = Slic3r::GUI::wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return false;
+
+    const std::vector<std::string> &filament_presets = preset_bundle->filament_presets;
+
+    if (extruder_id < 0 || extruder_id >= static_cast<int>(filament_presets.size()))
+        return false;
+
+    const Preset *filament = preset_bundle->filaments.find_preset(
+        filament_presets[extruder_id]);
+    if (filament == nullptr)
+        return false;
+
+    const ConfigOptionStrings *ft_opt =
+        filament->config.option<ConfigOptionStrings>("filament_type");
+    if (ft_opt == nullptr || ft_opt->values.empty())
+        return false;
+
+    const std::string &interface_type = ft_opt->values[0];
+
+    for (const IncompatibleSupportPair &pair : INCOMPATIBLE_SUPPORT_PAIRS) {
+        if (interface_type == pair.interface_type) {
+            bool found = has_filaments({pair.model_type});
+            if (found)
+                return true;
+        }
+    }
+
+    return false;
+}
+
 bool is_support_filament(int extruder_id)
 {
     auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
@@ -7362,7 +7494,7 @@ bool is_support_filament(int extruder_id)
     if (support_option == nullptr) return false;
 
     return support_option->get_at(0);
-};
+}
 
 } // GUI
 } //Slic3r

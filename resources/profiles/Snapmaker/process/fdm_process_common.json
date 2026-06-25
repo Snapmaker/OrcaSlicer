@@ -185,7 +185,7 @@
   "filename_format": "{input_filename_base}_{layer_height}mm_{print_time}.gcode",
   "post_process": "",
   "enforce_support_layers": "0",
-  "exclude_object": "0",
+  "exclude_object": "1",
   "timelapse_type": "0",
   "gap_fill_enabled": "0",
   "single_extruder_multi_material_priming": "0"

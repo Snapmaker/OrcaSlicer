@@ -1,0 +1,11 @@
+{
+    "type": "filament",
+    "name": "Polymaker PETG-HF @U1 base",
+    "inherits": "fdm_filament_petg_poly",
+    "from": "system",
+    "setting_id": "PPHF04",
+    "instantiation": "false",
+    "compatible_printers": [
+      "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

@@ -62,8 +62,13 @@ endif()
 # On macOS, this feature is valid and should be detected normally.
 if (APPLE)
   set(_curl_apple_flags "")
+  set(_curl_patch_cmd "")
 else()
   set(_curl_apple_flags -DHAVE_BUILTIN_AVAILABLE:INTERNAL=0)
+  # CurlTests.c:568 uses __builtin_available(macOS 10.12, *) — Apple-Clang only.
+  # GCC/MSVC don't define 'macOS'. Guard with #ifdef __APPLE__.
+  # Use perl (not sed) for cross-platform -i compatibility (BSD sed needs -i '').
+  set(_curl_patch_cmd PATCH_COMMAND perl -i -pe "if(/__builtin_available.*macOS/){s/^/#ifdef __APPLE__\\n/;s/\$/\\n#endif/}" CMake/CurlTests.c)
 endif()
 
 Snapmaker_Orca_add_cmake_project(CURL
@@ -72,13 +77,7 @@ Snapmaker_Orca_add_cmake_project(CURL
   URL                 https://github.com/curl/curl/archive/refs/tags/curl-7_75_0.zip
   URL_HASH            SHA256=a63ae025bb0a14f119e73250f2c923f4bf89aa93b8d4fafa4a9f5353a96a765a
   DEPENDS             ${ZLIB_PKG}
-  # CurlTests.c:568 uses __builtin_available(macOS 10.12, *) — Apple-Clang only syntax.
-  # GCC on Linux does not define 'macOS', causing a hard compile error.
-  # Fix 1 (source patch): guard the Apple-only test with #ifdef __APPLE__
-  # Fix 2 (cmake skip): pre-define HAVE_BUILTIN_AVAILABLE=0 so curl's CMake skips the
-  #     check_c_source_compiles test entirely (works even if PATCH_COMMAND was skipped
-  #     due to cached source extraction).
-  PATCH_COMMAND bash -c "sed -i '/__builtin_available.*macOS.*10\\.12/s|.*|#ifdef __APPLE__\\n&\\n#endif|' CMake/CurlTests.c; exit 0"
+  ${_curl_patch_cmd}
   CMAKE_ARGS
     -DBUILD_TESTING:BOOL=OFF
     -DBUILD_CURL_EXE:BOOL=OFF

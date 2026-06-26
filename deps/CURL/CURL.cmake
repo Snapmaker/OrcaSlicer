@@ -56,19 +56,35 @@ else()
   set(_curl_static ON)
 endif()
 
+# On non-Apple platforms, __builtin_available(macOS ...) is invalid C syntax.
+# Pre-define HAVE_BUILTIN_AVAILABLE=0 to skip curl's try_compile test that
+# would otherwise fail on Linux (GCC) and Windows (MSVC).
+# On macOS, this feature is valid and should be detected normally.
+if (APPLE)
+  set(_curl_apple_flags "")
+else()
+  set(_curl_apple_flags -DHAVE_BUILTIN_AVAILABLE:INTERNAL=0)
+endif()
+
 Snapmaker_Orca_add_cmake_project(CURL
   # GIT_REPOSITORY      https://github.com/curl/curl.git
   # GIT_TAG             curl-7_75_0
   URL                 https://github.com/curl/curl/archive/refs/tags/curl-7_75_0.zip
   URL_HASH            SHA256=a63ae025bb0a14f119e73250f2c923f4bf89aa93b8d4fafa4a9f5353a96a765a
   DEPENDS             ${ZLIB_PKG}
-  # PATCH_COMMAND       ${GIT_EXECUTABLE} checkout -f -- . && git clean -df && 
-  #                     ${GIT_EXECUTABLE} apply --whitespace=fix ${CMAKE_CURRENT_LIST_DIR}/curl-mods.patch
+  # CurlTests.c:568 uses __builtin_available(macOS 10.12, *) — Apple-Clang only syntax.
+  # GCC on Linux does not define 'macOS', causing a hard compile error.
+  # Fix 1 (source patch): guard the Apple-only test with #ifdef __APPLE__
+  # Fix 2 (cmake skip): pre-define HAVE_BUILTIN_AVAILABLE=0 so curl's CMake skips the
+  #     check_c_source_compiles test entirely (works even if PATCH_COMMAND was skipped
+  #     due to cached source extraction).
+  PATCH_COMMAND bash -c "sed -i '/__builtin_available.*macOS.*10\\.12/s|.*|#ifdef __APPLE__\\n&\\n#endif|' CMake/CurlTests.c; exit 0"
   CMAKE_ARGS
     -DBUILD_TESTING:BOOL=OFF
     -DBUILD_CURL_EXE:BOOL=OFF
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCURL_STATICLIB=${_curl_static}
+    ${_curl_apple_flags}
     ${_curl_platform_flags}
 )
 

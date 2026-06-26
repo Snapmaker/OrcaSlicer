@@ -62,6 +62,7 @@ Snapmaker_Orca_add_cmake_project(OpenCV
        -DOPENCV_INSTALL_FFMPEG_DOWNLOAD_SCRIPT=OFF
        -DBUILD_opencv_python2=OFF
        -DBUILD_opencv_python3=OFF
+       -DOPENCV_PYTHON_SKIP_DETECTION=ON
        -DWITH_OPENVINO=OFF
        -DWITH_INF_ENGINE=OFF
        -DWITH_NGRAPH=OFF

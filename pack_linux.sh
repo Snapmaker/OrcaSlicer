@@ -155,6 +155,26 @@ prepare_git_repo() {
 
     REPO_DIR="$(pwd)"
     echo -e "${GREEN}Build directory: $REPO_DIR${NC}"
+
+    # Fix deps cmake files: git apply fails on tarball-extracted sources (no .git dir)
+    # Replace: PATCH_COMMAND git apply <args> <patch>
+    # With:    PATCH_COMMAND bash -c "git init -q && git add -A &&
+    #           git -c user.email=b@l -c user.name=B commit -qm init && git apply <args> <patch>"
+    echo -e "${YELLOW}Patching deps CMake files for flatpak compatibility...${NC}"
+    for cmf in deps/OCCT/OCCT.cmake deps/GMP/GMP.cmake deps/CGAL/CGAL.cmake; do
+        if [ -f "$REPO_DIR/$cmf" ]; then
+            # Step 1: replace PATCH_COMMAND git apply with bash wrapper
+            sed -i -E \
+              's/^([[:space:]]*)PATCH_COMMAND git apply (.*\.patch)"?$/\1PATCH_COMMAND bash -c "git init -q \&\& git add -A \&\& git -c user.email=b@l -c user.name=B commit -qm init \&\& git apply \2"/' \
+              "$REPO_DIR/$cmf"
+            # Step 2: remove any --directory flag (not needed since bash -c runs from source dir)
+            sed -i -E \
+              's/\$\{[A-Z_]*DIRECTORY_FLAG\} *//g' \
+              "$REPO_DIR/$cmf"
+            echo "  Patched: $cmf"
+        fi
+    done
+
     echo ""
 }
 

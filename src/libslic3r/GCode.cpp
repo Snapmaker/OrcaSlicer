@@ -6246,6 +6246,27 @@ LayerResult GCode::process_layer(const Print& print,
         if (layer_tools.has_wipe_tower && m_wipe_tower)
             m_last_processor_extrusion_role = erWipeTower;
 
+        // BBS: emit object brim for the first extruder on the first layer,
+        // even when Local-Z phase-b has consumed all first-layer extrusions
+        // and by_extruder is empty for this extruder.
+        if (first_layer) {
+            for (std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.begin(); brim_it != this->m_objsWithBrim.end(); ) {
+                std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(*brim_it);
+                if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
+                    this->set_origin(0., 0.);
+                    m_avoid_crossing_perimeters.use_external_mp();
+                    for (const ExtrusionEntity* ee : brim_map_it->second.entities) {
+                        gcode += this->extrude_entity(*ee, "brim", m_config.support_speed.value);
+                    }
+                    m_avoid_crossing_perimeters.use_external_mp(false);
+                    m_avoid_crossing_perimeters.disable_once();
+                    brim_it = this->m_objsWithBrim.erase(brim_it);
+                } else {
+                    ++brim_it;
+                }
+            }
+        }
+
         auto objects_by_extruder_it = by_extruder.find(extruder_id);
         if (objects_by_extruder_it == by_extruder.end())
             continue;
@@ -6421,6 +6442,26 @@ LayerResult GCode::process_layer(const Print& print,
                     m_layer                  = layer_to_print.layer();
                     m_object_layer_over_raft = object_layer_over_raft;
                 }
+                // BBS: emit object brim before island loop to ensure emission
+                // even when Local-Z phase-b consumes all first-layer extrusions,
+                // leaving the island vector empty.
+                if (first_layer && !print_wipe_extrusions) {
+                    std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.find(instance_to_print.print_object.id());
+                    if (brim_it != this->m_objsWithBrim.end()) {
+                        std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(instance_to_print.print_object.id());
+                        if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
+                            this->set_origin(0., 0.);
+                            m_avoid_crossing_perimeters.use_external_mp();
+                            for (const ExtrusionEntity* ee : brim_map_it->second.entities) {
+                                gcode += this->extrude_entity(*ee, "brim", m_config.support_speed.value);
+                            }
+                            m_avoid_crossing_perimeters.use_external_mp(false);
+                            // Allow a straight travel move to the first object point.
+                            m_avoid_crossing_perimeters.disable_once();
+                            this->m_objsWithBrim.erase(brim_it);
+                        }
+                    }
+                }
                 // FIXME order islands?
                 //  Sequential tool path ordering of multiple parts within the same object, aka. perimeter tracking (#5511)
                 for (ObjectByExtruder::Island& island : instance_to_print.object_by_extruder.islands) {
@@ -6429,21 +6470,6 @@ LayerResult GCode::process_layer(const Print& print,
                                                                                    static_cast<unsigned int>(instance_to_print.instance_id),
                                                                                    extruder_id, print_wipe_extrusions != 0) :
                                                          island.by_region;
-                    // BBS: add brim by obj by extruder
-                    if (first_layer) {
-                        if (this->m_objsWithBrim.find(instance_to_print.print_object.id()) != this->m_objsWithBrim.end() &&
-                            !print_wipe_extrusions) {
-                            this->set_origin(0., 0.);
-                            m_avoid_crossing_perimeters.use_external_mp();
-                            for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {
-                                gcode += this->extrude_entity(*ee, "brim", m_config.support_speed.value);
-                            }
-                            m_avoid_crossing_perimeters.use_external_mp(false);
-                            // Allow a straight travel move to the first object point.
-                            m_avoid_crossing_perimeters.disable_once();
-                            this->m_objsWithBrim.erase(instance_to_print.print_object.id());
-                        }
-                    }
                     // When starting a new object, use the external motion planner for the first travel move.
                     const Point& offset = instance_to_print.print_object.instances()[instance_to_print.instance_id].shift;
                     std::pair<const PrintObject*, Point> this_object_copy(&instance_to_print.print_object, offset);

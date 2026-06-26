@@ -1,6 +1,8 @@
  #  Changelog
  
-## 2026-06-16
+## 2026-06-25
 ### Features
   * Add purifier control.
-
+  * Support official consumable identification.
+### Improvements
+  * Optimize internal API call logic.

@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.49.02",
+  "version": "02.02.50.02",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -1867,6 +1867,10 @@
     {
       "name": "Snapmaker PETG Translucent @U1 0.8 nozzle",
       "sub_path": "filament/Snapmaker PETG Translucent @U1 0.8 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PVA @U1",
+      "sub_path": "filament/Snapmaker PVA @U1.json"
     },
     {
       "name": "Snapmaker PVA @U1 0.6 nozzle",

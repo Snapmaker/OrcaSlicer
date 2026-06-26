@@ -23,7 +23,7 @@ constexpr int g_itemStepY     = 22; // DIP — vertical step between rows
 constexpr int g_firstRowY     = 12; // DIP — top of first row (after shadow)
 constexpr int g_itemGap       = 6;  // DIP — gap between rows
 constexpr int g_selectionInsetX = 3; // DIP — left/right inset for selected row background
-constexpr int g_contentOffsetX  = 1; // DIP — slight visual centering offset for row content
+constexpr int g_contentOffsetX  = -2; // DIP — keep row content clear of the right edge
 
 // --- Checkmark (draw with path, roughly 8×8 DIP) ---
 constexpr int g_checkmarkX = 9;

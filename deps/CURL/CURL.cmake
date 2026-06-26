@@ -57,18 +57,14 @@ else()
 endif()
 
 # On non-Apple platforms, __builtin_available(macOS ...) is invalid C syntax.
-# Pre-define HAVE_BUILTIN_AVAILABLE=0 to skip curl's try_compile test that
-# would otherwise fail on Linux (GCC) and Windows (MSVC).
-# On macOS, this feature is valid and should be detected normally.
+# Pre-define HAVE_BUILTIN_AVAILABLE=0 to skip curl's try_compile test.
+# curl_internal_test() checks `if(NOT DEFINED "...")` before running the test,
+# so pre-defining the cache variable skips CurlTests.c compilation entirely.
+# On macOS, this feature is valid — let curl detect it normally.
 if (APPLE)
   set(_curl_apple_flags "")
-  set(_curl_patch_cmd "")
 else()
   set(_curl_apple_flags -DHAVE_BUILTIN_AVAILABLE:INTERNAL=0)
-  # CurlTests.c:568 uses __builtin_available(macOS 10.12, *) — Apple-Clang only.
-  # GCC/MSVC don't define 'macOS'. Guard with #ifdef __APPLE__.
-  # Use perl (not sed) for cross-platform -i compatibility (BSD sed needs -i '').
-  set(_curl_patch_cmd PATCH_COMMAND perl -i -pe "if(/__builtin_available.*macOS/){s/^/#ifdef __APPLE__\\n/;s/\$/\\n#endif/}" CMake/CurlTests.c)
 endif()
 
 Snapmaker_Orca_add_cmake_project(CURL
@@ -77,7 +73,6 @@ Snapmaker_Orca_add_cmake_project(CURL
   URL                 https://github.com/curl/curl/archive/refs/tags/curl-7_75_0.zip
   URL_HASH            SHA256=a63ae025bb0a14f119e73250f2c923f4bf89aa93b8d4fafa4a9f5353a96a765a
   DEPENDS             ${ZLIB_PKG}
-  ${_curl_patch_cmd}
   CMAKE_ARGS
     -DBUILD_TESTING:BOOL=OFF
     -DBUILD_CURL_EXE:BOOL=OFF

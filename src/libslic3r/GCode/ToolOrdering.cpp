@@ -150,6 +150,11 @@ void remove_duplicates_preserve_order(std::vector<unsigned int> &values)
 // Shortest hamilton path problem
 static std::vector<unsigned int> solve_extruder_order(const std::vector<std::vector<float>>& wipe_volumes, std::vector<unsigned int> all_extruders, std::optional<unsigned int> start_extruder_id) 
 {
+	for (auto id : all_extruders) {
+    if (id >= wipe_volumes.size())
+        return all_extruders;
+	}
+	
     bool add_start_extruder_flag = false;
 
     if (start_extruder_id) {

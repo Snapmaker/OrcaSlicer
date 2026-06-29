@@ -17,10 +17,6 @@
               "description": ""
             },
             {
-              "serie": "Silk",
-              "description": ""
-            },
-            {
               "serie": "Basic",
               "description": ""
             },
@@ -58,10 +54,6 @@
           "material": "TPU",
           "description": "",
           "series": [
-            {
-              "serie": "90A",
-              "description": ""
-            },
             {
               "serie": "95A",
               "description": ""

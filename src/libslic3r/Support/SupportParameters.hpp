@@ -179,8 +179,13 @@ struct SupportParameters {
         }
         if (support_style == smsDefault) {
             if (is_tree(object_config.support_type)) {
-                // Orca: use organic as default
-                support_style = smsTreeOrganic;
+                // Align with Bambu Studio:
+                // Organic for normal cases, Hybrid for variable layer height or soluble interface
+                if (object.model_object()->has_custom_layering() || this->soluble_interface) {
+                    support_style = smsTreeHybrid;
+                } else {
+                    support_style = smsTreeOrganic;
+                }
             } else {
                 support_style = smsGrid;
             }

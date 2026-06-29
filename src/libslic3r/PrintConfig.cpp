@@ -5564,6 +5564,43 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(40.));
 
+    // Snapmaker: Support transition layer parameters
+    def = this->add("tree_support_transition_layers", coInt);
+    def->label = L("Tree support transition layers");
+    def->category = L("Support");
+    def->tooltip = L("Number of transition layers between tree support interface and support body. 0 disables transition layers. Bambu Studio uses 1 layer by default; Snapmaker recommends 2 layers for better adhesion with high-shrinkage materials like ABS/PC/PA.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->max = 3;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2));
+
+    def = this->add("support_transition_perimeter", coBool);
+    def->label = L("Support transition perimeter");
+    def->category = L("Support");
+    def->tooltip = L("Generate a perimeter loop before transition layer infill for better surface connection. Recommended to keep enabled.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("support_transition_speed", coFloat);
+    def->label = L("Support transition speed");
+    def->category = L("Speed");
+    def->tooltip = L("Independent printing speed for support transition layers. Lower speed improves layer adhesion. Different from bridge_speed which is for bridging over gaps.");
+    def->sidetext = L("mm/s");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(50));
+
+    def = this->add("support_transition_flow_ratio", coFloatOrPercent);
+    def->label = L("Support transition flow ratio");
+    def->category = L("Support");
+    def->tooltip = L("Flow ratio for support transition layers relative to normal support flow. Slightly lower than interface flow for a more natural transition. 0.85 = 85% of normal support flow.");
+    def->sidetext = L("%");
+    def->min = 0.1;
+    def->max = 2.0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent(1.0, false));
+
     def = this->add("tree_support_angle_slow", coFloat);
     def->label = L("Preferred Branch Angle");
     def->category = L("Support");
@@ -7265,7 +7302,7 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "max_volumetric_speed", "max_print_speed",
         "support_closing_radius",
         "remove_freq_sweep", "remove_bed_leveling", "remove_extrusion_calibration",
-        "support_transition_line_width", "support_transition_speed", "bed_temperature", "bed_temperature_initial_layer",
+        "support_transition_line_width", "bed_temperature", "bed_temperature_initial_layer",
         "can_switch_nozzle_type", "can_add_auxiliary_fan", "extra_flush_volume", "spaghetti_detector", "adaptive_layer_height",
         "z_hop_type", "z_lift_type", "bed_temperature_difference","long_retraction_when_cut",
         "retraction_distance_when_cut",

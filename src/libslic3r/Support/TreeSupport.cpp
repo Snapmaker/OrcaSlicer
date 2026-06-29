@@ -16,6 +16,7 @@
 #include "TreeSupport3D.hpp"
 #include <libnest2d/backends/libslic3r/geometries.hpp>
 #include <libnest2d/placers/nfpplacer.hpp>
+#include <fstream>
 
 
 #include <tbb/blocked_range.h>
@@ -1494,7 +1495,7 @@ void TreeSupport::generate_toolpaths()
                         filler_Roof1stLayer->spacing = interface_flow.spacing();
                         // generate a perimeter first to support interface better
                         ExtrusionEntityCollection* temp_support_fills = new ExtrusionEntityCollection();
-                        make_perimeter_and_infill(temp_support_fills->entities, poly, 1, interface_flow, erSupportMaterial,
+                        make_perimeter_and_infill(temp_support_fills->entities, poly, 1, interface_flow, erSupportTransition,
                             filler_Roof1stLayer.get(), interface_density, false);
                         temp_support_fills->no_sort = true; // make sure loops are first
                         if (!temp_support_fills->entities.empty())
@@ -1518,8 +1519,15 @@ void TreeSupport::generate_toolpaths()
                         if (m_object_config->support_interface_pattern == smipRectilinearInterlaced)
                             filler_interface->layer_id = area_group.interface_id;
 
-                        fill_expolygons_generate_paths(ts_layer->support_fills.entities, polys, filler_interface.get(), fill_params, erSupportMaterialInterface,
-                                                       interface_flow);
+                        // Generate perimeter first to support interface better (match Bambu behavior)
+                        ExtrusionEntityCollection* temp_support_fills = new ExtrusionEntityCollection();
+                        make_perimeter_and_infill(temp_support_fills->entities, poly, 1, interface_flow, erSupportMaterialInterface,
+                            filler_interface.get(), interface_density, false);
+                        temp_support_fills->no_sort = true; // make sure loops are first
+                        if (!temp_support_fills->entities.empty())
+                            ts_layer->support_fills.entities.push_back(temp_support_fills);
+                        else
+                            delete temp_support_fills;
                     }
                     else {
                         // base_areas
@@ -2022,12 +2030,22 @@ void TreeSupport::draw_circles()
                 //Draw the support areas and add the roofs appropriately to the support roof instead of normal areas.
                 ts_layer->lslices.reserve(curr_layer_nodes.size());
                 ExPolygons area_poly;  // the polygon node area which will be printed as normal support
+                // Diagnostic counters for transition layer analysis
+                int diag_sharp_tail = 0;
+                int diag_roof0 = 0, diag_roof1 = 0, diag_roof_ge2 = 0;
+                int diag_epoly = 0, diag_ecircle = 0;
                 for (const SupportNode* p_node : curr_layer_nodes)
                 {
                     if (print->canceled())
                         break;
 
                     const SupportNode& node = *p_node;
+                    if (node.is_sharp_tail) diag_sharp_tail++;
+                    if (node.support_roof_layers_below == 0) diag_roof0++;
+                    else if (node.support_roof_layers_below == 1) diag_roof1++;
+                    else if (node.support_roof_layers_below >= 2) diag_roof_ge2++;
+                    if (node.type == ePolygon) diag_epoly++;
+                    else diag_ecircle++;
                     ExPolygons area;
                     // Generate directly from overhang polygon if one of the following is true:
                     // 1) node is a normal part of hybrid support
@@ -2076,27 +2094,35 @@ void TreeSupport::draw_circles()
                         if (!area.empty()) has_circle_node = true;
                         if (node.need_extra_wall) need_extra_wall = true;
 
-                        // merge overhang to get a smoother interface surface
+                        // merge overhang to get a smoother interface surface.
                         // Do not merge when buildplate_only is on, because some underneath nodes may have been deleted.
-                        if (top_interface_layers > 0 && node.support_roof_layers_below > 0 && !on_buildplate_only && !node.is_sharp_tail) {
+                        // Align with Bambu Studio: replace node circle with expanded overhang (not append).
+                        // The overhang provides a larger continuous surface for better infill.
+                        if (top_interface_layers > 0 && node.support_roof_layers_below > 0 && !on_buildplate_only) {
                             ExPolygons overhang_expanded;
                             if (node.overhang.contour.size() > 100 || node.overhang.holes.size()>1)
                                 overhang_expanded.emplace_back(node.overhang);
                             else {
                                 overhang_expanded = offset_ex({ node.overhang }, scale_(m_ts_data->m_xy_distance));
                             }
-                            append(area, overhang_expanded);
+                            // Replace the circle area with the expanded overhang (aligns with Bambu)
+                            // This produces a single coherent polygon instead of circle+overhang fragments
+                            area = std::move(overhang_expanded);
+                            // Apply collision avoidance to the overhang area
+                            area = diff_clipped(area, get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
+                            if (!area.empty()) has_circle_node = true;
                         }
                     }
 
                     if (obj_layer_nr>0 && node.distance_to_top < 0)
                         append(roof_gap_areas, area);
-                    else if (obj_layer_nr > 0 && node.support_roof_layers_below == 1 && node.is_sharp_tail==false)
+                    else if (obj_layer_nr > 0 && node.support_roof_layers_below > 0
+                             && node.support_roof_layers_below <= config.tree_support_transition_layers.value)
                     {
                         append(roof_1st_layer, area);
                         max_layers_above_roof1 = std::max(max_layers_above_roof1, node.dist_mm_to_top);
                     }
-                    else if (obj_layer_nr > 0 && node.support_roof_layers_below > 0 && node.is_sharp_tail == false)
+                    else if (obj_layer_nr > 0 && node.support_roof_layers_below > 0)
                     {
                         append(roof_areas, area);
                         max_layers_above_roof = std::max(max_layers_above_roof, node.dist_mm_to_top);
@@ -2110,16 +2136,53 @@ void TreeSupport::draw_circles()
 
                 }
 
+                // ====== DIAG LOG: per-layer transition diagnostic ======
+                {
+                    static std::ofstream diag("C:\\Users\\Administrator\\Desktop\\orca_diag_transition.csv", std::ios::app);
+                    static bool header = false;
+                    if (!header) {
+                        diag << "layer_nr,obj_layer_nr,print_z,total_nodes,sharp_tail,roof0,roof1,roof_ge2,epoly,ecircle,roof_areas_polys,roof_1st_polys,base_polys,roof_gap_polys" << std::endl;
+                        header = true;
+                    }
+                    diag << layer_nr << ","
+                         << m_ts_data->layer_heights[layer_nr].obj_layer_nr << ","
+                         << ts_layer->print_z << ","
+                         << curr_layer_nodes.size() << ","
+                         << diag_sharp_tail << ","
+                         << diag_roof0 << "," << diag_roof1 << "," << diag_roof_ge2 << ","
+                         << diag_epoly << "," << diag_ecircle << ","
+                         << roof_areas.size() << "," << roof_1st_layer.size() << ","
+                         << base_areas.size() << "," << roof_gap_areas.size()
+                         << std::endl;
+                }
+                // ====== END DIAG LOG ======
+
                 //m_object->print()->set_status(65, (boost::format( _u8L("Support: generate polygons at layer %d")) % layer_nr).str());
 
                 // join roof segments
                 roof_areas     = diff_clipped(offset2_ex(roof_areas, line_width_scaled, -line_width_scaled), get_collision(false));
                 roof_areas     = intersection_ex(roof_areas, m_machine_border);
+                roof_areas     = union_ex(roof_areas); // merge fragments into continuous surfaces (align with Bambu)
                 roof_1st_layer = diff_clipped(offset2_ex(roof_1st_layer, line_width_scaled, -line_width_scaled), get_collision(false));
+                // Note: Bambu does NOT apply union_ex to roof_1st_layer (only to roof_areas).
+                // union_ex would merge separate branch polygons into one continuous surface,
+                // producing a single large block that diverges from Bambu's per-branch transition strips.
 
                 // roof_1st_layer and roof_areas may intersect, so need to subtract roof_areas from roof_1st_layer
                 roof_1st_layer = diff_ex(roof_1st_layer, ClipperUtils::clip_clipper_polygons_with_subject_bbox(roof_areas,get_extents(roof_1st_layer)));
                 roof_1st_layer = intersection_ex(roof_1st_layer, m_machine_border);
+
+                // Move small roof_areas (< 1mm^2) into roof_1st_layer, matching Bambu Studio behavior.
+                // This increases the transition layer area for better surface adhesion (膨胀成面).
+                ExPolygons new_roofs;
+                for (auto &expoly : roof_areas) {
+                    if (area(expoly) < SQ(scale_(1.)) && max_layers_above_roof > EPSILON) {
+                        roof_1st_layer.push_back(expoly);
+                        continue;
+                    }
+                    new_roofs.push_back(expoly);
+                }
+                roof_areas = std::move(new_roofs);
 
                 ExPolygons roofs; append(roofs, roof_1st_layer); append(roofs, roof_areas);append(roofs, roof_gap_areas);
                 base_areas = diff_ex(base_areas, ClipperUtils::clip_clipper_polygons_with_subject_bbox(roofs, get_extents(base_areas)));
@@ -3192,7 +3255,7 @@ void TreeSupport::generate_contact_points()
 
     size_t support_roof_layers = config.support_interface_top_layers.value;
     if (support_roof_layers > 0)
-        support_roof_layers += 1; // BBS: add a normal support layer below interface (if we have interface)
+        support_roof_layers += config.tree_support_transition_layers.value;
     coordf_t  thresh_angle = std::min(89.f, config.support_threshold_angle.value < EPSILON ? 30.f : config.support_threshold_angle.value);
     coordf_t  half_overhang_distance = scale_(tan(thresh_angle * M_PI / 180.0) * layer_height / 2);
 
@@ -3288,7 +3351,10 @@ void TreeSupport::generate_contact_points()
                 }
 
                 for (auto &overhang : overhangs_regular) {
-                    bool add_interface = (force_tip_to_roof || area(overhang) > minimum_roof_area) && !is_sharp_tail;
+                    bool add_interface = (force_tip_to_roof || area(overhang) > minimum_roof_area);
+                    // Align with Bambu: only exclude tiny sharp_tails with non-soluble interface
+                    if (is_sharp_tail && !m_support_params.soluble_interface && area(overhang) < SQ(scale_(2.)))
+                        add_interface = false;
                     BoundingBox overhang_bounds = get_extents(overhang);
                     double      radius          = std::clamp(unscale_(overhang_bounds.radius()), MIN_BRANCH_RADIUS, base_radius);
                     // add supports at corners for both auto and manual overhangs, github #2008

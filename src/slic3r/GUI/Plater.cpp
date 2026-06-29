@@ -8262,6 +8262,8 @@ void Sidebar::show_sync_filament_dialog()
                     mf.enabled = false;
                 }
             }
+            if (auto* opt = preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+                opt->value = preset_bundle->mixed_filaments.serialize_custom_entries();
         }
 
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();

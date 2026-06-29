@@ -292,6 +292,9 @@ set(lisbslic3r_sources
     filament_mixer.cpp
     filament_mixer.h
     filament_mixer_model.h
+    prusa_fdm_mixer.cpp
+    prusa_fdm_mixer.hpp
+    prusa_fdm_mixer_wrap.hpp
     miniz_extension.cpp
     miniz_extension.hpp
     ModelArrange.cpp

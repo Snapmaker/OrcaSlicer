@@ -1,4 +1,4 @@
-﻿#ifndef slic3r_MixedFilament_hpp_
+#ifndef slic3r_MixedFilament_hpp_
 #define slic3r_MixedFilament_hpp_
 
 #include <string>

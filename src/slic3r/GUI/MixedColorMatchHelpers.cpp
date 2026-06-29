@@ -1,4 +1,4 @@
-﻿#include "MixedColorMatchHelpers.hpp"
+#include "MixedColorMatchHelpers.hpp"
 #include "MixedGradientSelector.hpp"
 #include <unordered_set>
 #include <ColorSpaceConvert.hpp>
@@ -17,6 +17,9 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+#include "libslic3r/prusa_fdm_mixer.hpp"
+#endif
 
 namespace Slic3r { namespace GUI {
 wxColour parse_mixed_color(const std::string& value)
@@ -294,6 +297,61 @@ double delta_e_lab(const CIELab& a, const CIELab& b)
                            float(b.L), float(b.a), float(b.b)));
 }
 
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+// (prusa_fdm_mixer.hpp is included at global scope above — never inside this
+// namespace, or prusa_fdm_mixer would nest as Slic3r::GUI::prusa_fdm_mixer and
+// fail to link against the definitions in prusa_fdm_mixer.cpp.)
+// ---- prusa-fdm-mixer prediction helpers (demo A/B) ----
+// Predict the apparent mixed colour via the calibrated prusa-fdm-mixer model,
+// then convert to the repo's CIELab so ΔE scoring reuses the same sRGB_to_CIELab
+// path as the legacy polynomial model. mix_rgb() round-trips through 8-bit sRGB
+// (same as the legacy path), keeping the A/B comparison fair; a Lab-direct
+// variant is a future Layer-3 refinement.
+static std::string filament_mix_prusa_hex_from_wx(const wxColour& c)
+{
+    static const char* hex_digits = "0123456789abcdef";
+    auto to_hex = [](unsigned char v) -> std::string {
+        std::string s;
+        s += hex_digits[(v >> 4) & 0x0F];
+        s += hex_digits[v & 0x0F];
+        return s;
+    };
+    return "#" + to_hex(c.Red()) + to_hex(c.Green()) + to_hex(c.Blue());
+}
+
+static CIELab predict_pair_lab_prusa(const wxColour& a, const wxColour& b, float t)
+{
+    const double tc = static_cast<double>(std::clamp(t, 0.0f, 1.0f));
+    const std::vector<prusa_fdm_mixer::Part> parts = {
+        { filament_mix_prusa_hex_from_wx(a), 1.0 - tc },
+        { filament_mix_prusa_hex_from_wx(b), tc },
+    };
+    const prusa_fdm_mixer::RGB rgb = prusa_fdm_mixer::mix_rgb(parts);
+    return sRGB_to_CIELab(wxColour(rgb.r, rgb.g, rgb.b));
+}
+
+static CIELab predict_multi_lab_prusa(const std::vector<wxColour>& colors, const std::vector<double>& weights)
+{
+    if (colors.empty() || colors.size() != weights.size())
+        return { 50.0, 0.0, 0.0 };
+
+    // prusa expects ratios summing to ~1; normalize raw weights (the legacy path
+    // normalizes inside blend_multi_filament_mixer, so this matches semantics).
+    double sum = 0.0;
+    for (double w : weights) sum += std::max(0.0, w);
+    if (sum <= 0.0) return { 50.0, 0.0, 0.0 };
+
+    std::vector<prusa_fdm_mixer::Part> parts;
+    parts.reserve(colors.size());
+    for (size_t i = 0; i < colors.size(); ++i) {
+        const double r = std::max(0.0, weights[i]) / sum;
+        if (r > 0.0) parts.push_back({ filament_mix_prusa_hex_from_wx(colors[i]), r });
+    }
+    const prusa_fdm_mixer::RGB rgb = prusa_fdm_mixer::mix_rgb(parts);
+    return sRGB_to_CIELab(wxColour(rgb.r, rgb.g, rgb.b));
+}
+#endif // ENABLE_PRUSA_FDM_MIXER_DEMO
+
 BlendLUT build_blend_lut(const std::vector<wxColour>& palette)
 {
     const size_t n = palette.size();
@@ -303,8 +361,12 @@ BlendLUT build_blend_lut(const std::vector<wxColour>& palette)
     for (size_t a = 0; a < n; ++a) {
         for (size_t b = a; b < n; ++b) {
             for (int pct = 0; pct <= 100; ++pct) {
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+                lut.m_pair[a][b - a][pct] = predict_pair_lab_prusa(palette[a], palette[b], float(pct) / 100.f);
+#else
                 wxColour blended = blend_pair_filament_mixer(palette[a], palette[b], float(pct) / 100.f);
                 lut.m_pair[a][b - a][pct] = sRGB_to_CIELab(blended);
+#endif
             }
         }
     }
@@ -337,8 +399,12 @@ CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
         dweights.push_back(double(std::max(0, w)));
     }
 
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+    return predict_multi_lab_prusa(colors, dweights);
+#else
     wxColour blended = blend_multi_filament_mixer(colors, dweights);
     return sRGB_to_CIELab(blended);
+#endif
 }
 
 // ---- ΔE2000 ----

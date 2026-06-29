@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "GUI_Utils.hpp"
 #include "MixedColorMatchHelpers.hpp"

@@ -2365,6 +2365,19 @@ std::string MixedFilamentDialog::compute_preview_color()
             return MixedFilamentManager::blend_color(m_filament_colours[ia], m_filament_colours[ib], 100 - val, val);
         }
         if (nf >= 3) {
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+            const int ia = std::clamp(m_match_tri_indices[0], 0, (int)m_filament_colours.size() - 1);
+            const int ib = std::clamp(m_match_tri_indices[1], 0, (int)m_filament_colours.size() - 1);
+            const int ic = std::clamp(m_match_tri_indices[2], 0, (int)m_filament_colours.size() - 1);
+            int w0 = (int)std::round(m_match_tri_wx * 100.0);
+            int w1 = (int)std::round(m_match_tri_wy * 100.0);
+            int w2 = std::max(0, 100 - w0 - w1);
+            return MixedFilamentManager::blend_color_multi({
+                std::make_pair(m_filament_colours[ia], w0),
+                std::make_pair(m_filament_colours[ib], w1),
+                std::make_pair(m_filament_colours[ic], w2),
+            });
+#else
             wxColour c0 = parse_mixed_color(m_filament_colours[std::clamp(m_match_tri_indices[0], 0, (int)m_filament_colours.size() - 1)]);
             wxColour c1 = parse_mixed_color(m_filament_colours[std::clamp(m_match_tri_indices[1], 0, (int)m_filament_colours.size() - 1)]);
             wxColour c2 = parse_mixed_color(m_filament_colours[std::clamp(m_match_tri_indices[2], 0, (int)m_filament_colours.size() - 1)]);
@@ -2372,6 +2385,7 @@ std::string MixedFilamentDialog::compute_preview_color()
             int g = (int)(c0.Green()*m_match_tri_wx + c1.Green()*m_match_tri_wy + c2.Green()*m_match_tri_wz + 0.5);
             int b = (int)(c0.Blue()*m_match_tri_wx + c1.Blue()*m_match_tri_wy + c2.Blue()*m_match_tri_wz + 0.5);
             return wxString::Format("#%02X%02X%02X", std::clamp(r,0,255), std::clamp(g,0,255), std::clamp(b,0,255)).ToStdString();
+#endif
         }
     }
 
@@ -2428,6 +2442,16 @@ std::string MixedFilamentDialog::compute_preview_color()
 
     // 3-filament ratio mode: linear weighted average matching tri picker rendering
     if (n == 3 && m_current_mode == MODE_RATIO) {
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+        int w0 = (int)std::round(m_tri_wx * 100.0);
+        int w1 = (int)std::round(m_tri_wy * 100.0);
+        int w2 = std::max(0, 100 - w0 - w1);
+        return MixedFilamentManager::blend_color_multi({
+            std::make_pair(m_filament_colours[safe_idx(get_filament_index(0))], w0),
+            std::make_pair(m_filament_colours[safe_idx(get_filament_index(1))], w1),
+            std::make_pair(m_filament_colours[safe_idx(get_filament_index(2))], w2),
+        });
+#else
         auto get_col = [&](int row) {
             return parse_mixed_color(m_filament_colours[safe_idx(get_filament_index(row))]);
         };
@@ -2437,6 +2461,7 @@ std::string MixedFilamentDialog::compute_preview_color()
         int b = (int)(c0.Blue()  * m_tri_wx + c1.Blue()  * m_tri_wy + c2.Blue()  * m_tri_wz + 0.5);
         return wxString::Format("#%02X%02X%02X",
             std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255)).ToStdString();
+#endif
     }
 
     int per = 100 / n;

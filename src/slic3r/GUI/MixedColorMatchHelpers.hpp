@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 // Shared declarations for color-match helpers used by both Plater.cpp and
 // MixedColorMatchPanel.cpp. Implementations live in Plater.cpp.

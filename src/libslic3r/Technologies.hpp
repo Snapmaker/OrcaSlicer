@@ -25,6 +25,14 @@
 // Enable project dirty state manager debug window
 #define ENABLE_PROJECT_DIRTY_STATE_DEBUG_WINDOW 0
 
+// Enable prusa-fdm-mixer color-mixing model demo (A/B vs the legacy Justin Hayes
+// polynomial in filament_mixer_model.h). 0 = legacy behaviour, byte-identical
+// (call sites keep their original code under #else). 1 = route the colour-match
+// prediction path through the calibrated prusa-fdm-mixer model. Research demo;
+// removal = delete the prusa_fdm_mixer.* files, the #if blocks, this macro, and
+// the CMake lines. See plan: encapsulated-frolicking-zephyr.md.
+#define ENABLE_PRUSA_FDM_MIXER_DEMO 1
+
 
 // Enable rendering of objects using environment map
 #define ENABLE_ENVIRONMENT_MAP 0

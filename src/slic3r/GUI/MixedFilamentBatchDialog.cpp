@@ -1,4 +1,4 @@
-﻿#include "MixedFilamentBatchDialog.hpp"
+#include "MixedFilamentBatchDialog.hpp"
 #include "MixedFilamentBadge.hpp"
 #include "MixedColorMatchHelpers.hpp"
 #include "GUI_App.hpp"
@@ -381,10 +381,10 @@ void MixedFilamentBatchDialog::update_recommended_card()
     // Color name lookup — maps from hex in CMYG palette back to a
     // human-readable label.  Covers the 4 canonical colors.
     static const std::unordered_map<std::string, wxString> kColorName = {
-        {"#00FFFF", _L("Cyan")},
-        {"#FF00FF", _L("Magenta")},
-        {"#FFFF00", _L("Yellow")},
-        {"#00FF00", _L("Green")},
+        {"#08ABFB", _L("Blue")},
+        {"#D93B90", _L("Magenta")},
+        {"#F9ED3D", _L("Yellow")},
+        {"#9199A4", _L("Gray")},
     };
 
     for (int i = 0; i < 4; ++i) {
@@ -628,10 +628,10 @@ void MixedFilamentBatchDialog::build_ui()
 
         // 2-column grid: 4 fixed CMYG rows
         static const std::vector<std::pair<std::string, wxString>> CMYG_ENTRIES = {
-            {"#00FFFF", _L("Cyan")},
-            {"#FF00FF", _L("Magenta")},
-            {"#FFFF00", _L("Yellow")},
-            {"#00FF00", _L("Green")},
+            {"#08ABFB", _L("Blue")},
+            {"#D93B90", _L("Magenta")},
+            {"#F9ED3D", _L("Yellow")},
+            {"#9199A4", _L("Gray")},
         };
 
         auto* grid = new wxFlexGridSizer(2, FromDIP(6), FromDIP(6));
@@ -996,10 +996,10 @@ void MixedFilamentBatchDialog::launch_background_match()
     const auto matching_method = m_matching_method;
     // Fixed CMYG palette for recommended mode.
     static const std::vector<std::string> CMYG_COLORS = {
-        "#00FFFF",  // C: Cyan
-        "#FF00FF",  // M: Magenta
-        "#FFFF00",  // Y: Yellow
-        "#00FF00",  // G: Green
+        "#08ABFB",  // blue
+        "#D93B90",  // magenta
+        "#F9ED3D",  // yellow
+        "#9199A4",  // gray
     };
     const std::vector<std::string> preset_colors = CMYG_COLORS;
     // Use enabled_count() (skips deleted/disabled) to match the virtual ID
@@ -1024,9 +1024,24 @@ void MixedFilamentBatchDialog::launch_background_match()
         } else {
             if (preset_colors.size() >= 4) {
                 auto best = recommend_best_filament_combo(model_colors, preset_colors, 15, cancel_token);
-                physical_colors = best.empty()
-                    ? std::vector<std::string>(preset_colors.begin(), preset_colors.begin() + std::min<size_t>(4, preset_colors.size()))
-                    : std::move(best);
+                if (best.empty()) {
+                    physical_colors.assign(preset_colors.begin(), preset_colors.begin() + std::min<size_t>(4, preset_colors.size()));
+                } else {
+                    // Restore original preset_colors order (the function returns the
+                    // chosen subset sorted by ΔE); keeps the palette order stable and
+                    // stays correct when the candidate set grows beyond 4.
+                    std::vector<std::string> remaining = best;
+                    for (const std::string& c : preset_colors) {
+                        auto it = std::find(remaining.begin(), remaining.end(), c);
+                        if (it != remaining.end()) {
+                            physical_colors.push_back(c);
+                            remaining.erase(it);
+                            if (physical_colors.size() >= 4) break;
+                        }
+                    }
+                    if (physical_colors.size() < 4)
+                        physical_colors = std::move(best);  // fallback
+                }
             } else {
                 physical_colors = all_physical;
             }

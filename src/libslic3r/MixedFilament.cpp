@@ -1,6 +1,7 @@
 #include "MixedFilament.hpp"
 #include "filament_mixer.h"
 #include "libslic3r.h"
+#include "prusa_fdm_mixer_wrap.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -2657,6 +2658,25 @@ std::string MixedFilamentManager::blend_color_multi(
     if (color_percents.size() == 1)
         return color_percents.front().first;
 
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+    {
+        int total_pct = 0;
+        for (const auto &[hex, pct] : color_percents) {
+            if (pct > 0) total_pct += pct;
+        }
+        if (total_pct <= 0)
+            return "#000000";
+        std::vector<std::pair<std::string, double>> parts;
+        parts.reserve(color_percents.size());
+        for (const auto &[hex, pct] : color_percents) {
+            if (pct > 0)
+                parts.push_back({ hex, static_cast<double>(pct) / static_cast<double>(total_pct) });
+        }
+        unsigned char r = 0, g = 0, b = 0;
+        Slic3r::prusa_mix_rgb(parts, r, g, b);
+        return rgb_to_hex({int(r), int(g), int(b)});
+    }
+#else
     struct WeightedColor {
         RGB color;
         int pct;
@@ -2695,12 +2715,28 @@ std::string MixedFilamentManager::blend_color_multi(
     }
 
     return rgb_to_hex({int(r), int(g), int(b)});
+#endif
 }
 
 std::string MixedFilamentManager::blend_color(const std::string &color_a,
                                               const std::string &color_b,
                                               int ratio_a, int ratio_b)
 {
+#if ENABLE_PRUSA_FDM_MIXER_DEMO
+    {
+        const int safe_a = std::max(0, ratio_a);
+        const int safe_b = std::max(0, ratio_b);
+        const int total  = safe_a + safe_b;
+        double ra = 0.5, rb = 0.5;
+        if (total > 0) {
+            ra = static_cast<double>(safe_a) / static_cast<double>(total);
+            rb = static_cast<double>(safe_b) / static_cast<double>(total);
+        }
+        unsigned char r = 0, g = 0, b = 0;
+        Slic3r::prusa_mix_rgb({ {color_a, ra}, {color_b, rb} }, r, g, b);
+        return rgb_to_hex({int(r), int(g), int(b)});
+    }
+#else
     const int safe_a = std::max(0, ratio_a);
     const int safe_b = std::max(0, ratio_b);
     const int total  = safe_a + safe_b;
@@ -2721,6 +2757,7 @@ std::string MixedFilamentManager::blend_color(const std::string &color_a,
                         t, &out_r, &out_g, &out_b);
 
     return rgb_to_hex({int(out_r), int(out_g), int(out_b)});
+#endif
 }
 
 float MixedFilamentManager::max_component_surface_offset_mm(float reference_width_mm)

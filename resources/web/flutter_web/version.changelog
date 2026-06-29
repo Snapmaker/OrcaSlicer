@@ -6,3 +6,4 @@
   * Support official consumable identification.
 ### Improvements
   * Optimize internal API call logic.
+  * Optimize the experience of obtaining consumable matching on the print initiation page.

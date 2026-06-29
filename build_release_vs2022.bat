@@ -15,10 +15,13 @@ if "%1"=="pack" (
 
 set debug=OFF
 set debuginfo=OFF
+set arch=x64
 if "%1"=="debug" set debug=ON
 if "%2"=="debug" set debug=ON
 if "%1"=="debuginfo" set debuginfo=ON
 if "%2"=="debuginfo" set debuginfo=ON
+if "%1"=="arm64" set arch=ARM64
+if "%2"=="arm64" set arch=ARM64
 if "%debug%"=="ON" (
     set build_type=Debug
     set build_dir=build-dbg
@@ -31,7 +34,8 @@ if "%debug%"=="ON" (
         set build_dir=build
     )
 )
-echo build type set to %build_type%
+if "%arch%"=="ARM64" set build_dir=%build_dir%-arm64
+echo build type set to %build_type%, arch=%arch%
 
 setlocal DISABLEDELAYEDEXPANSION 
 cd deps
@@ -47,7 +51,7 @@ if "%1"=="slicer" (
 echo "building deps.."
 
 echo on
-cmake ../ -G "Visual Studio 17 2022" -A x64 -DDESTDIR="%DEPS%" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
+cmake ../ -G "Visual Studio 17 2022" -A %arch% -DDESTDIR="%DEPS%" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
 cmake --build . --config %build_type% --target deps -- -m
 @echo off
 
@@ -60,7 +64,7 @@ mkdir %build_dir%
 cd %build_dir%
 
 echo on
-cmake .. -G "Visual Studio 17 2022" -A x64 -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type% -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+cmake .. -G "Visual Studio 17 2022" -A %arch% -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type% -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
 cmake --build . --config %build_type% --target ALL_BUILD -- -m
 @echo off
 cd ..

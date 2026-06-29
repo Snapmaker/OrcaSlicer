@@ -191,8 +191,6 @@ set(lisbslic3r_sources
     Format/objparser.hpp
     Format/SL1.cpp
     Format/SL1.hpp
-    Format/STEP.cpp
-    Format/STEP.hpp
     Format/STL.cpp
     Format/STL.hpp
     Format/svg.cpp
@@ -468,7 +466,15 @@ if (APPLE)
         )
 endif ()
 
-add_library(libslic3r STATIC ${lisbslic3r_sources} 
+list(APPEND lisbslic3r_sources Format/STEP.hpp)
+if (SLIC3R_ENABLE_STEP)
+    list(APPEND lisbslic3r_sources Format/STEP.cpp)
+else()
+    # OCCT-free stub so STEP callers still compile and link on ARM64
+    list(APPEND lisbslic3r_sources Format/STEP_stub.cpp)
+endif()
+
+add_library(libslic3r STATIC ${lisbslic3r_sources}
     ${OpenVDBUtils_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lisbslic3r_sources})
 
@@ -522,40 +528,44 @@ target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
-set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
-find_package(OpenCASCADE REQUIRED)
-target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
+set(OCCT_LIBS "")
+if (SLIC3R_ENABLE_STEP)
+    set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+    find_package(OpenCASCADE REQUIRED)
+    target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
+    target_compile_definitions(libslic3r PUBLIC SLIC3R_ENABLE_STEP)
+    set(OCCT_LIBS
+        TKXDESTEP
+        TKSTEP
+        TKSTEP209
+        TKSTEPAttr
+        TKSTEPBase
+        TKXCAF
+        TKXSBase
+        TKVCAF
+        TKCAF
+        TKLCAF
+        TKCDF
+        TKV3d
+        TKService
+        TKMesh
+        TKBO
+        TKPrim
+        TKHLR
+        TKShHealing
+        TKTopAlgo
+        TKGeomAlgo
+        TKBRep
+        TKGeomBase
+        TKG3d
+        TKG2d
+        TKMath
+        TKernel
+    )
+endif()
 
+# JPEG is always required (libslic3r links JPEG::JPEG unconditionally).
 find_package(JPEG REQUIRED)
-
-set(OCCT_LIBS
-    TKXDESTEP
-    TKSTEP
-    TKSTEP209
-    TKSTEPAttr
-    TKSTEPBase
-    TKXCAF
-    TKXSBase
-    TKVCAF
-    TKCAF
-    TKLCAF
-    TKCDF
-    TKV3d
-    TKService
-    TKMesh
-    TKBO
-    TKPrim
-    TKHLR
-    TKShHealing
-    TKTopAlgo
-    TKGeomAlgo
-    TKBRep
-    TKGeomBase
-    TKG3d
-    TKG2d
-    TKMath
-    TKernel
-)
 
 find_package(libnoise REQUIRED)
 target_link_libraries(libslic3r

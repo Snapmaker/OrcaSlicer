@@ -145,6 +145,7 @@ if (NOT IS_CROSS_COMPILE OR NOT APPLE)
             -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
             -DCMAKE_TOOLCHAIN_FILE:STRING=${CMAKE_TOOLCHAIN_FILE}
             -DBUILD_SHARED_LIBS:BOOL=OFF
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
             ${_cmake_osx_arch}
             "${_configs_line}"
             ${DEP_CMAKE_OPTS}
@@ -174,6 +175,7 @@ elseif(FLATPAK)
             -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
             -DCMAKE_TOOLCHAIN_FILE:STRING=${CMAKE_TOOLCHAIN_FILE}
             -DBUILD_SHARED_LIBS:BOOL=OFF
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
             ${_cmake_osx_arch}
             "${_configs_line}"
             ${DEP_CMAKE_OPTS}
@@ -197,13 +199,14 @@ else()
             -DCMAKE_INSTALL_PREFIX:STRING=${DESTDIR}
             -DCMAKE_PREFIX_PATH:STRING=${DESTDIR}
             -DBUILD_SHARED_LIBS:BOOL=OFF
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
             ${_cmake_osx_arch}
             "${_configs_line}"
             ${DEP_CMAKE_OPTS}
             ${P_ARGS_CMAKE_ARGS}
        ${P_ARGS_UNPARSED_ARGUMENTS}
        BUILD_COMMAND ${CMAKE_COMMAND} --build . --config Release -- ${_build_j}
-       INSTALL_COMMAND ${CMAKE_COMMAND} --build . --target install --config Release 
+       INSTALL_COMMAND ${CMAKE_COMMAND} --build . --target install --config Release
     )
 
 endif()
@@ -219,6 +222,10 @@ if (MSVC)
     elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86")
         message(STATUS "\nDetected X86 compiler => building X86 deps bundle\n")
         set(DEPS_ARCH "x86")
+        include("deps-windows.cmake")
+    elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "ARM64")
+        message(STATUS "\nDetected ARM64 compiler => building ARM64 deps bundle\n")
+        set(DEPS_ARCH "arm64")
         include("deps-windows.cmake")
     else ()
         message(FATAL_ERROR "Unable to detect architecture")
@@ -296,6 +303,10 @@ include(Blosc/Blosc.cmake)
 include(OpenEXR/OpenEXR.cmake)
 include(OpenVDB/OpenVDB.cmake)
 
+# On Windows ARM64, GMP/MPFR are provided as prebuilt blobs in deps/*/lib/win-arm64
+# (staged by the CI workflow from MSYS2 clangarm64). GMP.cmake / MPFR.cmake's MSVC
+# branch copies them into the dep prefix just like x64, so CGAL builds with real
+# GMP/MPFR exact arithmetic on every Windows arch.
 include(GMP/GMP.cmake)
 include(MPFR/MPFR.cmake)
 include(CGAL/CGAL.cmake)
@@ -365,6 +376,8 @@ endif ()
 include(OCCT/OCCT.cmake)
 include(OpenCV/OpenCV.cmake)
 
+set(_occt_pkg dep_OCCT)
+
 set(_dep_list
     dep_Boost
     dep_TBB
@@ -379,7 +392,7 @@ set(_dep_list
     dep_OpenCV
     dep_CGAL
     dep_GLFW
-    dep_OCCT
+    ${_occt_pkg}
     ${FREETYPE_PKG}
     ${PNG_PKG}
     ${ZLIB_PKG}

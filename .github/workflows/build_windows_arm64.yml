@@ -1,0 +1,156 @@
+name: Build Windows ARM64
+
+on:
+  push:
+    branches: [ feat/windows-arm64 ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'build_release_vs2022.bat'
+      - '.github/workflows/build_windows_arm64.yml'
+
+jobs:
+  build-arm64:
+    name: Windows ARM64 (native)
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install CMake 3.31.x (project requires <= 3.31 on Windows)
+        # The windows-11-arm runner ships CMake 4.x, which removed pre-3.5
+        # policy compatibility AND has incomplete ASM_ARMASM linker modules
+        # (breaks Boost.Context on ARM64). Pin to the last 3.x release.
+        shell: pwsh
+        run: |
+          $ver = "3.31.6"
+          $url = "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-arm64.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\cmake.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\cmake.zip" -DestinationPath "$env:RUNNER_TEMP\cmake" -Force
+          $cmakeBin = "$env:RUNNER_TEMP\cmake\cmake-$ver-windows-arm64\bin"
+          if (-not (Test-Path "$cmakeBin\cmake.exe")) {
+            throw "cmake.exe not found at $cmakeBin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $cmakeBin
+          Write-Host "Pinned CMake bin: $cmakeBin"
+
+      - name: Verify CMake version
+        shell: pwsh
+        run: cmake --version
+
+      - name: Install MSYS2 (clangarm64) with GMP/MPFR and LLVM tools
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-gmp
+            mingw-w64-clang-aarch64-mpfr
+            mingw-w64-clang-aarch64-llvm
+
+      - name: Generate MSVC-compatible import libs for GMP and MPFR
+        # llvm-readobj --coff-exports parses PE DLL export tables.
+        # llvm-dlltool -m arm64 emits a COFF .lib that MSVC link.exe accepts.
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          BIN=/clangarm64/bin
+          REPO=$(cygpath -u "$GITHUB_WORKSPACE")
+
+          # Diagnose available tools if something goes wrong
+          echo "=== llvm tools in PATH ==="
+          ls /clangarm64/bin/llvm-* 2>/dev/null | head -20 || echo "(none found)"
+
+          make_import_lib() {
+            local dll="$1"
+            local lib="$2"
+            local def="/tmp/${dll%.dll}.def"
+            echo "--- $dll ---"
+            echo "EXPORTS" > "$def"
+            llvm-readobj --coff-exports "$BIN/$dll" \
+              | awk '/Name: /{print $2}' >> "$def"
+            echo "  $(( $(wc -l < "$def") - 1 )) exports"
+            llvm-dlltool -m arm64 -D "$dll" -d "$def" -l "$BIN/$lib"
+            echo "  $lib: $(wc -c < "$BIN/$lib") bytes"
+          }
+
+          make_import_lib libgmp-10.dll  libgmp-10.lib
+
+          # MPFR 4.x ships as libmpfr-6.dll (soname 6) in MSYS2 CLANGARM64, but
+          # the repo expects the libmpfr-4 name. Rename the DLL to libmpfr-4.dll
+          # FIRST, then generate the import lib against that name so the runtime
+          # DLL reference baked into the .lib is correct (else the slicer would
+          # try to load libmpfr-6.dll at runtime, which we never ship).
+          MPFR_DLL=$(ls $BIN/libmpfr-*.dll 2>/dev/null | head -1 | xargs basename)
+          echo "Found MPFR DLL: $MPFR_DLL"
+          if [ "$MPFR_DLL" != "libmpfr-4.dll" ]; then
+            cp "$BIN/$MPFR_DLL" "$BIN/libmpfr-4.dll"
+          fi
+          make_import_lib libmpfr-4.dll  libmpfr-4.lib
+
+          # Stage into repo blob dirs so cmake's win-${DEPS_ARCH} lookup works
+          mkdir -p $REPO/deps/GMP/gmp/lib/win-arm64
+          mkdir -p $REPO/deps/MPFR/mpfr/lib/win-arm64
+
+          cp $BIN/libgmp-10.dll  $REPO/deps/GMP/gmp/lib/win-arm64/
+          cp $BIN/libgmp-10.lib  $REPO/deps/GMP/gmp/lib/win-arm64/
+          cp $BIN/libmpfr-4.dll  $REPO/deps/MPFR/mpfr/lib/win-arm64/
+          cp $BIN/libmpfr-4.lib  $REPO/deps/MPFR/mpfr/lib/win-arm64/
+          cp /clangarm64/include/gmp.h  $REPO/deps/GMP/gmp/include/
+          cp /clangarm64/include/mpfr.h $REPO/deps/MPFR/mpfr/include/ || true
+          echo "Done staging GMP/MPFR win-arm64 blobs."
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        id: cache-deps
+        with:
+          path: deps/build-arm64/OrcaSlicer_dep
+          # Hash only the dependency cmake definitions (fixed-depth globs). Using
+          # 'deps/**' scans the whole built dep tree (millions of files) and times
+          # out hashFiles at the post-save step, failing the job after a good build.
+          key: deps-arm64-${{ runner.os }}-${{ hashFiles('deps/CMakeLists.txt', 'deps/*.cmake', 'deps/*/*.cmake') }}
+
+      - name: Build dependencies (ARM64)
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          cd deps
+          mkdir build-arm64
+          cd build-arm64
+          cmake ../ -G "Visual Studio 17 2022" -A ARM64 ^
+            -DDESTDIR="%CD%/OrcaSlicer_dep" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DDEP_DEBUG=OFF ^
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build . --config Release --target deps -- -m
+
+      - name: Build Snapmaker OrcaSlicer (ARM64)
+        shell: cmd
+        run: |
+          set DEPS=%CD%\deps\build-arm64\OrcaSlicer_dep
+          mkdir build-arm64
+          cd build-arm64
+          cmake .. -G "Visual Studio 17 2022" -A ARM64 ^
+            -DBBL_RELEASE_TO_PUBLIC=1 ^
+            -DORCA_TOOLS=ON ^
+            -DSLIC3R_ENABLE_STEP=ON ^
+            -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" ^
+            -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+          cmake --build . --config Release --target ALL_BUILD -- -m
+          cmake --build . --target install --config Release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snapmaker-OrcaSlicer-Windows-ARM64
+          path: build-arm64/Snapmaker_Orca/
+          retention-days: 30

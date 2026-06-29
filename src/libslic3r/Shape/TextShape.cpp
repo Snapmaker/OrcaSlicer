@@ -6,6 +6,12 @@
 
 #include <string>
 #include <vector>
+#include <map>
+
+// Text-to-3D (emboss) is implemented with OpenCASCADE (OCCT). When OCCT is
+// unavailable (e.g. Windows ARM64; OCCT 7.6 has no ARM64 support), compile an
+// OCCT-free stub instead (see the #else branch at the bottom of this file).
+#ifdef SLIC3R_ENABLE_STEP
 
 #include "Standard_TypeDef.hxx"
 #include "STEPCAFControl_Reader.hxx"
@@ -270,3 +276,16 @@ void load_text_shape(const char*text, const char* font, const float text_height,
 }
 
 }; // namespace Slic3r
+
+#else // !SLIC3R_ENABLE_STEP
+
+// OCCT-free stub: emboss/text-to-shape unavailable in this build.
+namespace Slic3r {
+std::vector<std::string> init_occt_fonts() { return {}; }
+std::map<std::string, std::string> get_occt_fonts_maps() { return {}; }
+void load_text_shape(const char * /*text*/, const char * /*font*/, const float /*text_height*/,
+                     const float /*thickness*/, bool /*is_bold*/, bool /*is_italic*/,
+                     TextResult & /*text_result*/) {}
+}; // namespace Slic3r
+
+#endif // SLIC3R_ENABLE_STEP

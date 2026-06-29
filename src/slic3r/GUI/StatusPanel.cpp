@@ -969,6 +969,13 @@ wxBoxSizer *StatusBasePanel::create_monitoring_page()
     bSizer_monitoring_title->Add(FromDIP(13), 0, 0, 0);
     bSizer_monitoring_title->AddStretchSpacer();
 
+    // Show the connected printer's IP address on the device tab (when known)
+    m_staticText_device_ip = new Label(m_panel_monitoring_title, wxEmptyString);
+    m_staticText_device_ip->Wrap(-1);
+    m_staticText_device_ip->SetForegroundColour(PAGE_TITLE_FONT_COL);
+    m_staticText_device_ip->SetToolTip(_L("IP address of the connected printer"));
+    bSizer_monitoring_title->Add(m_staticText_device_ip, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(13));
+
     m_staticText_timelapse = new wxStaticText(m_panel_monitoring_title, wxID_ANY, _L("Timelapse"), wxDefaultPosition, wxDefaultSize, 0);
     m_staticText_timelapse->Wrap(-1);
     m_staticText_timelapse->Hide();
@@ -2065,6 +2072,15 @@ bool StatusPanel::is_task_changed(MachineObject* obj)
 void StatusPanel::update(MachineObject *obj)
 {
     if (!obj) return;
+
+    // Surface the connected printer's IP address on the device tab header
+    if (m_staticText_device_ip) {
+        if (!obj->dev_ip.empty())
+            m_staticText_device_ip->SetLabelText(wxString::Format("IP: %s", from_u8(obj->dev_ip)));
+        else
+            m_staticText_device_ip->SetLabelText(wxEmptyString);
+    }
+
     m_project_task_panel->Freeze();
     update_subtask(obj);
     m_project_task_panel->Thaw();

@@ -1,12 +1,24 @@
 #ifndef slic3r_Format_STEP_hpp_
 #define slic3r_Format_STEP_hpp_
+
+// STEP/CAD import is backed by OpenCASCADE (OCCT). On platforms where OCCT is
+// unavailable (e.g. Windows ARM64 with OCCT 7.6, which has no ARM64 support),
+// SLIC3R_ENABLE_STEP is undefined. In that case the public interface below is
+// still declared so all callers compile and link, but the implementation is a
+// stub (see STEP_stub.cpp) that reports failure.
+
+#include <functional>
+#include <string>
+#include <atomic>
+#include <boost/filesystem/path.hpp>
+#include <boost/filesystem.hpp>
+
+#ifdef SLIC3R_ENABLE_STEP
 #include "XCAFDoc_DocumentTool.hxx"
 #include "XCAFApp_Application.hxx"
 #include "XCAFDoc_ShapeTool.hxx"
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem.hpp>
 #include <Message_ProgressIndicator.hxx>
-#include <atomic>
+#endif
 
 namespace fs = boost::filesystem;
 
@@ -14,6 +26,7 @@ namespace Slic3r {
 
 class TriangleMesh;
 class ModelObject;
+class Model;
 
 // load step stage
 const int LOAD_STEP_STAGE_READ_FILE          = 0;
@@ -25,6 +38,7 @@ const int LOAD_STEP_STAGE_UNIT_NUM           = 5;
 typedef std::function<void(int load_stage, int current, int total, bool& cancel)> ImportStepProgressFn;
 typedef std::function<void(bool isUtf8)> StepIsUtf8Fn;
 
+#ifdef SLIC3R_ENABLE_STEP
 struct NamedSolid
 {
     NamedSolid(const TopoDS_Shape& s,
@@ -34,6 +48,7 @@ struct NamedSolid
     const std::string  name;
     int tri_face_cout = 0;
 };
+#endif
 
 //BBS: Load an step file into a provided model.
 extern bool load_step(const char *path, Model *model,
@@ -70,6 +85,7 @@ private:
     EncodedType m_encode_type = EncodedType::UTF8;
 };
 
+#ifdef SLIC3R_ENABLE_STEP
 class StepProgressIncdicator : public Message_ProgressIndicator
 {
 public:
@@ -83,6 +99,7 @@ public:
 private:
     std::atomic<bool>& should_stop;
 };
+#endif
 
 class Step
 {
@@ -99,10 +116,12 @@ private:
     std::string m_path;
     ImportStepProgressFn m_stepFn;
     StepIsUtf8Fn m_utf8Fn;
+#ifdef SLIC3R_ENABLE_STEP
     Handle(XCAFApp_Application) m_app = XCAFApp_Application::GetApplication();
     Handle(TDocStd_Document) m_doc;
     Handle(XCAFDoc_ShapeTool) m_shape_tool;
     std::vector<NamedSolid> m_name_solids;
+#endif
 };
 
 }; // namespace Slic3r

@@ -675,7 +675,10 @@ void SelectMachineDialog::init_bind()
             if (!obj) return;
 
             if (obj->dev_id == e.GetString()) {
-                m_comboBox_printer->SetValue(obj->dev_name + "(LAN)");
+                wxString lan_label = from_u8(obj->dev_name) + "(LAN)";
+                if (!obj->dev_ip.empty())
+                    lan_label += " " + from_u8(obj->dev_ip);
+                m_comboBox_printer->SetValue(lan_label);
             }
         }
     });
@@ -2375,6 +2378,10 @@ void SelectMachineDialog::update_user_printer()
                 wxString dev_name_text = from_u8(it->second->dev_name);
                 if (it->second->is_lan_mode_printer()) {
                     dev_name_text += "(LAN)";
+                }
+                // Surface the printer's IP in the device picker when known (LAN/local)
+                if (!it->second->dev_ip.empty()) {
+                    dev_name_text += " " + from_u8(it->second->dev_ip);
                 }
                 machine_list_name.Add(dev_name_text);
                 break;

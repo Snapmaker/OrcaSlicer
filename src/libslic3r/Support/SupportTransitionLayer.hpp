@@ -11,8 +11,8 @@ struct SupportTransitionConfig
 {
     int   layer_count   = 2;      ///< 0 = disabled
     bool  use_perimeter = true;   ///< Generate perimeter before infill
-    float speed         = 30.0f;  ///< mm/s, independent transition speed
-    float flow_ratio    = 0.85f;  ///< Relative to normal support flow
+    float speed         = 50.0f;  ///< mm/s, independent transition speed
+    float flow_ratio    = 1.0f;  ///< Relative to normal support flow
 
     /// @brief Create from PrintObjectConfig
     static SupportTransitionConfig from_config(const PrintObjectConfig& cfg)

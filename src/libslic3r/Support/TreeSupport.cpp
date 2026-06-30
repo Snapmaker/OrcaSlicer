@@ -16,7 +16,6 @@
 #include "TreeSupport3D.hpp"
 #include <libnest2d/backends/libslic3r/geometries.hpp>
 #include <libnest2d/placers/nfpplacer.hpp>
-#include <fstream>
 
 
 #include <tbb/blocked_range.h>
@@ -2030,22 +2029,12 @@ void TreeSupport::draw_circles()
                 //Draw the support areas and add the roofs appropriately to the support roof instead of normal areas.
                 ts_layer->lslices.reserve(curr_layer_nodes.size());
                 ExPolygons area_poly;  // the polygon node area which will be printed as normal support
-                // Diagnostic counters for transition layer analysis
-                int diag_sharp_tail = 0;
-                int diag_roof0 = 0, diag_roof1 = 0, diag_roof_ge2 = 0;
-                int diag_epoly = 0, diag_ecircle = 0;
                 for (const SupportNode* p_node : curr_layer_nodes)
                 {
                     if (print->canceled())
                         break;
 
                     const SupportNode& node = *p_node;
-                    if (node.is_sharp_tail) diag_sharp_tail++;
-                    if (node.support_roof_layers_below == 0) diag_roof0++;
-                    else if (node.support_roof_layers_below == 1) diag_roof1++;
-                    else if (node.support_roof_layers_below >= 2) diag_roof_ge2++;
-                    if (node.type == ePolygon) diag_epoly++;
-                    else diag_ecircle++;
                     ExPolygons area;
                     // Generate directly from overhang polygon if one of the following is true:
                     // 1) node is a normal part of hybrid support
@@ -2136,27 +2125,6 @@ void TreeSupport::draw_circles()
 
                 }
 
-                // ====== DIAG LOG: per-layer transition diagnostic ======
-                {
-                    static std::ofstream diag("C:\\Users\\Administrator\\Desktop\\orca_diag_transition.csv", std::ios::app);
-                    static bool header = false;
-                    if (!header) {
-                        diag << "layer_nr,obj_layer_nr,print_z,total_nodes,sharp_tail,roof0,roof1,roof_ge2,epoly,ecircle,roof_areas_polys,roof_1st_polys,base_polys,roof_gap_polys" << std::endl;
-                        header = true;
-                    }
-                    diag << layer_nr << ","
-                         << m_ts_data->layer_heights[layer_nr].obj_layer_nr << ","
-                         << ts_layer->print_z << ","
-                         << curr_layer_nodes.size() << ","
-                         << diag_sharp_tail << ","
-                         << diag_roof0 << "," << diag_roof1 << "," << diag_roof_ge2 << ","
-                         << diag_epoly << "," << diag_ecircle << ","
-                         << roof_areas.size() << "," << roof_1st_layer.size() << ","
-                         << base_areas.size() << "," << roof_gap_areas.size()
-                         << std::endl;
-                }
-                // ====== END DIAG LOG ======
-
                 //m_object->print()->set_status(65, (boost::format( _u8L("Support: generate polygons at layer %d")) % layer_nr).str());
 
                 // join roof segments
@@ -2173,9 +2141,9 @@ void TreeSupport::draw_circles()
                 roof_1st_layer = intersection_ex(roof_1st_layer, m_machine_border);
 
                 // Move small roof_areas (< 1mm^2) into roof_1st_layer, matching Bambu Studio behavior.
-                // This increases the transition layer area for better surface adhesion (膨胀成面).
+                // This increases the transition layer area for better surface adhesion.
                 ExPolygons new_roofs;
-                for (auto &expoly : roof_areas) {
+                for (ExPolygon &expoly : roof_areas) {
                     if (area(expoly) < SQ(scale_(1.)) && max_layers_above_roof > EPSILON) {
                         roof_1st_layer.push_back(expoly);
                         continue;

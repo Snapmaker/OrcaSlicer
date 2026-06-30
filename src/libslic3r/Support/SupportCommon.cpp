@@ -1857,7 +1857,7 @@ void generate_support_toolpaths(
                 Fill             *filler          = filler_support.get();
                 filler->angle = angles[support_layer_id % angles.size()];
                 assert(! layer_cache.transition_layer.layer->bridging);
-                auto flow = support_params.support_material_flow.with_height(float(layer_cache.transition_layer.layer->height));
+                Flow flow = support_params.support_material_flow.with_height(float(layer_cache.transition_layer.layer->height));
                 filler->spacing = support_params.support_material_flow.spacing();
                 filler->link_max_length = coord_t(scale_(filler->spacing * link_max_length_factor / support_params.support_density));
                 float density = float(support_params.support_density);

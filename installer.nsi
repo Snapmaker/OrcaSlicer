@@ -11,7 +11,7 @@
 !define PRODUCT_INSTALL_KEY "Software\${PRODUCT_PUBLISHER}\${PRODUCT_NAME}"
 
 !ifndef VERSION
-    !define VERSION "2.3.3"
+    !define VERSION "2.3.5"
 !endif
 
 !ifndef SOURCE_DIR
@@ -135,7 +135,7 @@ Section "Main program" SecMain
     WriteRegStr HKLM "Software\Classes\Snapmaker_Orca" "URL Protocol" ""
     WriteRegStr HKLM "Software\Classes\Snapmaker_Orca\shell\open\command" "" '"$INSTDIR\snapmaker-orca.exe" "%1"'
     SetRegView 32
-    
+
     DetailPrint "Installation complete!"
     Goto end_section
     
@@ -148,7 +148,9 @@ SectionEnd
 
 Section "Desktop shortcut" SecDesktop
     DetailPrint "Creating desktop shortcut..."
+    SetShellVarContext current
     CreateShortcut "$DESKTOP\Snapmaker Orca.lnk" "$INSTDIR\snapmaker-orca.exe" "" "$INSTDIR\snapmaker-orca.exe" 0
+    SetShellVarContext all
 SectionEnd
 
 Section "Start menu shortcut" SecStartMenu

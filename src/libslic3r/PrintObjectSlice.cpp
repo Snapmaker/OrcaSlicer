@@ -2860,13 +2860,14 @@ static std::vector<std::vector<ExPolygons>> local_z_planner_segmentation_with_wh
                 continue;
 
             const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
+            if (!mixed_mgr.is_mixed(state_id, num_physical))
+                continue;
             if (channel_idx >= augmented[layer_id].size())
                 augmented[layer_id].resize(channel_idx + 1);
 
             append(augmented[layer_id][channel_idx], state_masks);
             layer_has_overlay = true;
-            if (mixed_mgr.is_mixed(state_id, num_physical))
-                ++overlay_mixed_channels;
+            ++overlay_mixed_channels;
         }
 
         for (size_t channel_idx = num_physical + 1; channel_idx < augmented[layer_id].size(); ++channel_idx) {
@@ -3159,9 +3160,9 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
     // Multi-color layer-cycle rows choose a pair once per nominal layer/zone
     // and rotate that pair independently from per-subpass A/B cadence.
     std::vector<int> row_layer_cycle_index(mixed_rows.size(), 0);
-    // Painted-only Local-Z keeps cadence isolated per zone. Whole-object Local-Z
-    // instead syncs newly introduced painted rows to the dominant mixed cadence
-    // so painted islands do not restart their phase at the boundary.
+    // Keep Local-Z cadence isolated per mixed row. Different mixed rows may
+    // share a component filament, but their ratios and phase must not bleed
+    // into one another.
     std::vector<uint8_t> row_active_prev_layer(mixed_rows.size(), uint8_t(0));
 
     std::vector<std::vector<int>> per_row_gradient_layers(mixed_rows.size());
@@ -3270,18 +3271,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                     row_direct_component_error_mm[row_idx].size() == row_direct_component_ids[row_idx].size()) {
                     std::fill(row_direct_component_error_mm[row_idx].begin(), row_direct_component_error_mm[row_idx].end(), 0.0);
                 }
-                const bool can_sync_to_dominant =
-                    local_z_whole_objects &&
-                    dominant_mixed_idx < mixed_rows.size() &&
-                    dominant_mixed_idx != row_idx &&
-                    row_active_this_layer[dominant_mixed_idx] != 0;
-                if (can_sync_to_dominant) {
-                    row_cadence_index[row_idx]     = row_cadence_index[dominant_mixed_idx];
-                    row_layer_cycle_index[row_idx] = row_layer_cycle_index[dominant_mixed_idx];
-                } else {
-                    row_cadence_index[row_idx]     = 0;
-                    row_layer_cycle_index[row_idx] = 0;
-                }
+                row_cadence_index[row_idx]     = 0;
+                row_layer_cycle_index[row_idx] = 0;
             }
         }
         std::vector<LocalZActivePair> row_active_pairs(mixed_rows.size());
@@ -3336,7 +3327,10 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 continue;
             const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
             if (state_id >= 1 && state_id <= num_physical) {
-                if (!dominant_is_gradient)
+                // Whole-object Local-Z uses physical paint only as a blocker
+                // when building augmented mixed masks. Do not put ordinary
+                // filaments into the Local-Z split domain.
+                if (!local_z_whole_objects && !dominant_is_gradient)
                     append(fixed_state_masks_by_extruder[state_id - 1], state_masks);
                 continue;
             }
@@ -3420,17 +3414,20 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
 
         std::vector<std::vector<double>> isolated_row_pass_heights(mixed_rows.size());
         bool isolated_multi_row_mode = false;
-        if (interval.has_mixed_paint &&
-            preferred_a <= EPSILON &&
-            preferred_b <= EPSILON &&
-            active_mixed_rows > 1) {
+        if (interval.has_mixed_paint && active_mixed_rows > 1) {
             size_t isolated_rows_with_split = 0;
             for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
                 if (row_active_this_layer[row_idx] == 0)
                     continue;
 
                 std::vector<double> row_passes;
-                if (row_uses_direct_multicolor_solver[row_idx] != 0) {
+                if (preferred_a > EPSILON || preferred_b > EPSILON) {
+                    row_passes = build_local_z_pass_heights(interval.base_height,
+                                                            mixed_lower,
+                                                            mixed_upper,
+                                                            preferred_a,
+                                                            preferred_b);
+                } else if (row_uses_direct_multicolor_solver[row_idx] != 0) {
                     row_passes = build_local_z_direct_multicolor_pass_heights(mixed_rows[row_idx],
                                                                              row_direct_component_weights[row_idx],
                                                                              interval.base_height,
@@ -4428,8 +4425,16 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         continue;
 
                     auto preserve_parent_region = [&by_region, &parent_layer_region, &parent_print_region]() {
-                        if (!parent_layer_region.slices.empty())
-                            by_region[parent_print_region.print_object_region_id()].surfaces = parent_layer_region.slices;
+                        if (parent_layer_region.slices.empty())
+                            return;
+
+                        ByRegion &dst = by_region[parent_print_region.print_object_region_id()];
+                        if (dst.surfaces.empty()) {
+                            dst.surfaces = parent_layer_region.slices;
+                        } else {
+                            dst.surfaces.append(parent_layer_region.slices);
+                            dst.needs_merge = true;
+                        }
                     };
 
                     if (it_painted_region_begin == layer_range.painted_regions.cend()) {
@@ -4467,7 +4472,7 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     if (const int cfg_wall = parent_print_region.config().wall_filament.value;
                         cfg_wall >= 1 && cfg_wall <= int(by_extruder.size()))
                         self_extruder_id = cfg_wall;
-                    if (default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
+                    if (clamp_parent_to_geometry && default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
                         default_self_expolygons = intersection_ex(parent_layer_region.slices.surfaces, default_segmentation);
                     std::vector<bool> assigned_extruder(by_extruder.size(), false);
                     std::vector<int>  alias_to_self_extruders;
@@ -4491,12 +4496,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         // Update the beginning PaintedRegion iterator for the next iteration.
                         it_painted_region_begin = it_target_region;
 
-                        // FIXME: Don't trim by self, it is not reliable.
                         if (it_target_region->region == &parent_print_region) {
                             if (self_extruder_id < 0)
                                 self_extruder_id = extruder_id;
                             if (extruder_id != self_extruder_id)
                                 alias_to_self_extruders.emplace_back(extruder_id);
+                            if (!clamp_parent_to_geometry)
+                                continue;
+
                             ExPolygons self_segmented = intersection_ex(parent_layer_region.slices.surfaces, segmented.expolygons);
                             if (!self_segmented.empty()) {
                                 if (explicit_self_expolygons.empty())
@@ -4524,6 +4531,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                                 dst.needs_merge = true;
                             }
                         }
+                    }
+
+                    const bool has_foreign_assigned_region =
+                        std::any_of(assigned_extruder.begin(), assigned_extruder.end(),
+                                    [](bool assigned) { return assigned; });
+                    if (!has_foreign_assigned_region) {
+                        preserve_parent_region();
+                        continue;
                     }
 
                     // Trim slices of this LayerRegion with all the MM regions.
@@ -5078,8 +5093,8 @@ void apply_fuzzy_skin_segmentation(PrintObject &print_object, ThrowOnCancel thro
             it_layer_range = layer_range_next(layer_ranges, it_layer_range, layer.slice_z);
             const PrintObjectRegions::LayerRangeRegions &layer_range = *it_layer_range;
 
-            assert(segmentation[layer_idx].size() == 1);
-            const ExPolygons &fuzzy_skin_segmentation      = segmentation[layer_idx][0];
+            assert(segmentation[layer_idx].size() >= 2);
+            const ExPolygons &fuzzy_skin_segmentation      = segmentation[layer_idx][1];
             const BoundingBox fuzzy_skin_segmentation_bbox = get_extents(fuzzy_skin_segmentation);
             if (fuzzy_skin_segmentation.empty())
                 continue;

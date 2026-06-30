@@ -39,24 +39,18 @@
     "enable_pressure_advance": [
         "0"
     ],
-    "filament_deretraction_speed": [
-        "nil"
-    ],
+    "filament_deretraction_speed": ["15"],
     "filament_flow_ratio": [
         "1.045"
     ],
     "filament_multitool_ramming_flow": [
         "5"
     ],
-    "filament_retract_length_toolchange": [
-        "4"
-    ],
+    "filament_retract_length_toolchange": ["2"],
     "filament_retraction_length": [
         "1.2"
     ],
-    "filament_retraction_speed": [
-        "nil"
-    ],
+    "filament_retraction_speed": ["15"],
     "filament_settings_id": [
         "TPU 90A"
     ],

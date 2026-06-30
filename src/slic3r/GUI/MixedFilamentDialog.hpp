@@ -45,6 +45,7 @@ private:
     void update_preview();
     void update_gradient_selector_colors();
     void build_swatch_grid();
+    void rebuild_swatch_sizer();
     void sync_rows_to_result();
     void resize_gradient_ids(int target_count);
     void update_compatibility_warning();
@@ -83,6 +84,7 @@ private:
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
     wxPanel*                m_swatch_grid_panel   = nullptr;
+    std::vector<int>         m_swatch_min_weights;
     wxPanel*                m_error_panel           = nullptr;
     Label*                   m_error_text            = nullptr;
     wxPanel*                m_warning_panel         = nullptr;

@@ -10275,6 +10275,25 @@ msgstr "首层抖动值"
 msgid "Jerk for travel."
 msgstr "空驶抖动值"
 
+msgid "First layer travel"
+msgstr "首层空驶"
+
+msgid ""
+"Acceleration of travel moves on the first layer. If expressed as a percentage "
+"it will be calculated based on the travel acceleration. A value of 0 means "
+"the printer will use its firmware default."
+msgstr ""
+"首层空驶移动的加速度。如果以百分比（如 50%）表示，将基于空驶加速度计算。"
+"设为 0 表示使用打印机固件默认值。"
+
+msgid ""
+"Jerk of travel moves on the first layer. If expressed as a percentage it "
+"will be calculated based on the travel jerk. A value of 0 means the printer "
+"will use its firmware default."
+msgstr ""
+"首层空驶移动的抖动。如果以百分比（如 50%）表示，将基于空驶抖动计算。"
+"设为 0 表示使用打印机固件默认值。"
+
 msgid "Line width of initial layer. If expressed as a %, it will be computed over the nozzle diameter."
 msgstr "首层的线宽。如果以%表示，它将基于喷嘴直径来计算。"
 

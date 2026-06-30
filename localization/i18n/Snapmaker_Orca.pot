@@ -10887,6 +10887,21 @@ msgstr ""
 msgid "Acceleration of travel moves."
 msgstr ""
 
+msgid "First layer travel"
+msgstr ""
+
+msgid ""
+"Acceleration of travel moves on the first layer. If expressed as a percentage "
+"it will be calculated based on the travel acceleration. A value of 0 means "
+"the printer will use its firmware default."
+msgstr ""
+
+msgid ""
+"Jerk of travel moves on the first layer. If expressed as a percentage it "
+"will be calculated based on the travel jerk. A value of 0 means the printer "
+"will use its firmware default."
+msgstr ""
+
 msgid ""
 "Acceleration of top surface infill. Using a lower value may improve top "
 "surface quality."

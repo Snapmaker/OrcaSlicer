@@ -50,7 +50,12 @@ inline boost::thread create_thread(boost::thread::attributes &attrs, Fn &&fn)
     // threads of the thread pool: allocate 4MB on a 64bit system, allocate 2MB
     // on a 32bit system by default.
     
-    attrs.set_stack_size((sizeof(void*) == 4) ? (2048 * 1024) : (4096 * 1024));
+    // Orca: the Emboss "On Surface" text-cut calls CGAL Polygon_mesh_processing::corefine,
+    // which falls back to exact rational (GMP/mpq) arithmetic on near-degenerate inputs and
+    // recurses deeply. The old 4 MB stack (and even the 16 MB upstream bump) overflows into the
+    // stack guard page -> EXC_BAD_ACCESS/SIGBUS in __gmpn_*/__gmpz_gcd on macOS. Reserve 256 MB;
+    // macOS/Linux commit thread-stack pages lazily, so idle workers cost address space, not RAM.
+    attrs.set_stack_size(256ull * 1024 * 1024);
     return boost::thread{attrs, std::forward<Fn>(fn)};
 }
 

@@ -593,6 +593,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "outer_wall_acceleration",
         "inner_wall_acceleration",
         "initial_layer_acceleration",
+        "first_layer_travel_acceleration",
+        "first_layer_travel_jerk",
         "top_surface_acceleration",
         "bridge_acceleration",
         "travel_acceleration",
@@ -2052,6 +2054,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         "outer_wall_acceleration",
                         "bridge_acceleration",
                         "initial_layer_acceleration",
+                        "first_layer_travel_acceleration",
                         "sparse_infill_acceleration",
                         "internal_solid_infill_acceleration",
                         "top_surface_acceleration",
@@ -2082,6 +2085,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     if (max_travel > 0) {
                         accel_to_check = {
                             "travel_acceleration",
+                            "first_layer_travel_acceleration",
                         };
                         warning_key = check_motion_ability_object_setting(accel_to_check, max_travel);
                         if (!warning_key.empty()) {

@@ -634,12 +634,13 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     bool have_default_acceleration = config->opt_float("default_acceleration") > 0;
 
     for (auto el : {"outer_wall_acceleration", "inner_wall_acceleration", "initial_layer_acceleration",
-        "top_surface_acceleration", "travel_acceleration", "bridge_acceleration", "sparse_infill_acceleration", "internal_solid_infill_acceleration"})
+        "top_surface_acceleration", "travel_acceleration", "first_layer_travel_acceleration",
+        "bridge_acceleration", "sparse_infill_acceleration", "internal_solid_infill_acceleration"})
         toggle_field(el, have_default_acceleration);
 
     bool have_default_jerk = config->opt_float("default_jerk") > 0;
 
-    for (auto el : { "outer_wall_jerk", "inner_wall_jerk", "initial_layer_jerk", "top_surface_jerk", "travel_jerk", "infill_jerk"})
+    for (auto el : { "outer_wall_jerk", "inner_wall_jerk", "initial_layer_jerk", "top_surface_jerk", "travel_jerk", "first_layer_travel_jerk", "infill_jerk"})
         toggle_field(el, have_default_jerk);
 
     toggle_line("default_junction_deviation", gcflavor == gcfMarlinFirmware);

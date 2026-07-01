@@ -941,6 +941,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,              initial_layer_acceleration))
     ((ConfigOptionFloatOrPercent,     bridge_acceleration))
     ((ConfigOptionFloat,              travel_acceleration))
+    ((ConfigOptionFloatOrPercent,     first_layer_travel_acceleration))
     ((ConfigOptionFloatOrPercent,     sparse_infill_acceleration))
     ((ConfigOptionFloatOrPercent,     internal_solid_infill_acceleration))
 
@@ -951,6 +952,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,              top_surface_jerk))
     ((ConfigOptionFloat,              initial_layer_jerk))
     ((ConfigOptionFloat,              travel_jerk))
+    ((ConfigOptionFloatOrPercent,     first_layer_travel_jerk))
     ((ConfigOptionBool,               precise_z_height))
     ((ConfigOptionFloat,              default_junction_deviation))
         

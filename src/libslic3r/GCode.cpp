@@ -4919,6 +4919,17 @@ LayerResult GCode::process_layer(const Print& print,
             gcode += m_writer.set_jerk_xy(m_config.default_jerk.value);
         }
 
+        // Reset TRAVEL acceleration and jerk at second layer
+        if (m_config.default_acceleration.value > 0 && m_config.travel_acceleration.value > 0
+            && m_config.get_abs_value("first_layer_travel_acceleration") > 0) {
+            gcode += m_writer.set_travel_acceleration(
+                (unsigned int) floor(m_config.travel_acceleration.value + 0.5));
+        }
+        if (m_config.default_jerk.value > 0 && m_config.travel_jerk.value > 0
+            && m_config.get_abs_value("first_layer_travel_jerk") > 0) {
+            gcode += m_writer.set_jerk_xy(m_config.travel_jerk.value);
+        }
+
         // Transition from 1st to 2nd layer. Adjust nozzle temperatures as prescribed by the nozzle dependent
         // nozzle_temperature_initial_layer vs. temperature settings.
         for (const Extruder& extruder : m_writer.extruders()) {
@@ -8124,11 +8135,13 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double       jerk_to_set         = 0.0;
     unsigned int acceleration_to_set = 0;
     if (this->on_first_layer()) {
-        if (m_config.default_acceleration.value > 0 && m_config.initial_layer_acceleration.value > 0) {
-            acceleration_to_set = (unsigned int) floor(m_config.initial_layer_acceleration.value + 0.5);
+        auto first_layer_travel_accel = m_config.get_abs_value("first_layer_travel_acceleration");
+        if (m_config.default_acceleration.value > 0 && first_layer_travel_accel > 0) {
+            acceleration_to_set = (unsigned int) floor(first_layer_travel_accel + 0.5);
         }
-        if (m_config.default_jerk.value > 0 && m_config.initial_layer_jerk.value > 0) {
-            jerk_to_set = m_config.initial_layer_jerk.value;
+        auto first_layer_travel_jerk_val = m_config.get_abs_value("first_layer_travel_jerk");
+        if (m_config.default_jerk.value > 0 && first_layer_travel_jerk_val > 0) {
+            jerk_to_set = first_layer_travel_jerk_val;
         }
     } else {
         if (m_config.default_acceleration.value > 0 && m_config.travel_acceleration.value > 0) {

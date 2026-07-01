@@ -4921,12 +4921,12 @@ LayerResult GCode::process_layer(const Print& print,
 
         // Reset TRAVEL acceleration and jerk at second layer
         if (m_config.default_acceleration.value > 0 && m_config.travel_acceleration.value > 0
-            && m_config.initial_layer_acceleration.value > 0) {
+            && m_config.get_abs_value("first_layer_travel_acceleration") > 0) {
             gcode += m_writer.set_travel_acceleration(
                 (unsigned int) floor(m_config.travel_acceleration.value + 0.5));
         }
         if (m_config.default_jerk.value > 0 && m_config.travel_jerk.value > 0
-            && m_config.initial_layer_jerk.value > 0) {
+            && m_config.get_abs_value("first_layer_travel_jerk") > 0) {
             gcode += m_writer.set_jerk_xy(m_config.travel_jerk.value);
         }
 

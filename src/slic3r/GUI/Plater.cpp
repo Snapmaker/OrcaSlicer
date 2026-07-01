@@ -14219,6 +14219,10 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
 {
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received slice plate event\n" ;
+
+        if (q->only_gcode_mode())
+            return;
+
         //BBS update extruder params and speed table before slicing
         const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
         auto& print = q->get_partplate_list().get_current_fff_print();
@@ -14242,6 +14246,10 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
 {
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received slice project event\n" ;
+
+        if (q->only_gcode_mode())
+            return;
+
         //BBS update extruder params and speed table before slicing
         const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
         auto& print = q->get_partplate_list().get_current_fff_print();
@@ -17696,6 +17704,13 @@ void Plater::load_gcode(const wxString& filename)
     // Orca: Fix crash when loading gcode file multiple times
     if (m_only_gcode) {
         p->view3D->get_canvas3d()->remove_raycasters_for_picking(SceneRaycaster::EType::Bed);
+
+        wxGetApp().mainframe->select_tab(MainFrame::tpPreview);
+        p->set_current_panel(p->preview, true);
+        if (GLCanvas3D* preview_canvas = p->preview->get_canvas3d()) {
+            preview_canvas->set_as_dirty();
+            preview_canvas->request_extra_frame();
+        }
     }
 }
 

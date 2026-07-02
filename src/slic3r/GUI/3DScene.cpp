@@ -7,7 +7,7 @@
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "Camera.hpp"
-
+#include "Frustum.hpp"
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
@@ -878,12 +878,13 @@ int GLVolumeCollection::get_selection_support_threshold_angle(bool& enable_suppo
 // BBS: add outline drawing logic
 void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                                 bool                                 disable_cullface,
-                                const Transform3d&                   view_matrix,
-                                const Transform3d&                   projection_matrix,
+                                const GUI::Camera&                   camera,
                                 const GUI::Size&                     cnv_size,
                                 std::function<bool(const GLVolume&)> filter_func,
                                 bool                                 partly_inside_enable) const
 {
+    const Transform3d& view_matrix = camera.get_view_matrix();
+    const Transform3d& projection_matrix = camera.get_projection_matrix();
     GLVolumeWithIdAndZList to_render = volumes_to_render(volumes, type, view_matrix, filter_func);
     if (to_render.empty())
         return;
@@ -905,6 +906,12 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         glsafe(::glDisable(GL_CULL_FACE));
 
     for (GLVolumeWithIdAndZ& volume : to_render) {
+        //CPU Frustum culling
+        auto _worldAABB = volume.first->transformed_bounding_box();
+        if (!camera.GetFrustum().Intersects(_worldAABB)) 
+        {
+            continue;
+        }
 #if ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
         if (type == ERenderType::Transparent) {
             volume.first->force_transparent = true;

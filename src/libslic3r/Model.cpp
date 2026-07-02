@@ -2459,15 +2459,42 @@ std::vector<int> ModelVolume::get_extruders() const
 
             mmuseg_extruders.push_back(idx);
         }
+
+        if (its_per_type.size() > 0 && its_per_type[0].indices.size() == 0) {
+            m_mmuseg_extruders_has_0_extruder = false;
+        }
+        else {
+            m_mmuseg_extruders_has_0_extruder = true;
+        }
     }
 
     std::vector<int> volume_extruders = mmuseg_extruders;
-
     int volume_extruder_id = this->extruder_id();
-    if (volume_extruder_id > 0)
+    if (m_mmuseg_extruders_has_0_extruder && volume_extruder_id > 0) {
         volume_extruders.push_back(volume_extruder_id);
-    else if (volume_extruder_id == 0)
-        volume_extruders.push_back(volume_extruder_id + 1);
+    }
+
+    // push back filaments for features
+    if (this->config.option("wall_filament") && this->config.option("wall_filament")->getInt() > 0) 
+        volume_extruders.push_back(this->config.option("wall_filament")->getInt());
+    // wall_filament of this volume not set, try use object options
+    else if (this->config.option("wall_filament") == nullptr && this->get_object()->config.option("wall_filament") &&
+        this->get_object()->config.option("wall_filament")->getInt() > 0)
+        volume_extruders.push_back(this->get_object()->config.option("wall_filament")->getInt());
+    //due to we cannot access the global config inside modelvolume,
+    // we have to limit the global preset of filament for features
+
+    if (this->config.option("solid_infill_filament") && this->config.option("solid_infill_filament")->getInt() > 0)
+        volume_extruders.push_back(this->config.option("solid_infill_filament")->getInt());
+    else if (this->config.option("solid_infill_filament") == nullptr && this->get_object()->config.option("solid_infill_filament") &&
+        this->get_object()->config.option("solid_infill_filament")->getInt() > 0)
+        volume_extruders.push_back(this->get_object()->config.option("solid_infill_filament")->getInt());
+
+    if (this->config.option("sparse_infill_filament") && this->config.option("sparse_infill_filament")->getInt() > 0)
+        volume_extruders.push_back(this->config.option("sparse_infill_filament")->getInt());
+    else if (this->config.option("sparse_infill_filament") == nullptr && this->get_object()->config.option("sparse_infill_filament") &&
+        this->get_object()->config.option("sparse_infill_filament")->getInt() > 0)
+        volume_extruders.push_back(this->get_object()->config.option("sparse_infill_filament")->getInt());
 
     return volume_extruders;
 }

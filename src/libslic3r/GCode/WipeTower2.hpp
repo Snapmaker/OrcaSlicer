@@ -21,6 +21,7 @@ class PrintRegionConfig;
 class WipeTower2
 {
 public:
+    friend class WipeTowerWriter2;
     static const std::string never_skip_tag() { return "_GCODE_WIPE_TOWER_NEVER_SKIP_TAG"; }
 	static std::pair<double, double> get_wipe_tower_cone_base(double width, double height, double depth, double angle_deg);
 	static std::vector<std::vector<float>> extract_wipe_volumes(const PrintConfig& config);
@@ -56,15 +57,18 @@ public:
 	void generate(std::vector<std::vector<WipeTower::ToolChangeResult>> &result,
                   std::vector<std::vector<WipeTower::ToolChangeResult>> &local_z_result);
 
+    void generate_new(std::vector<std::vector<WipeTower::ToolChangeResult>>& result,
+        std::vector<std::vector<WipeTower::ToolChangeResult>>& local_z_result);
+
     float get_depth() const { return m_wipe_tower_depth; }
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
     std::vector<std::vector<WipeTower::box_coordinates>> get_local_z_reserve_boxes() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
 
-
-
-
+    bool get_floating_area(float& start_pos_y, float& end_pos_y) const;
+    bool need_thick_bridge_flow(float pos_y) const;
+    float get_extrusion_flow() const { return m_extrusion_flow; }
 
 	// Switch to a next layer.
 	void set_layer(
@@ -128,6 +132,9 @@ public:
 	// Call this method only if layer_finished() is false.
 	WipeTower::ToolChangeResult finish_layer();
 
+    WipeTower::ToolChangeResult finish_layer_new(bool extrude_perimeter = true, 
+        bool extrude_fill = false, bool extrude_fill_wall = false);
+
 	// Is the current layer finished?
 	bool 			 layer_finished() const {
         return m_current_layer_finished;
@@ -167,11 +174,63 @@ public:
         float               retract_length;
         float               retract_speed;
         float               flat_iron_area;
+		int category = 0;
     };
 
     const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
 
+    enum class WipeTowerLayerType : unsigned char
+    {
+        Normal,
+        Contact,
+        Solid,
+        Contact_UP
+    }; // Contact layer should be solid and reduce feed
+
+    struct WipeTowerBlock
+    {
+        int block_id{ 0 };
+        int filament_adhesiveness_category{ 0 };
+        std::vector<float> layer_depths; // 每层的深度
+        std::vector<float> finish_depth{ 0 }; // 每层的 finish 起始位置
+        std::vector<WipeTowerLayerType> layers_type; // 每层的类型
+        float depth{ 0 }; // 总深度
+        float start_depth{ 0 }; // 在擦拭塔中的 Y 起始位置
+        float cur_depth{ 0 }; // 当前打印 Y 位置
+        int last_filament_change_id{ -1 };
+        int last_nozzle_change_id{ -1 };
+    };
+
+    struct BlockDepthInfo
+    {
+        int category{ -1 };
+        float depth{ 0 };
+        float ramming_depth{ 0 };
+    };
+
+    void set_filament_categories(const std::vector<int>& filament_categories) { m_filament_categories = filament_categories; }
 private:
+    std::vector<std::vector<BlockDepthInfo>> m_all_layers_depth;
+    std::vector<WipeTowerBlock> m_wipe_tower_blocks;
+    int m_last_block_id;
+    WipeTowerBlock* m_cur_block{ nullptr };
+    std::vector<int> m_filament_categories; // 粘接性类别
+    bool m_tower_framework = false; // 内支撑肋
+    size_t m_cur_layer_id;
+    bool m_use_rib_wall;
+    Vec2f m_rib_offset;
+
+    WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create);
+    void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);
+    int get_filament_category(int filament_id);
+    void reset_block_status();
+    void calc_block_infill_gap();
+    float get_block_gap_width(int tool);
+    void generate_wipe_tower_blocks(bool add_solid_flag);
+    void update_all_layer_depth(float wipe_tower_depth);
+    WipeTower::box_coordinates align_perimeter(const WipeTower::box_coordinates& perimeter_box);
+    Vec2f get_next_pos(const WipeTower::box_coordinates& cleaning_box, float wipe_length, bool solid_toolchange = false);
+
     struct WipeTowerInfo;
 
 	enum wipe_shape // A fill-in direction
@@ -280,9 +339,17 @@ private:
 		return layer_height * ( m_perimeter_width - layer_height * (1.f-float(M_PI)/4.f)) / filament_area();
 	}
 
+    float nozzle_change_extrusion_flow(float layer_height = -1.f) const // negative layer_height - return current m_extrusion_flow
+    {
+        if (layer_height < 0)
+            return m_extrusion_flow;
+        return layer_height * (m_perimeter_width * 2 - layer_height * (1.f - float(M_PI) / 4.f)) / filament_area();
+    }
 
-	// Calculates depth for all layers and propagates them downwards
-	void plan_tower();
+
+    // Calculates depth for all layers and propagates them downwards
+    void plan_tower();
+    void plan_tower_new();
 
     // Goes through m_plan, calculates border and finish_layer extrusions and subtracts them from last wipe
     void save_on_last_wipe();
@@ -296,13 +363,17 @@ private:
             float ramming_depth;
             float first_wipe_line;
             float wipe_volume;
+            float wipe_length;
 			float wipe_volume_total;
-            ToolChange(size_t old, size_t newtool, float depth=0.f, float ramming_depth=0.f, float fwl=0.f, float wv=0.f)
-            : old_tool{old}, new_tool{newtool}, required_depth{depth}, ramming_depth{ramming_depth}, first_wipe_line{fwl}, wipe_volume{wv}, wipe_volume_total{wv} {}
+            ToolChange(size_t old, size_t newtool, float depth=0.f, float ramming_depth=0.f, float fwl=0.f, float wv=0.f, float wl = 0.f)
+            : old_tool{old}, new_tool{newtool}, required_depth{depth}, 
+              ramming_depth{ramming_depth}, first_wipe_line{fwl},
+              wipe_volume{ wv }, wipe_volume_total{ wv }, wipe_length{wl} {}
 		};
 		float z;		// z position of the layer
 		float height;	// layer height
 		float depth;	// depth of the layer based on all layers above
+        bool  extruder_fill{ true };
         float normal_toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
         float local_z_toolchanges_depth() const { float sum = 0.f; for (const auto &a : local_z_tool_changes) sum += a.required_depth; return sum; }
 		float toolchanges_depth() const { return normal_toolchanges_depth() + local_z_toolchanges_depth(); }
@@ -337,6 +408,7 @@ private:
     bool layer_has_soluble_toolchange(const WipeTowerInfo &layer) const;
     float cumulative_toolchange_depth_before(const WipeTowerInfo::ToolChange *tool_change) const;
     WipeTower::ToolChangeResult emit_planned_tool_change(const WipeTowerInfo::ToolChange *tool_change);
+    WipeTower::ToolChangeResult tool_change_new(const WipeTowerInfo::ToolChange& tool_change);
 
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
@@ -344,6 +416,9 @@ private:
 		const std::string&	 	current_material,
 		const int 				old_temperature,
 		const int 				new_temperature);
+
+    void toolchange_unload_new(WipeTowerWriter2& writer, size_t old_filament_id, size_t new_filament_id,
+        int old_temperature, int new_temperature);
 
     void toolchange_Change(WipeTowerWriter2 &writer, const size_t new_tool, 
         const std::string& new_material);
@@ -357,6 +432,9 @@ private:
 		const WipeTower::box_coordinates  &cleaning_box,
 		float wipe_volume);
 
+    void toolchange_wipe_new(WipeTowerWriter2& writer, 
+        const WipeTower::box_coordinates& cleaning_box, float wipe_volume);
+    
     Polygon generate_support_rib_wall(WipeTowerWriter2&                 writer,
                                       const WipeTower::box_coordinates& wt_box,
                                       double                 feedrate,
@@ -383,6 +461,14 @@ private:
     Polygon generate_rib_polygon(const WipeTower::box_coordinates& wt_box);
 
     WipeTowerInfo::ToolChange set_toolchange(int old_tool, int new_tool, float layer_height, float wipe_volume);
+
+    Polygon generate_support_wall_new(WipeTowerWriter2& writer, const WipeTower::box_coordinates& wt_box,
+        double feedrate, bool first_layer, bool rib_wall, bool extrude_perimeter, bool skip_points);
+
+    WipeTower::ToolChangeResult finish_block(const WipeTowerBlock& block, int filament_id, bool extrude_fill);
+
+    WipeTower::ToolChangeResult finish_block_solid(const WipeTowerBlock& block, int filament_id, bool extrude_fill, WipeTowerLayerType layer_type);
+
 };
 
 

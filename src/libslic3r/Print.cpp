@@ -786,6 +786,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "purge_in_prime_tower"
             || opt_key == "z_offset"
             || opt_key == "support_multi_bed_types"
+            || opt_key == "filament_adhesiveness_category"
             ) {
             steps.emplace_back(psWipeTower);
             steps.emplace_back(psSkirtBrim);
@@ -3400,10 +3401,16 @@ void Print::_make_wipe_tower()
             }
         }
 
+        std::vector<int> categories;
+        for (size_t i = 0; i < m_config.filament_adhesiveness_category.values.size(); ++i) {
+            categories.push_back(m_config.filament_adhesiveness_category.get_at(i));
+        }
+        wipe_tower.set_filament_categories(categories);
+
         // Generate the wipe tower layers.
         m_wipe_tower_data.tool_changes.reserve(m_wipe_tower_data.tool_ordering.layer_tools().size());
         m_wipe_tower_data.local_z_tool_changes.reserve(m_wipe_tower_data.tool_ordering.layer_tools().size());
-        wipe_tower.generate(m_wipe_tower_data.tool_changes, m_wipe_tower_data.local_z_tool_changes);
+        wipe_tower.generate_new(m_wipe_tower_data.tool_changes, m_wipe_tower_data.local_z_tool_changes);
         BOOST_LOG_TRIVIAL(debug) << "Wipe tower generation completed"
                                  << " nominal_layers=" << m_wipe_tower_data.tool_changes.size()
                                  << " local_z_layers=" << m_wipe_tower_data.local_z_tool_changes.size();
@@ -4907,7 +4914,83 @@ int PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region_id(co
     return this->parent_print_object_region(layer_range)->print_object_region_id();
 }
 
-ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const 
+std::vector<ExtrusionPaths> FakeWipeTower::getFakeExtrusionPathsFromWipeTower2() const
+{
+    float h = height;
+    float lh = layer_height;
+    int   d = scale_(depth);
+    int   w = scale_(width);
+    int   bd = scale_(brim_width);
+    Point minCorner = { -bd, -bd };
+    Point maxCorner = { minCorner.x() + w + bd, minCorner.y() + d + bd };
+
+    const auto [cone_base_R, cone_scale_x] = WipeTower2::get_wipe_tower_cone_base(width, height, depth, cone_angle);
+
+    std::vector<ExtrusionPaths> paths;
+    for (float hh = 0.f; hh < h; hh += lh) {
+
+        if (hh != 0.f) {
+            // The wipe tower may be getting smaller. Find the depth for this layer.
+            size_t i = 0;
+            for (i = 0; i < z_and_depth_pairs.size() - 1; ++i)
+                if (hh >= z_and_depth_pairs[i].first && hh < z_and_depth_pairs[i + 1].first)
+                    break;
+            d = scale_(z_and_depth_pairs[i].second);
+            minCorner = { 0.f, -d / 2 + scale_(z_and_depth_pairs.front().second / 2.f) };
+            maxCorner = { minCorner.x() + w, minCorner.y() + d };
+        }
+
+
+        ExtrusionPath path(ExtrusionRole::erWipeTower, 0.0, 0.0, lh);
+        path.polyline = { minCorner, {maxCorner.x(), minCorner.y()}, maxCorner, {minCorner.x(), maxCorner.y()}, minCorner };
+        paths.push_back({ path });
+
+        // We added the border, now add several parallel lines so we can detect an object that is fully inside the tower.
+        // For now, simply use fixed spacing of 3mm.
+        for (coord_t y = minCorner.y() + scale_(3.); y < maxCorner.y(); y += scale_(3.)) {
+            path.polyline = { {minCorner.x(), y}, {maxCorner.x(), y} };
+            paths.back().emplace_back(path);
+        }
+
+        // And of course the stabilization cone and its base...
+        if (cone_base_R > 0.) {
+            path.polyline.clear();
+            double r = cone_base_R * (1 - hh / height);
+            for (double alpha = 0; alpha < 2.01 * M_PI; alpha += 2 * M_PI / 20.)
+                path.polyline.points.emplace_back(Point::new_scale(width / 2. + r * std::cos(alpha) / cone_scale_x, depth / 2. + r * std::sin(alpha)));
+            paths.back().emplace_back(path);
+            if (hh == 0.f) { // Cone brim.
+                for (float bw = brim_width; bw > 0.f; bw -= 3.f) {
+                    path.polyline.clear();
+                    for (double alpha = 0; alpha < 2.01 * M_PI; alpha += 2 * M_PI / 20.) // see load_wipe_tower_preview, where the same is a bit clearer
+                        path.polyline.points.emplace_back(Point::new_scale(
+                            width / 2. + cone_base_R * std::cos(alpha) / cone_scale_x * (1. + cone_scale_x * bw / cone_base_R),
+                            depth / 2. + cone_base_R * std::sin(alpha) * (1. + bw / cone_base_R))
+                        );
+                    paths.back().emplace_back(path);
+                }
+            }
+        }
+
+        // Only the first layer has brim.
+        if (hh == 0.f) {
+            minCorner = minCorner + Point(bd, bd);
+            maxCorner = maxCorner - Point(bd, bd);
+        }
+    }
+
+    // Rotate and translate the tower into the final position.
+    for (ExtrusionPaths& ps : paths) {
+        for (ExtrusionPath& p : ps) {
+            p.polyline.rotate(Geometry::deg2rad(rotation_angle));
+            p.polyline.translate(scale_(pos.x()), scale_(pos.y()));
+        }
+    }
+
+    return paths;
+}
+
+ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const
 { 
     ExtrusionLayers wtels;
     wtels.type = ExtrusionLayersType::WIPE_TOWER;

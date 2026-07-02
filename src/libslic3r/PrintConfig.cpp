@@ -6177,6 +6177,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{4.});
 
+    def = this->add("filament_adhesiveness_category", coInts);
+    def->label = L("Adhesiveness Category");
+    def->tooltip = L("Filament category. Filaments with the same category will share a block on the prime tower.");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts{ 100 });
+
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");
     def->category = L("Quality");

@@ -3700,6 +3700,7 @@ void TabFilament::build()
         // filament_is_high_temperature is controlled by preset data, not user-facing
         optgroup->append_single_option_line("idle_temperature");
         optgroup->append_single_option_line("filament_tower_ironing_area");
+        optgroup->append_single_option_line("filament_adhesiveness_category");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };
         line.append_option(optgroup->get_option("nozzle_temperature_range_low"));
         line.append_option(optgroup->get_option("nozzle_temperature_range_high"));

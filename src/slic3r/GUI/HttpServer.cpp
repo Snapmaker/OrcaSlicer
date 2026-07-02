@@ -771,9 +771,8 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
     }
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
-        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-        auto target_path = data_web_path / "flutter_web";
-        copy_directory_recursively(source_path, target_path);
+        if (!GUI::wxGetApp().copy_bundled_flutter_web(false))
+            GUI::wxGetApp().try_notify_flutter_web_copy_failure();
     }
 
     wxString res = "";

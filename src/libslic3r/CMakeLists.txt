@@ -132,6 +132,8 @@ set(lisbslic3r_sources
     Feature/Interlocking/VoxelUtils.cpp
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
+    FilamentColorLibrary.cpp
+    FilamentColorLibrary.hpp
     FilamentHotBedNozzleRules.cpp
     FilamentHotBedNozzleRules.hpp
     Fill/Fill3DHoneycomb.cpp

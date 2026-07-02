@@ -2826,6 +2826,9 @@ msgstr "AMS 材料设置"
 msgid "Confirm"
 msgstr "确定"
 
+msgid "Confirm slicing"
+msgstr "请确认是否切片"
+
 msgid "Close"
 msgstr "关闭"
 
@@ -5734,6 +5737,67 @@ msgstr "没有如任何兼容的材料，同步操作未执行。"
 msgid "There are some unknown filaments mapped to generic preset. Please update Snapmaker Orca or restart Snapmaker Orca to check if there is an update to system presets."
 msgstr "有一些未知型号的材料，映射到通用预设。请更新或者重启 Snapmaker Orca，以检查系统预设有没有更新。"
 
+msgid "Source Filament"
+msgstr "原耗材"
+
+msgid "Printer Filament"
+msgstr "设备耗材"
+
+msgid "Sync Filament Information"
+msgstr "同步耗材信息"
+
+msgid "Match Mapping"
+msgstr "匹配映射"
+
+msgid "Direct Override"
+msgstr "直接覆盖"
+
+msgid "Original Model"
+msgstr "原模型"
+
+msgid "Mapped Model"
+msgstr "匹配后模型"
+
+msgid "Overridden Model"
+msgstr "覆盖后模型"
+
+msgctxt "FilamentSync"
+msgid "Plate"
+msgstr "盘号"
+
+msgid "Sync Now"
+msgstr "立即同步"
+
+msgid "Note: Only filament types and colors are synchronized. Nozzle assignments are not included."
+msgstr "注意：仅同步耗材类型和颜色信息，不包含喷嘴顺序。"
+
+msgid "Add filaments from the remaining toolheads to the software filament list"
+msgstr "将其余打印头耗材添加到软件耗材列表"
+
+msgid "No printer is connected. Please connect your U1 from the Device page before syncing."
+msgstr "打印机未连接。请前往设备页连接 U1 后再同步。"
+
+msgid "The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."
+msgstr "当前连接的打印机不是 U1，无法同步耗材信息。请切换至 U1 后重试。"
+
+msgid "No filaments detected on the printer. Please preload the filaments before syncing."
+msgstr "打印机未检测到耗材，请完成耗材预载料后再同步。"
+
+msgid "Got it"
+msgstr "知道了"
+
+msgid "Connect Now"
+msgstr "前往连接"
+
+msgid "Later"
+msgstr "稍后再说"
+
+msgid "Filament types and colors have been successfully synced from the printer."
+msgstr "已成功从打印机同步耗材类型和颜色信息。"
+
+msgid "Some filaments used in color mixing will be replaced or removed. This will update the color mixing results. Continue?"
+msgstr "检测到参与混色的耗材将被替换或移除，执行此操作会更新混色结果。是否继续?"
+
 #, boost-format
 msgid "Do you want to save changes to \"%1%\"?"
 msgstr "是否保存修改到“%1%”？"
@@ -8373,7 +8437,7 @@ msgid "Update firmware"
 msgstr "更新固件"
 
 msgid "Beta version"
-msgstr "Beta版本"
+msgstr "Beta 版"
 
 msgid "Updating"
 msgstr "更新中"
@@ -10046,6 +10110,12 @@ msgstr "支撑材料"
 
 msgid "Support material is commonly used to print supports and support interfaces."
 msgstr "支撑材料通常用于打印支撑体和支撑接触面"
+
+msgid "Is high-temperature filament"
+msgstr "是否为高温耗材"
+
+msgid "Indicates whether this is a high-temperature filament that requires elevated printing temperatures."
+msgstr "指示此耗材是否为需要较高打印温度的高温耗材。"
 
 msgid "Softening temperature"
 msgstr "软化温度"
@@ -12254,29 +12324,11 @@ msgstr "稳定锥体顶角"
 msgid "Angle at the apex of the cone that is used to stabilize the wipe tower. Larger angle means wider base."
 msgstr "塔锥体顶角的角度，用于稳定擦拭塔。角度越大，底座越宽。"
 
-msgid "Maximum wipe tower print speed"
-msgstr "擦拭塔最大打印速度"
+msgid "Maximum wipe tower print speed of out wall"
+msgstr "擦拭塔外墙最大打印速度"
 
-msgid ""
-"The maximum print speed when purging in the wipe tower and printing the wipe tower sparse layers. When purging, if the sparse infill speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n"
-"\n"
-"When printing the sparse layers, if the internal perimeter speed or calculated speed from the filament max volumetric speed is lower, the lowest will be used instead.\n"
-"\n"
-"Increasing this speed may affect the tower's stability as well as increase the force with which the nozzle collides with any blobs that may have formed on the wipe tower.\n"
-"\n"
-"Before increasing this parameter beyond the default of 90 mm/s, make sure your printer can reliably bridge at the increased speeds and that ooze when tool changing is well controlled.\n"
-"\n"
-"For the wipe tower external perimeters the internal perimeter speed is used regardless of this setting."
-msgstr ""
-"擦拭塔冲刷和稀疏层的最大打印速度。当冲刷时，如果稀疏填充速度或从耗材最大体积速度计算出的速度较低，则使用最低速度。\n"
-"\n"
-"当打印稀疏层时，如果内墙速度或从耗材最大体积速度计算出的速度较低，则使用最低速度。\n"
-"\n"
-"增加此速度可能会影响塔的稳定性，同时增加喷嘴与擦拭塔上可能形成的任何斑点碰撞的力。\n"
-"\n"
-"在将此参数增加到默认值90mm/sec之外之前，请确保您的打印机可以可靠地在增加的速度下桥接，并且换料时的滴漏得到了很好的控制。\n"
-"\n"
-"对于擦拭塔外墙，无论此设置如何，都使用内墙速度。"
+msgid "Maximum wipe tower print speed of out wall."
+msgstr "擦拭塔外墙最大打印速度"
 
 msgid "Wall type"
 msgstr "墙体类型"
@@ -12309,6 +12361,12 @@ msgstr "墙体加圆角"
 
 msgid "The wall of prime tower will fillet."
 msgstr "擦料塔的墙壁做倒角处理"
+
+msgid "Wall gap"
+msgstr "外墙缺口"
+
+msgid "Create small gaps in the wipe tower outer wall at tool change entry points. The first extrusion path after a filament change will enter through the gap, leaving the filament blob on the gap edge instead of on the outer wall surface."
+msgstr "在擦拭塔外墙换料入口处创建小缺口。换料后的第一条挤出路径将从缺口进入，将料丝残留留在缺口边缘而非外墙表面。"
 
 msgid "The extruder to use when printing perimeter of the wipe tower. Set to 0 to use the one that is available (non-soluble would be preferred)."
 msgstr "打印擦拭塔周长时使用的挤出机。设置为0将使用唯一的挤出机（尽量使用不可溶的材料）。"
@@ -15278,6 +15336,59 @@ msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续�
 
 msgid "Filament %d ratio is too high. Mix may be affected."
 msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
+msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
+msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
+
+msgid "Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing."
+msgstr "混色耗材中包含不兼容的材料类型，请切片前修改为兼容的混色耗材类型。"
+
+msgid "High and Low Temperature Material Mixing Risk"
+msgstr "高/低温材料混打风险"
+
+msgid ""
+"Mixing materials with significantly different printing temperatures may result in:\n"
+"· Extruder clogging\n"
+"· Nozzle damage\n"
+"· Layer adhesion issues\n"
+"\n"
+"Do you want to enable this feature?"
+msgstr ""
+"混合使用打印温度差异较大的材料，可能导致：\n"
+"· 挤出机堵塞\n"
+"· 喷嘴损坏\n"
+"· 层间粘附问题\n"
+"\n"
+"确认启用此功能吗？"
+
+msgid "Tower ironing area"
+msgstr "擦拭塔熨烫面积"
+
+msgid "Ironing area for prime tower interface layer (where different materials meet)."
+msgstr "擦拭塔的起始点熨烫面积"
+
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。"
+
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+
+msgid "This material combination may cause risks. Do you want to continue?"
+msgstr "此材料组合可能存在风险，是否继续？"
+
+msgid "Allow high/low temperature filament mixing"
+msgstr "允许高/低温材料混合打印"
+
+msgid "If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."
+msgstr "启用后允许高温材料与低温材料同时打印"
+
+msgid "Official Filaments"
+msgstr "官方耗材"
+
+msgid "Other Colors"
+msgstr "其他颜色"
+
+msgid "Multiple Color"
+msgstr "多色"
 # Snapmaker: PLA/PETG support material detection strings
 msgid ""
 "PLA and PETG filaments detected on the same plate. When used as mutual "

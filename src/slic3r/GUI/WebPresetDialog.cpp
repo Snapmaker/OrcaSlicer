@@ -31,6 +31,7 @@
 #include "CreatePresetsDialog.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include <mutex>
+#include <atomic>
 
 using namespace nlohmann;
 
@@ -38,6 +39,7 @@ namespace Slic3r { namespace GUI {
 
 extern json m_ProfileJson;
 extern std::mutex m_ProfileJson_mutex;
+
 extern void StringReplace(string& strBase, string strSrc, string strDes);
 
 static wxString update_custom_filaments()
@@ -183,12 +185,7 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
     // Connect the idle events
     // Bind(wxEVT_IDLE, &WebPresetDialog::OnIdle, this);
     // Bind(wxEVT_CLOSE_WINDOW, &WebPresetDialog::OnClose, this);
-    m_load_thread = new std::thread([this]() {
-            LoadProfile();
-    });
-    // LoadProfile();
-
-    m_load_thread->detach();
+    m_load_thread = std::make_unique<std::thread>([this]() { LoadProfile(); });
 
     // UI
     SetStartPage(BBL_REGION);
@@ -199,6 +196,11 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
 
 WebPresetDialog::~WebPresetDialog()
 {
+    // Signal the loader to stop scheduling UI work, then wait for it to finish
+    // so the background thread can no longer access this object (no UAF).
+    m_destroy.store(true, std::memory_order_release);
+    if (m_load_thread && m_load_thread->joinable())
+        m_load_thread->join();
     if (m_browser) {
         delete m_browser;
         m_browser = nullptr;
@@ -424,69 +426,11 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 PrivacyUse = false;
             }
         } else if (strCmd == "request_userguide_profile") {
-            json m_Res           = json::object();
-            m_Res["command"]     = "response_userguide_profile";
-            m_Res["sequence_id"] = "10001";
-
-            json res_json;
-            {
-                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
-                res_json = m_ProfileJson;
+            if (!m_profile_ready.load(std::memory_order_acquire)) {
+                m_profile_request_pending = true;
+                return;
             }
-
-            // 把所有的选中信息取消，换成当前连接的机器
-            std::string model_name = "";
-            std::vector<std::string> nozzle_sizes;
-            if (m_device_id != "") {
-                DeviceInfo info;
-                if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
-                    if (info.model_name != "") {
-                        // test
-                        if (info.model_name == "lava" || info.model_name == "Snapmaker test") {
-                            info.model_name = "Snapmaker U1";
-                        }
-                        model_name = info.model_name;
-                        nozzle_sizes = info.nozzle_sizes;
-                    }
-                }
-            }
-
-            
-            if (res_json.count("model")) {
-                json& model = res_json["model"];
-                for (size_t i = 0; i < model.size(); ++i) {
-                    json& item = model[i];
-                    if (item.count("nozzle_selected")) {
-                        if (item["model"].get<std::string>() == model_name) {
-                            if (!nozzle_sizes.empty()) {
-                                item["nozzle_selected"] = nozzle_sizes[0];
-                            } else {
-                                item["nozzle_selected"] = "";
-                            }
-                            
-                            if (m_bind_nozzle) {
-                                json cp_item = item;
-                                res_json["model"].clear();
-                                res_json["model"].push_back(cp_item);
-                                break;
-                            }
-                        } else {
-                            item["nozzle_selected"] = "";
-                        }
-                    }
-                }
-            }
-            m_Res["response"]    = res_json;
-
-
-            
-            
-
-            // wxString strJS = wxString::Format("HandleStudio(%s)", m_Res.dump(-1, ' ', false, json::error_handler_t::ignore));
-            wxString strJS = wxString::Format("HandleStudio(%s)", m_Res.dump(-1, ' ', true));
-
-            // BOOST_LOG_TRIVIAL(trace) << "WebPresetDialog::OnScriptMessage;request_userguide_profile:" << strJS.c_str();
-            wxGetApp().CallAfter([this, strJS] { RunScript(strJS); });
+            SendUserGuideProfile();
         } else if (strCmd == "request_custom_filaments") {
             wxString strJS = update_custom_filaments();
             wxGetApp().CallAfter([this, strJS] { RunScript(strJS); });
@@ -646,6 +590,72 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
     {
         std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
         wxString strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
+    }
+}
+
+void WebPresetDialog::SendUserGuideProfile()
+{
+    json m_Res           = json::object();
+    m_Res["command"]     = "response_userguide_profile";
+    m_Res["sequence_id"] = "10001";
+
+    json res_json;
+    {
+        std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+        res_json = m_ProfileJson;
+    }
+
+    std::string              model_name = "";
+    std::vector<std::string> nozzle_sizes;
+    if (m_device_id != "") {
+        DeviceInfo info;
+        if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
+            if (info.model_name != "") {
+                // test
+                if (info.model_name == "lava" || info.model_name == "Snapmaker test") {
+                    info.model_name = "Snapmaker U1";
+                }
+                model_name   = info.model_name;
+                nozzle_sizes = info.nozzle_sizes;
+            }
+        }
+    }
+
+    if (res_json.count("model")) {
+        json& model = res_json["model"];
+        for (size_t i = 0; i < model.size(); ++i) {
+            json& item = model[i];
+            if (item.count("nozzle_selected")) {
+                if (item["model"].get<std::string>() == model_name) {
+                    if (!nozzle_sizes.empty()) {
+                        item["nozzle_selected"] = nozzle_sizes[0];
+                    } else {
+                        item["nozzle_selected"] = "";
+                    }
+
+                    if (m_bind_nozzle) {
+                        json cp_item = item;
+                        res_json["model"].clear();
+                        res_json["model"].push_back(cp_item);
+                        break;
+                    }
+                } else {
+                    item["nozzle_selected"] = "";
+                }
+            }
+        }
+    }
+    m_Res["response"] = res_json;
+
+    wxString strJS = wxString::Format("HandleStudio(%s)", m_Res.dump(-1, ' ', true));
+    wxGetApp().CallAfter([this, strJS] { RunScript(strJS); });
+}
+
+void WebPresetDialog::FlushPendingProfileRequest()
+{
+    if (m_profile_request_pending) {
+        m_profile_request_pending = false;
+        SendUserGuideProfile();
     }
 }
 
@@ -1147,7 +1157,7 @@ int WebPresetDialog::GetFilamentInfo(std::string VendorDirectory, json& pFilaLis
 
 int WebPresetDialog::LoadProfile()
 {
-    std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+    std::unique_lock<std::mutex> lock(m_ProfileJson_mutex);
     try {
         // wxString ExePath            = boost::dll::program_location().parent_path().string();
         // wxString TargetFolder       = ExePath + "\\resources\\profiles\\";
@@ -1317,6 +1327,13 @@ int WebPresetDialog::LoadProfile()
 
     std::string strAll = m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore);
     // wxLogMessage("GUIDE: profile_json_s2  %s ", m_ProfileJson.dump(-1, ' ', false, json::error_handler_t::ignore));
+    lock.unlock(); // release before marking ready / scheduling UI work
+
+    m_profile_ready.store(true, std::memory_order_release);
+    if (!m_destroy.load(std::memory_order_acquire))
+        CallAfter([this] {
+            FlushPendingProfileRequest();
+        });
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", finished, json contents: " << std::endl << strAll;
     return 0;

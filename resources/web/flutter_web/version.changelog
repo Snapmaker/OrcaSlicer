@@ -1,8 +1,9 @@
  #  Changelog
  
-## 2026-06-09
- 
-### Optimization
-  * Improve the user experience.
-### 优化
-  * 优化用户体验。
+## 2026-06-25
+### Features
+  * Add purifier control.
+  * Support official consumable identification.
+### Improvements
+  * Optimize internal API call logic.
+  * Optimize the experience of obtaining consumable matching on the print initiation page.

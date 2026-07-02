@@ -24,6 +24,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/format.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "common_func/common_func.hpp"
 #include "slic3r/GUI/GUI.hpp"
@@ -161,14 +162,39 @@ struct Update
 	{}
 
 	//BBS: add directory support
-	void install() const
+	bool install() const
 	{
 	    if (is_directory) {
-            copy_directory_recursively(source, target, file_filter);
+            auto validate_staging = [this](const fs::path &staging) -> bool {
+                if (vendor == "flutter_web") {
+                    if (!fs::exists(staging / "version.json")) {
+                        BOOST_LOG_TRIVIAL(error) << "Web resource staging is missing version.json";
+                        return false;
+                    }
+                    return true;
+                }
+                if (vendor.empty())
+                    return true;
+
+                const bool has_preset_tree = fs::exists(staging / PRESET_PRINTER_NAME) || fs::exists(staging / PRESET_FILAMENT_NAME) ||
+                                             fs::exists(staging / PRESET_PRINT_NAME);
+                if (!has_preset_tree) {
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging for %1% is missing preset subdirectories", vendor);
+                    return false;
+                }
+
+                const fs::path vendor_json = target.parent_path() / (vendor + ".json");
+                if (!fs::exists(vendor_json)) {
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging: %1%.json is not installed yet", vendor);
+                    return false;
+                }
+                return true;
+            };
+            return atomic_replace_directory(source, target, file_filter, validate_staging);
         }
-        else {
-            copy_file_fix(source, target);
-        }
+
+        copy_file_fix(source, target);
+        return true;
 	}
 
 	friend std::ostream& operator<<(std::ostream& os, const Update &self)
@@ -580,7 +606,7 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
             }
         })
         .on_complete([this, &resource_list, resources](std::string body, unsigned) {
-            try {
+            {
                 BOOST_LOG_TRIVIAL(info) << "[Orca Updater]: request_resources, body=" << body;
 
                 json        j       = json::parse(body);
@@ -618,11 +644,7 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
                 } else {
                     BOOST_LOG_TRIVIAL(error) << "[Orca Updater]: get version of settings failed, body=" << body;
                 }
-            } catch (std::exception &e) {
-                BOOST_LOG_TRIVIAL(error) << (boost::format("[Orca Updater]: get version of settings failed, exception=%1% body=%2%") % e.what() % body).str();
-            } catch (...) {
-                BOOST_LOG_TRIVIAL(error) << "[Orca Updater]: get version of settings failed, body=" << body;
-            }
+            } 
         })
         .on_error([&](std::string body, std::string error, unsigned status) {
             BOOST_LOG_TRIVIAL(error) << boost::format("[Orca Updater]: status=%1%, error=%2%, body=%3%") % status % error % body;
@@ -695,7 +717,7 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
             else
                 changelog_file = (cache_path / changelog_file).string();
 
-            try {
+            {
                 json j;
                 //record the headers
                 j["version"] = resource_update->second.version;
@@ -707,10 +729,7 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
                 c << std::setw(4) << j << std::endl;
                 c.close();
             }
-            catch(std::exception &err) {
-                BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": save to "<<changelog_file<<" got a generic exception, reason = " << err.what();
-            }
-
+          
             resource_it.second = resource_update->second;
         }
         else {
@@ -828,15 +847,16 @@ void PresetUpdater::priv::download_flutter_resource_async(const std::string& url
 
             BOOST_LOG_TRIVIAL(info) << "[Flutter Updater] Download completed: " << target_path;
 
-            // Extract file
-            auto extract_path = (fs::path(target_path).parent_path() / "flutter_web").string();
-            if (!extract_file(target_path, extract_path)) {
+            // Extract zip on worker thread. Zip entries use "flutter_web/..." prefix, so extract to parent dir.
+            auto parent_path = fs::path(target_path).parent_path();
+            auto flutter_dir = (parent_path / "flutter_web").string();
+            if (!extract_file(target_path, parent_path.string())) {
                 BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Failed to extract file: " << target_path;
                 return;
             }
 
-            GUI::wxGetApp().CallAfter([target_path]() {
-                GUI::wxGetApp().preset_updater->load_flutter_web(target_path, true);
+            GUI::wxGetApp().CallAfter([flutter_dir]() {
+                GUI::wxGetApp().preset_updater->load_flutter_web(flutter_dir, true);
             });
         })
         .timeout_max(60)  
@@ -892,16 +912,18 @@ void PresetUpdater::priv::download_profiles_resource_async(const std::string& ur
 
             BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Download completed: " << target_path;
 
-            auto extract_path = (fs::path(target_path).parent_path() / "profiles/profiles").string();
-            BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Extracting to: " << extract_path;
+            // Zip entries use "profiles/..." prefix; extract to ota/profiles/ so files land in ota/profiles/profiles/.
+            auto parent_path = fs::path(target_path).parent_path();
+            auto profiles_cache_dir = (parent_path / "profiles/profiles").string();
+            BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Extracting to: " << (parent_path / "profiles").string();
 
-            if (!extract_file(target_path, extract_path)) {
+            if (!extract_file(target_path, (parent_path / "profiles").string())) {
                 BOOST_LOG_TRIVIAL(error) << "[Profiles Updater] Failed to extract file: " << target_path;
                 return;
             }
 
             // Verify the extraction was successful
-            auto expected_path = cache_path / "profiles/profiles";
+            auto expected_path = fs::path(profiles_cache_dir);
             BOOST_LOG_TRIVIAL(info) << "[Profiles Updater] Checking expected path: " << expected_path.string()
                                     << ", exists: " << fs::exists(expected_path);
 
@@ -955,114 +977,106 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
         })
         .timeout_connect(TIMEOUT_CONNECT)
         .on_complete([this, cache_profile_path, isAuto_check](std::string body, unsigned http_status) {
-            // Http response OK
-            if (http_status != 200)
+        // Http response OK
+        if (http_status != 200)
+            return;
+            
+            json jsonObj = json::parse(body);
+            auto errCode = jsonObj["code"];
+            if (errCode != 200)
                 return;
-            try {
-                json jsonObj = json::parse(body);
-                auto errCode = jsonObj["code"];
-                if (errCode != 200)
-                    return;
 
-                auto dataObj = jsonObj.value("data", json::object());
-                auto buildNumer = dataObj.value("build_number", "");
-                auto minSupportPcVersion = dataObj.value("min_support_pc_version", "");
-                auto maxSupportPcVersion = dataObj.value("max_support_pc_version", "");
+            auto dataObj = jsonObj.value("data", json::object());
+            auto buildNumer = dataObj.value("build_number", "");
+            auto minSupportPcVersion = dataObj.value("min_support_pc_version", "");
+            auto maxSupportPcVersion = dataObj.value("max_support_pc_version", "");
 
-                auto isForceUpgrade      = dataObj.value("is_force_upgrade", false);
-                auto fileVersion         = dataObj.value("file_version", "");
-                auto fileSize            = dataObj.value("file_size", 0);
-                auto fileMd5             = dataObj.value("file_md5", "");
-                auto fileSha256          = dataObj.value("file_sha256", "");
-                auto fileUrl             = dataObj.value("file_url", "");
-                auto description         = dataObj.value("file_describe", "");
-                auto reservedData         = dataObj.value("reserved_1", "");
-                auto reservedData2        = dataObj.value("reserved_2", "");
+            auto isForceUpgrade      = dataObj.value("is_force_upgrade", false);
+            auto fileVersion         = dataObj.value("file_version", "");
+            auto fileSize            = dataObj.value("file_size", 0);
+            auto fileMd5             = dataObj.value("file_md5", "");
+            auto fileSha256          = dataObj.value("file_sha256", "");
+            auto fileUrl             = dataObj.value("file_url", "");
+            auto description         = dataObj.value("file_describe", "");
+            auto reservedData         = dataObj.value("reserved_1", "");
+            auto reservedData2        = dataObj.value("reserved_2", "");
 
-                auto        localProfilesjson    = cache_path / "flutter_web/version.json";
-                std::string json_path            = data_dir() + "/web/flutter_web/version.json";
-                std::string fileName             = cache_profile_path.string() + "/flutter_web.zip";
-                Semver      currentPresetVersion = get_version_from_json(json_path);
-                Semver      remoteVersion(fileVersion);
-                Semver      minSpVersion(minSupportPcVersion);
-                Semver      maxSpVersion(maxSupportPcVersion);
-                std::regex  matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+            auto        localProfilesjson    = cache_path / "flutter_web/version.json";
+            std::string json_path            = data_dir() + "/web/flutter_web/version.json";
+            // Use a unique filename per version to avoid deleting a zip that may still be in use (Windows file locks / concurrent UI import).
+            std::string fileName             = (cache_profile_path / ("flutter_web_" + fileVersion + ".zip")).string();
+            Semver      currentPresetVersion = get_version_from_json(json_path);
+            Semver      remoteVersion(fileVersion);
+            Semver      minSpVersion(minSupportPcVersion);
+            Semver      maxSpVersion(maxSupportPcVersion);
+            std::regex  matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
-                auto  get_version = [this](const std::string& str, const std::regex& regexp)
-                {
-                    std::smatch match;
-                    if (std::regex_match(str, match, regexp)) {
-                        std::string                   version_cleaned = match[0];
-                        const boost::optional<Semver> version         = Semver::parse(version_cleaned);
-                        if (version.has_value()) {
-                            return *version;
-                        }
+            auto  get_version = [this](const std::string& str, const std::regex& regexp)
+            {
+                std::smatch match;
+                if (std::regex_match(str, match, regexp)) {
+                    std::string                   version_cleaned = match[0];
+                    const boost::optional<Semver> version         = Semver::parse(version_cleaned);
+                    if (version.has_value()) {
+                        return *version;
                     }
-                    return Semver::invalid();
-                };
+                }
+                return Semver::invalid();
+            };
      
-                Semver      currentSoftVersion = get_version(Snapmaker_VERSION, matcher);
+            Semver      currentSoftVersion = get_version(Snapmaker_VERSION, matcher);
 
-                if (fileVersion.empty())
-                {
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
+            if (fileVersion.empty())
+            {
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
 
-                        BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
-                    }
-                    return;
+                    BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
                 }
+                return;
+            }
 
-                bool maxRes = false;
-                bool minRes = false;
+            bool maxRes = false;
+            bool minRes = false;
 
-                if (!maxSupportPcVersion.empty())
-                {
-                    maxRes = currentSoftVersion > maxSpVersion;
+            if (!maxSupportPcVersion.empty())
+            {
+                maxRes = currentSoftVersion > maxSpVersion;
+            }
+
+            if (!minSupportPcVersion.empty())
+            {
+                minRes = currentSoftVersion < minSpVersion;
+            }
+
+            if (maxRes || minRes) {
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+
+                    BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
                 }
+                return;
+            }
 
-                if (!minSupportPcVersion.empty())
-                {
-                    minRes = currentSoftVersion < minSpVersion;
+            if (currentPresetVersion < remoteVersion) {
+                fs::path tmpPath = fileName;
+                auto     dirPath = tmpPath.parent_path() / "flutter_web";
+
+                if (fs::exists(dirPath))
+                    fs::remove_all(dirPath);
+
+                // Download file asynchronously to avoid blocking UI
+                download_flutter_resource_async(fileUrl, fileName, fileVersion, isAuto_check);
+            }
+            else {
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+
+                    BOOST_LOG_TRIVIAL(info) << format("use check the web update local no profiles.");
                 }
-
-                if (maxRes || minRes) {
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-
-                        BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
-                    }
-                    return;
-                }
-
-                if (currentPresetVersion < remoteVersion) {
-
-                    if (fs::exists(fileName))
-                        fs::remove(fileName);
-
-                    fs::path tmpPath = fileName;
-                    auto     dirPath = tmpPath.parent_path() / "profiles/flutter_web";
-
-                    if (fs::exists(dirPath))
-                        fs::remove_all(dirPath);
-
-                    // Download file asynchronously to avoid blocking UI
-                    download_flutter_resource_async(fileUrl, fileName, fileVersion, isAuto_check);
-                }
-                else {
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_WEB_RESOURCE_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-
-                        BOOST_LOG_TRIVIAL(info) << format("use check the web update local no profiles.");
-                    }
-                }
-
-            } catch (const std::exception& ex) {
-                std::string errorMsg = ex.what();
-                BOOST_LOG_TRIVIAL(fatal) << "request server flutter update data error:" << errorMsg;
             }
         })
         .perform_sync();
@@ -1093,129 +1107,121 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
             // Http response OK
             if (http_status != 200)
                 return;
-            try {
-                json jsonObj = json::parse(body);
-                auto errCode = jsonObj["code"];
-                if (errCode != 200)
-                    return;
+   
+            json jsonObj = json::parse(body);
+            auto errCode = jsonObj["code"];
+            if (errCode != 200)
+                return;
 
-                auto dataObj             = jsonObj.value("data", json::object());
+            auto dataObj             = jsonObj.value("data", json::object());
 
-                auto isForceUpgrade      = dataObj.value("is_force_upgrade", false);
-                auto minSupportPcVersion = dataObj.value("min_support_pc_version", "");
-                auto maxSupportPcVersion = dataObj.value("max_support_pc_version", "");
-                auto fileVersion    = dataObj.value("file_version", "");
-                auto fileSize       = dataObj.value("file_size", 0);
-                auto fileMd5        = dataObj.value("file_md5", "");
-                auto fileSha256     = dataObj.value("file_sha256", "");
-                auto fileUrl        = dataObj.value("file_url", "");
-                auto description    = dataObj.value("file_describe", "");
-                auto reservedData    = dataObj.value("reserved_1", "");
-                auto reservedData2   = dataObj.value("reserved_2", "");
+            auto isForceUpgrade      = dataObj.value("is_force_upgrade", false);
+            auto minSupportPcVersion = dataObj.value("min_support_pc_version", "");
+            auto maxSupportPcVersion = dataObj.value("max_support_pc_version", "");
+            auto fileVersion    = dataObj.value("file_version", "");
+            auto fileSize       = dataObj.value("file_size", 0);
+            auto fileMd5        = dataObj.value("file_md5", "");
+            auto fileSha256     = dataObj.value("file_sha256", "");
+            auto fileUrl        = dataObj.value("file_url", "");
+            auto description    = dataObj.value("file_describe", "");
+            auto reservedData    = dataObj.value("reserved_1", "");
+            auto reservedData2   = dataObj.value("reserved_2", "");
 
-                std::string fileName = cache_profile_path.string() + "/profiles.zip";
-                // Compare server package against the vendor version actually loaded in the running app (not OTA cache / stale file).
-                Semver currentPresetVersion;
-                if (GUI::wxGetApp().preset_bundle)
-                    currentPresetVersion =
-                        GUI::wxGetApp().preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE);
-                else
-                    currentPresetVersion = get_version_from_json(data_dir() + "/system/Snapmaker.json");
+            std::string fileName = (cache_profile_path / ("profiles_" + fileVersion + ".zip")).string();
+            // Compare server package against the vendor version actually loaded in the running app (not OTA cache / stale file).
+            Semver currentPresetVersion;
+            if (GUI::wxGetApp().preset_bundle)
+                currentPresetVersion =
+                    GUI::wxGetApp().preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE);
+            else
+                currentPresetVersion = get_version_from_json(data_dir() + "/system/Snapmaker.json");
 
-                std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+            std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
-                auto get_version = [this](const std::string& str, const std::regex& regexp) {
-                    std::smatch match;
-                    if (std::regex_match(str, match, regexp)) {
-                        std::string                   version_cleaned = match[0];
-                        const boost::optional<Semver> version         = Semver::parse(version_cleaned);
-                        if (version.has_value()) {
-                            return *version;
-                        }
-                    }
-                    return Semver::invalid();
-                };
-
-                Semver currentSoftVersion = get_version(Snapmaker_VERSION, matcher);
-
-                if (fileVersion.empty()) {
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-
-                        BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
-                    }
-                    return;
-                }
-
-                const auto remoteParsed = Semver::parse(fileVersion);
-                if (!remoteParsed) {
-                    BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: invalid file_version in OTA response: " << fileVersion;
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-                    }
-                    return;
-                }
-                const Semver remoteVersion = *remoteParsed;
-
-                bool maxRes = false;
-                bool minRes = false;
-
-                if (!maxSupportPcVersion.empty()) {
-                    if (const auto maxSp = Semver::parse(maxSupportPcVersion))
-                        maxRes = currentSoftVersion > *maxSp;
-                }
-
-                if (!minSupportPcVersion.empty()) {
-                    if (const auto minSp = Semver::parse(minSupportPcVersion))
-                        minRes = currentSoftVersion < *minSp;
-                }
-
-                if (maxRes || minRes) {                
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-
-                        BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
-                    }
-                    return;
-                }
-
-                if (fileUrl.empty()) {
-                    BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: OTA response missing file_url";
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-                    }
-                    return;
-                }
-
-                if (currentPresetVersion < remoteVersion) {
-                    if (fs::exists(fileName))
-                        fs::remove(fileName);
-
-                    fs::path tmpPath = fileName;
-                    auto     dirPath = tmpPath.parent_path() / "profiles/profiles";
-
-                    if (fs::exists(dirPath))
-                        fs::remove_all(dirPath);
-
-                    // Download profiles file and automatically check updates after download completes
-                    download_profiles_resource_async(fileUrl, fileName, fileVersion, isAuto_check);
-                }
-                else {
-                    if (!isAuto_check) {
-                        wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
-                        GUI::wxGetApp().QueueEvent(evt);
-
-                        BOOST_LOG_TRIVIAL(info) << format("use check the preset update local no profiles.");
+            auto get_version = [this](const std::string& str, const std::regex& regexp) {
+                std::smatch match;
+                if (std::regex_match(str, match, regexp)) {
+                    std::string                   version_cleaned = match[0];
+                    const boost::optional<Semver> version         = Semver::parse(version_cleaned);
+                    if (version.has_value()) {
+                        return *version;
                     }
                 }
-                               
-            } catch (const std::exception& ex) {
-                std::string errorMsg = ex.what();
-                BOOST_LOG_TRIVIAL(fatal) << "request server preset update data error:" << errorMsg;
+                return Semver::invalid();
+            };
+
+            Semver currentSoftVersion = get_version(Snapmaker_VERSION, matcher);
+
+            if (fileVersion.empty()) {
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+
+                    BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
+                }
+                return;
+            }
+
+            const auto remoteParsed = Semver::parse(fileVersion);
+            if (!remoteParsed) {
+                BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: invalid file_version in OTA response: " << fileVersion;
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+                }
+                return;
+            }
+            const Semver remoteVersion = *remoteParsed;
+
+            bool maxRes = false;
+            bool minRes = false;
+
+            if (!maxSupportPcVersion.empty()) {
+                if (const auto maxSp = Semver::parse(maxSupportPcVersion))
+                    maxRes = currentSoftVersion > *maxSp;
+            }
+
+            if (!minSupportPcVersion.empty()) {
+                if (const auto minSp = Semver::parse(minSupportPcVersion))
+                    minRes = currentSoftVersion < *minSp;
+            }
+
+            if (maxRes || minRes) {                
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+
+                    BOOST_LOG_TRIVIAL(info) << format("use check the web update.");
+                }
+                return;
+            }
+
+            if (fileUrl.empty()) {
+                BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: OTA response missing file_url";
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+                }
+                return;
+            }
+
+            if (currentPresetVersion < remoteVersion) {
+                fs::path tmpPath = fileName;
+                auto     dirPath = tmpPath.parent_path() / "profiles/profiles";
+
+                if (fs::exists(dirPath))
+                    fs::remove_all(dirPath);
+
+                // Download profiles file and automatically check updates after download completes
+                download_profiles_resource_async(fileUrl, fileName, fileVersion, isAuto_check);
+            }
+            else {
+                if (!isAuto_check) {
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_NO_PRESET_UPDATE);
+                    GUI::wxGetApp().QueueEvent(evt);
+
+                    BOOST_LOG_TRIVIAL(info) << format("use check the preset update local no profiles.");
+                }
             }
         })
         .perform_sync();
@@ -1848,9 +1854,10 @@ bool PresetUpdater::priv::perform_updates(Updates &&updates, bool snapshot) cons
         for (const auto &update : updates.updates) {
             BOOST_LOG_TRIVIAL(info) << '\t' << update;
 
-            if (update.can_install)
-                update.install();
-
+            if (update.can_install && !update.install()) {
+                BOOST_LOG_TRIVIAL(error) << "[Orca Updater] Update install failed: " << update;
+                return false;
+            }
         }
     }
 
@@ -2138,20 +2145,37 @@ bool PresetUpdater::version_check_enabled() const
 }
 
 
-void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpdate)
+void PresetUpdater::load_flutter_web(const std::string& resource_path, bool serverUpdate)
 {
     boost::filesystem::path temp_path = boost::filesystem::temp_directory_path() / "orca_temp_flutter_import";
-    try {
-        if (boost::filesystem::exists(temp_path))
-            boost::filesystem::remove_all(temp_path);
-        boost::filesystem::create_directories(temp_path);
+    boost::filesystem::path flutter_root;
+    bool                    cleanup_temp = false;
+    {
+        if (serverUpdate && boost::filesystem::is_directory(resource_path)) {
+            // Server OTA flow: zip was already extracted in worker thread.
+            flutter_root = boost::filesystem::path(resource_path);
+        } else {
+            if (boost::filesystem::exists(temp_path))
+                boost::filesystem::remove_all(temp_path);
+            boost::filesystem::create_directories(temp_path);
+            cleanup_temp = true;
 
-        if (!p->extract_file(zip_file, temp_path.string())) {
-            if (!serverUpdate)
+            if (!p->extract_file(resource_path, temp_path.string())) {
+                if (!serverUpdate)
                 {
                     BOOST_LOG_TRIVIAL(error) << "extract_file Failed ";
                     GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
                 }
+                return;
+            }
+
+            flutter_root = temp_path / "flutter_web";
+        }
+
+        if (!boost::filesystem::exists(flutter_root / "version.json")) {
+            BOOST_LOG_TRIVIAL(error) << "Failed to import web resources: missing version.json in " << flutter_root.string();
+            if (!serverUpdate)
+                GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
             return;
         }
 
@@ -2173,63 +2197,58 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
         ori_version_str      = ori_config.get<std::string>("version", "0");
         ori_build_number_str = ori_config.get<std::string>("build_number", "0");
 
-        for (auto& dir_entry : boost::filesystem::directory_iterator(temp_path / "flutter_web")) {
-            if (dir_entry.path().filename() == "version.json") {
-                try {
+        {
+            const fs::path version_path = flutter_root / "version.json";
+            boost::property_tree::ptree config;
+            boost::property_tree::read_json(version_path.string(), config);
+            std::string version_str      = config.get<std::string>("version", "0");
+            std::string build_number_str = config.get<std::string>("build_number", "0");
 
-                    boost::property_tree::ptree config;
-                    boost::property_tree::read_json(dir_entry.path().string(), config);
-                    std::string version_str      = config.get<std::string>("version", "0");
-                    std::string build_number_str = config.get<std::string>("build_number", "0");
+            Semver online_version  = version_str;
+            Semver current_version = ori_version_str;
 
-                    Semver online_version  = version_str;
-                    Semver current_version = ori_version_str;
+            if (current_version < online_version) {
+                auto source_folder_path = flutter_root;
+                auto target_folder_path = (boost::filesystem::path(data_dir()) / "web" / "flutter_web");
 
-                    if (current_version < online_version) {
-                        auto source_folder_path = fs::path(dir_entry.path().parent_path());
-                        auto target_folder_path = (boost::filesystem::path(data_dir()) / "web" / "flutter_web");
+                Version version;
+                version.config_version = online_version;
 
-                        Version version;
-                        version.config_version = online_version; 
-
-                        // changelog
-                        std::string             changelog      = "";
-                        std::string             changelog_file = fs::path(dir_entry.path()).replace_extension(".changelog").string();
-                        boost::nowide::ifstream ifs(changelog_file);
-                        if (ifs) {
-                            std::ostringstream oss;
-                            oss << ifs.rdbuf();
-                            changelog = oss.str();
-                            ifs.close();
-                            size_t pos = 0;
-                            while ((pos = changelog.find("\\n", pos)) != std::string::npos) {
-                                changelog.replace(pos, 2, "\n");
-                                pos += 1; 
-                            }
-                        }
-
-                        Semver min_ver  = get_min_version_from_json(dir_entry.path().string());
-                        Semver soft_ver = Semver(std::string(Snapmaker_VERSION));
-
-                        bool legal = true;
-                        legal      = min_ver <= soft_ver;
-                        if (!legal) {
-                            changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") +
-                                          soft_ver.to_string() + "\n")
-                                             .ToStdString();
-                        }
-
-                        updates.updates.emplace_back(std::move(source_folder_path), std::move(target_folder_path), version, "flutter_web",
-                                                     changelog, "", false, true, legal);
-
-                    } else {
-                        outdated_presets.push_back("flutter_web");
+                // changelog
+                std::string             changelog      = "";
+                fs::path                changelog_path = version_path;
+                std::string             changelog_file = changelog_path.replace_extension(".changelog").string();
+                boost::nowide::ifstream ifs(changelog_file);
+                if (ifs) {
+                    std::ostringstream oss;
+                    oss << ifs.rdbuf();
+                    changelog = oss.str();
+                    ifs.close();
+                    size_t pos = 0;
+                    while ((pos = changelog.find("\\n", pos)) != std::string::npos) {
+                        changelog.replace(pos, 2, "\n");
+                        pos += 1;
                     }
-                } catch (std::exception& e) {
-                    BOOST_LOG_TRIVIAL(error) << "Failed to parse web resources json: " << e.what();
-                    continue;
                 }
+
+                Semver min_ver  = get_min_version_from_json(version_path.string());
+                Semver soft_ver = Semver(std::string(Snapmaker_VERSION));
+
+                bool legal = true;
+                legal      = min_ver <= soft_ver;
+                if (!legal) {
+                    changelog += ("\nSnapmaker Orca " + min_ver.to_string() + " " + _L("needed, but current version is ") +
+                                  soft_ver.to_string() + "\n")
+                                     .ToStdString();
+                }
+
+                updates.updates.emplace_back(std::move(source_folder_path), std::move(target_folder_path), version, "flutter_web",
+                                             changelog, "", false, true, legal);
+
+            } else {
+                outdated_presets.push_back("flutter_web");
             }
+
         }
 
         bool need_restart = false;
@@ -2249,7 +2268,8 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
 
             if (app && app->profile_config_update_dlg_open()) {
                 BOOST_LOG_TRIVIAL(info) << "[Flutter Updater] Skipping web resource configuration dialog: profile configuration dialog is active.";
-                boost::filesystem::remove_all(temp_path);
+                if (cleanup_temp)
+                    boost::filesystem::remove_all(temp_path);
                 return;
             }
 
@@ -2261,9 +2281,14 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
             }
 
             if (res == wxID_OK) {
-                p->perform_updates(std::move(updates));
+                if (!p->perform_updates(std::move(updates))) {
+                    BOOST_LOG_TRIVIAL(error) << "[Flutter Updater] Failed to install web resources";
+                    GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+                    return;
+                }
             } else {
-                boost::filesystem::remove_all(temp_path);
+                if (cleanup_temp)
+                    boost::filesystem::remove_all(temp_path);
                 return;
             }
         }
@@ -2287,15 +2312,11 @@ void PresetUpdater::load_flutter_web(const std::string& zip_file, bool serverUpd
             }
 
             app->schedule_recreate_gui_when_no_modal(_L("Update web resources"));
-        }
-            
+        }            
+    } 
 
-    } catch (std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << "Failed to importweb resources: " << e.what();
-        GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
-    }
-
-    boost::filesystem::remove_all(temp_path);
+    if (cleanup_temp)
+        boost::filesystem::remove_all(temp_path);
 }
 
 
@@ -2314,7 +2335,6 @@ void PresetUpdater::import_flutter_web()
 
 void PresetUpdater::import_system_profile()
 {
-    // 1. 弹出文件选择框
     wxFileDialog dialog(nullptr, _L("Please choose a system profile package file:"), "", "", "Profile packages (*.zip)|*.zip",
                         wxFD_OPEN | wxFD_FILE_MUST_EXIST);
 
@@ -2323,21 +2343,18 @@ void PresetUpdater::import_system_profile()
 
     std::string zip_file = dialog.GetPath().ToUTF8().data();
 
-    // 2. 创建临时目录用于解压
     boost::filesystem::path temp_path = boost::filesystem::temp_directory_path() / "orca_temp_import";
-    try {
+    {
         if (boost::filesystem::exists(temp_path))
             boost::filesystem::remove_all(temp_path);
         boost::filesystem::create_directories(temp_path);
 
-        // 3. 解压zip文件到临时目录
         if (!p->extract_file(zip_file, temp_path.string())) {
             BOOST_LOG_TRIVIAL(error) << "extract_file Failed ";
             GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
             return;
         }
 
-        // 4. 检查版本并导入
         std::vector<std::string> outdated_presets;
         Updates                  updates;
 
@@ -2347,17 +2364,19 @@ void PresetUpdater::import_system_profile()
             GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
         }
 
-        // 遍历解压的文件夹
-        for (auto& dir_entry : boost::filesystem::directory_iterator(temp_path)) {
+        // Zip entries use "profiles/..." prefix (see scripts/pack_profiles.sh).
+        fs::path scan_root = temp_path;
+        if (boost::filesystem::exists(temp_path / "profiles") && boost::filesystem::is_directory(temp_path / "profiles"))
+            scan_root = temp_path / "profiles";
+
+        for (auto& dir_entry : boost::filesystem::directory_iterator(scan_root)) {
             if (dir_entry.path().extension() == ".json") {
-                try {
-                    // 读取json文件获取版本信息
+                {                  
                     boost::property_tree::ptree config;
                     boost::property_tree::read_json(dir_entry.path().string(), config);
                     std::string version_str = config.get<std::string>("version", "0");
                     std::string vendor      = dir_entry.path().stem().string();
 
-                    // 使用 Semver 进行版本比较
                     Semver online_version = version_str;
                     Semver current_version = app->preset_bundle->get_vendor_profile_version(vendor);
 
@@ -2367,9 +2386,9 @@ void PresetUpdater::import_system_profile()
 
                         auto source_folder_path = fs::path(dir_entry.path().parent_path() / dir_entry.path().stem());
                         auto target_folder_path = (p->vendor_path / vendor);
-                        // 创建Version对象
+
                         Version version;
-                        version.config_version = online_version; // 将Semver赋值给Version的config_version
+                        version.config_version = online_version; 
 
                         //changelog
                         std::string             changelog;
@@ -2380,15 +2399,14 @@ void PresetUpdater::import_system_profile()
                             oss << ifs.rdbuf();
                             changelog = oss.str();
                             ifs.close();
-                            // 替换所有的 \\n 为 \n
+                            //install  \\n  to \n
                             size_t pos = 0;
                             while ((pos = changelog.find("\\n", pos)) != std::string::npos) {
                                 changelog.replace(pos, 2, "\n");
-                                pos += 1; // 移动到下一个可能的位置
+                                pos += 1; 
                             }
                         }
-
-                        // 检查最小要求软件版本
+                        
                         Semver min_ver  = get_min_version_from_json(source_path.string());
                         Semver soft_ver = Semver(std::string(Snapmaker_VERSION));
 
@@ -2400,14 +2418,12 @@ void PresetUpdater::import_system_profile()
                                              .ToStdString();
                         }
 
-
-                        // 版本较新且兼容，添加到更新列表
                          updates.updates.emplace_back(
                              std::move(source_path),
                              std::move(target_path),
-                             version,  // Version 类型
-                             vendor,         // std::string
-                             changelog,            // changelog
+                             version,       // Version 
+                             vendor,        // std::string
+                             changelog,     // changelog
                              ""             // description
                              ,false
                              ,false
@@ -2428,20 +2444,15 @@ void PresetUpdater::import_system_profile()
 
                         BOOST_LOG_TRIVIAL(info) << boost::format("Found newer version for %1%: %2% -> %3%") 
                             % vendor % current_version.to_string() % online_version.to_string();
-                    } else {
-                        // 版本较旧或不兼容，添加到提示列表
+                    } else {                  
                         outdated_presets.push_back(vendor);
                         BOOST_LOG_TRIVIAL(warning) << boost::format("Skip update for %1%: online version=%2%, current_version=%3%") 
                             % vendor % online_version.to_string() % current_version.to_string();
                     }
-                } catch (std::exception& e) {
-                    BOOST_LOG_TRIVIAL(error) << "Failed to parse preset json: " << e.what();
-                    continue;
-                }
+                } 
             }
         }
 
-        // 5. 执行更新并提示结果
         if (!updates.updates.empty()) {
             std::vector<GUI::MsgUpdateConfig::Update> updates_msg;
             for (const auto& update : updates.updates) {
@@ -2461,7 +2472,12 @@ void PresetUpdater::import_system_profile()
             }
 
             if (res == wxID_OK) {
-                p->perform_updates(std::move(updates));
+                if (!p->perform_updates(std::move(updates))) {
+                    BOOST_LOG_TRIVIAL(error) << "[Orca Updater] Failed to install system profiles";
+                    GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
+                    boost::filesystem::remove_all(temp_path);
+                    return;
+                }
                 // Use hot reload instead of restart
                 if (!reload_configs_update_gui()) {
                     BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:reload_configs_update_gui failed for system profiles";
@@ -2482,14 +2498,9 @@ void PresetUpdater::import_system_profile()
             }
             GUI::MessageDialog(nullptr, message).ShowModal();
         }
-
-    } catch (std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << "Failed to import presets: " << e.what();
-        GUI::MessageDialog(nullptr, _L("Import Failed")).ShowModal();
     }
 
-    // 6. 清理临时目录
+    // 6. clear cache
     boost::filesystem::remove_all(temp_path);
 }
-
 }

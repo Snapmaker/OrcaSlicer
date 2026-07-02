@@ -791,11 +791,22 @@ void MixedFilamentDialog::build_ui()
             range_sizer->Add(m_match_range_value, 0, wxALIGN_CENTER_VERTICAL);
             range_sizer->AddStretchSpacer();
             m_match_range_slider->Bind(wxEVT_SLIDER, [this](wxCommandEvent&) {
-                m_match_min_pct = std::clamp(m_match_range_slider->value(), 0, 50);
-                m_match_range_value->SetLabel(wxString::Format("%d%%", m_match_min_pct));
+                const int new_min = std::clamp(m_match_range_slider->value(), 0, 50);
+                m_match_range_value->SetLabel(wxString::Format("%d%%", new_min));
                 if (m_match_gradient_selector)
-                    m_match_gradient_selector->set_min_max(m_match_min_pct, 100 - m_match_min_pct);
-                if (m_match_panel) m_match_panel->set_min_component_percent(m_match_min_pct);
+                    m_match_gradient_selector->set_min_max(new_min, 100 - new_min);
+                bool visibility_changed = false;
+                for (int w : m_swatch_min_weights) {
+                    if ((w >= m_match_min_pct) != (w >= new_min)) {
+                        visibility_changed = true;
+                        break;
+                    }
+                }
+                m_match_min_pct = new_min;
+                if (visibility_changed)
+                    rebuild_swatch_sizer();
+                if (m_match_panel)
+                    m_match_panel->set_min_component_percent(new_min);
             });
             m_match_range_row->SetSizer(range_sizer);
             m_match_ratio_card_sizer->Add(m_match_range_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
@@ -2755,6 +2766,7 @@ void MixedFilamentDialog::build_swatch_grid()
     }
 
     if (candidates.empty()) return;
+    m_swatch_min_weights.clear();
     auto* grid = new wxGridSizer(10, FromDIP(6), FromDIP(6));
 
     // Build display context for MixedFilamentBadge
@@ -2857,11 +2869,52 @@ void MixedFilamentDialog::build_swatch_grid()
             update_compatibility_warning();
         });
 
+        // Single-filament badges are always visible regardless of the min-mix slider.
+        int min_w = 100;
+        if (cand.n_rows == 2)
+            min_w = std::min(100 - cand.b_pct, cand.b_pct);
+        else if (cand.n_rows == 3)
+            min_w = static_cast<int>(std::min({cand.wx, cand.wy, cand.wz}) * 100.0 + 0.5);
+        // n_rows == 1 or unknown: badge is always visible (sentinel 100).
+        m_swatch_min_weights.push_back(min_w);
+
         grid->Add(badge, 0, wxALIGN_CENTER);
     }
 
     m_swatch_grid_panel->SetSizer(grid);
     m_swatch_grid_panel->Layout();
+}
+
+/**
+ * Rebuild the swatch grid sizer in match mode without recreating widgets.
+ * Hides badges whose minimum component weight falls below m_match_min_pct
+ * and reflows the remaining visible badges into a new grid sizer.
+ */
+void MixedFilamentDialog::rebuild_swatch_sizer()
+{
+    if (m_current_mode != MODE_MATCH) return;
+    auto& children = m_swatch_grid_panel->GetChildren();
+
+    // Guard: the grid panel children must correspond 1:1 with swatch badges.
+    if (children.size() != m_swatch_min_weights.size()) return;
+
+    const int cols = 10;
+    auto* new_grid = new wxGridSizer(cols, FromDIP(6), FromDIP(6));
+    for (size_t i = 0; i < children.size() && i < m_swatch_min_weights.size(); ++i) {
+        bool visible = m_swatch_min_weights[i] >= m_match_min_pct;
+        children[i]->Show(visible);
+        if (visible)
+            new_grid->Add(children[i], 0, wxALIGN_CENTER);
+    }
+
+    // SetSizer replaces and auto-deletes the old sizer.
+    // Windows survive because Add() defaults to no ownership.
+    m_swatch_grid_panel->SetSizer(new_grid);
+    m_swatch_grid_panel->Layout();
+    m_swatch_card->Layout();
+    m_swatch_card->Refresh();
+    m_scrolled_content->FitInside();
+    m_scrolled_content->Refresh();
 }
 
 void MixedFilamentDialog::on_mode_changed(int mode_index)

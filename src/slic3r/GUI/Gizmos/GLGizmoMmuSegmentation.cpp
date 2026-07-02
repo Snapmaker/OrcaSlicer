@@ -1000,6 +1000,7 @@ void GLGizmoMmuSegmentation::update_model_object()
         wxGetApp().obj_list()->update_info_items(obj_idx);
         wxGetApp().plater()->get_partplate_list().notify_instance_update(obj_idx, 0);
         m_parent.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
+        wxGetApp().plater()->notify_filament_usage_changed();
     }
 }
 

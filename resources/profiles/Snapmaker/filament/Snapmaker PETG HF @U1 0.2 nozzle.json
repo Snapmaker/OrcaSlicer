@@ -5,7 +5,10 @@
     "from": "system",
     "setting_id": "GFSG96_01",
     "instantiation": "true",
-    "filament_max_volumetric_speed": ["2"],
+    "filament_max_volumetric_speed": [
+        "1",
+        "1"
+    ],
     "filament_ramming_travel_time": [
         "0",
         "0"
@@ -107,5 +110,6 @@
     ],
     "graphic_effect_plate_temp": ["0"],
     "graphic_effect_plate_temp_initial_layer": ["0"],
-    "filament_z_hop_types": ["Slope Lift"]
+    "filament_z_hop_types": ["Slope Lift"],
+    "filament_is_high_temperature": ["0"]
 }

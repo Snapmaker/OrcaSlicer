@@ -687,6 +687,38 @@ static std::vector<std::string> tokenize_pattern_group(const std::string &group)
     return tokens;
 }
 
+static bool mixed_filament_references_exceed_physical(const std::string &gradient_component_ids,
+        const std::string &manual_pattern, size_t n)
+{
+    if (!gradient_component_ids.empty()) {
+        auto ids = MixedFilamentManager::decode_gradient_component_ids(gradient_component_ids, 0);
+        for (unsigned int id : ids) {
+            if (id > n)
+                return true;
+        }
+    }
+
+    if (!manual_pattern.empty()) {
+        const std::string norm = MixedFilamentManager::normalize_manual_pattern(manual_pattern);
+        if (!norm.empty()) {
+            auto groups = MixedFilamentManager::split_pattern_groups(norm);
+            for (const auto &group : groups) {
+                auto tokens = tokenize_pattern_group(group);
+                for (const auto &token : tokens) {
+                    if (token == "1" || token == "2")
+                        continue;
+                    char *end = nullptr;
+                    unsigned long val = std::strtoul(token.c_str(), &end, 10);
+                    if (*end == '\0' && val > n)
+                        return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 std::vector<std::string> MixedFilamentManager::split_pattern_group_to_tokens(const std::string &group, size_t /*num_physical*/)
 {
     return tokenize_pattern_group(group);
@@ -2131,6 +2163,17 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
                                        << ", row=" << row
                                        << ", a=" << a
                                        << ", b=" << b
+                                       << ", physical_count=" << n;
+            continue;
+        }
+
+        if (mixed_filament_references_exceed_physical(gradient_component_ids, manual_pattern, n)) {
+            ++skipped_rows;
+            BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries row rejected: "
+                                          "gradient/pattern references filament exceeding physical count"
+                                       << ", row=" << row
+                                       << ", gradient_ids=" << gradient_component_ids
+                                       << ", manual_pattern=" << manual_pattern
                                        << ", physical_count=" << n;
             continue;
         }

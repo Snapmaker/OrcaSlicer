@@ -4049,10 +4049,10 @@ void GCodeViewer::render_shells(int canvas_width, int canvas_height)
 
 //BBS
 void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessorResult*>& gcode_result_list, bool show /*= true*/) const {
-    if (!show)
+    if (!show || gcode_result_list.empty())
         return;
-    for (auto gcode_result : gcode_result_list) {
-        if (gcode_result->moves.size() == 0)
+    for (const GCodeProcessorResult* gcode_result : gcode_result_list) {
+        if (gcode_result == nullptr || gcode_result->moves.empty())
             return;
     }
     ImGuiWrapper& imgui = *wxGetApp().imgui();
@@ -4076,7 +4076,7 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
     std::vector<ColorRGBA> filament_colors;
     decode_colors(wxGetApp().plater()->get_extruder_colors_from_plater_config(gcode_result_list.back()), filament_colors);
 
-    for (int i = 0; i < filament_colors.size(); i++) { 
+    for (size_t i = 0; i < filament_colors.size(); i++) {
         filament_colors[i] = adjust_color_for_rendering(filament_colors[i]);
     }
 
@@ -4170,6 +4170,10 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
         ImGui::Separator();
     };
     auto get_used_filament_from_volume = [this, imperial_units, &filament_diameters, &filament_densities](double volume, int extruder_id) {
+        if (extruder_id < 0 || static_cast<size_t>(extruder_id) >= filament_diameters.size() ||
+            static_cast<size_t>(extruder_id) >= filament_densities.size())
+            return std::pair<double, double>{ 0.0, 0.0 };
+
         double koef = imperial_units ? 1.0 / GizmoObjectManipulation::in_to_mm : 0.001;
         std::pair<double, double> ret = { koef * volume / (PI * sqr(0.5 * filament_diameters[extruder_id])),
                                             volume * filament_densities[extruder_id] * 0.001 };
@@ -4183,6 +4187,9 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
         PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
         for (auto plate : plate_list.get_nonempty_plate_list())
         {
+            if (plate == nullptr || plate->get_slice_result() == nullptr)
+                continue;
+
             auto plate_print_statistics = plate->get_slice_result()->print_statistics;
             for (const auto& [extruder_id, model_volume] : plate_print_statistics.model_volumes_per_extruder) {
                 model_volume_of_extruders_all_plates[extruder_id] += model_volume;
@@ -4201,7 +4208,8 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
             
             Print     *print;
             plate->get_print((PrintBase **) &print, nullptr, nullptr);
-            total_cost_all_plates += print->print_statistics().total_cost;
+            if (print != nullptr)
+                total_cost_all_plates += print->print_statistics().total_cost;
         }
        
         for (auto it = model_volume_of_extruders_all_plates.begin(); it != model_volume_of_extruders_all_plates.end(); it++)

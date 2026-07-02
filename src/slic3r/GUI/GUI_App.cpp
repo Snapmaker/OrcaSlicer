@@ -69,6 +69,7 @@
 #include <wx/fontutil.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
+#include <wx/thread.h>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -403,15 +404,15 @@ public:
         scale_bitmap(m_main_bitmap, m_scale);
 
         // init constant texts and scale fonts
-        m_constant_text.init(Label::Body_16);
+        m_constant_text.init();
 
 		// ORCA scale all fonts with monitor scale
-        scale_font(m_constant_text.version_font,	m_scale * 2);
-        scale_font(m_constant_text.based_on_font,	m_scale * 1.5f);
-        scale_font(m_constant_text.credits_font,	m_scale * 2);
+        scale_font(m_constant_text.titleFont,       m_scale * 1.5f);
+        scale_font(m_constant_text.versionFont,     m_scale * 1.5f);
+        scale_font(m_constant_text.loadingFont,     m_scale * 1.5f);
 
         // this font will be used for the action string
-        m_action_font = m_constant_text.credits_font;
+        m_action_font = m_constant_text.loadingFont;
 
         // draw logo and constant info text
         Decorate(m_main_bitmap);
@@ -427,7 +428,7 @@ public:
             wxMemoryDC memDC;
             memDC.SelectObject(bitmap);
             memDC.SetFont(m_action_font);
-            memDC.SetTextForeground(StateColor::darkModeColorFor(wxColour(144, 144, 144)));
+            memDC.SetTextForeground(wxColour(143, 143, 143));
             int width = bitmap.GetWidth();
             int text_height = memDC.GetTextExtent(text).GetHeight();
             int text_width = memDC.GetTextExtent(text).GetWidth();
@@ -448,41 +449,63 @@ public:
         if (!bmp.IsOk())
             return;
 
-		bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
-
         // use a memory DC to draw directly onto the bitmap
         wxMemoryDC memDc(bmp);
-        
-        int width = bmp.GetWidth();
-		int height = bmp.GetHeight();
 
-		// Logo
-        BitmapCache bmp_cache;
-        wxBitmap logo_bmp = *bmp_cache.load_svg(is_dark ? "splash_logo_dark" : "splash_logo", width, height);  // use with full width & height
-        memDc.DrawBitmap(logo_bmp, 0, 0, true);
+        int width  = bmp.GetWidth();
+        int height = bmp.GetHeight();
 
-        // Version
-        memDc.SetFont(m_constant_text.version_font);
-        memDc.SetTextForeground(StateColor::darkModeColorFor(wxColor(134, 134, 134)));
-        wxSize version_ext = memDc.GetTextExtent(m_constant_text.version);
-        wxRect version_rect(
-			wxPoint(0, int(height * 0.70)),
-			wxPoint(width, int(height * 0.70) + version_ext.GetHeight())
-		);
-        memDc.DrawLabel(m_constant_text.version, version_rect, wxALIGN_CENTER);
+        const int designSize = 480;
+        auto scaleX = [width, designSize](int value) { return value * width / designSize; };
+        auto scaleY = [height, designSize](int value) { return value * height / designSize; };
 
-        // Dynamic Text
-        m_action_line_y_position = int(height * 0.83);
+        // Logo icon: 140x140, centered horizontally, y=80
+        BitmapCache bmpCache;
+        int logoSize = scaleX(140);
+        int logoX    = scaleX(170);
+        int logoY    = scaleY(80);
+        wxBitmap* logoBmp = bmpCache.load_svg("splash_app_icon", logoSize, logoSize);
+        if (logoBmp != nullptr)
+            memDc.DrawBitmap(*logoBmp, logoX, logoY, true);
 
-		// Based on Text
-        memDc.SetFont(m_constant_text.based_on_font);
-        auto bs_version = wxString::Format("Based on Orca Slicer").ToStdString();
-        wxSize based_on_ext = memDc.GetTextExtent(bs_version);
-        wxRect based_on_rect(
-			wxPoint(0, height - based_on_ext.GetHeight() * 2),
-            wxPoint(width, height - based_on_ext.GetHeight())
-		);
-        memDc.DrawLabel(bs_version, based_on_rect, wxALIGN_CENTER);
+        // Brand name: "Snapmaker Orca"
+        memDc.SetFont(m_constant_text.titleFont);
+        memDc.SetTextForeground(wxColour(23, 23, 23));
+        wxSize brandExt = memDc.GetTextExtent(m_constant_text.title);
+
+        // Version tag: "V" + current app version
+        memDc.SetFont(m_constant_text.versionFont);
+        memDc.SetTextForeground(wxColour(143, 143, 143));
+        wxSize versionExt = memDc.GetTextExtent(m_constant_text.version);
+
+        // Center brand + gap + tag as a group.
+        int gap    = scaleX(10);
+        int totalW = brandExt.GetWidth() + gap + versionExt.GetWidth();
+        int startX = (width - totalW) / 2;
+        int brandY = scaleY(241);
+        int tagY   = scaleY(251);
+
+        memDc.SetFont(m_constant_text.titleFont);
+        memDc.SetTextForeground(wxColour(23, 23, 23));
+        memDc.DrawText(m_constant_text.title, startX, brandY);
+
+        memDc.SetFont(m_constant_text.versionFont);
+        memDc.SetTextForeground(wxColour(143, 143, 143));
+        memDc.DrawText(m_constant_text.version,
+                       startX + brandExt.GetWidth() + gap,
+                       tagY);
+
+        // Beta text below brand, centered
+        int betaY = scaleY(279);
+        memDc.SetFont(m_constant_text.versionFont);
+        memDc.SetTextForeground(wxColour(143, 143, 143));
+        wxSize betaExt = memDc.GetTextExtent(m_constant_text.betaText);
+        wxRect betaRect(wxPoint(0, betaY),
+                        wxPoint(width, betaY + betaExt.GetHeight()));
+        memDc.DrawLabel(m_constant_text.betaText, betaRect, wxALIGN_CENTER);
+
+        // Dynamic text y position (for SetText)
+        m_action_line_y_position = scaleY(384);
     }
 
     static wxBitmap MakeBitmap()
@@ -495,7 +518,7 @@ public:
 
         wxMemoryDC memDC;
         memDC.SelectObject(new_bmp);
-        memDC.SetBrush(StateColor::darkModeColorFor(*wxWHITE));
+        memDC.SetBrush(wxColour(255, 255, 255));
         memDC.DrawRectangle(-1, -1, width + 2, height + 2);
         memDC.DrawBitmap(new_bmp, 0, 0, true);
         return new_bmp;
@@ -557,28 +580,21 @@ private:
     {
         wxString title;
         wxString version;
-        wxString credits;
+        wxString betaText;
 
-        wxFont   title_font;
-        wxFont   version_font;
-        wxFont   credits_font;
-        wxFont   based_on_font;
+        wxFont   titleFont;
+        wxFont   versionFont;
+        wxFont   loadingFont;
 
-        void init(wxFont init_font)
+        void init()
         {
-            // title
-            //title = wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME;
+            title    = "Snapmaker Orca";
+            version  = std::string("V") + Snapmaker_VERSION;
+            betaText = _L("Beta version");
 
-            // dynamically get the version to display
-            version = GUI_App::format_display_version();
-
-            // credits infornation
-            credits = "";
-
-            //title_font    = Label::Head_16;
-            version_font  = Label::Body_13;
-            based_on_font = Label::Body_8;
-            credits_font  = Label::Body_8;
+            titleFont   = Label::sysFont(20, false);
+            versionFont = Label::Body_13;
+            loadingFont = Label::Body_11;
         }
     }
     m_constant_text;
@@ -1067,11 +1083,17 @@ void GUI_App::post_init()
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << "Found glcontext not ready, postpone the init";
         }
 //#endif
-        if (is_editor())
-            mainframe->select_tab(size_t(0));
-        if (app_config->get("default_page") == "1")
-            mainframe->select_tab(size_t(1));
         mainframe->Thaw();
+        // Defer the final tab selection to after pending events are
+        // processed. During GL init, the PAGE_CHANGED handler posts
+        // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
+        // select_tab(0) and switch back to the Prepare tab.
+        CallAfter([this] {
+            if (is_editor() && app_config->get("default_page") != "1")
+                mainframe->select_tab(size_t(0));
+            else if (app_config->get("default_page") == "1")
+                mainframe->select_tab(size_t(1));
+        });
         plater_->trigger_restore_project(1);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
@@ -1121,6 +1143,7 @@ void GUI_App::post_init()
     // Neither wxShowEvent nor wxWindowCreateEvent work reliably.
     if (this->preset_updater) { // G-Code Viewer does not initialize preset_updater.
         CallAfter([this] {
+            try {
             bool cw_showed = this->config_wizard_startup();
 
             SSWCP_MqttAgent_Instance::m_dialog = new WebPresetDialog(this);
@@ -1132,7 +1155,13 @@ void GUI_App::post_init()
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             this->preset_updater->sync_web_async(true);
             this->check_new_version_sf(false, false);
-     
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "CallAfter config wizard exception: " << e.what();
+                flush_logs();
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << "CallAfter config wizard unknown exception";
+                flush_logs();
+            }
         });
     }
 
@@ -2243,9 +2272,7 @@ void GUI_App::copy_web_resources() {
 
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
-        auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-        auto target_path = data_web_path / "flutter_web";
-        copy_directory_recursively(source_path, target_path);
+        copy_bundled_flutter_web(false);
         profiler.mark("copy flutter_web (missing target)");
     } else {
         auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
@@ -2259,9 +2286,7 @@ void GUI_App::copy_web_resources() {
             std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
 
             if (source_build_number_str > target_build_number_str) {
-                auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-                auto target_path = data_web_path / "flutter_web";
-                copy_directory_recursively(source_path, target_path);
+                copy_bundled_flutter_web(true);
                 profiler.mark("copy flutter_web (version upgrade)");
             } else {
                 profiler.note("flutter_web already up to date");
@@ -2271,6 +2296,64 @@ void GUI_App::copy_web_resources() {
             profiler.note(std::string("version check failed: ") + e.what());
         }
     }
+}
+
+bool GUI_App::copy_bundled_flutter_web(bool upgrade)
+{
+    auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+    auto target_path = boost::filesystem::path(data_dir()) / "web" / "flutter_web";
+    if (copy_directory_recursively(source_path, target_path))
+        return true;
+
+    BOOST_LOG_TRIVIAL(error) << "Failed to copy bundled flutter_web to " << target_path.string();
+    report_flutter_web_copy_failure(upgrade ? FlutterWebCopyStatus::UpgradeFailed : FlutterWebCopyStatus::InstallFailed);
+    return false;
+}
+
+void GUI_App::report_flutter_web_copy_failure(FlutterWebCopyStatus status)
+{
+    if (status == FlutterWebCopyStatus::InstallFailed)
+        m_flutter_web_copy_status = FlutterWebCopyStatus::InstallFailed;
+    else if (status == FlutterWebCopyStatus::UpgradeFailed &&
+             m_flutter_web_copy_status != FlutterWebCopyStatus::InstallFailed)
+        m_flutter_web_copy_status = FlutterWebCopyStatus::UpgradeFailed;
+    else 
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << static_cast<int>(status);
+}
+
+void GUI_App::do_notify_flutter_web_copy_failure()
+{
+    if (m_flutter_web_copy_notified || m_flutter_web_copy_status == FlutterWebCopyStatus::Ok)
+        return;
+
+    m_flutter_web_copy_notified = true;
+
+    switch (m_flutter_web_copy_status) {
+    case FlutterWebCopyStatus::InstallFailed:
+        show_error(mainframe,
+                   _L("Failed to install Web UI resources. Some features may not work correctly.\n"
+                      "Please check disk space and file permissions, then restart the application."));
+        break;
+    case FlutterWebCopyStatus::UpgradeFailed:
+        if (notification_manager()) {
+            notification_manager()->push_notification(
+                NotificationType::CustomNotification,
+                NotificationManager::NotificationLevel::WarningNotificationLevel,
+                _u8L("Failed to update Web UI resources. The application will continue using the previous version."));
+        }
+        break;
+    default: 
+        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus other status" << static_cast<int>(m_flutter_web_copy_status);
+        break;
+    }
+}
+
+void GUI_App::try_notify_flutter_web_copy_failure()
+{
+    if (wxThread::IsMain())
+        do_notify_flutter_web_copy_failure();
+    else
+        CallAfter([this]() { do_notify_flutter_web_copy_failure(); });
 }
 
 void GUI_App::copy_older_config()
@@ -2647,8 +2730,6 @@ bool GUI_App::on_init_inner()
         app_config->set("version", SLIC3R_VERSION);
     }
 
-    // temporarily cancel the loading window
-    /*
     SplashScreen * scrn = nullptr;
     if (app_config->get("show_splash_screen") == "true") {
         // make a bitmap with dark grey banner on the left side
@@ -2667,9 +2748,11 @@ bool GUI_App::on_init_inner()
         //BBS use BBL splashScreen
         scrn = new SplashScreen(bmp, wxSPLASH_CENTRE_ON_SCREEN | wxSPLASH_TIMEOUT, 1500, splashscreen_pos);
         wxYield();
-        scrn->SetText(_L("Loading configuration")+ dots);
+        wxString loadingText = _L("Loading configuration");
+        std::string languageCode = app_config->get_language_code();
+        loadingText += languageCode == "zh-cn" || languageCode == "zh" ? dots + dots : dots;
+        scrn->SetText(loadingText);
     }
-    */
     BOOST_LOG_TRIVIAL(info) << "loading systen presets...";
     preset_bundle = new PresetBundle();
 
@@ -2995,6 +3078,8 @@ bool GUI_App::on_init_inner()
                        "The Snapmaker Orca configuration file may be corrupted and cannot be parsed.\nSnapmaker Orca has attempted to recreate the "
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
+
+    do_notify_flutter_web_copy_failure();
 
     profiler.mark("on_init_inner return");
 
@@ -6825,7 +6910,16 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
                 start_page == ConfigWizard::SP_PRINTERS ? GuideFrame::BBL_MODELS_ONLY :
                 GuideFrame::BBL_MODELS;
     wizard.SetStartPage(page);
-    bool       res = wizard.run();
+    bool       res = false;
+    try {
+        res = wizard.run();
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "run_wizard exception: " << e.what();
+        flush_logs();
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "run_wizard unknown exception";
+        flush_logs();
+    }
 
     if (res) {
         load_current_presets();
@@ -7074,20 +7168,28 @@ void GUI_App::user_login_notify(const json& res)
 bool GUI_App::config_wizard_startup()
 {
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
-    user_update_privacy_notify(isAgree == "true");   
+    user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup changed the privacy policy with: " << (isAgree);
-    if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
-        BOOST_LOG_TRIVIAL(info) << "run wizard...";
-        run_wizard(ConfigWizard::RR_DATA_EMPTY);
-        BOOST_LOG_TRIVIAL(info) << "finished run wizard";
+    try {
+        if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
+            BOOST_LOG_TRIVIAL(info) << "run wizard...";
+            run_wizard(ConfigWizard::RR_DATA_EMPTY);
+            BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
-        return true;
-    }
+            return true;
+        }
 
-    if (isAgree.empty()) 
-    {
-        run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
-        return true;
+        if (isAgree.empty())
+        {
+            run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
+            return true;
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "config_wizard_startup exception: " << e.what();
+        flush_logs();
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "config_wizard_startup unknown exception";
+        flush_logs();
     }
 
     return false;

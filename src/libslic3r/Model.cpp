@@ -483,7 +483,7 @@ ModelObject* Model::add_object(const char *name, const char *path, TriangleMesh 
 
 ModelObject* Model::add_object(const ModelObject &other)
 {
-	ModelObject* new_object = ModelObject::new_clone(other);
+    ModelObject* new_object = ModelObject::new_clone(other);
     new_object->set_model(this);
     // BBS: set default extruder id to 1
     if (!new_object->config.has("extruder") || new_object->config.extruder() == 0)

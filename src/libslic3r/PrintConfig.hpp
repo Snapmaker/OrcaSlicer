@@ -930,6 +930,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,            tree_support_top_rate))
     ((ConfigOptionFloat,              tree_support_branch_diameter_organic))
     ((ConfigOptionFloat,              tree_support_branch_angle_organic))
+    // Snapmaker: Support transition layer parameters
+    ((ConfigOptionInt,                tree_support_transition_layers))
+    ((ConfigOptionBool,               support_transition_perimeter))
+    ((ConfigOptionFloat,              support_transition_speed))
+    ((ConfigOptionFloatOrPercent,     support_transition_flow_ratio))
     ((ConfigOptionEnum<GapFillTarget>,gap_fill_target))
     ((ConfigOptionFloat,              min_length_factor))
 

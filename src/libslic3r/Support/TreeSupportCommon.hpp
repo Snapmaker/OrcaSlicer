@@ -12,6 +12,7 @@
 #include "../libslic3r.h"
 #include "../Polygon.hpp"
 #include "SupportCommon.hpp"
+#include "SupportTransitionLayer.hpp"
 
 #include <string_view>
 
@@ -91,6 +92,9 @@ struct TreeSupportMeshGroupSettings {
         this->support_tree_top_rate       = config.tree_support_top_rate.value; // percent
     //    this->support_tree_tip_diameter = this->support_line_width;
         this->support_tree_tip_diameter = std::clamp(scaled<coord_t>(config.tree_support_tip_diameter.value), (coord_t)0, this->support_tree_branch_diameter);
+
+        // Snapmaker: Load support transition configuration
+        this->transition_config         = SupportTransitionConfig::from_config(config);
     }
 
 /*********************************************************************/
@@ -252,6 +256,9 @@ struct TreeSupportMeshGroupSettings {
     // The diameter of the top of the tip of the branches of tree support.
     // minimum: min_wall_line_width, minimum warning: min_wall_line_width+0.05, maximum_value: support_tree_branch_diameter, value: support_line_width
     coord_t                         support_tree_tip_diameter               { scaled<coord_t>(0.4) };
+
+    // Snapmaker: Support transition layer configuration
+    SupportTransitionConfig          transition_config;
 
     // Support Interface Priority
     // How support interface and support will interact when they overlap. Currently only implemented for support roof.

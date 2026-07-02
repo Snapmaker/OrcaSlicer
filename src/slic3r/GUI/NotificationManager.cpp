@@ -1946,6 +1946,31 @@ void NotificationManager::close_plater_warning_notification(const std::string& t
 		}
 	}
 }
+void NotificationManager::push_pla_petg_mix_warning(const std::string& text)
+{
+    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+        if (notification->get_type() == NotificationType::SlicingWarning &&
+            notification->compare_text(_u8L("Warning:") + "\n" + text)) {
+            return;
+        }
+    }
+    NotificationData data{ NotificationType::SlicingWarning,
+                           NotificationLevel::WarningNotificationLevel,
+                           0,
+                           _u8L("Warning:") + "\n" + text };
+    push_notification_data(data, 0);
+}
+
+void NotificationManager::close_pla_petg_mix_warning(const std::string& text)
+{
+    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+        if (notification->get_type() == NotificationType::SlicingWarning &&
+            notification->compare_text(_u8L("Warning:") + "\n" + text)) {
+            notification->close();
+        }
+    }
+}
+
 void NotificationManager::set_all_slicing_errors_gray(bool g)
 {
 	for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {

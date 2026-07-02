@@ -8750,6 +8750,12 @@ msgstr "Organic支撑分支的直径不得小于支撑材料挤出宽度的2倍�
 msgid "Organic support branch diameter must not be smaller than support tree tip diameter."
 msgstr "Organic支撑分支的直径不得小于支撑树尖端的直径。"
 
+msgid "For Organic supports, two walls are supported only with the Hollow/Default base pattern."
+msgstr "对于有机支撑，仅在空心/默认主体图案下支持双墙"
+
+msgid "The Lightning base pattern is not supported by this support type; Rectilinear will be used instead."
+msgstr "此支撑类型不支持闪电主体图案；将改用直线图案。"
+
 msgid "Support enforcers are used but support is not enabled. Please enable support."
 msgstr "使用了支撑添加器但没有打开支撑。请打开支撑。"
 
@@ -10274,6 +10280,25 @@ msgstr "首层抖动值"
 
 msgid "Jerk for travel."
 msgstr "空驶抖动值"
+
+msgid "First layer travel"
+msgstr "首层空驶"
+
+msgid ""
+"Acceleration of travel moves on the first layer. If expressed as a percentage "
+"it will be calculated based on the travel acceleration. A value of 0 means "
+"the printer will use its firmware default."
+msgstr ""
+"首层空驶移动的加速度。如果以百分比（如 50%）表示，将基于空驶加速度计算。"
+"设为 0 表示使用打印机固件默认值。"
+
+msgid ""
+"Jerk of travel moves on the first layer. If expressed as a percentage it "
+"will be calculated based on the travel jerk. A value of 0 means the printer "
+"will use its firmware default."
+msgstr ""
+"首层空驶移动的抖动。如果以百分比（如 50%）表示，将基于空驶抖动计算。"
+"设为 0 表示使用打印机固件默认值。"
 
 msgid "Line width of initial layer. If expressed as a %, it will be computed over the nozzle diameter."
 msgstr "首层的线宽。如果以%表示，它将基于喷嘴直径来计算。"
@@ -11910,8 +11935,24 @@ msgstr "支撑面速度"
 msgid "Base pattern"
 msgstr "支撑主体图案"
 
-msgid "Line pattern of support."
-msgstr "支撑走线图案"
+msgid ""
+"Line pattern of support.\n"
+"\n"
+"The Default option for Tree supports is Hollow, which means no base pattern. "
+"For other support types, the Default option is the Rectilinear pattern.\n"
+"\n"
+"NOTE: For Organic supports, the two walls are supported only with the Hollow/Default base pattern. "
+"The Lightning base pattern is supported only by Tree Slim/Strong/Hybrid supports. "
+"For the other support types, the Rectilinear will be used instead of Lightning."
+msgstr ""
+"支撑走线图案。\n"
+"\n"
+"树状支撑的默认选项为空心，即无主体图案。"
+"其他支撑类型的默认选项为直线图案。\n"
+"\n"
+"注意：对于有机支撑，仅在空心/默认主体图案下支持双墙。"
+"闪电主体图案仅树状苗条/粗壮/混合支撑支持。"
+"对于其他支撑类型，将改用直线图案填充替代闪电图案。"
 
 msgid "Rectilinear grid"
 msgstr "直线网格"
@@ -15237,3 +15278,39 @@ msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续�
 
 msgid "Filament %d ratio is too high. Mix may be affected."
 msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
+# Snapmaker: PLA/PETG support material detection strings
+msgid ""
+"PLA and PETG filaments detected on the same plate. When used as mutual "
+"support materials, parameter adjustment is recommended."
+msgstr "检测到同一底板上同时存在PLA和PETG耗材，互为支撑时需调整参数。"
+
+#, c-format, boost-format
+msgid ""
+"Detected %s as support interface material for %s models. PLA and PETG do not "
+"bond together — we recommend adjusting the following parameters:"
+msgstr "检测到%s作为%s模型的支撑界面材料。PLA与PETG无法粘合——建议调整以下参数："
+
+msgid ""
+"Non-soluble support materials are not recommended for support base.\n"
+"Are you sure to use them for support base?"
+msgstr ""
+"不建议使用非可溶性支撑材料作为支撑基底。\n"
+"确定要将其用作支撑基底吗？"
+
+#, c-format, boost-format
+msgid "  • Top Z distance: %.2f → 0 mm\n"
+msgstr "  • 顶部Z距离：%.2f → 0 mm\n"
+
+msgid "  • Base pattern → Rectilinear\n"
+msgstr "  • 支撑主体图案 → 直线网格\n"
+
+#, c-format, boost-format
+msgid "  • Top interface layers: %d → 3\n"
+msgstr "  • 顶部接触面层数：%d → 3\n"
+
+msgid "  • Interface pattern → Rectilinear Interlaced\n"
+msgstr "  • 接触面图案 → 交叠直线\n"
+
+#, c-format, boost-format
+msgid "  • Interface spacing: %.2f → 0 mm\n"
+msgstr "  • 接触面间距：%.2f → 0 mm\n"

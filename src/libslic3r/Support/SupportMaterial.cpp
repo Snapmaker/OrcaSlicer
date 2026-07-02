@@ -5,6 +5,7 @@
 #include "Print.hpp"
 #include "SupportMaterial.hpp"
 #include "SupportCommon.hpp"
+#include "SupportTransitionLayer.hpp"
 #include "Geometry.hpp"
 #include "Point.hpp"
 #include "MutablePolygon.hpp"
@@ -371,6 +372,46 @@ static constexpr const std::initializer_list<SupporLayerType> support_types_inte
     SupporLayerType::RaftInterface, SupporLayerType::BottomContact, SupporLayerType::BottomInterface, SupporLayerType::TopContact, SupporLayerType::TopInterface
 };
 
+// Snapmaker: Generate transition layers between interface and base support for Grid support.
+// These layers use erSupportTransition role with independent speed/flow parameters.
+static SupportGeneratorLayersPtr generate_transition_layers(
+    const PrintObjectConfig           &config,
+    const SupportGeneratorLayersPtr   &top_contacts,
+    SupportGeneratorLayerStorage      &layer_storage)
+{
+    SupportGeneratorLayersPtr transition_layers;
+
+    const SupportTransitionConfig transition_cfg = SupportTransitionConfig::from_config(config);
+    if (!transition_cfg.enabled())
+        return transition_layers;
+
+    // For each top contact layer, create transition layers just below it
+    for (SupportGeneratorLayer *top_contact : top_contacts)
+    {
+        if (top_contact == nullptr)
+            continue;
+
+        for (int i = 0; i < transition_cfg.layer_count; ++i)
+        {
+            SupportGeneratorLayer *transition_layer =
+                &layer_storage.allocate_unguarded(SupporLayerType::Transition);
+
+            // Stagger transition layers below the interface at distinct Z-levels.
+            // Each transition layer descends from the interface Z by one layer height,
+            // so generate_support_toolpaths() can resolve each layer at its own Z.
+            const coordf_t offset_z = (i + 1) * top_contact->height;
+            transition_layer->polygons = top_contact->polygons;
+            transition_layer->print_z  = top_contact->print_z - offset_z;
+            transition_layer->bottom_z = transition_layer->print_z - top_contact->height;
+            transition_layer->height   = top_contact->height;
+
+            transition_layers.push_back(transition_layer);
+        }
+    }
+
+    return transition_layers;
+}
+
 void PrintObjectSupportMaterial::generate(PrintObject &object)
 {
     BOOST_LOG_TRIVIAL(info) << "Support generator - Start";
@@ -479,6 +520,10 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 	SupportGeneratorLayersPtr empty_layers;
     auto [interface_layers, base_interface_layers] = generate_interface_layers(*m_object_config, m_support_params, bottom_contacts, top_contacts, empty_layers, empty_layers, intermediate_layers, layer_storage);
 
+    // Snapmaker: Generate transition layers for Grid support between interface and base.
+    SupportGeneratorLayersPtr transition_layers =
+        generate_transition_layers(*m_object_config, top_contacts, layer_storage);
+
     BOOST_LOG_TRIVIAL(info) << "Support generator - Creating raft";
 
     // If raft is to be generated, the 1st top_contact layer will contain the 1st object layer silhouette with holes filled.
@@ -552,7 +597,7 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 #endif /* SLIC3R_DEBUG */
 
     // Generate the actual toolpaths and save them into each layer.
-    generate_support_toolpaths(object.support_layers(), *m_object_config, m_support_params, m_slicing_params, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers);
+    generate_support_toolpaths(object.support_layers(), *m_object_config, m_support_params, m_slicing_params, raft_layers, bottom_contacts, top_contacts, intermediate_layers, interface_layers, base_interface_layers, transition_layers);
 
 #ifdef SLIC3R_DEBUG
     {

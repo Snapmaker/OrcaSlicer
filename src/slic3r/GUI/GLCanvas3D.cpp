@@ -1894,6 +1894,31 @@ void GLCanvas3D::render(bool only_init)
     if (only_init)
         return;
 
+    // Per-frame check: warn if PLA and PETG are both used on the current plate.
+    if (wxGetApp().plater() != nullptr && wxGetApp().preset_bundle != nullptr) {
+        bool has_pla = false;
+        bool has_petg = false;
+        PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+        if (cur_plate != nullptr) {
+            const DynamicPrintConfig &full_config = wxGetApp().preset_bundle->full_config();
+            const ConfigOptionStrings *ft_opt = full_config.option<ConfigOptionStrings>("filament_type");
+            if (ft_opt != nullptr) {
+                std::vector<int> used_filaments = cur_plate->get_extruders(true);
+                for (int filament_idx : used_filaments) {
+                    int filament_id = filament_idx - 1;
+                    if (filament_id >= 0 && filament_id < static_cast<int>(ft_opt->values.size())) {
+                        const std::string &filament_type = ft_opt->values[filament_id];
+                        if (filament_type == "PLA")
+                            has_pla = true;
+                        else if (filament_type == "PETG")
+                            has_petg = true;
+                    }
+                }
+            }
+        }
+        _set_warning_notification(EWarning::MixUsePLAAndPETG, has_pla && has_petg);
+    }
+
 #if ENABLE_ENVIRONMENT_MAP
     if (wxGetApp().is_editor())
         wxGetApp().plater()->init_environment_texture();
@@ -2859,7 +2884,8 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
             _set_warning_notification(EWarning::ObjectOutside, false);
             _set_warning_notification(EWarning::ObjectClashed, false);
             _set_warning_notification(EWarning::SlaSupportsOutside, false);
-            _set_warning_notification(EWarning::SpiralLiftNearBoundary, false);  // Snapmaker: 清空警告
+            _set_warning_notification(EWarning::SpiralLiftNearBoundary, false);
+            _set_warning_notification(EWarning::MixUsePLAAndPETG, false);
             post_event(Event<bool>(EVT_GLCANVAS_ENABLE_ACTION_BUTTONS, false));
         }
     }
@@ -9784,6 +9810,10 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
          text = _u8L("Model too close to bed boundary. Disable spiral lifting or keep at least 3.5mm gap to avoid collision.");
         error = ErrorType::SLICING_SERIOUS_WARNING;
         break;
+    case EWarning::MixUsePLAAndPETG:
+        text = _u8L("PLA and PETG filaments detected on the same plate. When used as mutual support materials, parameter adjustment is recommended.");
+        error = ErrorType::PLATER_WARNING;
+        break;
     }
     //BBS: this may happened when exit the app, plater is null
     if (!wxGetApp().plater())
@@ -9800,6 +9830,15 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
     switch (error)
     {
     case PLATER_WARNING:
+        // MixUsePLAAndPETG: route through SlicingWarning type so it
+        // stays visible on Preview tab without blocking slicing.
+        if (warning == EWarning::MixUsePLAAndPETG) {
+            if (state)
+                notification_manager.push_pla_petg_mix_warning(text);
+            else
+                notification_manager.close_pla_petg_mix_warning(text);
+            break;
+        }
         if (state)
             notification_manager.push_plater_warning_notification(text);
         else

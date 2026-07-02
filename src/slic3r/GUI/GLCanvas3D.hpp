@@ -382,7 +382,8 @@ class GLCanvas3D
         ObjectClashed,
         GCodeConflict,
         ToolHeightOutside,
-        SpiralLiftNearBoundary  // Snapmaker: 螺旋抬升靠近边界警告
+        SpiralLiftNearBoundary,
+        MixUsePLAAndPETG
     };
 
     class RenderStats

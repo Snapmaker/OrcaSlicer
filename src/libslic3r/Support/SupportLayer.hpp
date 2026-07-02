@@ -30,6 +30,9 @@ enum class SupporLayerType {
 	TopInterface,
 	// Top contact layer directly supporting an overhang. To be printed with a support interface material.
 	TopContact,
+	// Transition layer printed between interface and base support.
+	// Uses erSupportTransition role with independent speed/flow parameters.
+	Transition,
 	// Some undecided type yet. It will turn into Base first, then it may turn into BottomInterface or TopInterface.
 	Intermediate,
 };

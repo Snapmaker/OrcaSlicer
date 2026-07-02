@@ -20,6 +20,10 @@ finish-args:
   - --system-talk-name=org.freedesktop.UDisks2
   - --env=SPNAV_SOCKET=/run/spnav.sock
 
+build-options:
+  env:
+    CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
 modules:
 
   # JPEG codec for the liveview
@@ -51,6 +55,8 @@ modules:
 
   - name: kde-extra-cmake-modules
     buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     sources:
       - type: git
         url: https://github.com/KDE/extra-cmake-modules
@@ -68,6 +74,7 @@ modules:
     buildsystem: simple
     build-commands:
       - |
+        set -euo pipefail
         export CMAKE_POLICY_VERSION_MINIMUM=3.5
         mkdir builddir && cd builddir
         cmake ../ -GNinja \

@@ -75,6 +75,17 @@ namespace GUI {
 
 class Bed3D;
 
+namespace {
+
+template <typename ConfigLike>
+int resolve_sparse_infill_filament(const ConfigLike &config, int inherited_sparse_infill_filament)
+{
+    const ConfigOption *sparse_opt = config.option("sparse_infill_filament");
+    return sparse_opt != nullptr && sparse_opt->getInt() > 0 ? sparse_opt->getInt() : inherited_sparse_infill_filament;
+}
+
+} // namespace
+
 ColorRGBA PartPlate::SELECT_COLOR		= { 0.2666f, 0.2784f, 0.2784f, 1.0f }; //{ 0.4196f, 0.4235f, 0.4235f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_COLOR		= { 0.82f, 0.82f, 0.82f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_DARK_COLOR		= { 0.384f, 0.384f, 0.412f, 1.0f };
@@ -1334,6 +1345,16 @@ int PartPlate::picking_id_component(int idx) const
     return this->m_plate_index * GRABBER_COUNT + idx;
 }
 
+
+static void expand_plate_extruders(std::vector<int>& ids)
+{
+	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
+	if (num_physical > 0) {
+		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);
+		std::sort(ids.begin(), ids.end());
+		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+	}
+}
 std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 {
 	std::vector<int> plate_extruders;
@@ -1405,23 +1426,16 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
                 plate_extruders.push_back(glb_support_extr);
         }
 
-        int obj_wall_extr = 1;
+        int obj_wall_extr = glb_wall_extr;
 		const ConfigOption* wall_opt = mo->config.option("wall_filament");
 		if (wall_opt != nullptr)
 			obj_wall_extr = wall_opt->getInt();
 		if (obj_wall_extr != 1)
 			plate_extruders.push_back(obj_wall_extr);
-		else if (glb_wall_extr != 1)
-			plate_extruders.push_back(glb_wall_extr);
 
-		int obj_sparse_infill_extr = 1;
-		const ConfigOption* sparse_infill_opt = mo->config.option("sparse_infill_filament");
-		if (sparse_infill_opt != nullptr)
-			obj_sparse_infill_extr = sparse_infill_opt->getInt();
-		if (obj_sparse_infill_extr != 1)
-			plate_extruders.push_back(obj_sparse_infill_extr);
-		else if (glb_sparse_infill_extr != 1)
-			plate_extruders.push_back(glb_sparse_infill_extr);
+		const int object_sparse_infill_extr = resolve_sparse_infill_filament(mo->config, glb_sparse_infill_extr);
+		if (object_sparse_infill_extr != 1)
+			plate_extruders.push_back(object_sparse_infill_extr);
 
 		int obj_solid_infill_extr = 1;
 		const ConfigOption* solid_infill_opt = mo->config.option("solid_infill_filament");
@@ -1439,9 +1453,10 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
         int nums_extruders = 0;
         if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(wxGetApp().preset_bundle->project_config.option("filament_colour"))) {
             nums_extruders = color_option->values.size();
+            const size_t total_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(size_t(nums_extruders));
 			if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
 				for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
+					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(total_filaments))
 						plate_extruders.push_back(item.extruder);
 				}
 			}
@@ -1451,16 +1466,24 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
 	std::sort(plate_extruders.begin(), plate_extruders.end());
 	auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
 	plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+
+		expand_plate_extruders(plate_extruders);
+
+
 	return plate_extruders;
 }
 
 std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, DynamicPrintConfig& full_config) const
 {
     std::vector<int> plate_extruders;
+    BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli begin"
+                             << " plate=" << m_plate_index
+                             << " obj_to_instance_count=" << obj_to_instance_set.size()
+                             << " consider_custom_gcode=" << conside_custom_gcode;
 
     // if 3mf file
     int glb_support_intf_extr = full_config.opt_int("support_interface_filament");
-    int glb_support_extr = full_config.opt_int("support_filament");
+	int glb_support_extr = full_config.opt_int("support_filament");
 	int glb_wall_extr = full_config.opt_int("wall_filament");
 	int glb_sparse_infill_extr = full_config.opt_int("sparse_infill_filament");
 	int glb_solid_infill_extr = full_config.opt_int("solid_infill_filament");
@@ -1476,7 +1499,27 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
         if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
         {
             ModelObject* object = m_model->objects[obj_id];
+            if (object == nullptr) {
+                BOOST_LOG_TRIVIAL(error) << "PartPlate::get_extruders_under_cli encountered null model object"
+                                         << " plate=" << m_plate_index
+                                         << " obj_id=" << obj_id;
+                continue;
+            }
+            if (instance_id < 0 || instance_id >= object->instances.size()) {
+                BOOST_LOG_TRIVIAL(error) << "PartPlate::get_extruders_under_cli encountered invalid instance index"
+                                         << " plate=" << m_plate_index
+                                         << " obj_id=" << obj_id
+                                         << " instance_id=" << instance_id
+                                         << " instance_count=" << object->instances.size();
+                continue;
+            }
             ModelInstance* instance = object->instances[instance_id];
+            BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli object"
+                                     << " plate=" << m_plate_index
+                                     << " obj_id=" << obj_id
+                                     << " instance_id=" << instance_id
+                                     << " volume_count=" << object->volumes.size()
+                                     << " printable=" << instance->printable;
 
             if (!instance->printable)
                 continue;
@@ -1527,23 +1570,16 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
             else if (glb_support_extr != 0)
                 plate_extruders.push_back(glb_support_extr);
 
-			int obj_wall_extr = 1;
+			int obj_wall_extr = glb_wall_extr;
 			const ConfigOption* wall_opt = object->config.option("wall_filament");
 			if (wall_opt != nullptr)
 				obj_wall_extr = wall_opt->getInt();
 			if (obj_wall_extr != 1)
 				plate_extruders.push_back(obj_wall_extr);
-			else if (glb_wall_extr != 1)
-				plate_extruders.push_back(glb_wall_extr);
 
-			int obj_sparse_infill_extr = 1;
-			const ConfigOption* sparse_infill_opt = object->config.option("sparse_infill_filament");
-			if (sparse_infill_opt != nullptr)
-				obj_sparse_infill_extr = sparse_infill_opt->getInt();
-			if (obj_sparse_infill_extr != 1)
-				plate_extruders.push_back(obj_sparse_infill_extr);
-			else if (glb_sparse_infill_extr != 1)
-				plate_extruders.push_back(glb_sparse_infill_extr);
+			const int object_sparse_infill_extr = resolve_sparse_infill_filament(object->config, glb_sparse_infill_extr);
+			if (object_sparse_infill_extr != 1)
+				plate_extruders.push_back(object_sparse_infill_extr);
 
 			int obj_solid_infill_extr = 1;
 			const ConfigOption* solid_infill_opt = object->config.option("solid_infill_filament");
@@ -1557,22 +1593,23 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
     }
 
     if (conside_custom_gcode) {
-        //BBS
-        int nums_extruders = 0;
-        if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(full_config.option("filament_colour"))) {
-            nums_extruders = color_option->values.size();
-            if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
-                for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-                    if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
-                        plate_extruders.push_back(item.extruder);
-                }
-            }
-        }
+        BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli skipping custom gcode scan in CLI path"
+                                 << " plate=" << m_plate_index;
     }
 
     std::sort(plate_extruders.begin(), plate_extruders.end());
     auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
     plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+    expand_plate_extruders(plate_extruders);
+    std::ostringstream extruders_list;
+    for (size_t i = 0; i < plate_extruders.size(); ++i) {
+        if (i != 0)
+            extruders_list << ",";
+        extruders_list << plate_extruders[i];
+    }
+    BOOST_LOG_TRIVIAL(debug) << "PartPlate::get_extruders_under_cli result"
+                             << " plate=" << m_plate_index
+                             << " extruders=[" << extruders_list.str() << "]";
     return plate_extruders;
 }
 
@@ -1606,9 +1643,10 @@ std::vector<int> PartPlate::get_extruders_without_support(bool conside_custom_gc
 		int nums_extruders = 0;
 		if (const ConfigOptionStrings* color_option = dynamic_cast<const ConfigOptionStrings*>(wxGetApp().preset_bundle->project_config.option("filament_colour"))) {
 			nums_extruders = color_option->values.size();
+            const size_t total_filaments = wxGetApp().preset_bundle->mixed_filaments.total_filaments(size_t(nums_extruders));
 			if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
 				for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
-					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
+					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= int(total_filaments))
 						plate_extruders.push_back(item.extruder);
 				}
 			}
@@ -1618,6 +1656,8 @@ std::vector<int> PartPlate::get_extruders_without_support(bool conside_custom_gc
 	std::sort(plate_extruders.begin(), plate_extruders.end());
 	auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
 	plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
+
+	expand_plate_extruders(plate_extruders);
 	return plate_extruders;
 }
 
@@ -1979,7 +2019,7 @@ bool PartPlate::is_valid_gcode_file()
 	return true;
 }
 
-ModelObjectPtrs PartPlate::get_objects_on_this_plate() {
+ModelObjectPtrs PartPlate::get_objects_on_this_plate() const {
     ModelObjectPtrs objects_ptr;
     int obj_id;
     for (auto it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); it++) {
@@ -3999,6 +4039,8 @@ int PartPlateList::select_plate(int index)
 		return -1;
 	}
 
+        const int old_plate_index = m_current_plate;
+
 	// BBS: erase unnecessary snapshot
 	if (get_curr_plate_index() != index && m_intialized) {
 		if (m_plater)
@@ -4012,6 +4054,8 @@ int PartPlateList::select_plate(int index)
 
 	m_current_plate = index;
 	m_plate_list[m_current_plate]->set_selected();
+        if (old_plate_index != m_current_plate && wxGetApp().plater())
+            wxGetApp().plater()->notify_filament_usage_changed();
 
 	//BBS
 	if(m_model)
@@ -4486,6 +4530,8 @@ int PartPlateList::add_to_plate(int obj_id, int instance_id, int plate_id)
 		return -1;
 	}
 	ret = plate->add_instance(obj_id, instance_id, true);
+
+    wxGetApp().plater()->notify_filament_usage_changed();
 
 	return ret;
 }

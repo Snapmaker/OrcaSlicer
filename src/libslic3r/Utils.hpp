@@ -682,7 +682,14 @@ inline std::string filter_characters(const std::string& str, const std::string& 
     return filteredStr;
 }
 
-void copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter = nullptr);
+bool copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter = nullptr);
+
+// Copy source tree to target + ".new", run validate_staging, then rename into place (target + ".old" rollback on failure).
+bool atomic_replace_directory(
+    const boost::filesystem::path &source,
+    const boost::filesystem::path &target,
+    std::function<bool(const std::string)> filter,
+    std::function<bool(const boost::filesystem::path &staging)> validate_staging);
 
 // Orca: Since 1.7.9 Boost deprecated save_string_file and load_string_file, copy and modified from boost 1.7.8
 void save_string_file(const boost::filesystem::path& p, const std::string& str);

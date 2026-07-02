@@ -890,9 +890,9 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                 line.replace(line.find(cur_gcode_start), 3, oss.str());
                 old_pos = transformed_pos;
             }
-			else {
-				continue;
-			}
+            else {
+                line = line_out.str();
+            }
         }
 
         gcode_out += line + "\n";
@@ -2698,6 +2698,29 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             this->placeholder_parser().set("scan_first_layer", new ConfigOptionBool(false));
         }
     }
+
+    // Compute chamber cooling mode based on all filaments used on this plate.
+    constexpr int kChamberCoolingKeepWarm  = 0;
+    constexpr int kChamberCoolingWeak      = 1;
+    constexpr int kChamberCoolingStrong    = 2;
+    constexpr int kVitrificationStrongCool = 50;  // <= 50: trigger strong cooling
+    constexpr int kVitrificationWeakCool   = 70;  // <= 70: trigger weak cooling (and > 50)
+    {
+        int chamber_cooling_mode = kChamberCoolingKeepWarm;
+        for (unsigned int extruder : tool_ordering.all_extruders()) {
+            if (!m_config.filament_is_high_temperature.get_at(extruder)) {
+                int vitrification = m_config.temperature_vitrification.get_at(extruder);
+                if (vitrification <= kVitrificationStrongCool) {
+                    chamber_cooling_mode = kChamberCoolingStrong;
+                    break;
+                } else if (vitrification <= kVitrificationWeakCool) {
+                    chamber_cooling_mode = kChamberCoolingWeak;
+                }
+            }
+        }
+        this->placeholder_parser().set("chamber_cooling_mode", new ConfigOptionInt(chamber_cooling_mode));
+    }
+
     std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value,
                                                                        initial_extruder_id);
     if (print.config().gcode_flavor != gcfKlipper) {

@@ -2613,7 +2613,6 @@ bool Moonraker_Mqtt::send_to_request(
     std::function<void()> timeout_callback)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] sending request, method: " << method << ", need response: " << need_response;
     wcp_loger.add_log("sending request, method: " + method + ", need response: " + std::to_string(need_response), false, "", "Moonraker_Mqtt", "info");
     
     json body;

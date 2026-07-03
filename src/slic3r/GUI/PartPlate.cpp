@@ -1348,6 +1348,7 @@ int PartPlate::picking_id_component(int idx) const
 
 static void expand_plate_extruders(std::vector<int>& ids)
 {
+	if (!wxTheApp) return;
 	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
 	if (num_physical > 0) {
 		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);
@@ -2103,7 +2104,7 @@ bool PartPlate::check_outside(int obj_id, int instance_id, BoundingBoxf3* boundi
 	if (instance_box.max.z() > plate_box.min.z())
 		plate_box.min.z() += instance_box.min.z(); // not considering outsize if sinking
 
-	if (instance_box.min.z() < SINKING_Z_THRESHOLD) {
+	if (m_plater && instance_box.min.z() < SINKING_Z_THRESHOLD) {
 		// Orca: For sinking object, we use a more expensive algorithm so part below build plate won't be considered
 		if (plate_box.intersects(instance_box)) {
 			// TODO: FIXME: this does not take exclusion area into account
@@ -2684,6 +2685,7 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 		for (const Vec2d& p : exclude_areas) {
 			m_exclude_area.push_back(Vec2d(p.x() + position.x(), p.y() + position.y()));
 		}*/
+		if (!m_plater) return true;
 		m_shape = std::move(new_shape);
 		m_exclude_area = std::move(new_exclude_areas);
 
@@ -5487,6 +5489,7 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list)
 		GCodeResult* gcode_result = nullptr;
 		PrintBase* fff_print = nullptr;
 		m_plate_list[index]->get_print(&fff_print, &gcode_result, nullptr);
+		if (!m_plater) continue;
 		PrintStatistics& ps = (dynamic_cast<Print*>(fff_print))->print_statistics();
 		gcode_result->print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time = atoi(plate_data_list[i]->gcode_prediction.c_str());
 		ps.total_weight = atof(plate_data_list[i]->gcode_weight.c_str());

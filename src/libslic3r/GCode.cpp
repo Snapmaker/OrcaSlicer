@@ -7192,7 +7192,7 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
         for (ExtrusionEntity* ee : support_fills.entities) {
             const ExtrusionRole role = ee->role();
             if ((role == support_extrusion_role) ||
-                (role == erSupportTransition) ||
+                (role == erSupportTransition && support_extrusion_role == erSupportMaterial) ||
                 (support_extrusion_role == erMixed && role != erIroning)) {
                 extrusions.emplace_back(ee);
             }

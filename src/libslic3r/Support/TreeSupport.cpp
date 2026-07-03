@@ -1488,11 +1488,10 @@ void TreeSupport::generate_toolpaths()
                         fill_params.dont_adjust = true;
                     }
                     if (area_group.type == SupportLayer::Roof1stLayer) {
-                        // roof_1st_layer
+                        // roof_1st_layer — transition strips that use support body filament.
+                        // Use interface_flow to match Bambu Studio behavior (higher flow for dense transition).
                         fill_params.density = interface_density;
-                        // Note: spacing means the separation between two lines as if they are tightly extruded
                         filler_Roof1stLayer->spacing = interface_flow.spacing();
-                        // generate a perimeter first to support interface better
                         ExtrusionEntityCollection* temp_support_fills = new ExtrusionEntityCollection();
                         make_perimeter_and_infill(temp_support_fills->entities, poly, 1, interface_flow, erSupportTransition,
                             filler_Roof1stLayer.get(), interface_density, false);
@@ -2136,8 +2135,9 @@ void TreeSupport::draw_circles()
                 // union_ex would merge separate branch polygons into one continuous surface,
                 // producing a single large block that diverges from Bambu's per-branch transition strips.
 
-                // roof_1st_layer and roof_areas may intersect, so need to subtract roof_areas from roof_1st_layer
-                roof_1st_layer = diff_ex(roof_1st_layer, ClipperUtils::clip_clipper_polygons_with_subject_bbox(roof_areas,get_extents(roof_1st_layer)));
+                // roof_areas and roof_1st_layer may intersect.
+                // Subtract roof_1st_layer from roof_areas so transition strips keep support body filament.
+                roof_areas = diff_ex(roof_areas, roof_1st_layer);
                 roof_1st_layer = intersection_ex(roof_1st_layer, m_machine_border);
 
                 // Move small roof_areas (< 1mm^2) into roof_1st_layer, matching Bambu Studio behavior.
@@ -3283,7 +3283,7 @@ void TreeSupport::generate_contact_points()
                     // print_z=object_layer->bottom_z: it directly contacts the bottom
                     // height=z_distance_top: it's height is exactly the gap distance
                     // dist_mm_to_top=0: it directly contacts the bottom
-                    contact_node = m_ts_data->create_node(pt, -gap_layers, layer_nr-1, roof_layers + 1, to_buildplate, SupportNode::NO_PARENT, bottom_z, z_distance_top, 0,
+                    contact_node = m_ts_data->create_node(pt, -gap_layers, layer_nr-1, roof_layers + gap_layers, to_buildplate, SupportNode::NO_PARENT, bottom_z, z_distance_top, 0,
                                                           radius);
                     contact_node->overhang = overhang;
                     contact_node->is_sharp_tail = is_sharp_tail;

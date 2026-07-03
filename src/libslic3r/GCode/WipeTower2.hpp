@@ -29,10 +29,14 @@ public:
     
     // Construct ToolChangeResult from current state of WipeTower2 and WipeTowerWriter2.
     // WipeTowerWriter2 is moved from !
-    WipeTower::ToolChangeResult construct_tcr(WipeTowerWriter2& writer,
-                                   bool priming,
-                                   size_t old_tool,
-								   bool is_finish) const;
+    WipeTower::ToolChangeResult construct_tcr(WipeTowerWriter2& writer,bool priming,
+        size_t old_tool, bool is_finish) const;
+
+    WipeTower::ToolChangeResult construct_tcr_new(WipeTowerWriter2& writer, bool priming,
+        size_t old_tool, bool is_finish, bool is_tool_change, float purge_volume, bool is_contact) const;
+
+    WipeTower::ToolChangeResult construct_block_tcr(WipeTowerWriter2& writer,
+        bool priming, size_t filament_id, bool is_finish, float purge_volume) const;
 
 	// x			-- x coordinates of wipe tower in mm ( left bottom corner )
 	// y			-- y coordinates of wipe tower in mm ( left bottom corner )
@@ -174,7 +178,8 @@ public:
         float               retract_length;
         float               retract_speed;
         float               flat_iron_area;
-		int category = 0;
+        int category = 0;
+        float prime_volume = 0.f;
     };
 
     const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
@@ -198,7 +203,7 @@ public:
         float start_depth{ 0 }; // 在擦拭塔中的 Y 起始位置
         float cur_depth{ 0 }; // 当前打印 Y 位置
         int last_filament_change_id{ -1 };
-        int last_nozzle_change_id{ -1 };
+        //int last_nozzle_change_id{ -1 };
     };
 
     struct BlockDepthInfo
@@ -230,6 +235,7 @@ private:
     void update_all_layer_depth(float wipe_tower_depth);
     WipeTower::box_coordinates align_perimeter(const WipeTower::box_coordinates& perimeter_box);
     Vec2f get_next_pos(const WipeTower::box_coordinates& cleaning_box, float wipe_length, bool solid_toolchange = false);
+    int get_wall_filament_for_all_layer();
 
     struct WipeTowerInfo;
 

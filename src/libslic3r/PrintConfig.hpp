@@ -1438,6 +1438,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,       idle_temperature))
     ((ConfigOptionFloats, filament_tower_ironing_area))
     ((ConfigOptionInts, filament_adhesiveness_category))
+    ((ConfigOptionFloats, filament_prime_volume))
 
     // BBS: wipe tower is only used for priming
     ((ConfigOptionFloat,              prime_volume))

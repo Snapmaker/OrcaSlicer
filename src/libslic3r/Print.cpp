@@ -787,6 +787,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "z_offset"
             || opt_key == "support_multi_bed_types"
             || opt_key == "filament_adhesiveness_category"
+            || opt_key == "filament_prime_volume"
             ) {
             steps.emplace_back(psWipeTower);
             steps.emplace_back(psSkirtBrim);
@@ -3155,7 +3156,7 @@ void Print::_make_wipe_tower()
         for (unsigned int i = 0; i < number_of_extruders; ++i) {
             for (unsigned int j = 0; j < number_of_extruders; ++j) {
                 if (wipe_volumes[i][j] > 0) {
-                    wipe_volumes[i][j] = m_config.prime_volume;
+                    wipe_volumes[i][j] = m_config.filament_prime_volume.get_at(j);
                 }
             }
         }
@@ -3358,8 +3359,9 @@ void Print::_make_wipe_tower()
                                                  << " sequence=" << local_z_sequence.str();
                     }
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
+                        float filament_volume = m_config.filament_prime_volume.get_at(toolchange.new_tool);
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
-                                                           toolchange.old_tool, toolchange.new_tool, (float) m_config.prime_volume);
+                                                           toolchange.old_tool, toolchange.new_tool, filament_volume);
                     }
                     if (!local_z_toolchanges.empty())
                         current_extruder_id = local_z_toolchanges.back().new_tool;
@@ -3373,7 +3375,7 @@ void Print::_make_wipe_tower()
                 for (const auto extruder_id : nominal_layer_extruders) {
                     if ((first_layer && extruder_id == m_wipe_tower_data.tool_ordering.all_extruders().back()) || extruder_id !=
                         current_extruder_id) {
-                        float volume_to_wipe = m_config.prime_volume;
+                        float volume_to_wipe = m_config.filament_prime_volume.get_at(extruder_id);
                         if (m_config.purge_in_prime_tower && m_config.single_extruder_multi_material) {
                             volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
                             volume_to_wipe *= m_config.flush_multiplier;

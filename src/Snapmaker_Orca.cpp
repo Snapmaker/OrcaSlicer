@@ -78,6 +78,7 @@ using namespace nlohmann;
 #include <wx/stdpaths.h>
 #ifdef WIN32
 #include "dev-utils/BaseException.h"
+#include "libslic3r/Exception.hpp"
 #endif
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
@@ -2848,9 +2849,8 @@ int CLI::run(int argc, char **argv)
 
             if (filament_is_support->size() != project_filament_count)
             {
-                BOOST_LOG_TRIVIAL(error) << boost::format("filament_is_support's count %1% not equal to filament_colour's size %2%")%filament_is_support->size() %project_filament_count;
-                record_exit_reson(outfile_dir, CLI_CONFIG_FILE_ERROR, 0, cli_errors[CLI_CONFIG_FILE_ERROR], sliced_info);
-                flush_and_exit(CLI_CONFIG_FILE_ERROR);
+                BOOST_LOG_TRIVIAL(warning) << boost::format("filament_is_support's count %1% not equal to filament_colour's size %2%, auto-resizing")%filament_is_support->size() %project_filament_count;
+                filament_is_support->values.resize(project_filament_count, false);
             }
 
             {
@@ -3000,11 +3000,59 @@ int CLI::run(int argc, char **argv)
 
     std::map<std::string, std::string> validity = m_print_config.validate(true);
     if (!validity.empty()) {
-        boost::nowide::cerr << "Param values in 3mf/config error: "<< std::endl;
-        for (std::map<std::string, std::string>::iterator it=validity.begin(); it!=validity.end(); ++it)
-            boost::nowide::cerr << it->first <<": "<< it->second << std::endl;
-        record_exit_reson(outfile_dir, CLI_INVALID_VALUES_IN_3MF, 0, cli_errors[CLI_INVALID_VALUES_IN_3MF], sliced_info);
-        flush_and_exit(CLI_INVALID_VALUES_IN_3MF);
+        BOOST_LOG_TRIVIAL(warning) << "Auto-correcting out-of-range config values from 3MF...";
+        for (auto it = validity.begin(); it != validity.end(); ++it) {
+            const t_config_option_key& key = it->first;
+            BOOST_LOG_TRIVIAL(warning) << "  correcting: " << key << " — " << it->second;
+            const ConfigOptionDef* optdef = m_print_config.def()->get(key);
+            ConfigOption* opt = m_print_config.option(key, false);
+            if (optdef && opt) {
+                switch (optdef->type) {
+                case coFloat: {
+                    double& val = static_cast<ConfigOptionFloat*>(opt)->value;
+                    if (val < optdef->min) val = (double)optdef->min;
+                    if (val > optdef->max) val = (double)optdef->max;
+                    break;
+                }
+                case coInt: {
+                    int& val = static_cast<ConfigOptionInt*>(opt)->value;
+                    if (val < optdef->min) val = optdef->min;
+                    if (val > optdef->max) val = optdef->max;
+                    break;
+                }
+                case coInts: {
+                    for (int& val : static_cast<ConfigOptionInts*>(opt)->values) {
+                        if (val < optdef->min) val = optdef->min;
+                        if (val > optdef->max) val = optdef->max;
+                    }
+                    break;
+                }
+                case coFloats: {
+                    for (double& val : static_cast<ConfigOptionFloats*>(opt)->values) {
+                        if (val < optdef->min) val = (double)optdef->min;
+                        if (val > optdef->max) val = (double)optdef->max;
+                    }
+                    break;
+                }
+                case coPercent: {
+                    double& val = static_cast<ConfigOptionPercent*>(opt)->value;
+                    if (val < optdef->min) val = (double)optdef->min;
+                    if (val > optdef->max) val = (double)optdef->max;
+                    break;
+                }
+                default:
+                    BOOST_LOG_TRIVIAL(warning) << "  skipping unsupported type: " << key;
+                    break;
+                }
+            }
+        }
+        // Re-validate after correction
+        validity = m_print_config.validate(true);
+        if (!validity.empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "Config values still out of range after auto-correction:";
+            for (auto it = validity.begin(); it != validity.end(); ++it)
+                BOOST_LOG_TRIVIAL(warning) << "  " << it->first << ": " << it->second;
+        }
     }
 
     auto timelapse_type_opt = m_print_config.option("timelapse_type");
@@ -4988,6 +5036,32 @@ int CLI::run(int argc, char **argv)
                         DynamicPrintConfig new_print_config = m_print_config;
                         new_print_config.apply(*part_plate->config());
                         new_print_config.apply(m_extra_config, true);
+
+                        // Auto-add G92 E0 when relative extruder mode is used
+                        // without explicit reset in layer_gcode (CLI safety net for
+                        // 3MF files created with use_relative_e_distances=1 but
+                        // missing the required G92 E0 in layer_change_gcode).
+                        {
+                            auto* rel_opt = new_print_config.option<ConfigOptionBool>("use_relative_e_distances", false);
+                            auto* flavor_opt = new_print_config.option<ConfigOptionEnumGeneric>("gcode_flavor", false);
+                            bool use_rel = rel_opt && rel_opt->value;
+                            int flavor = flavor_opt ? flavor_opt->value : -1;
+                            if (use_rel && (flavor == gcfMarlinLegacy || flavor == gcfMarlinFirmware)) {
+                                auto* lcg = new_print_config.option<ConfigOptionString>("layer_change_gcode", false);
+                                bool has_g92e0 = false;
+                                if (lcg) {
+                                    // Simple case-insensitive search for G92 E0 pattern
+                                    std::string upper = lcg->value;
+                                    for (char& c : upper) c = (char)toupper((unsigned char)c);
+                                    has_g92e0 = upper.find("G92") != std::string::npos;
+                                    if (!has_g92e0) {
+                                        BOOST_LOG_TRIVIAL(warning) << "Auto-adding G92 E0 to layer_change_gcode for relative extruder mode";
+                                        lcg->value += "\nG92 E0 ; auto-added for CLI relative mode";
+                                    }
+                                }
+                            }
+                        }
+
                         print->apply(model, new_print_config);
                         BOOST_LOG_TRIVIAL(info) << boost::format("set no_check to %1%:")%no_check;
                         print->set_no_check_flag(no_check);//BBS
@@ -5241,6 +5315,11 @@ int CLI::run(int argc, char **argv)
                                     }
                                 }
                                 sliced_info.sliced_plates.push_back(sliced_plate_info);
+                            } catch (const Slic3r::PlaceholderParserError &ex) {
+                                // G-code template placeholder errors: log warning but continue.
+                                // The G-code will contain error markers for the failed templates,
+                                // but a usable G-code is still produced.
+                                BOOST_LOG_TRIVIAL(warning) << "G-code template placeholder issue for plate "<<index+1<<": " << ex.what();
                             } catch (const std::exception &ex) {
                                 BOOST_LOG_TRIVIAL(error) << "found slicing or export error for partplate "<<index+1 << std::endl;
                                 boost::nowide::cerr << ex.what() << std::endl;

@@ -3104,11 +3104,13 @@ void GCode::check_placeholder_parser_failed()
 {
     if (!m_placeholder_parser_integration.failed_templates.empty()) {
         // G-code export proceeded, but some of the PlaceholderParser substitutions failed.
-        std::string msg = Slic3r::format(_(L("Failed to generate G-code for invalid custom G-code.\n\n")));
+        // Log as warning instead of throwing, so that the G-code file (which already
+        // contains error markers inside the failed templates) is still produced.
+        std::string msg = Slic3r::format(_(L("G-code template substitutions failed:\n\n")));
         for (const auto& name_and_error : m_placeholder_parser_integration.failed_templates)
             msg += name_and_error.first + " " + name_and_error.second + "\n";
-        msg += Slic3r::format(_(L("Please check the custom G-code or use the default custom G-code.")));
-        throw Slic3r::PlaceholderParserError(msg);
+        BOOST_LOG_TRIVIAL(warning) << msg;
+        m_placeholder_parser_integration.failed_templates.clear();
     }
 }
 
@@ -3384,7 +3386,7 @@ std::string GCode::placeholder_parser_process(const std::string&   name,
         }
 
         return output;
-    } catch (std::runtime_error& err) {
+    } catch (const std::exception& err) {
         // Collect the names of failed template substitutions for error reporting.
         auto it = ppi.failed_templates.find(name);
         if (it == ppi.failed_templates.end())

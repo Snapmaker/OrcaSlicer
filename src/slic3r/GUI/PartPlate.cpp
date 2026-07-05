@@ -1914,6 +1914,7 @@ Vec3d PartPlate::get_center_origin()
 
 void PartPlate::generate_plate_name_texture()
 {
+    if (!m_plater) return;
     m_plate_name_icon.reset();
 
 	// generate m_name_texture texture from m_name with generate_from_text_string
@@ -1966,7 +1967,8 @@ void PartPlate::set_plate_name(const std::string& name)
     if (m_print != nullptr)
         m_print->set_plate_name(name);
 
-	generate_plate_name_texture();
+	if (m_plater)
+		generate_plate_name_texture();
 }
 
 //get the print's object, result and index
@@ -2685,11 +2687,12 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 		for (const Vec2d& p : exclude_areas) {
 			m_exclude_area.push_back(Vec2d(p.x() + position.x(), p.y() + position.y()));
 		}*/
-		if (!m_plater) return true;
 		m_shape = std::move(new_shape);
 		m_exclude_area = std::move(new_exclude_areas);
 
 		calc_bounding_boxes();
+
+		if (!m_plater) return true;
 
 		ExPolygon logo_poly;
 		generate_logo_polygon(logo_poly);
@@ -5469,6 +5472,10 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list)
 	clear(true, true);
 	for (unsigned int i = 0; i < (unsigned int)plate_data_list.size(); ++i)
 	{
+		if (!plate_data_list[i]) {
+			BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": null plate_data at index %1%, skipping") % i;
+			continue;
+		}
 		int index = create_plate(false);
 		m_plate_list[index]->m_locked = plate_data_list[i]->locked;
 		m_plate_list[index]->config()->apply(plate_data_list[i]->config);

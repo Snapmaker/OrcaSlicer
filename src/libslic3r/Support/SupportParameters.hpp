@@ -179,8 +179,11 @@ struct SupportParameters {
         }
         if (support_style == smsDefault) {
             if (is_tree(object_config.support_type)) {
-                // Orca: use organic as default
-                support_style = smsTreeOrganic;
+                if (!slicing_params.soluble_interface) {
+                    support_style = smsTreeOrganic;
+                } else {
+                    support_style = smsTreeHybrid;
+                }
             } else {
                 support_style = smsGrid;
             }

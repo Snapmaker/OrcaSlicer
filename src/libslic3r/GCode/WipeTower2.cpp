@@ -1582,7 +1582,7 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     // while (m_filpar.size() < idx+1)   // makes sure the required element is in the vector
     m_filpar.push_back(FilamentParameters());
 
-    //m_filpar[idx].material = config.filament_type.get_at(idx);
+    m_filpar[idx].material = config.filament_type.get_at(idx);
     m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) :
                                (idx != size_t(config.wipe_tower_filament - 1));
     m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);

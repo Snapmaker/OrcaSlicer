@@ -1063,7 +1063,7 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
             local_z_wipe_tower.set_layer(float(toolchange_print_z), layer_height, 0, m_layer_idx == 0, false);
 
             WipeTower::ToolChangeResult local_z_tcr =
-                local_z_wipe_tower.local_z_tool_change(size_t(extruder_id), slot, float(print_config.prime_volume));
+                local_z_wipe_tower.local_z_tool_change(size_t(extruder_id), slot, print_config.filament_prime_volume.get_at(extruder_id));
             BOOST_LOG_TRIVIAL(debug) << "Local-Z toolchange emitted via wipe tower mini-toolchange"
                                      << " layer_idx=" << m_layer_idx
                                      << " extruder_id=" << extruder_id

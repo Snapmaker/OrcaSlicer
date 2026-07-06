@@ -5208,9 +5208,12 @@ int CLI::run(int argc, char **argv)
                                 if (printer_technology == ptFFF) {
                                     std::string conflict_result = print_fff->get_conflict_string();
                                     if (!conflict_result.empty()) {
-                                       BOOST_LOG_TRIVIAL(error) << "plate "<< index+1<< ": found slicing result conflict!"<< std::endl;
-                                       record_exit_reson(outfile_dir, CLI_GCODE_PATH_CONFLICTS, index+1, cli_errors[CLI_GCODE_PATH_CONFLICTS], sliced_info);
-                                       flush_and_exit(CLI_GCODE_PATH_CONFLICTS);
+                                       // Demote G-code path conflict from a hard exit to a warning so the
+                                       // G-code is still exported. This matches GUI behavior, where a path
+                                       // conflict only surfaces as a non-blocking notification and the slice
+                                       // still produces usable output. The conflict is logged for diagnosis.
+                                       BOOST_LOG_TRIVIAL(warning) << "plate "<< index+1<< ": found slicing result conflict, continuing to export G-code. Detail: "<< conflict_result;
+                                       sliced_plate_info.warning_message = conflict_result;
                                     }
 
                                     //check the warnings

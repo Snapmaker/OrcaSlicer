@@ -8435,7 +8435,11 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def->label = L("Allow 3mf with newer version to be sliced");
     def->tooltip = L("Allow 3mf with newer version to be sliced.");
     def->cli_params = "option";
-    def->set_default_value(new  ConfigOptionBool(false));
+    // Default true: the CLI should slice 3MF files regardless of a newer file
+    // version. The version check otherwise blocks all 2.x 3MF files against the
+    // CLI's 1.x version, which defeats CLI batch slicing. This option is only
+    // consumed by the CLI path; the GUI does not read it.
+    def->set_default_value(new  ConfigOptionBool(true));
 }
 
 const CLIActionsConfigDef    cli_actions_config_def;

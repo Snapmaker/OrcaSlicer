@@ -228,6 +228,13 @@ ConflictResultOpt ConflictChecker::find_inter_of_lines_in_diff_objs(PrintObjectP
         conflictQueue.emplace_back_bucket(std::move(wtels), wtdptr.value(), {wtdptr.value()->plate_origin.x(), wtdptr.value()->plate_origin.y()});
     }
     for (PrintObject *obj : objs) {
+        // Guard against objects with no instances: instances().front() on an empty
+        // vector is undefined behavior and a known SIGSEGV source for certain 3MF
+        // files. Skip such objects rather than crashing the whole CLI slice.
+        if (obj->instances().empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "ConflictChecker: object has no instances, skipping conflict check for it";
+            continue;
+        }
         auto layers = getAllLayersExtrusionPathsFromObject(obj);
         conflictQueue.emplace_back_bucket(std::move(layers.perimeters), obj, obj->instances().front().shift);
         conflictQueue.emplace_back_bucket(std::move(layers.support), obj, obj->instances().front().shift);

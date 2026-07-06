@@ -1892,9 +1892,8 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
     m_active_tool_change = &tool_change;
     
     auto new_tool_temp = first_layer ? m_filpar[new_tool].first_layer_temperature : m_filpar[new_tool].temperature;
-    toolchange_unload_new(writer, old_tool, new_tool,
-        (first_layer ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature),
-        new_tool_temp);
+    auto old_tool_temp = first_layer ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature;
+    toolchange_unload_new(writer, old_tool, new_tool, old_tool_temp, new_tool_temp);
 
     WipeTowerBlock* new_block = get_block_by_category(m_filpar[new_tool].category, false);
     if (!new_block) {
@@ -2316,7 +2315,7 @@ void WipeTower2::toolchange_unload_new(WipeTowerWriter2& writer, size_t old_fila
             }
         }
     }
-    WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, old_block->cur_depth + m_perimeter_width / 2),
+    WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, old_block->cur_depth),
         m_wipe_tower_width - 2 * m_perimeter_width, nozzle_change_depth);
     Vec2f initial_position = cleaning_box.ld;
     writer.set_initial_position(initial_position, m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
@@ -3126,7 +3125,14 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
     wt_box = align_perimeter(wt_box);
 
     Polygon outer_wall;
-    outer_wall = generate_support_wall_new(writer, wt_box, feedrate, first_layer, m_use_rib_wall, extrude_perimeter, m_use_gap_wall);
+    if (m_wall_type == (int)wtwCone) {
+        const float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
+        bool infill_cone = first_layer && m_wipe_tower_width > 2 * spacing && m_wipe_tower_depth > 2 * spacing;
+        outer_wall = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing);
+    }
+    else {
+        outer_wall = generate_support_wall_new(writer, wt_box, feedrate, first_layer, m_use_rib_wall, extrude_perimeter, m_use_gap_wall);
+    }
     if (extrude_perimeter) {
         Polyline shift_polyline = to_polyline(outer_wall);
         shift_polyline.translate(0, scaled(m_y_shift));
@@ -4411,7 +4417,7 @@ void WipeTower2::generate_wipe_tower_blocks(bool add_solid_flag)
 void WipeTower2::update_all_layer_depth(float wipe_tower_depth)
 {
     m_wipe_tower_depth = 0.f;
-    float start_offset = m_perimeter_width;
+    float start_offset = m_perimeter_width / 2.f;
     float start_depth = start_offset;
     for (auto& block : m_wipe_tower_blocks) {
         block.start_depth = start_depth;
@@ -4419,7 +4425,7 @@ void WipeTower2::update_all_layer_depth(float wipe_tower_depth)
         m_wipe_tower_depth += block.depth;
     }
     if (m_wipe_tower_depth > 0)
-        m_wipe_tower_depth += start_offset;
+        m_wipe_tower_depth += m_perimeter_width;
 }
 
 Vec2f WipeTower2::get_next_pos(const WipeTower::box_coordinates& cleaning_box, float wipe_length, bool solid_toolchange)

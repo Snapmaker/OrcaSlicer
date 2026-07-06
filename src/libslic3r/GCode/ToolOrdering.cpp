@@ -1142,7 +1142,7 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
     } else {
         // populate wipe_volumes with prime_volume
         for (unsigned int i = 0; i < number_of_extruders; ++i)
-            wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->prime_volume));
+            wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->filament_prime_volume.get_at(i)));
     }
 
     auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,

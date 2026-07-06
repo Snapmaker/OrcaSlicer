@@ -6179,7 +6179,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("filament_adhesiveness_category", coInts);
     def->label = L("Adhesiveness Category");
-    def->tooltip = L("Filament category. Filaments with the same category will share a block on the prime tower.");
+    def->tooltip = L("Filament category");
     def->min = 0;
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{ 100 });
@@ -7153,8 +7153,12 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
     } else if (opt_key == "wipe_tower_width") {
         opt_key = "prime_tower_width";
     } else if (opt_key == "wiping_volume") {
-        opt_key = "prime_volume";
-    } else if (opt_key == "wipe_tower_brim_width") {
+        opt_key = "filament_prime_volume";
+    }
+    else if (opt_key == "prime_volume") {
+        opt_key = "filament_prime_volume";
+    }
+    else if (opt_key == "wipe_tower_brim_width") {
         opt_key = "prime_tower_brim_width";
     } else if (opt_key == "tool_change_gcode") {
         opt_key = "change_filament_gcode";

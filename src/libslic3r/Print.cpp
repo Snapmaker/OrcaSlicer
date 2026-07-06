@@ -3118,7 +3118,8 @@ const WipeTowerData &Print::wipe_tower_data(size_t filaments_cnt) const
             maximum *= 0.6; 
             const_cast<Print *>(this)->m_wipe_tower_data.depth = maximum / (layer_height * width);
         } else {
-            double wipe_volume = m_config.prime_volume;
+            std::vector<double> filament_wipe_volume = m_config.filament_prime_volume.values;
+            double wipe_volume = get_max_element(filament_wipe_volume);
             if (filaments_cnt == 1 && enable_timelapse_print()) {
                 const_cast<Print *>(this)->m_wipe_tower_data.depth = wipe_volume / (layer_height * width);
             } else {

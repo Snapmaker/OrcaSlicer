@@ -537,7 +537,19 @@ struct PaintedLineVisitor
         const double v1_sqr_norm            = v1.squaredNorm();
         const double heuristic_thr_part     = line_to_test.length() + append_threshold;
         for (auto it_contour_and_segment = cell_data_range.first; it_contour_and_segment != cell_data_range.second; ++it_contour_and_segment) {
-            Line        grid_line         = grid.line(*it_contour_and_segment);
+            const std::pair<size_t, size_t> &contour_and_segment = *it_contour_and_segment;
+            // Bounds check before dereference. In Release builds the EdgeGrid
+            // asserts (segment_start/segment_end assert idx < num_segments()) are
+            // stripped, so a (contour_idx, segment_idx) recorded in m_cell_data that
+            // is out of range -- possible with degenerate painted geometry such as
+            // negative volumes or zero-area contours -- causes an access violation in
+            // grid.line() (reading address 0xFFFFFFFF). Skip such entries instead of
+            // crashing the whole CLI slice.
+            if (contour_and_segment.first >= grid.contours().size())
+                continue;
+            if (contour_and_segment.second >= grid.contours()[contour_and_segment.first].num_segments())
+                continue;
+            Line        grid_line         = grid.line(contour_and_segment);
             const Vec2d v2                = grid_line.vector().cast<double>();
             double      heuristic_thr_sqr = Slic3r::sqr(heuristic_thr_part + grid_line.length());
 

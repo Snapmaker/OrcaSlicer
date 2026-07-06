@@ -337,7 +337,21 @@ public:
 	{
         assert(row >= 0 && size_t(row) < m_rows);
         assert(col >= 0 && size_t(col) < m_cols);
+        // Bounds check (the asserts above are stripped in Release builds).
+        // visit_cells_intersecting_line computes (row, col) from a painted line's
+        // endpoints; if those endpoints escape the grid bbox (possible with
+        // degenerate painted geometry / negative volumes, despite clipping) the
+        // computed indices go out of range and m_cells[row*m_cols+col] reads
+        // garbage, yielding a wild Cell with out-of-range begin/end and a wild
+        // iterator that crashes the caller with an access violation. Return an
+        // empty range for any out-of-bounds or inconsistent cell so the visitor
+        // loop simply skips it instead of crashing the whole CLI slice.
+        if (row < 0 || size_t(row) >= m_rows || col < 0 || size_t(col) >= m_cols)
+            return std::make_pair(m_cell_data.end(), m_cell_data.end());
 		const EdgeGrid::Grid::Cell &cell = m_cells[row * m_cols + col];
+        size_t data_size = m_cell_data.size();
+        if (cell.begin > data_size || cell.end > data_size || cell.begin > cell.end)
+            return std::make_pair(m_cell_data.end(), m_cell_data.end());
 		return std::make_pair(m_cell_data.begin() + cell.begin, m_cell_data.begin() + cell.end);
 	}
 

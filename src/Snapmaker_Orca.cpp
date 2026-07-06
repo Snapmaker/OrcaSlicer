@@ -6224,6 +6224,29 @@ bool CLI::setup(int argc, char **argv)
 
     set_data_dir(m_config.opt_string("datadir"));
 
+#ifdef _WIN32
+    // Register the unhandled-exception filter so that a CLI crash (e.g. an
+    // access violation in the slicing engine) produces a stack-trace log,
+    // matching GUI behavior. Without this, a CLI crash dies silently with exit
+    // code 0xC0000005 and no diagnostic, making engine crashes on specific 3MF
+    // files impossible to diagnose. Use data_dir() if set, otherwise fall back
+    // to the executable's own directory so the log is always discoverable.
+    {
+        std::string crash_log_folder = data_dir();
+        if (crash_log_folder.empty()) {
+            wchar_t exe_pathw[MAX_PATH] = { 0 };
+            if (::GetModuleFileNameW(nullptr, exe_pathw, MAX_PATH) > 0) {
+                boost::filesystem::path exe_path(exe_pathw);
+                crash_log_folder = exe_path.parent_path().string();
+            }
+        }
+        if (!crash_log_folder.empty()) {
+            CBaseException::set_log_folder(crash_log_folder);
+            ::SetUnhandledExceptionFilter(CBaseException::UnhandledExceptionFilter);
+        }
+    }
+#endif
+
     //FIXME Validating at this stage most likely does not make sense, as the config is not fully initialized yet.
     if (!validity.empty()) {
         boost::nowide::cerr << "Params in command line error: "<< std::endl;

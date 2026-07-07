@@ -195,6 +195,12 @@ enum EnsureVerticalShellThickness {
     evstAll,
 };
 
+// ORCA: per-extruder layer height ("extruder_layer_height").
+enum ExtruderLayerHeightMode {
+    elhmConsistent,
+    elhmAdaptive,
+};
+
 //Orca
 enum InternalBridgeFilter {
     ibfDisabled, ibfLimited, ibfNofilter
@@ -460,6 +466,7 @@ static std::string get_bed_temp_1st_layer_key(const BedType type)
     template<> const t_config_enum_values& ConfigOptionEnum<NAME>::get_enum_values();
 
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PrinterTechnology)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ExtruderLayerHeightMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeFlavor)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FuzzySkinType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FuzzySkinMode)
@@ -837,6 +844,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Force the generation of solid shells between adjacent materials/volumes.
     ((ConfigOptionBool,                interface_shells))
     ((ConfigOptionFloat,               layer_height))
+    // ORCA: per-extruder layer height ("extruder_layer_height").
+    ((ConfigOptionEnum<ExtruderLayerHeightMode>, extruder_layer_height_mode))
+    ((ConfigOptionPercent,             extruder_layer_height_tolerance))
     ((ConfigOptionFloat,               mmu_segmented_region_max_width))
     ((ConfigOptionFloat,               mmu_segmented_region_interlocking_depth))
     ((ConfigOptionFloat,               raft_contact_distance))
@@ -860,6 +870,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               support_bottom_z_distance))
     ((ConfigOptionInt,                 enforce_support_layers))
     ((ConfigOptionInt,                 support_filament))
+    // ORCA: restrict support/raft/interface printing to filaments of this nozzle diameter (0 = no restriction).
+    ((ConfigOptionFloat,               support_nozzle_diameter))
     ((ConfigOptionFloatOrPercent,      support_line_width))
     ((ConfigOptionBool,                support_interface_not_for_body))
     ((ConfigOptionBool,                support_interface_loop_pattern))
@@ -1010,7 +1022,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                  fuzzy_skin_octaves))
     ((ConfigOptionFloat,                fuzzy_skin_persistence))
     ((ConfigOptionFloat,                gap_infill_speed))
-    ((ConfigOptionInt,                  sparse_infill_filament))
+    ((ConfigOptionInt,                  sparse_infill_filament_id))
     ((ConfigOptionFloatOrPercent,       sparse_infill_line_width))
     ((ConfigOptionPercent,              infill_wall_overlap))
     ((ConfigOptionPercent,              top_bottom_infill_wall_overlap))
@@ -1036,14 +1048,17 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, ironing_angle))
     // Detect bridging perimeters
     ((ConfigOptionBool, detect_overhang_wall))
-    ((ConfigOptionInt, wall_filament))
+    ((ConfigOptionInt, outer_wall_filament_id))
+    ((ConfigOptionInt, inner_wall_filament_id))
     ((ConfigOptionFloatOrPercent, inner_wall_line_width))
     ((ConfigOptionFloat, inner_wall_speed))
     // Total number of perimeters.
     ((ConfigOptionInt, wall_loops))
     ((ConfigOptionBool, alternate_extra_wall))
     ((ConfigOptionFloat, minimum_sparse_infill_area))
-    ((ConfigOptionInt, solid_infill_filament))
+    ((ConfigOptionInt, internal_solid_filament_id))
+    ((ConfigOptionInt, top_surface_filament_id))
+    ((ConfigOptionInt, bottom_surface_filament_id))
     ((ConfigOptionFloatOrPercent, internal_solid_infill_line_width))
     ((ConfigOptionFloat, internal_solid_infill_speed))
     // Detect thin walls.
@@ -1355,6 +1370,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             max_layer_height))
     ((ConfigOptionFloats,               fan_min_speed))
     ((ConfigOptionFloats,             min_layer_height))
+    ((ConfigOptionFloats,             extruder_layer_height))
     ((ConfigOptionFloat,              printable_height))
     ((ConfigOptionPoint,              best_object_pos))
     ((ConfigOptionFloats,             slow_down_min_speed))

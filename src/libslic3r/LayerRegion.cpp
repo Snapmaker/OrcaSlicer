@@ -20,8 +20,6 @@
 
 namespace Slic3r {
 
-namespace {
-
 unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filament_id)
 {
     if (filament_id == 0)
@@ -81,16 +79,14 @@ unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionC
                                        object);
 }
 
-} // namespace
-
 unsigned int LayerRegion::extruder(FlowRole role) const
 {
     const PrintRegionConfig &config = this->region().config();
     unsigned int             filament_id = 0;
     if (role == frInfill)
-        filament_id = config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament_id.value;
     else if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
-        filament_id = config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament_id.value;
     else
         filament_id = this->region().extruder(role);
 
@@ -109,7 +105,13 @@ Flow LayerRegion::flow(FlowRole role, double layer_height) const
     return this->flow(role, layer_height, m_layer->id() == 0);
 }
 
-Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_layer_width) const
+// filament_id: 1-based filament actually printing this flow when it differs from the role's default mapping (e.g. top/bottom surface fills, external bridges), 0 to resolve from the role.
+Flow LayerRegion::flow(FlowRole role, double layer_height, unsigned int filament_id) const
+{
+    return this->flow(role, layer_height, m_layer->id() == 0, filament_id);
+}
+
+Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_layer_width, unsigned int filament_id) const
 {
     const PrintConfig          &print_config = m_layer->object()->print()->config();
     ConfigOptionFloatOrPercent config_width;
@@ -134,17 +136,19 @@ Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_laye
     if (config_width.value == 0)
         config_width = m_layer->object()->config().line_width;
 
-    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at(this->extruder(role) - 1));
+    // Width resolves against the nozzle of the filament that actually prints (filament_id, when given),
+    // which may differ from the role's default filament mapping.
+    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
     return Flow::new_from_config_width(role, config_width, nozzle_diameter, float(layer_height));
 }
 
-Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
+Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge, unsigned int filament_id, double layer_height) const
 {
     const PrintRegion       &region         = this->region();
     const PrintRegionConfig &region_config  = region.config();
     const PrintObject       &print_object   = *this->layer()->object();
     Flow bridge_flow;
-    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at(this->extruder(role) - 1));
+    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
     if (thick_bridge) {
         // The old Slic3r way (different from all other slicers): Use rounded extrusions.
         // Get the configured nozzle_diameter for the extruder associated to the flow role requested.
@@ -153,7 +157,8 @@ Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
         bridge_flow = Flow::bridging_flow(float(sqrt(region_config.bridge_flow)) * nozzle_diameter, nozzle_diameter);
     } else {
         // The same way as other slicers: Use normal extrusions. Apply bridge_flow while maintaining the original spacing.
-        bridge_flow = this->flow(role).with_flow_ratio(region_config.bridge_flow);
+        // Combined layer groups stamp their full thickness on the surface; the base flow must be resolved at that height.
+        bridge_flow = this->flow(role, layer_height > 0. ? layer_height : m_layer->height, filament_id).with_flow_ratio(region_config.bridge_flow);
     }
     return bridge_flow;
 
@@ -188,27 +193,33 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
     const PrintRegionConfig &region_config = this->region().config();
     const PrintObjectConfig& object_config = this->layer()->object()->config();
     PrintRegionConfig        perimeter_config = region_config;
-    perimeter_config.wall_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.wall_filament.value))));
-    perimeter_config.sparse_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament.value))));
-    perimeter_config.solid_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.solid_infill_filament.value))));
+    perimeter_config.outer_wall_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.outer_wall_filament_id.value))));
+    perimeter_config.inner_wall_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.inner_wall_filament_id.value))));
+    perimeter_config.sparse_infill_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament_id.value))));
+    perimeter_config.internal_solid_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.internal_solid_filament_id.value))));
+    perimeter_config.top_surface_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.top_surface_filament_id.value))));
+    perimeter_config.bottom_surface_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.bottom_surface_filament_id.value))));
     // This needs to be in sync with PrintObject::_slice() slicing_mode_normal_below_layer!
     bool spiral_mode = print_config.spiral_mode &&
         //FIXME account for raft layers.
         (this->layer()->id() >= size_t(region_config.bottom_shell_layers.value) &&
          this->layer()->print_z >= region_config.bottom_shell_thickness - EPSILON);
 
+    // ORCA: on the top layer of a combined group all perimeters extrude with the whole group's height.
+    const double perimeter_height = this->combined_height();
+
     PerimeterGenerator g(
         // input:
         &slices,
         &compatible_regions,
-        this->layer()->height,
+        perimeter_height,
         this->layer()->slice_z,
-        this->flow(frPerimeter),
+        this->flow(frPerimeter, perimeter_height),
         &perimeter_config,
         &this->layer()->object()->config(),
         &print_config,
         spiral_mode,
-        
+
         // output:
         &this->perimeters,
         &this->thin_fills,
@@ -216,10 +227,11 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         //BBS
         fill_no_overlap
     );
-    
-    if (this->layer()->lower_layer != nullptr)
+
+    // Detect overhangs / bridges against the layer below the whole combined group (combined_lower_layer() == lower_layer for regular regions).
+    if (const Layer *lower_layer = this->combined_lower_layer(); lower_layer != nullptr)
         // Cummulative sum of polygons over all the regions.
-        g.lower_slices = &this->layer()->lower_layer->lslices;
+        g.lower_slices = &lower_layer->lslices;
     if (this->layer()->upper_layer != NULL)
         g.upper_slices = &this->layer()->upper_layer->lslices;
 
@@ -228,9 +240,15 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
 
     g.layer_id              = (int)this->layer()->id();
-    g.ext_perimeter_flow    = this->flow(frExternalPerimeter);
-    g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges);
-    g.solid_infill_flow     = this->flow(frSolidInfill);
+    g.ext_perimeter_flow    = this->flow(frExternalPerimeter, perimeter_height);
+    g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges, 0, perimeter_height);
+    // Overhangs of external / fully overhanging loops dispatch to the outer wall filament (GCode::process_layer() splits mixed perimeters); resolve their width against its nozzle.
+    // The filament id comes from the resolved perimeter_config (mixed-filament aware), not the raw region config.
+    g.ext_overhang_flow     = this->bridging_flow(frPerimeter, object_config.thick_bridges,
+                                                  (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value), perimeter_height);
+    g.solid_infill_flow     = this->flow(frSolidInfill, perimeter_height);
+    // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
+    g.gap_fill_flow         = this->flow(frSolidInfill, perimeter_height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
 
     if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
         g.process_arachne();

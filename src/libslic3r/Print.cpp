@@ -697,6 +697,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "filament_shrinkage_compensation_z"
             || opt_key == "resolution"
             || opt_key == "precise_z_height"
+            // ORCA: layer combining for thicker extruder layer heights happens at the slicing step.
+            || opt_key == "extruder_layer_height"
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_local_z_whole_objects"
@@ -807,6 +809,11 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "enable_arc_fitting"
             || opt_key == "print_order"
             || opt_key == "wall_sequence") {
+            // The min / max layer height limits gate layer combining at the slicing step (see region_layer_height_multiplier()), so re-slice while per-extruder layer heights are active.
+            if ((opt_key == "min_layer_height" || opt_key == "max_layer_height") &&
+                std::any_of(m_config.extruder_layer_height.values.begin(), m_config.extruder_layer_height.values.end(),
+                            [](double h) { return h > 0.; }))
+                osteps.emplace_back(posSlice);
             osteps.emplace_back(posPerimeters);
             osteps.emplace_back(posEstimateCurledExtrusions);
             osteps.emplace_back(posInfill);
@@ -911,17 +918,27 @@ std::vector<unsigned int> Print::support_material_extruders() const
 
     for (PrintObject *object : m_objects) {
         if (object->has_support_material()) {
+            // Under a support nozzle diameter restriction a "default" (0) support filament resolves to a matching-nozzle filament: one of the object's own or the deterministic fallback.
+            const unsigned int resolved_default = object->resolved_default_support_filament();
         	assert(object->config().support_filament >= 0);
-            if (object->config().support_filament == 0)
-                support_uses_current_extruder = true;
-            else {
+            if (object->config().support_filament == 0) {
+                if (resolved_default > 0) {
+                    unsigned int i = resolved_default - 1;
+                    extruders.emplace_back((i >= num_extruders) ? 0 : i);
+                } else
+                    support_uses_current_extruder = true;
+            } else {
             	unsigned int i = (unsigned int)object->config().support_filament - 1;
                 extruders.emplace_back((i >= num_extruders) ? 0 : i);
             }
         	assert(object->config().support_interface_filament >= 0);
-            if (object->config().support_interface_filament == 0)
-                support_uses_current_extruder = true;
-            else {
+            if (object->config().support_interface_filament == 0) {
+                if (resolved_default > 0) {
+                    unsigned int i = resolved_default - 1;
+                    extruders.emplace_back((i >= num_extruders) ? 0 : i);
+                } else
+                    support_uses_current_extruder = true;
+            } else {
             	unsigned int i = (unsigned int)object->config().support_interface_filament - 1;
                 extruders.emplace_back((i >= num_extruders) ? 0 : i);
             }
@@ -1803,6 +1820,19 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 			}
 			return true;
 		};
+        // ORCA: append per-extruder layer height / support nozzle diagnostics to the single warning out-param.
+        auto warn = [warning](const std::string &msg, const std::string &opt_key, const PrintObject *object) {
+            if (warning) {
+                if (! warning->string.empty())
+                    warning->string += "\n";
+                warning->string += msg;
+                warning->opt_key = opt_key;
+                warning->object  = object;
+            }
+        };
+        // Flags for the per-extruder layer height / support nozzle warnings below.
+        bool warned_unhonored_heights = false, warned_support_mixed_nozzles = false,
+             warned_below_min_heights = false, warned_pitch_fallbacks = false;
         for (PrintObject *object : m_objects) {
             if (object->has_support_material()) {
                 // BBS: remove useless logics and L()
@@ -1823,6 +1853,26 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     return {L("The prime tower requires that support has the same layer height with object."), object, "support_filament"};
                 }
 #endif
+
+                // ORCA: multi-nozzle support restriction ("support_nozzle_diameter").
+                if (const double support_nozzle = object->config().support_nozzle_diameter.value; support_nozzle > 0.) {
+                    if (std::none_of(m_config.nozzle_diameter.values.begin(), m_config.nozzle_diameter.values.end(),
+                                     [support_nozzle](double d) { return std::abs(d - support_nozzle) < EPSILON; }))
+                        return {L("No extruder has a nozzle matching the support nozzle diameter."), object, "support_nozzle_diameter"};
+                    if (object->config().support_filament.value > 0 &&
+                        std::abs(m_config.nozzle_diameter.get_at(object->config().support_filament.value - 1) - support_nozzle) > EPSILON)
+                        return {L("The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."), object, "support_filament"};
+                    if (object->config().support_interface_filament.value > 0 &&
+                        std::abs(m_config.nozzle_diameter.get_at(object->config().support_interface_filament.value - 1) - support_nozzle) > EPSILON)
+                        return {L("The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."), object, "support_interface_filament"};
+                } else if (! warned_support_mixed_nozzles && max_nozzle_diameter - min_nozzle_diameter > EPSILON &&
+                           (object->config().support_filament.value == 0 || object->config().support_interface_filament.value == 0)) {
+                    // Supports left on the "default" filament follow the active extruder, mixing nozzle sizes.
+                    warn(L("Support may print with extruders of differing nozzle diameters. Set the support "
+                           "nozzle diameter (or explicit support and interface filaments) to keep the support "
+                           "on one nozzle size."), "support_nozzle_diameter", object);
+                    warned_support_mixed_nozzles = true;
+                }
 
                 // Prusa: Fixing crashes with invalid tip diameter or branch diameter
                 // https://github.com/prusa3d/PrusaSlicer/commit/96b3ae85013ac363cd1c3e98ec6b7938aeacf46d
@@ -1862,9 +1912,13 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 size_t first_layer_extruder = object->config().raft_layers == 1
                     ? object->config().support_interface_filament-1
                     : object->config().support_filament-1;
-                first_layer_min_nozzle_diameter = (first_layer_extruder == size_t(-1)) ?
-                    min_nozzle_diameter :
-                    m_config.nozzle_diameter.get_at(first_layer_extruder);
+                if (first_layer_extruder == size_t(-1) && object->config().support_nozzle_diameter.value > 0.)
+                    // ORCA: a "default" support filament under the restriction prints the raft with the restricted nozzle.
+                    first_layer_min_nozzle_diameter = object->config().support_nozzle_diameter.value;
+                else
+                    first_layer_min_nozzle_diameter = (first_layer_extruder == size_t(-1)) ?
+                        min_nozzle_diameter :
+                        m_config.nozzle_diameter.get_at(first_layer_extruder);
             } else {
                 // if we don't have raft layers, any nozzle diameter is potentially used in first layer
                 first_layer_min_nozzle_diameter = min_nozzle_diameter;
@@ -1889,6 +1943,219 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 				for (const PrintRegion &region : object->all_regions())
                     if (!validate_extrusion_width(region.config(), opt_key, layer_height, err_msg))
 		            	return  {err_msg, object, opt_key};
+
+            // ORCA: per-extruder layer height ("extruder_layer_height").
+            if (layer_height > EPSILON) {
+                // Gates diagnostics that would otherwise fire for configurations not using the feature.
+                const bool heights_feature_active = std::any_of(m_config.extruder_layer_height.values.begin(),
+                    m_config.extruder_layer_height.values.end(), [](double v) { return v > 0.; });
+                bool object_has_combined_regions = false;
+                for (const PrintRegion &region : object->all_regions()) {
+                    const PrintRegionConfig &region_config = region.config();
+                    // The wall filaments define the part's layer pitch and must satisfy the strict lattice constraints below; must match the gating of PrintObject::region_layer_height_multiplier().
+                    std::vector<unsigned int> lattice_filaments; // 0-based
+                    bool has_mixed_wall = false;
+                    if (region_config.wall_loops.value > 0) {
+                        const int num_filaments = (int)m_config.filament_diameter.size();
+                        auto emplace_filament = [num_filaments, &lattice_filaments, &has_mixed_wall](int filament_id) {
+                            int i = std::max(0, filament_id - 1);
+                            if (i >= num_filaments) {
+                                // Snapmaker mixed filament: virtual mixed ids resolve to a different
+                                // physical extruder per layer; such walls never combine
+                                // (matches PrintObject::region_layer_height_multiplier()).
+                                has_mixed_wall = true;
+                                return;
+                            }
+                            lattice_filaments.emplace_back(i);
+                        };
+                        emplace_filament(region_config.outer_wall_filament_id.value);
+                        if (region_config.wall_loops.value > 1)
+                            emplace_filament(region_config.inner_wall_filament_id.value);
+                    } else
+                        PrintRegion::collect_object_printing_extruders(m_config, region_config, false /* has_brim */, lattice_filaments);
+                    unsigned int region_multiplier = 0;
+                    for (const unsigned int filament : lattice_filaments) {
+                        // The filament index is the extruder index on classic multi-tool printers.
+                        const size_t       extruder_idx    = filament;
+                        const double       extruder_height = m_config.extruder_layer_height.get_at(extruder_idx);
+                        unsigned int       multiplier      = 1;
+                        if (extruder_height > 0.) {
+                            if (extruder_height < layer_height - EPSILON)
+                                return { Slic3r::format(_u8L("The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). "
+                                                             "Lower the object layer height to the finest extruder layer height."),
+                                                        extruder_idx + 1, extruder_height, layer_height), object, "extruder_layer_height" };
+                            const int n = int(std::lround(extruder_height / layer_height));
+                            if (std::abs(extruder_height - n * layer_height) > EPSILON)
+                                return { Slic3r::format(_u8L("The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."),
+                                                        extruder_idx + 1, extruder_height, layer_height), object, "extruder_layer_height" };
+                            if (extruder_height > m_config.nozzle_diameter.get_at(extruder_idx) + EPSILON)
+                                return { Slic3r::format(_u8L("The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."),
+                                                        extruder_idx + 1, extruder_height), object, "extruder_layer_height" };
+                            // 0 means "auto" (0.75 of the nozzle diameter for adaptive layer heights), not enforced here.
+                            if (const double max_lh = m_config.max_layer_height.get_at(extruder_idx); max_lh > EPSILON && extruder_height > max_lh + EPSILON)
+                                return { Slic3r::format(_u8L("The layer height of extruder %1% (%2% mm) cannot exceed its maximum layer height (%3% mm)."),
+                                                        extruder_idx + 1, extruder_height, max_lh), object, "extruder_layer_height" };
+                            if (const double min_lh = m_config.min_layer_height.get_at(extruder_idx); min_lh > EPSILON && extruder_height < min_lh - EPSILON)
+                                return { Slic3r::format(_u8L("The layer height of extruder %1% (%2% mm) is below its minimum layer height (%3% mm)."),
+                                                        extruder_idx + 1, extruder_height, min_lh), object, "extruder_layer_height" };
+                            multiplier = (unsigned int)n;
+                        }
+                        if (region_multiplier == 0)
+                            region_multiplier = multiplier;
+                        else if (region_multiplier != multiplier) {
+                            // Walls print together; differing preferences fall back to the object layer height (warned below).
+                            region_multiplier = 1;
+                            break;
+                        }
+                    }
+                    if (region_multiplier == 0 || has_mixed_wall)
+                        region_multiplier = 1;
+                    // 0-based indices of all filaments printing this region's features.
+                    std::vector<unsigned int> used_filaments;
+                    PrintRegion::collect_object_printing_extruders(m_config, region_config, false /* has_brim */, used_filaments);
+                    if (region_multiplier > 1)
+                        // A feature filament that cannot print the walls' pitch makes the part fall back to the object layer height (mirrors PrintObject::region_layer_height_multiplier()).
+                        for (const unsigned int filament : used_filaments) {
+                            const size_t extruder_idx = filament; // filament index == extruder index here
+                            const double pitch        = region_multiplier * layer_height;
+                            const double max_lh       = m_config.max_layer_height.get_at(extruder_idx);
+                            const double min_lh       = m_config.min_layer_height.get_at(extruder_idx);
+                            if (pitch > m_config.nozzle_diameter.get_at(extruder_idx) + EPSILON ||
+                                (max_lh > EPSILON && pitch > max_lh + EPSILON) ||
+                                (min_lh > EPSILON && pitch < min_lh - EPSILON)) {
+                                if (! warned_pitch_fallbacks) {
+                                    warned_pitch_fallbacks = true;
+                                    warn(Slic3r::format(_u8L("The walls of some object parts prefer %1% mm layers, but filament %2% printing "
+                                                             "other features of the part cannot print that height (nozzle diameter or layer "
+                                                             "height limits). These parts print with the object layer height instead."),
+                                                        pitch, filament + 1),
+                                         "extruder_layer_height", object);
+                                }
+                                region_multiplier = 1;
+                                break;
+                            }
+                        }
+                    const double region_pitch = region_multiplier * layer_height;
+                    // Infill combines up to the preferred height of its printing filament (sparse, or internal solid at 100% density; mirrors PrintObject::combine_infill()); its width must cover the tallest group.
+                    const bool   solid_combined_infill    = std::fabs(region_config.sparse_infill_density.value - 100.) < EPSILON;
+                    double       combined_infill_height   = 0.;
+                    unsigned int combined_infill_filament = 0; // 0-based, only valid while combining
+                    if (region_multiplier == 1 && region_config.sparse_infill_density.value > 0) {
+                        // This fork prints internal solid infill at 100% density with the sparse
+                        // filament (internal_solid_infill_uses_sparse_filament), so the sparse
+                        // filament decides in both cases (mirrors PrintObject::combine_infill()).
+                        const int      filament_id = region_config.sparse_infill_filament_id.value;
+                        const FlowRole role        = solid_combined_infill ? frSolidInfill : frInfill;
+                        const char    *width_key   = solid_combined_infill ? "internal_solid_infill_line_width" : "sparse_infill_line_width";
+                        const double   preferred   = object->extruder_preferred_layer_height((unsigned int)std::max(0, filament_id));
+                        if (preferred > layer_height + EPSILON) {
+                            const double infill_nozzle = m_config.nozzle_diameter.get_at(region.extruder(role) - 1);
+                            // Mirrors PrintObject::combine_infill(): groups capped by both feature nozzles and the printing extruder's max layer height (0 = unset).
+                            const unsigned int combine_filament0 = (unsigned int)std::max(1, filament_id) - 1;
+                            double combine_cap = std::min({preferred,
+                                m_config.nozzle_diameter.get_at(std::max(1, region_config.sparse_infill_filament_id.value) - 1),
+                                m_config.nozzle_diameter.get_at(std::max(1, region_config.internal_solid_filament_id.value) - 1)});
+                            if (const double max_lh = m_config.max_layer_height.get_at(combine_filament0); max_lh > EPSILON)
+                                combine_cap = std::min(combine_cap, max_lh);
+                            combined_infill_height   = std::floor(combine_cap / layer_height + EPSILON) * layer_height;
+                            combined_infill_filament = combine_filament0;
+                            auto width_opt = *region_config.option<ConfigOptionFloatOrPercent>(width_key);
+                            if (width_opt.value == 0.)
+                                width_opt = object->config().line_width;
+                            const double width = width_opt.value == 0. ?
+                                double(Flow::auto_extrusion_width(role, float(infill_nozzle))) :
+                                width_opt.get_abs_value(infill_nozzle);
+                            if (combined_infill_height > layer_height + EPSILON && width <= combined_infill_height + EPSILON)
+                                return { Slic3r::format(_u8L("The %1% mm infill line width is too small for infill combined to %2% mm high layers. "
+                                                             "Increase the line width or lower the preferred layer height of the infill filament."),
+                                                        width, combined_infill_height), object, width_key };
+                        }
+                    }
+                    // Warn once when a filament's minimum layer height is above the height its features print at (the part's pitch; the combined infill prints above the minimum by construction).
+                    if (! warned_below_min_heights && heights_feature_active)
+                        for (const unsigned int filament : used_filaments) {
+                            const double min_lh = m_config.min_layer_height.get_at(filament);
+                            if (min_lh <= EPSILON)
+                                continue;
+                            const bool pitch_below_min = region_pitch < min_lh - EPSILON;
+                            // Areas of a combined region that cannot reach the pitch fall back to the object layer height (see apply_extruder_layer_heights()), possibly below the minimum.
+                            const bool fallback_below_min = region_multiplier > 1 && layer_height < min_lh - EPSILON;
+                            if (! pitch_below_min && ! fallback_below_min)
+                                continue;
+                            if (combined_infill_height > 0. && filament == combined_infill_filament &&
+                                combined_infill_height >= min_lh - EPSILON && ! fallback_below_min)
+                                continue;
+                            warned_below_min_heights = true;
+                            warn(Slic3r::format(_u8L("Some object parts print %1% mm layers with filament %2% whose minimum layer "
+                                                     "height is %3% mm. Raise the object layer height, use a filament with a finer "
+                                                     "nozzle for these features, or accept printing below the extruder's minimum."),
+                                                pitch_below_min ? region_pitch : layer_height, filament + 1, min_lh),
+                                 "extruder_layer_height", object);
+                            break;
+                        }
+                    // Warn once about preferred heights the part cannot honor: walls set the pitch, infill combines separately, everything else prints with the pitch.
+                    if (! warned_unhonored_heights)
+                        for (const unsigned int filament : used_filaments) {
+                            const double preferred = object->extruder_preferred_layer_height(filament + 1);
+                            if (preferred <= 0. || std::abs(preferred - region_pitch) < EPSILON)
+                                continue;
+                            if (combined_infill_height > 0. && filament == combined_infill_filament)
+                                continue;
+                            // At 100% density no sparse surfaces exist, the sparse filament's preference is moot.
+                            if (solid_combined_infill &&
+                                filament == (unsigned int)std::max(1, region_config.sparse_infill_filament_id.value) - 1)
+                                continue;
+                            warned_unhonored_heights = true;
+                            warn(_u8L("Some object parts use filaments whose preferred layer heights cannot all be honored: "
+                                      "the wall filaments set a part's layer pitch, the infill can combine to a thicker height, "
+                                      "and the remaining features print with the part's pitch."),
+                                 "extruder_layer_height", object);
+                            break;
+                        }
+                    if (region_multiplier > 1) {
+                        object_has_combined_regions = true;
+                        // The combined extrusions are thicker, so line widths must stay above the combined
+                        // height, resolved per role against the region's own nozzle (mirrors PrintRegion::flow()),
+                        // unlike validate_extrusion_width() above which uses the object's smallest nozzle.
+                        // (role, 1-based filament printing it, width key). Bottom surfaces print
+                        // the solid infill width with the bottom surface filament (Fill.cpp).
+                        const std::tuple<FlowRole, int, const char *> width_roles[] = {
+                            { frExternalPerimeter, region_config.outer_wall_filament_id.value,     "outer_wall_line_width" },
+                            { frPerimeter,         region_config.inner_wall_filament_id.value,     "inner_wall_line_width" },
+                            { frInfill,            region_config.sparse_infill_filament_id.value,  "sparse_infill_line_width" },
+                            { frSolidInfill,       region_config.internal_solid_filament_id.value, "internal_solid_infill_line_width" },
+                            { frTopSolidInfill,    region_config.top_surface_filament_id.value,    "top_surface_line_width" },
+                            { frSolidInfill,       region_config.bottom_surface_filament_id.value, "internal_solid_infill_line_width" },
+                        };
+                        for (const auto &[role, filament_id, width_key] : width_roles) {
+                            const double nozzle_diameter = m_config.nozzle_diameter.get_at(std::max(1, filament_id) - 1);
+                            auto width_opt = *region_config.option<ConfigOptionFloatOrPercent>(width_key);
+                            if (width_opt.value == 0.)
+                                width_opt = object->config().line_width;
+                            const double width = width_opt.value == 0. ?
+                                double(Flow::auto_extrusion_width(role, float(nozzle_diameter))) :
+                                width_opt.get_abs_value(nozzle_diameter);
+                            if (width <= region_pitch + EPSILON)
+                                return { Slic3r::format(_u8L("The %1% mm line width is too small for the %2% mm layer height of its extruder. "
+                                                             "Increase the line width or lower the extruder layer height."),
+                                                        width, region_pitch), object, width_key };
+                        }
+                    }
+                }
+                if (object_has_combined_regions) {
+                    if (m_config.spiral_mode)
+                        return { _u8L("Per-extruder layer heights are not supported in spiral vase mode."), object, "extruder_layer_height" };
+                    if (object->config().interface_shells)
+                        return { _u8L("Per-extruder layer heights are not supported together with interface shells."), object, "extruder_layer_height" };
+                    if (object->model_object()->has_custom_layering()) {
+                        std::vector<coordf_t> profile;
+                        PrintObject::update_layer_height_profile(*object->model_object(), object->slicing_parameters(), profile, object);
+                        if (! check_object_layers_fixed(object->slicing_parameters(), profile))
+                            return { _u8L("Per-extruder layer heights are not supported together with variable layer height."),
+                                     object, "extruder_layer_height" };
+                    }
+                }
+            }
         }
     }
 
@@ -2186,7 +2453,7 @@ Flow Print::brim_flow() const
         frPerimeter,
         // Flow::new_from_config_width takes care of the percent to value substitution
 		width,
-        (float)m_config.nozzle_diameter.get_at(m_print_regions.front()->config().wall_filament-1),
+        (float)m_config.nozzle_diameter.get_at(m_print_regions.front()->config().outer_wall_filament_id-1),
 		(float)this->skirt_first_layer_height());
 }
 

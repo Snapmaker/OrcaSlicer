@@ -154,7 +154,9 @@ public:
     int                         print_object_region_id() const throw() { return m_print_object_region_id; }
 	// 1-based extruder identifier for this region and role.
 	unsigned int 				extruder(FlowRole role) const;
-    Flow                        flow(const PrintObject &object, FlowRole role, double layer_height, bool first_layer = false) const;
+    // filament_id: 1-based filament actually printing this flow when it differs from the role's default
+    // mapping (top / bottom surface fills), 0 to resolve the filament from the role.
+    Flow                        flow(const PrintObject &object, FlowRole role, double layer_height, bool first_layer = false, unsigned int filament_id = 0) const;
     // Average diameter of nozzles participating on extruding this region.
     coordf_t                    nozzle_dmr_avg(const PrintConfig &print_config) const;
     // Average diameter of nozzles participating on extruding this region.
@@ -486,6 +488,23 @@ public:
     // returns 0-based indices of extruders used to print the object (without brim, support and other helper extrusions)
     std::vector<unsigned int>   object_extruders() const;
 
+    // ORCA: per-extruder layer height ("extruder_layer_height" printer option).
+    // Preferred layer height (mm) of the extruder printing the given 1-based filament id; 0 when unset or not reliably resolvable.
+    double       extruder_preferred_layer_height(unsigned int filament_id) const;
+    // Object layers a region printing with the given 1-based filament id combines into one extrusion where its geometry allows it (1 = no combining).
+    unsigned int layer_height_multiplier_for_filament(unsigned int filament_id) const;
+    // Layer pitch multiplier of a region, driven by its wall filaments; 1 when no combining is requested or possible.
+    unsigned int region_layer_height_multiplier(const PrintRegion &region) const;
+    // Any region of this object printing with a layer height multiplier > 1?
+    bool         has_combined_layer_regions() const;
+    // Multi-nozzle support restriction ("support_nozzle_diameter" print option): may the given 1-based filament print this object's support / raft?
+    // Always true when the restriction is disabled or for the "default" filament 0.
+    bool         support_filament_allowed(unsigned int filament_id) const;
+    // 1-based filament a "default" (0) support filament resolves to under the support nozzle
+    // diameter restriction when none of a layer's own filaments match: the first non-soluble
+    // matching-nozzle filament, else the first matching one; 0 when the restriction is disabled or nothing matches.
+    unsigned int resolved_default_support_filament() const;
+
     // Called by make_perimeters()
     void slice();
 
@@ -550,6 +569,8 @@ private:
     void simplify_extrusion_path();
 
     void slice_volumes();
+    // Combine slices of regions configured with a thicker extruder layer height into every Nth layer where geometry allows. Called by slice().
+    void apply_extruder_layer_heights();
     //BBS
     ExPolygons _shrink_contour_holes(double contour_delta, double hole_delta, const ExPolygons& polys) const;
     // BBS

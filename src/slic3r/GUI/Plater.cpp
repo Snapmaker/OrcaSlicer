@@ -247,24 +247,20 @@ static void collect_filament_slots_from_config(
     int num_filaments,
     std::set<int>& used_slots)
 {
-    static const std::vector<const char*> keys_1based = {
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament"
-    };
-    for (const char* key : keys_1based)
-    {
-        const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
-        if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-            used_slots.insert(option->value - 1);
-    }
-
-    static const std::vector<const char*> keys_0based = {
+    // All feature filament keys use 0 = "Default" (inherit the active object/part filament),
+    // so only explicit selections (>= 1) mark a slot as used.
+    static const std::vector<const char*> keys_with_default = {
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id",
         "support_filament",
         "support_interface_filament",
         "wipe_tower_filament"
     };
-    for (const char* key : keys_0based)
+    for (const char* key : keys_with_default)
     {
         const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
         if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
@@ -288,12 +284,15 @@ static void collect_filament_slots_from_model_config(
             used_slots.insert(extruder_id - 1);
     }
 
-    // Per-object feature-specific keys (wall_filament, etc.) may be
+    // Per-object feature-specific keys (outer_wall_filament_id, etc.) may be
     // overridden independently of the object's primary extruder.
     static const std::vector<const char*> feature_keys = {
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament",
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id",
         "support_filament",
         "support_interface_filament",
         "wipe_tower_filament"
@@ -1247,54 +1246,6 @@ struct DynamicFilamentList : DynamicList
     }
 };
 
-struct DynamicFilamentList1Based : DynamicFilamentList
-{
-    void apply_on(Choice *c) override
-    {
-        if (items.empty())
-            update(true);
-        auto cb = dynamic_cast<ComboBox *>(c->window);
-        auto n  = cb->GetSelection();
-        cb->Clear();
-        for (auto i : items) {
-            cb->Append(i.first, *i.second);
-        }
-        if (n < cb->GetCount())
-            cb->SetSelection(n);
-    }
-    wxString get_value(int index) override
-    {
-        wxString str;
-        str << index+1;
-        return str;
-    }
-    int index_of(wxString value) override
-    {
-        long n = 0;
-        if(!value.ToLong(&n))
-            return -1;
-        --n;
-        return (n >= 0 && n <= items.size()) ? int(n) : -1;
-    }
-    void update(bool force = false)
-    {
-        items.clear();
-        if (!force && m_choices.empty())
-            return;
-        auto icons = get_extruder_color_icons(true);
-        auto presets = wxGetApp().preset_bundle->filament_presets;
-        for (int i = 0; i < presets.size(); ++i) {
-            wxString str;
-            std::string type;
-            wxGetApp().preset_bundle->filaments.find_preset(presets[i])->get_filament_type(type);
-            str << type;
-            items.push_back({str, icons[i]});
-        }
-        DynamicList::update();
-    }
-
-};
-
 class MixedFilamentColorMatchDialog : public DPIDialog
 {
 public:
@@ -1819,7 +1770,6 @@ MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow*            
 }
 
 static DynamicFilamentList dynamic_filament_list;
-static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
 static wxString nozzle_type_key_to_label(const std::string& key)
 {
@@ -1839,9 +1789,12 @@ Sidebar::Sidebar(Plater *parent)
 {
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
-    Choice::register_dynamic_list("wall_filament", &dynamic_filament_list_1_based);
-    Choice::register_dynamic_list("sparse_infill_filament", &dynamic_filament_list_1_based);
-    Choice::register_dynamic_list("solid_infill_filament", &dynamic_filament_list_1_based);
+    Choice::register_dynamic_list("outer_wall_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("inner_wall_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("sparse_infill_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("internal_solid_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("top_surface_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("bottom_surface_filament_id", &dynamic_filament_list);
     Choice::register_dynamic_list("wipe_tower_filament", &dynamic_filament_list);
 
     p->scrolled = new wxPanel(this);
@@ -8299,7 +8252,6 @@ void Sidebar::show_SEMM_buttons(bool bshow)
 void Sidebar::update_dynamic_filament_list()
 {
     dynamic_filament_list.update();
-    dynamic_filament_list_1_based.update();
 }
 
 void Sidebar::update_nozzle_settings(bool switch_machine)
@@ -9434,7 +9386,8 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         "extruder_colour", "filament_colour", "material_colour", "printable_height", "printer_model", "printer_technology",
         // These values are necessary to construct SlicingParameters by the Canvas3D variable layer height editor.
         "layer_height", "initial_layer_print_height", "min_layer_height", "max_layer_height",
-        "brim_width", "wall_loops", "wall_filament", "sparse_infill_density", "sparse_infill_filament", "solid_infill_filament", "top_shell_layers",
+        "brim_width", "wall_loops", "outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_density", "sparse_infill_filament_id",
+        "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id", "top_shell_layers",
         "enable_support", "support_filament", "support_interface_filament",
         "support_top_z_distance", "support_bottom_z_distance", "raft_layers",
         "wipe_tower_rotation_angle", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "local_z_wipe_tower_purge_lines", "wipe_tower_max_purge_speed",
@@ -12302,7 +12255,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             // Validate passed, but also check filament temp mixing as a final
             // guard. check_filament_temp_mixing() reads directly from preset
             // configs and catches cases that Print::validate() may miss (e.g.
-            // wall_filament changes that haven't propagated to PrintRegions yet).
+            // outer_wall_filament_id changes that haven't propagated to PrintRegions yet).
             bool filament_ok = q->sync_filament_temp_mixing_notification();
             if (filament_ok) {
                 this->partplate_list.get_curr_plate()->update_apply_result_invalid(false);
@@ -20543,7 +20496,8 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     sidebar().on_filaments_delete(filament_id);
 
     // update global feature filament selections
-    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+    static const char* keys[] = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+                                 "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id",
                                  "support_filament", "support_interface_filament"};
     for (auto key : keys)
         if (p->config->has(key)) {
@@ -20810,7 +20764,7 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     // Collect from the Plater working config. The approach balances
     // sensitivity against false positives:
     // - Global features (wipe tower, support) always apply → always collected.
-    // - Feature-specific keys (wall_filament, infill) depend on the global
+    // - Feature-specific keys (outer_wall_filament_id, infill) depend on the global
     //   process defaults. They are only collected when at least one object
     //   on the plate uses the default extruder (e=0), which means those
     //   defaults WILL affect the actual slicing output.
@@ -20833,9 +20787,12 @@ bool Plater::check_filament_temp_mixing(int plate_index)
         if (uses_default_extruder)
         {
             static const std::vector<const char*> default_keys = {
-                "wall_filament",
-                "sparse_infill_filament",
-                "solid_infill_filament"
+                "outer_wall_filament_id",
+                "inner_wall_filament_id",
+                "sparse_infill_filament_id",
+                "internal_solid_filament_id",
+                "top_surface_filament_id",
+                "bottom_surface_filament_id"
             };
             for (const char* key : default_keys)
             {
@@ -21133,8 +21090,10 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
             update_scheduled = true;
         }
         // Orca: update when *_filament changed
-        else if (opt_key == "support_interface_filament" || opt_key == "support_filament" || opt_key == "wall_filament" ||
-                 opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
+        else if (opt_key == "support_interface_filament" || opt_key == "support_filament" ||
+                 opt_key == "outer_wall_filament_id" || opt_key == "inner_wall_filament_id" ||
+                 opt_key == "sparse_infill_filament_id" || opt_key == "internal_solid_filament_id" ||
+                 opt_key == "top_surface_filament_id" || opt_key == "bottom_surface_filament_id") {
             update_scheduled = true;
         }
     }

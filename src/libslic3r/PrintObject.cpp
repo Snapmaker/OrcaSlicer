@@ -223,7 +223,7 @@ void PrintObject::_transform_hole_to_polyholes()
                                 bool twist = this->m_layers[layer_idx]->m_regions[region_idx]->region().config().hole_to_polyhole_twisted.value;
                                 if (diameter_max - diameter_min < max_variation * 2 && diameter_line_max - diameter_line_min < max_variation * 2) {
                                     layerid2center[layer_idx].emplace_back(
-                                        std::tuple<Point, float, int, coord_t, bool>{center, diameter_max, layer->m_regions[region_idx]->region().config().wall_filament.value, max_variation, twist}, & hole);
+                                        std::tuple<Point, float, int, coord_t, bool>{center, diameter_max, layer->m_regions[region_idx]->region().config().outer_wall_filament_id.value, max_variation, twist}, & hole);
                                 }
                             }
                         }
@@ -518,6 +518,18 @@ void PrintObject::prepare_infill()
     // combine fill surfaces to honor the "infill every N layers" option
     this->combine_infill();
     m_print->throw_if_canceled();
+
+    // Per-extruder layer height. Stamp the group height onto fill surfaces of combined LayerRegions (Fill uses Surface::thickness when set); must run last, earlier steps re-create surfaces.
+    if (this->has_combined_layer_regions()) {
+        for (Layer *layer : m_layers)
+            for (LayerRegion *layerm : layer->m_regions)
+                if (layerm->combined_layer_count() > 1)
+                    for (Surface &surface : layerm->fill_surfaces.surfaces) {
+                        surface.thickness        = layerm->combined_height();
+                        surface.thickness_layers = layerm->combined_layer_count();
+                    }
+        m_print->throw_if_canceled();
+    }
 
 #ifdef SLIC3R_DEBUG_SLICE_PROCESSING
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
@@ -881,6 +893,18 @@ bool PrintObject::invalidate_state_by_config_options(
     std::vector<PrintObjectStep> steps;
     bool invalidated = false;
     for (const t_config_option_key &opt_key : opt_keys) {
+        // Per-extruder layer height: these options feed region_layer_height_multiplier(), which decides layer combination at the slicing step.
+        if (opt_key == "outer_wall_filament_id"    || opt_key == "inner_wall_filament_id"
+         || opt_key == "sparse_infill_filament_id" || opt_key == "internal_solid_filament_id"
+         || opt_key == "top_surface_filament_id"   || opt_key == "bottom_surface_filament_id"
+         || opt_key == "wall_loops"                || opt_key == "sparse_infill_density"
+         || opt_key == "top_shell_layers"          || opt_key == "bottom_shell_layers") {
+            for (double extruder_layer_height : m_print->config().extruder_layer_height.values)
+                if (extruder_layer_height > 0.) {
+                    steps.emplace_back(posSlice);
+                    break;
+                }
+        }
         if (   opt_key == "brim_width"
             || opt_key == "brim_object_gap"
             || opt_key == "brim_type"
@@ -947,6 +971,9 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posPerimeters);
         } else if (
                opt_key == "layer_height"
+            // ORCA: per-extruder layer height: the layer combining happens at the slicing step.
+            || opt_key == "extruder_layer_height_mode"
+            || opt_key == "extruder_layer_height_tolerance"
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_local_z_whole_objects"
@@ -1019,6 +1046,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "support_remove_small_overhang"
             || opt_key == "enforce_support_layers"
             || opt_key == "support_filament"
+            || opt_key == "support_nozzle_diameter"
             || opt_key == "support_line_width"
             || opt_key == "support_interface_top_layers"
             || opt_key == "support_interface_bottom_layers"
@@ -1092,8 +1120,10 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "bottom_shell_thickness"
             || opt_key == "top_shell_thickness"
             || opt_key == "minimum_sparse_infill_area"
-            || opt_key == "sparse_infill_filament"
-            || opt_key == "solid_infill_filament"
+            || opt_key == "sparse_infill_filament_id"
+            || opt_key == "internal_solid_filament_id"
+            || opt_key == "top_surface_filament_id"
+            || opt_key == "bottom_surface_filament_id"
             || opt_key == "sparse_infill_line_width"
             || opt_key == "skin_infill_line_width"
             || opt_key == "skeleton_infill_line_width"
@@ -1151,7 +1181,8 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posPrepareInfill);
         } else if (
                opt_key == "outer_wall_line_width"
-            || opt_key == "wall_filament"
+            || opt_key == "outer_wall_filament_id"
+            || opt_key == "inner_wall_filament_id"
             || opt_key == "fuzzy_skin"
             || opt_key == "fuzzy_skin_thickness"
             || opt_key == "fuzzy_skin_point_distance"
@@ -1704,11 +1735,17 @@ void PrintObject::process_external_surfaces()
                 for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++ layer_idx) {
                     m_print->throw_if_canceled();
                     // BOOST_LOG_TRIVIAL(trace) << "Processing external surface, layer" << m_layers[layer_idx]->print_z;
-                    m_layers[layer_idx]->get_region(int(region_id))->process_external_surfaces(
+                    LayerRegion *layerm = m_layers[layer_idx]->get_region(int(region_id));
+                    // Per-extruder layer height: a combined group's external surfaces relate to the layer below the whole group (lower_idx == layer_idx - 1 for regular regions;
+                    // count == 0 on combined-away layers, hence the max(..., 1)).
+                    const size_t combined_layers = std::max<unsigned short>(layerm->combined_layer_count(), 1);
+                    const bool   has_lower       = layer_idx >= combined_layers;
+                    const size_t lower_idx       = has_lower ? layer_idx - combined_layers : 0;
+                    layerm->process_external_surfaces(
                         // lower layer
-                    	(layer_idx == 0) ? nullptr : m_layers[layer_idx - 1],
+                    	has_lower ? m_layers[lower_idx] : nullptr,
                         // lower layer polygons with density > 0%
-                    	(layer_idx == 0 || surfaces_covered.empty() || surfaces_covered[layer_idx - 1].empty()) ? nullptr : &surfaces_covered[layer_idx - 1]);
+                    	(! has_lower || surfaces_covered.empty() || surfaces_covered[lower_idx].empty()) ? nullptr : &surfaces_covered[lower_idx]);
                 }
             }
         );
@@ -1824,6 +1861,9 @@ void PrintObject::discover_vertical_shells()
         const PrintRegion &region = this->printing_region(region_id);
         if (region.config().ensure_vertical_shell_thickness.value != evstAll )
             // This region will be handled by discover_horizontal_shells().
+            continue;
+        if (this->region_layer_height_multiplier(region) > 1)
+            // Per-extruder layer height. Combined regions extrude on group tops only; their shells are ensured by discover_horizontal_shells() stepping over the groups instead.
             continue;
 
         //FIXME Improve the heuristics for a grain size.
@@ -3190,6 +3230,15 @@ static void clamp_exturder_to_default(ConfigOptionInt &opt, size_t num_total_fil
         opt.value = 1;
 }
 
+// ORCA: feature filament selectors use 0 = "Default" (inherit the active object/part filament).
+// Once the object/part/layer-range overrides are resolved, any remaining "Default" or invalid
+// value falls back to filament 1.
+static void clamp_feature_filament_to_valid(ConfigOptionInt &opt, size_t num_total_filaments)
+{
+    if (opt.value <= 0 || opt.value > (int)num_total_filaments)
+        opt.value = 1;
+}
+
 PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders)
 {
     PrintObjectConfig config = default_object_config;
@@ -3205,55 +3254,124 @@ PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObject
 }
 
 const std::string                                                    key_extruder { "extruder" };
-static constexpr const std::initializer_list<const std::string_view> keys_extruders { "sparse_infill_filament"sv, "solid_infill_filament"sv, "wall_filament"sv };
+static constexpr const std::initializer_list<const std::string_view> keys_extruders {
+    "sparse_infill_filament_id"sv,
+    "internal_solid_filament_id"sv,
+    "top_surface_filament_id"sv,
+    "bottom_surface_filament_id"sv,
+    "outer_wall_filament_id"sv,
+    "inner_wall_filament_id"sv
+};
 
-static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in)
+struct FeatureFilamentOverrideMask
 {
-    // 1) Copy the "extruder key to sparse_infill_filament and wall_filament.
+    bool sparse_infill_filament_id  = false;
+    bool internal_solid_filament_id = false;
+    bool top_surface_filament_id    = false;
+    bool bottom_surface_filament_id = false;
+    bool outer_wall_filament_id     = false;
+    bool inner_wall_filament_id     = false;
+};
+
+static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in, FeatureFilamentOverrideMask &feature_overrides)
+{
+    // 1) Explicit feature filament values take precedence over base extruder fallback.
     auto *opt_extruder = in.opt<ConfigOptionInt>(key_extruder);
-    if (opt_extruder)
-        if (int extruder = opt_extruder->value; extruder != 0) {
-            // Not a default extruder.
-            out.sparse_infill_filament.value = extruder;
-            out.solid_infill_filament.value  = extruder;
-            out.wall_filament.value          = extruder;
-        }
+    int base_extruder = (opt_extruder != nullptr) ? opt_extruder->value : 0;
+
     // 2) Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)
         if (it->first != key_extruder)
             if (ConfigOption* my_opt = out.option(it->first, false); my_opt != nullptr) {
                 if (one_of(it->first, keys_extruders)) {
-                    // Ignore "default" extruders.
+                    // "Default" (0) clears explicit override for this scope and lets fallback apply.
                     int extruder = static_cast<const ConfigOptionInt*>(it->second.get())->value;
-                    if (extruder > 0)
+                    if (extruder > 0) {
                         my_opt->setInt(extruder);
+                        if (it->first == "sparse_infill_filament_id")
+                            feature_overrides.sparse_infill_filament_id = true;
+                        else if (it->first == "internal_solid_filament_id")
+                            feature_overrides.internal_solid_filament_id = true;
+                        else if (it->first == "top_surface_filament_id")
+                            feature_overrides.top_surface_filament_id = true;
+                        else if (it->first == "bottom_surface_filament_id")
+                            feature_overrides.bottom_surface_filament_id = true;
+                        else if (it->first == "outer_wall_filament_id")
+                            feature_overrides.outer_wall_filament_id = true;
+                        else if (it->first == "inner_wall_filament_id")
+                            feature_overrides.inner_wall_filament_id = true;
+                    } else {
+                        if (it->first == "sparse_infill_filament_id")
+                            feature_overrides.sparse_infill_filament_id = false;
+                        else if (it->first == "internal_solid_filament_id")
+                            feature_overrides.internal_solid_filament_id = false;
+                        else if (it->first == "top_surface_filament_id")
+                            feature_overrides.top_surface_filament_id = false;
+                        else if (it->first == "bottom_surface_filament_id")
+                            feature_overrides.bottom_surface_filament_id = false;
+                        else if (it->first == "outer_wall_filament_id")
+                            feature_overrides.outer_wall_filament_id = false;
+                        else if (it->first == "inner_wall_filament_id")
+                            feature_overrides.inner_wall_filament_id = false;
+                    }
                 } else
                     my_opt->set(it->second.get());
             }
+
+    // 3) Apply base extruder only to features that were not explicitly overridden.
+    if (base_extruder > 0) {
+        if (!feature_overrides.sparse_infill_filament_id)
+            out.sparse_infill_filament_id.value = base_extruder;
+        if (!feature_overrides.internal_solid_filament_id)
+            out.internal_solid_filament_id.value = base_extruder;
+        if (!feature_overrides.top_surface_filament_id)
+            out.top_surface_filament_id.value = base_extruder;
+        if (!feature_overrides.bottom_surface_filament_id)
+            out.bottom_surface_filament_id.value = base_extruder;
+        if (!feature_overrides.outer_wall_filament_id)
+            out.outer_wall_filament_id.value = base_extruder;
+        if (!feature_overrides.inner_wall_filament_id)
+            out.inner_wall_filament_id.value = base_extruder;
+    }
 }
 
 PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders)
 {
     PrintRegionConfig config = default_or_parent_region_config;
+    FeatureFilamentOverrideMask feature_overrides;
+
+    // For model parts, non-zero values coming from the print defaults should stay explicit.
+    if (volume.is_model_part()) {
+        feature_overrides.sparse_infill_filament_id  = (config.sparse_infill_filament_id.value > 0);
+        feature_overrides.internal_solid_filament_id = (config.internal_solid_filament_id.value > 0);
+        feature_overrides.top_surface_filament_id    = (config.top_surface_filament_id.value > 0);
+        feature_overrides.bottom_surface_filament_id = (config.bottom_surface_filament_id.value > 0);
+        feature_overrides.outer_wall_filament_id     = (config.outer_wall_filament_id.value > 0);
+        feature_overrides.inner_wall_filament_id     = (config.inner_wall_filament_id.value > 0);
+    }
+
     if (volume.is_model_part()) {
         // default_or_parent_region_config contains the Print's PrintRegionConfig.
         // Override with ModelObject's PrintRegionConfig values.
-        apply_to_print_region_config(config, volume.get_object()->config.get());
+        apply_to_print_region_config(config, volume.get_object()->config.get(), feature_overrides);
     } else {
         // default_or_parent_region_config contains parent PrintRegion config, which already contains ModelVolume's config.
     }
-    apply_to_print_region_config(config, volume.config.get());
+    apply_to_print_region_config(config, volume.config.get(), feature_overrides);
     if (! volume.material_id().empty())
-        apply_to_print_region_config(config, volume.material()->config.get());
+        apply_to_print_region_config(config, volume.material()->config.get(), feature_overrides);
     if (layer_range_config != nullptr) {
         // Not applicable to modifiers.
         assert(volume.is_model_part());
-    	apply_to_print_region_config(config, *layer_range_config);
+    	apply_to_print_region_config(config, *layer_range_config, feature_overrides);
     }
-    // Clamp invalid extruders to the default extruder (with index 1).
-    clamp_exturder_to_default(config.sparse_infill_filament,       num_extruders);
-    clamp_exturder_to_default(config.wall_filament,    num_extruders);
-    clamp_exturder_to_default(config.solid_infill_filament, num_extruders);
+    // Resolve feature defaults and clamp invalid extruders to index 1.
+    clamp_feature_filament_to_valid(config.sparse_infill_filament_id, num_extruders);
+    clamp_feature_filament_to_valid(config.outer_wall_filament_id, num_extruders);
+    clamp_feature_filament_to_valid(config.inner_wall_filament_id, num_extruders);
+    clamp_feature_filament_to_valid(config.internal_solid_filament_id, num_extruders);
+    clamp_feature_filament_to_valid(config.top_surface_filament_id, num_extruders);
+    clamp_feature_filament_to_valid(config.bottom_surface_filament_id, num_extruders);
     if (config.sparse_infill_density.value < 0.00011f)
         // Switch of infill for very low infill rates, also avoid division by zero in infill generator for these very low rates.
         // See GH issue #5910.
@@ -3316,9 +3434,12 @@ SlicingParameters PrintObject::slicing_parameters(const DynamicPrintConfig &full
                 object_config.brim_type != btNoBrim && object_config.brim_width > 0.,
 				object_extruders);
 			for (const std::pair<const t_layer_height_range, ModelConfig> &range_and_config : model_object.layer_config_ranges)
-				if (range_and_config.second.has("wall_filament") ||
-					range_and_config.second.has("sparse_infill_filament") ||
-					range_and_config.second.has("solid_infill_filament"))
+				if (range_and_config.second.has("outer_wall_filament_id") ||
+					range_and_config.second.has("inner_wall_filament_id") ||
+					range_and_config.second.has("sparse_infill_filament_id") ||
+					range_and_config.second.has("internal_solid_filament_id") ||
+					range_and_config.second.has("top_surface_filament_id") ||
+					range_and_config.second.has("bottom_surface_filament_id"))
 					PrintRegion::collect_object_printing_extruders(
 						print_config,
 						region_config_from_model_volume(default_region_config, &range_and_config.second.get(), *model_volume, filament_extruders),
@@ -3353,6 +3474,138 @@ std::vector<unsigned int> PrintObject::object_extruders() const
     }
     sort_remove_duplicates(extruders);
     return extruders;
+}
+
+// Per-extruder layer height ("extruder_layer_height" printer option).
+// Raw preferred layer height (mm) of the extruder printing the given 1-based filament id, 0 when unset or not reliably resolvable.
+double PrintObject::extruder_preferred_layer_height(unsigned int filament_id) const
+{
+    const PrintConfig &print_config = m_print->config();
+    if (print_config.extruder_layer_height.empty())
+        return 0.;
+    // Region filament ids are 1-based, 0 ("Default") falls back to the first filament.
+    if (filament_id == 0)
+        filament_id = 1;
+    // Snapmaker mixed filament: virtual mixed ids (beyond the physical filaments) resolve to a
+    // different physical extruder on every layer, so no stable preferred height exists for them.
+    if (filament_id > print_config.filament_diameter.values.size())
+        return 0.;
+    // Classic multi-tool printers index per-extruder vectors by the filament id directly (like the min/max_layer_height and nozzle_diameter lookups elsewhere).
+    const size_t extruder_idx = filament_id - 1;
+    return std::max(0., print_config.extruder_layer_height.get_at(extruder_idx));
+}
+
+// Returns the number of object layers a region printing with the given 1-based filament id combines into one extrusion (1 = no combining).
+// The configured height must be a (near) integer multiple of the object layer height, otherwise it is ignored here and rejected by Print::validate().
+unsigned int PrintObject::layer_height_multiplier_for_filament(unsigned int filament_id) const
+{
+    const double extruder_height = this->extruder_preferred_layer_height(filament_id);
+    if (extruder_height <= 0.)
+        return 1;
+    const double layer_height = m_config.layer_height.value;
+    if (layer_height <= EPSILON)
+        return 1;
+    const int multiplier = int(std::lround(extruder_height / layer_height));
+    if (multiplier <= 1 || std::abs(extruder_height - multiplier * layer_height) > EPSILON)
+        // Not combining, or not an integer multiple (the latter is rejected by Print::validate()).
+        return 1;
+    // Same filament -> extruder mapping as extruder_preferred_layer_height() and Print::validate().
+    const PrintConfig &print_config = m_print->config();
+    const size_t extruder_idx = size_t((filament_id == 0 ? 1 : filament_id) - 1);
+    if (extruder_height > print_config.nozzle_diameter.get_at(extruder_idx) + EPSILON)
+        // Taller than the nozzle can print, rejected by Print::validate().
+        return 1;
+    return (unsigned int)multiplier;
+}
+
+unsigned int PrintObject::region_layer_height_multiplier(const PrintRegion &region) const
+{
+    const PrintRegionConfig &config = region.config();
+    // The wall filaments define a region's layer pitch (sparse infill preferring taller layers is combined separately in combine_infill()); wall-less regions need agreement of all their feature filaments.
+    // Disagreeing filaments keep the object layer height (Print::validate() warns).
+    std::vector<unsigned int> filaments; // 0-based filament indices
+    if (config.wall_loops.value > 0) {
+        const int num_filaments = (int)m_print->config().filament_diameter.size();
+        bool has_mixed_wall = false;
+        auto emplace_filament = [num_filaments, &filaments, &has_mixed_wall](int filament_id) {
+            int i = std::max(0, filament_id - 1);
+            if (i >= num_filaments) {
+                // Snapmaker mixed filament: virtual mixed ids resolve to a different physical
+                // extruder per layer, so such walls need every layer and must never combine
+                // (matches Print::validate() and extruder_preferred_layer_height()).
+                has_mixed_wall = true;
+                return;
+            }
+            filaments.emplace_back(i);
+        };
+        emplace_filament(config.outer_wall_filament_id.value);
+        if (config.wall_loops.value > 1)
+            emplace_filament(config.inner_wall_filament_id.value);
+        if (has_mixed_wall)
+            return 1;
+    } else
+        // The brim is not considered, it prints on the first layer which is never combined.
+        PrintRegion::collect_object_printing_extruders(m_print->config(), config, false /* has_brim */, filaments);
+    unsigned int multiplier = 0;
+    for (unsigned int filament : filaments) {
+        unsigned int m = this->layer_height_multiplier_for_filament(filament + 1);
+        if (multiplier == 0)
+            multiplier = m;
+        else if (m != multiplier)
+            return 1;
+    }
+    if (multiplier <= 1)
+        return 1;
+    // A feature filament whose nozzle or layer height limits cannot follow the walls' pitch makes the region fall back to the object layer height (Print::validate() warns about it).
+    const PrintConfig &print_config = m_print->config();
+    const double pitch = multiplier * m_config.layer_height.value;
+    std::vector<unsigned int> used_filaments; // 0-based filament indices
+    PrintRegion::collect_object_printing_extruders(print_config, config, false /* has_brim */, used_filaments);
+    for (unsigned int filament : used_filaments) {
+        // The filament index is the extruder index on classic multi-tool printers.
+        const size_t extruder_idx = size_t(filament);
+        if (pitch > print_config.nozzle_diameter.get_at(extruder_idx) + EPSILON)
+            return 1;
+        if (const double max_lh = print_config.max_layer_height.get_at(extruder_idx); max_lh > EPSILON && pitch > max_lh + EPSILON)
+            return 1;
+        if (const double min_lh = print_config.min_layer_height.get_at(extruder_idx); min_lh > EPSILON && pitch < min_lh - EPSILON)
+            return 1;
+    }
+    return multiplier;
+}
+
+bool PrintObject::has_combined_layer_regions() const
+{
+    for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id)
+        if (this->region_layer_height_multiplier(this->printing_region(region_id)) > 1)
+            return true;
+    return false;
+}
+
+bool PrintObject::support_filament_allowed(unsigned int filament_id) const
+{
+    const double restriction = m_config.support_nozzle_diameter.value;
+    if (restriction <= 0. || filament_id == 0)
+        return true;
+    return std::abs(m_print->config().nozzle_diameter.get_at(filament_id - 1) - restriction) < EPSILON;
+}
+
+unsigned int PrintObject::resolved_default_support_filament() const
+{
+    if (m_config.support_nozzle_diameter.value <= 0.)
+        return 0;
+    const PrintConfig &print_config = m_print->config();
+    const size_t num_filaments = std::max(print_config.nozzle_diameter.values.size(),
+                                          print_config.filament_diameter.values.size());
+    unsigned int soluble_fallback = 0;
+    for (size_t i = 0; i < num_filaments; ++ i)
+        if (this->support_filament_allowed((unsigned int)(i + 1))) {
+            if (! print_config.filament_soluble.get_at(i))
+                return (unsigned int)(i + 1);
+            if (soluble_fallback == 0)
+                soluble_fallback = (unsigned int)(i + 1);
+        }
+    return soluble_fallback;
 }
 
 namespace {
@@ -4038,6 +4291,9 @@ void PrintObject::clip_fill_surfaces()
         for (LayerRegion *layerm : lower_layer->m_regions) {
             if (layerm->region().config().sparse_infill_density.value == 0)
                 continue;
+            if (layerm->combined_layer_count() > 1)
+                // Per-extruder layer height: a combined group's infill supports the whole group, don't clip it against the single layer above.
+                continue;
             Polygons internal;
             for (Surface &surface : layerm->fill_surfaces.surfaces)
                 if (surface.surface_type == stInternal || surface.surface_type == stInternalVoid)
@@ -4061,6 +4317,9 @@ void PrintObject::discover_horizontal_shells()
     BOOST_LOG_TRIVIAL(trace) << "discover_horizontal_shells()";
 
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
+        // ORCA: per-extruder layer height. Combined regions extrude only on the top layers of their
+        // groups; the empty layers in between must neither receive shells nor count as shell layers.
+        const bool region_combined = this->region_layer_height_multiplier(this->printing_region(region_id)) > 1;
         for (size_t i = 0; i < m_layers.size(); ++ i) {
             m_print->throw_if_canceled();
             Layer 					*layer  = m_layers[i];
@@ -4076,7 +4335,8 @@ void PrintObject::discover_horizontal_shells()
             }
 
             // If ensure_vertical_shell_thickness, then the rest has already been performed by discover_vertical_shells().
-            if (region_config.ensure_vertical_shell_thickness.value == evstAll)
+            // ORCA: combined regions are skipped by discover_vertical_shells() and handled here instead.
+            if (region_config.ensure_vertical_shell_thickness.value == evstAll && ! region_combined)
                 continue;
 
             coordf_t print_z  = layer->print_z;
@@ -4113,17 +4373,26 @@ void PrintObject::discover_horizontal_shells()
 //                Slic3r::debugf "Layer %d has %s surfaces\n", $i, ($type == stTop) ? 'top' : 'bottom';
 
                 // Scatter top / bottom regions to other layers. Scattering process is inherently serial, it is difficult to parallelize without locking.
+                // ORCA: per-extruder layer height. n_region_layers counts only layers the region
+                // prints on (equals the int(i) - n index distance when nothing is skipped), so
+                // shells of combined regions propagate across group tops.
+                int n_region_layers = 0;
                 for (int n = (type == stTop) ? int(i) - 1 : int(i) + 1;
                 	(type == stTop) ?
-                		(n >= 0                   && (int(i) - n < num_solid_layers ||
+                		(n >= 0                   && (n_region_layers + 1 < num_solid_layers ||
                 								 	  print_z - m_layers[n]->print_z < region_config.top_shell_thickness.value - EPSILON)) :
-                		(n < int(m_layers.size()) && (n - int(i) < num_solid_layers ||
+                		(n < int(m_layers.size()) && (n_region_layers + 1 < num_solid_layers ||
                 									  m_layers[n]->bottom_z() - bottom_z < region_config.bottom_shell_thickness.value - EPSILON));
                 	(type == stTop) ? -- n : ++ n)
                 {
 //                    Slic3r::debugf "  looking for neighbors on layer %d...\n", $n;
                     // Reference to the lower layer of a TOP surface, or an upper layer of a BOTTOM surface.
                     LayerRegion *neighbor_layerm = m_layers[n]->regions()[region_id];
+                    // ORCA: combined-away layers (count == 0) print nothing here: no shells, not
+                    // counted. Genuinely absent geometry (count == 1, empty slices) still counts.
+                    if (region_combined && neighbor_layerm->combined_layer_count() == 0)
+                        continue;
+                    ++ n_region_layers;
 
                     // find intersection between neighbor and current layer's surfaces
                     // intersections have contours and holes
@@ -4274,7 +4543,21 @@ void PrintObject::combine_infill()
         const PrintRegion &region = this->printing_region(region_id);
         //BBS
         const bool enable_combine_infill = region.config().infill_combination.value;
-        if (enable_combine_infill == false || region.config().sparse_infill_density == 0.)
+        // Per-extruder layer height: infill whose filament prefers a taller layer height is combined up to it, with or without the infill_combination option.
+        // Only for regions printing at the object layer height; combined-wall regions already print everything over their runs.
+        if (this->region_layer_height_multiplier(region) > 1)
+            continue;
+        // At 100% density the combined surfaces are internal solid infill (see use_solid_infill
+        // below), but this fork prints them with the sparse infill filament
+        // (internal_solid_infill_uses_sparse_filament in PrintRegion::extruder()), so the sparse
+        // filament's preference and limits decide in both cases.
+        const int combine_filament_id = std::max(1, region.config().sparse_infill_filament_id.value);
+        // Per-extruder vector index: the filament index is the extruder index on classic multi-tool printers (like extruder_preferred_layer_height()).
+        const size_t combine_extruder_idx = size_t(combine_filament_id - 1);
+        double preferred_infill_height = this->extruder_preferred_layer_height((unsigned int)combine_filament_id);
+        if (preferred_infill_height <= m_config.layer_height.value + EPSILON)
+            preferred_infill_height = 0.;
+        if ((enable_combine_infill == false && preferred_infill_height == 0.) || region.config().sparse_infill_density == 0.)
             continue;
 
         // Support internal solid infill when sparse_infill_density is 100%
@@ -4285,14 +4568,26 @@ void PrintObject::combine_infill()
 
         // Limit the number of combined layers to the maximum height allowed by this regions' nozzle.
         //FIXME limit the layer height to max_layer_height
-        double nozzle_diameter = this->print()->config().nozzle_diameter.get_at(region.config().wall_filament.value - 1);
-        nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().sparse_infill_filament.value - 1));
-        nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().solid_infill_filament.value - 1));
+        double nozzle_diameter = this->print()->config().nozzle_diameter.get_at(region.config().outer_wall_filament_id.value - 1);
+        nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().inner_wall_filament_id.value - 1));
+        nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().sparse_infill_filament_id.value - 1));
+        nozzle_diameter = std::min(nozzle_diameter, this->print()->config().nozzle_diameter.get_at(region.config().internal_solid_filament_id.value - 1));
         
         //Orca: Limit combination of infill to up to infill_combination_max_layer_height
         const double infill_combination_max_layer_height = region.config().infill_combination_max_layer_height.get_abs_value(nozzle_diameter);
         nozzle_diameter = infill_combination_max_layer_height > 0 ? std::min(infill_combination_max_layer_height, nozzle_diameter) : nozzle_diameter;
-        
+
+        // Per-extruder layer height: the filament's preferred height is an explicit target that overrides the caps above, limited only by the physical nozzle diameters and the extruder's max layer height.
+        // Plain infill_combination keeps its historical cap untouched.
+        if (preferred_infill_height > 0.) {
+            nozzle_diameter = std::min({preferred_infill_height,
+                this->print()->config().nozzle_diameter.get_at(region.config().sparse_infill_filament_id.value - 1),
+                this->print()->config().nozzle_diameter.get_at(region.config().internal_solid_filament_id.value - 1)});
+            const double combine_max_layer_height = this->print()->config().max_layer_height.get_at(combine_extruder_idx);
+            if (combine_max_layer_height > EPSILON)
+                nozzle_diameter = std::min(nozzle_diameter, combine_max_layer_height);
+        }
+
         // define the combinations
         std::vector<size_t> combine(m_layers.size(), 0);
         {
@@ -4384,6 +4679,107 @@ void PrintObject::combine_infill()
                     layerm->fill_surfaces.append(
                         intersection_ex(internal, intersection_with_clearance),
                         stInternalVoid);
+                }
+            }
+        }
+
+        // Per-extruder layer height: leftovers the pass above could not combine to the full group height print at the object layer height.
+        // Where that is below the infill extruder's min layer height, re-group them over the smallest layer count reaching the minimum (isolated leftovers with no matching neighbors stay as-is; Print::validate() warns).
+        const double combine_min_layer_height = this->print()->config().min_layer_height.get_at(combine_extruder_idx);
+        const double min_window = combine_min_layer_height > 0. ?
+            std::ceil(combine_min_layer_height / m_config.layer_height.value - EPSILON) * m_config.layer_height.value : 0.;
+        // Re-grouped windows must stay within the main pass' caps (a min_layer_height above them is
+        // a misconfiguration).
+        if (preferred_infill_height > 0. && combine_min_layer_height > m_config.layer_height.value + EPSILON &&
+            min_window <= nozzle_diameter + EPSILON) {
+            // Assign leftover windows exactly like the pass above, just with the shorter target.
+            std::vector<size_t> recombine(m_layers.size(), 0);
+            {
+                double current_height = 0.;
+                size_t num_layers = 0;
+                for (size_t layer_idx = 0; layer_idx < m_layers.size(); ++ layer_idx) {
+                    m_print->throw_if_canceled();
+                    const Layer *layer = m_layers[layer_idx];
+                    if (layer->id() == 0)
+                        // Skip first print layer (which may not be first layer in array because of raft).
+                        continue;
+                    if (current_height + layer->height >= min_window + EPSILON) {
+                        recombine[layer_idx - 1] = num_layers;
+                        current_height = 0.;
+                        num_layers = 0;
+                    }
+                    current_height += layer->height;
+                    ++ num_layers;
+                }
+                recombine[m_layers.size() - 1] = num_layers;
+            }
+            // Leftovers are surfaces of the combined type whose thickness is still unset.
+            auto leftover_expolygons = [surface_type](const LayerRegion *layerm) {
+                ExPolygons out;
+                for (const Surface &surface : layerm->fill_surfaces.surfaces)
+                    if (surface.surface_type == surface_type && surface.thickness < 0.)
+                        out.emplace_back(surface.expolygon);
+                return out;
+            };
+            for (size_t layer_idx = 0; layer_idx < m_layers.size(); ++ layer_idx) {
+                m_print->throw_if_canceled();
+                size_t num_layers = recombine[layer_idx];
+                if (num_layers <= 1)
+                    continue;
+                std::vector<LayerRegion*> layerms;
+                layerms.reserve(num_layers);
+                for (size_t i = layer_idx + 1 - num_layers; i <= layer_idx; ++ i)
+                    layerms.emplace_back(m_layers[i]->regions()[region_id]);
+                ExPolygons intersection = leftover_expolygons(layerms.front());
+                for (size_t i = 1; i < layerms.size() && ! intersection.empty(); ++ i)
+                    intersection = intersection_ex(leftover_expolygons(layerms[i]), intersection);
+                double area_threshold = layerms.front()->infill_area_threshold();
+                if (! intersection.empty() && area_threshold > 0.)
+                    intersection.erase(std::remove_if(intersection.begin(), intersection.end(),
+                        [area_threshold](const ExPolygon &expoly) { return expoly.area() <= area_threshold; }),
+                        intersection.end());
+                if (intersection.empty())
+                    continue;
+                // Same clearance as the pass above: the leftover fills also grow to overlap perimeters.
+                Polygons intersection_with_clearance;
+                intersection_with_clearance.reserve(intersection.size());
+                float clearance_offset =
+                    0.5f * layerms.back()->flow(frPerimeter).scaled_width() +
+                    ((infill_pattern == ipRectilinear   ||
+                      infill_pattern == ipMonotonic     ||
+                      infill_pattern == ipGrid          ||
+                      infill_pattern == ipLateralLattice||
+                      infill_pattern == ipLine          ||
+                      infill_pattern == ipHoneycomb     ||
+                      infill_pattern == ipLateralHoneycomb) ? 1.5f : 0.5f) *
+                        layerms.back()->flow(frSolidInfill).scaled_width();
+                for (ExPolygon &expoly : intersection)
+                    polygons_append(intersection_with_clearance, offset(expoly, clearance_offset));
+                for (LayerRegion *layerm : layerms) {
+                    // Take out only the leftover surfaces; surfaces combined above keep their heights.
+                    Polygons leftover;
+                    Surfaces kept;
+                    kept.reserve(layerm->fill_surfaces.surfaces.size());
+                    for (Surface &surface : layerm->fill_surfaces.surfaces) {
+                        if (surface.surface_type == surface_type && surface.thickness < 0.)
+                            polygons_append(leftover, to_polygons(std::move(surface.expolygon)));
+                        else
+                            kept.emplace_back(std::move(surface));
+                    }
+                    layerm->fill_surfaces.surfaces = std::move(kept);
+                    layerm->fill_surfaces.append(diff_ex(leftover, intersection_with_clearance), surface_type);
+                    if (layerm == layerms.back()) {
+                        Surface templ(surface_type, ExPolygon());
+                        templ.thickness = 0.;
+                        for (LayerRegion *layerm2 : layerms)
+                            templ.thickness += layerm2->layer()->height;
+                        templ.thickness_layers = (unsigned short)layerms.size();
+                        layerm->fill_surfaces.append(intersection, templ);
+                    } else {
+                        layerm->fill_surfaces.append(
+                            intersection_ex(leftover, intersection_with_clearance),
+                            stInternalVoid);
+                    }
                 }
             }
         }

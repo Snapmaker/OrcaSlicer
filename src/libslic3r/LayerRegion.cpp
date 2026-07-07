@@ -20,8 +20,6 @@
 
 namespace Slic3r {
 
-namespace {
-
 unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filament_id)
 {
     if (filament_id == 0)
@@ -81,16 +79,14 @@ unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionC
                                        object);
 }
 
-} // namespace
-
 unsigned int LayerRegion::extruder(FlowRole role) const
 {
     const PrintRegionConfig &config = this->region().config();
     unsigned int             filament_id = 0;
     if (role == frInfill)
-        filament_id = config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament_id.value;
     else if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
-        filament_id = config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament_id.value;
     else
         filament_id = this->region().extruder(role);
 
@@ -188,9 +184,12 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
     const PrintRegionConfig &region_config = this->region().config();
     const PrintObjectConfig& object_config = this->layer()->object()->config();
     PrintRegionConfig        perimeter_config = region_config;
-    perimeter_config.wall_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.wall_filament.value))));
-    perimeter_config.sparse_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament.value))));
-    perimeter_config.solid_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.solid_infill_filament.value))));
+    perimeter_config.outer_wall_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.outer_wall_filament_id.value))));
+    perimeter_config.inner_wall_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.inner_wall_filament_id.value))));
+    perimeter_config.sparse_infill_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament_id.value))));
+    perimeter_config.internal_solid_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.internal_solid_filament_id.value))));
+    perimeter_config.top_surface_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.top_surface_filament_id.value))));
+    perimeter_config.bottom_surface_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.bottom_surface_filament_id.value))));
     // This needs to be in sync with PrintObject::_slice() slicing_mode_normal_below_layer!
     bool spiral_mode = print_config.spiral_mode &&
         //FIXME account for raft layers.

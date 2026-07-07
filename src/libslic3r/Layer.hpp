@@ -16,7 +16,14 @@ using LayerPtrs = std::vector<Layer*>;
 class LayerRegion;
 using LayerRegionPtrs = std::vector<LayerRegion*>;
 class PrintRegion;
+class PrintRegionConfig;
 class PrintObject;
+
+// Snapmaker mixed filament: resolve a configured 1-based filament id to the physical filament
+// actually printing on this layer (0 "Default" passes through unchanged). The infill variant
+// additionally resolves grouped manual patterns like the innermost perimeter.
+unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filament_id);
+unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionConfig &config, unsigned int filament_id);
 
 namespace FillAdaptive {
     struct Octree;

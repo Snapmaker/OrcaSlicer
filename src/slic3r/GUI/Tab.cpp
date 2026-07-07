@@ -2571,9 +2571,12 @@ void TabPrint::build()
         optgroup->append_single_option_line("single_extruder_multi_material_priming", "multimaterial_settings_prime_tower");
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
-        optgroup->append_single_option_line("wall_filament", "multimaterial_settings_filament_for_features#walls");
-        optgroup->append_single_option_line("sparse_infill_filament", "multimaterial_settings_filament_for_features#infill");
-        optgroup->append_single_option_line("solid_infill_filament", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("outer_wall_filament_id", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("inner_wall_filament_id", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("sparse_infill_filament_id", "multimaterial_settings_filament_for_features#infill");
+        optgroup->append_single_option_line("internal_solid_filament_id", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("top_surface_filament_id", "multimaterial_settings_filament_for_features#solid-infill");
+        optgroup->append_single_option_line("bottom_surface_filament_id", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("wipe_tower_filament", "multimaterial_settings_filament_for_features#wipe-tower");
 
         optgroup = page->new_optgroup(L("Ooze prevention"), L"param_ooze_prevention");
@@ -2879,16 +2882,24 @@ static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig
 
     if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
         const int extruder = extruder_opt->value;
-        if (!resolved.has("wall_filament"))
-            resolved.set_key_value("wall_filament", new ConfigOptionInt(extruder));
-        if (!resolved.has("sparse_infill_filament"))
-            resolved.set_key_value("sparse_infill_filament", new ConfigOptionInt(extruder));
-        if (!resolved.has("solid_infill_filament"))
-            resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(extruder));
+        for (const char* key : {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+                                "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"})
+            if (!resolved.has(key))
+                resolved.set_key_value(key, new ConfigOptionInt(extruder));
     }
 
-    if (!resolved.has("solid_infill_filament") && resolved.has("sparse_infill_filament"))
-        resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament")));
+    // 0 = "Default" (use the active object/part filament); only explicit selections propagate.
+    if (resolved.has("sparse_infill_filament_id") && !resolved.has("internal_solid_filament_id"))
+        if (const int sparse_infill_filament_id = resolved.opt_int("sparse_infill_filament_id"); sparse_infill_filament_id > 0)
+            resolved.set_key_value("internal_solid_filament_id", new ConfigOptionInt(sparse_infill_filament_id));
+
+    if (resolved.has("internal_solid_filament_id"))
+        if (const int internal_solid_filament_id = resolved.opt_int("internal_solid_filament_id"); internal_solid_filament_id > 0) {
+            if (!resolved.has("top_surface_filament_id"))
+                resolved.set_key_value("top_surface_filament_id", new ConfigOptionInt(internal_solid_filament_id));
+            if (!resolved.has("bottom_surface_filament_id"))
+                resolved.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(internal_solid_filament_id));
+        }
 
     return resolved;
 }

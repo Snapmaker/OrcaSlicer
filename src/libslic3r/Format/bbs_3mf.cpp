@@ -1,6 +1,7 @@
 #include "../libslic3r.h"
 #include "../Exception.hpp"
 #include "../Model.hpp"
+#include "../MixedFilament.hpp"
 #include "../Preset.hpp"
 #include "../Utils.hpp"
 #include "../LocalesUtils.hpp"
@@ -274,7 +275,8 @@ static constexpr const char* OFFSET_ATTR = "offset";
 static constexpr const char* PRINTABLE_ATTR = "printable";
 static constexpr const char* INSTANCESCOUNT_ATTR = "instances_count";
 static constexpr const char* CUSTOM_SUPPORTS_ATTR = "paint_supports";
-static constexpr const char* CUSTOM_FUZZY_SKIN_ATTR  = "paint_fuzzy_skin";
+static constexpr const char* CUSTOM_FUZZY_SKIN_ATTR      = "paint_fuzzy_skin";
+static constexpr const char* CUSTOM_FUZZY_SKIN_ATTR_OLD  = "paint_fuzzy";
 static constexpr const char* CUSTOM_SEAM_ATTR = "paint_seam";
 static constexpr const char* MMU_SEGMENTATION_ATTR = "paint_color";
 // BBS
@@ -438,6 +440,18 @@ std::string bbs_get_attribute_value_string(const char** attributes, unsigned int
     return (text != nullptr) ? text : "";
 }
 
+// Try each key in order, returning the first non-empty value.
+// Supports any number of fallback keys for backward compatibility.
+static std::string bbs_get_attribute_value_string(const char** attributes, unsigned int attributes_size,
+                                                   std::initializer_list<const char*> keys)
+{
+    for (const char* key : keys) {
+        std::string data = bbs_get_attribute_value_string(attributes, attributes_size, key);
+        if (!data.empty()) return data;
+    }
+    return "";
+}
+
 float bbs_get_attribute_value_float(const char** attributes, unsigned int attributes_size, const char* attribute_key)
 {
     float value = 0.0f;
@@ -573,6 +587,54 @@ bool bbs_is_valid_object_type(const std::string& type)
 }
 
 namespace Slic3r {
+
+static size_t physical_filament_count_from_project_config(const DynamicPrintConfig &config)
+{
+    for (const char* key : {"filament_colour", "filament_settings_id",
+                             "filament_ids", "default_filament_colour"}) {
+        if (const auto* opt = config.option<ConfigOptionStrings>(key); opt && !opt->values.empty())
+            return opt->values.size();
+    }
+    if (const auto* opt = config.option<ConfigOptionFloats>("nozzle_diameter"); opt && !opt->values.empty())
+        return opt->values.size();
+    return 0;
+}
+
+static int max_supported_filament_id_from_project_config(const DynamicPrintConfig &config)
+{
+    size_t physical_count = 0;
+    std::vector<std::string> physical_colors;
+    auto try_color_key = [&](const char* key) -> bool {
+        const auto* opt = config.option<ConfigOptionStrings>(key);
+        if (opt != nullptr && !opt->values.empty()) {
+            physical_count  = opt->values.size();
+            physical_colors = opt->values;
+            return true;
+        }
+        return false;
+    };
+    if (!try_color_key("filament_colour") && !try_color_key("default_filament_colour")) {
+        physical_count = physical_filament_count_from_project_config(config);
+        if (physical_count > 0)
+            physical_colors.assign(physical_count, "#FFFFFF");
+    }
+
+    if (physical_count == 0)
+        return std::numeric_limits<int>::max();
+
+    size_t max_filament_id = physical_count;
+    if (physical_count >= 2) {
+        if (const auto *mixed_defs_opt = config.option<ConfigOptionString>("mixed_filament_definitions");
+            mixed_defs_opt != nullptr && !mixed_defs_opt->value.empty()) {
+            MixedFilamentManager mixed_mgr;
+            mixed_mgr.auto_generate(physical_colors);
+            mixed_mgr.load_custom_entries(mixed_defs_opt->value, physical_colors);
+            max_filament_id = mixed_mgr.total_filaments(physical_count);
+        }
+    }
+
+    return max_filament_id >= size_t(std::numeric_limits<int>::max()) ? std::numeric_limits<int>::max() : int(max_filament_id);
+}
 
 void PlateData::parse_filament_info(GCodeProcessorResult *result)
 {
@@ -1787,7 +1849,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     // extract slic3r print config file
                 //    _extract_print_config_from_archive(archive, stat, config, config_substitutions, filename);
                 //} else
-                if (!dont_load_config && boost::algorithm::iequals(name, BBS_PROJECT_CONFIG_FILE)) {
+                if (boost::algorithm::iequals(name, BBS_PROJECT_CONFIG_FILE)) {
                     // extract slic3r print config file
                     _extract_project_config_from_archive(archive, stat, config, config_substitutions, model);
                 }
@@ -2085,8 +2147,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             ++object_idx;
         }
 
-        const ConfigOptionStrings* filament_ids_opt = config.option<ConfigOptionStrings>("filament_settings_id");
-        int max_filament_id = filament_ids_opt ? filament_ids_opt->size() : std::numeric_limits<int>::max();
+        const int max_filament_id = max_supported_filament_id_from_project_config(config);
         for (ModelObject* mo : m_model->objects) {
             const ConfigOptionInt* extruder_opt = dynamic_cast<const ConfigOptionInt*>(mo->config.option("extruder"));
             int extruder_id = 0;
@@ -3605,7 +3666,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             m_curr_object->geometry.custom_supports.push_back(bbs_get_attribute_value_string(attributes, num_attributes, CUSTOM_SUPPORTS_ATTR));
             m_curr_object->geometry.custom_seam.push_back(bbs_get_attribute_value_string(attributes, num_attributes, CUSTOM_SEAM_ATTR));
             m_curr_object->geometry.mmu_segmentation.push_back(bbs_get_attribute_value_string(attributes, num_attributes, MMU_SEGMENTATION_ATTR));
-            m_curr_object->geometry.fuzzy_skin.push_back(bbs_get_attribute_value_string(attributes, num_attributes, CUSTOM_FUZZY_SKIN_ATTR));
+            m_curr_object->geometry.fuzzy_skin.push_back(bbs_get_attribute_value_string(attributes, num_attributes, {CUSTOM_FUZZY_SKIN_ATTR, CUSTOM_FUZZY_SKIN_ATTR_OLD}));
             // BBS
             m_curr_object->geometry.face_properties.push_back(bbs_get_attribute_value_string(attributes, num_attributes, FACE_PROPERTY_ATTR));
         }
@@ -5247,7 +5308,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             current_object->geometry.custom_supports.push_back(bbs_get_attribute_value_string(attributes, num_attributes, CUSTOM_SUPPORTS_ATTR));
             current_object->geometry.custom_seam.push_back(bbs_get_attribute_value_string(attributes, num_attributes, CUSTOM_SEAM_ATTR));
             current_object->geometry.mmu_segmentation.push_back(bbs_get_attribute_value_string(attributes, num_attributes, MMU_SEGMENTATION_ATTR));
-            current_object->geometry.fuzzy_skin.push_back(bbs_get_attribute_value_string(attributes, num_attributes, CUSTOM_FUZZY_SKIN_ATTR));
+            current_object->geometry.fuzzy_skin.push_back(bbs_get_attribute_value_string(attributes, num_attributes, {CUSTOM_FUZZY_SKIN_ATTR, CUSTOM_FUZZY_SKIN_ATTR_OLD}));
             // BBS
             current_object->geometry.face_properties.push_back(bbs_get_attribute_value_string(attributes, num_attributes, FACE_PROPERTY_ATTR));
         }

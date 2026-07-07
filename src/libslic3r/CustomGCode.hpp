@@ -120,9 +120,10 @@ struct Info
 // So, we should set CustomGCode::Info.mode should be updated considering code values from items.
 extern void check_mode_for_custom_gcode_per_print_z(Info& info);
 
-// Return pairs of <print_z, 1-based extruder ID> sorted by increasing print_z from custom_gcode_per_print_z.
-// print_z corresponds to the first layer printed with the new extruder.
-std::vector<std::pair<double, unsigned int>> custom_tool_changes(const Info& custom_gcode_per_print_z, size_t num_extruders);
+// Return pairs of <print_z, 1-based filament ID> sorted by increasing print_z
+// from custom_gcode_per_print_z. The filament count may include mixed virtual
+// filaments in addition to physical ones.
+std::vector<std::pair<double, unsigned int>> custom_tool_changes(const Info& custom_gcode_per_print_z, size_t num_filaments);
 
 } // namespace CustomGCode
 

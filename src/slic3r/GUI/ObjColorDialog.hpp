@@ -31,8 +31,9 @@ public:
     void update_filament_ids();
     struct ButtonState
     {
-        ComboBox*   bitmap_combox{nullptr};
-        bool      is_map{false};//int id{0};
+        ComboBox *bitmap_combox{nullptr};
+        Button *  keep_color_btn{nullptr};
+        bool      is_map{false}; // int id{0};
     };
 private:
     wxBoxSizer *create_approximate_match_btn_sizer(wxWindow *parent);
@@ -40,7 +41,7 @@ private:
     wxBoxSizer *create_reset_btn_sizer(wxWindow *parent);
     wxBoxSizer *create_extruder_icon_and_rgba_sizer(wxWindow *parent, int id, const wxColour& color);
     std::string get_color_str(const wxColour &color);
-    void create_result_button_sizer(wxWindow *parent, int id);
+    wxBoxSizer *create_result_button_sizer(wxWindow *parent, int id);
     wxBoxSizer *create_color_icon_and_rgba_sizer(wxWindow *parent, int id, const wxColour& color);
     void update_color_icon_and_rgba_sizer(int id, const wxColour &color);
     ComboBox* CreateEditorCtrl(wxWindow *parent,int id);
@@ -48,10 +49,15 @@ private:
     void show_sizer(wxSizer *sizer, bool show);
     void redraw_part_table();
     void deal_approximate_match_btn();
+    void deal_keep_color_btn(int id);
     void deal_add_btn();
     void deal_reset_btn();
     void deal_algo(char cluster_number,bool redraw_ui =false);
     void deal_default_strategy();
+    int find_filament_selection_by_color(const wxColour &color) const;
+    int append_new_filament_option(const wxColour &color);
+    void update_keep_color_buttons();
+    static bool colors_are_equal(const wxColour &lhs, const wxColour &rhs);
 private:
     //view ui
     wxScrolledWindow *        m_scrolledWindow = nullptr;
@@ -66,7 +72,7 @@ private:
     std::vector<wxButton*> m_extruder_icon_list;
     std::vector<wxButton*> m_color_cluster_icon_list;//need modeify
     std::vector<wxStaticText*> m_color_cluster_text_list;//need modeify
-    std::vector<wxGridSizer*> m_row_sizer_list;         // control show or not
+    std::vector<wxSizer*> m_row_sizer_list;         // control show or not
     std::vector<ButtonState*> m_result_icon_list;
     int                       m_last_cluster_num{-1};
     const int               m_combox_width{50};
@@ -83,13 +89,11 @@ private:
     std::vector<wxColour> m_colours;//from project and show right
     std::vector<int>      m_cluster_map_filaments;//show middle
     std::vector<wxColour> m_cluster_colours;//from_algo and show left
-    bool                  m_can_add_filament{true};
     std::vector<wxColour> m_new_add_colors;
     //algo result
     std::vector<Slic3r::RGBA> m_cluster_colors_from_algo;
     std::vector<int>          m_cluster_labels_from_algo;
     //result
-    bool                        m_is_add_filament{false};
     unsigned char&             m_first_extruder_id;
     std::vector<unsigned char> &m_filament_ids;
 };

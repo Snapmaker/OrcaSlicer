@@ -2,7 +2,9 @@
 #include "I18N.hpp"
 
 #include <atomic>
+#include <cstdlib>
 #include <locale>
+#include <mutex>
 #include <ctime>
 #include <cstdarg>
 #include <stdio.h>
@@ -62,6 +64,7 @@
 #include <boost/filesystem/fstream.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/nowide/convert.hpp>
+#include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/cstdio.hpp>
 
 #include "nlohmann/json.hpp"
@@ -285,7 +288,7 @@ void set_data_dir(const std::string &dir)
 {
 #ifdef WIN32
     // `dir` is UTF-8 from wx (e.g. GetUserDataDir().ToUTF8()). Do not round-trip through
-    // path(wstring).string() — that uses the process narrow code page and corrupts CJK profile paths.
+    // path(wstring).string() - that uses the process narrow code page and corrupts CJK profile paths.
     g_data_dir = dir;
     if (!g_data_dir.empty()) {
         const boost::filesystem::path p(boost::nowide::widen(g_data_dir));
@@ -372,7 +375,7 @@ void set_log_path_and_level(const std::string& file, unsigned int level)
 	//BBS log file at C:\\Users\\[yourname]\\AppData\\Roaming\\Snapmaker_Orca\\log\\[log_filename].log
 	auto log_folder = data_dir_path() / "log";
 	if (!boost::filesystem::exists(log_folder)) {
-		boost::filesystem::create_directory(log_folder);
+		boost::filesystem::create_directories(log_folder);
 	}
 	auto full_path = (log_folder / file).make_preferred();
 
@@ -1200,7 +1203,8 @@ std::string string_printf(const char *format, ...)
 
 std::string header_slic3r_generated()
 {
-	return std::string(SLIC3R_APP_NAME " " Snapmaker_VERSION);
+    // Keep generated G-code branded like Snapmaker Orca for printer-side compatibility.
+    return std::string("Snapmaker Orca ") + Snapmaker_VERSION;
 }
 
 std::string header_gcodeviewer_generated()
@@ -1553,20 +1557,22 @@ bool bbl_calc_md5(std::string &filename, std::string &md5_out)
 }
 
 // SoftFever: copy directory recursively
-void copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter)
+bool copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target,
+                                std::function<bool(const std::string)> filter)
 {
     BOOST_LOG_TRIVIAL(debug) << Slic3r::format("copy_directory_recursively %1% -> %2%", source, target);
-    std::string error_message;
 
     if (!boost::filesystem::exists(source) || !boost::filesystem::is_directory(source)) {
-        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);        
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);
+        return false;
     }
 
     if (boost::filesystem::exists(target))
         boost::filesystem::remove_all(target);
     boost::filesystem::create_directories(target);
-    for (auto &dir_entry : boost::filesystem::directory_iterator(source))
-    {
+
+    std::string error_message;
+    for (auto &dir_entry : boost::filesystem::directory_iterator(source)) {
         const boost::filesystem::path dest_child = target / dir_entry.path().filename();
 #ifdef WIN32
         const std::string name = boost::nowide::narrow(dir_entry.path().filename().wstring());
@@ -1575,11 +1581,11 @@ void copy_directory_recursively(const boost::filesystem::path &source, const boo
 #endif
 
         if (boost::filesystem::is_directory(dir_entry)) {
-            copy_directory_recursively(dir_entry.path(), dest_child);
-        }
-        else {
-			if(filter && filter(name))
-				continue;
+            if (!copy_directory_recursively(dir_entry, dest_child, filter))
+                return false;
+        } else {
+            if (filter && filter(name))
+                continue;
 #ifdef WIN32
             const std::string source_file = boost::nowide::narrow(dir_entry.path().wstring());
             const std::string target_file = boost::nowide::narrow(dest_child.wstring());
@@ -1587,16 +1593,99 @@ void copy_directory_recursively(const boost::filesystem::path &source, const boo
             const std::string source_file = dir_entry.path().string();
             const std::string target_file = dest_child.string();
 #endif
-            CopyFileResult cfr = copy_file(source_file, target_file, error_message, false);
+            const CopyFileResult cfr = copy_file(source_file, target_file, error_message, false);
             if (cfr != CopyFileResult::SUCCESS) {
-                BOOST_LOG_TRIVIAL(error) << "Copying failed(" << cfr << "): " << error_message;
-                throw Slic3r::CriticalException(Slic3r::format(
-                    ("Copying directory %1% to %2% failed: %3%"),
-                    source, target, error_message));
+                BOOST_LOG_TRIVIAL(error) << "Copying failed(" << static_cast<int>(cfr) << "): " << error_message
+                                         << " (" << source_file << " -> " << target_file << ")";
+                return false;
             }
         }
     }
-    return;
+    return true;
+}
+
+bool atomic_replace_directory(
+    const boost::filesystem::path &source,
+    const boost::filesystem::path &target,
+    std::function<bool(const std::string)> filter,
+    std::function<bool(const boost::filesystem::path &staging)> validate_staging)
+{
+    namespace fs = boost::filesystem;
+    BOOST_LOG_TRIVIAL(debug) << Slic3r::format("atomic_replace_directory %1% -> %2%", source, target);
+
+    if (!fs::exists(source) || !fs::is_directory(source)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: invalid source %1%", source);
+        return false;
+    }
+
+    const fs::path staging = fs::path(target.string() + ".new");
+    const fs::path backup  = fs::path(target.string() + ".old");
+
+    auto remove_path = [](const fs::path &p) -> bool {
+        boost::system::error_code ec;
+        if (!fs::exists(p))
+            return true;
+        fs::remove_all(p, ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(warning) << Slic3r::format("atomic_replace_directory: failed to remove %1%: %2%", p, ec.message());
+            return false;
+        }
+        return true;
+    };
+
+    if (!remove_path(staging)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to clear staging %1%", staging);
+        return false;
+    }
+
+    if (!copy_directory_recursively(source, staging, filter)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to stage %1% -> %2%", source, staging);
+        remove_path(staging);
+        return false;
+    }
+
+    if (validate_staging && !validate_staging(staging)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: staging validation failed for %1%", target);
+        remove_path(staging);
+        return false;
+    }
+
+    if (!remove_path(backup)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to clear backup %1%", backup);
+        remove_path(staging);
+        return false;
+    }
+
+    {
+        boost::system::error_code ec;
+        fs::rename(target, backup, ec);
+        if (ec && ec != boost::system::errc::no_such_file_or_directory) {
+            BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to backup %1%: %2%", target, ec.message());
+            remove_path(staging);
+            return false;
+        }
+    }
+
+    {
+        boost::system::error_code ec;
+        fs::rename(staging, target, ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to activate %1%: %2%", target, ec.message());
+            if (fs::exists(backup)) {
+                boost::system::error_code ec2;
+                fs::rename(backup, target, ec2);
+                if (ec2)
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to restore %1% from backup: %2%",
+                                                               target, ec2.message());
+            }
+            remove_path(staging);
+            return false;
+        }
+    }
+
+    remove_path(backup);
+    BOOST_LOG_TRIVIAL(info) << Slic3r::format("atomic_replace_directory: replaced %1%", target);
+    return true;
 }
 
 void save_string_file(const boost::filesystem::path& p, const std::string& str)

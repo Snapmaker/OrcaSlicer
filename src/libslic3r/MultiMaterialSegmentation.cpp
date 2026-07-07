@@ -8,6 +8,7 @@
 #include "MutablePolygon.hpp"
 #include "format.hpp"
 
+#include <algorithm>
 #include <utility>
 #include <unordered_set>
 
@@ -1829,15 +1830,14 @@ static std::vector<std::vector<ExPolygons>> merge_segmented_layers(const std::ve
 {
     const size_t                         num_layers = segmented_regions.size();
     std::vector<std::vector<ExPolygons>> segmented_regions_merged(num_layers);
-    segmented_regions_merged.assign(num_layers, std::vector<ExPolygons>(num_facets_states - 1));
+    segmented_regions_merged.assign(num_layers, std::vector<ExPolygons>(num_facets_states));
     assert(!top_and_bottom_layers.size() || num_facets_states == top_and_bottom_layers.size());
 
     BOOST_LOG_TRIVIAL(debug) << "Print object segmentation - Merging segmented layers in parallel - Begin";
     tbb::parallel_for(tbb::blocked_range<size_t>(0, num_layers), [&segmented_regions, &top_and_bottom_layers, &segmented_regions_merged, &num_facets_states, &throw_on_cancel_callback](const tbb::blocked_range<size_t> &range) {
         for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++layer_idx) {
             assert(segmented_regions[layer_idx].size() == num_facets_states);
-            // Zero is skipped because it is the default color of the volume
-            for (size_t extruder_id = 1; extruder_id < num_facets_states; ++extruder_id) {
+            for (size_t extruder_id = 0; extruder_id < num_facets_states; ++extruder_id) {
                 throw_on_cancel_callback();
                 if (!segmented_regions[layer_idx][extruder_id].empty()) {
                     ExPolygons segmented_regions_trimmed = segmented_regions[layer_idx][extruder_id];
@@ -1849,16 +1849,16 @@ static std::vector<std::vector<ExPolygons>> merge_segmented_layers(const std::ve
                         }
                     }
 
-                    segmented_regions_merged[layer_idx][extruder_id - 1] = std::move(segmented_regions_trimmed);
+                    segmented_regions_merged[layer_idx][extruder_id] = std::move(segmented_regions_trimmed);
                 }
 
                 if (!top_and_bottom_layers.empty() && !top_and_bottom_layers[extruder_id][layer_idx].empty()) {
-                    bool was_top_and_bottom_empty = segmented_regions_merged[layer_idx][extruder_id - 1].empty();
-                    append(segmented_regions_merged[layer_idx][extruder_id - 1], top_and_bottom_layers[extruder_id][layer_idx]);
+                    bool was_top_and_bottom_empty = segmented_regions_merged[layer_idx][extruder_id].empty();
+                    append(segmented_regions_merged[layer_idx][extruder_id], top_and_bottom_layers[extruder_id][layer_idx]);
 
                     // Remove dimples (#7235) appearing after merging side segmentation of the model with tops and bottoms painted layers.
                     if (!was_top_and_bottom_empty)
-                        segmented_regions_merged[layer_idx][extruder_id - 1] = offset2_ex(union_ex(segmented_regions_merged[layer_idx][extruder_id - 1]), float(SCALED_EPSILON), -float(SCALED_EPSILON));
+                        segmented_regions_merged[layer_idx][extruder_id] = offset2_ex(union_ex(segmented_regions_merged[layer_idx][extruder_id]), float(SCALED_EPSILON), -float(SCALED_EPSILON));
                 }
             }
         }
@@ -2195,10 +2195,36 @@ std::vector<std::vector<ExPolygons>> segmentation_by_painting(const PrintObject 
 
 // Returns multi-material segmentation based on painting in multi-material segmentation gizmo
 std::vector<std::vector<ExPolygons>> multi_material_segmentation_by_painting(const PrintObject &print_object, const std::function<void()> &throw_on_cancel_callback) {
-    const size_t num_facets_states  = print_object.print()->config().filament_colour.size() + 1;
+    const size_t num_physical_filaments = print_object.print()->config().filament_colour.size();
+    const size_t num_total_filaments    = print_object.print()->mixed_filament_manager().total_filaments(num_physical_filaments);
+    const size_t num_facets_states      = num_total_filaments + 1;
     const float  max_width          = float(print_object.config().mmu_segmented_region_max_width.value);
     const float  interlocking_depth = float(print_object.config().mmu_segmented_region_interlocking_depth.value);
     const bool   interlocking_beam  = print_object.config().interlocking_beam.value;
+
+    size_t max_painted_state = 0;
+    for (const ModelVolume *mv : print_object.model_object()->volumes) {
+        if (!mv->is_model_part())
+            continue;
+        const auto &used_states = mv->mmu_segmentation_facets.get_data().used_states;
+        for (size_t state_idx = static_cast<size_t>(EnforcerBlockerType::Extruder1); state_idx < used_states.size(); ++state_idx) {
+            if (used_states[state_idx])
+                max_painted_state = std::max(max_painted_state, state_idx);
+        }
+    }
+    if (max_painted_state >= num_facets_states) {
+        BOOST_LOG_TRIVIAL(warning) << "multi_material_segmentation_by_painting dropping painted states above segmentation range"
+                                   << " max_painted_state=" << max_painted_state
+                                   << " num_facets_states=" << num_facets_states
+                                   << " physical_filaments=" << num_physical_filaments
+                                   << " total_filaments=" << num_total_filaments;
+    } else {
+        BOOST_LOG_TRIVIAL(debug) << "multi_material_segmentation_by_painting state range check"
+                                 << " max_painted_state=" << max_painted_state
+                                 << " num_facets_states=" << num_facets_states
+                                 << " physical_filaments=" << num_physical_filaments
+                                 << " total_filaments=" << num_total_filaments;
+    }
 
     const auto extract_facets_info = [](const ModelVolume &mv) -> ModelVolumeFacetsInfo {
         return {mv.mmu_segmentation_facets, mv.is_mm_painted(), false};

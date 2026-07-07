@@ -73,5 +73,6 @@
     ],
     "slow_down_min_speed": [
         "20"
-    ]
+    ],
+    "filament_is_high_temperature": ["0"]
 }

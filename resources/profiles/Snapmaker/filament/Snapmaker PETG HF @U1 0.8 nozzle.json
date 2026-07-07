@@ -71,21 +71,15 @@
     "filament_wipe_distance": [
         "2"
     ],
-    "filament_z_hop_types": [
-        "Spiral Lift"
-    ],
+    "filament_z_hop_types": ["Slope Lift"],
     "hot_plate_temp": [
         "80"
     ],
     "hot_plate_temp_initial_layer": [
         "80"
     ],
-    "nozzle_temperature": [
-        "235"
-    ],
-    "nozzle_temperature_initial_layer": [
-        "235"
-    ],
+    "nozzle_temperature": ["245"],
+    "nozzle_temperature_initial_layer": ["245"],
     "nozzle_temperature_range_low": [
         "230"
     ],

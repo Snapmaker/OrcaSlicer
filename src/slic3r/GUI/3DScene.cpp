@@ -1219,14 +1219,22 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
         if (filamemts_opt == nullptr)
             return;
 
-        size_t colors_count = (size_t) filamemts_opt->values.size();
-        if (colors_count == 0)
+        std::vector<std::string> filament_colors = filamemts_opt->values;
+        if (filament_colors.empty())
             return;
-        colors.resize(colors_count);
 
-        for (unsigned int i = 0; i < colors_count; ++i) {
+        // Include enabled mixed (virtual) filament colors so volume extruder IDs
+        // assigned to mixed rows render correctly in Prepare view.
+        if (GUI::wxGetApp().preset_bundle != nullptr) {
+            const auto mixed_colors = GUI::wxGetApp().preset_bundle->mixed_filaments.display_colors();
+            filament_colors.insert(filament_colors.end(), mixed_colors.begin(), mixed_colors.end());
+        }
+
+        colors.resize(filament_colors.size());
+
+        for (size_t i = 0; i < filament_colors.size(); ++i) {
             ColorRGBA          rgba;
-            const std::string& fil_color = config->opt_string("filament_colour", i);
+            const std::string& fil_color = filament_colors[i];
             if (decode_color(fil_color, rgba))
                 colors[i] = {fil_color, rgba};
         }

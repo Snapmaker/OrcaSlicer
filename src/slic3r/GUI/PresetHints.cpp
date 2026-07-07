@@ -129,7 +129,7 @@ std::string PresetHints::maximum_volumetric_flow_description(const PresetBundle 
         return i <= 0 || i > num_extruders || idx_extruder == -1 || idx_extruder == i - 1;
     };
     bool perimeter_extruder_active                  = feature_extruder_active(print_config.opt_int("wall_filament"));
-    bool infill_extruder_active                     = feature_extruder_active(print_config.opt_int("sparse_infill_filament"));
+    bool infill_extruder_active                     = feature_extruder_active(print_config.opt_int("wall_filament"));
     bool solid_infill_extruder_active               = feature_extruder_active(print_config.opt_int("solid_infill_filament"));
     bool support_material_extruder_active           = feature_extruder_active(print_config.opt_int("support_filament"));
     bool support_material_interface_extruder_active = feature_extruder_active(print_config.opt_int("support_interface_filament"));

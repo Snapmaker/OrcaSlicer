@@ -103,7 +103,7 @@ unsigned int infill_filament_id_1based(const LayerTools &layer_tools, const Prin
         return sparse_infill_filament_id_1based(region);
     if (role == erTopSolidInfill || role == erIroning)
         return region.config().top_surface_filament_id.value;
-    if (role == erBottomSurface)
+    if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
         return region.config().bottom_surface_filament_id.value;
     return is_solid_infill(role) ? region.config().internal_solid_filament_id.value : sparse_infill_filament_id_1based(region);
 }
@@ -746,6 +746,10 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                                                         float(support_layer->height),
                                                         &object);
         // support nozzle diameter restriction, resolve a "default" (0) support filament to a nozzle-matching one here, preferring a filament this layer already prints with to save toolchanges.
+        // Note: this fork collects support before the object's own layers, so the preference scan
+        // only sees filaments of previously collected objects and otherwise settles on the
+        // deterministic resolved_default_support_filament(); GCode::process_layer() re-prefers
+        // layer-scheduled extruders for "don't care" support when the G-code is emitted.
         if (object.config().support_nozzle_diameter.value > 0.) {
             auto restrict_default_filament = [&object, &layer_tools](unsigned int configured) -> unsigned int {
                 if (configured != 0)
@@ -811,36 +815,37 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 }
 
                 if (something_nonoverriddable){
-                    const unsigned int configured_wall = (extruder_override == 0) ? region.config().outer_wall_filament_id.value : extruder_override;
-                    unsigned int       wall_ext        = resolve_mixed(configured_wall, layerCount, float(layer->print_z), float(layer->height), &object);
-                    const unsigned int grouped_id =
-                        grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_wall);
-                    if (grouped_id != 0) {
-                        const std::vector<unsigned int> ordered =
-                            m_mixed_mgr->ordered_perimeter_extruders(grouped_id,
-                                                                     m_num_physical,
-                                                                     layerCount,
-                                                                     float(layer->print_z),
-                                                                     float(layer->height));
-                        if (!ordered.empty()) {
-                            if (ordered.size() >= 2)
-                                layer_tools.preserve_extruder_order = true;
-                            for (unsigned int extruder_id : ordered) {
-                                layer_tools.extruders.emplace_back(extruder_id);
-                                if (layerCount == 0 &&
-                                    std::find(firstLayerExtruders.begin(), firstLayerExtruders.end(), int(extruder_id)) == firstLayerExtruders.end())
-                                    firstLayerExtruders.emplace_back(int(extruder_id));
+                    // Emplace a wall filament, expanding a grouped manual-pattern mixed filament
+                    // into its per-layer ordered physical extruders (both walls need this so the
+                    // wipe tower planner sees every extruder the grouped split will emit).
+                    auto emplace_wall_filament = [&](unsigned int configured_wall, bool first_layer_candidate) {
+                        unsigned int wall_ext = resolve_mixed(configured_wall, layerCount, float(layer->print_z), float(layer->height), &object);
+                        const unsigned int grouped_id =
+                            grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_wall);
+                        if (grouped_id != 0) {
+                            const std::vector<unsigned int> ordered =
+                                m_mixed_mgr->ordered_perimeter_extruders(grouped_id,
+                                                                         m_num_physical,
+                                                                         layerCount,
+                                                                         float(layer->print_z),
+                                                                         float(layer->height));
+                            if (!ordered.empty()) {
+                                if (ordered.size() >= 2)
+                                    layer_tools.preserve_extruder_order = true;
+                                for (unsigned int extruder_id : ordered) {
+                                    layer_tools.extruders.emplace_back(extruder_id);
+                                    if (first_layer_candidate && layerCount == 0 &&
+                                        std::find(firstLayerExtruders.begin(), firstLayerExtruders.end(), int(extruder_id)) == firstLayerExtruders.end())
+                                        firstLayerExtruders.emplace_back(int(extruder_id));
+                                }
+                                return;
                             }
-                        } else {
-                            layer_tools.extruders.emplace_back(wall_ext);
-                            if (layerCount == 0)
-                                firstLayerExtruders.emplace_back(wall_ext);
                         }
-                    } else {
                         layer_tools.extruders.emplace_back(wall_ext);
-                        if (layerCount == 0)
+                        if (first_layer_candidate && layerCount == 0)
                             firstLayerExtruders.emplace_back(wall_ext);
-                    }
+                    };
+                    emplace_wall_filament((extruder_override == 0) ? region.config().outer_wall_filament_id.value : extruder_override, true);
                     // alternate_extra_wall should add an inner loop on odd layers (mirrors PerimeterGenerator's loop_number and the spiral gate of LayerRegion::make_perimeters()); layers dropping the loop again (only_one_wall_top / only_one_wall_first_layer) may reserve the filament unused, which merely costs a toolchange.
                     const bool spiral_vase_layer = object.print()->config().spiral_mode.value &&
                         layer->id() >= size_t(region.config().bottom_shell_layers.value) &&
@@ -849,11 +854,7 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                         (region.config().wall_loops.value > 1 ||
                          (region.config().alternate_extra_wall.value && layer->id() % 2 == 1 &&
                           region.config().sparse_infill_density.value > 0 && !spiral_vase_layer)))
-                        layer_tools.extruders.emplace_back(resolve_mixed(region.config().inner_wall_filament_id.value,
-                                                                         layerCount,
-                                                                         float(layer->print_z),
-                                                                         float(layer->height),
-                                                                         &object));
+                        emplace_wall_filament(region.config().inner_wall_filament_id.value, false);
                 }
 
                 layer_tools.has_object = true;

@@ -3486,6 +3486,10 @@ double PrintObject::extruder_preferred_layer_height(unsigned int filament_id) co
     // Region filament ids are 1-based, 0 ("Default") falls back to the first filament.
     if (filament_id == 0)
         filament_id = 1;
+    // Snapmaker mixed filament: virtual mixed ids (beyond the physical filaments) resolve to a
+    // different physical extruder on every layer, so no stable preferred height exists for them.
+    if (filament_id > print_config.filament_diameter.values.size())
+        return 0.;
     // Classic multi-tool printers index per-extruder vectors by the filament id directly (like the min/max_layer_height and nozzle_diameter lookups elsewhere).
     const size_t extruder_idx = filament_id - 1;
     return std::max(0., print_config.extruder_layer_height.get_at(extruder_idx));
@@ -3522,13 +3526,23 @@ unsigned int PrintObject::region_layer_height_multiplier(const PrintRegion &regi
     std::vector<unsigned int> filaments; // 0-based filament indices
     if (config.wall_loops.value > 0) {
         const int num_filaments = (int)m_print->config().filament_diameter.size();
-        auto emplace_filament = [num_filaments, &filaments](int filament_id) {
+        bool has_mixed_wall = false;
+        auto emplace_filament = [num_filaments, &filaments, &has_mixed_wall](int filament_id) {
             int i = std::max(0, filament_id - 1);
-            filaments.emplace_back(i >= num_filaments ? 0 : i);
+            if (i >= num_filaments) {
+                // Snapmaker mixed filament: virtual mixed ids resolve to a different physical
+                // extruder per layer, so such walls need every layer and must never combine
+                // (matches Print::validate() and extruder_preferred_layer_height()).
+                has_mixed_wall = true;
+                return;
+            }
+            filaments.emplace_back(i);
         };
         emplace_filament(config.outer_wall_filament_id.value);
         if (config.wall_loops.value > 1)
             emplace_filament(config.inner_wall_filament_id.value);
+        if (has_mixed_wall)
+            return 1;
     } else
         // The brim is not considered, it prints on the first layer which is never combined.
         PrintRegion::collect_object_printing_extruders(m_print->config(), config, false /* has_brim */, filaments);
@@ -4534,9 +4548,10 @@ void PrintObject::combine_infill()
         if (this->region_layer_height_multiplier(region) > 1)
             continue;
         // At 100% density the combined surfaces are internal solid infill (see use_solid_infill
-        // below), so that filament's preference and limits decide.
-        const int combine_filament_id = std::max(1, std::fabs(region.config().sparse_infill_density.value - 100.) < EPSILON ?
-            region.config().internal_solid_filament_id.value : region.config().sparse_infill_filament_id.value);
+        // below), but this fork prints them with the sparse infill filament
+        // (internal_solid_infill_uses_sparse_filament in PrintRegion::extruder()), so the sparse
+        // filament's preference and limits decide in both cases.
+        const int combine_filament_id = std::max(1, region.config().sparse_infill_filament_id.value);
         // Per-extruder vector index: the filament index is the extruder index on classic multi-tool printers (like extruder_preferred_layer_height()).
         const size_t combine_extruder_idx = size_t(combine_filament_id - 1);
         double preferred_infill_height = this->extruder_preferred_layer_height((unsigned int)combine_filament_id);

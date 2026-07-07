@@ -5030,12 +5030,22 @@ LayerResult GCode::process_layer(const Print& print,
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
             if (layer_tools.extruder_override != 0)
                 return layer_tools.extruder_override;
-            const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return unsigned(region.config().outer_wall_filament_id.value);
             if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
                 return unsigned(region.config().sparse_infill_filament_id.value);
             if (role == erTopSolidInfill || role == erIroning)
                 return unsigned(region.config().top_surface_filament_id.value);
-            if (role == erBottomSurface)
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
                 return unsigned(region.config().bottom_surface_filament_id.value);
             if (is_solid_infill(role))
                 return unsigned(region.config().internal_solid_filament_id.value);
@@ -5051,12 +5061,22 @@ LayerResult GCode::process_layer(const Print& print,
                                                  const ExtrusionEntityCollection&                    entities,
                                                  const PrintRegion&                                  region) -> int {
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
-            const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return int(layer_tools.wall_extruder_id(region));
             if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
                 return int(layer_tools.sparse_infill_filament_id(region));
             if (role == erTopSolidInfill || role == erIroning)
                 return int(layer_tools.top_surface_filament_id(region));
-            if (role == erBottomSurface)
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
                 return int(layer_tools.bottom_surface_filament_id(region));
             if (is_solid_infill(role))
                 return int(layer_tools.internal_solid_filament_id(region));

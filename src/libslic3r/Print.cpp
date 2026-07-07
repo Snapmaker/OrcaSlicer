@@ -1954,11 +1954,19 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     const PrintRegionConfig &region_config = region.config();
                     // The wall filaments define the part's layer pitch and must satisfy the strict lattice constraints below; must match the gating of PrintObject::region_layer_height_multiplier().
                     std::vector<unsigned int> lattice_filaments; // 0-based
+                    bool has_mixed_wall = false;
                     if (region_config.wall_loops.value > 0) {
                         const int num_filaments = (int)m_config.filament_diameter.size();
-                        auto emplace_filament = [num_filaments, &lattice_filaments](int filament_id) {
+                        auto emplace_filament = [num_filaments, &lattice_filaments, &has_mixed_wall](int filament_id) {
                             int i = std::max(0, filament_id - 1);
-                            lattice_filaments.emplace_back(i >= num_filaments ? 0 : i);
+                            if (i >= num_filaments) {
+                                // Snapmaker mixed filament: virtual mixed ids resolve to a different
+                                // physical extruder per layer; such walls never combine
+                                // (matches PrintObject::region_layer_height_multiplier()).
+                                has_mixed_wall = true;
+                                return;
+                            }
+                            lattice_filaments.emplace_back(i);
                         };
                         emplace_filament(region_config.outer_wall_filament_id.value);
                         if (region_config.wall_loops.value > 1)
@@ -2000,7 +2008,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                             break;
                         }
                     }
-                    if (region_multiplier == 0)
+                    if (region_multiplier == 0 || has_mixed_wall)
                         region_multiplier = 1;
                     // 0-based indices of all filaments printing this region's features.
                     std::vector<unsigned int> used_filaments;
@@ -2033,8 +2041,10 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     double       combined_infill_height   = 0.;
                     unsigned int combined_infill_filament = 0; // 0-based, only valid while combining
                     if (region_multiplier == 1 && region_config.sparse_infill_density.value > 0) {
-                        const int      filament_id = solid_combined_infill ? region_config.internal_solid_filament_id.value :
-                                                                             region_config.sparse_infill_filament_id.value;
+                        // This fork prints internal solid infill at 100% density with the sparse
+                        // filament (internal_solid_infill_uses_sparse_filament), so the sparse
+                        // filament decides in both cases (mirrors PrintObject::combine_infill()).
+                        const int      filament_id = region_config.sparse_infill_filament_id.value;
                         const FlowRole role        = solid_combined_infill ? frSolidInfill : frInfill;
                         const char    *width_key   = solid_combined_infill ? "internal_solid_infill_line_width" : "sparse_infill_line_width";
                         const double   preferred   = object->extruder_preferred_layer_height((unsigned int)std::max(0, filament_id));

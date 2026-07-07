@@ -294,6 +294,13 @@ static t_config_enum_values s_keys_map_EnsureVerticalShellThickness{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(EnsureVerticalShellThickness)
 
+// ORCA: per-extruder layer height ("extruder_layer_height").
+static t_config_enum_values s_keys_map_ExtruderLayerHeightMode{
+    { "consistent", int(ExtruderLayerHeightMode::elhmConsistent) },
+    { "adaptive",   int(ExtruderLayerHeightMode::elhmAdaptive) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ExtruderLayerHeightMode)
+
 // Orca
 static t_config_enum_values s_keys_map_InternalBridgeFilter {
     { "disabled",        ibfDisabled },
@@ -3952,11 +3959,60 @@ void PrintConfigDef::init_fff_params()
     def = this->add("min_layer_height", coFloats);
     def->label = L("Min");
     def->tooltip = L("The lowest printable layer height for the extruder. "
-                     "Used to limit the minimum layer height when enable adaptive layer height.");
+                     "Used to limit the minimum layer height when enable adaptive layer height. "
+                     "Parts printed with a thicker preferred extruder layer height never fall back "
+                     "below this height either (the first layer excepted).");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0.07 });
+
+    def = this->add("extruder_layer_height", coFloats);
+    def->label = L("Preferred layer height");
+    def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
+                     "different nozzle sizes. Object parts whose walls are assigned to this extruder are "
+                     "printed only on every Nth layer with correspondingly thicker extrusions, wherever "
+                     "their geometry allows it (near-vertical walls); elsewhere they fall back to the "
+                     "object layer height. It must then be an integer multiple of the object layer height. "
+                     "When only the sparse infill of a part uses this extruder, the infill is combined up "
+                     "to this height instead. 0 means to use the object layer height.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("extruder_layer_height_mode", coEnum);
+    def->label = L("Thick layer regions");
+    def->category = L("Quality");
+    def->tooltip = L("How aggressively object parts assigned to an extruder with a thicker preferred layer "
+                     "height are combined into thick layers.\n"
+                     "Consistent: parts print with at most two layer heights, the extruder layer height "
+                     "wherever whole runs of layers fit and the object layer height everywhere else. This "
+                     "gives the most uniform walls.\n"
+                     "Adaptive: runs may also be combined at intermediate multiples of the object layer "
+                     "height, so more of the part prints with thicker layers, at the price of bands of "
+                     "varying layer heights on curved part boundaries.");
+    def->enum_keys_map = &ConfigOptionEnum<ExtruderLayerHeightMode>::get_enum_values();
+    def->enum_values.push_back("consistent");
+    def->enum_values.push_back("adaptive");
+    def->enum_labels.push_back(L("Consistent"));
+    def->enum_labels.push_back(L("Adaptive"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ExtruderLayerHeightMode>(elhmConsistent));
+
+    def = this->add("extruder_layer_height_tolerance", coPercent);
+    def->label = L("Thick layer tolerance");
+    def->category = L("Quality");
+    def->tooltip = L("How far the outline of an object part assigned to an extruder with a thicker preferred "
+                     "layer height may drift sideways across the layers of one thick run and still be combined, "
+                     "as a percentage of that extruder's nozzle diameter. Higher values combine more of curved "
+                     "part boundaries into thick layers, at the price of rougher boundary walls: deviations up "
+                     "to this fraction of the nozzle diameter are swallowed by the thick extrusions.");
+    def->sidetext = "%";
+    def->min = 0;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(10));
 
     def = this->add("slow_down_min_speed", coFloats);
     def->label = L("Min print speed");
@@ -5353,6 +5409,19 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("support_nozzle_diameter", coFloat);
+    def->label    = L("Support nozzle diameter");
+    def->category = L("Support");
+    def->tooltip = L("On printers whose extruders have different nozzle diameters, only filaments of this "
+                     "nozzle diameter are used to print support, raft and support interface. This keeps "
+                     "filaments of other nozzle sizes - with their different line widths and layer height "
+                     "limits - out of the support. Support filaments set to a non-default value must match "
+                     "this diameter. Value 0 allows any filament to print support.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
     def = this->add("support_line_width", coFloatOrPercent);
     def->label = L("Support");
     def->category = L("Quality");
@@ -6453,7 +6522,7 @@ void PrintConfigDef::init_extruder_option_keys()
 {
     // ConfigOptionFloats, ConfigOptionPercents, ConfigOptionBools, ConfigOptionStrings
     m_extruder_option_keys = {
-        "nozzle_diameter", "min_layer_height", "max_layer_height", "extruder_offset",
+        "nozzle_diameter", "min_layer_height", "max_layer_height", "extruder_layer_height", "extruder_offset",
         "retraction_length", "z_hop", "z_hop_types", "z_hop_when_prime", "travel_slope", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "extruder_colour",

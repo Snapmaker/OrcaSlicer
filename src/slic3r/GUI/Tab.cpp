@@ -2257,6 +2257,8 @@ void TabPrint::build()
         auto optgroup = page->new_optgroup(L("Layer height"), L"param_layer_height");
         optgroup->append_single_option_line("layer_height","quality_settings_layer_height");
         optgroup->append_single_option_line("initial_layer_print_height","quality_settings_layer_height");
+        optgroup->append_single_option_line("extruder_layer_height_mode","quality_settings_layer_height");
+        optgroup->append_single_option_line("extruder_layer_height_tolerance","quality_settings_layer_height");
 
         optgroup = page->new_optgroup(L("Line width"), L"param_line_width");
         optgroup->append_single_option_line("line_width","quality_settings_line_width");
@@ -2499,6 +2501,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("raft_contact_distance", "support_settings_raft");
 
         optgroup = page->new_optgroup(L("Support filament"), L"param_support_filament");
+        optgroup->append_single_option_line("support_nozzle_diameter", "support_settings_filament");
         optgroup->append_single_option_line("support_filament", "support_settings_filament#base");
         optgroup->append_single_option_line("support_interface_filament", "support_settings_filament#interface");
         optgroup->append_single_option_line("support_interface_not_for_body", "support_settings_filament#avoid-interface-filament-for-base");
@@ -4862,6 +4865,7 @@ if (is_marlin_flavor)
                 optgroup = page->new_optgroup(L("Layer height limits"), L"param_layer_height");
                 optgroup->append_single_option_line("min_layer_height", "", extruder_idx);
                 optgroup->append_single_option_line("max_layer_height", "", extruder_idx);
+                optgroup->append_single_option_line("extruder_layer_height", "", extruder_idx);
 
                 optgroup = page->new_optgroup(L("Position"), L"param_position");
                 optgroup->append_single_option_line("extruder_offset", "", extruder_idx);

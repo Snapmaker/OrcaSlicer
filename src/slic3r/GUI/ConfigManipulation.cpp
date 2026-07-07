@@ -731,6 +731,14 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_field("inner_wall_line_width", have_perimeters || have_skirt || have_brim);
     toggle_field("support_filament", have_support_material || have_skirt);
 
+    // ORCA: support_nozzle_diameter only applies to printers whose extruders have differing nozzle diameters.
+    bool mixed_nozzle_sizes = false;
+    if (const auto *nozzle_diameters = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+        nozzle_diameters != nullptr && ! nozzle_diameters->values.empty())
+        for (double d : nozzle_diameters->values)
+            mixed_nozzle_sizes |= std::abs(d - nozzle_diameters->values.front()) > EPSILON;
+    toggle_line("support_nozzle_diameter", have_support_material && mixed_nozzle_sizes);
+
     toggle_line("raft_contact_distance", have_raft && !have_support_soluble);
 
     // Orca: Raft, grid, snug and organic supports use these two parameters to control the size & density of the "brim"/flange

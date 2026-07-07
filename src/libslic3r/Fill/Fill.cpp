@@ -899,7 +899,9 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                 // ORCA: per-feature filaments. Top and internal solid fills are already resolved
                 // by layerm.extruder(extrusion_role) above; bottom surfaces print with the bottom
                 // surface filament, routed through the same mixed-filament remapping as top surfaces.
-                if (params.extrusion_role == erBottomSurface)
+                // External bridges are bottom surfaces, so they print with the bottom surface filament
+                // too (internal bridges keep their pre-seeded filament).
+                if (params.extrusion_role == erBottomSurface || params.extrusion_role == erBridgeInfill)
                     params.extruder = effective_layer_filament_id(layer,
                         (unsigned int)std::max(0, region_config.bottom_surface_filament_id.value));
                 // Orca: apply fill multiline only for sparse infill
@@ -925,9 +927,12 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 		        params.bridge = is_bridge || Fill::use_bridge_flow(params.pattern);
                 const bool is_thick_bridge = surface.is_bridge() && (surface.is_internal_bridge() ? object_config.thick_internal_bridges : object_config.thick_bridges);
 				params.flow   = params.bridge ?
-					//Orca: enable thick bridge based on config
-					layerm.bridging_flow(extrusion_role, is_thick_bridge) :
-					layerm.flow(extrusion_role, (surface.thickness == -1) ? layer.height : surface.thickness);
+					//Orca: enable thick bridge based on config. Combined layers stamp their full thickness on the surface; the non-thick bridge flow must be based on it.
+					layerm.bridging_flow(extrusion_role, is_thick_bridge, params.extruder,
+					                     (surface.thickness == -1) ? 0. : surface.thickness) :
+					// Width resolves against the nozzle of the filament that actually prints
+					// (params.extruder), which may differ from the role's default filament mapping.
+					layerm.flow(extrusion_role, (surface.thickness == -1) ? layer.height : surface.thickness, params.extruder);
 				// record speed params
                 if (!params.bridge) {
                     if (params.extrusion_role == erInternalInfill)

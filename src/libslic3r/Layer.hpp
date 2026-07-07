@@ -81,8 +81,11 @@ public:
     unsigned int extruder(FlowRole role) const;
     Flow    flow(FlowRole role) const;
     Flow    flow(FlowRole role, double layer_height) const;
-    Flow    flow(FlowRole role, double layer_height, bool use_initial_layer_width) const;
-    Flow    bridging_flow(FlowRole role, bool thick_bridge = false) const;
+    // filament_id: 1-based filament actually printing this flow when it differs from the role's default mapping (e.g. top/bottom surface fills, external bridges), 0 to resolve from the role.
+    Flow    flow(FlowRole role, double layer_height, unsigned int filament_id) const;
+    Flow    flow(FlowRole role, double layer_height, bool use_initial_layer_width, unsigned int filament_id = 0) const;
+    // layer_height overrides m_layer->height for the non-thick flow (combined layer groups print thicker), 0 to use m_layer->height.
+    Flow    bridging_flow(FlowRole role, bool thick_bridge = false, unsigned int filament_id = 0, double layer_height = 0.) const;
 
     void    slices_to_fill_surfaces_clipped();
     void    prepare_fill_surfaces();
@@ -107,6 +110,17 @@ public:
     //BBS
     void    simplify_infill_extrusion_entity() { simplify_entity_collection(&fills); }
     void    simplify_wall_extrusion_entity() { simplify_entity_collection(&perimeters); }
+
+    // ORCA: per-extruder layer height. Number of object layers this region's extrusions cover here:
+    // > 1 on the top layer of a group combined by PrintObject::apply_extruder_layer_heights(), 0 on
+    // the combined-away layers below such a top (their slices are empty and print nothing; the 0
+    // tells them apart from layers where the region's geometry is genuinely absent), 1 otherwise.
+    unsigned short combined_layer_count() const { return m_combined_layer_count; }
+    // Extrusion height at this layer (sum of the covered layer heights when combined, else layer height).
+    double  combined_height() const;
+    // Layer right below the covered group; replaces Layer::lower_layer for overhang / bridge
+    // detection of combined regions. May be nullptr.
+    const Layer* combined_lower_layer() const;
 private:
     void    simplify_entity_collection(ExtrusionEntityCollection* entity_collection);
     void    simplify_path(ExtrusionPath* path);
@@ -123,6 +137,9 @@ protected:
 private:
     Layer             *m_layer;
     const PrintRegion *m_region;
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(), see combined_layer_count() / combined_height().
+    unsigned short     m_combined_layer_count { 1 };
+    double             m_combined_height { 0. };
 };
 
 class Layer

@@ -1513,7 +1513,12 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
                 }
                 extra_gap = std::max(extra_gap, object.config().raft_contact_distance.value);
             }
-            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_to_print.layer()->height +
+            double layer_span = layer_to_print.layer()->height;
+            // ORCA: the top layer of a combined group prints the whole group at once, so tolerate a gap of combined_height() (equals the layer height when not combined).
+            if (layer_to_print.object_layer != nullptr)
+                for (const LayerRegion *layerm : layer_to_print.object_layer->regions())
+                    layer_span = std::max(layer_span, layerm->combined_height());
+            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_span +
                                      std::max(0., extra_gap);
             // Negative support_contact_z is not taken into account, it can result in false positives in cases
 
@@ -5394,6 +5399,29 @@ LayerResult GCode::process_layer(const Print& print,
                     if (interface_dontcare)
                         interface_extruder = dontcare_extruder;
                 }
+                // ORCA: with a support nozzle diameter restriction, ("don't care") support/interface may only use a nozzle-matching extruder; prefer one scheduled on this layer (as ToolOrdering did).
+                if (object.config().support_nozzle_diameter.value > 0.) {
+                    auto restrict_to_support_nozzle = [&print, &object, &layer_tools](unsigned int extruder_id) -> unsigned int {
+                        if (object.support_filament_allowed(extruder_id + 1))
+                            return extruder_id;
+                        unsigned int fallback   = extruder_id;
+                        bool have_fallback      = false;
+                        for (unsigned int candidate : layer_tools.extruders) // 0 based at this point
+                            if (object.support_filament_allowed(candidate + 1)) {
+                                if (! print.config().filament_soluble.get_at(candidate))
+                                    return candidate;
+                                if (! have_fallback) {
+                                    fallback      = candidate;
+                                    have_fallback = true;
+                                }
+                            }
+                        return fallback;
+                    };
+                    if (support_dontcare)
+                        support_extruder = restrict_to_support_nozzle(support_extruder);
+                    if (interface_dontcare)
+                        interface_extruder = restrict_to_support_nozzle(interface_extruder);
+                }
                 // Both the support and the support interface are printed with the same extruder, therefore
                 // the interface may be interleaved with the support base.
                 bool single_extruder = !has_support || support_extruder == interface_extruder;
@@ -5762,10 +5790,31 @@ LayerResult GCode::process_layer(const Print& print,
                             auto outer_perimeters = std::make_unique<ExtrusionEntityCollection>();
                             auto inner_perimeters = std::make_unique<ExtrusionEntityCollection>();
                             for (const ExtrusionEntity* entity : filtered_extrusions->entities) {
-                                const ExtrusionRole role = entity->role();
-                                if (role == erExternalPerimeter || role == erOverhangPerimeter)
+                                // ORCA: chaining may put an overhang path first and fully overhanging loops
+                                // have no plain perimeter path: classify by scanning every path; anything without
+                                // an inner perimeter path uses the outer wall filament (matches PerimeterGenerator's
+                                // overhang flows).
+                                bool has_external = false, has_internal = false;
+                                auto classify = [&](const ExtrusionPaths& paths) {
+                                    for (const ExtrusionPath& path : paths) {
+                                        if (path.role() == erExternalPerimeter)
+                                            has_external = true;
+                                        else if (path.role() == erPerimeter)
+                                            has_internal = true;
+                                    }
+                                };
+                                if (const auto* loop = dynamic_cast<const ExtrusionLoop*>(entity))
+                                    classify(loop->paths);
+                                else if (const auto* multi_path = dynamic_cast<const ExtrusionMultiPath*>(entity))
+                                    classify(multi_path->paths);
+                                else {
+                                    const ExtrusionRole role = entity->role();
+                                    has_external = role == erExternalPerimeter;
+                                    has_internal = role == erPerimeter;
+                                }
+                                if (has_external || !has_internal)
                                     outer_perimeters->append(*entity);
-                                else if (role == erPerimeter)
+                                else
                                     inner_perimeters->append(*entity);
                             }
 

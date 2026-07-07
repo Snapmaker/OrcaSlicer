@@ -73,8 +73,16 @@ SlicingParameters SlicingParameters::create_from_config(
     // which is consistent with the requirement that if support_filament == 0 resp. support_interface_filament == 0,
     // support will not trigger tool change, but it will use the current nozzle instead.
     // In that case all the nozzles have to be of the same diameter.
-    coordf_t support_material_extruder_dmr           = print_config.nozzle_diameter.get_at(object_config.support_filament.value - 1);
-    coordf_t support_material_interface_extruder_dmr = print_config.nozzle_diameter.get_at(object_config.support_interface_filament.value - 1);
+    // Support_nozzle_diameter restricts which extruders / nozzle diameter may print support ("default" = no restriction)
+    auto restricted_default = [&object_config](int configured) {
+        return configured == 0 && object_config.support_nozzle_diameter.value > 0.;
+    };
+    coordf_t support_material_extruder_dmr           = restricted_default(object_config.support_filament.value) ?
+        object_config.support_nozzle_diameter.value :
+        print_config.nozzle_diameter.get_at(object_config.support_filament.value - 1);
+    coordf_t support_material_interface_extruder_dmr = restricted_default(object_config.support_interface_filament.value) ?
+        object_config.support_nozzle_diameter.value :
+        print_config.nozzle_diameter.get_at(object_config.support_interface_filament.value - 1);
     bool     soluble_interface                       = object_config.support_top_z_distance.value == 0.;
 
     SlicingParameters params;
@@ -94,12 +102,31 @@ SlicingParameters SlicingParameters::create_from_config(
     params.max_layer_height = std::numeric_limits<double>::max();
     if (object_config.enable_support.value || params.base_raft_layers > 0 || object_config.enforce_support_layers > 0) {
         // Has some form of support. Add the support layers to the minimum / maximum layer height limits.
+        auto support_layer_height_limit = [&print_config, &object_config, &restricted_default](int configured, bool min_limit) -> coordf_t {
+            auto from_nozzle = [&print_config, min_limit](int filament) {
+                return min_limit ? min_layer_height_from_nozzle(print_config, filament) : max_layer_height_from_nozzle(print_config, filament);
+            };
+            if (restricted_default(configured)) {
+                // Combine the limits of all filaments the restriction allows.
+                coordf_t limit = min_limit ? 0. : std::numeric_limits<coordf_t>::max();
+                bool found = false;
+                for (size_t i = 0; i < print_config.nozzle_diameter.values.size(); ++ i)
+                    if (std::abs(print_config.nozzle_diameter.values[i] - object_config.support_nozzle_diameter.value) < EPSILON) {
+                        coordf_t l = from_nozzle(int(i + 1));
+                        limit = min_limit ? std::max(limit, l) : std::min(limit, l);
+                        found = true;
+                    }
+                if (found)
+                    return limit;
+            }
+            return from_nozzle(configured);
+        };
         params.min_layer_height = std::max(
-            min_layer_height_from_nozzle(print_config, object_config.support_filament), 
-            min_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
+            support_layer_height_limit(object_config.support_filament.value, true),
+            support_layer_height_limit(object_config.support_interface_filament.value, true));
         params.max_layer_height = std::min(
-            max_layer_height_from_nozzle(print_config, object_config.support_filament), 
-            max_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
+            support_layer_height_limit(object_config.support_filament.value, false),
+            support_layer_height_limit(object_config.support_interface_filament.value, false));
         params.max_suport_layer_height = params.max_layer_height;
     }
     if (object_extruders.empty()) {

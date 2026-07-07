@@ -8820,6 +8820,9 @@ msgstr "对于有机支撑，仅在空心/默认主体图案下支持双墙"
 msgid "The Lightning base pattern is not supported by this support type; Rectilinear will be used instead."
 msgstr "此支撑类型不支持闪电主体图案；将改用直线图案。"
 
+msgid "The Hollow base pattern is not supported by this support type; Rectilinear will be used instead."
+msgstr "此支撑类型不支持空心主体图案；将改用直线图案。"
+
 msgid "Support enforcers are used but support is not enabled. Please enable support."
 msgstr "使用了支撑添加器但没有打开支撑。请打开支撑。"
 

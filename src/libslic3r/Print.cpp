@@ -1876,8 +1876,11 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     }
                 } else if (object->config().support_base_pattern == SupportMaterialPattern::smpLightning && warning) {
                     // Orca: check if the Lightning base pattern selected
-                    warning->string = L(
-                        "The Lightning base pattern is not supported by this support type; Rectilinear will be used instead.");
+                    warning->string = L("The Lightning base pattern is not supported by this support type; Rectilinear will be used instead.");
+                    warning->opt_key = "support_base_pattern";
+                } else if (object->config().support_base_pattern == SupportMaterialPattern::smpNone) {
+                    // Orca: check if the Hollow base pattern selected
+                    warning->string = L("The Hollow base pattern is not supported by this support type; Rectilinear will be used instead.");
                     warning->opt_key = "support_base_pattern";
                 }
             }

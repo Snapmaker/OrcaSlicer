@@ -30,6 +30,7 @@
 #include <future>
 #include <functional>
 #include <sstream>
+#include <locale>
 #include <boost/algorithm/string.hpp>
 #include <boost/iterator/counting_iterator.hpp>
 #include <boost/optional.hpp>
@@ -8311,61 +8312,72 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         }
 
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
+            // ORCA multi-nozzle-size: set ONLY this nozzle's diameter, mirroring the
+            // Printer Settings -> Extruder tab. Previously this switched the whole printer preset
+            // to a single-diameter variant (forcing all nozzles to the same size); that defeats
+            // per-nozzle sizes, which the slicer now supports.
 
-            //auto* pNotice = p->plater->get_notification_manager();
-            //if (pNotice)
-            //{
-            //    pNotice->close_notification_of_type(NotificationType::CustomNotification);
-            //    pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
-            //    pNotice->set_slicing_progress_hidden();            
-            //}
-
-            auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-            auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-            if (printer_model_opt) {
-                std::string printer_model   = printer_model_opt->value;
-                bool        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
-
-                if (is_snapmaker_u1)
-                {
-                    //check the config has flags to tips switch nozzle and all nozzle will be changed to the same type
-                    auto  notShow = wxGetApp().app_config->get("app", "sync_diameter_flags");
-                    if (notShow != "true")
-                    {
-                        RichMessageDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe),
-                                              _L("Note: Changing this will sync all other nozzles to the same diameter."),
-                                              _L("Set Nozzle Diameter"), 
-                                               wxOK);
-                        dlg.ShowCheckBox(_L("Don't show this again"), false);
-                        auto res = dlg.ShowModal();
-                        bool isCheckBox = dlg.IsCheckBoxChecked();
-
-                        if (wxID_OK == res)
-                            wxGetApp().app_config->set("app", "sync_diameter_flags", isCheckBox);     
-                    }
-                }
-            }
-
-            auto diameter = diameter_combo->GetValue().substr(0, 3);
-            auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
-            if (preset == nullptr) {
-                BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+            // Parse the selected diameter from the "0.4mm" combo item.
+            wxString sel_num = diameter_combo->GetValue();
+            if (sel_num.EndsWith("mm"))
+                sel_num.RemoveLast(2);
+            double new_nd = 0.;
+            if (!sel_num.ToCDouble(&new_nd) || new_nd <= 0.)
                 return;
-            }
-            preset->is_visible = true; // force visible
-            
-            for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                //set all nozzle use the diameter
-                p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-            }
 
-            wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-            // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
+            Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+            if (printer_tab == nullptr)
+                return;
+
+            // Write nozzle_diameter[i] into the edited printer config, like Tab.cpp's extruder page.
+            DynamicPrintConfig  new_conf         = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            const auto*         nozzle_diam_opt  = static_cast<const ConfigOptionFloats*>(new_conf.option("nozzle_diameter"));
+            if (nozzle_diam_opt == nullptr || i >= nozzle_diam_opt->values.size())
+                return;
+            std::vector<double> nozzle_diameters = nozzle_diam_opt->values;
+            if (std::abs(nozzle_diameters[i] - new_nd) < EPSILON)
+                return; // unchanged
+            nozzle_diameters[i] = new_nd;
+            new_conf.set_key_value("nozzle_diameter", new ConfigOptionFloats(nozzle_diameters));
+
+            // load_config marks the printer preset modified and propagates the change without
+            // rebuilding these combos or switching presets, so the other nozzles keep their sizes.
+            printer_tab->load_config(new_conf);
+            // Do not event.Skip(): this is a plain ComboBox; skipping would let the sidebar treat
+            // it as the bed-type combo (Plater::priv::on_combobox_select) and mishandle it.
         });
         
-        auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
-        
-        diameter_combo->SetValue(diam_str + "mm");
+        // Show THIS nozzle's own diameter (per-nozzle sizes are supported), selecting the matching
+        // "x.xmm" item so the read-only combo accepts it. Falls back to the uniform printer_variant
+        // label only when the per-nozzle value is unavailable.
+        const double this_nd = (nozzle_diameter && i < nozzle_diameter->values.size()) ? nozzle_diameter->values[i] : 0.;
+        wxString     this_label;
+        for (unsigned int n = 0; n < diameter_combo->GetCount(); ++n) {
+            wxString item = diameter_combo->GetString(n);
+            wxString num  = item;
+            if (num.EndsWith("mm"))
+                num.RemoveLast(2);
+            double item_nd = 0.;
+            if (num.ToCDouble(&item_nd) && std::abs(item_nd - this_nd) < EPSILON) {
+                this_label = item;
+                break;
+            }
+        }
+        if (this_label.empty() && this_nd > 0.) {
+            // A per-nozzle diameter not among the printer's variant list (e.g. an imported config):
+            // add it so the combo can display the true value. Format with the C locale (period
+            // decimal) to match the other "x.xmm" items and the ToCDouble parsing above.
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << this_nd;
+            this_label = wxString(oss.str()) + "mm";
+            diameter_combo->AppendString(this_label);
+        }
+        if (this_label.empty()) {
+            const auto *pv = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant");
+            this_label = (pv ? wxString(pv->value) : wxString()) + "mm";
+        }
+        diameter_combo->SetValue(this_label);
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 

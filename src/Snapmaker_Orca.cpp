@@ -3010,8 +3010,8 @@ int CLI::run(int argc, char **argv)
                 switch (optdef->type) {
                 case coFloat: {
                     double& val = static_cast<ConfigOptionFloat*>(opt)->value;
-                    if (val < optdef->min) val = (double)optdef->min;
-                    if (val > optdef->max) val = (double)optdef->max;
+                    if (val < optdef->min) val = static_cast<double>(optdef->min);
+                    if (val > optdef->max) val = static_cast<double>(optdef->max);
                     break;
                 }
                 case coInt: {
@@ -3029,15 +3029,30 @@ int CLI::run(int argc, char **argv)
                 }
                 case coFloats: {
                     for (double& val : static_cast<ConfigOptionFloats*>(opt)->values) {
-                        if (val < optdef->min) val = (double)optdef->min;
-                        if (val > optdef->max) val = (double)optdef->max;
+                        if (val < optdef->min) val = static_cast<double>(optdef->min);
+                        if (val > optdef->max) val = static_cast<double>(optdef->max);
                     }
                     break;
                 }
-                case coPercent: {
+                case coPercent:
+                case coFloatOrPercent: {
                     double& val = static_cast<ConfigOptionPercent*>(opt)->value;
-                    if (val < optdef->min) val = (double)optdef->min;
-                    if (val > optdef->max) val = (double)optdef->max;
+                    if (val < optdef->min) val = static_cast<double>(optdef->min);
+                    if (val > optdef->max) val = static_cast<double>(optdef->max);
+                    break;
+                }
+                case coPercents: {
+                    for (double& val : static_cast<ConfigOptionPercents*>(opt)->values) {
+                        if (val < optdef->min) val = static_cast<double>(optdef->min);
+                        if (val > optdef->max) val = static_cast<double>(optdef->max);
+                    }
+                    break;
+                }
+                case coFloatsOrPercents: {
+                    for (auto& fop : static_cast<ConfigOptionFloatsOrPercents*>(opt)->values) {
+                        if (fop.value < optdef->min) fop.value = static_cast<double>(optdef->min);
+                        if (fop.value > optdef->max) fop.value = static_cast<double>(optdef->max);
+                    }
                     break;
                 }
                 default:
@@ -5050,13 +5065,24 @@ int CLI::run(int argc, char **argv)
                                 auto* lcg = new_print_config.option<ConfigOptionString>("layer_change_gcode", false);
                                 bool has_g92e0 = false;
                                 if (lcg) {
-                                    // Simple case-insensitive search for G92 E0 pattern
+                                    // Search for G92 E* reset in layer_change_gcode.
+                                    // Check line-by-line to avoid matching G92.1 (position
+                                    // reset), G92.2/G92.3 (coordinate system), or G92
+                                    // substring inside unrelated commands (M592) or comments.
                                     std::string upper = lcg->value;
-                                    for (char& c : upper) c = (char)toupper((unsigned char)c);
-                                    has_g92e0 = upper.find("G92") != std::string::npos;
+                                    for (char& c : upper) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+                                    size_t pos = 0;
+                                    while ((pos = upper.find("G92", pos)) != std::string::npos) {
+                                        // Reject G92. (G92.1, G92.2, G92.3 are different commands)
+                                        if (pos + 3 >= upper.size() || upper[pos + 3] != '.') {
+                                            has_g92e0 = true;
+                                            break;
+                                        }
+                                        ++pos;
+                                    }
                                     if (!has_g92e0) {
                                         BOOST_LOG_TRIVIAL(warning) << "Auto-adding G92 E0 to layer_change_gcode for relative extruder mode";
-                                        lcg->value += "\nG92 E0 ; auto-added for CLI relative mode";
+                                        lcg->value += "\nG92 E0";
                                     }
                                 }
                             }

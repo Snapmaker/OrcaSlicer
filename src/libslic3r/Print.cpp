@@ -1838,6 +1838,14 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         return { L("Organic support branch diameter must not be smaller than 2x support material extrusion width."), object, "tree_support_branch_diameter_organic" };
                     if (object->config().tree_support_branch_diameter_organic < object->config().tree_support_tip_diameter)
                         return { L("Organic support branch diameter must not be smaller than support tree tip diameter."), object, "tree_support_branch_diameter_organic" };
+                } else if (object->config().support_base_pattern == SupportMaterialPattern::smpLightning && warning) {
+                    // Orca: check if the Lightning base pattern selected
+                    warning->string = L("The Lightning base pattern is not supported by this support type; Rectilinear will be used instead.");
+                    warning->opt_key = "support_base_pattern";
+                } else if (object->config().support_base_pattern == SupportMaterialPattern::smpNone && warning) {
+                    // Orca: check if the Hollow base pattern selected
+                    warning->string = L("The Hollow base pattern is not supported by this support type; Rectilinear will be used instead.");
+                    warning->opt_key = "support_base_pattern";
                 }
             }
 

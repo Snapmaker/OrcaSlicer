@@ -24,8 +24,8 @@ public:
     int calc_flush_vol(unsigned char src_a, unsigned char src_r, unsigned char src_g, unsigned char src_b,
         unsigned char dst_a, unsigned char dst_r, unsigned char dst_g, unsigned char dst_b);
 
-    // Pure HSV formula — Path B, extracted from calc_flush_vol for clarity.
-    // This contains the EXACT existing formula with zero changes.
+    // Path B: Full HSV color-distance formula with stain-risk compensation.
+    // Contains the calibrated parameters from regression calibration against PLA Snapspeed matrix.
     int calc_flush_vol_rgb(unsigned char src_r, unsigned char src_g, unsigned char src_b,
         unsigned char dst_r, unsigned char dst_g, unsigned char dst_b);
 

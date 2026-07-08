@@ -114,17 +114,22 @@ SlicingParameters SlicingParameters::create_from_config(
     params.min_layer_height = std::min(params.min_layer_height, params.layer_height);
     params.max_layer_height = std::max(params.max_layer_height, params.layer_height);
 
-    if (! soluble_interface) {
-        params.gap_raft_object    = object_config.raft_contact_distance.value;
-        //BBS
-        params.gap_object_support = object_config.support_bottom_z_distance.value; 
-        params.gap_support_object = object_config.support_top_z_distance.value;
+    // Align with Bambu upstream: the support-object gaps must be taken from config
+    // unconditionally. Guarding them behind `! soluble_interface` (Orca d54d81e89d)
+    // left gap_object_support at its 0 default whenever support_top_z_distance == 0,
+    // which dropped the bottom trim in trim_support_layers_by_object and caused the
+    // interface/transition band to extend one object-layer too low at interior boundaries.
+    params.gap_raft_object    = soluble_interface ? 0 : object_config.raft_contact_distance.value;
+    //BBS
+    params.gap_object_support = object_config.support_bottom_z_distance.value;
+    params.gap_support_object = object_config.support_top_z_distance.value;
+    if (params.gap_object_support <= 0)
+        params.gap_object_support = params.gap_support_object;
 
-        if (!print_config.independent_support_layer_height) {
-            params.gap_raft_object = std::round(params.gap_raft_object / object_config.layer_height + EPSILON) * object_config.layer_height;
-            params.gap_object_support = std::round(params.gap_object_support / object_config.layer_height + EPSILON) * object_config.layer_height;
-            params.gap_support_object = std::round(params.gap_support_object / object_config.layer_height + EPSILON) * object_config.layer_height;
-        }
+    if (!print_config.independent_support_layer_height) {
+        params.gap_raft_object = std::round(params.gap_raft_object / object_config.layer_height + EPSILON) * object_config.layer_height;
+        params.gap_object_support = std::round(params.gap_object_support / object_config.layer_height + EPSILON) * object_config.layer_height;
+        params.gap_support_object = std::round(params.gap_support_object / object_config.layer_height + EPSILON) * object_config.layer_height;
     }
 
     if (params.base_raft_layers > 0) {

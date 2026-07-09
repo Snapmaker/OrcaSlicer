@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp., Ian Craggs and others
+ * Copyright (c) 2009, 2025 IBM Corp., Ian Craggs and others
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -41,9 +41,11 @@
  * @endcond
  * @cond MQTTClient_main
  * @mainpage MQTT Client library for C (MQTTClient)
- * &copy; Copyright 2009, 2023 IBM Corp., Ian Craggs and others
+ * &copy; Copyright 2009, 2025 IBM Corp., Ian Craggs and others
  *
  * @brief An MQTT client library in C.
+ *
+ * Version 1.3.14
  *
  * These pages describe the original more synchronous API which might be
  * considered easier to use.  Some of the calls will block.  For the new
@@ -97,6 +99,7 @@
  * <li>@ref wildcard</li>
  * <li>@ref qos</li>
  * <li>@ref tracing</li>
+ * <li>@ref HTTP_proxies</li>
  * </ul>
  * @endcond
  */
@@ -123,6 +126,8 @@
 #include "MQTTSubscribeOpts.h"
 #if !defined(NO_PERSISTENCE)
 #include "MQTTClientPersistence.h"
+#else
+#define MQTTCLIENT_PERSISTENCE_NONE 1
 #endif
 
 /**
@@ -405,7 +410,8 @@ typedef void MQTTClient_connectionLost(void* context, char* cause);
 /**
  * This function sets the callback functions for a specific client.
  * If your client application doesn't use a particular callback, set the
- * relevant parameter to NULL. Calling MQTTClient_setCallbacks() puts the
+ * relevant parameter to NULL (except for message arrived, which must be given).
+ * Calling MQTTClient_setCallbacks() puts the
  * client into multi-threaded mode. Any necessary message acknowledgements and
  * status communications are handled in the background without any intervention
  * from the client application. See @ref async for more information.
@@ -969,12 +975,14 @@ typedef struct
 	 */
 	const MQTTClient_nameValue* httpHeaders;
 	/**
-	 * HTTP proxy
-	 */
+	* The string value of the HTTP proxy. Examples:
+	*  - http://your.proxy.server:8080/
+	*  - http://user:pass@my.proxy.server:8080/
+	*/
 	const char* httpProxy;
 	/**
-	 * HTTPS proxy
-	 */
+	* HTTPS proxy setting. See ::MQTTClient_connectOptions.httpProxy and the section @ref HTTP_proxies.
+	*/
 	const char* httpsProxy;
 } MQTTClient_connectOptions;
 
@@ -1977,4 +1985,20 @@ exit:
     20130528 163909.209 Heap scan end
   * @endcode
   * @endcond
+  *
+* √* @page HTTP_proxies HTTP Proxies
+  * The use of HTTP proxies can be controlled by environment variables or API calls.
+  *
+  * The ::MQTTClient_connectOptions.httpProxy and ::MQTTClient_connectOptions.httpsProxy fields
+  * of the ::MQTTClient_connectOptions structure override any settings in the environment.
+  *
+  * If the environment variable PAHO_C_CLIENT_USE_HTTP_PROXY is set to TRUE, then the
+  * http_proxy or https_proxy (lower case only) environment variables are used, for plain
+  * TCP and TLS-secured connections respectively.
+  *
+  * The no_proxy environment variable can be used to exclude certain hosts from using an
+  * environment variable chosen proxy. This does not apply to a proxy selected through the API.
+  * The no_proxy environment variable is lower case only, and is a list of comma-separated
+  * hostname:port values. Suffixes are matched (e.g. example.com will match test.example.com).
+  *
   */

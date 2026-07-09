@@ -258,7 +258,7 @@ if(FLATPAK)
     find_package(CURL)
     find_package(JPEG)
     find_package(Freetype)
-    find_package(OpenSSL 1.1...<3.2)
+    find_package(OpenSSL 3.0...<4.0)
     find_package(CURL)
 endif()
 
@@ -304,10 +304,6 @@ include(NLopt/NLopt.cmake)
 include(libnoise/libnoise.cmake)
 
 
-# I *think* 1.1 is used for *just* md5 hashing?
-# 3.1 has everything in the right place, but the md5 funcs used are deprecated
-# a grep across the repo shows it is used for other things
-# TODO: update openssl and everything that uses <openssl/md5.h> 
 set(OPENSSL_PKG "")
 if(NOT OPENSSL_FOUND)
     include(OpenSSL/OpenSSL.cmake)

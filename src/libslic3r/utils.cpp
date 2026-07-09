@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <locale>
+#include <memory>
 #include <mutex>
 #include <ctime>
 #include <cstdarg>
@@ -1559,23 +1560,41 @@ bool makedir(const std::string path) {
 	return true;  // dir already exists
 }
 
-bool bbl_calc_md5(std::string &filename, std::string &md5_out)
+bool bbl_calc_md5(const std::string& filename, std::string& md5_out)
 {
-    unsigned char digest[16];
-    MD5_CTX       ctx;
-    MD5_Init(&ctx);
+    md5_out.clear();
+
+    boost::system::error_code error_code;
+    if (!boost::filesystem::is_regular_file(filename, error_code) || error_code)
+        return false;
+
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> mdctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    if (!mdctx || EVP_DigestInit_ex(mdctx.get(), EVP_md5(), nullptr) != 1)
+        return false;
+
     boost::nowide::ifstream ifs(filename, std::ios::binary);
-    std::string                 buf(64 * 1024, 0);
-    const std::size_t &         size      = boost::filesystem::file_size(filename);
-    std::size_t                 left_size = size;
+    if (!ifs)
+        return false;
+
+    std::string buffer(64 * 1024, 0);
     while (ifs) {
-        ifs.read(buf.data(), buf.size());
-        int read_bytes = ifs.gcount();
-        MD5_Update(&ctx, (unsigned char *) buf.data(), read_bytes);
+        ifs.read(buffer.data(), buffer.size());
+        const std::streamsize read_bytes = ifs.gcount();
+        if (read_bytes > 0 && EVP_DigestUpdate(mdctx.get(), buffer.data(), static_cast<std::size_t>(read_bytes)) != 1)
+            return false;
     }
-    MD5_Final(digest, &ctx);
+    if (!ifs.eof())
+        return false;
+
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  digest_size = 0;
+    if (EVP_DigestFinal_ex(mdctx.get(), digest, &digest_size) != 1 || digest_size != 16)
+        return false;
+
     char md5_str[33];
-    for (int j = 0; j < 16; j++) { sprintf(&md5_str[j * 2], "%02X", (unsigned int) digest[j]); }
+    for (unsigned int byte_index = 0; byte_index < digest_size; ++byte_index) {
+        sprintf(&md5_str[byte_index * 2], "%02X", static_cast<unsigned int>(digest[byte_index]));
+    }
     md5_out = std::string(md5_str);
     return true;
 }

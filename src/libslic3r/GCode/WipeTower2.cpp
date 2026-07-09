@@ -1526,6 +1526,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     , m_extra_rib_length(config.wipe_tower_extra_rib_length)
     , m_wall_type((int) config.wipe_tower_wall_type)
     , m_use_rib_wall(config.wipe_tower_wall_type == WipeTowerWallType::wtwRib)
+    , m_wall_filament(config.wipe_tower_filament)
 {
     // Read absolute value of first layer speed, if given as percentage,
     // it is taken over following default. Speeds from config are not
@@ -1923,7 +1924,6 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
 
     new_block->cur_depth += (wipe_depth - nozzle_change_depth);
     new_block->last_filament_change_id = new_tool;
-    //new_block->last_nozzle_change_id = new_tool;
 
     m_active_tool_change = nullptr;
 
@@ -2315,7 +2315,7 @@ void WipeTower2::toolchange_unload_new(WipeTowerWriter2& writer, size_t old_fila
             }
         }
     }
-    WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, old_block->cur_depth),
+    WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, old_block->cur_depth + m_perimeter_width / 2),
         m_wipe_tower_width - 2 * m_perimeter_width, nozzle_change_depth);
     Vec2f initial_position = cleaning_box.ld;
     writer.set_initial_position(initial_position, m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
@@ -2392,7 +2392,7 @@ void WipeTower2::toolchange_unload_new(WipeTowerWriter2& writer, size_t old_fila
     }
 
     old_block->cur_depth += nozzle_change_depth;
-    //old_block->last_nozzle_change_id = old_filament_id;
+    old_block->last_nozzle_change_id = old_filament_id;
 
     Vec2f end_of_ramming(writer.x(), writer.y());
     writer.change_analyzer_line_width(m_perimeter_width); // so the next lines are not affected by ramming_line_width_multiplier
@@ -3674,7 +3674,6 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResult>>& result, 
     std::vector<std::vector<WipeTower::ToolChangeResult>>& local_z_result)
 {
-    // 先忽略local_z进行测试
     if (m_plan.empty())
         return;
 
@@ -3730,7 +3729,7 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
         int idx = first_toolchange_to_nonsoluble(layer.tool_changes);
         WipeTower::ToolChangeResult finish_layer_tcr;
 
-        auto get_wall_filament_for_this_layer = [this, &layer, &wall_filament]() -> int {
+        /*auto get_wall_filament_for_this_layer = [this, &layer, &wall_filament]() -> int {
             if (layer.tool_changes.size() == 0)
                 return -1;
 
@@ -3751,12 +3750,21 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                     candidate_id = layer.tool_changes[idx].new_tool;
             }
             return candidate_id == -1 ? layer.tool_changes[0].new_tool : candidate_id;
+        };*/
+
+        auto get_wall_filament_for_this_layer = [this, &layer]() -> int {
+            if (layer.tool_changes.size() == 0)
+                return -1;
+            if (m_wall_filament > 0) {
+                return m_wall_filament - 1;
+            }
+            return layer.tool_changes[0].new_tool;
         };
+
         int wall_idx = get_wall_filament_for_this_layer();
 
-        // TODO
-        //for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes)
-        //    local_z_layer_result.emplace_back(emit_planned_tool_change(&toolchange));
+        for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes)
+            local_z_layer_result.emplace_back(tool_change_new(toolchange));
 
         if (wall_idx == -1) {
             bool need_insert_solid_infill = false;
@@ -3819,9 +3827,9 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                 if (block.last_filament_change_id != -1) {
                     finish_layer_filament = block.last_filament_change_id;
                 }
-                /*else if (block.last_nozzle_change_id != -1) {
+                else if (block.last_nozzle_change_id != -1) {
                     finish_layer_filament = block.last_nozzle_change_id;
-                }*/
+                }
 
                 if (!layer.tool_changes.empty()) {
                     WipeTowerBlock* last_layer_finish_block = get_block_by_category(get_filament_category(layer.tool_changes.front().old_tool), false);
@@ -3831,7 +3839,6 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
 
                 if (finish_layer_filament == -1) {
                     finish_layer_filament = wall_idx;
-                    //finish_layer_filament = idx;
                 }
                 // Cancel the block of the last layer
                 //if (!is_valid_last_layer(finish_layer_filament, m_cur_layer_id, layer.z)) continue;
@@ -4279,7 +4286,7 @@ void WipeTower2::reset_block_status()
     for (auto& block : m_wipe_tower_blocks) {
         block.cur_depth = block.start_depth;
         block.last_filament_change_id = -1;
-        //block.last_nozzle_change_id = -1;
+        block.last_nozzle_change_id = -1;
     }
 }
 
@@ -4301,6 +4308,14 @@ void WipeTower2::generate_wipe_tower_blocks(bool add_solid_flag)
     for (auto& info : m_plan) {
         for (const WipeTowerInfo::ToolChange& tool_change : info.tool_changes) {
             if(tool_change.old_tool != tool_change.new_tool) {
+                int old_filament_category = get_filament_category(tool_change.old_tool);
+                add_depth_to_block(tool_change.old_tool, old_filament_category, tool_change.ramming_depth, true);
+                int new_filament_category = get_filament_category(tool_change.new_tool);
+                add_depth_to_block(tool_change.new_tool, new_filament_category, tool_change.required_depth - tool_change.ramming_depth);
+            }
+        }
+        for (const WipeTowerInfo::ToolChange& tool_change : info.local_z_tool_changes) {
+            if (tool_change.old_tool != tool_change.new_tool) {
                 int old_filament_category = get_filament_category(tool_change.old_tool);
                 add_depth_to_block(tool_change.old_tool, old_filament_category, tool_change.ramming_depth, true);
                 int new_filament_category = get_filament_category(tool_change.new_tool);

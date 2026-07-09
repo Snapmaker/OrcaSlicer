@@ -203,7 +203,7 @@ public:
         float start_depth{ 0 }; // 在擦拭塔中的 Y 起始位置
         float cur_depth{ 0 }; // 当前打印 Y 位置
         int last_filament_change_id{ -1 };
-        //int last_nozzle_change_id{ -1 };
+        int last_nozzle_change_id{ -1 };
     };
 
     struct BlockDepthInfo
@@ -224,6 +224,7 @@ private:
     size_t m_cur_layer_id;
     bool m_use_rib_wall;
     Vec2f m_rib_offset;
+    int m_wall_filament;
 
     WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create);
     void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);

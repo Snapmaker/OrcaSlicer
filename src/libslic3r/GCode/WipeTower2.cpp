@@ -433,16 +433,83 @@ void insert_points(std::vector<PointWithFlag>& pl, int idx, Vec2f pos, int pair_
     }
 }
 
-Polylines remove_points_from_polygon(
-    const Polygon& polygon, const std::vector<Vec2f>& skip_points, double range, bool is_left, Polygon& insert_skip_pg)
+// Migrated from Bambu WipeTower.cpp:415-506.
+// Adds 3 extra vertices on the edge closest to the bottom-center of the polygon,
+// ensuring sufficient vertex density for gap cutting.
+static Polygon add_extra_point(const Polygon& polygon, int scale_range)
 {
-    assert(polygon.size() > 2);
+    Polygon res;
+    if (polygon.size() < 2) return polygon;
+
+    auto polygon_box = get_extents(polygon);
+    Vec2f anchor_point(float(polygon_box.center()[0]), float(polygon_box.min[1]));
+
+    size_t closest_edge_idx = 0;
+    float  min_dist_sq      = std::numeric_limits<float>::max();
+    for (size_t i = 0; i < polygon.size(); ++i) {
+        const Point& a_i = polygon[i];
+        const Point& b_i = polygon[(i + 1) % polygon.size()];
+        Vec2f a(float(a_i.x()), float(a_i.y()));
+        Vec2f b(float(b_i.x()), float(b_i.y()));
+        Vec2f mid = (a + b) * 0.5f;
+        float dist_sq = (anchor_point - mid).squaredNorm();
+        if (dist_sq < min_dist_sq) { min_dist_sq = dist_sq; closest_edge_idx = i; }
+    }
+
+    const Point& a_i = polygon[closest_edge_idx];
+    const Point& b_i = polygon[(closest_edge_idx + 1) % polygon.size()];
+    Vec2f a(float(a_i.x()), float(a_i.y()));
+    Vec2f b(float(b_i.x()), float(b_i.y()));
+    Vec2f mid = (a + b) * 0.5f;
+    Vec2f dir_to_a = a - mid;
+    Vec2f dir_to_b = b - mid;
+    float len_a = dir_to_a.norm();
+    float len_b = dir_to_b.norm();
+    if (len_a < EPSILON || len_b < EPSILON) return polygon;
+    dir_to_a /= len_a;
+    dir_to_b /= len_b;
+
+    float max_range = std::min(len_a, len_b) * 0.9f;
+    float range     = std::min(float(scale_range), max_range);
+    Vec2f offset_to_a_f = mid + dir_to_a * range;
+    Vec2f offset_to_b_f = mid + dir_to_b * range;
+
+    auto to_int_point = [](const Vec2f& p) {
+        auto clamp = [](float v) -> coord_t {
+            constexpr float kMin = float(std::numeric_limits<coord_t>::min());
+            constexpr float kMax = float(std::numeric_limits<coord_t>::max());
+            v = std::clamp(v, kMin, kMax);
+            return static_cast<coord_t>(std::lround(v));
+        };
+        return Point(clamp(p.x()), clamp(p.y()));
+    };
+
+    Point mid_i         = to_int_point(mid);
+    Point offset_to_a_i = to_int_point(offset_to_a_f);
+    Point offset_to_b_i = to_int_point(offset_to_b_f);
+
+    for (size_t i = 0; i < polygon.size(); ++i) {
+        res.points.push_back(polygon[i]);
+        if (i == closest_edge_idx) {
+            res.points.push_back(offset_to_a_i);
+            res.points.push_back(mid_i);
+            res.points.push_back(offset_to_b_i);
+        }
+    }
+    return res;
+}
+
+Polylines remove_points_from_polygon(
+    const Polygon& polygon_ori, const std::vector<Vec2f>& skip_points, double range, float wt_width, Polygon& insert_skip_pg)
+{
+    Polygon polygon = add_extra_point(polygon_ori, scale_(range));
+    if (polygon.size() < 2) return Polylines{to_polyline(polygon)};
     Polylines                     result;
     std::vector<PointWithFlag>    new_pl; // add intersection points for gaps, where bool indicates whether it's a gap point.
     std::vector<IntersectionInfo> inter_info;
-    Vec2f                         ray          = is_left ? Vec2f(-1, 0) : Vec2f(1, 0);
     auto                          polygon_box  = get_extents(polygon);
-    Point                         anchor_point = is_left ? Point{polygon_box.max[0], polygon_box.min[1]} : polygon_box.min; // rd:ld
+    // Anchor to bottom-center for consistent splitting (matching Bambu)
+    Point anchor_point = Point{polygon_box.center()[0], polygon_box.min[1]};
     std::vector<Vec2f>            points;
     {
         points.reserve(polygon.points.size());
@@ -454,6 +521,9 @@ Polylines remove_points_from_polygon(
     }
 
     for (int i = 0; i < skip_points.size(); i++) {
+        // Per-point left/right determination (migrated from Bambu: abs(x) < wt_width/2 -> left wall)
+        bool is_left = std::abs(skip_points[i].x()) < wt_width / 2.f;
+        Vec2f ray    = is_left ? Vec2f(-1, 0) : Vec2f(1, 0);
         for (int j = 0; j < points.size(); j++) {
             Vec2f& p1                  = points[j];
             Vec2f& p2                  = points[(j + 1) % points.size()];
@@ -531,12 +601,8 @@ Polylines contrust_gap_for_skip_points(
         insert_skip_polygon = polygon;
         return Polylines{to_polyline(polygon)};
     }
-    bool        is_left = false;
-    const auto& pt      = skip_points.front();
-    if (abs(pt.x()) < wt_width / 2.f) {
-        is_left = true;
-    }
-    return remove_points_from_polygon(polygon, skip_points, gap_length, is_left, insert_skip_polygon);
+    // Per-point left/right determination is done inside remove_points_from_polygon
+    return remove_points_from_polygon(polygon, skip_points, gap_length, wt_width, insert_skip_polygon);
 };
 
 Polygon generate_rectange_polygon(const Vec2f& wt_box_min, const Vec2f& wt_box_max)
@@ -1909,8 +1975,7 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
 
         WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, new_block->cur_depth),
             m_wipe_tower_width - 2 * m_perimeter_width, wipe_depth - nozzle_change_depth);
-        //Vec2f initial_position = get_next_pos(cleaning_box, wipe_length);
-        Vec2f initial_position = cleaning_box.ld;
+        Vec2f initial_position = get_next_pos(cleaning_box, wipe_length, false);
         writer.set_initial_position(initial_position, m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
         toolchange_Load(writer, cleaning_box);
 
@@ -2720,6 +2785,9 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer, const WipeTower::
     float retract_length = m_filpar[m_current_tool].retract_length;
     float retract_speed = m_filpar[m_current_tool].retract_speed * 60;
 
+    // Align wipe direction with notch X position (matching Bambu's layer rotation)
+    m_left_to_right = ((m_cur_layer_id + 3) % 4 >= 2);
+
     for (int i = 0; true; ++i) {
         if (i != 0) {
             if (wipe_speed < 0.34f * target_speed)
@@ -3525,31 +3593,92 @@ static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first,
     return out;
 }
 
-// For each layer, compute gap positions on the outer wall where B filament will enter.
-// Gap X: on the wall closest to where ramming ends. Gap Y: ramming end + turnaround step + half line widths.
+// Check if ramming is needed for a toolchange (migrated from Bambu).
+// Orca version: determines by filament ramming config instead of multi-nozzle grouping.
+bool WipeTower2::is_need_ramming(int filament_id_1, int /*filament_id_2*/, int /*layer_id*/) const
+{
+    (void)filament_id_1;
+    // Orca's ramming logic: SEMM with filament ramming enabled, or multitool ramming configured
+    return (m_semm && m_enable_filament_ramming) || m_filpar[filament_id_1].multitool_ramming;
+}
+
+// Wrapper: iterate all layers and compute gap points for each (migrated from Bambu).
 void WipeTower2::get_all_wall_skip_points()
 {
     m_wall_skip_points.clear();
     m_wall_skip_points.resize(m_plan.size());
+    for (size_t i = 0; i < m_plan.size(); i++)
+        get_wall_skip_points(m_plan[i], (int)i);
+}
 
-    for (size_t layer_id = 0; layer_id < m_plan.size(); ++layer_id) {
-        const auto& layer = m_plan[layer_id];
-        if (layer.tool_changes.empty()) continue;
+// Core computation: compute gap points for a single layer with Block-awareness.
+// Migrated from Bambu WipeTower.cpp:3156-3238, adapted for Orca:
+//   - nozzle_change_depth → ramming_depth
+//   - is_valid_last_layer() → removed (Orca has no printable height limit)
+//   - is_need_ramming() → Orca's filament-ramming-based logic
+//   - m_enable_tower_interface_features gating → commented out (TODO: future extension)
+void WipeTower2::get_wall_skip_points(const WipeTowerInfo& layer, int layer_id)
+{
+    const int                      pre_access_layer = 4;
+    std::unordered_map<int, float> cur_block_depth;
+    for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
+        const WipeTowerInfo::ToolChange& tool_change  = layer.tool_changes[i];
+        size_t                           old_filament = tool_change.old_tool;
+        size_t                           new_filament = tool_change.new_tool;
+        float                            ramming_depth_val = tool_change.ramming_depth;
+        float                            wipe_depth   = tool_change.required_depth - ramming_depth_val;
 
-        std::vector<Vec2f> skip_points;
-        float              process_depth = 0.f;
-
-        for (size_t tc_idx = 0; tc_idx < layer.tool_changes.size(); ++tc_idx) {
-            const auto& tc = layer.tool_changes[tc_idx];
-            // Gap on wall closest to where ramming ends; Y at ramming-wiping boundary
-            bool do_ramming = (m_semm && m_enable_filament_ramming) || m_filpar[tc.old_tool].multitool_ramming;
-            float x = (predict_ramming_end_x((int) tc.old_tool, layer.height) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
-            float y = process_depth + (do_ramming ? tc.ramming_depth : 0.f) + m_perimeter_width / 2.f;
-            skip_points.emplace_back(x, y);
-            process_depth += tc.required_depth;
+        auto* block = get_block_by_category(m_filpar[new_filament].category, false);
+        if (!block) continue;
+        float process_depth = 0.f;
+        if (!cur_block_depth.count(m_filpar[new_filament].category))
+            cur_block_depth[m_filpar[new_filament].category] = block->start_depth;
+        process_depth = cur_block_depth[m_filpar[new_filament].category];
+        if (is_need_ramming((int)old_filament, (int)new_filament, layer_id)) {
+            if (m_filament_categories[new_filament] == m_filament_categories[old_filament])
+                process_depth += ramming_depth_val;
+            else {
+                if (!cur_block_depth.count(m_filpar[old_filament].category)) {
+                    auto* old_block = get_block_by_category(m_filpar[old_filament].category, false);
+                    if (!old_block) continue;
+                    cur_block_depth[m_filpar[old_filament].category] = old_block->start_depth;
+                }
+                cur_block_depth[m_filpar[old_filament].category] += ramming_depth_val;
+            }
         }
-        m_wall_skip_points[layer_id] = std::move(skip_points);
+
+        float infill_gap_width = get_block_gap_width((int)new_filament, false);
+        Vec2f res;
+        int   index = layer_id % 4;
+        switch (index) {
+        case 0: res = Vec2f(0, process_depth); break;
+        case 1: res = Vec2f(m_wipe_tower_width, process_depth + wipe_depth - layer.extra_spacing * infill_gap_width); break;
+        case 2: res = Vec2f(m_wipe_tower_width, process_depth); break;
+        case 3: res = Vec2f(0, process_depth + wipe_depth - layer.extra_spacing * infill_gap_width); break;
+        default: break;
+        }
+
+        m_wall_skip_points[layer_id].emplace_back(res);
+
+        cur_block_depth[m_filpar[new_filament].category] = process_depth + wipe_depth;
+
+        // Gap deepening: when this is a Contact layer, propagate skip points
+        // downward to the previous 4 layers so the nozzle can enter through
+        // pre-existing gaps during interface pre-extrusion.
+        //bool solid_toolchange = block->layers_type[layer_id] == WipeTowerLayerType::Contact;
+        //if (solid_toolchange) {
+        //    for (int j = 0; j < pre_access_layer; j++) {
+        //        int pre_layer_id = layer_id - j;
+        //        if (pre_layer_id < 0) break;
+        //        m_wall_skip_points[pre_layer_id].push_back(res);
+        //    }
+        //}
     }
+    /* === TODO: Part B — Block start-point extra gaps (Bambu lines 3209-3237) ===
+     * Enable together with gap deepening above. Requires the same prerequisites.
+     * When enabled, traverses all blocks and adds grid-aligned skip points
+     * at Contact layer block-start positions, propagating downward 4 layers.
+     */
 }
 
 // Return pre-computed gap points for a given layer, with bounds check.
@@ -3679,7 +3808,7 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
         return;
 
     m_wipe_tower_height = m_plan.back().z;
-    m_use_gap_wall = false; // TODO: 先忽略缺口逻辑，后续重新适配
+    //m_use_gap_wall      = false; // TODO: 先忽略缺口逻辑，后续重新适配
     plan_tower_new();
 
     m_layer_info = m_plan.begin();
@@ -4287,9 +4416,13 @@ void WipeTower2::calc_block_infill_gap()
 {
 }
 
-float WipeTower2::get_block_gap_width(int tool)
+float WipeTower2::get_block_gap_width(int tool, bool is_nozzlechangle)
 {
-    return 0.0f;
+    // Orca: no per-category gap width optimization (calc_block_infill_gap is a stub).
+    // Always fall back to perimeter width for both toolchange and nozzlechange gaps.
+    (void)tool;
+    (void)is_nozzlechangle;
+    return m_perimeter_width;
 }
 
 void WipeTower2::generate_wipe_tower_blocks(bool add_solid_flag)

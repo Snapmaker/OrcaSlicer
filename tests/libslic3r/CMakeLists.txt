@@ -28,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
     test_png_io.cpp
 	test_sswcp_protocol.cpp
     test_indexed_triangle_set.cpp
+	TestMD5.cpp
     ../libnest2d/printer_parts.cpp
 	)
 
@@ -49,7 +50,7 @@ if(UNIX AND NOT APPLE)
 endif()
 target_link_libraries(${_TEST_NAME}_tests PRIVATE ${TEST_LINK_LIBS})
 if (WIN32)
-    target_link_libraries(${_TEST_NAME}_tests PRIVATE bcrypt.lib)
+    target_link_libraries(${_TEST_NAME}_tests PRIVATE bcrypt.lib crypt32.lib)
 endif()
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 

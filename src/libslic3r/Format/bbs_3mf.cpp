@@ -37,7 +37,6 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <boost/foreach.hpp>
-#include <openssl/md5.h>
 
 namespace pt = boost::property_tree;
 
@@ -6148,23 +6147,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             for (int i = 0; i < plate_data_list.size(); i++) {
                 PlateData *plate_data = plate_data_list[i];
                 if (!plate_data->gcode_file.empty() && plate_data->is_sliced_valid && boost::filesystem::exists(plate_data->gcode_file)) {
-                    unsigned char digest[16];
-                    MD5_CTX       ctx;
-                    MD5_Init(&ctx);
-                    auto                        src_gcode_file = plate_data->gcode_file;
-                    boost::filesystem::ifstream ifs(src_gcode_file, std::ios::binary);
-                    std::string                 buf(64 * 1024, 0);
-                    const std::size_t &         size      = boost::filesystem::file_size(src_gcode_file);
-                    std::size_t                 left_size = size;
-                    while (ifs) {
-                        ifs.read(buf.data(), buf.size());
-                        int read_bytes = ifs.gcount();
-                        MD5_Update(&ctx, (unsigned char *) buf.data(), read_bytes);
+                    if (!bbl_calc_md5(plate_data->gcode_file, plate_data->gcode_file_md5)) {
+                        BOOST_LOG_TRIVIAL(error)
+                            << __FUNCTION__ << ":" << __LINE__
+                            << boost::format(", calculate MD5 for 3mf's gcode file %1%, failed\n") % plate_data->gcode_file;
+                        return false;
                     }
-                    MD5_Final(digest, &ctx);
-                    char md5_str[33];
-                    for (int j = 0; j < 16; j++) { sprintf(&md5_str[j * 2], "%02X", (unsigned int) digest[j]); }
-                    plate_data->gcode_file_md5 = std::string(md5_str);
+
                     std::string target_file    = (boost::format("Metadata/plate_%1%.gcode.md5") % (plate_data->plate_index + 1)).str();
                     if (!mz_zip_writer_add_mem(&archive, target_file.c_str(), (const void *) plate_data->gcode_file_md5.c_str(), plate_data->gcode_file_md5.length(),
                                                MZ_DEFAULT_COMPRESSION)) {

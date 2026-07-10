@@ -395,6 +395,7 @@ static const t_config_enum_values s_keys_map_BedType = {
     { "Textured Cool Plate", btPCT },
     // Canonical name for btGESP (UI: "Graphic Effect Plate"). Keep legacy string so old projects/3MF still deserialize.
     { "Graphic Effect Plate", btGESP },
+    { "Cold Pressed Steel Plate", btCPSP },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(BedType)
 
@@ -786,6 +787,16 @@ void PrintConfigDef::init_fff_params()
     def->max        = 300;
     def->set_default_value(new ConfigOptionInts{0});
 
+    def             = this->add("cold_pressed_steel_plate_temp", coInts);
+    def->label      = L("Other layers");
+    def->tooltip    = L("Bed temperature for layers except the initial one. "
+                           "A value of 0 means the filament does not support printing on the Cold Pressed Steel Plate.");
+    def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
+    def->full_label = L("Bed temperature");
+    def->min        = 0;
+    def->max        = 300;
+    def->set_default_value(new ConfigOptionInts{0});
+
     def = this->add("supertack_plate_temp_initial_layer", coInts);
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
@@ -855,6 +866,16 @@ void PrintConfigDef::init_fff_params()
     def->max        = 300;
     def->set_default_value(new ConfigOptionInts{0});
 
+    def             = this->add("cold_pressed_steel_plate_temp_initial_layer", coInts);
+    def->label      = L("Initial layer");
+    def->full_label = L("Initial layer bed temperature");
+    def->tooltip    = L("Bed temperature of the initial layer. "
+                           "A value of 0 means the filament does not support printing on the Cold Pressed Steel Plate.");
+    def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
+    def->min        = 0;
+    def->max        = 300;
+    def->set_default_value(new ConfigOptionInts{0});
+
     def = this->add("curr_bed_type", coEnum);
     def->label = L("Bed type");
     def->tooltip = L("Bed types supported by the printer.");
@@ -873,14 +894,16 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.emplace_back(L("Textured PEI Plate"));
     def->enum_labels.emplace_back(L("Textured Cool Plate"));
     def->enum_labels.emplace_back(L("Cool Plate (SuperTack)"));
-    // U1 only 3
+    // U1 only 4
     def->enum_values_u1.emplace_back("Textured PEI Plate");
     def->enum_values_u1.emplace_back("High Temp Plate");
     def->enum_values_u1.emplace_back("Graphic Effect Plate");
+    def->enum_values_u1.emplace_back("Cold Pressed Steel Plate");
     def->enum_labels_u1.emplace_back(L("Textured PEI Plate"));
     def->enum_labels_u1.emplace_back(L("Smooth PEI Plate"));
     def->enum_labels_u1.emplace_back(L("Graphic Effect Plate"));
-    // U1 use 7 when open support_multi_bed_types
+    def->enum_labels_u1.emplace_back(L("Cold Pressed Steel Plate"));
+    // U1 use 8 when open support_multi_bed_types
     def->enum_values_ex.emplace_back("Cool Plate");
     def->enum_values_ex.emplace_back("Engineering Plate");
     def->enum_values_ex.emplace_back("High Temp Plate");
@@ -888,6 +911,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values_ex.emplace_back("Textured Cool Plate");
     def->enum_values_ex.emplace_back("Supertack Plate");
     def->enum_values_ex.emplace_back("Graphic Effect Plate");
+    def->enum_values_ex.emplace_back("Cold Pressed Steel Plate");
     def->enum_labels_ex.emplace_back(L("Smooth Cool Plate"));
     def->enum_labels_ex.emplace_back(L("Engineering Plate"));
     def->enum_labels_ex.emplace_back(L("Smooth PEI Plate"));
@@ -895,6 +919,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels_ex.emplace_back(L("Textured Cool Plate"));
     def->enum_labels_ex.emplace_back(L("Cool Plate (SuperTack)"));
     def->enum_labels_ex.emplace_back(L("Graphic Effect Plate"));
+    def->enum_labels_ex.emplace_back(L("Cold Pressed Steel Plate"));
     def->set_default_value(new ConfigOptionEnum<BedType>(btPC));
 
     // Orca: allow profile maker to set default bed type in machine profile

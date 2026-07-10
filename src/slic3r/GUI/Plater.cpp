@@ -10760,7 +10760,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         Preset::normalize(config);
                         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
 
-                        Semver old_version3(2, 3, 6);
+                        /*Semver old_version3(2, 3, 6);
                         if (file_version < old_version3) {
                             double old_filament_prime_volume = 0.;
                             int filament_count = 0;
@@ -10810,7 +10810,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 diff_filament_settings = Slic3r::escape_strings_cstyle(diff_filament_keys);
                                 diff_settings[index + 1] = diff_filament_settings;
                             }
-                        }
+                        }*/
 
                         auto choise = wxGetApp().app_config->get("no_warn_when_modified_gcodes");
                         if (choise.empty() || choise != "true") {

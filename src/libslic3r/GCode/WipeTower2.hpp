@@ -180,6 +180,7 @@ public:
         float               flat_iron_area;
         int category = 0;
         float prime_volume = 0.f;
+        float wipe_dist = 0.f;
     };
 
     const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
@@ -225,6 +226,7 @@ private:
     bool m_use_rib_wall;
     Vec2f m_rib_offset;
     int m_wall_filament;
+    WipeTower::NozzleChangeResult m_nozzle_change_result;
 
     WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create);
     void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);
@@ -346,11 +348,11 @@ private:
 		return layer_height * ( m_perimeter_width - layer_height * (1.f-float(M_PI)/4.f)) / filament_area();
 	}
 
-    float nozzle_change_extrusion_flow(float layer_height = -1.f) const // negative layer_height - return current m_extrusion_flow
+    float nozzle_change_extrusion_flow(float line_widht, float layer_height = -1.f) const // negative layer_height - return current m_extrusion_flow
     {
         if (layer_height < 0)
             return m_extrusion_flow;
-        return layer_height * (m_perimeter_width * 2 - layer_height * (1.f - float(M_PI) / 4.f)) / filament_area();
+        return layer_height * (line_widht - layer_height * (1.f - float(M_PI) / 4.f)) / filament_area();
     }
 
 
@@ -368,6 +370,7 @@ private:
             size_t new_tool;
 			float required_depth;
             float ramming_depth;
+            float ramming_length;
             float first_wipe_line;
             float wipe_volume;
             float wipe_length;
@@ -417,6 +420,8 @@ private:
     WipeTower::ToolChangeResult emit_planned_tool_change(const WipeTowerInfo::ToolChange *tool_change);
     WipeTower::ToolChangeResult tool_change_new(const WipeTowerInfo::ToolChange& tool_change);
 
+    WipeTower::ToolChangeResult tool_change_new(size_t new_tool, bool solid_change = false, bool solid_nozzlechange = false);
+
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
@@ -426,6 +431,9 @@ private:
 
     void toolchange_unload_new(WipeTowerWriter2& writer, size_t old_filament_id, size_t new_filament_id,
         int old_temperature, int new_temperature);
+
+    WipeTower::NozzleChangeResult ramming(int old_filament_id, int new_filament_id, 
+        bool solid_infill = false, bool extruder_change = true); // extruder_chang means nozzle_change
 
     void toolchange_Change(WipeTowerWriter2 &writer, const size_t new_tool, 
         const std::string& new_material);
@@ -441,6 +449,9 @@ private:
 
     void toolchange_wipe_new(WipeTowerWriter2& writer, 
         const WipeTower::box_coordinates& cleaning_box, float wipe_volume);
+
+    void toolchange_wipe_new_test(WipeTowerWriter2& writer,
+        const WipeTower::box_coordinates& cleaning_box, float wipe_length, bool solid_toolchange = false);
     
     Polygon generate_support_rib_wall(WipeTowerWriter2&                 writer,
                                       const WipeTower::box_coordinates& wt_box,

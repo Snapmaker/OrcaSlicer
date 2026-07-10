@@ -720,7 +720,17 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     float wipe_tower_rotation = tcr.priming ? 0.f : alpha;
     Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
 
-    // For Snapmaker Artision
+    // Check whether this TCR carries a separate nozzle change (ramming) result.
+    bool has_nozzle_change = !tcr.nozzle_change_result.gcode.empty()
+        && (gcodegen.config().nozzle_diameter.size() > 1);
+
+    Vec2f ramming_start, ramming_end;
+    if (has_nozzle_change) {
+        ramming_start = transform_wt_pt(tcr.nozzle_change_result.start_pos);
+        ramming_end   = transform_wt_pt(tcr.nozzle_change_result.end_pos);
+    }
+
+    // For Snapmaker Artision — next_wipe_x/y point to the wipe (not ramming) start
     gcodegen.m_next_wipe_x = 0;
     gcodegen.m_next_wipe_y = 0;
     auto transformed_pos   = Eigen::Rotation2Df(wipe_tower_rotation) * tcr.start_pos + wipe_tower_offset;
@@ -745,9 +755,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
                                                          || !needs_toolchange // this is just finishing the tower with no toolchange
                                                          || is_ramming);
 
+    // When there is a separate nozzle change, travel to the ramming area first;
+    // otherwise travel to the wipe area (existing behaviour).
+    Vec2f travel_target = has_nozzle_change ? ramming_start : start_pos;
+
     if (should_travel_to_tower || gcodegen.m_need_change_layer_lift_z) {
-        // FIXME: It would be better if the wipe tower set the force_travel flag for all toolchanges,
-        // then we could simplify the condition and make it more readable.
         auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
         if (type == ZHopType::zhtAuto) {
             type = ZHopType::zhtSpiral;
@@ -759,7 +771,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         }
 
         gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d), erMixed,
+        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, travel_target + plate_origin_2d), erMixed,
                                     "Travel to a Wipe Tower");
         gcode += gcodegen.unretract();
     } else {
@@ -771,6 +783,31 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         gcode += gcodegen.writer().retract();
         gcode += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
         gcode += gcodegen.writer().unretract();
+    }
+
+    // Process separate nozzle change (ramming) G-code before the toolchange command.
+    if (has_nozzle_change) {
+        std::string ramming_rotated = post_process_wipe_tower_moves(
+            tcr.nozzle_change_result.gcode,
+            tcr.nozzle_change_result.start_pos,
+            int(tcr.initial_tool),
+            int(tcr.initial_tool),  // ramming gcode has no [change_filament_gcode], new_tool unused
+            wipe_tower_offset, wipe_tower_rotation);
+        gcode += ramming_rotated;
+
+        // Update the writer's internal position to the ramming end point.
+        gcodegen.writer().travel_to_xy((ramming_end + plate_origin_2d).cast<double>());
+        gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, ramming_end + plate_origin_2d));
+
+        // Travel from the ramming area to the wipe area if they are not contiguous.
+        if ((ramming_end - start_pos).norm() > EPSILON) {
+            gcode += gcodegen.retract(false, false, gcodegen.to_lift_type(ZHopType::zhtSpiral));
+            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+            gcode += gcodegen.travel_to(
+                wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d),
+                erMixed, "Travel from ramming to wipe area");
+            gcode += gcodegen.unretract();
+        }
     }
 
     std::string toolchange_gcode_str;
@@ -838,12 +875,22 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                                                                 const Vec2f&                       translation,
                                                                 float                              angle) const
 {
-    Vec2f extruder_offset = extruder_offset_at(tcr.initial_tool).cast<float>();
+    return post_process_wipe_tower_moves(tcr.gcode, tcr.start_pos, int(tcr.initial_tool), int(tcr.new_tool), translation, angle);
+}
 
-    std::istringstream gcode_str(tcr.gcode);
+std::string WipeTowerIntegration::post_process_wipe_tower_moves(const std::string& gcode_str_in,
+                                                                const Vec2f&       start_pos_in,
+                                                                int                initial_tool,
+                                                                int                new_tool,
+                                                                const Vec2f&       translation,
+                                                                float              angle) const
+{
+    Vec2f extruder_offset = extruder_offset_at(size_t(initial_tool)).cast<float>();
+
+    std::istringstream gcode_str(gcode_str_in);
     std::string        gcode_out;
     std::string        line;
-    Vec2f              pos = tcr.start_pos;
+    Vec2f              pos = start_pos_in;
     auto  trans_pos = [wt_rot = Eigen::Rotation2Df(angle), &translation](const Vec2f& p) -> Vec2f { return wt_rot * p + translation; };
     Vec2f transformed_pos = trans_pos(pos);
     Vec2f old_pos(-1000.1f, -1000.1f);
@@ -901,10 +948,10 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
         if (line == "[change_filament_gcode]") {
             // BBS
             if (!m_single_extruder_multi_material) {
-                extruder_offset = extruder_offset_at(tcr.new_tool).cast<float>();
+                extruder_offset = extruder_offset_at(size_t(new_tool)).cast<float>();
 
                 // If the extruder offset changed, add an extra move so everything is continuous
-                if (extruder_offset != extruder_offset_at(tcr.initial_tool).cast<float>()) {
+                if (extruder_offset != extruder_offset_at(size_t(initial_tool)).cast<float>()) {
                     std::ostringstream oss;
                     oss << std::fixed << std::setprecision(3) << "G1 X" << transformed_pos.x() - extruder_offset.x() << " Y"
                         << transformed_pos.y() - extruder_offset.y() << "\n";

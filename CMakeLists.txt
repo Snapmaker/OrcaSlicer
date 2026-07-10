@@ -878,6 +878,7 @@ endfunction()
 add_subdirectory(deps_src)
 add_subdirectory(src)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Snapmaker_Orca_app_gui)
+set_target_properties(Snapmaker_Orca_app_gui PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$(OutDir)")
 
 add_dependencies(gettext_make_pot hintsToPot)
 

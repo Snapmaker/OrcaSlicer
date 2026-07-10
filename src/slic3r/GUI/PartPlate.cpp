@@ -5283,13 +5283,49 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 		}
 
 		//can not find, create a new one
+		// Create a new one using an unused print index.
+		while (m_print_list.count(m_print_index) > 0 || m_gcode_result_list.count(m_print_index) > 0)
+		{
+			++m_print_index;
+		}
+
+		const int new_print_index = m_print_index++;
+
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
-		m_print_list.emplace(m_print_index, print);
-		m_gcode_result_list.emplace(m_print_index, gcode);
-		m_plate_list[i]->set_print(print, gcode, m_print_index);
+
+		auto print_result = m_print_list.emplace(new_print_index, print);
+
+		auto gcode_result = m_gcode_result_list.emplace(new_print_index, gcode);
+
+		if (!print_result.second || !gcode_result.second)
+		{
+			BOOST_LOG_TRIVIAL(error)
+				<< "[ORCA-347] failed to create Print mapping"
+				<< ", plate_index=" << i
+				<< ", print_index=" << new_print_index
+				<< ", print_inserted="
+				<< (print_result.second ? 1 : 0)
+				<< ", gcode_inserted="
+				<< (gcode_result.second ? 1 : 0)
+				<< ", new_print="
+				<< static_cast<const void*>(print);
+
+			if (print_result.second)
+				m_print_list.erase(print_result.first);
+
+			if (gcode_result.second)
+				m_gcode_result_list.erase(gcode_result.first);
+
+			delete print;
+			delete gcode;
+
+			return -1;
+		}
+
+		m_plate_list[i]->set_print(print, gcode, new_print_index);
+
 		print->set_plate_index(i);
-		m_print_index++;
 	}
 
 	//go through the print list, and delete the one not used by plate

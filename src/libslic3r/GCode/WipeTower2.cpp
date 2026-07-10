@@ -1975,7 +1975,8 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
 
         WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, new_block->cur_depth),
             m_wipe_tower_width - 2 * m_perimeter_width, wipe_depth - nozzle_change_depth);
-        Vec2f initial_position = get_next_pos(cleaning_box, wipe_length, false);
+        //Vec2f initial_position = get_next_pos(cleaning_box, wipe_length);
+        Vec2f initial_position = cleaning_box.ld;
         writer.set_initial_position(initial_position, m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
         toolchange_Load(writer, cleaning_box);
 
@@ -2784,9 +2785,6 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer, const WipeTower::
 
     float retract_length = m_filpar[m_current_tool].retract_length;
     float retract_speed = m_filpar[m_current_tool].retract_speed * 60;
-
-    // Align wipe direction with notch X position (matching Bambu's layer rotation)
-    m_left_to_right = ((m_cur_layer_id + 3) % 4 >= 2);
 
     for (int i = 0; true; ++i) {
         if (i != 0) {
@@ -3647,16 +3645,12 @@ void WipeTower2::get_wall_skip_points(const WipeTowerInfo& layer, int layer_id)
             }
         }
 
-        float infill_gap_width = get_block_gap_width((int)new_filament, false);
-        Vec2f res;
-        int   index = layer_id % 4;
-        switch (index) {
-        case 0: res = Vec2f(0, process_depth); break;
-        case 1: res = Vec2f(m_wipe_tower_width, process_depth + wipe_depth - layer.extra_spacing * infill_gap_width); break;
-        case 2: res = Vec2f(m_wipe_tower_width, process_depth); break;
-        case 3: res = Vec2f(0, process_depth + wipe_depth - layer.extra_spacing * infill_gap_width); break;
-        default: break;
-        }
+        
+        //float x = (predict_ramming_end_x((int)old_filament, layer.height) < m_wipe_tower_width / 2.f)
+        //    ? 0.f : m_wipe_tower_width;
+        float x = 0.f;
+        float y = process_depth;
+        Vec2f res(x, y);
 
         m_wall_skip_points[layer_id].emplace_back(res);
 

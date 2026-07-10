@@ -38,6 +38,16 @@ public:
 		unsigned int    tool;
 	};
 
+    struct NozzleChangeResult
+    {
+        std::string gcode;
+        Vec2f start_pos;  // rotated
+        Vec2f end_pos;
+        Vec2f origin_start_pos;  // not rotated
+        std::vector<Vec2f> wipe_path;
+        bool is_extruder_change;
+    };
+
 	struct ToolChangeResult
 	{
 		// Print heigh of this tool change.
@@ -83,6 +93,7 @@ public:
         // executing the gcode finish_layer_tcr.
         bool is_finish_first = false;
         bool is_contact = false;
+        NozzleChangeResult nozzle_change_result;
 
 		// Sum the total length of the extrusion.
 		float total_extrusion_length_in_plane() {

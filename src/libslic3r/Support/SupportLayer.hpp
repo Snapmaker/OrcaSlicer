@@ -30,9 +30,6 @@ enum class SupporLayerType {
 	TopInterface,
 	// Top contact layer directly supporting an overhang. To be printed with a support interface material.
 	TopContact,
-	// Transition layer printed between interface and base support.
-	// Uses erSupportTransition role with independent speed/flow parameters.
-	Transition,
 	// Some undecided type yet. It will turn into Base first, then it may turn into BottomInterface or TopInterface.
 	Intermediate,
 };
@@ -105,6 +102,8 @@ public:
 	size_t 	 idx_object_layer_below { size_t(-1) };
 	// Use a bridging flow when printing this support layer.
 	bool 	 bridging { false };
+	//order of the transition layers
+	bool	 up{false};
 
 	// Polygons to be filled by the support pattern.
 	Polygons polygons;

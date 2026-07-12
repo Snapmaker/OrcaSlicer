@@ -1495,7 +1495,7 @@ wxString build_support_recommendation_message(
                     _L("  \342\200\242 Top Z distance: %.2f \342\206\222 0 mm\n"),
                     current_config.opt_float("support_top_z_distance"));
             else if (key == "support_base_pattern")
-                msg_text += _L("  \342\200\242 Base pattern \342\206\222 Rectilinear\n");
+                msg_text += _L("  \342\200\242 Base pattern \342\206\222 Default\n");
             else if (key == "support_interface_top_layers")
                 msg_text += wxString::Format(
                     _L("  \342\200\242 Top interface layers: %d \342\206\222 3\n"),
@@ -1844,7 +1844,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 new ConfigOptionFloat(0));
             recommended_conf.set_key_value("support_base_pattern",
                 new ConfigOptionEnum<SupportMaterialPattern>(
-                    smpRectilinear));
+                    smpDefault));
             recommended_conf.set_key_value("support_interface_top_layers",
                 new ConfigOptionInt(3));
             recommended_conf.set_key_value("support_interface_pattern",

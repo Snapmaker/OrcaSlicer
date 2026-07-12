@@ -493,8 +493,20 @@ public:
     double       extruder_preferred_layer_height(unsigned int filament_id) const;
     // Object layers a region printing with the given 1-based filament id combines into one extrusion where its geometry allows it (1 = no combining).
     unsigned int layer_height_multiplier_for_filament(unsigned int filament_id) const;
+    // 0-based filaments allowed to drive a region's layer pitch: its walls, or - when no wall filament carries an
+    // explicit layer height preference - its top/bottom/solid feature filaments. Returns false when the region
+    // involves a mixed (virtual) filament whose physical extruder varies per layer, in which case no pitch applies.
+    bool         collect_region_pitch_filaments(const PrintRegionConfig &config, std::vector<unsigned int> &filaments, bool &pitch_from_features) const;
     // Layer pitch multiplier of a region, driven by its wall filaments; 1 when no combining is requested or possible.
     unsigned int region_layer_height_multiplier(const PrintRegion &region) const;
+    // Do inner-wall loops print in this region? Besides wall_loops > 1, the alternating extra
+    // wall and the extra perimeters on overhangs add inner loops even at a single wall loop.
+    static bool  region_prints_inner_walls(const PrintRegionConfig &config);
+    // Walls-only pitch multiplier: when the region as a whole cannot follow its wall filaments'
+    // preferred pitch (region_layer_height_multiplier() == 1, e.g. a finer-nozzle filament prints
+    // the region's other features), the walls alone combine to it while everything else keeps
+    // printing every layer. 1 when the walls print with the region's own pitch.
+    unsigned int wall_layer_height_multiplier(const PrintRegion &region) const;
     // Any region of this object printing with a layer height multiplier > 1?
     bool         has_combined_layer_regions() const;
     // Multi-nozzle support restriction ("support_nozzle_diameter" print option): may the given 1-based filament print this object's support / raft?
@@ -587,6 +599,9 @@ private:
     void clip_fill_surfaces();
     void discover_horizontal_shells();
     void combine_infill();
+    // Per-extruder layer height: top surfaces print at their filament's preferred pitch by
+    // absorbing the internal solid layers right below them into one thick pass.
+    void combine_top_surfaces();
     void _generate_support_material();
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, float>>& surfaces_w_bottom_z) const;
@@ -1123,7 +1138,9 @@ private:
     PrintRegionPtrs                         m_print_regions;
     
     //SoftFever
-    bool m_isBBLPrinter;
+    // Assigned by the GUI (BackgroundSlicingProcess) from the vendor; must not be read
+    // uninitialized by CLI/tests - BBL-only code paths key off it.
+    bool m_isBBLPrinter { false };
 
     // Ordered collections of extrusion paths to build skirt loops and brim.
     ExtrusionEntityCollection               m_skirt;

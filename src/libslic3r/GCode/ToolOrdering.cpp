@@ -87,20 +87,53 @@ void append_unique_preserve_order(std::vector<unsigned int> &dst, unsigned int v
         dst.emplace_back(value);
 }
 
-bool internal_solid_infill_uses_sparse_filament(const PrintRegion &region, ExtrusionRole role)
-{
-    return role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON;
-}
-
 unsigned int sparse_infill_filament_id_1based(const PrintRegion &region)
 {
     return region.config().sparse_infill_filament_id.value;
 }
 
+} // anonymous namespace
+
+bool perimeter_entity_uses_outer_wall_filament(const ExtrusionEntity &entity)
+{
+    // Chaining may put an overhang path first and fully overhanging loops have no plain
+    // perimeter path: classify by scanning every path (must match the mixed-perimeter split
+    // in GCode::process_layer()).
+    bool has_external = false, has_internal = false;
+    auto classify = [&](const ExtrusionPaths &paths) {
+        for (const ExtrusionPath &path : paths) {
+            if (path.role() == erExternalPerimeter)
+                has_external = true;
+            else if (path.role() == erPerimeter)
+                has_internal = true;
+        }
+    };
+    if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(&entity))
+        classify(loop->paths);
+    else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(&entity))
+        classify(multi_path->paths);
+    else {
+        const ExtrusionRole role = entity.role();
+        has_external = role == erExternalPerimeter;
+        has_internal = role == erPerimeter;
+    }
+    return has_external || ! has_internal;
+}
+
+void classify_wall_filaments(const ExtrusionEntityCollection &collection, bool &any_outer, bool &any_inner)
+{
+    any_outer = any_inner = false;
+    for (const ExtrusionEntity *entity : collection.entities)
+        (perimeter_entity_uses_outer_wall_filament(*entity) ? any_outer : any_inner) = true;
+}
+
+namespace {
+
+// The internal solid filament owns internal solid infill at every density - including the solid
+// interior at 100% sparse density (matches mainline Orca and PrintRegion::extruder(); this fork
+// used to hand the 100% interior to the sparse filament, hiding the internal solid selector).
 unsigned int infill_filament_id_1based(const LayerTools &layer_tools, const PrintRegion &region, ExtrusionRole role)
 {
-    if (internal_solid_infill_uses_sparse_filament(region, role))
-        return sparse_infill_filament_id_1based(region);
     if (role == erTopSolidInfill || role == erIroning)
         return region.config().top_surface_filament_id.value;
     if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
@@ -352,8 +385,6 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
                     role = ee->role();
                     break;
                 }
-        if (internal_solid_infill_uses_sparse_filament(region, role))
-            return sparse_infill_filament_id(region);
         if (extrusions.has_solid_infill()) {
             ExtrusionRole solid_role = extrusions.role();
             // gap fill inherits the filament of the surface it fills; derive the role from the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
@@ -371,7 +402,11 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
         }
         return sparse_infill_filament_id(region);
     }
-    return extrusions.role() == erPerimeter ? inner_wall_extruder_id(region) : wall_extruder_id(region);
+    // Classify like the mixed-perimeter split: role() only reflects the first path of the first
+    // loop, which may be an overhang path of an inner loop.
+    bool any_outer = false, any_inner = false;
+    classify_wall_filaments(extrusions, any_outer, any_inner);
+    return any_inner && ! any_outer ? inner_wall_extruder_id(region) : wall_extruder_id(region);
 }
 
 static double calc_max_layer_height(const PrintConfig &config, double max_object_layer_height)
@@ -448,10 +483,14 @@ bool ToolOrdering::insert_wipe_tower_extruder()
         for (LayerTools& lt : m_layer_tools) {
             if (lt.wipe_tower_partitions > 0) {
                 lt.extruders.emplace_back(m_print_config_ptr->wipe_tower_filament - 1);
-                sort_remove_duplicates(lt.extruders);
+                if (lt.preserve_extruder_order)
+                    // Mixed filament layers depend on their collected extruder order, sorting would destroy it.
+                    remove_duplicates_preserve_order(lt.extruders);
+                else
+                    sort_remove_duplicates(lt.extruders);
                 changed = true;
             }
-        }  
+        }
     }
     return changed;
 }
@@ -877,9 +916,7 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                             role = fill_entity->role();
                             break;
                         }
-                if (internal_solid_infill_uses_sparse_filament(region, role))
-                    has_sparse_infill = true;
-                else if (role == erTopSolidInfill || role == erIroning)
+                if (role == erTopSolidInfill || role == erIroning)
                     has_top_solid_surface = true;
                 else if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces
                     has_bottom_surface = true;

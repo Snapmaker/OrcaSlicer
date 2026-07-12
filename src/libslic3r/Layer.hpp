@@ -121,6 +121,18 @@ public:
     // Layer right below the covered group; replaces Layer::lower_layer for overhang / bridge
     // detection of combined regions. May be nullptr.
     const Layer* combined_lower_layer() const;
+
+    // ORCA: walls-only pitch (PrintObject::wall_layer_height_multiplier()). Number of object
+    // layers whose walls this region's perimeters cover here: > 1 on the top layer of a wall run
+    // marked by PrintObject::apply_extruder_layer_heights(), 0 on the run layers below (they
+    // generate perimeters only to bound their fills and drop the wall extrusions), 1 otherwise.
+    unsigned short wall_combined_count() const { return m_wall_combined_count; }
+    // Height the walls are generated with at this layer: the wall run height on all its layers
+    // (the whole run's fill boundaries must line up with the walls printed at its top), else the
+    // region's combined height / layer height.
+    double  wall_combined_height() const;
+    // Layer right below the wall run for overhang / bridge detection of the run's walls.
+    const Layer* wall_combined_lower_layer() const;
 private:
     void    simplify_entity_collection(ExtrusionEntityCollection* entity_collection);
     void    simplify_path(ExtrusionPath* path);
@@ -140,6 +152,9 @@ private:
     // ORCA: set by PrintObject::apply_extruder_layer_heights(), see combined_layer_count() / combined_height().
     unsigned short     m_combined_layer_count { 1 };
     double             m_combined_height { 0. };
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(), see wall_combined_count() / wall_combined_height().
+    unsigned short     m_wall_combined_count { 1 };
+    double             m_wall_combined_height { 0. };
 };
 
 class Layer

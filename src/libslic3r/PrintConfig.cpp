@@ -3970,12 +3970,14 @@ void PrintConfigDef::init_fff_params()
     def = this->add("extruder_layer_height", coFloats);
     def->label = L("Preferred layer height");
     def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
-                     "different nozzle sizes. Object parts whose walls are assigned to this extruder are "
-                     "printed only on every Nth layer with correspondingly thicker extrusions, wherever "
-                     "their geometry allows it (near-vertical walls); elsewhere they fall back to the "
-                     "object layer height. It must then be an integer multiple of the object layer height. "
-                     "When only the sparse infill of a part uses this extruder, the infill is combined up "
-                     "to this height instead. 0 means to use the object layer height.");
+                     "different nozzle sizes. It must be an integer multiple of the object layer height. "
+                     "A part whose features all follow this extruder prints only on every Nth layer with "
+                     "correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it "
+                     "falls back to the object layer height. When the rest of the part cannot follow, "
+                     "walls assigned to this extruder still combine to this height on their own, "
+                     "full-density top surfaces absorb the solid layers below them, and sparse or 100% "
+                     "dense infill combines to this height independently. 0 means to use the object "
+                     "layer height.");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
@@ -7546,24 +7548,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             this->option("wipe_tower_filament")->setInt(0);
     }
 
-    if (this->has("sparse_infill_filament_id")) {
-        int sparse_infill_filament_id = this->option("sparse_infill_filament_id")->getInt();
-        if (sparse_infill_filament_id > 0 && (!this->has("internal_solid_filament_id") || this->option("internal_solid_filament_id")->getInt() == 0))
-            this->option("internal_solid_filament_id", true)->setInt(sparse_infill_filament_id);
-    }
-
-    const int internal_solid = this->has("internal_solid_filament_id") ? this->option("internal_solid_filament_id")->getInt() : 0;
-    const int top_surface    = this->has("top_surface_filament_id") ? this->option("top_surface_filament_id")->getInt() : 0;
-    const int bottom_surface = this->has("bottom_surface_filament_id") ? this->option("bottom_surface_filament_id")->getInt() : 0;
-
-    if (internal_solid == 0 && top_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(top_surface);
-    if (internal_solid == 0 && bottom_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(bottom_surface);
-    if (top_surface == 0 && internal_solid > 0)
-        this->option("top_surface_filament_id", true)->setInt(internal_solid);
-    if (bottom_surface == 0 && internal_solid > 0)
-        this->option("bottom_surface_filament_id", true)->setInt(internal_solid);
+    // Note: no cross-propagation between the per-feature filament selectors here. Filling one
+    // selector from another (sparse -> internal solid, internal solid <-> top/bottom) silently
+    // overwrote "Default" (0), which means "use the part's filament", with an unrelated feature's
+    // explicit filament - e.g. assigning internal solid infill dragged the top/bottom surfaces along.
+    // Each selector resolves its own "Default" at slicing time (PrintRegion::extruder()).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {
@@ -7643,24 +7632,11 @@ void DynamicPrintConfig::normalize_fdm_1()
         }
     }
 
-    if (this->has("sparse_infill_filament_id")) {
-        int sparse_infill_filament_id = this->option("sparse_infill_filament_id")->getInt();
-        if (sparse_infill_filament_id > 0 && (!this->has("internal_solid_filament_id") || this->option("internal_solid_filament_id")->getInt() == 0))
-            this->option("internal_solid_filament_id", true)->setInt(sparse_infill_filament_id);
-    }
-
-    const int internal_solid = this->has("internal_solid_filament_id") ? this->option("internal_solid_filament_id")->getInt() : 0;
-    const int top_surface    = this->has("top_surface_filament_id") ? this->option("top_surface_filament_id")->getInt() : 0;
-    const int bottom_surface = this->has("bottom_surface_filament_id") ? this->option("bottom_surface_filament_id")->getInt() : 0;
-
-    if (internal_solid == 0 && top_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(top_surface);
-    if (internal_solid == 0 && bottom_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(bottom_surface);
-    if (top_surface == 0 && internal_solid > 0)
-        this->option("top_surface_filament_id", true)->setInt(internal_solid);
-    if (bottom_surface == 0 && internal_solid > 0)
-        this->option("bottom_surface_filament_id", true)->setInt(internal_solid);
+    // Note: no cross-propagation between the per-feature filament selectors here. Filling one
+    // selector from another (sparse -> internal solid, internal solid <-> top/bottom) silently
+    // overwrote "Default" (0), which means "use the part's filament", with an unrelated feature's
+    // explicit filament - e.g. assigning internal solid infill dragged the top/bottom surfaces along.
+    // Each selector resolves its own "Default" at slicing time (PrintRegion::extruder()).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {

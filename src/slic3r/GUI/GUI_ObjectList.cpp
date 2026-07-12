@@ -955,6 +955,16 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
                         extruder              = wxString::Format("%d", new_extruder);
                         layer_range_item.second.set("extruder", new_extruder);
                     }
+                    // Height ranges carry the per-feature selectors too (the engine reads them from
+                    // layer_config_ranges); remap them like the object / volume configs above.
+                    for (auto key : keys) {
+                        if (layer_range_item.second.has(key)) {
+                            if (layer_range_item.second.option(key)->getInt() == int(filament_id) + 1)
+                                layer_range_item.second.erase(key);
+                            else if (layer_range_item.second.option(key)->getInt() > int(filament_id))
+                                layer_range_item.second.set(key, layer_range_item.second.option(key)->getInt() - 1);
+                        }
+                    }
                     m_objects_model->SetExtruder(extruder, layer_item);
                 }
             }

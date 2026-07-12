@@ -85,9 +85,9 @@ unsigned int LayerRegion::extruder(FlowRole role) const
     unsigned int             filament_id = 0;
     if (role == frInfill)
         filament_id = config.sparse_infill_filament_id.value;
-    else if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
-        filament_id = config.sparse_infill_filament_id.value;
     else
+        // Internal solid infill resolves to the internal solid filament at every density,
+        // including the 100% dense interior (PrintRegion::extruder()).
         filament_id = this->region().extruder(role);
 
     return (role == frInfill || role == frSolidInfill) ?
@@ -205,8 +205,11 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         (this->layer()->id() >= size_t(region_config.bottom_shell_layers.value) &&
          this->layer()->print_z >= region_config.bottom_shell_thickness - EPSILON);
 
-    // ORCA: on the top layer of a combined group all perimeters extrude with the whole group's height.
-    const double perimeter_height = this->combined_height();
+    // ORCA: on the top layer of a combined group all perimeters extrude with the whole group's
+    // height. On layers of a walls-only run (wall_combined_count()) the walls are generated with
+    // the run height on every run layer - so the fill boundaries line up with the walls printed
+    // once at the run top - and the wall extrusions of the layers below the top are dropped below.
+    const double perimeter_height = this->wall_combined_height();
 
     PerimeterGenerator g(
         // input:
@@ -228,8 +231,9 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         fill_no_overlap
     );
 
-    // Detect overhangs / bridges against the layer below the whole combined group (combined_lower_layer() == lower_layer for regular regions).
-    if (const Layer *lower_layer = this->combined_lower_layer(); lower_layer != nullptr)
+    // Detect overhangs / bridges against the layer below the whole combined group or wall run
+    // (wall_combined_lower_layer() == lower_layer for regular regions).
+    if (const Layer *lower_layer = this->wall_combined_lower_layer(); lower_layer != nullptr)
         // Cummulative sum of polygons over all the regions.
         g.lower_slices = &lower_layer->lslices;
     if (this->layer()->upper_layer != NULL)
@@ -254,6 +258,14 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         g.process_arachne();
     else
         g.process_classic();
+
+    // ORCA: walls-only pitch. The run layers below the top only generated their perimeters to
+    // carve fill boundaries consistent with the run; the walls themselves (and their thin fills /
+    // gap fills, which print with the walls) extrude once at the run top.
+    if (this->wall_combined_count() == 0) {
+        this->perimeters.clear();
+        this->thin_fills.clear();
+    }
 }
 
 #if 1

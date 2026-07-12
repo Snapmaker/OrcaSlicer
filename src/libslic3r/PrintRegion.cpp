@@ -5,15 +5,6 @@
 
 namespace Slic3r {
 
-namespace {
-
-bool internal_solid_infill_uses_sparse_filament(const PrintRegionConfig &config, FlowRole role)
-{
-    return role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON;
-}
-
-} // namespace
-
 // 1-based extruder identifier for this region and role.
 unsigned int PrintRegion::extruder(FlowRole role) const
 {
@@ -25,7 +16,10 @@ unsigned int PrintRegion::extruder(FlowRole role) const
     else if (role == frInfill)
         extruder = m_config.sparse_infill_filament_id;
     else if (role == frSolidInfill)
-        extruder = internal_solid_infill_uses_sparse_filament(m_config, role) ? m_config.sparse_infill_filament_id : m_config.internal_solid_filament_id;
+        // The internal solid filament owns internal solid infill at every density, including the
+        // solid interior at 100% sparse density (matches mainline Orca; this fork used to hand
+        // the 100% interior to the sparse filament, hiding the internal solid selector entirely).
+        extruder = m_config.internal_solid_filament_id;
     else if (role == frTopSolidInfill)
         extruder = m_config.top_surface_filament_id;
     else

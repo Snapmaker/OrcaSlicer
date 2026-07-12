@@ -888,10 +888,15 @@ void PrintObject::apply_extruder_layer_heights()
     if (m_layers.size() < 2 || this->num_printing_regions() == 0)
         return;
     std::vector<unsigned int> multipliers(this->num_printing_regions(), 1);
+    // Walls-only pitch (see wall_layer_height_multiplier()): the region prints every layer, only
+    // its walls combine. Mutually exclusive with a whole-region multiplier > 1.
+    std::vector<unsigned int> wall_multipliers(this->num_printing_regions(), 1);
     bool any_combined = false;
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
         multipliers[region_id] = this->region_layer_height_multiplier(this->printing_region(region_id));
-        any_combined |= multipliers[region_id] > 1;
+        if (multipliers[region_id] <= 1)
+            wall_multipliers[region_id] = this->wall_layer_height_multiplier(this->printing_region(region_id));
+        any_combined |= multipliers[region_id] > 1 || wall_multipliers[region_id] > 1;
     }
     if (! any_combined)
         return;
@@ -918,7 +923,10 @@ void PrintObject::apply_extruder_layer_heights()
         return size_t((unsigned int)std::max(1, filament_id) - 1);
     };
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
-        const size_t mult = multipliers[region_id];
+        // Walls-only mode marks the runs on the LayerRegions for make_perimeters() instead of
+        // moving any slices: every layer keeps its geometry, fills and surfaces.
+        const bool   walls_only = wall_multipliers[region_id] > 1;
+        const size_t mult       = walls_only ? wall_multipliers[region_id] : multipliers[region_id];
         if (mult <= 1)
             continue;
         // Shapes deviating by less than this fraction of the region's nozzle diameter are considered
@@ -928,13 +936,24 @@ void PrintObject::apply_extruder_layer_heights()
         const float tolerance = float(scale_(m_config.extruder_layer_height_tolerance.get_abs_value(nozzle_diameter)));
         // Where geometry would fall back below the extruders' minimum layer height, runs of at least
         // min_run layers are forced instead, ignoring the shape tolerance (the nozzle cannot print
-        // finer). Both wall filaments print fallback runs, so the coarser of their minimums decides.
+        // finer). All the region's pitch filaments print fallback runs, so the coarsest minimum decides
+        // (with a feature-derived pitch the coarse feature filament matters, not just the walls).
         const PrintRegionConfig &region_config = this->printing_region(region_id).config();
-        double min_layer_height = print_config.min_layer_height.get_at(
-            extruder_idx_of(region_config.outer_wall_filament_id.value));
-        if (region_config.wall_loops.value > 1)
-            min_layer_height = std::max(min_layer_height, print_config.min_layer_height.get_at(
-                extruder_idx_of(region_config.inner_wall_filament_id.value)));
+        double min_layer_height = 0.;
+        {
+            std::vector<unsigned int> pitch_filaments; // 0-based filament indices
+            if (walls_only) {
+                // Only the wall filaments print the combined runs here.
+                pitch_filaments.emplace_back((unsigned int)extruder_idx_of(region_config.outer_wall_filament_id.value));
+                if (region_prints_inner_walls(region_config))
+                    pitch_filaments.emplace_back((unsigned int)extruder_idx_of(region_config.inner_wall_filament_id.value));
+            } else {
+                bool pitch_from_features = false;
+                this->collect_region_pitch_filaments(region_config, pitch_filaments, pitch_from_features);
+            }
+            for (unsigned int filament : pitch_filaments)
+                min_layer_height = std::max(min_layer_height, print_config.min_layer_height.get_at(size_t(filament)));
+        }
         size_t min_run = 1;
         if (min_layer_height > m_config.layer_height.value + EPSILON)
             min_run = std::min(mult, (size_t)std::ceil(min_layer_height / m_config.layer_height.value - EPSILON));
@@ -1037,10 +1056,24 @@ void PrintObject::apply_extruder_layer_heights()
                     ++ idx;
                     continue;
                 }
-            // Commit: move the common shape to the top layer of the run, drop the layers below.
             double combined_height = 0.;
             for (size_t i = idx; i <= commit_top; ++ i)
                 combined_height += m_layers[i]->height;
+            if (walls_only) {
+                // Commit: mark the run for LayerRegion::make_perimeters(). The run's top layer
+                // extrudes all its walls at once at the full run height; the layers below keep
+                // their slices, fills and surfaces but drop their wall extrusions (count 0). All
+                // run layers carry the run height so their perimeters are generated with the same
+                // flow and the fill boundaries line up with the walls actually printed at the top.
+                for (size_t i = idx; i <= commit_top; ++ i) {
+                    LayerRegion *layerm = m_layers[i]->regions()[region_id];
+                    layerm->m_wall_combined_count  = i == commit_top ? (unsigned short)(commit_top - idx + 1) : 0;
+                    layerm->m_wall_combined_height = combined_height;
+                }
+                idx = commit_top + 1;
+                continue;
+            }
+            // Commit: move the common shape to the top layer of the run, drop the layers below.
             LayerRegion *top_layerm = m_layers[commit_top]->regions()[region_id];
             top_layerm->slices.set(std::move(merged), stInternal);
             top_layerm->m_combined_layer_count = (unsigned short)(commit_top - idx + 1);

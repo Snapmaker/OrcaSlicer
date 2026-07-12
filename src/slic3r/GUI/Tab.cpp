@@ -2879,30 +2879,32 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
     return t;
 }
 
-static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
+static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config, const DynamicPrintConfig* parent_scope_config)
 {
     DynamicPrintConfig resolved(config);
 
+    // Mirror the slicing precedence (apply_to_print_region_config): explicit selectors of outer
+    // scopes - the process preset and, for the part/layer tabs, the parent object's own config -
+    // win over this scope's extruder; the extruder only fills selectors left on "Default" (0) by
+    // every outer scope. The gate reads the edited print preset directly: a parent TAB's m_config
+    // may carry values auto-filled from the parent object's extruder, which must NOT beat this
+    // scope's own extruder. No cross-propagation between the selectors either - the engine
+    // resolves each feature's "Default" independently.
     if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
         const int extruder = extruder_opt->value;
+        const DynamicPrintConfig& preset_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
         for (const char* key : {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
-                                "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"})
-            if (!resolved.has(key))
-                resolved.set_key_value(key, new ConfigOptionInt(extruder));
-    }
-
-    // 0 = "Default" (use the active object/part filament); only explicit selections propagate.
-    if (resolved.has("sparse_infill_filament_id") && !resolved.has("internal_solid_filament_id"))
-        if (const int sparse_infill_filament_id = resolved.opt_int("sparse_infill_filament_id"); sparse_infill_filament_id > 0)
-            resolved.set_key_value("internal_solid_filament_id", new ConfigOptionInt(sparse_infill_filament_id));
-
-    if (resolved.has("internal_solid_filament_id"))
-        if (const int internal_solid_filament_id = resolved.opt_int("internal_solid_filament_id"); internal_solid_filament_id > 0) {
-            if (!resolved.has("top_surface_filament_id"))
-                resolved.set_key_value("top_surface_filament_id", new ConfigOptionInt(internal_solid_filament_id));
-            if (!resolved.has("bottom_surface_filament_id"))
-                resolved.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(internal_solid_filament_id));
+                                "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"}) {
+            if (resolved.has(key))
+                continue;
+            if (const auto* preset_opt = preset_config.option<ConfigOptionInt>(key); preset_opt != nullptr && preset_opt->value > 0)
+                continue;
+            if (parent_scope_config != nullptr)
+                if (const auto* parent_opt = parent_scope_config->option<ConfigOptionInt>(key); parent_opt != nullptr && parent_opt->value > 0)
+                    continue;
+            resolved.set_key_value(key, new ConfigOptionInt(extruder));
         }
+    }
 
     return resolved;
 }
@@ -2989,15 +2991,22 @@ void TabPrintModel::update_model_config()
     }
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
+        // For the part/layer tabs, the parent object's own explicit selectors also beat this
+        // scope's extruder in the engine; the object tab holds that object's config while a
+        // part/layer is selected (GUI_ObjectSettings).
+        const DynamicPrintConfig *parent_object_config = nullptr;
+        if (auto *object_tab = dynamic_cast<TabPrintModel*>(wxGetApp().get_model_tab());
+            object_tab != nullptr && object_tab != this && m_parent_tab == object_tab && object_tab->m_object_configs.size() == 1)
+            parent_object_config = &object_tab->m_object_configs.begin()->second->get();
         DynamicPrintConfig const & global_config= *m_config;
-        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get());
+        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get(), parent_object_config);
         DynamicPrintConfig diff_config;
         std::vector<std::string> all_keys = local_config.keys(); // at least one has these keys
         std::vector<std::string> local_keys = intersect(m_keys, all_keys); // all equal on these keys
         if (m_object_configs.size() > 1) {
             std::vector<std::string> global_keys = m_keys; // all equal with global on these keys
             for (auto & config : m_object_configs) {
-                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get());
+                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get(), parent_object_config);
                 auto equals = global_config.equal(resolved_config);
                 global_keys = intersect(global_keys, equals);
                 diff_config.apply_only(resolved_config, substruct(resolved_config.keys(), equals));

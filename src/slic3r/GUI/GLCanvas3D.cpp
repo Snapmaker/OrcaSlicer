@@ -9399,39 +9399,61 @@ void GLCanvas3D::_load_print_object_toolpaths(const PrintObject& print_object, c
             for (const PrintInstance &instance : *ctxt.shifted_copies) {
                 const Point &copy = instance.shift;
                 for (const LayerRegion *layerm : layer->regions()) {
+                    // ORCA: per-feature filaments. Attribute every feature to the filament that
+                    // actually prints it (must match LayerTools::extruder() and Fill.cpp).
+                    const auto &region_config          = layerm->region().config();
+                    const int   filament_outer_wall    = int(layerm->extruder(frExternalPerimeter));
+                    const int   filament_inner_wall    = int(layerm->extruder(frPerimeter));
+                    const int   filament_sparse_infill = int(layerm->extruder(frInfill));
+                    const int   filament_solid_infill  = int(layerm->extruder(frSolidInfill));
+                    const int   filament_top_surface   = int(layerm->extruder(frTopSolidInfill));
+                    const int   filament_bottom_surface = int(effective_layer_filament_id(*layer,
+                        (unsigned int)std::max(0, region_config.bottom_surface_filament_id.value)));
+                    auto fill_filament = [&](const ExtrusionEntityCollection &fill) -> int {
+                        ExtrusionRole role = fill.entities.empty() ? erNone : fill.entities.front()->role();
+                        // gap fill inherits the filament of the surface it fills (matches ToolOrdering::collect_extruders()).
+                        if (role == erGapFill)
+                            for (const ExtrusionEntity *fill_entity : fill.entities)
+                                if (fill_entity->role() != erGapFill) {
+                                    role = fill_entity->role();
+                                    break;
+                                }
+                        if (role == erTopSolidInfill || role == erIroning)
+                            return filament_top_surface;
+                        if (role == erBottomSurface || role == erBridgeInfill) // external bridges print as bottom surfaces
+                            return filament_bottom_surface;
+                        if (role == erGapFill)
+                            // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                            return filament_outer_wall;
+                        return is_solid_infill(role) ? filament_solid_infill : filament_sparse_infill;
+                    };
                     if (is_selected_separate_extruder)
                     {
-                        const int effective_wall_filament          = int(layerm->extruder(frPerimeter));
-                        const int effective_sparse_infill_filament = int(layerm->extruder(frInfill));
-                        const int effective_solid_infill_filament  = int(layerm->extruder(frSolidInfill));
-                        if (effective_wall_filament != m_selected_extruder &&
-                            effective_sparse_infill_filament != m_selected_extruder &&
-                            effective_solid_infill_filament != m_selected_extruder)
+                        if (filament_outer_wall != m_selected_extruder &&
+                            filament_inner_wall != m_selected_extruder &&
+                            filament_sparse_infill != m_selected_extruder &&
+                            filament_solid_infill != m_selected_extruder &&
+                            filament_top_surface != m_selected_extruder &&
+                            filament_bottom_surface != m_selected_extruder)
                             continue;
                     }
                     if (ctxt.has_perimeters) {
-                        const int effective_wall_filament = int(layerm->extruder(frPerimeter));
-                        _3DScene::extrusionentity_to_verts(layerm->perimeters, float(layer->print_z), copy,
-                            select_geometry(idx_layer, effective_wall_filament, 0));
+                        // Outer and inner walls may print with different filaments; classify each
+                        // entity the way the wall filament dispatch does.
+                        for (const ExtrusionEntity *ee : layerm->perimeters.entities)
+                            _3DScene::extrusionentity_to_verts(ee, float(layer->print_z), copy,
+                                select_geometry(idx_layer,
+                                                perimeter_entity_uses_outer_wall_filament(*ee) ?
+                                                    filament_outer_wall : filament_inner_wall,
+                                                0));
                     }
                     if (ctxt.has_infill) {
                         for (const ExtrusionEntity *ee : layerm->fills.entities) {
                             // fill represents infill extrusions of a single island.
                             const auto *fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
                             if (! fill->entities.empty())
-                            {
-                                const int effective_sparse_infill_filament = int(layerm->extruder(frInfill));
-                                const int effective_solid_infill_filament = int(layerm->extruder(frSolidInfill));
                                 _3DScene::extrusionentity_to_verts(*fill, float(layer->print_z), copy,
-                                    select_geometry(idx_layer,
-                                                    (fill->entities.front()->role() == erSolidInfill &&
-                                                     std::abs(layerm->region().config().sparse_infill_density.value - 100.) < EPSILON) ?
-                                                        effective_solid_infill_filament :
-                                                        (is_solid_infill(fill->entities.front()->role()) ?
-                                                             effective_solid_infill_filament :
-                                                             effective_sparse_infill_filament),
-                                                    1));
-                            }
+                                    select_geometry(idx_layer, fill_filament(*fill), 1));
                         }
                     }
                 }

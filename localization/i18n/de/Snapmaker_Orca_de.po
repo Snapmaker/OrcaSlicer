@@ -14176,7 +14176,7 @@ msgstr "Dichte der ersten Schicht der Druckbasis oder Support"
 msgid "Initial layer expansion"
 msgstr "Ausdehnung der ersten Schicht"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Ausdehnung der ersten Druckbasis oder Support-Schicht um die "
 "Druckplattenhaftung zu verbessern"

@@ -14100,7 +14100,7 @@ msgstr "Densité du premier radeau ou couche de support"
 msgid "Initial layer expansion"
 msgstr "Extension de la couche initiale"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Développez le premier radeau ou couche de support pour améliorer l'adhérence "
 "du plateau"

@@ -398,8 +398,12 @@ SupportGeneratorLayersPtr generate_raft_base(
     }
 
     // How much to inflate the support columns to be stable. This also applies to the 1st layer, if no raft layers are to be printed.
-    const float inflate_factor_fine      = float(scale_((slicing_params.raft_layers() > 1) ? 0.5 : EPSILON));
-    const float inflate_factor_1st_layer = std::max(0.f, float(scale_(object.config().raft_first_layer_expansion)) - inflate_factor_fine);
+    const float inflate_factor_fine = float(scale_((slicing_params.raft_layers() > 1) ? 0.5 : EPSILON));
+    // Resolve auto: -1 means 2.0mm
+    float initial_inflation = float(object.config().raft_first_layer_expansion);
+    if (initial_inflation < 0.f)
+        initial_inflation = 2.f;
+    float inflate_factor_1st_layer = std::max(0.f, float(scale_(initial_inflation)) - inflate_factor_fine);
     SupportGeneratorLayer       *contacts         = top_contacts         .empty() ? nullptr : top_contacts         .front();
     SupportGeneratorLayer       *interfaces       = interface_layers     .empty() ? nullptr : interface_layers     .front();
     SupportGeneratorLayer       *base_interfaces  = base_interface_layers.empty() ? nullptr : base_interface_layers.front();

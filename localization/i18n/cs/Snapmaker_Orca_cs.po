@@ -13023,7 +13023,7 @@ msgstr "Hustota prvního vrstvy raftu nebo podpůrné vrstvy"
 msgid "Initial layer expansion"
 msgstr "Rozšíření první vrstvy"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Rozšiřte první raft nebo podpůrnou vrstvu pro zlepšení přilnavosti k podložce"
 

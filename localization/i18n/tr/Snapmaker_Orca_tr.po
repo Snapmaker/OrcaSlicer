@@ -13829,7 +13829,7 @@ msgstr "İlk sal veya destek katmanının yoğunluğu."
 msgid "Initial layer expansion"
 msgstr "İlk katman genişletme"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Yatak plakası yapışmasını iyileştirmek için ilk raft veya destek katmanını "
 "genişletin."

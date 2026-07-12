@@ -14105,7 +14105,7 @@ msgstr ""
 msgid "Initial layer expansion"
 msgstr "Расширение первого слоя"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Расширение первого слоя подложки или поддержки в плоскости XY для улучшения "
 "адгезии при печати материалами, склонными к отлипанию и закручиванию."

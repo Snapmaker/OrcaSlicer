@@ -13844,7 +13844,7 @@ msgstr "Щільність першого шару підкладки або п�
 msgid "Initial layer expansion"
 msgstr "Розширення початкового шару"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Розширити перший шар підкладки або підтримки, щоб покращити прилипання до "
 "робочої поверхні"

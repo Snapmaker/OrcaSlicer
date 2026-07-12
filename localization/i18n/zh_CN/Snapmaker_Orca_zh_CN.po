@@ -11363,8 +11363,8 @@ msgstr "筏和支撑的首层密度"
 msgid "Initial layer expansion"
 msgstr "首层扩展"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
-msgstr "扩展筏和支撑的首层可以改善和热床的粘接。"
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgstr "扩展筏层和支撑的首层可以改善和热床的粘接，-1 表示自动"
 
 msgid "Raft layers"
 msgstr "筏层"

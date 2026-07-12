@@ -12766,7 +12766,7 @@ msgstr "Az első tutaj vagy támasz réteg sűrűsége"
 msgid "Initial layer expansion"
 msgstr "First layer expansion"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr "This expands the first raft or support layer to improve bed adhesion."
 
 msgid "Raft layers"

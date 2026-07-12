@@ -89,7 +89,7 @@ Density of the first raft or support layer.
 
 ## Initial layer expansion
 
-Expand the first raft or support layer to improve bed plate adhesion.
+Expand the first raft or support layer to improve bed plate adhesion. Set to -1 for auto (2.0mm).
 
 ## On build plate only
 

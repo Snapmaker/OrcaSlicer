@@ -13922,7 +13922,7 @@ msgstr "Densitat de la primera Vora d'Adherència o capa de suport"
 msgid "Initial layer expansion"
 msgstr "Expansió de la primera capa"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Expandir la primera Vora d'Adherència o capa de suport per millorar "
 "l'adherència de la placa d'impressió"

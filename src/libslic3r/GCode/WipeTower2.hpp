@@ -231,7 +231,7 @@ private:
     int get_filament_category(int filament_id);
     void reset_block_status();
     void calc_block_infill_gap();
-    float get_block_gap_width(int tool, bool is_nozzlechangle = false);
+    float get_block_gap_width(int tool);
     void generate_wipe_tower_blocks(bool add_solid_flag);
     void update_all_layer_depth(float wipe_tower_depth);
     WipeTower::box_coordinates align_perimeter(const WipeTower::box_coordinates& perimeter_box);
@@ -380,7 +380,6 @@ private:
 		float z;		// z position of the layer
 		float height;	// layer height
 		float depth;	// depth of the layer based on all layers above
-        float extra_spacing = 1.f; // scaling factor per-layer (migrated from Bambu)
         bool  extruder_fill{ true };
         float normal_toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
         float local_z_toolchanges_depth() const { float sum = 0.f; for (const auto &a : local_z_tool_changes) sum += a.required_depth; return sum; }
@@ -452,16 +451,11 @@ private:
                                       const std::vector<Vec2f>&         skip_points);
 
     void get_all_wall_skip_points();
-    // Bambu-style core computation: compute gap points for one layer with Block-awareness.
-    void get_wall_skip_points(const WipeTowerInfo& layer, int layer_id);
     // Retrieve pre-computed gap points for a specific layer. Returns empty if layer_id out of bounds.
     std::vector<Vec2f> get_wall_skip_points(size_t layer_id);
     // Predict nozzle X after toolchange_Unload ramming, matching its xl/xr and do_ramming logic.
     // old_tool: extruder index of the filament being unloaded
     float predict_ramming_end_x(int old_tool, float layer_height) const;
-    // Check if ramming is needed for a toolchange (migrated from Bambu).
-    // Orca version: determines by filament ramming config instead of multi-nozzle grouping.
-    bool is_need_ramming(int filament_id_1, int filament_id_2, int layer_id) const;
 
     Polygon generate_support_cone_wall(
         WipeTowerWriter2& writer, 

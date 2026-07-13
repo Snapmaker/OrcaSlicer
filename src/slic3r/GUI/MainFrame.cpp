@@ -1915,6 +1915,10 @@ bool MainFrame::get_enable_slice_status()
         {
             enable = false;
         }
+        else if (m_plater->has_incompatible_mixed_filament_in_use())
+        {
+            enable = false;
+        }
         else if (m_plater->is_plate_blocked_by_filament_temp_mixing(part_plate_list.get_curr_plate_index()))
         {
             enable = false;

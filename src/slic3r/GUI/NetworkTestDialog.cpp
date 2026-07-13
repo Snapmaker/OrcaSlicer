@@ -1151,13 +1151,21 @@ void NetworkTestDialog::log_section_header(const wxString& title)
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
+	if (m_closing.load())
+		return;
+
+	if (!wxThread::IsMain()) {
+		wxGetApp().CallAfter([weak_this = weak_this, job_id, info]() {
+			if (auto self = weak_this.lock())
+				self->update_status(job_id, info);
+		});
+		return;
+	}
+
 	// Send log to MainFrame for file writing
 	auto log_evt = new wxCommandEvent(EVT_NETWORK_TEST_LOG_UPDATE);
 	log_evt->SetString(info);
 	wxQueueEvent(wxGetApp().mainframe, log_evt);
-
-	if (m_closing.load())
-		return;
 
 	switch (job_id)
 	{

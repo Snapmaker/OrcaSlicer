@@ -507,6 +507,18 @@ public:
     // the region's other features), the walls alone combine to it while everything else keeps
     // printing every layer. 1 when the walls print with the region's own pitch.
     unsigned int wall_layer_height_multiplier(const PrintRegion &region) const;
+    // Effective wall pitch multipliers of the two wall classes: the conforming multipliers of
+    // their filaments' explicit preferred heights (0 = no explicit preference; inner_m is 0 when
+    // the region prints no inner walls), with the "split_wall_adjust" adjustment applied when the
+    // two do not divide evenly. Adjusted heights respect the filament's layer height limits.
+    // Returns false for mixed virtual wall filaments, which forbid wall combining.
+    bool         wall_effective_multipliers(const PrintRegion &region, unsigned int &outer_m, unsigned int &inner_m) const;
+    // Split wall layer heights: true when the outer and inner walls print with their own pitches
+    // - both effective multipliers explicit, unequal, and the larger a whole multiple of the
+    // smaller. fine/coarse receive the two multipliers, coarse_is_outer which wall class prints
+    // the coarse one. Callers must only act on it while the region prints at the object layer
+    // height (region_layer_height_multiplier() == 1).
+    bool         wall_split_pitches(const PrintRegion &region, unsigned int &fine, unsigned int &coarse, bool &coarse_is_outer) const;
     // Any region of this object printing with a layer height multiplier > 1?
     bool         has_combined_layer_regions() const;
     // Multi-nozzle support restriction ("support_nozzle_diameter" print option): may the given 1-based filament print this object's support / raft?

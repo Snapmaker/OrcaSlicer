@@ -5,6 +5,7 @@
 #include "Geometry.hpp"
 #include "PerimeterGenerator.hpp"
 #include "Print.hpp"
+#include "GCode/ToolOrdering.hpp"
 #include "Surface.hpp"
 #include "BoundingBox.hpp"
 #include "SVG.hpp"
@@ -184,6 +185,28 @@ void LayerRegion::slices_to_fill_surfaces_clipped()
     }
 }
 
+// ORCA: split wall layer heights - drop one wall class from freshly generated perimeters.
+// Classification matches the G-code dispatch (perimeter_entity_uses_outer_wall_filament()), so
+// the class printing at a cadence is exactly the class dispatched to its wall filament.
+static void remove_wall_class(ExtrusionEntityCollection &collection, bool outer_class)
+{
+    ExtrusionEntitiesPtr &entities = collection.entities;
+    for (size_t i = 0; i < entities.size(); ) {
+        if (auto *sub = dynamic_cast<ExtrusionEntityCollection*>(entities[i])) {
+            remove_wall_class(*sub, outer_class);
+            if (! sub->entities.empty()) {
+                ++ i;
+                continue;
+            }
+        } else if (perimeter_entity_uses_outer_wall_filament(*entities[i]) != outer_class) {
+            ++ i;
+            continue;
+        }
+        delete entities[i];
+        entities.erase(entities.begin() + i);
+    }
+}
+
 void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRegionPtrs &compatible_regions, SurfaceCollection* fill_surfaces, ExPolygons* fill_no_overlap)
 {
     this->perimeters.clear();
@@ -209,55 +232,58 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
     // height. On layers of a walls-only run (wall_combined_count()) the walls are generated with
     // the run height on every run layer - so the fill boundaries line up with the walls printed
     // once at the run top - and the wall extrusions of the layers below the top are dropped below.
-    const double perimeter_height = this->wall_combined_height();
+    // Shared by the main pass and the coarse-wall pass of split wall layer heights below.
+    const int region_id = this->region().print_object_region_id();
+    auto generate_perimeters = [&](double height, const Layer *lower_layer, ExtrusionEntityCollection *perimeters,
+                                   ExtrusionEntityCollection *thin_fills, SurfaceCollection *surfaces, ExPolygons *no_overlap) {
+        PerimeterGenerator g(
+            // input:
+            &slices,
+            &compatible_regions,
+            height,
+            this->layer()->slice_z,
+            this->flow(frPerimeter, height),
+            &perimeter_config,
+            &this->layer()->object()->config(),
+            &print_config,
+            spiral_mode,
 
-    PerimeterGenerator g(
-        // input:
-        &slices,
-        &compatible_regions,
-        perimeter_height,
-        this->layer()->slice_z,
-        this->flow(frPerimeter, perimeter_height),
-        &perimeter_config,
-        &this->layer()->object()->config(),
-        &print_config,
-        spiral_mode,
+            // output:
+            perimeters,
+            thin_fills,
+            surfaces,
+            //BBS
+            no_overlap
+        );
 
-        // output:
-        &this->perimeters,
-        &this->thin_fills,
-        fill_surfaces,
-        //BBS
-        fill_no_overlap
-    );
+        // Detect overhangs / bridges against the layer below the whole combined group or wall run
+        // (wall_combined_lower_layer() == lower_layer for regular regions).
+        if (lower_layer != nullptr)
+            // Cummulative sum of polygons over all the regions.
+            g.lower_slices = &lower_layer->lslices;
+        if (this->layer()->upper_layer != NULL) {
+            g.upper_slices             = &this->layer()->upper_layer->lslices;
+            g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
+        }
 
-    // Detect overhangs / bridges against the layer below the whole combined group or wall run
-    // (wall_combined_lower_layer() == lower_layer for regular regions).
-    if (const Layer *lower_layer = this->wall_combined_lower_layer(); lower_layer != nullptr)
-        // Cummulative sum of polygons over all the regions.
-        g.lower_slices = &lower_layer->lslices;
-    if (this->layer()->upper_layer != NULL)
-        g.upper_slices = &this->layer()->upper_layer->lslices;
+        g.layer_id              = (int)this->layer()->id();
+        g.ext_perimeter_flow    = this->flow(frExternalPerimeter, height);
+        g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges, 0, height);
+        // Overhangs of external / fully overhanging loops dispatch to the outer wall filament (GCode::process_layer() splits mixed perimeters); resolve their width against its nozzle.
+        // The filament id comes from the resolved perimeter_config (mixed-filament aware), not the raw region config.
+        g.ext_overhang_flow     = this->bridging_flow(frPerimeter, object_config.thick_bridges,
+                                                      (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value), height);
+        g.solid_infill_flow     = this->flow(frSolidInfill, height);
+        // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
+        g.gap_fill_flow         = this->flow(frSolidInfill, height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
 
-    int region_id = this->region().print_object_region_id();
-    if (this->layer()->upper_layer != NULL)
-        g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
-
-    g.layer_id              = (int)this->layer()->id();
-    g.ext_perimeter_flow    = this->flow(frExternalPerimeter, perimeter_height);
-    g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges, 0, perimeter_height);
-    // Overhangs of external / fully overhanging loops dispatch to the outer wall filament (GCode::process_layer() splits mixed perimeters); resolve their width against its nozzle.
-    // The filament id comes from the resolved perimeter_config (mixed-filament aware), not the raw region config.
-    g.ext_overhang_flow     = this->bridging_flow(frPerimeter, object_config.thick_bridges,
-                                                  (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value), perimeter_height);
-    g.solid_infill_flow     = this->flow(frSolidInfill, perimeter_height);
-    // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
-    g.gap_fill_flow         = this->flow(frSolidInfill, perimeter_height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
-
-    if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
-        g.process_arachne();
-    else
-        g.process_classic();
+        if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
+            g.process_arachne();
+        else
+            g.process_classic();
+    };
+    generate_perimeters(this->wall_combined_height(), this->wall_combined_lower_layer(),
+                        &this->perimeters, &this->thin_fills, fill_surfaces, fill_no_overlap);
 
     // ORCA: walls-only pitch. The run layers below the top only generated their perimeters to
     // carve fill boundaries consistent with the run; the walls themselves (and their thin fills /
@@ -265,6 +291,30 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
     if (this->wall_combined_count() == 0) {
         this->perimeters.clear();
         this->thin_fills.clear();
+    }
+
+    // ORCA: split wall layer heights. Inside a coarse run the pass above laid out both wall
+    // classes at the fine cadence; the coarse class prints on its own runs instead: drop its
+    // loops here and, on the run top, regenerate them once at the full coarse height with the
+    // layer below the run as overhang reference (their space stays reserved - the fine pass
+    // placed the remaining loops around them). Thin / gap fills and the fill boundaries stay
+    // with the fine pass; the coarse pass's copies are scratch. Outside a committed coarse run
+    // the coarse class simply follows the fine cadence.
+    if (this->wall_split_height() > 0. && ! this->perimeters.empty()) {
+        unsigned int fine = 0, coarse = 0;
+        bool         coarse_is_outer = false;
+        if (this->layer()->object()->wall_split_pitches(this->region(), fine, coarse, coarse_is_outer)) {
+            remove_wall_class(this->perimeters, coarse_is_outer);
+            if (this->wall_split_count() > 1) {
+                ExtrusionEntityCollection coarse_perimeters, scratch_thin_fills;
+                SurfaceCollection         scratch_surfaces;
+                ExPolygons                scratch_no_overlap;
+                generate_perimeters(this->wall_split_height(), this->wall_split_lower_layer(),
+                                    &coarse_perimeters, &scratch_thin_fills, &scratch_surfaces, &scratch_no_overlap);
+                remove_wall_class(coarse_perimeters, ! coarse_is_outer);
+                this->perimeters.append(std::move(coarse_perimeters.entities));
+            }
+        }
     }
 }
 

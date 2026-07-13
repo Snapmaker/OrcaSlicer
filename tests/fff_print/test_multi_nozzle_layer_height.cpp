@@ -1038,3 +1038,204 @@ SCENARIO("Disagreeing wall preferences meet at the lower height", "[MultiNozzleL
         }
     }
 }
+
+// Heights of the wall extrusions per wall class, classified like the G-code dispatch
+// (perimeter_entity_uses_outer_wall_filament()). Bridges keep their nozzle-derived flow height
+// and are skipped, like collect_path_heights().
+static void collect_wall_class_heights(const ExtrusionEntityCollection &collection,
+                                       std::vector<float> &outer_heights, std::vector<float> &inner_heights)
+{
+    for (const ExtrusionEntity *entity : collection.entities) {
+        if (auto *sub = dynamic_cast<const ExtrusionEntityCollection *>(entity)) {
+            collect_wall_class_heights(*sub, outer_heights, inner_heights);
+            continue;
+        }
+        std::vector<float> &dst = perimeter_entity_uses_outer_wall_filament(*entity) ? outer_heights : inner_heights;
+        if (auto *loop = dynamic_cast<const ExtrusionLoop *>(entity)) {
+            for (const ExtrusionPath &path : loop->paths)
+                if (path.role() != erBridgeInfill && path.role() != erInternalBridgeInfill && path.role() != erOverhangPerimeter)
+                    dst.emplace_back(path.height);
+        } else if (auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(entity)) {
+            for (const ExtrusionPath &path : multi_path->paths)
+                dst.emplace_back(path.height);
+        } else if (auto *path = dynamic_cast<const ExtrusionPath *>(entity))
+            dst.emplace_back(path->height);
+    }
+}
+
+// Wall heights of the whole object bucketed per class: `tall` counts the layers where a class
+// prints its own pitch (the first expected entry); any height outside the class's expected set
+// (the finer entries: fine cadence, first-layer and cap fallbacks) counts as `bad`.
+struct WallHeightCounts { size_t outer_tall = 0, inner_tall = 0, bad = 0; };
+static WallHeightCounts count_wall_heights(const PrintObject &object,
+                                           const std::vector<float> &outer_expected,
+                                           const std::vector<float> &inner_expected)
+{
+    auto tally = [](const std::vector<float> &heights, const std::vector<float> &expected, size_t &tall_layers, size_t &bad) {
+        bool tall = false;
+        for (float height : heights) {
+            if (std::abs(height - expected.front()) < 1e-3f)
+                tall = true;
+            else if (std::none_of(expected.begin() + 1, expected.end(),
+                                  [height](float e) { return std::abs(height - e) < 1e-3f; }))
+                ++ bad;
+        }
+        tall_layers += tall;
+    };
+    WallHeightCounts counts;
+    for (size_t idx = 0; idx < object.layer_count(); ++ idx) {
+        std::vector<float> outer_heights, inner_heights;
+        collect_wall_class_heights(object.get_layer(int(idx))->get_region(0)->perimeters, outer_heights, inner_heights);
+        tally(outer_heights, outer_expected, counts.outer_tall, counts.bad);
+        tally(inner_heights, inner_expected, counts.inner_tall, counts.bad);
+    }
+    return counts;
+}
+
+SCENARIO("Split wall layer heights print each wall class at its own pitch", "[MultiNozzleLayerHeight]") {
+    GIVEN("Outer walls prefer 0.48 mm and inner walls 0.24 mm - divisible heights split automatically") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(4));
+        config.set_key_value("inner_wall_filament_id", new ConfigOptionInt(2));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("outer walls print once per 4 layers at 0.48 mm, inner walls once per 2 at 0.24 mm") {
+            StringObjectException warning;
+            REQUIRE(print.validate(&warning).string.empty());
+            // The disagreement is intentional here; no conflict warning.
+            CHECK(warning.string.find("prefer different layer heights") == std::string::npos);
+            print.process();
+
+            // Outside committed coarse runs the outer walls follow the fine cadence; the first
+            // layer and fallback areas keep the object layer height. 83 layers: ~20 coarse runs
+            // of 4 and ~40 fine runs of 2 above the first layer.
+            const PrintObject      &object = *print.objects().front();
+            const WallHeightCounts  counts = count_wall_heights(object, {0.48f, 0.24f, 0.12f}, {0.24f, 0.12f});
+            CHECK(counts.outer_tall >= 15);
+            CHECK(counts.inner_tall >= 30);
+            CHECK(counts.bad == 0);
+            size_t fill_bad_heights = 0;
+            for (size_t idx = 0; idx < object.layer_count(); ++ idx) {
+                std::vector<float> fill_heights;
+                collect_path_heights(object.get_layer(int(idx))->get_region(0)->fills, fill_heights);
+                for (float height : fill_heights)
+                    if (std::abs(height - 0.12f) > 1e-3f)
+                        ++ fill_bad_heights;
+            }
+            CHECK(fill_bad_heights == 0);
+        }
+    }
+    GIVEN("The finer wall class at the object layer height itself") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(4));
+        config.set_key_value("inner_wall_filament_id", new ConfigOptionInt(1));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("inner walls print every 0.12 mm layer while outer walls combine to 0.48 mm") {
+            REQUIRE(print.validate().string.empty());
+            print.process();
+
+            const WallHeightCounts counts = count_wall_heights(*print.objects().front(), {0.48f, 0.12f}, {0.12f});
+            CHECK(counts.outer_tall >= 15);
+            CHECK(counts.bad == 0);
+        }
+    }
+    GIVEN("Wall preferences that do not divide evenly (0.48 mm and 0.36 mm), no adjustment") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(4));
+        config.set_key_value("inner_wall_filament_id", new ConfigOptionInt(3));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("the walls fall back to printing together at the lower height, with the conflict warning") {
+            StringObjectException warning;
+            REQUIRE(print.validate(&warning).string.empty());
+            CHECK(warning.string.find("prefer different layer heights") != std::string::npos);
+            print.process();
+
+            const WallHeightCounts counts = count_wall_heights(*print.objects().front(),
+                                                               {0.36f, 0.24f, 0.12f}, {0.36f, 0.24f, 0.12f});
+            CHECK(counts.outer_tall >= 15);
+            CHECK(counts.bad == 0);
+        }
+    }
+}
+
+// Non-divisible wall preferences reconciled by "split_wall_adjust": outer walls prefer 0.48 mm
+// (filament 4, multiplier 4) and inner walls 0.36 mm (filament 3, multiplier 3) over 0.12 mm
+// object layers. The selected wall class moves to the nearest divisor / multiple of the other
+// in the selected direction, hard-bounded by its filament's layer height limits.
+static DynamicPrintConfig wall_adjust_config(WallSplitFilament filament, WallSplitDirection direction)
+{
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("outer_wall_filament_id",      new ConfigOptionInt(4));
+    config.set_key_value("inner_wall_filament_id",      new ConfigOptionInt(3));
+    config.set_key_value("split_wall_adjust",           new ConfigOptionBool(true));
+    config.set_key_value("split_wall_adjust_filament",  new ConfigOptionEnum<WallSplitFilament>(filament));
+    config.set_key_value("split_wall_adjust_direction", new ConfigOptionEnum<WallSplitDirection>(direction));
+    return config;
+}
+
+SCENARIO("Adjusting a wall layer height reconciles non-divisible wall preferences", "[MultiNozzleLayerHeight]") {
+    GIVEN("The inner walls adjusted downwards") {
+        DynamicPrintConfig config = wall_adjust_config(wsfInnerWall, wsdDecrease);
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("inner walls print 0.24 mm - the largest divisor of 0.48 mm below 0.36 mm - and the walls split") {
+            StringObjectException warning;
+            REQUIRE(print.validate(&warning).string.empty());
+            CHECK(warning.string.find("was adjusted") != std::string::npos);
+            CHECK(warning.string.find("prefer different layer heights") == std::string::npos);
+            print.process();
+
+            // In particular no 0.36 mm: the raw inner preference is off for walls.
+            const WallHeightCounts counts = count_wall_heights(*print.objects().front(),
+                                                               {0.48f, 0.24f, 0.12f}, {0.24f, 0.12f});
+            CHECK(counts.outer_tall >= 15);
+            CHECK(counts.inner_tall >= 30);
+            CHECK(counts.bad == 0);
+        }
+    }
+    GIVEN("The inner walls adjusted upwards") {
+        DynamicPrintConfig config = wall_adjust_config(wsfInnerWall, wsdIncrease);
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("the inner walls land on the outer walls' 0.48 mm and the walls merge there") {
+            StringObjectException warning;
+            REQUIRE(print.validate(&warning).string.empty());
+            CHECK(warning.string.find("was adjusted") != std::string::npos);
+            CHECK(warning.string.find("prefer different layer heights") == std::string::npos);
+            print.process();
+
+            // Merged walls never print the raw 0.36 mm inner preference (bad == 0 covers it).
+            const WallHeightCounts counts = count_wall_heights(*print.objects().front(),
+                                                               {0.48f, 0.24f, 0.12f}, {0.48f, 0.24f, 0.12f});
+            CHECK(counts.inner_tall >= 15);
+            CHECK(counts.bad == 0);
+        }
+    }
+    GIVEN("The outer walls adjusted upwards, where the next candidate breaks the layer height limit") {
+        // The smallest multiple of the inner 0.36 mm above the outer 0.48 mm is 0.72 mm, over
+        // filament 4's 0.64 mm maximum layer height - a hard bound for adjustments.
+        DynamicPrintConfig config = wall_adjust_config(wsfOuterWall, wsdIncrease);
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("no adjustment happens: the walls merge at the lower height with the conflict warning") {
+            StringObjectException warning;
+            REQUIRE(print.validate(&warning).string.empty());
+            CHECK(warning.string.find("was adjusted") == std::string::npos);
+            CHECK(warning.string.find("prefer different layer heights") != std::string::npos);
+            print.process();
+
+            const WallHeightCounts counts = count_wall_heights(*print.objects().front(),
+                                                               {0.36f, 0.24f, 0.12f}, {0.36f, 0.24f, 0.12f});
+            CHECK(counts.outer_tall >= 15);
+            CHECK(counts.bad == 0);
+        }
+    }
+}

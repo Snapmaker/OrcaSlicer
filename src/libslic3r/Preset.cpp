@@ -907,7 +907,7 @@ static std::vector<std::string> s_Preset_print_options {
      "detect_narrow_internal_solid_infill",
      "gcode_add_line_number", "enable_arc_fitting", "precise_z_height", "infill_combination","infill_combination_max_layer_height", /*"adaptive_layer_height",*/
      // ORCA: per-extruder layer height ("extruder_layer_height").
-     "extruder_layer_height_mode", "extruder_layer_height_tolerance",
+     "extruder_layer_height_mode", "extruder_layer_height_tolerance", "split_wall_adjust", "split_wall_adjust_filament", "split_wall_adjust_direction",
      "support_bottom_interface_spacing", "enable_overhang_speed", "slowdown_for_curled_perimeters", "overhang_1_4_speed", "overhang_2_4_speed", "overhang_3_4_speed", "overhang_4_4_speed",
      "initial_layer_infill_speed", "only_one_wall_top", 
      "timelapse_type",

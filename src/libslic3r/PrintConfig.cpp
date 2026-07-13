@@ -301,6 +301,19 @@ static t_config_enum_values s_keys_map_ExtruderLayerHeightMode{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ExtruderLayerHeightMode)
 
+// ORCA: split wall layer heights ("split_wall_adjust").
+static t_config_enum_values s_keys_map_WallSplitFilament{
+    { "outer_wall", int(WallSplitFilament::wsfOuterWall) },
+    { "inner_wall", int(WallSplitFilament::wsfInnerWall) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSplitFilament)
+
+static t_config_enum_values s_keys_map_WallSplitDirection{
+    { "decrease", int(WallSplitDirection::wsdDecrease) },
+    { "increase", int(WallSplitDirection::wsdIncrease) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSplitDirection)
+
 // Orca
 static t_config_enum_values s_keys_map_InternalBridgeFilter {
     { "disabled",        ibfDisabled },
@@ -4214,6 +4227,54 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
+
+    // ORCA: split wall layer heights. When the outer and inner wall filaments print at their own
+    // preferred layer heights and one is an integer multiple of the other, the walls always split:
+    // the finer walls print every time their height is reached and the coarser walls once per
+    // multiple, so their tops stay flush. The options below additionally allow adjusting one wall
+    // filament's wall-only layer height so the split also happens when the preferred heights do
+    // not divide evenly.
+    def = this->add("split_wall_adjust", coBool);
+    def->label = L("Adjust wall layer height");
+    def->category = L("Extruders");
+    def->tooltip = L("Outer and inner walls automatically print at their own preferred layer heights when "
+                     "one height is an integer multiple of the other. When the heights do not divide evenly, "
+                     "this option adjusts the wall layer height of one of the two wall filaments (chosen "
+                     "below) to the nearest multiple or divisor of the other, so the walls can still split. "
+                     "The adjusted height only applies to that filament's walls; other features keep the "
+                     "preferred layer height. Adjustments never leave the filament's layer height limits: "
+                     "if no allowed height exists in the chosen direction, the walls print together at the "
+                     "lower height as usual.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("split_wall_adjust_filament", coEnum);
+    def->label = L("Adjusted walls");
+    def->category = L("Extruders");
+    def->tooltip = L("Which of the two wall filaments gets its wall layer height adjusted when the "
+                     "preferred layer heights do not divide evenly.");
+    def->enum_keys_map = &ConfigOptionEnum<WallSplitFilament>::get_enum_values();
+    def->enum_values.push_back("outer_wall");
+    def->enum_values.push_back("inner_wall");
+    def->enum_labels.push_back(L("Outer walls"));
+    def->enum_labels.push_back(L("Inner walls"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WallSplitFilament>(wsfOuterWall));
+
+    def = this->add("split_wall_adjust_direction", coEnum);
+    def->label = L("Adjustment direction");
+    def->category = L("Extruders");
+    def->tooltip = L("Whether the adjusted wall filament's wall layer height is decreased or increased to "
+                     "reach a height compatible with the other wall filament. Heights outside the adjusted "
+                     "filament's layer height limits are never used: if no allowed height exists in this "
+                     "direction, the walls print together at the lower height as usual.");
+    def->enum_keys_map = &ConfigOptionEnum<WallSplitDirection>::get_enum_values();
+    def->enum_values.push_back("decrease");
+    def->enum_values.push_back("increase");
+    def->enum_labels.push_back(L("Decrease"));
+    def->enum_labels.push_back(L("Increase"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WallSplitDirection>(wsdDecrease));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");

@@ -2576,6 +2576,9 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("outer_wall_filament_id", "multimaterial_settings_filament_for_features#walls");
         optgroup->append_single_option_line("inner_wall_filament_id", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("split_wall_adjust", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("split_wall_adjust_filament", "multimaterial_settings_filament_for_features#walls");
+        optgroup->append_single_option_line("split_wall_adjust_direction", "multimaterial_settings_filament_for_features#walls");
         optgroup->append_single_option_line("sparse_infill_filament_id", "multimaterial_settings_filament_for_features#infill");
         optgroup->append_single_option_line("internal_solid_filament_id", "multimaterial_settings_filament_for_features#solid-infill");
         optgroup->append_single_option_line("top_surface_filament_id", "multimaterial_settings_filament_for_features#solid-infill");

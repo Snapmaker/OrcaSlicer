@@ -133,6 +133,18 @@ public:
     double  wall_combined_height() const;
     // Layer right below the wall run for overhang / bridge detection of the run's walls.
     const Layer* wall_combined_lower_layer() const;
+
+    // ORCA: split wall layer heights. Cadence of the COARSER wall class when the outer and
+    // inner walls print with their own heights: > 1 (in object layers) on the top layer of a
+    // coarse run, 0 on the other layers of a committed coarse run (the coarse class prints
+    // nothing there), 1 when no coarse run covers this layer (the coarse class follows the fine
+    // cadence). Which class is coarse follows from the two wall filaments' effective heights
+    // (see PrintObject::wall_split_pitches()).
+    unsigned short wall_split_count() const { return m_wall_split_count; }
+    // Extrusion height of the coarse class at a coarse-run top.
+    double  wall_split_height() const { return m_wall_split_height; }
+    // Layer right below the coarse run for overhang / bridge detection of the coarse walls.
+    const Layer* wall_split_lower_layer() const;
 private:
     void    simplify_entity_collection(ExtrusionEntityCollection* entity_collection);
     void    simplify_path(ExtrusionPath* path);
@@ -155,6 +167,9 @@ private:
     // ORCA: set by PrintObject::apply_extruder_layer_heights(), see wall_combined_count() / wall_combined_height().
     unsigned short     m_wall_combined_count { 1 };
     double             m_wall_combined_height { 0. };
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(), see wall_split_count() / wall_split_height().
+    unsigned short     m_wall_split_count { 1 };
+    double             m_wall_split_height { 0. };
 };
 
 class Layer

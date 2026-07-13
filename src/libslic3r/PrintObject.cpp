@@ -986,6 +986,9 @@ bool PrintObject::invalidate_state_by_config_options(
             // ORCA: per-extruder layer height: the layer combining happens at the slicing step.
             || opt_key == "extruder_layer_height_mode"
             || opt_key == "extruder_layer_height_tolerance"
+            || opt_key == "split_wall_adjust"
+            || opt_key == "split_wall_adjust_filament"
+            || opt_key == "split_wall_adjust_direction"
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_local_z_whole_objects"
@@ -3689,27 +3692,17 @@ unsigned int PrintObject::wall_layer_height_multiplier(const PrintRegion &region
     if (this->region_layer_height_multiplier(region) > 1)
         // The whole region follows the pitch, walls included.
         return 1;
-    const int num_filaments = (int)m_print->config().filament_diameter.size();
-    const bool prints_inner_walls = region_prints_inner_walls(config);
-    unsigned int multiplier = 0;
-    auto merge_wall_filament = [this, num_filaments, &multiplier](int filament_id) -> bool {
-        if (std::max(0, filament_id - 1) >= num_filaments)
-            // Snapmaker mixed filament: virtual mixed ids resolve to a different physical
-            // extruder per layer, no stable pitch exists for them.
-            return false;
-        if (this->extruder_preferred_layer_height((unsigned int)std::max(0, filament_id)) <= 0.)
-            // No explicit preference: follows the other wall filament's pitch.
-            return true;
-        const unsigned int m = this->layer_height_multiplier_for_filament((unsigned int)std::max(0, filament_id));
-        // Outer and inner walls print together at one height: disagreeing preferences meet at the
-        // LOWER one (Print::validate() reports the unhonored higher preference).
-        multiplier = multiplier == 0 ? m : std::min(multiplier, m);
-        return true;
-    };
-    if (! merge_wall_filament(config.outer_wall_filament_id.value))
+    unsigned int outer_m = 0, inner_m = 0;
+    if (! this->wall_effective_multipliers(region, outer_m, inner_m))
+        // Snapmaker mixed filament: virtual mixed ids resolve to a different physical
+        // extruder per layer, no stable pitch exists for them.
         return 1;
-    if (prints_inner_walls && ! merge_wall_filament(config.inner_wall_filament_id.value))
-        return 1;
+    // A preference-less wall filament (0) follows the other one's pitch. Outer and inner walls
+    // that cannot split print together at one height: disagreeing effective preferences meet at
+    // the LOWER one (Print::validate() reports the unhonored higher preference). With split
+    // pitches this minimum is the finer class's pitch, the run cadence of both classes.
+    const unsigned int multiplier = outer_m == 0 || inner_m == 0 ? std::max(outer_m, inner_m) :
+                                                                   std::min(outer_m, inner_m);
     if (multiplier <= 1)
         return 1;
     // Every wall filament must fit the pitch through its own bore, including preference-less
@@ -3723,9 +3716,94 @@ unsigned int PrintObject::wall_layer_height_multiplier(const PrintRegion &region
     };
     if (nozzle_too_small(config.outer_wall_filament_id.value))
         return 1;
-    if (prints_inner_walls && nozzle_too_small(config.inner_wall_filament_id.value))
+    if (region_prints_inner_walls(config) && nozzle_too_small(config.inner_wall_filament_id.value))
         return 1;
     return multiplier;
+}
+
+// ORCA: split wall layer heights. Effective wall pitch multipliers of the two wall classes: the
+// conforming multipliers of their filaments' explicit preferred heights (0 = no explicit
+// preference; inner_m is 0 when the region prints no inner walls). When both are explicit but do
+// not divide evenly, the "split_wall_adjust" option moves the selected class's wall-only height
+// to the nearest divisor or multiple of the other one in the selected direction, so the walls
+// can still split (or merge, when the adjustment lands on the other class's height). Unlike the
+// preferred heights themselves, an adjusted height is hard-bounded by the adjusted filament's
+// min/max layer heights and bore: without a legal candidate in the chosen direction the
+// multipliers stay unadjusted and the walls merge at the lower height as usual.
+// Returns false when a mixed (virtual) wall filament forbids wall combining altogether.
+bool PrintObject::wall_effective_multipliers(const PrintRegion &region, unsigned int &outer_m, unsigned int &inner_m) const
+{
+    const PrintRegionConfig &config = region.config();
+    outer_m = inner_m = 0;
+    const int num_filaments = (int)m_print->config().filament_diameter.size();
+    if (config.wall_loops.value > 0 &&
+        (std::max(0, config.outer_wall_filament_id.value - 1) >= num_filaments ||
+         (region_prints_inner_walls(config) && std::max(0, config.inner_wall_filament_id.value - 1) >= num_filaments)))
+        // Snapmaker mixed filament: virtual mixed ids resolve to a different physical extruder
+        // per layer, no stable pitch exists for the walls.
+        return false;
+    auto conforming_multiplier = [this](int filament_id) -> unsigned int {
+        if (this->extruder_preferred_layer_height((unsigned int)std::max(0, filament_id)) <= 0.)
+            return 0;
+        return this->layer_height_multiplier_for_filament((unsigned int)std::max(0, filament_id));
+    };
+    outer_m = config.wall_loops.value > 0 ? conforming_multiplier(config.outer_wall_filament_id.value) : 0;
+    inner_m = config.wall_loops.value > 0 && region_prints_inner_walls(config) ?
+        conforming_multiplier(config.inner_wall_filament_id.value) : 0;
+    if (! m_config.split_wall_adjust.value || outer_m == 0 || inner_m == 0 ||
+        std::max(outer_m, inner_m) % std::min(outer_m, inner_m) == 0)
+        return true;
+    const bool         adjust_outer = m_config.split_wall_adjust_filament.value == wsfOuterWall;
+    unsigned int      &adjusted     = adjust_outer ? outer_m : inner_m;
+    const unsigned int other        = adjust_outer ? inner_m : outer_m;
+    const int          filament_id  = adjust_outer ? config.outer_wall_filament_id.value : config.inner_wall_filament_id.value;
+    const PrintConfig &print_config = m_print->config();
+    // The filament index is the extruder index on classic multi-tool printers.
+    const size_t extruder_idx = size_t((unsigned int)std::max(1, filament_id) - 1);
+    const double h      = m_config.layer_height.value;
+    const double min_lh = print_config.min_layer_height.get_at(extruder_idx);
+    const double max_lh = print_config.max_layer_height.get_at(extruder_idx);
+    const double bore   = print_config.nozzle_diameter.get_at(extruder_idx);
+    auto legal = [&](unsigned int m) {
+        // A candidate height divides the other class's pitch or is a whole multiple of it (equal
+        // merges the walls at that height), and it honors the adjusted filament's limits.
+        if (other % m != 0 && m % other != 0)
+            return false;
+        const double height = m * h;
+        return height <= bore + EPSILON && height >= min_lh - EPSILON &&
+               (max_lh <= EPSILON || height <= max_lh + EPSILON);
+    };
+    if (m_config.split_wall_adjust_direction.value == wsdIncrease) {
+        for (unsigned int m = adjusted + 1, limit = (unsigned int)std::floor(bore / h + EPSILON); m <= limit; ++m)
+            if (legal(m)) { adjusted = m; return true; }
+    } else {
+        for (unsigned int m = adjusted - 1; m >= 1; --m)
+            if (legal(m)) { adjusted = m; return true; }
+    }
+    // No legal height in the chosen direction: leave the preferences unadjusted.
+    return true;
+}
+
+// ORCA: split wall layer heights. The finer wall class prints on every fine-run top, the coarser
+// once per coarse/fine fine runs, so their tops stay flush. Splitting happens whenever both wall
+// classes' effective heights are explicit, unequal and divide evenly; otherwise the walls keep
+// printing together at the lower height (wall_layer_height_multiplier()'s min-merge).
+bool PrintObject::wall_split_pitches(const PrintRegion &region, unsigned int &fine, unsigned int &coarse, bool &coarse_is_outer) const
+{
+    unsigned int outer_m = 0, inner_m = 0;
+    if (! this->wall_effective_multipliers(region, outer_m, inner_m))
+        // Mixed (virtual) filament ids never combine.
+        return false;
+    // Split needs an explicit preference on both wall classes; a preference-less wall filament
+    // follows the other one at a single merged pitch as usual.
+    if (outer_m == 0 || inner_m == 0 || outer_m == inner_m)
+        return false;
+    fine   = std::min(outer_m, inner_m);
+    coarse = std::max(outer_m, inner_m);
+    if (coarse % fine != 0)
+        return false;
+    coarse_is_outer = outer_m > inner_m;
+    return true;
 }
 
 bool PrintObject::has_combined_layer_regions() const

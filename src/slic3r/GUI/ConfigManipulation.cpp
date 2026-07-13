@@ -556,6 +556,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         "inner_wall_speed", "outer_wall_speed", "small_perimeter_speed", "small_perimeter_threshold" })
         toggle_field(el, have_perimeters);
 
+    // ORCA: split wall layer heights - the adjustment target and direction only matter while
+    // the adjustment itself is enabled.
+    const bool split_wall_adjust = config->opt_bool("split_wall_adjust");
+    toggle_line("split_wall_adjust_filament", split_wall_adjust);
+    toggle_line("split_wall_adjust_direction", split_wall_adjust);
+
     bool have_infill = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0;
     // sparse_infill_filament_id uses the same logic as in Print::extruders()
     for (auto el : { "sparse_infill_pattern", "infill_combination",

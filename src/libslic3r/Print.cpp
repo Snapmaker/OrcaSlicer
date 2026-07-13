@@ -1831,7 +1831,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             }
         };
         // Flags for the per-extruder layer height / support nozzle warnings below.
-        bool warned_wall_pref_conflicts = false;
+        bool warned_wall_pref_conflicts = false, warned_wall_adjustments = false;
         bool warned_unhonored_heights = false, warned_support_mixed_nozzles = false,
              warned_below_min_heights = false, warned_pitch_fallbacks = false,
              warned_above_max_heights = false, warned_ignored_feature_prefs = false;
@@ -2040,10 +2040,16 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     };
                     // Inner-wall loops can appear at a single wall loop too (alternate / extra walls,
                     // see PrintObject::region_prints_inner_walls()).
+                    auto prints_outer_wall = [&](unsigned int filament) {
+                        return region_config.wall_loops.value > 0 &&
+                               filament == selector_filament0(region_config.outer_wall_filament_id.value);
+                    };
+                    auto prints_inner_wall = [&](unsigned int filament) {
+                        return region_config.wall_loops.value > 0 && PrintObject::region_prints_inner_walls(region_config) &&
+                               filament == selector_filament0(region_config.inner_wall_filament_id.value);
+                    };
                     auto prints_walls = [&](unsigned int filament) {
-                        return (region_config.wall_loops.value > 0 && filament == selector_filament0(region_config.outer_wall_filament_id.value)) ||
-                               (region_config.wall_loops.value > 0 && PrintObject::region_prints_inner_walls(region_config) &&
-                                filament == selector_filament0(region_config.inner_wall_filament_id.value));
+                        return prints_outer_wall(filament) || prints_inner_wall(filament);
                     };
                     auto prints_top = [&](unsigned int filament) {
                         return region_config.top_shell_layers.value > 0 &&
@@ -2068,37 +2074,40 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     }
                     // Walls-only pitch (mirrors PrintObject::wall_layer_height_multiplier()): when the
                     // rest of the part vetoes the walls' pitch, the walls still combine to it on their
-                    // own. Disagreeing explicit wall preferences meet at the lower one; preference-less
+                    // own. Non-splittable effective preferences meet at the lower one; preference-less
                     // wall filaments follow, but every wall filament must fit the pitch through its bore.
-                    unsigned int wall_candidate = 0;
-                    if (region_config.wall_loops.value > 0) {
-                        auto merge_wall = [&](int filament_id) -> bool {
-                            if (std::max(0, filament_id - 1) >= (int)m_config.filament_diameter.size())
-                                // Mixed (virtual) filament ids never combine.
-                                return false;
-                            const size_t extruder_idx = selector_extruder_idx(filament_id);
-                            const double preferred    = m_config.extruder_layer_height.get_at(extruder_idx);
-                            if (preferred <= 0.)
-                                return true;
-                            const unsigned int m = std::max(1u, conforming_multiplier(preferred, extruder_idx));
-                            wall_candidate = wall_candidate == 0 ? m : std::min(wall_candidate, m);
-                            return true;
-                        };
-                        auto wall_nozzle_fits = [&](unsigned int m) {
-                            const double p = m * layer_height;
-                            if (p > m_config.nozzle_diameter.get_at(selector_extruder_idx(region_config.outer_wall_filament_id.value)) + EPSILON)
-                                return false;
-                            return ! PrintObject::region_prints_inner_walls(region_config) ||
-                                   p <= m_config.nozzle_diameter.get_at(selector_extruder_idx(region_config.inner_wall_filament_id.value)) + EPSILON;
-                        };
-                        if (! merge_wall(region_config.outer_wall_filament_id.value) ||
-                            (PrintObject::region_prints_inner_walls(region_config) && ! merge_wall(region_config.inner_wall_filament_id.value)))
-                            wall_candidate = 1;
-                        else if (wall_candidate > 1 && ! wall_nozzle_fits(wall_candidate))
+                    unsigned int eff_outer = 0, eff_inner = 0;
+                    object->wall_effective_multipliers(region, eff_outer, eff_inner);
+                    // Which wall class prints an adjusted height ("split_wall_adjust") instead of its
+                    // filament's own preference - the adjustment is deliberate, so the conflict and
+                    // unhonored-heights warnings below stay silent about it.
+                    auto raw_wall_multiplier = [&](int filament_id) -> unsigned int {
+                        const unsigned int filament = (unsigned int)std::max(0, filament_id);
+                        return object->extruder_preferred_layer_height(filament) > 0. ?
+                            object->layer_height_multiplier_for_filament(filament) : 0;
+                    };
+                    const bool adjusted_outer = eff_outer != 0 &&
+                        eff_outer != raw_wall_multiplier(region_config.outer_wall_filament_id.value);
+                    const bool adjusted_inner = eff_inner != 0 &&
+                        eff_inner != raw_wall_multiplier(region_config.inner_wall_filament_id.value);
+                    unsigned int wall_candidate = eff_outer == 0 || eff_inner == 0 ? std::max(eff_outer, eff_inner) :
+                                                                                     std::min(eff_outer, eff_inner);
+                    if (wall_candidate > 1) {
+                        const double p = wall_candidate * layer_height;
+                        if (p > m_config.nozzle_diameter.get_at(selector_extruder_idx(region_config.outer_wall_filament_id.value)) + EPSILON ||
+                            (PrintObject::region_prints_inner_walls(region_config) &&
+                             p > m_config.nozzle_diameter.get_at(selector_extruder_idx(region_config.inner_wall_filament_id.value)) + EPSILON))
                             wall_candidate = 1;
                     }
                     if (wall_candidate == 0)
                         wall_candidate = 1;
+                    // Split wall layer heights (mirrors PrintObject::wall_split_pitches()): each
+                    // wall class prints at its own pitch, so the min-merge conflict warning stays
+                    // silent and the per-class checks below use each class's real height.
+                    unsigned int split_fine = 0, split_coarse = 0;
+                    bool         split_coarse_outer = false;
+                    const bool   wall_split = region_multiplier == 1 &&
+                        object->wall_split_pitches(region, split_fine, split_coarse, split_coarse_outer);
                     // 0-based indices of all filaments printing this region's features.
                     std::vector<unsigned int> used_filaments;
                     PrintRegion::collect_object_printing_extruders(m_config, region_config, false /* has_brim */, used_filaments);
@@ -2144,11 +2153,26 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         }
                     // The walls combine on their own only while the region prints at the object layer height.
                     const unsigned int wall_multiplier = region_multiplier == 1 ? wall_candidate : 1;
+                    // Tell the user once what the "split_wall_adjust" adjustment settled on.
+                    if ((adjusted_outer || adjusted_inner) && ! warned_wall_adjustments) {
+                        warned_wall_adjustments = true;
+                        const int adjusted_id = adjusted_outer ? region_config.outer_wall_filament_id.value :
+                                                                 region_config.inner_wall_filament_id.value;
+                        warn(Slic3r::format(_u8L("The wall layer height of filament %1% was adjusted from the preferred %2% mm to "
+                                                 "%3% mm so the outer and inner walls can print at compatible layer heights "
+                                                 "(\"Adjust wall layer height\"). Only this filament's walls print the adjusted "
+                                                 "height; its other features keep the preferred one."),
+                                            selector_filament0(adjusted_id) + 1,
+                                            object->extruder_preferred_layer_height((unsigned int)std::max(0, adjusted_id)),
+                                            (adjusted_outer ? eff_outer : eff_inner) * layer_height),
+                             "split_wall_adjust", object);
+                    }
                     // Disagreeing wall preferences: report what actually happens once the walls-only
                     // pitch is known - with every extruder carrying a preferred height, a wall
                     // selector left on "Default" resolves to the part's filament and its preference
-                    // silently conflicts with the other wall's.
-                    if (wall_prefs_disagree && ! warned_wall_pref_conflicts) {
+                    // silently conflicts with the other wall's. An adjustment that made the heights
+                    // compatible resolved the disagreement (reported above).
+                    if (wall_prefs_disagree && ! wall_split && ! adjusted_outer && ! adjusted_inner && ! warned_wall_pref_conflicts) {
                         warned_wall_pref_conflicts = true;
                         if (wall_multiplier > 1)
                             warn(Slic3r::format(_u8L("The wall filaments of some object parts prefer different layer heights. "
@@ -2175,19 +2199,25 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                                             pitch, filament0 + 1, max_lh),
                              "extruder_layer_height", object);
                     };
-                    if (region_multiplier > 1 || wall_multiplier > 1)
-                        // With a walls-only pitch only the wall filaments print it, the others stay
-                        // at the object layer height.
+                    const double region_pitch = region_multiplier * layer_height;
+                    // Heights the wall classes print at: the region pitch when the whole part
+                    // combines, the walls-only pitch when the walls combine on their own, and
+                    // each class's own pitch when the wall layer heights are split.
+                    const double merged_wall_height = wall_multiplier > 1 ? wall_multiplier * layer_height : region_pitch;
+                    const double outer_wall_height  = wall_split ? (split_coarse_outer ? split_coarse : split_fine) * layer_height : merged_wall_height;
+                    const double inner_wall_height  = wall_split ? (split_coarse_outer ? split_fine : split_coarse) * layer_height : merged_wall_height;
+                    if (region_multiplier > 1 || wall_multiplier > 1 || wall_split)
+                        // With a walls-only or split pitch only the wall filaments print it, the
+                        // others stay at the object layer height.
                         for (const unsigned int filament : used_filaments) {
-                            double pitch = region_multiplier * layer_height;
-                            if (wall_multiplier > 1) {
+                            double pitch = region_pitch;
+                            if (region_multiplier == 1) {
                                 if (! prints_walls(filament))
                                     continue;
-                                pitch = wall_multiplier * layer_height;
+                                pitch = prints_outer_wall(filament) ? outer_wall_height : inner_wall_height;
                             }
                             warn_above_max(pitch, filament, m_config.max_layer_height.get_at(extruder_of(filament)));
                         }
-                    const double region_pitch = region_multiplier * layer_height;
                     auto filament_nozzle = [&](int filament_id) {
                         return m_config.nozzle_diameter.get_at(selector_extruder_idx(filament_id));
                     };
@@ -2242,15 +2272,16 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         warn_above_max(top_multiplier * layer_height,
                                        selector_filament0(region_config.top_surface_filament_id.value),
                                        m_config.max_layer_height.get_at(selector_extruder_idx(region_config.top_surface_filament_id.value)));
-                    // Heights the filament's pitch-bound features print at: walls at the walls-only
+                    // Heights the filament's pitch-bound features print at: walls at their class's
                     // pitch when active, top surfaces at the top pitch when active, everything else
                     // at the region pitch (also used by the unhonored-heights check below).
-                    const double wall_print_height = wall_multiplier > 1 ? wall_multiplier * layer_height : region_pitch;
-                    const double top_print_height  = top_multiplier  > 1 ? top_multiplier  * layer_height : region_pitch;
+                    const double top_print_height = top_multiplier > 1 ? top_multiplier * layer_height : region_pitch;
                     auto lowest_feature_height = [&](unsigned int filament) {
                         double h = std::numeric_limits<double>::max();
-                        if (prints_walls(filament))
-                            h = std::min(h, wall_print_height);
+                        if (prints_outer_wall(filament))
+                            h = std::min(h, outer_wall_height);
+                        if (prints_inner_wall(filament))
+                            h = std::min(h, inner_wall_height);
                         if (prints_top(filament))
                             h = std::min(h, top_print_height);
                         if (prints_bottom_or_solid(filament))
@@ -2272,7 +2303,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                             // the object layer height (see apply_extruder_layer_heights()), possibly below
                             // the minimum.
                             const bool fallback_below_min = (region_multiplier > 1 ||
-                                                             (wall_multiplier > 1 && prints_walls(filament)) ||
+                                                             ((wall_multiplier > 1 || wall_split) && prints_walls(filament)) ||
                                                              (top_multiplier > 1 && prints_top(filament))) &&
                                                             layer_height < min_lh - EPSILON;
                             if (! pitch_below_min && ! fallback_below_min)
@@ -2305,8 +2336,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                                                           combined_infill_height >= preferred - EPSILON;
                             if (prints_pitch_features(filament)) {
                                 bool honored = combined_covered;
-                                if (prints_walls(filament))
-                                    honored &= std::abs(wall_print_height - preferred) < EPSILON;
+                                // An adjusted wall class prints its adjusted height on purpose
+                                // (warned about above), not an unhonored preference.
+                                if (prints_outer_wall(filament))
+                                    honored &= adjusted_outer || std::abs(outer_wall_height - preferred) < EPSILON;
+                                if (prints_inner_wall(filament))
+                                    honored &= adjusted_inner || std::abs(inner_wall_height - preferred) < EPSILON;
                                 if (prints_top(filament))
                                     honored &= std::abs(top_print_height - preferred) < EPSILON;
                                 if (prints_bottom_or_solid(filament))
@@ -2329,7 +2364,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                                  "extruder_layer_height", object);
                             break;
                         }
-                    if (region_multiplier > 1 || wall_multiplier > 1 || top_multiplier > 1) {
+                    if (region_multiplier > 1 || wall_multiplier > 1 || top_multiplier > 1 || wall_split) {
                         object_has_combined_regions = true;
                         // Combined extrusions are thicker: explicit line widths must stay above the
                         // height each feature prints at, resolved per role against the region's own
@@ -2339,8 +2374,8 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         // infill at 100% density) must not hard-error the pitch; features printing
                         // at the object layer height are skipped by the pitch test.
                         const std::tuple<int, const char *, double, bool> width_checks[] = {
-                            { region_config.outer_wall_filament_id.value,     "outer_wall_line_width",            wall_print_height, region_config.wall_loops.value > 0 },
-                            { region_config.inner_wall_filament_id.value,     "inner_wall_line_width",            wall_print_height, region_config.wall_loops.value > 0 },
+                            { region_config.outer_wall_filament_id.value,     "outer_wall_line_width",            outer_wall_height, region_config.wall_loops.value > 0 },
+                            { region_config.inner_wall_filament_id.value,     "inner_wall_line_width",            inner_wall_height, region_config.wall_loops.value > 0 },
                             { region_config.sparse_infill_filament_id.value,  "sparse_infill_line_width",         region_pitch,      region_config.sparse_infill_density.value > 0 && ! solid_combined_infill },
                             { region_config.internal_solid_filament_id.value, "internal_solid_infill_line_width", region_pitch,      true },
                             { region_config.top_surface_filament_id.value,    "top_surface_line_width",           top_print_height,  region_config.top_shell_layers.value > 0 },

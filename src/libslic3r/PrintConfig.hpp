@@ -201,6 +201,17 @@ enum ExtruderLayerHeightMode {
     elhmAdaptive,
 };
 
+// ORCA: split wall layer heights - which wall class gets its wall-only layer height adjusted
+// when the two wall filaments' preferred heights do not divide evenly, and in which direction.
+enum WallSplitFilament {
+    wsfOuterWall,
+    wsfInnerWall,
+};
+enum WallSplitDirection {
+    wsdDecrease,
+    wsdIncrease,
+};
+
 //Orca
 enum InternalBridgeFilter {
     ibfDisabled, ibfLimited, ibfNofilter
@@ -467,6 +478,8 @@ static std::string get_bed_temp_1st_layer_key(const BedType type)
 
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PrinterTechnology)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ExtruderLayerHeightMode)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WallSplitFilament)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WallSplitDirection)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeFlavor)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FuzzySkinType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FuzzySkinMode)
@@ -847,6 +860,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     // ORCA: per-extruder layer height ("extruder_layer_height").
     ((ConfigOptionEnum<ExtruderLayerHeightMode>, extruder_layer_height_mode))
     ((ConfigOptionPercent,             extruder_layer_height_tolerance))
+    ((ConfigOptionBool,                split_wall_adjust))
+    ((ConfigOptionEnum<WallSplitFilament>,  split_wall_adjust_filament))
+    ((ConfigOptionEnum<WallSplitDirection>, split_wall_adjust_direction))
     ((ConfigOptionFloat,               mmu_segmented_region_max_width))
     ((ConfigOptionFloat,               mmu_segmented_region_interlocking_depth))
     ((ConfigOptionFloat,               raft_contact_distance))

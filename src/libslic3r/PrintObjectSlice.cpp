@@ -891,12 +891,23 @@ void PrintObject::apply_extruder_layer_heights()
     // Walls-only pitch (see wall_layer_height_multiplier()): the region prints every layer, only
     // its walls combine. Mutually exclusive with a whole-region multiplier > 1.
     std::vector<unsigned int> wall_multipliers(this->num_printing_regions(), 1);
+    // Split wall layer heights (see wall_split_pitches()): the wall min-merge above already
+    // equals the fine class's pitch; the coarse class additionally combines to its own runs.
+    std::vector<unsigned int> split_coarses(this->num_printing_regions(), 1);
+    std::vector<char>         split_outers(this->num_printing_regions(), 0);
     bool any_combined = false;
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
         multipliers[region_id] = this->region_layer_height_multiplier(this->printing_region(region_id));
-        if (multipliers[region_id] <= 1)
+        if (multipliers[region_id] <= 1) {
             wall_multipliers[region_id] = this->wall_layer_height_multiplier(this->printing_region(region_id));
-        any_combined |= multipliers[region_id] > 1 || wall_multipliers[region_id] > 1;
+            unsigned int fine = 0, coarse = 0;
+            bool         coarse_is_outer = false;
+            if (this->wall_split_pitches(this->printing_region(region_id), fine, coarse, coarse_is_outer)) {
+                split_coarses[region_id] = coarse;
+                split_outers[region_id]  = coarse_is_outer;
+            }
+        }
+        any_combined |= multipliers[region_id] > 1 || wall_multipliers[region_id] > 1 || split_coarses[region_id] > 1;
     }
     if (! any_combined)
         return;
@@ -925,9 +936,10 @@ void PrintObject::apply_extruder_layer_heights()
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
         // Walls-only mode marks the runs on the LayerRegions for make_perimeters() instead of
         // moving any slices: every layer keeps its geometry, fills and surfaces.
-        const bool   walls_only = wall_multipliers[region_id] > 1;
+        const bool   split      = split_coarses[region_id] > 1;
+        const bool   walls_only = wall_multipliers[region_id] > 1 || split;
         const size_t mult       = walls_only ? wall_multipliers[region_id] : multipliers[region_id];
-        if (mult <= 1)
+        if (mult <= 1 && ! split)
             continue;
         // Shapes deviating by less than this fraction of the region's nozzle diameter are considered
         // identical; the deviations swallowed stay below what printing N layers at once causes anyway.
@@ -957,7 +969,9 @@ void PrintObject::apply_extruder_layer_heights()
         size_t min_run = 1;
         if (min_layer_height > m_config.layer_height.value + EPSILON)
             min_run = std::min(mult, (size_t)std::ceil(min_layer_height / m_config.layer_height.value - EPSILON));
-        size_t idx = first_idx;
+        // With a fine multiplier of 1 (split with the finer wall at the object layer height)
+        // there are no fine runs to walk; only the coarse pass below applies.
+        size_t idx = mult > 1 ? first_idx : m_layers.size();
         while (idx < m_layers.size()) {
             m_print->throw_if_canceled();
             ExPolygons merged = to_expolygons(m_layers[idx]->regions()[region_id]->slices.surfaces);
@@ -1087,6 +1101,61 @@ void PrintObject::apply_extruder_layer_heights()
             // Do not touch Layer::lslices here: they describe the final object and keep driving
             // top / bottom detection of the other regions, brim, supports and overhang handling.
             idx = commit_top + 1;
+        }
+        // ORCA: split wall layer heights - group the fine cadence into coarse runs of
+        // split_coarses[region_id] layers and mark them for LayerRegion::make_perimeters(): the
+        // coarse wall class extrudes once per coarse run at the full run height and follows the
+        // fine cadence wherever no coarse run forms (both walls then print at the lower pitch,
+        // like the min-merge fallback).
+        if (split) {
+            const size_t coarse = split_coarses[region_id];
+            const size_t fine   = std::max<size_t>(1, mult);
+            size_t bottom = first_idx;
+            while (bottom + coarse <= m_layers.size()) {
+                m_print->throw_if_canceled();
+                // When the fine class combines, a coarse run must span whole fine runs so both
+                // classes' tops stay flush: every expected fine-run top must carry a full run.
+                bool aligned = true;
+                if (fine > 1)
+                    for (size_t top = bottom + fine - 1; aligned && top < bottom + coarse; top += fine)
+                        aligned = m_layers[top]->regions()[region_id]->wall_combined_count() == fine;
+                if (! aligned) {
+                    ++ bottom;
+                    continue;
+                }
+                // Uniform layer heights, the region present everywhere, and the whole span's
+                // shape within the run tolerance (mirrors the fine walk above).
+                ExPolygons merged = to_expolygons(m_layers[bottom]->regions()[region_id]->slices.surfaces);
+                Polygons unioned  = to_polygons(merged);
+                bool     valid    = ! merged.empty();
+                for (size_t i = bottom + 1; valid && i < bottom + coarse; ++ i) {
+                    const ExPolygons expolys = to_expolygons(m_layers[i]->regions()[region_id]->slices.surfaces);
+                    merged = expolys.empty() ? ExPolygons() : intersection_ex(expolys, merged);
+                    polygons_append(unioned, to_polygons(expolys));
+                    valid = ! merged.empty() && std::abs(m_layers[i]->height - m_layers[bottom]->height) <= EPSILON;
+                }
+                if (valid)
+                    valid = opening(diff(union_(unioned), offset(merged, tolerance)), 0.5f * tolerance).empty();
+                // The coarse walls must rest on the object below the whole run, like the fine walk.
+                if (valid)
+                    if (const Layer *below = m_layers[bottom]->lower_layer; below != nullptr &&
+                        ! opening_ex(diff_ex(merged, below->lslices, ApplySafetyOffset::Yes), 0.5f * tolerance).empty())
+                        valid = false;
+                if (! valid) {
+                    bottom += fine;
+                    continue;
+                }
+                const size_t top = bottom + coarse - 1;
+                double split_height = 0.;
+                for (size_t i = bottom; i <= top; ++ i)
+                    split_height += m_layers[i]->height;
+                for (size_t i = bottom; i <= top; ++ i) {
+                    LayerRegion *layerm = m_layers[i]->regions()[region_id];
+                    layerm->m_wall_split_count  = i == top ? (unsigned short)coarse : 0;
+                    layerm->m_wall_split_height = split_height;
+                }
+                bottom = top + 1;
+            }
         }
         m_print->throw_if_canceled();
     }

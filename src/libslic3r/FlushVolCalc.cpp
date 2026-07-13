@@ -1,6 +1,7 @@
 #include <cmath>
 #include <algorithm>
 #include <assert.h>
+#include <string>
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
 
 #include "FlushVolCalc.hpp"
@@ -12,6 +13,177 @@ const int g_min_flush_volume_from_support = 420.f;
 const int g_flush_volume_to_support = 230;
 
 const int g_max_flush_volume = 350;
+
+// ---- Special color type classification for flush correction ----
+
+enum class SpecialColorType {
+    Red,
+    PearlWhite,
+    ColdWhite,
+    LightGray,
+    MidGray,
+    DarkGray,
+    Black,
+    DarkColor,
+    Normal
+};
+
+static SpecialColorType classify_color(unsigned char r, unsigned char g, unsigned char b)
+{
+    float rf = r / 255.f;
+    float gf = g / 255.f;
+    float bf = b / 255.f;
+
+    float h, s, v;
+    RGB2HSV(rf, gf, bf, &h, &s, &v);
+
+    float S_pct = s * 100.f;
+    float V_pct = v * 100.f;
+
+    // Priority: achromatic first (S <= 8), then chromatic
+    if (S_pct <= 8.f) {
+        if (V_pct >= 85.f) {
+            // High brightness, low saturation — could be pearl white, cold white, or plain white
+            int dRG = std::abs((int)r - (int)g);
+            int dGB = std::abs((int)g - (int)b);
+            int dBR = (int)b - (int)r; // B minus R for cold-white detection
+
+            if (dRG <= 8 && dGB <= 8)
+                return SpecialColorType::PearlWhite;
+
+            if (dBR >= 12 && (int)b - (int)g >= 10)
+                return SpecialColorType::ColdWhite;
+
+            // plain white — treat as Normal (no special correction)
+            return SpecialColorType::Normal;
+        }
+
+        if (V_pct >= 70.f && V_pct <= 88.f) {
+            int dRG = std::abs((int)r - (int)g);
+            int dGB = std::abs((int)g - (int)b);
+            if (dRG <= 10 && dGB <= 10)
+                return SpecialColorType::LightGray;
+        }
+
+        if (V_pct >= 45.f && V_pct <= 69.f) {
+            int dRG = std::abs((int)r - (int)g);
+            int dGB = std::abs((int)g - (int)b);
+            if (dRG <= 10 && dGB <= 10)
+                return SpecialColorType::MidGray;
+        }
+
+        if (V_pct >= 20.f && V_pct <= 44.f) {
+            int dRG = std::abs((int)r - (int)g);
+            int dGB = std::abs((int)g - (int)b);
+            if (dRG <= 10 && dGB <= 10)
+                return SpecialColorType::DarkGray;
+        }
+
+        if (V_pct < 20.f)
+            return SpecialColorType::Black;
+
+        // low-S but V in [88,90] gap — treat as Normal
+        return SpecialColorType::Normal;
+    }
+
+    // Chromatic (S > 8): check red first
+    if (V_pct >= 20.f && S_pct >= 30.f) {
+        bool hue_in_red = (h >= 0.f && h <= 30.f) || (h >= 330.f && h <= 360.f);
+        int r_minus_g = (int)r - (int)g;
+        int r_minus_b = (int)r - (int)b;
+        if (hue_in_red && r_minus_g >= 80 && r_minus_b >= 80)
+            return SpecialColorType::Red;
+    }
+
+    // Dark non-special chromatic color (V < 50)
+    if (V_pct < 50.f)
+        return SpecialColorType::DarkColor;
+
+    return SpecialColorType::Normal;
+}
+
+static bool is_white_class(SpecialColorType t)
+{
+    return t == SpecialColorType::PearlWhite || t == SpecialColorType::ColdWhite;
+}
+
+static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned char src_b,
+                            unsigned char dst_r, unsigned char dst_g, unsigned char dst_b)
+{
+    SpecialColorType src_type = classify_color(src_r, src_g, src_b);
+    SpecialColorType dst_type = classify_color(dst_r, dst_g, dst_b);
+
+    // Boundary: same special type => minimal flush (section 6, 边界兜底逻辑)
+    if (src_type == dst_type && src_type != SpecialColorType::Normal && src_type != SpecialColorType::DarkColor)
+        return 0.4f;
+
+    float k = 1.0f;
+
+    // ---- Red correction (section 5.1) ----
+    if (src_type == SpecialColorType::Red) {
+        if (dst_type == SpecialColorType::PearlWhite ||
+            dst_type == SpecialColorType::ColdWhite ||
+            dst_type == SpecialColorType::LightGray) {
+            k *= 1.5f;
+        } else if (dst_type == SpecialColorType::MidGray ||
+                   dst_type == SpecialColorType::DarkColor) {
+            k *= 1.15f;
+        } else {
+            k *= 0.75f;
+        }
+    }
+    if (dst_type == SpecialColorType::Red) {
+        k *= 0.75f;
+    }
+
+    // ---- Pearl white correction (section 5.2) ----
+    if (dst_type == SpecialColorType::PearlWhite) {
+        if (src_type == SpecialColorType::Red ||
+            src_type == SpecialColorType::DarkGray ||
+            src_type == SpecialColorType::Black) {
+            k *= 1.4f;
+        } else if (src_type == SpecialColorType::ColdWhite ||
+                   src_type == SpecialColorType::LightGray) {
+            k *= 1.1f;
+        }
+    }
+    if (src_type == SpecialColorType::PearlWhite) {
+        k *= 0.85f;
+    }
+
+    // ---- Cold white correction (section 5.3) ----
+    if (dst_type == SpecialColorType::ColdWhite) {
+        if (src_type == SpecialColorType::Red ||
+            src_type == SpecialColorType::DarkGray ||
+            src_type == SpecialColorType::Black) {
+            k *= 1.3f;
+        }
+    }
+    if (src_type == SpecialColorType::ColdWhite) {
+        k *= 0.9f;
+    }
+
+    // ---- Gray tiered correction (section 5.4) ----
+    if (dst_type == SpecialColorType::LightGray) {
+        if (src_type == SpecialColorType::Red ||
+            src_type == SpecialColorType::DarkGray ||
+            src_type == SpecialColorType::Black) {
+            k *= 1.3f;
+        } else if (is_white_class(src_type)) {
+            k *= 1.05f;
+        }
+    }
+    if (dst_type == SpecialColorType::MidGray) {
+        if (!is_white_class(src_type)) {
+            k *= 1.15f;
+        }
+    }
+    if (dst_type == SpecialColorType::DarkGray) {
+        k *= 0.9f;
+    }
+
+    return std::clamp(k, 0.3f, 2.5f);
+}
 
 static float to_radians(float degree)
 {
@@ -88,8 +260,6 @@ int FlushVolCalculator::calc_flush_vol_rgb(unsigned char src_r, unsigned char sr
     // Calculate color distance in HSV color space
     RGB2HSV(src_r_f, src_g_f, src_b_f, &from_hsv_h, &from_hsv_s, &from_hsv_v);
     RGB2HSV(dst_r_f, dst_g_f, dst_b_f, &to_hsv_h, &to_hsv_s, &to_hsv_v);
-    from_hsv_h = normalize_hue(from_hsv_h);
-    to_hsv_h = normalize_hue(to_hsv_h);
     float hs_dist = DeltaHS_BBS(from_hsv_h, from_hsv_s, from_hsv_v, to_hsv_h, to_hsv_s, to_hsv_v);
 
     // 1. Color difference is more obvious if the dest color has high luminance
@@ -110,58 +280,6 @@ int FlushVolCalculator::calc_flush_vol_rgb(unsigned char src_r, unsigned char sr
 
     float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 74.828899f);
 
-    // Targeted residue compensation: saturated colors into light neutral targets and red into neutral midtones.
-    const float src_chroma = from_hsv_s * from_hsv_v;
-    const float dst_chroma = to_hsv_s * to_hsv_v;
-    const float dst_rgb_spread = std::max(dst_r_f, std::max(dst_g_f, dst_b_f)) - std::min(dst_r_f, std::min(dst_g_f, dst_b_f));
-    const float neutral_target = 1.f - dst_rgb_spread;
-    const float cool_target = std::max(0.f, dst_b_f - dst_r_f);
-    const float lumi_gap = to_lumi - from_lumi;
-    const float white_risk = smoothstep(0.70f, 0.86f, to_lumi) *
-                             smoothstep(0.86f, 0.96f, neutral_target) *
-                             (1.f + 0.45f * smoothstep(0.00f, 0.06f, cool_target)) *
-                             (1.f - 0.75f * smoothstep(0.46f, 0.62f, from_lumi)) *
-                             smoothstep(0.45f, 0.75f, from_hsv_s) *
-                             smoothstep(0.32f, 0.80f, src_chroma) *
-                             smoothstep(0.34f, 0.58f, lumi_gap) *
-                             (1.f - 0.45f * smoothstep(0.25f, 0.55f, to_hsv_s));
-
-    const float red_hue = std::max(std::max(smoothstep(340.f, 360.f, from_hsv_h), smoothstep(0.f, 20.f, 20.f - from_hsv_h)),
-                                   0.55f * smoothstep(300.f, 340.f, from_hsv_h));
-    const float red_residue = red_hue *
-                              smoothstep(0.75f, 0.95f, from_hsv_s) *
-                              smoothstep(0.65f, 0.90f, from_hsv_v) *
-                              (1.f - 0.70f * smoothstep(0.48f, 0.62f, from_lumi)) *
-                              smoothstep(0.08f, 0.35f, lumi_gap) *
-                              smoothstep(0.50f, 0.82f, to_lumi) *
-                              (1.f - 0.25f * smoothstep(0.35f, 0.65f, to_hsv_s));
-    const float gray_residue = red_hue *
-                               smoothstep(0.75f, 0.95f, from_hsv_s) *
-                               smoothstep(0.65f, 0.90f, from_hsv_v) *
-                               smoothstep(0.48f, 0.60f, to_lumi) *
-                               (1.f - smoothstep(0.72f, 0.84f, to_lumi)) *
-                               smoothstep(0.70f, 0.92f, neutral_target) *
-                               (1.f - 0.85f * smoothstep(0.30f, 0.58f, to_hsv_s));
-
-    flush_volume += 213.842157f * white_risk * std::pow(std::max(0.f, lumi_gap + 0.305462f), 0.566376f);
-    flush_volume += 139.835305f * red_residue;
-    flush_volume += 223.243684f * gray_residue;
-
-    // Generic HSV/RGB stain risk for high-chroma sources into bright neutral targets, damped once existing compensation is already high.
-    const float warm_or_pink_target = std::max(smoothstep(330.f, 360.f, to_hsv_h), smoothstep(0.f, 70.f, 70.f - to_hsv_h));
-    const float warm_pastel = smoothstep(0.70f, 0.92f, to_lumi) *
-                              smoothstep(0.08f, 0.20f, to_hsv_s) *
-                              warm_or_pink_target;
-    const float stain_risk = smoothstep(0.30f, 0.55f, src_chroma) *
-                             smoothstep(0.32f, 0.48f, src_chroma - dst_chroma) *
-                             smoothstep(0.74f, 0.88f, to_lumi) *
-                             (1.f - smoothstep(0.04f, 0.12f, dst_rgb_spread)) *
-                             std::max(0.f, 1.f - 0.45f * warm_pastel);
-    const float existing_flush_damp = 1.f - smoothstep(139.553794f, 200.000000f, flush_volume);
-    const float high_flush_activation = std::max(smoothstep(44.449818f, 103.434751f, flush_volume), 0.75f * stain_risk) * existing_flush_damp;
-    flush_volume *= 1.f + 1.012565f * high_flush_activation * stain_risk;
-    flush_volume = std::max(flush_volume, 38.085362f);
-
     return std::min((int)flush_volume, m_max_flush_vol);
 }
 
@@ -176,16 +294,23 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
         dst_r = dst_g = dst_b = 255;
     }
 
-    // Path A: always try lookup table first
+    // Path A: always try lookup table first — lookup data is pre-calibrated, no extra correction
     float lookup_volume;
     if (get_flush_vol_from_data(src_r, src_g, src_b, dst_r, dst_g, dst_b, lookup_volume)) {
         return std::min((int)lookup_volume, m_max_flush_vol);
     }
+
     // Lookup miss — fall through to Path B (HSV formula with stain-risk compensation)
     float flush_volume = (float)calc_flush_vol_rgb(src_r, src_g, src_b, dst_r, dst_g, dst_b);
 
-    flush_volume += (float)m_min_flush_vol;
-    return std::min((int)flush_volume, m_max_flush_vol);
+    // Apply special color correction coefficient K only for Path B (red / pearl white / cold white / gray)
+    float k = get_special_k(src_r, src_g, src_b, dst_r, dst_g, dst_b);
+    int   final_volume = (int) ((float) flush_volume * k);
+
+   //flush_volume += (float) m_min_flush_vol;
+    return std::min((int) flush_volume, m_max_flush_vol);
+
+    /*return std::clamp(final_volume, m_min_flush_vol, m_max_flush_vol);*/
 }
 
 }

@@ -188,8 +188,11 @@ private:
     // Sentry
     void sw_UploadEvent();
 
-    // Get software basic info
+    // Get software basic info (name, version, platform)
     void sw_GetSoftwareInfo();
+
+    // Get host system info: os_version, computer_name, mac_address
+    void sw_GetSystemInfo();
 
     // open network dialog
     void sw_OpenNetworkDialog();
@@ -252,6 +255,9 @@ private:
     void sw_connect_other_device();
 
     void sw_get_pin_code();
+
+    // Subscribe to foreground/background change events (event_id=205890)
+    void sw_SubscribeForegroundChange();
 
 };
 

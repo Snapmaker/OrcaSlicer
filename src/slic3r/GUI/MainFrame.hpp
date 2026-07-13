@@ -199,6 +199,9 @@ protected:
     WXLRESULT MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam) override;
 #endif
 
+    // Log and dispatch foreground/background change to Flutter subscribers
+    void NotifyActivateChange(bool active);
+
 public:
     MainFrame();
     ~MainFrame() = default;

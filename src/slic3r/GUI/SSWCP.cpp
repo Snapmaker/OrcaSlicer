@@ -13,6 +13,7 @@
 #include <exception>
 #include <cstdlib>
 #include <iomanip>
+#include <sstream>
 #include <regex>
 #include <thread>
 #include <string_view>
@@ -36,6 +37,18 @@
 #include "slic3r/GUI/WebPresetDialog.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include <mutex>
+
+#ifdef _WIN32
+#include <iphlpapi.h>
+#else
+#include <ifaddrs.h>
+#ifdef __APPLE__
+#include <net/if_dl.h>
+#else
+#include <netpacket/packet.h>
+#include <net/if.h>
+#endif
+#endif
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 #include "slic3r/GUI/WebUrlDialog.hpp"
@@ -516,6 +529,8 @@ void SSWCP_Instance::process() {
         sw_OpenNetworkDialog();
     } else if (m_cmd == "sw_GetSoftwareInfo") {
         sw_GetSoftwareInfo();
+    } else if (m_cmd == "sw_GetSystemInfo") {
+        sw_GetSystemInfo();
     }
     else {
         handle_general_fail();
@@ -565,6 +580,225 @@ void SSWCP_Instance::sw_GetSoftwareInfo()
     m_res_data["version"] = std::string(Snapmaker_VERSION);
     auto& server = wxGetApp().m_page_http_server;
     m_res_data["http_host"] = std::string(LOCALHOST_URL) + std::to_string(server.get_port());
+
+    send_to_js();
+    finish_job();
+}
+
+// Format raw MAC bytes into "XX-XX-XX-XX-XX-XX" dash-separated hex string
+static std::string format_mac_address(const unsigned char* mac_bytes, size_t byte_count)
+{
+    std::ostringstream stream;
+    for (size_t idx = 0; idx < byte_count; idx++) {
+        if (idx > 0) stream << "-";
+        stream << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+               << static_cast<int>(mac_bytes[idx]);
+    }
+    return stream.str();
+}
+
+#ifdef _WIN32
+// Retrieve the MAC address of the primary physical network adapter on Windows.
+// Prefers a connected Ethernet/WiFi adapter; falls back to any physical adapter.
+static void get_windows_mac_address(json& res_data)
+{
+    // Case-insensitive substring match for wide strings
+    auto contains_wide_nocase = [](PCWSTR haystack, PCWSTR needle) -> bool {
+        if (!haystack || !needle) return false;
+        size_t hay_len = wcslen(haystack);
+        size_t ndl_len = wcslen(needle);
+        if (ndl_len == 0 || ndl_len > hay_len) return false;
+        for (size_t i = 0; i <= hay_len - ndl_len; i++) {
+            bool match = true;
+            for (size_t j = 0; j < ndl_len; j++) {
+                if (towlower(haystack[i + j]) != towlower(needle[j])) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return true;
+        }
+        return false;
+    };
+
+    // Check if adapter Description/FriendlyName indicates a virtual adapter
+    auto has_virtual_description = [&](PIP_ADAPTER_ADDRESSES adapter) -> bool {
+        const std::vector<PCWSTR> kw_list = {
+            L"virtual", L"hyper-v", L"vmware", L"virtualbox",
+            L"tap-windows", L"vpn", L"tunnel", L"teredo",
+            L"isatap", L"6to4", L"pseudo"
+        };
+        for (auto* kw : kw_list) {
+            if ((adapter->Description  && contains_wide_nocase(adapter->Description, kw))
+                || (adapter->FriendlyName && contains_wide_nocase(adapter->FriendlyName, kw)))
+                return true;
+        }
+        return false;
+    };
+
+    // Determine if an adapter is a genuine physical hardware adapter
+    auto is_physical_adapter = [&](PIP_ADAPTER_ADDRESSES adapter) -> bool {
+        if (adapter->IfType != IF_TYPE_ETHERNET_CSMACD
+            && adapter->IfType != IF_TYPE_IEEE80211)
+            return false;
+        if (adapter->TunnelType != TUNNEL_TYPE_NONE)
+            return false;
+        if (has_virtual_description(adapter))
+            return false;
+        return true;
+    };
+
+    // Prefer connected physical adapter, fallback to any physical adapter
+    ULONG buf_size = 0;
+    GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, NULL, &buf_size);
+    if (buf_size > 0) {
+        std::vector<BYTE> buffer(buf_size);
+        PIP_ADAPTER_ADDRESSES adapter_list = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+        if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, adapter_list, &buf_size) == ERROR_SUCCESS) {
+            // First pass: connected physical adapter (Ethernet or WiFi)
+            for (PIP_ADAPTER_ADDRESSES adapter = adapter_list; adapter != NULL; adapter = adapter->Next) {
+                if (adapter->PhysicalAddressLength == 0)
+                    continue;
+                std::string mac_str = format_mac_address(adapter->PhysicalAddress, adapter->PhysicalAddressLength);
+                std::string name_str = adapter->FriendlyName ? boost::nowide::narrow(adapter->FriendlyName) : "(null)";
+                bool is_phy = is_physical_adapter(adapter);
+                BOOST_LOG_TRIVIAL(info) << "[SystemInfo] adapter: name=\"" << name_str
+                                        << "\", mac=" << mac_str
+                                        << ", IfType=" << adapter->IfType
+                                        << ", OperStatus=" << adapter->OperStatus
+                                        << ", TunnelType=" << adapter->TunnelType
+                                        << ", is_physical=" << (is_phy ? "YES" : "NO");
+                if (is_phy && adapter->OperStatus == IfOperStatusUp) {
+                    res_data["mac_address"] = mac_str;
+                    break;
+                }
+            }
+            // Second pass: any physical adapter (even if disconnected)
+            if (res_data.find("mac_address") == res_data.end()) {
+                for (PIP_ADAPTER_ADDRESSES adapter = adapter_list; adapter != NULL; adapter = adapter->Next) {
+                    if (adapter->PhysicalAddressLength == 0)
+                        continue;
+                    if (is_physical_adapter(adapter)) {
+                        res_data["mac_address"] = format_mac_address(adapter->PhysicalAddress, adapter->PhysicalAddressLength);
+                        BOOST_LOG_TRIVIAL(info) << "[SystemInfo] fallback to disconnected physical adapter";
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+#else  // macOS / Linux
+// Retrieve the MAC address of the primary physical network interface on Unix.
+// Prefers built-in hardware interfaces (en* on macOS, eth*/wlan*/enp* on Linux),
+// falls back to any non-virtual interface.
+static void get_unix_mac_address(json& res_data)
+{
+    // Check if interface name indicates a virtual (non-physical) interface
+    auto is_virtual_iface = [](const char* name) -> bool {
+        if (!name || name[0] == '\0') return true;
+#ifdef __APPLE__
+        static const std::vector<const char*> virtual_prefixes = {
+            "lo", "vmnet", "vboxnet", "utun", "tun", "tap",
+            "bridge", "llw", "awdl", "anpi", "gif", "stf",
+            "pdp_ip", "ap",
+        };
+#else
+        static const std::vector<const char*> virtual_prefixes = {
+            "lo", "vmnet", "vboxnet", "docker", "br-", "virbr",
+            "tun", "tap", "veth", "bond", "dummy", "sit",
+            "ip6tnl", "wg",
+        };
+#endif
+        for (const auto* prefix : virtual_prefixes) {
+            size_t plen = strlen(prefix);
+            if (strncmp(name, prefix, plen) == 0)
+                return true;
+        }
+        return false;
+    };
+
+    // Walk interfaces preferring physical hardware ones
+    struct ifaddrs* interface_list = nullptr;
+    if (getifaddrs(&interface_list) == 0) {
+        std::string mac_fallback;
+
+        for (struct ifaddrs* iface = interface_list; iface != nullptr; iface = iface->ifa_next) {
+            if (iface->ifa_addr == nullptr)
+                continue;
+            if (is_virtual_iface(iface->ifa_name))
+                continue;
+
+#ifdef __APPLE__
+            if (iface->ifa_addr->sa_family != AF_LINK)
+                continue;
+            auto* data_link = reinterpret_cast<struct sockaddr_dl*>(iface->ifa_addr);
+            if (data_link->sdl_alen > 0) {
+                std::string mac = format_mac_address(
+                    reinterpret_cast<const unsigned char*>(LLADDR(data_link)), data_link->sdl_alen);
+                if (strncmp(iface->ifa_name, "en", 2) == 0) {
+                    res_data["mac_address"] = mac;
+                    break;
+                }
+                if (mac_fallback.empty())
+                    mac_fallback = mac;
+            }
+#else  // Linux
+            if (iface->ifa_addr->sa_family != AF_PACKET)
+                continue;
+            auto* link_layer = reinterpret_cast<struct sockaddr_ll*>(iface->ifa_addr);
+            if (link_layer->sll_halen > 0) {
+                std::string mac = format_mac_address(link_layer->sll_addr, link_layer->sll_halen);
+                if (strncmp(iface->ifa_name, "eth", 3) == 0
+                    || strncmp(iface->ifa_name, "enp", 3) == 0
+                    || strncmp(iface->ifa_name, "eno", 3) == 0
+                    || strncmp(iface->ifa_name, "ens", 3) == 0
+                    || strncmp(iface->ifa_name, "enx", 3) == 0
+                    || strncmp(iface->ifa_name, "wlan", 4) == 0
+                    || strncmp(iface->ifa_name, "wlp", 3) == 0
+                    || strncmp(iface->ifa_name, "wlo", 3) == 0
+                    || strncmp(iface->ifa_name, "wls", 3) == 0
+                    || strncmp(iface->ifa_name, "wlx", 3) == 0) {
+                    res_data["mac_address"] = mac;
+                    break;
+                }
+                if (mac_fallback.empty())
+                    mac_fallback = mac;
+            }
+#endif
+        }
+        if (res_data.find("mac_address") == res_data.end() && !mac_fallback.empty())
+            res_data["mac_address"] = mac_fallback;
+
+        freeifaddrs(interface_list);
+    }
+}
+#endif
+
+void SSWCP_Instance::sw_GetSystemInfo()
+{
+    m_res_data["os_version"] = wxGetOsDescription().ToStdString();
+
+#ifdef _WIN32
+    // Computer name via wide-char API to preserve non-ASCII names (e.g. Chinese)
+    std::array<wchar_t, 256> name_buf{};
+    DWORD name_len = static_cast<DWORD>(name_buf.size());
+    GetComputerNameExW(ComputerNameDnsHostname, name_buf.data(), &name_len)
+        ? m_res_data["computer_name"] = boost::nowide::narrow(name_buf.data())
+        : m_res_data["computer_name"] = boost::asio::ip::host_name();
+    get_windows_mac_address(m_res_data);
+#else
+    m_res_data["computer_name"] = boost::asio::ip::host_name();
+    get_unix_mac_address(m_res_data);
+#endif
+
+    std::string mac_log = "<not found>";
+    if (m_res_data.find("mac_address") != m_res_data.end()) {
+        std::string mac = m_res_data["mac_address"].get<std::string>();
+        mac_log = mac.substr(0, 8) + ":**:**:**";
+    }
+    BOOST_LOG_TRIVIAL(info) << "[SystemInfo] mac_address = " << mac_log
+                            << ", computer_name = " << m_res_data["computer_name"].get<std::string>();
 
     send_to_js();
     finish_job();
@@ -1282,6 +1516,7 @@ void SSWCP_Instance::sw_UnsubscribeAll() {
     wxGetApp().m_user_login_subscribers.clear();
     wxGetApp().m_cache_subscribers.clear();
     wxGetApp().m_user_update_privacy_subscribers.clear();
+    wxGetApp().m_foreground_change_subscribers.clear();
 
     send_to_js();
     finish_job();
@@ -1328,6 +1563,15 @@ void SSWCP_Instance::sw_Webview_Unsubscribe() {
     for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
         if (iter->first == m_webview) {
             iter = privacy_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& foreground_map = wxGetApp().m_foreground_change_subscribers;
+    for (auto iter = foreground_map.begin(); iter != foreground_map.end();) {
+        if (iter->first == m_webview) {
+            iter = foreground_map.erase(iter);
         } else {
             iter++;
         }
@@ -4149,6 +4393,8 @@ void SSWCP_MachineConnect_Instance::process() {
         sw_connect_other_device();
     } else if (m_cmd == "sw_GetPincode") {
         sw_get_pin_code();
+    } else if (m_cmd == "sw_SubscribeForegroundChange") {
+        sw_SubscribeForegroundChange();
     }
     else {
         handle_general_fail();
@@ -4224,6 +4470,12 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+void SSWCP_MachineConnect_Instance::sw_SubscribeForegroundChange()
+{
+    auto self = shared_from_this();
+    wxGetApp().m_foreground_change_subscribers[m_webview] = self;
 }
 
 
@@ -6332,7 +6584,8 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_Disconnect",
     "sw_GetConnectedMachine",
     "sw_ConnectOtherMachine",
-    "sw_GetPincode"
+    "sw_GetPincode",
+    "sw_SubscribeForegroundChange"
 };
 
 std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
@@ -6562,6 +6815,15 @@ void SSWCP::on_webview_delete(wxWebView* view)
     for (auto iter = page_state_map.begin(); iter != page_state_map.end();) {
         if (iter->first == view) {
             iter = page_state_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& foreground_map = wxGetApp().m_foreground_change_subscribers;
+    for (auto iter = foreground_map.begin(); iter != foreground_map.end();) {
+        if (iter->first == view) {
+            iter = foreground_map.erase(iter);
         } else {
             iter++;
         }

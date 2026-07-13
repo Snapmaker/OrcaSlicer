@@ -197,6 +197,11 @@ if (MSVC)
     # error C3859: virtual memory range for PCH exceeded; please recompile with a command line option of '-Zm90' or greater
     # Generate symbols at every build target, even for the release.
     add_compile_options(-bigobj -Zm520 /Zi)
+    # Enable C++ exception handling for all targets. Normally part of CMake's
+    # default MSVC flags, but the default CMAKE_CXX_FLAGS came through without it
+    # here; without /EHsc, _CPPUNWIND is undefined and wxWidgets' chkconf.h forces
+    # wxUSE_EXCEPTIONS=0, which breaks GUI_App::OnExceptionInMainLoop() (C3668).
+    add_compile_options(/EHsc)
     # Disable STL4007: Many result_type typedefs and all argument_type, first_argument_type, and second_argument_type typedefs are deprecated in C++17.
     #FIXME Remove this line after eigen library adapts to the new C++17 adaptor rules.
     add_compile_options(-D_SILENCE_CXX17_ADAPTOR_TYPEDEFS_DEPRECATION_WARNING)
@@ -441,7 +446,7 @@ include_directories(SYSTEM ${LIBDIR_BIN}/dev-utils/platform)
 include_directories(SYSTEM ${LIBDIR}/libigl)
 
 if(WIN32)
-    add_definitions(-D_USE_MATH_DEFINES -D_WIN32 -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS)
+    add_definitions(-D_USE_MATH_DEFINES -DWIN32 -D_WIN32 -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS)
     if(MSVC)
         # BOOST_ALL_NO_LIB: Avoid the automatic linking of Boost libraries on Windows. Rather rely on explicit linking.
         add_definitions(-DBOOST_ALL_NO_LIB -DBOOST_USE_WINAPI_VERSION=0x602 -DBOOST_SYSTEM_USE_UTF8 )

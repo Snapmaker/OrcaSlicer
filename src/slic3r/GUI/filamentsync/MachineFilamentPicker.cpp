@@ -56,17 +56,18 @@ bool isNoneEntry(const Slic3r::GUI::FilamentData& data)
 // Helper: determine which row is under a mouse-y coordinate,
 //         returns -1 when the click is not on any row.
 // ============================================================
-int hitTestRow(int yPhysical, wxWindow* win, int itemCount)
+int hitTestRow(int yDip, int itemCount)
 {
-    if (yPhysical < win->FromDIP(g_firstRowY)) {
+    if (yDip < g_firstRowY) {
         return -1;
     }
-    int row = (yPhysical - win->FromDIP(g_firstRowY)) / win->FromDIP(g_itemStepY);
+    int row = (yDip - g_firstRowY) / g_itemStepY;
     if (row >= itemCount) {
         return -1;
     }
-    int top = win->FromDIP(g_firstRowY) + row * win->FromDIP(g_itemStepY);
-    if (yPhysical > top + win->FromDIP(g_itemRowH + g_itemGap)) {
+    // Allow a little tolerance into the gap below the last row
+    int top = g_firstRowY + row * g_itemStepY;
+    if (yDip > top + g_itemRowH + g_itemGap) {
         return -1;
     }
     return row;
@@ -257,7 +258,7 @@ private:
 
     void onLeftDown(wxMouseEvent& evt)
     {
-        int row = hitTestRow(evt.GetY(), this,
+        int row = hitTestRow(ToDIP(evt.GetY()),
                              static_cast<int>(m_dataList.size()));
         if (row < 0) {
             return;

@@ -18,8 +18,8 @@
 @REM    |-- Orca-deps-wxWidgets/          -- cloned wxWidgets (source)
 @REM    |-- sentry-native/                -- cloned sentry (source + crashpad)
 @REM    |-- gitlab_build/                 -- slicer build output
-@REM    |-- deps_src/                     -- xcopy from vendor (restored on exit)
-@REM    `-- deps_src_github/              -- backup of original deps_src
+@REM    |-- gitlab_deps_src/              -- xcopy from vendor/gitlab_deps_src
+@REM    `-- deps_src/                     -- original repo version (untouched)
 @REM
 @REM  Usage:
 @REM    gitlab_build_win.bat              -- build deps + slicer
@@ -58,8 +58,6 @@ set "SENTRY_DIR=%ORCA_ROOT%\sentry-native"
 
 REM Build directories
 set "DEPS_DIR=%VENDOR_DIR%\gitlab_deps"
-set "GIT_DEPS_SRC=%ORCA_ROOT%\deps_src"
-set "GIT_DEPS_SRC_BAK=%ORCA_ROOT%\deps_src_github"
 
 echo.
 echo ============================================================
@@ -167,31 +165,26 @@ if errorlevel 1 (
 echo.
 
 REM ============================================================
-REM  4. Prepare deps_src from vendor
-REM     The slicer build uses deps_src/ via add_subdirectory(deps_src).
-REM     We backup the original and copy the vendor's version in its place.
+REM  4. Prepare gitlab_deps_src from vendor
+REM     The slicer build uses deps_src/ via add_subdirectory().
+REM     We copy the vendor's version to gitlab_deps_src/ and
+REM     pass -DDEPS_SRC_DIR=gitlab_deps_src to CMake.
+REM     The original deps_src/ is NOT touched -- no swap, no restore.
 REM ============================================================
 echo [3/6] Preparing vendored library sources...
 
 if exist "%VENDOR_DIR%\gitlab_deps_src\" (
-    REM Restore any stale backup first
-    if exist "%GIT_DEPS_SRC_BAK%\" (
-        echo   Found stale backup, restoring original deps_src...
-        if exist "%GIT_DEPS_SRC%\" rmdir /s /q "%GIT_DEPS_SRC%"
-        move "%GIT_DEPS_SRC_BAK%" "%GIT_DEPS_SRC%"
+    REM Remove stale copy from previous run
+    if exist "%ORCA_ROOT%\gitlab_deps_src\" (
+        echo   Removing stale gitlab_deps_src/...
+        rmdir /s /q "%ORCA_ROOT%\gitlab_deps_src"
     )
 
-    REM Backup original deps_src
-    if exist "%GIT_DEPS_SRC%\CMakeLists.txt" (
-        echo   Backing up original deps_src/ to deps_src_github/...
-        move "%GIT_DEPS_SRC%" "%GIT_DEPS_SRC_BAK%"
-    )
-
-    REM Copy vendor version
-    echo   Copying vendor/gitlab_deps_src/ to deps_src/...
-    xcopy /E /I /Q "%VENDOR_DIR%\gitlab_deps_src" "%GIT_DEPS_SRC%"
+    REM Copy vendor version to root as gitlab_deps_src/ (name matches vendor)
+    echo   Copying vendor/gitlab_deps_src/ to gitlab_deps_src/...
+    xcopy /E /I /Q "%VENDOR_DIR%\gitlab_deps_src" "%ORCA_ROOT%\gitlab_deps_src"
     if errorlevel 1 (
-        echo   [ERROR] Failed to copy deps_src from vendor
+        echo   [ERROR] Failed to copy gitlab_deps_src from vendor
         goto :restore_exit
     )
 ) else (
@@ -323,8 +316,8 @@ REM  Main CMakeLists.txt uses find_package() / find_library() to
 REM  locate wxWidgets, Sentry, and all other deps via:
 REM    CMAKE_PREFIX_PATH = %DEPS%/usr/local
 REM
-REM  deps_src/ is used via add_subdirectory(deps_src) and now
-REM  contains the vendor's version (copied in step [3/6]).
+REM  gitlab_deps_src/ is used via -DDEPS_SRC_DIR=gitlab_deps_src
+REM  (copied from vendor in step [3/6], original deps_src/ untouched).
 REM ============================================================
 :slicer
 echo [slicer] Building Snapmaker Orca...
@@ -344,6 +337,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64 ^
     -DBBL_RELEASE_TO_PUBLIC=1 ^
     -DORCA_TOOLS=ON ^
     %SIG_FLAG% ^
+    -DDEPS_SRC_DIR=gitlab_deps_src ^
     -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" ^
     -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" ^
     -DCMAKE_BUILD_TYPE=%build_type% ^
@@ -390,8 +384,8 @@ goto :restore_exit
 REM ============================================================
 REM  Restore and exit
 REM
-REM  Restore original deps_src/ so GitHub build is unaffected.
 REM  Restore vendor cmake files so vendor repo stays clean.
+REM  No need to restore deps_src -- the original was never touched.
 REM ============================================================
 :restore_exit
 if not defined EC set "EC=1"
@@ -403,22 +397,6 @@ if exist "%VENDOR_DIR%\.git" (
     git checkout -- gitlab_deps/Sentry/Sentry.cmake 2>nul
     git checkout -- gitlab_deps/OpenVDB/OpenVDB.cmake 2>nul
     popd
-)
-
-REM Restore original deps_src
-if exist "%GIT_DEPS_SRC_BAK%\" (
-    echo   Restoring original deps_src...
-    if exist "%GIT_DEPS_SRC%\" rmdir /s /q "%GIT_DEPS_SRC%"
-    move "%GIT_DEPS_SRC_BAK%" "%GIT_DEPS_SRC%" >nul 2>&1
-    if errorlevel 1 (
-        echo   [WARNING] Failed to restore deps_src from backup!
-        echo   Original is at: %GIT_DEPS_SRC_BAK%
-        echo   Manually restore with:
-        echo     rmdir /s /q "%GIT_DEPS_SRC%"
-        echo     move "%GIT_DEPS_SRC_BAK%" "%GIT_DEPS_SRC%"
-    ) else (
-        echo   Original deps_src restored.
-    )
 )
 
 exit /b %EC%

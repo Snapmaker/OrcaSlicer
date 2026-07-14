@@ -894,7 +894,12 @@ endfunction()
 # src/CMakeLists.txt calls project(); use this for paths to repo-root (e.g. deps/) from there.
 set(SNAPMAKER_ORCA_TOP_SOURCE_DIR "${CMAKE_SOURCE_DIR}" CACHE INTERNAL "Top of Snapmaker_Orca source tree")
 
-add_subdirectory(deps_src)
+# GitLab CI can override with -DDEPS_SRC_DIR=gitlab_deps_src to use vendor-provided deps
+if(DEFINED DEPS_SRC_DIR)
+    add_subdirectory(${DEPS_SRC_DIR} deps_src)
+else()
+    add_subdirectory(deps_src)
+endif()
 add_subdirectory(src)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Snapmaker_Orca_app_gui)
 

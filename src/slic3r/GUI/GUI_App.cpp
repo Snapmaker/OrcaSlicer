@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <iterator>
 #include <exception>
 #include <cstdlib>
@@ -66,6 +67,7 @@
 #include <wx/dialog.h>
 #include <wx/textctrl.h>
 #include <wx/splash.h>
+#include <wx/dcscreen.h>
 #include <wx/fontutil.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
@@ -379,8 +381,23 @@ bool is_associate_files(std::wstring extend)
 }
 #endif
 
+/**
+ * @brief Displays the application startup artwork and current loading state.
+ */
 class SplashScreen : public wxSplashScreen
 {
+private:
+    static const int SPLASH_CONTENT_SIZE = 480;
+#ifdef __WXMSW__
+    static const int SPLASH_SHADOW_MARGIN = 28;
+    static const int SPLASH_SHADOW_OFFSET_Y = 2;
+    static const int SPLASH_SHADOW_MAX_ALPHA = 32;
+#else
+    static const int SPLASH_SHADOW_MARGIN = 0;
+    static const int SPLASH_SHADOW_OFFSET_Y = 0;
+    static const int SPLASH_SHADOW_MAX_ALPHA = 0;
+#endif
+
 public:
     SplashScreen(const wxBitmap& bitmap, long splashStyle, int milliseconds, wxPoint pos = wxDefaultPosition)
         : wxSplashScreen(bitmap, splashStyle, milliseconds, static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -415,14 +432,18 @@ public:
 
         // draw logo and constant info text
         Decorate(m_main_bitmap);
+        RestoreContentAlpha(m_main_bitmap);
         wxGetApp().UpdateFrameDarkUI(this);
+#ifdef __APPLE__
+        SetWindowShadow(GetHandle(), true);
+#endif
     }
 
     void SetText(const wxString& text)
     {
         set_bitmap(m_main_bitmap);
         if (!text.empty()) {
-            wxBitmap bitmap(m_main_bitmap);
+            wxBitmap bitmap(m_main_bitmap.ConvertToImage());
 
             wxMemoryDC memDC;
             memDC.SelectObject(bitmap);
@@ -435,6 +456,7 @@ public:
             memDC.DrawLabel(text, text_rect, wxALIGN_CENTER);
 
             memDC.SelectObject(wxNullBitmap);
+            RestoreContentAlpha(bitmap);
             set_bitmap(bitmap);
 #ifdef __WXOSX__
             // without this code splash screen wouldn't be updated under OSX
@@ -454,15 +476,17 @@ public:
         int width  = bmp.GetWidth();
         int height = bmp.GetHeight();
 
-        const int designSize = 480;
+        const int designSize = SPLASH_CONTENT_SIZE + SPLASH_SHADOW_MARGIN * 2;
         auto scaleX = [width, designSize](int value) { return value * width / designSize; };
         auto scaleY = [height, designSize](int value) { return value * height / designSize; };
+        const int contentX = scaleX(SPLASH_SHADOW_MARGIN);
+        const int contentY = scaleY(SPLASH_SHADOW_MARGIN);
 
         // Logo icon: 140x140, centered horizontally, y=80
         BitmapCache bmpCache;
         int logoSize = scaleX(140);
-        int logoX    = scaleX(170);
-        int logoY    = scaleY(80);
+        int logoX    = contentX + scaleX(170);
+        int logoY    = contentY + scaleY(80);
         wxBitmap* logoBmp = bmpCache.load_svg("splash_app_icon", logoSize, logoSize);
         if (logoBmp != nullptr)
             memDc.DrawBitmap(*logoBmp, logoX, logoY, true);
@@ -481,8 +505,8 @@ public:
         int gap    = scaleX(10);
         int totalW = brandExt.GetWidth() + gap + versionExt.GetWidth();
         int startX = (width - totalW) / 2;
-        int brandY = scaleY(241);
-        int tagY   = scaleY(251);
+        int brandY = contentY + scaleY(241);
+        int tagY   = contentY + scaleY(251);
 
         memDc.SetFont(m_constant_text.titleFont);
         memDc.SetTextForeground(wxColour(23, 23, 23));
@@ -495,7 +519,7 @@ public:
                        tagY);
 
         // Beta text below brand, centered
-        int betaY = scaleY(279);
+        int betaY = contentY + scaleY(279);
         memDc.SetFont(m_constant_text.versionFont);
         memDc.SetTextForeground(wxColour(143, 143, 143));
         wxSize betaExt = memDc.GetTextExtent(m_constant_text.betaText);
@@ -504,31 +528,208 @@ public:
         memDc.DrawLabel(m_constant_text.betaText, betaRect, wxALIGN_CENTER);
 
         // Dynamic text y position (for SetText)
-        m_action_line_y_position = scaleY(384);
+        m_action_line_y_position = contentY + scaleY(384);
     }
 
     static wxBitmap MakeBitmap()
     {
-        int width = FromDIP(480, nullptr);
-        int height = FromDIP(480, nullptr);
+        const int contentSize = FromDIP(SPLASH_CONTENT_SIZE, nullptr);
+        const int shadowMargin = FromDIP(SPLASH_SHADOW_MARGIN, nullptr);
+        const int shadowOffsetY = FromDIP(SPLASH_SHADOW_OFFSET_Y, nullptr);
+        const int width = contentSize + shadowMargin * 2;
+        const int height = contentSize + shadowMargin * 2;
 
         wxImage image(width, height);
-        wxBitmap new_bmp(image);
+        if (!image.IsOk())
+        {
+            return wxNullBitmap;
+        }
 
-        wxMemoryDC memDC;
-        memDC.SelectObject(new_bmp);
-        memDC.SetBrush(wxColour(255, 255, 255));
-        memDC.DrawRectangle(-1, -1, width + 2, height + 2);
-        memDC.DrawBitmap(new_bmp, 0, 0, true);
-        return new_bmp;
+        image.InitAlpha();
+        unsigned char* imageData = image.GetData();
+        unsigned char* alphaData = image.GetAlpha();
+        if (imageData == nullptr || alphaData == nullptr)
+        {
+            return wxNullBitmap;
+        }
+
+        const int cardLeft = shadowMargin;
+        const int cardTop = shadowMargin;
+        const int cardRight = cardLeft + contentSize - 1;
+        const int cardBottom = cardTop + contentSize - 1;
+        const int shadowTop = cardTop + shadowOffsetY;
+        const int shadowBottom = cardBottom + shadowOffsetY;
+        const double shadowSigma = shadowMargin > 0 ? static_cast<double>(shadowMargin) / 2.8 : 1.0;
+        const double shadowDenominator = 2.0 * shadowSigma * shadowSigma;
+
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                const int pixelIndex = y * width + x;
+                const int colourIndex = pixelIndex * 3;
+                const bool isCardPixel = x >= cardLeft && x <= cardRight && y >= cardTop && y <= cardBottom;
+
+                if (isCardPixel)
+                {
+                    imageData[colourIndex] = 255;
+                    imageData[colourIndex + 1] = 255;
+                    imageData[colourIndex + 2] = 255;
+                    alphaData[pixelIndex] = 255;
+                    continue;
+                }
+
+                int distanceX = 0;
+                if (x < cardLeft)
+                {
+                    distanceX = cardLeft - x;
+                }
+                else if (x > cardRight)
+                {
+                    distanceX = x - cardRight;
+                }
+
+                int distanceY = 0;
+                if (y < shadowTop)
+                {
+                    distanceY = shadowTop - y;
+                }
+                else if (y > shadowBottom)
+                {
+                    distanceY = y - shadowBottom;
+                }
+
+                const double distanceSquared = static_cast<double>(distanceX * distanceX + distanceY * distanceY);
+                const double shadowOpacity = std::exp(-distanceSquared / shadowDenominator);
+                alphaData[pixelIndex] = static_cast<unsigned char>(SPLASH_SHADOW_MAX_ALPHA * shadowOpacity + 0.5);
+                imageData[colourIndex] = 0;
+                imageData[colourIndex + 1] = 0;
+                imageData[colourIndex + 2] = 0;
+            }
+        }
+
+        return wxBitmap(image);
+    }
+
+    /**
+     * @brief Restores full opacity for the white content card after GDI drawing.
+     * @param bmp Splash bitmap whose shadow alpha must remain unchanged.
+     */
+    void RestoreContentAlpha(wxBitmap& bmp)
+    {
+        if (!bmp.IsOk())
+        {
+            return;
+        }
+
+        wxImage image = bmp.ConvertToImage();
+        if (!image.IsOk())
+        {
+            return;
+        }
+
+        if (!image.HasAlpha())
+        {
+            image.InitAlpha();
+        }
+
+        unsigned char* alphaData = image.GetAlpha();
+        if (alphaData == nullptr)
+        {
+            return;
+        }
+
+        const int width = image.GetWidth();
+        const int height = image.GetHeight();
+        const int designSize = SPLASH_CONTENT_SIZE + SPLASH_SHADOW_MARGIN * 2;
+        const int contentLeft = SPLASH_SHADOW_MARGIN * width / designSize;
+        const int contentTop = SPLASH_SHADOW_MARGIN * height / designSize;
+        const int contentRight = width - contentLeft;
+        const int contentBottom = height - contentTop;
+
+        for (int y = contentTop; y < contentBottom; ++y)
+        {
+            unsigned char* rowBegin = alphaData + y * width + contentLeft;
+            unsigned char* rowEnd = alphaData + y * width + contentRight;
+            std::fill(rowBegin, rowEnd, static_cast<unsigned char>(255));
+        }
+
+        bmp = wxBitmap(std::move(image));
     }
 
     void set_bitmap(wxBitmap& bmp)
     {
         m_window->SetBitmap(bmp);
+#ifdef __WXMSW__
+        if (SetLayeredBitmap(bmp))
+            return;
+#endif
         m_window->Refresh();
         m_window->Update();
     }
+
+#ifdef __WXMSW__
+    /**
+     * @brief Updates the native splash window using per-pixel alpha blending.
+     * @param bmp Bitmap containing the splash card and its translucent shadow.
+     * @return true when the layered window was updated successfully.
+     */
+    bool SetLayeredBitmap(const wxBitmap& bmp)
+    {
+        if (!bmp.IsOk())
+        {
+            return false;
+        }
+
+        HWND windowHandle = static_cast<HWND>(GetHandle());
+        if (windowHandle == nullptr)
+        {
+            return false;
+        }
+
+        const wxSize bitmapSize(bmp.GetWidth(), bmp.GetHeight());
+        if (GetClientSize() != bitmapSize)
+        {
+            SetClientSize(bitmapSize);
+            m_window->SetSize(0, 0, bitmapSize.GetWidth(), bitmapSize.GetHeight());
+        }
+
+        LONG_PTR extendedStyle = ::GetWindowLongPtr(windowHandle, GWL_EXSTYLE);
+        if ((extendedStyle & WS_EX_LAYERED) == 0)
+        {
+            ::SetWindowLongPtr(windowHandle, GWL_EXSTYLE, extendedStyle | WS_EX_LAYERED);
+        }
+
+        wxScreenDC screenDc;
+        wxMemoryDC bitmapDc;
+        bitmapDc.SelectObjectAsSource(bmp);
+
+        HDC screenHandle = static_cast<HDC>(screenDc.GetHDC());
+        HDC bitmapHandle = static_cast<HDC>(bitmapDc.GetHDC());
+        if (screenHandle == nullptr || bitmapHandle == nullptr)
+        {
+            ::SetWindowLongPtr(windowHandle, GWL_EXSTYLE, extendedStyle & ~WS_EX_LAYERED);
+            m_window->Show();
+            return false;
+        }
+
+        POINT sourcePoint = {0, 0};
+        SIZE windowSize = {bitmapSize.GetWidth(), bitmapSize.GetHeight()};
+        BLENDFUNCTION blendFunction = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        const BOOL updateSucceeded = ::UpdateLayeredWindow(windowHandle, screenHandle, nullptr, &windowSize,
+                                                          bitmapHandle, &sourcePoint, 0, &blendFunction, ULW_ALPHA);
+
+        if (updateSucceeded == FALSE)
+        {
+            ::SetWindowLongPtr(windowHandle, GWL_EXSTYLE, extendedStyle & ~WS_EX_LAYERED);
+            m_window->Show();
+            return false;
+        }
+
+        m_window->Hide();
+        return true;
+    }
+#endif
 
     void scale_bitmap(wxBitmap& bmp, float scale)
     {

@@ -62,6 +62,24 @@ void set_miniaturizable(void * window)
     }
 }
 
+void SetWindowShadow(void* window, bool enabled)
+{
+    if (window == nullptr)
+    {
+        return;
+    }
+
+    NSView* nativeView = static_cast<NSView*>(window);
+    NSWindow* nativeWindow = [nativeView window];
+    if (nativeWindow == nil)
+    {
+        return;
+    }
+
+    [nativeWindow setHasShadow:enabled ? YES : NO];
+    [nativeWindow invalidateShadow];
+}
+
 void set_tag_when_enter_full_screen(bool isfullscreen)
 {
   is_in_full_screen_mode = isfullscreen;

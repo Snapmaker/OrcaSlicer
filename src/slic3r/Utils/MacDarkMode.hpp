@@ -10,6 +10,12 @@ namespace GUI {
 extern bool mac_dark_mode();
 extern double mac_max_scaling_factor();
 extern void set_miniaturizable(void * window);
+/**
+ * @brief Enables or disables the native Cocoa shadow for a wxWidgets window.
+ * @param window Native NSView handle owned by the wxWidgets window.
+ * @param enabled Whether the native window shadow should be enabled.
+ */
+void SetWindowShadow(void* window, bool enabled);
 void WKWebView_evaluateJavaScript(void * web, wxString const & script, void (*callback)(wxString const &));
 void WKWebView_setTransparentBackground(void * web);
 void set_tag_when_enter_full_screen(bool isfullscreen);

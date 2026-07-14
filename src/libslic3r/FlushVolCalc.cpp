@@ -40,21 +40,25 @@ static SpecialColorType classify_color(unsigned char r, unsigned char g, unsigne
     float S_pct = s * 100.f;
     float V_pct = v * 100.f;
 
-    // Priority: achromatic first (S <= 8), then chromatic
+    // Black: extremely dark, regardless of saturation (V < 15)
+    if (V_pct < 15.f)
+        return SpecialColorType::Black;
+
+    // Achromatic path (S <= 8)
     if (S_pct <= 8.f) {
         if (V_pct >= 85.f) {
-            // High brightness, low saturation — could be pearl white, cold white, or plain white
             int dRG = std::abs((int)r - (int)g);
             int dGB = std::abs((int)g - (int)b);
-            int dBR = (int)b - (int)r; // B minus R for cold-white detection
+            int dBR = (int)b - (int)r;
 
-            if (dRG <= 8 && dGB <= 8)
-                return SpecialColorType::PearlWhite;
-
+            // Cold white first — blue shift is more specific
             if (dBR >= 12 && (int)b - (int)g >= 10)
                 return SpecialColorType::ColdWhite;
 
-            // plain white — treat as Normal (no special correction)
+            // Pearl white — balanced channels
+            if (dRG <= 8 && dGB <= 8)
+                return SpecialColorType::PearlWhite;
+
             return SpecialColorType::Normal;
         }
 
@@ -72,26 +76,23 @@ static SpecialColorType classify_color(unsigned char r, unsigned char g, unsigne
                 return SpecialColorType::MidGray;
         }
 
-        if (V_pct >= 20.f && V_pct <= 44.f) {
+        if (V_pct >= 15.f && V_pct <= 44.f) {
             int dRG = std::abs((int)r - (int)g);
             int dGB = std::abs((int)g - (int)b);
             if (dRG <= 10 && dGB <= 10)
                 return SpecialColorType::DarkGray;
         }
 
-        if (V_pct < 20.f)
-            return SpecialColorType::Black;
-
-        // low-S but V in [88,90] gap — treat as Normal
         return SpecialColorType::Normal;
     }
 
-    // Chromatic (S > 8): check red first
-    if (V_pct >= 20.f && S_pct >= 30.f) {
-        bool hue_in_red = (h >= 0.f && h <= 30.f) || (h >= 330.f && h <= 360.f);
+    // Chromatic path (S > 8):
+    // Red — tightened hue range to exclude orange/pink/magenta
+    if (V_pct >= 20.f && S_pct >= 40.f) {
+        bool hue_in_red = (h >= 0.f && h <= 15.f) || (h >= 345.f && h <= 360.f);
         int r_minus_g = (int)r - (int)g;
         int r_minus_b = (int)r - (int)b;
-        if (hue_in_red && r_minus_g >= 80 && r_minus_b >= 80)
+        if (hue_in_red && r_minus_g >= 100 && r_minus_b >= 100)
             return SpecialColorType::Red;
     }
 
@@ -113,13 +114,13 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
     SpecialColorType src_type = classify_color(src_r, src_g, src_b);
     SpecialColorType dst_type = classify_color(dst_r, dst_g, dst_b);
 
-    // Boundary: same special type => minimal flush (section 6, 边界兜底逻辑)
+    // Boundary: same special type => minimal flush
     if (src_type == dst_type && src_type != SpecialColorType::Normal && src_type != SpecialColorType::DarkColor)
         return 0.4f;
 
     float k = 1.0f;
 
-    // ---- Red correction (section 5.1) ----
+    // ---- Red correction ----
     if (src_type == SpecialColorType::Red) {
         if (dst_type == SpecialColorType::PearlWhite ||
             dst_type == SpecialColorType::ColdWhite ||
@@ -129,14 +130,14 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
                    dst_type == SpecialColorType::DarkColor) {
             k *= 1.15f;
         } else {
-            k *= 0.75f;
+            k *= 1.05f;
         }
     }
     if (dst_type == SpecialColorType::Red) {
         k *= 0.75f;
     }
 
-    // ---- Pearl white correction (section 5.2) ----
+    // ---- Pearl white correction ----
     if (dst_type == SpecialColorType::PearlWhite) {
         if (src_type == SpecialColorType::Red ||
             src_type == SpecialColorType::DarkGray ||
@@ -151,7 +152,7 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
         k *= 0.85f;
     }
 
-    // ---- Cold white correction (section 5.3) ----
+    // ---- Cold white correction ----
     if (dst_type == SpecialColorType::ColdWhite) {
         if (src_type == SpecialColorType::Red ||
             src_type == SpecialColorType::DarkGray ||
@@ -163,7 +164,7 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
         k *= 0.9f;
     }
 
-    // ---- Gray tiered correction (section 5.4) ----
+    // ---- Gray tiered correction ----
     if (dst_type == SpecialColorType::LightGray) {
         if (src_type == SpecialColorType::Red ||
             src_type == SpecialColorType::DarkGray ||
@@ -224,7 +225,7 @@ static float DeltaHS_BBS(float h1, float s1, float v1, float h2, float s2, float
     float dx = std::cos(h1_rad) * s1 * v1 - cos(h2_rad) * s2 * v2;
     float dy = std::sin(h1_rad) * s1 * v1 - sin(h2_rad) * s2 * v2;
     float dxy = std::sqrt(dx * dx + dy * dy);
-    return std::min(0.941650f, dxy);
+    return std::min(0.30f, dxy);
 }
 
 FlushVolCalculator::FlushVolCalculator(int min, int max, float multiplier, int flush_dataset)
@@ -268,17 +269,17 @@ int FlushVolCalculator::calc_flush_vol_rgb(unsigned char src_r, unsigned char sr
     float to_lumi = get_luminance(dst_r_f, dst_g_f, dst_b_f);
     float lumi_flush = 0.f;
     if (to_lumi >= from_lumi) {
-        lumi_flush = std::pow(to_lumi - from_lumi, 0.553946f) * 122.799732f;
+        lumi_flush = std::pow(to_lumi - from_lumi, 0.80f) * 120.f;
     }
     else {
-        lumi_flush = (from_lumi - to_lumi) * 3.743419f;
+        lumi_flush = (from_lumi - to_lumi) * 30.f;
 
-        float inter_hsv_v = 0.528182f * to_hsv_v + 0.471818f * from_hsv_v;
+        float inter_hsv_v = 0.20f * to_hsv_v + 0.80f * from_hsv_v;
         hs_dist = std::min(inter_hsv_v, hs_dist);
     }
-    float hs_flush = 55.589048f * hs_dist;
+    float hs_flush = 220.f * hs_dist;
 
-    float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 74.828899f);
+    float flush_volume = calc_triangle_3rd_edge(hs_flush, lumi_flush, 125.f);
 
     return std::min((int)flush_volume, m_max_flush_vol);
 }
@@ -296,9 +297,9 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
 
     // Path A: always try lookup table first — lookup data is pre-calibrated, no extra correction
     float lookup_volume;
-    if (get_flush_vol_from_data(src_r, src_g, src_b, dst_r, dst_g, dst_b, lookup_volume)) {
-        return std::min((int)lookup_volume, m_max_flush_vol);
-    }
+    //if (get_flush_vol_from_data(src_r, src_g, src_b, dst_r, dst_g, dst_b, lookup_volume)) {
+    //    return std::min((int)lookup_volume, m_max_flush_vol);
+    //}
 
     // Lookup miss — fall through to Path B (HSV formula with stain-risk compensation)
     float flush_volume = (float)calc_flush_vol_rgb(src_r, src_g, src_b, dst_r, dst_g, dst_b);
@@ -308,7 +309,7 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     int   final_volume = (int) ((float) flush_volume * k);
 
    //flush_volume += (float) m_min_flush_vol;
-    return std::min((int) flush_volume, m_max_flush_vol);
+    return std::min((int) final_volume, m_max_flush_vol);
 
     /*return std::clamp(final_volume, m_min_flush_vol, m_max_flush_vol);*/
 }

@@ -29,7 +29,7 @@
 @REM    gitlab_build_win.bat debuginfo    -- RelWithDebInfo build
 @REM
 @REM  Environment variables (optional):
-@REM    GITLAB_BASE_URL  -- GitLab host (default: gitlab.lan.snapmaker.com)
+@REM    GITLAB_BASE_URL  -- GitLab host (default: gitlab.s.com)
 @REM    GITLAB_GROUP     -- GitLab group (default: snapmaker_orca)
 @REM ============================================================
 @echo off
@@ -41,7 +41,7 @@ if exist "C:\Strawberry\perl\bin\perl.exe" set "PATH=C:\Strawberry\perl\bin;%PAT
 REM ============================================================
 REM  1. Configure GitLab repository URLs
 REM ============================================================
-if not defined GITLAB_BASE_URL  set "GITLAB_BASE_URL=gitlab.lan.snapmaker.com"
+if not defined GITLAB_BASE_URL  set "GITLAB_BASE_URL=gitlab.s.com"
 if not defined GITLAB_GROUP     set "GITLAB_GROUP=snapmaker_orca"
 
 set "GITLAB_VENDOR=http://%GITLAB_BASE_URL%/%GITLAB_GROUP%/snapmaker_orca_vendor.git"

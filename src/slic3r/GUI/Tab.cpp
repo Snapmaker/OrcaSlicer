@@ -2722,10 +2722,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("tree_support_adaptive_layer_height", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_auto_brim", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_brim_width", "support_settings_tree");
-        // Snapmaker: hide transition parameters from users; keep engine defaults (2 layers / perimeter on / 100% flow)
-        //optgroup->append_single_option_line("tree_support_transition_layers", "support_settings_tree#transition-layers");
-        //optgroup->append_single_option_line("support_transition_perimeter", "support_settings_tree#transition-perimeter");
-        //optgroup->append_single_option_line("support_transition_flow_ratio", "support_settings_tree#transition-flow-ratio");
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");

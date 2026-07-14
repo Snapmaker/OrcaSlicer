@@ -12952,7 +12952,7 @@ msgstr "Dit is de dichtheid van de eerste raft- of support laag."
 msgid "Initial layer expansion"
 msgstr "Vergroten van de eerste laag"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Dit zet de eerste raft- of steun (support) laag uit om de hechting van het "
 "bed te verbeteren."

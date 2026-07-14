@@ -12483,7 +12483,7 @@ msgstr "ラフト或はサポートの1層目の密度です。"
 msgid "Initial layer expansion"
 msgstr "1層目拡張"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "この設定により、ラフト或はサポートの1層目を拡大します。ベッドとの接着性が良く"
 "なります。"

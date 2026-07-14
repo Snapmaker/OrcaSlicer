@@ -13761,7 +13761,7 @@ msgstr "Pirmojo platformos arba atraminio sluoksnio tankis"
 msgid "Initial layer expansion"
 msgstr "Pradinio sluoksnio išplėtimas"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Kad pagerėtų sukibimas su pagrindu, išplečiamas pirmasis platformos arba "
 "atraminis sluoksnis"

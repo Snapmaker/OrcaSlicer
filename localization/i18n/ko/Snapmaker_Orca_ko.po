@@ -13324,7 +13324,7 @@ msgstr "첫 번째 라프트 또는 서포트의 밀도"
 msgid "Initial layer expansion"
 msgstr "초기 레이어 확장"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr "베드 플레이트 안착을 향상시키기 위해 첫 번째 라프트 또는 서포트 확장"
 
 msgid "Raft layers"

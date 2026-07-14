@@ -14016,7 +14016,7 @@ msgstr "Densità del primo strato della zattera o del supporto."
 msgid "Initial layer expansion"
 msgstr "Espansione primo strato"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Espande il primo strato della zattera o del supporto per migliorare "
 "l'adesione al piatto."

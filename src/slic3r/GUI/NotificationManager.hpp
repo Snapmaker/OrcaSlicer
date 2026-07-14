@@ -235,6 +235,7 @@ public:
 	// in Preview mode without blocking slicing.
 	void push_pla_petg_mix_warning(const std::string& text);
 	void close_pla_petg_mix_warning(const std::string& text);
+	void reset_pla_petg_mix_warning();
 	// Object warning with ObjectID, closes when object is deleted. ID used is of object not print like in slicing warning.
 	void push_simplify_suggestion_notification(const std::string& text, ObjectID object_id, const std::string& hypertext = "",
 		std::function<bool(wxEvtHandler*)> callback = std::function<bool(wxEvtHandler*)>());
@@ -598,6 +599,20 @@ private:
 		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
 		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
 		void         show()            { m_state = EState::Unknown; }
+	};
+
+	// Snapmaker: PLA/PETG mutual-support mix warning.
+	// Mirrors PlaterWarningNotification's Hidden semantics: closing with X hides it (remembered)
+	// instead of erasing it, so the per-frame detection can no longer immediately recreate it.
+	// It is truly removed (real_close) only when the underlying data changes (PLA/PETG combo
+	// removed), so the warning re-appears only on a real data change. Uses SlicingWarning type
+	// (not PlaterWarning) so it is unaffected by set_in_preview() tab switching.
+	class PlaPetgMixNotification : public PopNotification
+	{
+	public:
+		PlaPetgMixNotification(const NotificationData& n, NotificationIDProvider& id_provider, wxEvtHandler* evt_handler) : PopNotification(n, id_provider, evt_handler) {}
+		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
+		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
 	};
 
 

@@ -14014,7 +14014,7 @@ msgstr "Densidade da primeira camada da jangada ou do suporte."
 msgid "Initial layer expansion"
 msgstr "Expansão da primeira camada"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Expanda a primeira camada da jangada ou do suporte para melhorar a adesão à "
 "placa da mesa de impressão."

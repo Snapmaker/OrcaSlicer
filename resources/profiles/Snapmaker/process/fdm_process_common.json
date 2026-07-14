@@ -136,7 +136,7 @@
   "raft_contact_distance": "0.1",
   "raft_expansion": "1.5",
   "raft_first_layer_density": "90%",
-  "raft_first_layer_expansion": "2",
+  "raft_first_layer_expansion": "-1",
   "support_filament": "0",
   "support_interface_filament": "0",
   "tree_support_branch_distance": "5",

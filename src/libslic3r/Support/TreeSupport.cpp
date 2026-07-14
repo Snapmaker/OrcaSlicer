@@ -1359,12 +1359,22 @@ void TreeSupport::generate_toolpaths()
             raft_areas.push_back(expoly);
     }
 
-    raft_areas = std::move(offset_ex(raft_areas, scale_(object_config.raft_first_layer_expansion)));
+    // Base raft grip: fixed 3.0mm margin (matches Bambu golden), applied to ALL raft
+    // layers. The user parameter must NOT drive the base expansion, otherwise it is
+    // double-applied on layer 0 (base offset + layer0 offset below). Keep the base a
+    // constant so raft_first_layer_expansion is added exactly once, on layer 0 only.
+    // Pass raft_first_layer_expansion through raw (matching Bambu): -1 = auto, which
+    // is a ~1mm inset on layer 0 so the first raft layer stays tucked inside the base
+    // (no protruding expansion ring); 0 = flush with the base; >=1 = explicit mm.
+    // (No -1 -> 2.0 resolution: that was only needed while the base offset used the
+    // parameter and a raw -1 would erode the raft; the fixed 3.0 base removed that.)
+    float raft_1st_layer_expansion = object_config.raft_first_layer_expansion.value;
+    raft_areas = std::move(offset_ex(raft_areas, scale_(3.)));
 
     size_t layer_nr = 0;
     for (; layer_nr < m_slicing_params.base_raft_layers; layer_nr++) {
         SupportLayer *ts_layer = m_object->get_support_layer(layer_nr);
-        coordf_t expand_offset = (layer_nr == 0 ? m_object_config->raft_first_layer_expansion.value : 0.);
+        coordf_t expand_offset = (layer_nr == 0 ? raft_1st_layer_expansion : 0.);
         auto raft_areas1 = offset_ex(raft_areas, scale_(expand_offset));
 
         Flow support_flow = Flow(support_extrusion_width, ts_layer->height, nozzle_diameter);
@@ -1960,7 +1970,11 @@ void TreeSupport::draw_circles()
     const coordf_t line_width_scaled           = scale_(line_width);
     const bool with_lightning_infill = m_support_params.base_fill_pattern == ipLightning;
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
-    const float tree_brim_width = config.tree_support_brim_width.value;
+    // Align with BambuStudio: no-raft tree first-layer expansion is driven by
+    // raft_first_layer_expansion (the same key as the raft path), so first-layer
+    // expansion works independently of whether a raft is generated.
+    // -1 = auto, 0 = none, >=1 = explicit width in mm.
+    const float tree_brim_width = config.raft_first_layer_expansion.value;
 
     if (m_object->support_layer_count() <= m_raft_layers)
         return;
@@ -2071,7 +2085,10 @@ void TreeSupport::draw_circles()
                             }
                         }
                         if (obj_layer_nr == 0 && m_raft_layers == 0) {
-                            double brim_width = !config.tree_support_auto_brim ? tree_brim_width : std::max(MIN_BRANCH_RADIUS_FIRST_LAYER, std::min(node.radius + node.dist_mm_to_top / (scale * branch_radius) * 0.5, MAX_BRANCH_RADIUS_FIRST_LAYER) - node.radius);
+                            // -1 (auto) -> Orca branch-radius heuristic (Bambu's
+                            // map_moment_to_expansion is not available in Orca);
+                            // 0 -> no brim; >=1 -> explicit width in mm.
+                            double brim_width = tree_brim_width >= 0.f ? tree_brim_width : std::max(MIN_BRANCH_RADIUS_FIRST_LAYER, std::min(node.radius + node.dist_mm_to_top / (scale * branch_radius) * 0.5, MAX_BRANCH_RADIUS_FIRST_LAYER) - node.radius);
                             auto tmp=offset(circle, scale_(brim_width));
                             if(!tmp.empty())
                                 circle = tmp[0];

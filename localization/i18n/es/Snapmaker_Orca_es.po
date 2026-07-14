@@ -13793,7 +13793,7 @@ msgstr "Densidad de la balsa (base de impresión) o capa de soporte"
 msgid "Initial layer expansion"
 msgstr "Expansión de la primera capa"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
 msgstr ""
 "Expandir la primera capa de la base de impresión o de soportes para mejorar "
 "la adherencia con la superficie de impresión"

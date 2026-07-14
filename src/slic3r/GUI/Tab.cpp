@@ -1495,7 +1495,7 @@ wxString build_support_recommendation_message(
                     _L("  \342\200\242 Top Z distance: %.2f \342\206\222 0 mm\n"),
                     current_config.opt_float("support_top_z_distance"));
             else if (key == "support_base_pattern")
-                msg_text += _L("  \342\200\242 Base pattern \342\206\222 Rectilinear\n");
+                msg_text += _L("  \342\200\242 Base pattern \342\206\222 Default\n");
             else if (key == "support_interface_top_layers")
                 msg_text += wxString::Format(
                     _L("  \342\200\242 Top interface layers: %d \342\206\222 3\n"),
@@ -1844,7 +1844,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 new ConfigOptionFloat(0));
             recommended_conf.set_key_value("support_base_pattern",
                 new ConfigOptionEnum<SupportMaterialPattern>(
-                    smpRectilinear));
+                    smpDefault));
             recommended_conf.set_key_value("support_interface_top_layers",
                 new ConfigOptionInt(3));
             recommended_conf.set_key_value("support_interface_pattern",
@@ -2722,9 +2722,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("tree_support_adaptive_layer_height", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_auto_brim", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_brim_width", "support_settings_tree");
-        optgroup->append_single_option_line("tree_support_transition_layers", "support_settings_tree#transition-layers");
-        optgroup->append_single_option_line("support_transition_perimeter", "support_settings_tree#transition-perimeter");
-        optgroup->append_single_option_line("support_transition_flow_ratio", "support_settings_tree#transition-flow-ratio");
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");

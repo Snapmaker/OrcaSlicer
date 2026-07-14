@@ -5282,8 +5282,7 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 			}
 		}
 
-		//can not find, create a new one
-		// Create a new one using an unused print index.
+		//can not find, create a new one using an unused print index.
 		while (m_print_list.count(m_print_index) > 0 || m_gcode_result_list.count(m_print_index) > 0)
 		{
 			++m_print_index;
@@ -5295,21 +5294,11 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 		GCodeResult* gcode = new GCodeResult();
 
 		auto print_result = m_print_list.emplace(new_print_index, print);
-
 		auto gcode_result = m_gcode_result_list.emplace(new_print_index, gcode);
 
 		if (!print_result.second || !gcode_result.second)
 		{
-			BOOST_LOG_TRIVIAL(error)
-				<< "[ORCA-347] failed to create Print mapping"
-				<< ", plate_index=" << i
-				<< ", print_index=" << new_print_index
-				<< ", print_inserted="
-				<< (print_result.second ? 1 : 0)
-				<< ", gcode_inserted="
-				<< (gcode_result.second ? 1 : 0)
-				<< ", new_print="
-				<< static_cast<const void*>(print);
+			BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to insert Print/GCodeResult, index=" << new_print_index;
 
 			if (print_result.second)
 				m_print_list.erase(print_result.first);
@@ -5318,9 +5307,12 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 				m_gcode_result_list.erase(gcode_result.first);
 
 			delete print;
+			print = nullptr;
 			delete gcode;
+			gcode = nullptr;
 
-			return -1;
+			ret = -1;
+			continue;
 		}
 
 		m_plate_list[i]->set_print(print, gcode, new_print_index);

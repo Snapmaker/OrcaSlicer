@@ -9766,7 +9766,9 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         q->Bind(EVT_GLVIEWTOOLBAR_PREVIEW, [q](SimpleEvent&) {
             if (q->is_view3D_shown()) {
                 PartPlate* curr = q->get_partplate_list().get_curr_plate();
-                if (curr && !curr->can_slice()) {
+                if (curr && (!curr->can_slice() ||
+                    q->is_plate_blocked_by_filament_temp_mixing(q->get_partplate_list().get_curr_plate_index()))) {
+                    q->sync_filament_temp_mixing_notification();
                     q->select_view_3D("Preview", true);
                     return;
                 }
@@ -20943,13 +20945,14 @@ bool Plater::sync_filament_temp_mixing_notification()
     switch (mixing_state)
     {
     case FilamentTempMixingState::Compatible:
-        curr_plate->update_filament_temp_blocked(false);
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
+        // Filament temp mixing is compatible — only clear our own notification,
+        // do NOT touch m_apply_invalid. Bed type mismatch or other validation
+        // errors must not be cleared by the filament temp mixing system.
         slicing_allowed = true;
         break;
     case FilamentTempMixingState::AllowedWarning:
-        curr_plate->update_filament_temp_blocked(false);
         get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
         get_notification_manager()->push_notification(
             NotificationType::ValidateWarning,
@@ -20961,9 +20964,11 @@ bool Plater::sync_filament_temp_mixing_notification()
         StringObjectException err;
         err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
         err.string = filament_temp_mixing_error_text();
-        curr_plate->update_filament_temp_blocked(true);
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
         get_notification_manager()->push_validate_error_notification(err);
+        // Blocking is enforced through get_enable_slice_status() / find_next_sliceable_plate_for_slice_all()
+        // which independently check is_plate_blocked_by_filament_temp_mixing().
+        // Do NOT set m_apply_invalid — that flag belongs to the background validation system.
         slicing_allowed = false;
         break;
     }

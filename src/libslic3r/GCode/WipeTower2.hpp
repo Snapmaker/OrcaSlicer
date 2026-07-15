@@ -178,6 +178,9 @@ public:
         float               retract_length;
         float               retract_speed;
         float               flat_iron_area;
+        float filament_tower_interface_pre_extrusion_dist = 0.f;
+        float filament_tower_interface_pre_extrusion_length = 0.f;
+        int filament_tower_interface_print_temp = -1;
         int category = 0;
         float prime_volume = 0.f;
         float wipe_dist = 0.f;
@@ -215,6 +218,8 @@ public:
     };
 
     void set_filament_categories(const std::vector<int>& filament_categories) { m_filament_categories = filament_categories; }
+
+    void set_shared_print_bed(const Polygons& bed) { m_shared_print_bed = bed; }
 private:
     std::vector<std::vector<BlockDepthInfo>> m_all_layers_depth;
     std::vector<WipeTowerBlock> m_wipe_tower_blocks;
@@ -222,18 +227,21 @@ private:
     WipeTowerBlock* m_cur_block{ nullptr };
     std::vector<int> m_filament_categories; // 粘接性类别
     bool m_tower_framework = false; // 内支撑肋
+    bool m_enable_tower_interface_features = false;
     size_t m_cur_layer_id;
     bool m_use_rib_wall;
     Vec2f m_rib_offset;
     int m_wall_filament;
     WipeTower::NozzleChangeResult m_nozzle_change_result;
+    Polygons m_shared_print_bed;
+    float m_contact_speed = 20 * 60.f;
 
     WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create);
     void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);
     int get_filament_category(int filament_id);
     void reset_block_status();
     void calc_block_infill_gap();
-    float get_block_gap_width(int tool);
+    float get_block_gap_width(int tool, bool is_ramming);
     void generate_wipe_tower_blocks(bool add_solid_flag);
     void update_all_layer_depth(float wipe_tower_depth);
     WipeTower::box_coordinates align_perimeter(const WipeTower::box_coordinates& perimeter_box);
@@ -462,6 +470,7 @@ private:
                                       const std::vector<Vec2f>&         skip_points);
 
     void get_all_wall_skip_points();
+    void get_wall_skip_points(const WipeTowerInfo& layer, int layer_id);
     // Retrieve pre-computed gap points for a specific layer. Returns empty if layer_id out of bounds.
     std::vector<Vec2f> get_wall_skip_points(size_t layer_id);
     // Predict nozzle X after toolchange_Unload ramming, matching its xl/xr and do_ramming logic.

@@ -2568,6 +2568,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("wipe_tower_fillet_wall", "multimaterial_settings_prime_tower#fillet-wall");
         optgroup->append_single_option_line("wipe_tower_no_sparse_layers", "multimaterial_settings_prime_tower#no-sparse-layers");
         optgroup->append_single_option_line("wipe_tower_wall_gap", "multimaterial_settings_prime_tower#wall-gap");
+        optgroup->append_single_option_line("enable_tower_interface_features", "multimaterial_settings_prime_tower");
         optgroup->append_single_option_line("single_extruder_multi_material_priming", "multimaterial_settings_prime_tower");
 
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
@@ -3699,6 +3700,9 @@ void TabFilament::build()
         optgroup->append_single_option_line("temperature_vitrification");
         // filament_is_high_temperature is controlled by preset data, not user-facing
         optgroup->append_single_option_line("idle_temperature");
+        optgroup->append_single_option_line("filament_tower_interface_pre_extrusion_dist");
+        optgroup->append_single_option_line("filament_tower_interface_pre_extrusion_length");
+        optgroup->append_single_option_line("filament_tower_interface_print_temp");
         optgroup->append_single_option_line("filament_tower_ironing_area");
         optgroup->append_single_option_line("filament_adhesiveness_category");
         optgroup->append_single_option_line("filament_prime_volume");
@@ -4052,6 +4056,11 @@ void TabFilament::toggle_options()
             std::string printer_model = printer_model_opt->value;
             is_snapmaker_u1 = is_snapmaker_u1 || (boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1"));
         }
+        for (auto el : { "filament_tower_interface_pre_extrusion_dist", "filament_tower_interface_pre_extrusion_length",
+            "filament_tower_interface_print_temp" }) {
+            toggle_line(el, is_snapmaker_u1);
+        }
+
         if (Line* hot_plate_line = get_line("hot_plate_temp_initial_layer")) {
             hot_plate_line->label = is_snapmaker_u1
                 ? _L("Smooth PEI Plate")

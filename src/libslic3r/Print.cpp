@@ -676,6 +676,15 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         } else if (steps_ignore.find(opt_key) != steps_ignore.end()) {
             // These steps have no influence on the G-code whatsoever. Just ignore them.
         } else if (
+               opt_key == "filament_volume_type"
+            || opt_key == "filament_flow_support"
+            || opt_key == "process_flow_support"
+            || opt_key == "printer_flow_support") {
+            // Snapmaker: switching a filament's flow variant changes the values read out of
+            // flow-variant arrays without the arrays themselves
+            // changing, so everything has to be recalculated. Do NOT move these keys into steps_gcode.
+            invalidated |= this->invalidate_all_steps();
+        } else if (
                opt_key == "skirt_type"
             || opt_key == "skirt_loops"
             || opt_key == "skirt_speed"

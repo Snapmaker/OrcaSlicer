@@ -7130,6 +7130,47 @@ void PrintConfigDef::init_sla_params()
     def->set_default_value(new ConfigOptionEnum<SLAMaterialSpeed>(slamsFast));
 }
 
+// Snapmaker: flow-variant support -----------------------------------------------------------------
+size_t flow_variant_index(const std::vector<std::string> &flow_support, const std::string &mode)
+{
+    if (mode.empty())
+        return 0;
+
+    auto it = std::find(flow_support.begin(), flow_support.end(), mode);
+    return it == flow_support.end() ? 0 : size_t(it - flow_support.begin());
+}
+
+const char* flow_support_key(ConfigFlowDomain domain)
+{
+    switch (domain) {
+    case ConfigFlowDomain::Filament:
+        return "filament_flow_support";
+    case ConfigFlowDomain::Process:
+        return "process_flow_support";
+    default:
+        return "printer_flow_support";
+    }
+}
+
+size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
+{
+    const ConfigOption *modes_opt = config.option("filament_volume_type");
+    if (modes_opt == nullptr || modes_opt->type() != coStrings)
+        return 0;
+
+    const auto &modes = static_cast<const ConfigOptionStrings*>(modes_opt)->values;
+    if (modes.empty())
+        return 0;
+
+    const std::string &mode = filament_id < modes.size() ? modes[filament_id] : modes.front();
+
+    const ConfigOption *support_opt = config.option(flow_support_key(domain));
+    if (support_opt == nullptr || support_opt->type() != coStrings)
+        return 0;
+
+    return flow_variant_index(static_cast<const ConfigOptionStrings*>(support_opt)->values, mode);
+}
+
 void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &value)
 {
     //BBS: handle legacy options

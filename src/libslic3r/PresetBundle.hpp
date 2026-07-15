@@ -135,6 +135,9 @@ public:
     //BBS: check whether this is the only edited filament
     bool is_the_only_edited_filament(unsigned int filament_index);
 
+    std::vector<std::string> get_filament_volume_types() const;
+    void                     set_filament_volume_types(const std::vector<std::string> &types);
+
     // Orca: update selected filament and print
     void           update_selections(AppConfig &config);
     void set_calibrate_printer(std::string name);

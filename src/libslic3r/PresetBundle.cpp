@@ -191,6 +191,8 @@ static std::vector<std::string> s_project_options {
     "wipe_tower_y",
     "wipe_tower_rotation_angle",
     "curr_bed_type",
+    // Snapmaker: flow variants
+    "filament_volume_type",
     "flush_multiplier",
     // Mixed filament / local-Z settings
     "mixed_filament_gradient_mode",
@@ -2172,6 +2174,19 @@ void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> ne
     }
     update_multi_material_filament_presets(size_t(-1), size_t(old_filament_count));
 }
+
+std::vector<std::string> PresetBundle::get_filament_volume_types() const
+{
+    const auto *types = this->project_config.option<ConfigOptionStrings>("filament_volume_type");
+    return types != nullptr ? types->values : std::vector<std::string>{ FLOW_MODE_STANDARD };
+}
+
+void PresetBundle::set_filament_volume_types(const std::vector<std::string> &types)
+{
+    auto *opt = this->project_config.option<ConfigOptionStrings>("filament_volume_type", true);
+    opt->values = types.empty() ? std::vector<std::string>{ FLOW_MODE_STANDARD } : types;
+}
+
 void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
 {
     int old_filament_count = this->filament_presets.size();
@@ -2474,6 +2489,16 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
 
     // BBS
     size_t  num_filaments = this->filament_presets.size();
+
+    const ConfigOptionStrings* filament_volume_types = this->project_config.option<ConfigOptionStrings>("filament_volume_type");
+    auto filament_flow_mode = [filament_volume_types](size_t filament_idx) -> const std::string& {
+        static const std::string standard_mode(FLOW_MODE_STANDARD);
+        if (filament_volume_types == nullptr || filament_volume_types->values.empty())
+            return standard_mode;
+
+        return filament_volume_types->get_at(filament_idx);
+    };
+
     auto* extruder_diameter = dynamic_cast<const ConfigOptionFloats*>(out.option("nozzle_diameter"));
     // Collect the "compatible_printers_condition" and "inherits" values over all presets (print, filaments, printers) into a single vector.
     std::vector<std::string> compatible_printers_condition;
@@ -2503,6 +2528,36 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
 
     if (num_filaments <= 1) {
         out.apply(this->filaments.get_edited_preset().config);
+
+        // Snapmaker: collapse the flow-variant dimension of filament vector options to the variant
+        // selected by its filament_volume_type entry. Values are ordered by the preset's filament_flow_support
+        // declaration; get_at() falls back to the first (standard) value for shorter arrays.
+        {
+            const DynamicPrintConfig &filament_cfg = this->filaments.get_edited_preset().config;
+            size_t filament_variant_idx = 0;
+            if (const auto *flow_support = filament_cfg.option<ConfigOptionStrings>("filament_flow_support"))
+                filament_variant_idx = flow_variant_index(flow_support->values, filament_flow_mode(0));
+
+            for (const t_config_option_key &key : this->filaments.default_preset().config.keys()) {
+                if (key == "compatible_prints" || key == "compatible_printers")
+                    continue;
+
+                ConfigOption *opt_dst = out.option(key, false);
+                if (opt_dst == nullptr || opt_dst->is_scalar())
+                    continue;
+
+                auto *opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
+                if (opt_vec_dst->size() <= 1 && filament_variant_idx == 0)
+                    continue;
+
+                const ConfigOption *opt_src = filament_cfg.option(key);
+                if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0)
+                    opt_vec_dst->set_at(opt_src, 0, filament_variant_idx);
+
+                opt_vec_dst->resize(1);
+            }
+        }
+
         compatible_printers_condition.emplace_back(this->filaments.get_edited_preset().compatible_printers_condition());
         compatible_prints_condition  .emplace_back(this->filaments.get_edited_preset().compatible_prints_condition());
         //BBS: add logic for settings check between different system presets
@@ -2586,6 +2641,12 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
             different_settings.emplace_back(different_filament_settings);
         }
 
+        // Snapmaker: per-filament index into flow-variant arrays, resolved from each filament's own flow type.
+        std::vector<size_t> filament_variant_idxs(num_filaments, 0);
+        for (size_t i = 0; i < num_filaments; ++i)
+            if (const auto *flow_support = filament_configs[i]->option<ConfigOptionStrings>("filament_flow_support"))
+                filament_variant_idxs[i] = flow_variant_index(flow_support->values, filament_flow_mode(i));
+
         // loop through options and apply them to the resulting config.
         for (const t_config_option_key &key : this->filaments.default_preset().config.keys()) {
 			if (key == "compatible_prints" || key == "compatible_printers")
@@ -2606,6 +2667,11 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                     for (size_t i = 0; i < filament_opts.size(); ++i)
                         filament_opts[i] = filament_configs[i]->option(key);
                     opt_vec_dst->set(filament_opts);
+                    // Snapmaker: set() stored each preset's first (standard) value; for filaments
+                    // running a non-standard flow variant re-pick the value of that variant.
+                    for (size_t i = 0; i < filament_opts.size(); ++i)
+                        if (filament_variant_idxs[i] > 0 && filament_opts[i] != nullptr && !filament_opts[i]->is_scalar())
+                            opt_vec_dst->set_at(filament_opts[i], i, filament_variant_idxs[i]);
                 }
             }
         }

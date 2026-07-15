@@ -358,6 +358,24 @@ enum RetractLiftEnforceType {
     rletTopAndBottom
 };
 
+// Snapmaker: flow-variant (standard / high flow) presets ------------------------------------------
+enum class ConfigFlowDomain {
+    Filament,   // *_flow_support key: filament_flow_support
+    Process,    // *_flow_support key: process_flow_support
+    Printer     // *_flow_support key: printer_flow_support
+};
+
+constexpr const char* FLOW_MODE_STANDARD  = "standard";
+constexpr const char* FLOW_MODE_HIGH_FLOW = "high_flow";
+
+size_t flow_variant_index(const std::vector<std::string> &flow_support, const std::string &mode);
+
+const char* flow_support_key(ConfigFlowDomain domain);
+
+size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id = 0);
+
+// end Snapmaker: flow variant------------------------------------------------------------------------
+
 enum class GCodeThumbnailsFormat {
     PNG, JPG, QOI, BTT_TFT, ColPic
 };
@@ -1284,6 +1302,12 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionStrings,              small_area_infill_flow_compensation_model))
 
     ((ConfigOptionBool,                has_scarf_joint_seam))
+
+    // Snapmaker: flow-variant
+    ((ConfigOptionStrings,             filament_volume_type))
+    ((ConfigOptionStrings,             filament_flow_support))
+    ((ConfigOptionStrings,             process_flow_support))
+    ((ConfigOptionStrings,             printer_flow_support))
 )
 
 // This object is mapped to Perl as Slic3r::Config::Print.

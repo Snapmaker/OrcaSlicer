@@ -345,7 +345,7 @@ void MqttClient::connection_lost(const std::string& cause)
     connected_.store(false, std::memory_order_release);
         
     if (!ever_connected_.load(std::memory_order_acquire)) {
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] do not auto connect because no connect success any time";
+        BOOST_LOG_TRIVIAL(error) << "The first connection failed. Since no successful connection has been made before, automatic reconnection remains disabled";
         if (connection_failure_callback_) {
             connection_failure_callback_();
         }
@@ -425,7 +425,7 @@ void MqttClient::on_failure(const mqtt::token& tok)
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Reason code: " << tok.get_reason_code();
         }
  
-        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] firstly connect fail,and no connect successfully then disable auto connect";
+        BOOST_LOG_TRIVIAL(error) << "The first connection failed. Since no successful connection has been made before, automatic reconnection remains disabled";
         
         connected_.store(false, std::memory_order_release);
                 

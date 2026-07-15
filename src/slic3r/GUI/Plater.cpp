@@ -8251,9 +8251,6 @@ void Sidebar::show_sync_filament_dialog()
             }
         }
 
-        const size_t num_filaments = effective_size;
-        wxGetApp().plater()->on_filaments_change(num_filaments);
-
         if (dlg.shouldDeleteMixedFilaments()) {
             auto& mixedList = preset_bundle->mixed_filaments.mixed_filaments();
             for (auto& mf : mixedList) {
@@ -8262,7 +8259,12 @@ void Sidebar::show_sync_filament_dialog()
                     mf.enabled = false;
                 }
             }
+            if (auto* opt = preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+                opt->value = preset_bundle->mixed_filaments.serialize_custom_entries();
         }
+
+        const size_t num_filaments = effective_size;
+        wxGetApp().plater()->on_filaments_change(num_filaments);
 
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         preset_bundle->export_selections(*wxGetApp().app_config);

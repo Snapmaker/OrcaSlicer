@@ -888,6 +888,7 @@ void SyncFilamentColorDialog::setMixedFilamentInfos(
     const std::vector<MixedFilamentPreviewInfo>& infos)
 {
     m_mixedFilamentInfos = infos;
+    loadCoverPreview();
 }
 
 bool SyncFilamentColorDialog::shouldDeleteMixedFilaments() const

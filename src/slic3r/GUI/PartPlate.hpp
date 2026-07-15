@@ -104,6 +104,7 @@ private:
     bool m_ready_for_slice;
     bool m_slice_result_valid;
     bool m_apply_invalid {false};
+    bool m_filament_temp_blocked {false};
     float m_slice_percent;
 
     Print *m_print; //Print reference, not own it, no need to serialize
@@ -402,7 +403,7 @@ public:
     //can be sliced or not
     bool can_slice() const
     {
-        return m_ready_for_slice && !m_apply_invalid;
+        return m_ready_for_slice && !m_apply_invalid && !m_filament_temp_blocked;
     }
     void update_slice_ready_status(bool ready_slice)
     {
@@ -417,6 +418,10 @@ public:
     void update_apply_result_invalid(bool invalid)
     {
         m_apply_invalid = invalid;
+    }
+    void update_filament_temp_blocked(bool blocked)
+    {
+        m_filament_temp_blocked = blocked;
     }
 
     //is slice result valid or not

@@ -2,52 +2,15 @@
 
 #include <numeric>
 #include "MixedColorMatchHelpers.hpp"
-#include "libslic3r/prusa_fdm_mixer_wrap.hpp"
 
 namespace Slic3r { namespace GUI {
 
-#if ENABLE_PRUSA_FDM_MIXER_DEMO
-static std::string prusa_hex_from_wxcolour(const wxColour &c)
-{
-    static const char *hex_digits = "0123456789abcdef";
-    auto to_hex = [](unsigned char v) -> std::string {
-        std::string s;
-        s += hex_digits[(v >> 4) & 0x0F];
-        s += hex_digits[v & 0x0F];
-        return s;
-    };
-    return "#" + to_hex(static_cast<unsigned char>(c.Red())) +
-                 to_hex(static_cast<unsigned char>(c.Green())) +
-                 to_hex(static_cast<unsigned char>(c.Blue()));
-}
-#endif
 
 wxColour blend_multi_filament_mixer(const std::vector<wxColour>& colors, const std::vector<double>& weights)
 {
     if (colors.empty() || weights.empty())
         return wxColour("#26A69A");
 
-#if ENABLE_PRUSA_FDM_MIXER_DEMO
-    {
-        double total = 0.0;
-        for (size_t i = 0; i < colors.size() && i < weights.size(); ++i)
-            total += std::max(0.0, weights[i]);
-        if (total <= 0.0)
-            return wxColour("#26A69A");
-        std::vector<std::pair<std::string, double>> parts;
-        parts.reserve(colors.size());
-        for (size_t i = 0; i < colors.size() && i < weights.size(); ++i) {
-            const double w = std::max(0.0, weights[i]);
-            if (w <= 0.0) continue;
-            const wxColour safe = colors[i].IsOk() ? colors[i] : wxColour("#26A69A");
-            parts.push_back({ prusa_hex_from_wxcolour(safe), w / total });
-        }
-        unsigned char r = 0, g = 0, b = 0;
-        if (Slic3r::prusa_mix_rgb(parts, r, g, b))
-            return wxColour(r, g, b);
-        return wxColour("#26A69A");
-    }
-#else
     unsigned char out_r              = 0;
     unsigned char out_g              = 0;
     unsigned char out_b              = 0;
@@ -85,7 +48,6 @@ wxColour blend_multi_filament_mixer(const std::vector<wxColour>& colors, const s
         return wxColour("#26A69A");
 
     return wxColour(out_r, out_g, out_b);
-#endif
 }
 
 // --- MixedFilamentColorMapPanel ---

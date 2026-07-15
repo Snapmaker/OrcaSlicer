@@ -4,9 +4,8 @@
 // Golden baseline for the legacy Justin-Hayes polynomial mixer backend
 // (Slic3r::filament_mixer_lerp -> filament_mixer::lerp in filament_mixer_model.h).
 //
-// Purpose: pin the CURRENT backend output so that the prusa-fdm-mixer demo
-// (gated by ENABLE_PRUSA_FDM_MIXER_DEMO, which only re-routes the GUI match
-// path) or any refactor of filament_mixer* is immediately visible if it
+// Purpose: pin the CURRENT legacy filament_mixer backend output.
+// Any refactor of filament_mixer* is immediately visible if it
 // changes legacy behaviour. Integer-exact assertions (no hex-case ambiguity).
 
 TEST_CASE("filament_mixer_lerp documented example", "[mixed_filament][golden]")

@@ -1,38 +1,13 @@
 #include "MixedGradientSelector.hpp"
-#include "libslic3r/prusa_fdm_mixer_wrap.hpp"
 
 namespace Slic3r { namespace GUI {
 
-#if ENABLE_PRUSA_FDM_MIXER_DEMO
-static std::string prusa_hex_from_wxcolour(const wxColour &c)
-{
-    static const char *hex_digits = "0123456789abcdef";
-    auto to_hex = [](unsigned char v) -> std::string {
-        std::string s;
-        s += hex_digits[(v >> 4) & 0x0F];
-        s += hex_digits[v & 0x0F];
-        return s;
-    };
-    return "#" + to_hex(static_cast<unsigned char>(c.Red())) +
-                 to_hex(static_cast<unsigned char>(c.Green())) +
-                 to_hex(static_cast<unsigned char>(c.Blue()));
-}
-#endif
 
 wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, float t)
 {
     const wxColour safe_left  = left.IsOk()  ? left  : wxColour("#26A69A");
     const wxColour safe_right = right.IsOk() ? right : wxColour("#26A69A");
 
-#if ENABLE_PRUSA_FDM_MIXER_DEMO
-    {
-        const double tc = static_cast<double>(std::clamp(t, 0.0f, 1.0f));
-        unsigned char r = 0, g = 0, b = 0;
-        Slic3r::prusa_mix_rgb({ {prusa_hex_from_wxcolour(safe_left), 1.0 - tc},
-                                {prusa_hex_from_wxcolour(safe_right), tc} }, r, g, b);
-        return wxColour(r, g, b);
-    }
-#else
     unsigned char out_r = static_cast<unsigned char>(safe_left.Red());
     unsigned char out_g = static_cast<unsigned char>(safe_left.Green());
     unsigned char out_b = static_cast<unsigned char>(safe_left.Blue());
@@ -46,7 +21,6 @@ wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, 
         std::clamp(t, 0.f, 1.f),
         &out_r, &out_g, &out_b);
     return wxColour(out_r, out_g, out_b);
-#endif
 }
 
 wxRect MixedGradientSelector::gradient_rect() const

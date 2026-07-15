@@ -8,6 +8,7 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -1195,8 +1196,11 @@ TEST_CASE("SER-REGRESS-01: manual_pattern preserved through serialize-load cycle
         }
     }
     REQUIRE(custom_entry != nullptr);
-    custom_entry->manual_pattern = MixedFilamentManager::normalize_manual_pattern("1266666");
-    REQUIRE(custom_entry->manual_pattern == "1266666");
+    // Pattern must stay in range for physical_count=4: tokens '1'/'2' are
+    // symbolic (component_a/b), '3'/'4' are literal physical ids.  Out-of-range
+    // ids are intentionally rejected by load_custom_entries.
+    custom_entry->manual_pattern = MixedFilamentManager::normalize_manual_pattern("123434");
+    REQUIRE(custom_entry->manual_pattern == "123434");
 
     const std::string serialized = mgr.serialize_custom_entries();
 
@@ -1207,7 +1211,7 @@ TEST_CASE("SER-REGRESS-01: manual_pattern preserved through serialize-load cycle
     bool found = false;
     for (const auto &mf : loaded.mixed_filaments()) {
         if (mf.custom && mf.component_a == 1 && mf.component_b == 2) {
-            CHECK(mf.manual_pattern == "1266666");
+            CHECK(mf.manual_pattern == "123434");
             found = true;
         }
     }
@@ -1986,6 +1990,44 @@ TEST_CASE("RES-REGRESS-01: resolve handles deleted mixed filament", "[MixedFilam
     // The surviving mixed entries still resolve correctly (virt_4 -> index 0, virt_5 -> index 1)
     CHECK(mgr.mixed_index_from_filament_id(virt_4, num_physical) >= 0);
     CHECK(mgr.mixed_index_from_filament_id(virt_5, num_physical) >= 0);
+}
+
+TEST_CASE("resolve: deleted middle mixed's virtual id re-aliases to a survivor (R3 root)", "[MixedFilament][Resolve]")
+{
+    // R3 root mechanism at the resolve layer. cleanup_unused_filaments_after_batch_match
+    // marks redundant mixed rows `deleted` WITHOUT remapping model painting. Because
+    // virtual IDs re-enumerate over *enabled* rows, the deleted row's former virtual ID
+    // is silently taken by the next survivor, so painting still holding that ID resolves
+    // to the WRONG mixed filament (a different valid color — not a crash, not a
+    // filament-1 fallback). The fix belongs in the GUI cleanup (repoint painting off
+    // redundant rows before/while marking them deleted); this test only characterizes
+    // why that matters.
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
+    MixedFilamentManager mgr;
+    mgr.auto_generate(colors);
+    const size_t num_physical = 3;
+    REQUIRE(mgr.mixed_filaments().size() == 3); // (1,2)=v4, (1,3)=v5, (2,3)=v6
+
+    auto &rows = mgr.mixed_filaments();
+    int idx_13 = -1, idx_23 = -1;
+    for (int i = 0; i < int(rows.size()); ++i) {
+        if (rows[size_t(i)].component_a == 1 && rows[size_t(i)].component_b == 3) idx_13 = i;
+        if (rows[size_t(i)].component_a == 2 && rows[size_t(i)].component_b == 3) idx_23 = i;
+    }
+    REQUIRE(idx_13 >= 0);
+    REQUIRE(idx_23 >= 0);
+
+    // Simulate cleanup marking the middle (1,3) row deleted.
+    rows[size_t(idx_13)].deleted = true;
+    rows[size_t(idx_13)].enabled = false;
+    CHECK(mgr.total_filaments(num_physical) == 5); // 3 physical + 2 enabled mixed
+
+    // virt_5 — the deleted (1,3) row's former id — now maps to the surviving (2,3)
+    // row (it shifted up into the freed enabled slot), not to -1 and not to (1,3).
+    // Painting holding virt_5 would silently resolve to (2,3): the R3 hazard.
+    const int mapped = mgr.mixed_index_from_filament_id(5u, num_physical);
+    REQUIRE(mapped >= 0);
+    CHECK(mapped == idx_23);
 }
 
 TEST_CASE("RES-REGRESS-02: resolve with gradient multi-color after component removal", "[MixedFilament][Resolve]")
@@ -2913,4 +2955,856 @@ TEST_CASE("Local Z infill subdivision defaults inactive when Subdivide Mix Layer
     full_config.apply(bundle.project_config);
     REQUIRE(full_config.has("dithering_local_z_infill"));
     CHECK_FALSE(full_config.opt_bool("dithering_local_z_infill"));
+}
+
+// --------------------------------------------------------------------------
+// compute_redundant_filaments
+// --------------------------------------------------------------------------
+
+namespace {
+
+/// Build a MixedFilamentManager seeded with `n` physical colours and an
+/// optional list of custom mixed rows.  Returns the manager so callers can
+/// inspect its mixed_filaments() vector.
+static MixedFilamentManager build_manager(size_t n,
+                                          const std::vector<MixedFilament> &extra_rows = {})
+{
+    std::vector<std::string> colours(n, "#FF0000");
+    for (size_t i = 1; i < n; ++i)
+        colours[i] = "#0000FF"; // placeholder
+    // Disable auto-generate so m_mixed stays exactly what we build.
+    MixedAutoGenerateGuard guard(false);
+    MixedFilamentManager    mgr;
+    // The constructor doesn't need colours; add_custom adds mixed rows.
+    // We don't need add_batch — just push rows directly via the mutable accessor.
+    for (const MixedFilament &row : extra_rows) {
+        MixedFilament mf = row;
+        mf.enabled       = true;
+        mf.deleted       = false;
+        mf.custom        = true;
+        mf.origin_auto   = false;
+        // stable_id is left 0: these tests never serialize (load_custom_entries
+        // is what assigns/validates it), and compute_redundant_filaments ignores
+        // it.  Tests that need stable_id (e.g. the differential oracle) set it
+        // explicitly after building.
+        mgr.mixed_filaments().push_back(std::move(mf));
+    }
+    return mgr;
+}
+
+/// Helper to build a minimal enabled mixed row for cascade tests.
+static MixedFilament make_row(unsigned int a, unsigned int b,
+                              const std::string &gradient_ids = {},
+                              const std::string &manual_pattern_str = {})
+{
+    MixedFilament mf;
+    mf.component_a            = a;
+    mf.component_b            = b;
+    mf.enabled                = true;
+    mf.deleted                = false;
+    mf.gradient_component_ids = gradient_ids;
+    mf.manual_pattern         = manual_pattern_str;
+    mf.stable_id              = 0;
+    mf.custom                 = true;
+    return mf;
+}
+
+} // namespace
+
+TEST_CASE("compute_redundant_filaments physical-only", "[MixedFilament][redundant_set]")
+{
+    // 4 physicals, keep {1,3} → redundant {4,2}
+    auto mgr = build_manager(4);
+    auto red = compute_redundant_filaments(4, {1, 3}, {}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_mixed.empty());
+    REQUIRE(red.redundant_physical.size() == 2);
+    CHECK(red.redundant_physical[0] == 4); // descending
+    CHECK(red.redundant_physical[1] == 2);
+    CHECK(red.new_num_physical == 2);
+}
+
+TEST_CASE("compute_redundant_filaments mixed-only", "[MixedFilament][redundant_set]")
+{
+    // 4 physicals, 1 mixed row (v5), keep all physicals but not the mixed
+    auto mgr = build_manager(4, {make_row(1, 2)});
+    auto red = compute_redundant_filaments(4, {1,2,3,4}, {}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.empty());
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.redundant_mixed[0] == 5); // virtual id = 4+1
+    CHECK(red.cascade_mixed_count == 0);
+}
+
+TEST_CASE("remove_physical_filament preserves stable_id on survivors", "[MixedFilament][redundant_set]")
+{
+    // Regression guard for batch-match cleanup (C1 fix): cleanup marks
+    // redundant mixed rows by stable_id AFTER physical deletion rebuilds
+    // m_mixed, so it relies on remove_physical_filament keeping each
+    // survivor's stable_id unchanged (it edits components/pattern only).
+    //   row A (1,2) stable_id=100 — references physical 2 -> DROPPED
+    //   row B (1,3) stable_id=200 — survives; component 3 > 2 -> renumbered to 2
+    auto mgr = build_manager(4, {make_row(1, 2), make_row(1, 3)});
+    auto &rows = mgr.mixed_filaments();
+    REQUIRE(rows.size() == 2);
+    rows[0].stable_id = 100;
+    rows[1].stable_id = 200;
+
+    mgr.remove_physical_filament(2); // delete physical 2 (1-based)
+
+    REQUIRE(rows.size() == 1);           // A dropped; B survives the rebuild
+    CHECK(rows[0].stable_id == 200);     // identity preserved through rebuild
+    CHECK(rows[0].component_a == 1);
+    CHECK(rows[0].component_b == 2);     // 3 > deleted 2 -> decremented to 2
+}
+
+TEST_CASE("compute_redundant_filaments cascade component-a", "[MixedFilament][redundant_set]")
+{
+    // 4 physical, keep {1,2,3} (drop 4). Mixed row component_a=4 → cascade
+    auto mgr = build_manager(4, {make_row(4, 1)});
+    auto red = compute_redundant_filaments(4, {1,2,3}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_physical[0] == 4);
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.redundant_mixed[0] == 5);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments cascade component-b", "[MixedFilament][redundant_set]")
+{
+    // 4 physical, keep {1,2,3}. Mixed row component_b=4 → cascade
+    auto mgr = build_manager(4, {make_row(1, 4)});
+    auto red = compute_redundant_filaments(4, {1,2,3}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.redundant_mixed[0] == 5);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments cascade gradient-ids", "[MixedFilament][redundant_set]")
+{
+    // 4 physical, keep {1,2,3}. Mixed row gradient_component_ids="14" → cascade
+    auto mgr = build_manager(4, {make_row(1, 2, "14")});
+    auto red = compute_redundant_filaments(4, {1,2,3}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.redundant_mixed[0] == 5);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments survivor-floor", "[MixedFilament][redundant_set]")
+{
+    // Empty kept set → survivor floor keeps only filament 1
+    auto mgr = build_manager(4);
+    auto red = compute_redundant_filaments(4, {}, {}, mgr.mixed_filaments());
+    CHECK(red.new_num_physical == 1);
+    REQUIRE(red.redundant_physical.size() == 3);
+    CHECK(red.redundant_physical[0] == 4); // descending
+    CHECK(red.redundant_physical[1] == 3);
+    CHECK(red.redundant_physical[2] == 2);
+}
+
+TEST_CASE("compute_redundant_filaments keep-all", "[MixedFilament][redundant_set]")
+{
+    // 3 physical + 1 mixed, all kept
+    auto mgr = build_manager(3, {make_row(1, 2)});
+    auto red = compute_redundant_filaments(3, {1,2,3}, {4}, mgr.mixed_filaments());
+    CHECK(red.redundant_physical.empty());
+    CHECK(red.redundant_mixed.empty());
+}
+
+TEST_CASE("compute_redundant_filaments empty-mixed", "[MixedFilament][redundant_set]")
+{
+    // No mixed rows → no crash
+    auto mgr = build_manager(2);
+    auto red = compute_redundant_filaments(2, {1}, {}, mgr.mixed_filaments());
+    CHECK(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_mixed.empty());
+}
+
+TEST_CASE("compute_redundant_filaments out-of-range ids", "[MixedFilament][redundant_set]")
+{
+    // kept_physical_ids={99} → filtered to empty → floor → filament 1 only
+    auto mgr = build_manager(4);
+    auto red = compute_redundant_filaments(4, {99}, {999}, mgr.mixed_filaments());
+    CHECK(red.new_num_physical == 1);
+    REQUIRE(red.redundant_physical.size() == 3);
+    CHECK(red.redundant_physical[0] == 4); // descending
+    CHECK(red.redundant_physical[1] == 3);
+    CHECK(red.redundant_physical[2] == 2);
+    CHECK(red.redundant_mixed.empty());
+}
+
+TEST_CASE("compute_redundant_filaments modern gradient-id format", "[MixedFilament][redundant_set]")
+{
+    // "/" separated multi-digit IDs
+    auto mgr = build_manager(12, {make_row(1, 2, "1/12/3")});
+    auto red = compute_redundant_filaments(12, {1,2,3,4,5,6,7,8,9,10,11}, {13}, mgr.mixed_filaments());
+    // Physical 12 is not kept → gradient contains 12 → cascade
+    REQUIRE(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_physical[0] == 12);
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("add_batch assigned_ids matches virtual-id enumeration", "[MixedFilament][batch_match]")
+{
+    // 4 physicals, no pre-existing mixed rows.
+    std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    MixedAutoGenerateGuard    guard(false);
+    MixedFilamentManager      mgr;
+
+    std::vector<MixedFilamentBatchEntry> entries(2);
+    entries[0].component_a   = 1;
+    entries[0].component_b   = 2;
+    entries[0].mix_b_percent = 50;
+    entries[1].component_a   = 3;
+    entries[1].component_b   = 4;
+    entries[1].mix_b_percent = 30;
+
+    std::vector<unsigned int> assigned_ids;
+    mgr.add_batch_custom_filaments(entries, colors, &assigned_ids);
+
+    REQUIRE(assigned_ids.size() == 2);
+    CHECK(assigned_ids[0] == 5);
+    CHECK(assigned_ids[1] == 6);
+
+    // kept_mixed = assigned_ids → both rows kept
+    auto red = compute_redundant_filaments(4, {1,2,3,4}, assigned_ids, mgr.mixed_filaments());
+    CHECK(red.redundant_physical.empty());
+    CHECK(red.redundant_mixed.empty());
+
+    // With only one in kept_mixed, the other is redundant
+    auto red2 = compute_redundant_filaments(4, {1,2,3,4}, {assigned_ids[0]}, mgr.mixed_filaments());
+    CHECK(red2.redundant_mixed.size() == 1);
+    CHECK(red2.redundant_mixed[0] == assigned_ids[1]);
+}
+
+TEST_CASE("auto_generate shifts virtual ids before add_batch", "[MixedFilament][batch_match]")
+{
+    // Reproduces the second-match paint-loss bug:
+    //   T0: dialog computes target_filament_id assuming 4 phys + 0 mixed → v5.
+    //   T1: set_num_filaments → auto_generate inserts C(4,2)=6 auto rows at v5-v10.
+    //   T2: add_batch_custom_filaments assigns actual ids starting from v11.
+    //   kept_mixed uses the stale dialog target (v5) → batch row (v11) becomes
+    //   redundant → deleted → painting lost.
+    std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+
+    // T0: dialog-time state
+    size_t num_phys_dialog    = 4;
+    size_t existing_mixed_cnt = 0;
+    unsigned int dialog_target = unsigned(num_phys_dialog + existing_mixed_cnt + 1);
+    CHECK(dialog_target == 5);
+
+    // T1: auto_generate
+    MixedAutoGenerateGuard guard(true);
+    MixedFilamentManager   mgr;
+    mgr.auto_generate(colors);
+    CHECK(mgr.enabled_count() == 6);
+
+    // T2: add_batch
+    std::vector<MixedFilamentBatchEntry> entries(1);
+    entries[0].component_a   = 1;
+    entries[0].component_b   = 2;
+    entries[0].mix_b_percent = 50;
+
+    std::vector<unsigned int> assigned_ids;
+    mgr.add_batch_custom_filaments(entries, colors, &assigned_ids);
+
+    REQUIRE(assigned_ids.size() == 1);
+    unsigned int actual_assigned = assigned_ids[0];
+    CHECK(actual_assigned == 11);
+
+    // Dialog target ≠ actual assigned
+    CHECK(dialog_target != actual_assigned);
+
+    // BUG: kept_mixed with stale dialog_target ({5}) marks the actual batch row
+    // (v11) as redundant, along with the other 5 auto rows not in the kept set.
+    auto red = compute_redundant_filaments(4, {1,2,3,4}, {dialog_target}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_mixed.size() == 6);                // v6-v11 all redundant
+    CHECK(red.redundant_mixed[5] == actual_assigned);        // last one = the batch row
+
+    // Fix: kept_mixed with assigned_ids ({11}) keeps the batch row.
+    // The 6 auto rows (v5-v10) not in kept_mixed remain redundant.
+    auto red_ok = compute_redundant_filaments(4, {1,2,3,4}, assigned_ids, mgr.mixed_filaments());
+    REQUIRE(red_ok.redundant_mixed.size() == 6);
+    // v5-v10 are auto rows, none are the batch row
+    for (unsigned int id : red_ok.redundant_mixed)
+        CHECK(id != actual_assigned);
+}
+
+TEST_CASE("compute_redundant_filaments manual-pattern cascade legacy", "[MixedFilament][redundant_set]")
+{
+    // mixed a=1,b=2, manual_pattern="13". Token '3'=literal physical 3.
+    // Keep {1,2,4}, delete 3 → manual_pattern refs deleted physical → cascade.
+    auto mgr = build_manager(4, {make_row(1, 2, {}, "13")});
+    auto red = compute_redundant_filaments(4, {1,2,4}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_physical[0] == 3);
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.redundant_mixed[0] == 5);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments manual-pattern cascade multi-digit-token", "[MixedFilament][redundant_set]")
+{
+    // Mixed row with manual_pattern containing a literal direct physical id
+    // that is NOT kept.  Same semantics as the modern "/" format but using
+    // the legacy encoding path which is what normalize_manual_pattern produces
+    // (it drops '/' characters, converting "1/11/2" → "1[11]2" style; the
+    // multi-digit normalization is covered by the existing remove_physical_filament
+    // test in the source).  Here we test: "14" pattern where token '4' is a
+    // literal physical id not in the kept set.
+    auto mgr = build_manager(4, {make_row(1, 2, {}, "14")});
+    auto red = compute_redundant_filaments(4, {1,2,3}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_physical[0] == 4);
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments manual-pattern token-1-resolves-to-component-a", "[MixedFilament][redundant_set]")
+{
+    // mixed a=3,b=4, manual_pattern="1". Token '1'→component_a(=3).
+    // Keep {1,2,3,4} (3 kept) → no cascade.
+    auto mgr = build_manager(4, {make_row(3, 4, {}, "1")});
+    auto red = compute_redundant_filaments(4, {1,2,3,4}, {5}, mgr.mixed_filaments());
+    CHECK(red.redundant_mixed.empty());
+    CHECK(red.cascade_mixed_count == 0);
+}
+
+TEST_CASE("compute_redundant_filaments manual-pattern token-2-resolves-to-component-b", "[MixedFilament][redundant_set]")
+{
+    // mixed a=1,b=4, manual_pattern="2". Token '2'→component_b(=4).
+    // Keep {1,2,3}, delete 4 → cascade via component_b, not just via pattern.
+    auto mgr = build_manager(4, {make_row(1, 4, {}, "2")});
+    auto red = compute_redundant_filaments(4, {1,2,3}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments both-components-cascade", "[MixedFilament][redundant_set]")
+{
+    // mixed a=3,b=4. Keep {1,2}, delete 3 AND 4 → both cascade.
+    auto mgr = build_manager(4, {make_row(3, 4)});
+    auto red = compute_redundant_filaments(4, {1,2}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.size() == 2);
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments all-mixed-deleted", "[MixedFilament][redundant_set]")
+{
+    // 4 phys + 2 mixed. keep_phys={1,2,3,4}, kept_mixed empty.
+    // Both mixed are explicit redundant (not in kept set).
+    auto mgr = build_manager(4, {make_row(1, 2), make_row(3, 4)});
+    auto red = compute_redundant_filaments(4, {1,2,3,4}, {}, mgr.mixed_filaments());
+    CHECK(red.redundant_physical.empty());
+    REQUIRE(red.redundant_mixed.size() == 2);
+    CHECK(red.redundant_mixed[0] == 5);
+    CHECK(red.redundant_mixed[1] == 6);
+    CHECK(red.cascade_mixed_count == 0);
+}
+
+TEST_CASE("compute_redundant_filaments num-physical-2", "[MixedFilament][redundant_set]")
+{
+    // Smallest meaningful physical count. 2 phys + 1 mixed.
+    auto mgr = build_manager(2, {make_row(1, 2)});
+    auto red = compute_redundant_filaments(2, {1}, {3}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_physical[0] == 2);
+    // mixed row component_b=2 → deleted physical → cascade (not just kept)
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.redundant_mixed[0] == 3);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+TEST_CASE("compute_redundant_filaments num-physical-0", "[MixedFilament][redundant_set]")
+{
+    // No physical filaments is a degenerate input: the survivor floor does not
+    // apply (nothing to survive) and nothing can be redundant.  Production code
+    // never reaches this state (cleanup_unused_filaments_after_batch_match
+    // guards on filament_presets.empty()), but this pure helper is exported and
+    // test-visible, so the contract must hold.  Before the early-return, the
+    // mixed-enumeration loop below would run with virtual_id = num_physical + 1
+    // = 1 and emit bogus redundant_mixed entries for any stray rows — this test
+    // pins the fixed, well-defined behaviour (empty result, no floor).
+    std::vector<MixedFilament> stray{make_row(1, 2)};
+    auto red = compute_redundant_filaments(0, {}, {}, stray);
+    REQUIRE(red.redundant_physical.empty());
+    REQUIRE(red.redundant_mixed.empty());
+    CHECK(red.cascade_mixed_count == 0);
+}
+
+TEST_CASE("compute_redundant_filaments deleted-rows-skipped", "[MixedFilament][redundant_set]")
+{
+    // 4 phys. Push a deleted mixed row — compute must skip it.
+    // NOTE: build_manager overrides enabled/deleted on extra_rows, so we push
+    // the deleted row directly into the manager's mutable list after creation.
+    MixedFilament del_row = make_row(1, 2);
+    del_row.enabled = false;
+    del_row.deleted = true;
+    auto mgr = build_manager(4, {make_row(3, 4)});   // v5 = enabled row (3,4)
+    mgr.mixed_filaments().insert(mgr.mixed_filaments().begin(), del_row); // pushed as-is at front
+    // Now: [deleted(1,2), enabled(3,4)].  virtual_id=5 for the deleted row is
+    // skipped (continue); the enabled row also gets virtual_id=5, which is in
+    // kept_mixed={5} → kept.  deleted/disabled rows do NOT consume a virtual-ID slot.
+    auto red = compute_redundant_filaments(4, {1,2,3,4}, {5}, mgr.mixed_filaments());
+    CHECK(red.redundant_mixed.empty());
+}
+
+// ===========================================================================
+// Differential oracle: compute_redundant_filaments  vs  remove_physical_filament
+// ---------------------------------------------------------------------------
+// compute_redundant_filaments is a PREDICTION of which mixed rows the batch-match
+// cleanup should drop. The cleanup then deletes physicals via delete_filament,
+// which routes through remove_physical_filament -- the AUTHORITATIVE runtime
+// cascade. If the two disagree, cleanup marks the wrong rows deleted (by
+// stable_id): a live, correctly-resolving row is killed, its virtual id is freed
+// and re-aliased to the next survivor, and painted regions silently render as a
+// different valid color (the R3 hazard). B1 is exactly such a disagreement.
+//
+// These tests encode the invariant as a machine-checked differential assertion:
+//   for every mixed row the match decided to KEEP (kept_mixed),
+//     compute flags it redundant  <=>  it does NOT survive the cascade of
+//     remove_physical_filament calls.
+// The oracle is remove_physical_filament itself -- no hand-written expected
+// values -- so the tests cannot pass-for-the-wrong-reason by mirroring the
+// author's mental model (which is how B1 slipped through: every existing
+// manual_pattern test kept component_a in the kept set, so the disagree shape
+// was never constructed, and the expected ids were written from the same flawed
+// model that produced the bug).
+// ===========================================================================
+
+namespace {
+
+// Asserts the differential invariant (see comment above) for the kept_mixed rows.
+// `rows` must be enabled & non-deleted; each is tagged with a unique 1-based
+// stable_id so survival can be tracked across remove_physical_filament's rebuild.
+void expect_kept_mixed_matches_runtime(
+    size_t                           num_physical,
+    const std::vector<unsigned int> &kept_physical,
+    const std::vector<unsigned int> &kept_mixed,
+    std::vector<MixedFilament>       rows)
+{
+    for (size_t i = 0; i < rows.size(); ++i)
+        rows[i].stable_id = static_cast<uint64_t>(i + 1);
+
+    // (1) compute's prediction.
+    auto red = compute_redundant_filaments(num_physical, kept_physical, kept_mixed, rows);
+    const std::set<unsigned int> compute_redundant(red.redundant_mixed.begin(),
+                                                    red.redundant_mixed.end());
+
+    // (2) ground truth: replay the cleanup's physical-deletion cascade.
+    //     Descending order is required -- cleanup iterates red.redundant_physical
+    //     (descending) and remove_physical_filament renumbers components > id,
+    //     so deleting in ascending order would invalidate the higher ids still
+    //     pending deletion.
+    // Iterate red.redundant_physical directly: it is the exact descending, survivor-
+    // floor-respecting set the real cleanup deletes (compute force-keeps phys 1 when
+    // nothing is kept, so phys 1 is never in redundant_physical and the cleanup never
+    // deletes it). Recomputing the delete set from kept_physical instead would delete
+    // phys 1 when the floor fires, diverging from the real cleanup and making the
+    // oracle compare compute against the wrong ground truth.
+    auto mgr = build_manager(num_physical, rows);
+    for (unsigned int pid : red.redundant_physical)
+        mgr.remove_physical_filament(pid);
+
+    std::set<uint64_t> survivor_sids;
+    for (const MixedFilament &mf : mgr.mixed_filaments())
+        if (mf.stable_id != 0)
+            survivor_sids.insert(mf.stable_id);
+
+    // (3) invariant: a KEPT row is flagged redundant by compute  <=>  it did NOT
+    //     survive the runtime cascade. Checking only kept_mixed rows is intentional:
+    //     rows outside the kept set are dropped by match policy, not by physical
+    //     dependency, so remove_physical_filament has no opinion on them.
+    for (unsigned int vid : kept_mixed) {
+        if (vid <= num_physical) continue;           // not a virtual id
+        const size_t k = vid - num_physical - 1;      // 0-based enabled-row index
+        if (k >= rows.size()) continue;
+        const uint64_t sid = rows[k].stable_id;
+        if (sid == 0) continue;
+
+        const bool compute_says_redundant = compute_redundant.count(vid) > 0;
+        const bool survived               = survivor_sids.count(sid) > 0;
+        INFO("vid=" << vid << " stable_id=" << sid
+             << " compute_redundant=" << (compute_says_redundant ? "yes" : "no")
+             << " survived=" << (survived ? "yes" : "no")
+             << " (invariant expects: redundant == !survived)");
+        CHECK(compute_says_redundant != survived);
+    }
+}
+
+} // namespace
+
+TEST_CASE("B1: kept manual_pattern row whose component_a is dropped must survive (differential)", "[MixedFilament][redundant_set][differential]")
+{
+    // THE B1 ROOT. a=3 (dropped), b=2, manual_pattern "2" -> component_b=2 (kept).
+    // The pattern does NOT reference component_a. At runtime resolve() uses the
+    // pattern, so the row works; remove_physical_filament gates component_a behind
+    // norm.empty() and PRESERVES the row. But compute checks component_a
+    // unconditionally -> cascade -> the cleanup would mark this live row deleted.
+    // RED until the component_a check is gated behind norm.empty() (aligned with
+    // remove_physical_filament), at which point it turns GREEN.
+    std::vector<MixedFilament> rows{ make_row(3, 2, {}, "2") };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 4}, {5}, rows);  // drop physical 3
+}
+
+TEST_CASE("B1 control: pattern references dropped component_b -> both drop (differential)", "[MixedFilament][redundant_set][differential]")
+{
+    // Mirror of B1 via component_b: a=1, b=4 (dropped), pattern "2" -> component_b=4.
+    // The pattern genuinely references the dropped physical, so both compute
+    // (token resolves to 4, not kept) and remove_physical (token "2"->4==deleted)
+    // drop the row. GREEN -- documents that the b-path is consistent and that the
+    // divergence is component_a only.
+    std::vector<MixedFilament> rows{ make_row(1, 4, {}, "2") };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 3}, {5}, rows);  // drop physical 4
+}
+
+TEST_CASE("B1 control: pattern '1' references dropped component_a -> both drop (differential)", "[MixedFilament][redundant_set][differential]")
+{
+    // a=3 (dropped), pattern "1" -> component_a=3 (genuinely references the dropped
+    // physical). Both compute (token resolves to 3, not kept) and remove_physical
+    // (physical_filament_from_token("1")->3==deleted) drop the row. GREEN.
+    // Distinguishes "pattern USES deleted component_a" (agree) from B1 "pattern
+    // does NOT use component_a but it is dropped" (disagree).
+    std::vector<MixedFilament> rows{ make_row(3, 2, {}, "1") };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 4}, {5}, rows);  // drop physical 3
+}
+
+TEST_CASE("B1 variant: multi-token pattern not touching component_a, a dropped (differential)", "[MixedFilament][redundant_set][differential]")
+{
+    // a=3 (dropped). pattern "2,4": token '2'->component_b=2 (kept), token '4'->literal 4 (kept).
+    // Neither token references physical 3, so remove_physical PRESERVES; compute
+    // over-cascades on component_a=3. RED (B1). Confirms B1 is not specific to a
+    // single-token pattern.
+    std::vector<MixedFilament> rows{ make_row(3, 2, {}, "2,4") };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 4}, {5}, rows);  // drop physical 3
+}
+
+TEST_CASE("B1 with two kept rows: only the over-cascaded one disagrees (differential)", "[MixedFilament][redundant_set][differential]")
+{
+    // v5: a=3 dropped, pattern "2"->b=2 kept   -> B1 over-cascade (compute drops, runtime keeps).
+    // v6: a=3 dropped, pattern "1"->a=3 dropped -> both agree (drop).
+    // The oracle flags exactly the v5 disagreement. RED (B1). Shows B1 can coexist
+    // with a correctly-cascaded sibling row.
+    std::vector<MixedFilament> rows{ make_row(3, 2, {}, "2"), make_row(3, 2, {}, "1") };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 4}, {5, 6}, rows);  // drop physical 3
+}
+
+TEST_CASE("B1 control: no pattern, component_a dropped -> both drop via norm-empty branch (differential)", "[MixedFilament][redundant_set][differential]")
+{
+    // No manual_pattern (norm empty). a=4 (dropped). Both compute (component_a check
+    // in the norm-empty branch) and remove_physical (pair check, norm empty) drop
+    // the row. GREEN -- confirms the divergence lives ONLY in the norm-non-empty
+    // branch (i.e. only when a manual_pattern is present).
+    std::vector<MixedFilament> rows{ make_row(4, 1) };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 3}, {5}, rows);  // drop physical 4
+}
+
+TEST_CASE("m1: compute uses num_physical bound, remove_physical uses kMax=64 (differential)", "[MixedFilament][redundant_set][differential][!shouldfail]")
+{
+    // KNOWN DIVERGENCE (m1) -- tagged [!shouldfail]: this test is EXPECTED to FAIL.
+    // It documents that compute_redundant_filaments bounds pattern/gradient literal
+    // tokens by `num_physical`, while remove_physical_filament bounds them by
+    // kMaxPhysicalFilaments (64) and uses an ==deleted criterion. For an
+    // out-of-range literal token they disagree:
+    //   pattern "[12]" (literal), num_physical=4, drop physical 4:
+    //     compute:         slashified -> pid 12 > num_physical 4 -> cascade.
+    //     remove_physical: physical_filament_from_token("12", mf, 64) -> 12 != 4 -> PRESERVE.
+    // UNREACHABLE in product flows: a literal token > num_physical cannot exist in
+    // the live mixed list -- references_exceed_physical rejects it at EVERY write
+    // path: load_custom_entries AND add_batch_custom_filaments (the batch-match
+    // confirm flow's own entry point) both call it, and add_custom_filament /
+    // auto_generate never set a manual_pattern/gradient at all.  The
+    // clear_custom_entries + load_custom_entries cycle inside
+    // update_multi_material_filament_presets (run on every filament-count change,
+    // incl. set_num_filaments -> to_delete=-1, which skips remove_physical_filament)
+    // re-validates with the new colour count and drops it. So this guards no
+    // user-hittable bug today; it is a regression guard for the validation perimeter
+    // (if that perimeter is ever weakened, this state becomes reachable and m1 turns
+    // into a live wrong-delete). If m1 is ever fixed (bounds unified) this test will
+    // UNEXPECTEDLY SUCCEED and the [!shouldfail] tag will flag it red -- at that point
+    // drop the tag. Do NOT relax the oracle instead.
+    std::vector<MixedFilament> rows{ make_row(1, 2, {}, "[12]") };
+    expect_kept_mixed_matches_runtime(4, {1, 2, 3}, {5}, rows);  // drop physical 4
+}
+
+
+TEST_CASE("compute_redundant_filaments gradient-and-manual-pattern-both-kept", "[MixedFilament][redundant_set]")
+{
+    // mixed with gradient="13" and manual_pattern="4". Keep {1,2,3} → delete 4.
+    // manual_pattern refs deleted id 4 → cascade, even though gradient ids are kept.
+    auto mgr = build_manager(4, {make_row(1, 2, "13", "4")});
+    // gradient "13": physicals 1 and 3 → both kept {1,3} ✓
+    // manual_pattern "4": literal physical 4 → not in {1,2,3} → cascade
+    auto red = compute_redundant_filaments(4, {1,2,3}, {5}, mgr.mixed_filaments());
+    REQUIRE(red.redundant_physical.size() == 1);
+    CHECK(red.redundant_physical[0] == 4);
+    REQUIRE(red.redundant_mixed.size() == 1);
+    CHECK(red.cascade_mixed_count == 1);
+}
+
+// ===========================================================================
+// Batch-match confirm-flow mechanism guards (RV1 / RV2 in the gap register)
+// ===========================================================================
+
+TEST_CASE("display_color follows the physical palette: color-keyed matching across a palette change misses", "[MixedFilament][batch_match]")
+{
+    // RV1 mechanism. WHY the confirm handler matches existing custom mixed rows
+    // by IDENTITY (dialog-time vid -> stable_id -> current row) instead of by
+    // display color: in recommended mode the handler rewrites filament_colour
+    // and calls set_num_filaments BEFORE the in-place block, and
+    // update_multi_material_filament_presets -> auto_generate ends in
+    // refresh_display_colors on BOTH exits (auto-generate pref on or off), so
+    // display_color is already NEW-palette based when that block runs. This
+    // test pins the underlying reason: the same recipe yields a different
+    // display_color under a different palette, so an equality lookup keyed on
+    // the dialog-time color (the rejected design) would silently never find the
+    // row. The identity lookup the code actually uses is immune to this.
+    MixedAutoGenerateGuard guard(false);
+    auto mgr = build_manager(2, {make_row(1, 2)});
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    const std::vector<std::string> palette_old = {"#FF0000", "#0000FF"}; // dialog-time
+    const std::vector<std::string> palette_new = {"#FFFF00", "#00FF00"}; // post-rewrite
+
+    mgr.refresh_display_colors(palette_old);
+    const std::string dialog_time_color = mgr.mixed_filaments()[0].display_color;
+    REQUIRE(!dialog_time_color.empty());
+
+    // Control: refresh is deterministic — same palette, same display_color.
+    mgr.refresh_display_colors(palette_old);
+    CHECK(mgr.mixed_filaments()[0].display_color == dialog_time_color);
+
+    // Palette change (what recommended mode does before the in-place block).
+    mgr.refresh_display_colors(palette_new);
+    const std::string confirm_time_color = mgr.mixed_filaments()[0].display_color;
+    REQUIRE(!confirm_time_color.empty());
+
+    // The equality key the in-place block relies on no longer holds.
+    CHECK(confirm_time_color != dialog_time_color);
+}
+
+TEST_CASE("physical growth shifts mixed virtual ids in the remap: dialog-time source ids go stale", "[MixedFilament][batch_match]")
+{
+    // RV2 mechanism. The batch dialog captures source_extruder_ids = {slot+1}
+    // at dialog-open. In recommended mode with < 4 physicals the confirm
+    // handler then grows the physical count (set_num_filaments) and Plater::
+    // on_filaments_change consumes the remap built there and applies it to
+    // painted facets BEFORE apply_batch_match_to_model runs. This test pins
+    // the shift itself: after 3 -> 4 growth the mixed row's old virtual id (4)
+    // maps to 5, so no facet carries the dialog-time id anymore and a facet
+    // remap keyed on it (apply's extruder_remap) targets what is now physical
+    // slot 4 instead of the moved mixed painting.
+    MixedAutoGenerateGuard guard(false);
+
+    PresetBundle bundle;
+    bundle.filament_presets = {"Filament 1", "Filament 2", "Filament 3"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values = {
+        "#FF0000", "#00FF00", "#0000FF"
+    };
+    bundle.update_multi_material_filament_presets();
+
+    auto &mgr = bundle.mixed_filaments;
+    const auto &colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    const uint64_t sid = mgr.mixed_filaments().back().stable_id;
+    REQUIRE(sid != 0);
+
+    // Persist the custom row the way the product does after every mixed edit —
+    // the non-deleting umfp path below reloads customs from this config string.
+    bundle.project_config.option<ConfigOptionString>("mixed_filament_definitions", true)->value =
+        mgr.serialize_custom_entries();
+
+    const unsigned int dialog_time_vid = virtual_id_for_stable_id(mgr.mixed_filaments(), 3, sid);
+    REQUIRE(dialog_time_vid == 4);
+    (void)bundle.consume_last_filament_id_remap(); // discard setup remap
+
+    // Grow 3 -> 4 exactly like the confirm handler: write the new palette
+    // first, then set_num_filaments (passes the true old count to the remap).
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values = {
+        "#00FFFF", "#FF00FF", "#FFFF00", "#00FF00"
+    };
+    bundle.set_num_filaments(4u, std::vector<std::string>{});
+
+    const unsigned int post_growth_vid = virtual_id_for_stable_id(mgr.mixed_filaments(), 4, sid);
+    REQUIRE(post_growth_vid == 5);
+
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+    REQUIRE(remap.size() > dialog_time_vid);
+    CHECK(remap[1] == 1);
+    CHECK(remap[2] == 2);
+    CHECK(remap[3] == 3);
+    CHECK(remap[dialog_time_vid] == post_growth_vid); // painted facets move 4 -> 5
+    CHECK(dialog_time_vid != post_growth_vid);        // the dialog-time key is stale
+}
+
+// ===========================================================================
+// add_batch_custom_filaments branch coverage (out_assigned_ids contract)
+// ===========================================================================
+
+TEST_CASE("add_batch at the filament cap emits per-entry zero ids instead of truncating", "[MixedFilament][batch_match]")
+{
+    // The confirm handler aligns assigned_ids to mappings by construction
+    // order, so the contract is STRICT: one id per input entry, 0 = dropped.
+    // The cap path must therefore continue (pushing 0s), never break early.
+    MixedAutoGenerateGuard guard(false);
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    MixedFilamentManager mgr;
+    // Fill to one slot below the cap: 4 physical + (kMax - 5) mixed = kMax - 1.
+    const size_t kMax = MAXIMUM_FILAMENT_NUMBER;
+    for (size_t i = 0; i < kMax - 5; ++i)
+        mgr.mixed_filaments().push_back(make_row(1, 2));
+    REQUIRE(mgr.total_filaments(4) == kMax - 1);
+
+    std::vector<MixedFilamentBatchEntry> entries(3);
+    for (auto &e : entries) {
+        e.component_a   = 1;
+        e.component_b   = 3;
+        e.mix_b_percent = 40;
+    }
+
+    std::vector<unsigned int> assigned;
+    mgr.add_batch_custom_filaments(entries, colors, &assigned);
+
+    REQUIRE(assigned.size() == 3);          // strict 1:1 with entries
+    CHECK(assigned[0] == kMax);             // last free slot
+    CHECK(assigned[1] == 0);                // dropped at cap
+    CHECK(assigned[2] == 0);                // still one zero PER entry
+    CHECK(mgr.total_filaments(4) == kMax);
+}
+
+TEST_CASE("add_batch clamps out-of-range components and falls back on a==b instead of dropping", "[MixedFilament][batch_match]")
+{
+    MixedAutoGenerateGuard guard(false);
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
+    MixedFilamentManager mgr;
+
+    std::vector<MixedFilamentBatchEntry> entries(3);
+    entries[0].component_a = 2;  entries[0].component_b = 2;  // a==b       -> b = 1
+    entries[1].component_a = 1;  entries[1].component_b = 1;  // a==b, a==1 -> b = 2
+    entries[2].component_a = 99; entries[2].component_b = 1;  // a clamped to n=3
+
+    std::vector<unsigned int> assigned;
+    mgr.add_batch_custom_filaments(entries, colors, &assigned);
+
+    REQUIRE(assigned.size() == 3);
+    CHECK(assigned[0] == 4);
+    CHECK(assigned[1] == 5);
+    CHECK(assigned[2] == 6);
+    REQUIRE(mgr.mixed_filaments().size() == 3);
+    CHECK(mgr.mixed_filaments()[0].component_a == 2);
+    CHECK(mgr.mixed_filaments()[0].component_b == 1);
+    CHECK(mgr.mixed_filaments()[1].component_a == 1);
+    CHECK(mgr.mixed_filaments()[1].component_b == 2);
+    CHECK(mgr.mixed_filaments()[2].component_a == 3);
+    CHECK(mgr.mixed_filaments()[2].component_b == 1);
+}
+
+TEST_CASE("add_batch guards: <2 colours yields all-zero ids, empty entries yield empty ids", "[MixedFilament][batch_match]")
+{
+    MixedAutoGenerateGuard guard(false);
+    MixedFilamentManager mgr;
+
+    std::vector<MixedFilamentBatchEntry> entries(2);
+    entries[0].component_a = 1; entries[0].component_b = 2;
+    entries[1].component_a = 1; entries[1].component_b = 2;
+
+    std::vector<unsigned int> assigned = {77u}; // stale content must be overwritten
+    mgr.add_batch_custom_filaments(entries, {"#FF0000"}, &assigned); // n = 1
+    REQUIRE(assigned.size() == 2);              // still 1:1 with entries
+    CHECK(assigned[0] == 0);
+    CHECK(assigned[1] == 0);
+    CHECK(mgr.mixed_filaments().empty());
+
+    std::vector<unsigned int> assigned2 = {77u};
+    mgr.add_batch_custom_filaments({}, {"#FF0000", "#00FF00"}, &assigned2);
+    CHECK(assigned2.empty());                   // 0 entries -> 0 ids
+    CHECK(mgr.mixed_filaments().empty());
+}
+
+TEST_CASE("serialize/load round-trip preserves custom-row stable_id", "[MixedFilament][Serialization]")
+{
+    // The batch-match cleanup marks redundant mixed rows by stable_id AFTER
+    // physical deletions that round-trip the list through serialize -> clear ->
+    // load (update_multi_material_filament_presets).  Identity surviving that
+    // round-trip is the load-bearing assumption; pin it explicitly.
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
+    MixedAutoGenerateGuard guard(false);
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, colors);
+    mgr.add_custom_filament(2, 3, 30, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 2);
+    const uint64_t sid0 = mgr.mixed_filaments()[0].stable_id;
+    const uint64_t sid1 = mgr.mixed_filaments()[1].stable_id;
+    REQUIRE(sid0 != 0);
+    REQUIRE(sid1 != 0);
+    REQUIRE(sid0 != sid1);
+
+    const std::string serialized = mgr.serialize_custom_entries();
+    MixedFilamentManager loaded;
+    loaded.load_custom_entries(serialized, colors);
+
+    bool found0 = false;
+    bool found1 = false;
+    for (const MixedFilament &mf : loaded.mixed_filaments()) {
+        if (mf.stable_id == sid0) {
+            found0 = true;
+            CHECK(mf.component_a == 1);
+            CHECK(mf.component_b == 2);
+        }
+        if (mf.stable_id == sid1) {
+            found1 = true;
+            CHECK(mf.component_a == 2);
+            CHECK(mf.component_b == 3);
+        }
+    }
+    CHECK(found0);
+    CHECK(found1);
+}
+
+TEST_CASE("add_batch rejects entries whose gradient/pattern reference a filament > n (m1 perimeter)", "[MixedFilament][batch_match]")
+{
+    // Regression guard for the major-1 fix. compute_redundant_filaments bounds
+    // pattern/gradient literal tokens by num_physical, while remove_physical_
+    // filament bounds them by kMaxPhysicalFilaments=64 (the m1 divergence,
+    // documented in MixedFilament.hpp and pinned by the [!shouldfail] "m1"
+    // differential test). For m1 to stay UNREACHABLE the invariant "no live row
+    // references a literal physical id > n" must hold at EVERY write path, not
+    // just load_custom_entries. add_batch_custom_filaments is the batch-match
+    // confirm flow's own entry point, so it must reject out-of-range references
+    // the same way load_custom_entries does. Without this guard a recipe
+    // generator change that ever emitted a literal token > n would turn m1 into a
+    // live silent-wrong-color bug (cleanup marks the wrong rows deleted).
+    MixedAutoGenerateGuard guard(false);
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}; // n = 4
+    MixedFilamentManager mgr;
+
+    std::vector<MixedFilamentBatchEntry> entries(3);
+    // e0: valid (a,b in range, no gradient) -> assigned a real id
+    entries[0].component_a = 1;
+    entries[0].component_b = 2;
+    // e1: gradient references physical 12 > n=4 -> REJECTED (assigned 0)
+    entries[1].component_a = 1;
+    entries[1].component_b = 2;
+    entries[1].gradient_component_ids = "1/12/3";
+    // e2: manual_pattern literal token '5' > n=4 -> REJECTED (assigned 0)
+    entries[2].component_a = 1;
+    entries[2].component_b = 2;
+    entries[2].manual_pattern = "15"; // '1' symbolic, '5' literal > 4
+
+    std::vector<unsigned int> assigned;
+    mgr.add_batch_custom_filaments(entries, colors, &assigned);
+
+    REQUIRE(assigned.size() == 3);              // strict 1:1 with entries
+    CHECK(assigned[0] == 5);                    // only e0 created (4 phys + 1)
+    CHECK(assigned[1] == 0u);                   // e1 rejected
+    CHECK(assigned[2] == 0u);                   // e2 rejected
+    REQUIRE(mgr.mixed_filaments().size() == 1); // only e0's row stored
+    CHECK(mgr.mixed_filaments()[0].component_a == 1);
+    CHECK(mgr.mixed_filaments()[0].component_b == 2);
+
+    // The one stored row is clean (no out-of-range references) and, since it is
+    // the only enabled mixed row at v5, compute_redundant_filaments sees a list
+    // whose every token is in range -- the m1 state never enters it.
+    auto red = compute_redundant_filaments(4, {1, 2, 3, 4}, {5}, mgr.mixed_filaments());
+    CHECK(red.redundant_mixed.empty());
 }

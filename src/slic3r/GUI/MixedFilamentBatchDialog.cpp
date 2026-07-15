@@ -95,8 +95,8 @@ static wxBitmap thumbnail_to_bitmap(const ThumbnailData& data, int max_w, int ma
     for (unsigned int y = 0; y < data.height; ++y) {
         unsigned int src_y = data.height - 1 - y;
         for (unsigned int x = 0; x < data.width; ++x) {
-            size_t si = ((size_t)src_y * data.width + x) * 4;
-            size_t di = ((size_t)y       * data.width + x) * 3;
+            size_t si = (static_cast<size_t>(src_y) * data.width + x) * 4;
+            size_t di = (static_cast<size_t>(y)       * data.width + x) * 3;
             unsigned char r   = data.pixels[si + 0];
             unsigned char g   = data.pixels[si + 1];
             unsigned char b   = data.pixels[si + 2];
@@ -104,14 +104,14 @@ static wxBitmap thumbnail_to_bitmap(const ThumbnailData& data, int max_w, int ma
             // Blend with panel background (#F5F5F5) for low-alpha pixels
             if (alpha < 255) {
                 float t = alpha / 255.0f;
-                r = (unsigned char)(r * t + 245 * (1.0f - t));
-                g = (unsigned char)(g * t + 245 * (1.0f - t));
-                b = (unsigned char)(b * t + 245 * (1.0f - t));
+                r = static_cast<unsigned char>(r * t + 245 * (1.0f - t));
+                g = static_cast<unsigned char>(g * t + 245 * (1.0f - t));
+                b = static_cast<unsigned char>(b * t + 245 * (1.0f - t));
             }
             d[di + 0] = r;
             d[di + 1] = g;
             d[di + 2] = b;
-            a[(size_t)y * data.width + x] = 255;
+            a[static_cast<size_t>(y) * data.width + x] = 255;
         }
     }
 
@@ -173,14 +173,14 @@ void MixedFilamentBatchDialog::build_preview_panels()
 void MixedFilamentBatchDialog::refresh_previews()
 {
     const int idx = m_tray_index - 1;
-    if (idx < 0 || idx >= (int)m_thumb_cache.size()) return;
+    if (idx < 0 || idx >= static_cast<int>(m_thumb_cache.size())) return;
 
     const int orig_w = std::max(FromDIP(100), m_preview_orig_panel->GetClientSize().GetWidth());
     const int orig_h = std::max(FromDIP(100), m_preview_orig_panel->GetClientSize().GetHeight());
     const int match_w = std::max(FromDIP(160), m_preview_match_panel->GetClientSize().GetWidth());
     const int match_h = std::max(FromDIP(120), m_preview_match_panel->GetClientSize().GetHeight());
 
-    if (m_preview_orig_bitmap && idx < (int)m_thumb_cache.size() && m_thumb_cache[idx].IsOk()) {
+    if (m_preview_orig_bitmap && idx < static_cast<int>(m_thumb_cache.size()) && m_thumb_cache[idx].IsOk()) {
         m_preview_orig_bitmap->SetBitmap(m_thumb_cache[idx]);
         m_preview_orig_bitmap->SetSize(orig_w, orig_h);
         m_preview_orig_panel->Layout();
@@ -188,11 +188,11 @@ void MixedFilamentBatchDialog::refresh_previews()
 
     // Lazy-render match thumbnail for current plate on demand
     if (m_match_completed && !m_match_colors.empty() &&
-        idx < (int)m_match_cache.size() && !m_match_cache[idx].IsOk()) {
+        idx < static_cast<int>(m_match_cache.size()) && !m_match_cache[idx].IsOk()) {
         render_match_thumb_for_plate(idx);
     }
 
-    if (m_preview_match_bitmap && idx < (int)m_match_cache.size() && m_match_cache[idx].IsOk()) {
+    if (m_preview_match_bitmap && idx < static_cast<int>(m_match_cache.size()) && m_match_cache[idx].IsOk()) {
         m_preview_match_bitmap->SetBitmap(m_match_cache[idx]);
         m_preview_match_bitmap->SetSize(match_w, match_h);
         m_preview_match_panel->Layout();
@@ -301,7 +301,7 @@ void MixedFilamentBatchDialog::rebuild_match_thumb_cache()
 
 void MixedFilamentBatchDialog::render_match_thumb_for_plate(int plate_idx)
 {
-    if (plate_idx < 0 || plate_idx >= (int)m_match_cache.size()) return;
+    if (plate_idx < 0 || plate_idx >= static_cast<int>(m_match_cache.size())) return;
     if (m_match_colors.empty()) return;
 
     auto* plater = wxGetApp().plater();
@@ -353,7 +353,6 @@ void MixedFilamentBatchDialog::load_model_colors()
     if (!plater) return;
 
     const auto all_colors = plater->get_extruder_colors_from_plater_config(nullptr, true);
-    const size_t num_physical = m_physical_colors.size();
 
     for (size_t i = 0; i < all_colors.size(); ++i) {
         const std::string& hex = all_colors[i];
@@ -361,13 +360,17 @@ void MixedFilamentBatchDialog::load_model_colors()
         wxColour c;
         if (!try_parse_color_match_hex(hex, c)) continue;
 
-        const bool is_physical = (i < num_physical);
+        // all_colors is indexed by filament_id-1: [physical colors..., then mixed
+        // display colors]. filament_id = i+1 for every slot — physical OR mixed.
+        // For a mixed slot, i+1 is the virtual id its regions are painted with, so
+        // binding it here lets apply_batch_match_to_model re-match and re-map
+        // existing mixed-painted regions to the new target. Leaving it empty (the
+        // old behavior) stranded those regions: never re-matched, then erased by
+        // cleanup when a component physical was dropped.
         m_model_colors.push_back({
             static_cast<unsigned int>(m_model_colors.size() + 1),
             c, hex,
-            is_physical
-                ? std::vector<unsigned int>{static_cast<unsigned int>(i + 1)}
-                : std::vector<unsigned int>{}
+            std::vector<unsigned int>{static_cast<unsigned int>(i + 1)}
         });
     }
 }
@@ -583,7 +586,7 @@ void MixedFilamentBatchDialog::build_ui()
                 wxBitmap* icon = get_extruder_color_icon(m_physical_colors[j], std::to_string(j + 1), FromDIP(20), FromDIP(20));
                 cb->Append(name, icon ? icon->ConvertToImage() : wxNullImage);
             }
-            if (m_filament_selections[i] >= 0 && m_filament_selections[i] < (int)m_physical_colors.size())
+            if (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
                 cb->SetSelection(m_filament_selections[i]);
             else if (!m_physical_colors.empty())
                 cb->SetSelection(0);
@@ -977,7 +980,7 @@ void MixedFilamentBatchDialog::launch_background_match()
     if (m_matching_method == MANUAL) {
         for (int i = 0; i < m_manual_filament_count; ++i) {
             int sel = m_filament_combo[i] ? m_filament_combo[i]->GetSelection() : i;
-            if (sel >= 0 && sel < (int)m_physical_colors.size()) {
+            if (sel >= 0 && sel < static_cast<int>(m_physical_colors.size())) {
                 active_colors.push_back(m_physical_colors[sel]);
                 manual_full_ids.push_back(static_cast<unsigned int>(sel + 1)); // 1-based
             }
@@ -1085,7 +1088,7 @@ void MixedFilamentBatchDialog::launch_background_match()
                 mapping.target_filament_id   = existing_ids[best_idx];
                 mapping.matched_color        = existing_palette[best_idx];
                 mapping.delta_e              = best_de;
-                mapping.is_pure_recipe       = (existing_ids[best_idx] <= (unsigned int)num_physical);
+                mapping.is_pure_recipe       = (existing_ids[best_idx] <= static_cast<unsigned int>(num_physical));
                 mapping.pure_delta_e         = best_de;
                 mapping.merged_model_indices = {mc.color_index};
                 mapping.source_extruder_ids  = mc.extruder_ids;
@@ -1100,37 +1103,29 @@ void MixedFilamentBatchDialog::launch_background_match()
             }
         }
 
-        // Pass 2: batch-match remaining colors
+        // Pass 2: batch-match remaining colors.  batch_match_model_colors uses a
+        // return-code model (result.success / error_code) and its whole call chain
+        // has no throw sites, so no exception handling is needed here.
         if (!unmatched_colors.empty()) {
-            try {
-                auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, 15, cancel_token,
-                    [progress_bar, destroyed](int done, int total) {
-                        if (progress_bar && !destroyed->load()) {
-                            wxGetApp().CallAfter([progress_bar, done, total, destroyed]() {
-                                if (destroyed->load()) return;
-                                if (total > 0) progress_bar->SetValue(done * 100 / total);
-                            });
-                        }
-                    });
-                if (sub_result.success) {
-                    // Offset virtual IDs: start after all existing filaments
-                    assign_batch_virtual_filament_ids(sub_result, physical_colors.size(), existing_mixed_count);
-                    // Merge
-                    result.mappings.insert(result.mappings.end(),
-                        sub_result.mappings.begin(), sub_result.mappings.end());
-                } else {
-                    result.success = false;
-                    result.error_message = sub_result.error_message;
-                    result.error_code = sub_result.error_code;
-                }
-            } catch (const std::exception& e) {
+            auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, 15, cancel_token,
+                [progress_bar, destroyed](int done, int total) {
+                    if (progress_bar && !destroyed->load()) {
+                        wxGetApp().CallAfter([progress_bar, done, total, destroyed]() {
+                            if (destroyed->load()) return;
+                            if (total > 0) progress_bar->SetValue(done * 100 / total);
+                        });
+                    }
+                });
+            if (sub_result.success) {
+                // Offset virtual IDs: start after all existing filaments
+                assign_batch_virtual_filament_ids(sub_result, physical_colors.size(), existing_mixed_count);
+                // Merge
+                result.mappings.insert(result.mappings.end(),
+                    sub_result.mappings.begin(), sub_result.mappings.end());
+            } else {
                 result.success = false;
-                result.error_message = std::string("Error: ") + e.what();
-                result.error_code = 3;
-            } catch (...) {
-                result.success = false;
-                result.error_message = "Unknown error during batch match";
-                result.error_code = 3;
+                result.error_message = sub_result.error_message;
+                result.error_code = sub_result.error_code;
             }
         }
 
@@ -1171,7 +1166,7 @@ void MixedFilamentBatchDialog::launch_background_match()
             // After remapping, pure-recipe component_a values may now be > the
             // old subset-size threshold used by assign_batch_virtual_filament_ids.
             // Re-evaluate is_pure_recipe against the full project physical count.
-            const unsigned int full_phys = (unsigned int)all_physical.size();
+            const unsigned int full_phys = static_cast<unsigned int>(all_physical.size());
             for (auto& mapping : result.mappings) {
                 if (mapping.is_pure_recipe)
                     mapping.is_pure_recipe = (mapping.recipe.component_a <= full_phys);
@@ -1179,7 +1174,7 @@ void MixedFilamentBatchDialog::launch_background_match()
 
             // Reassign virtual filament IDs using the full project physical count
             // so they don't collide with remapped pure-recipe IDs.
-            unsigned int next_vid = (unsigned int)(all_physical.size()
+            unsigned int next_vid = static_cast<unsigned int>(all_physical.size()
                                                    + existing_mixed_count + 1);
             for (auto& mapping : result.mappings) {
                 if (!mapping.is_pure_recipe)
@@ -1204,7 +1199,7 @@ void MixedFilamentBatchDialog::launch_background_match()
                 result.selected_physical_ids = manual_full_ids;
             } else {
                 for (size_t i = 1; i <= physical_colors.size(); ++i)
-                    result.selected_physical_ids.push_back((unsigned int)i);
+                    result.selected_physical_ids.push_back(static_cast<unsigned int>(i));
             }
             if (matching_method == RECOMMENDED) {
                 result.is_recommended_mode = true;

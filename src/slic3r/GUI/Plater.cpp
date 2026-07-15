@@ -26,6 +26,7 @@
 #include <vector>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <regex>
 #include <future>
@@ -2331,9 +2332,38 @@ Sidebar::Sidebar(Plater *parent)
         const BatchMatchResult& result = dlg.GetResult();
         if (!result.success) return;
 
+        auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+
+        // Snapshot the dialog-time virtual-id -> stable_id mapping BEFORE any
+        // palette or filament-count change.  The dialog captured each mapping's
+        // source_extruder_ids ({slot index + 1}) against exactly this
+        // enumeration; stable_ids survive the auto_generate rebuild that
+        // set_num_filaments runs in recommended mode, so this table lets the
+        // in-place / translate steps below re-find existing mixed rows by
+        // IDENTITY.  (Display colors are refreshed to the NEW palette before
+        // those steps run, so a color key would silently never match there.)
+        std::unordered_map<unsigned int, uint64_t> dialog_vid_to_sid;
+        const size_t dialog_num_physical = wxGetApp().preset_bundle->filament_presets.size();
+        {
+            unsigned int vid = (unsigned int)dialog_num_physical + 1;
+            for (const MixedFilament& mf : mgr.mixed_filaments()) {
+                if (!mf.enabled || mf.deleted) continue;
+                dialog_vid_to_sid[vid++] = mf.stable_id;
+            }
+        }
+
+        // NOTE: deliberately NO take_snapshot() here. The UndoRedo stack only
+        // captures the Model (object painting), not the preset_bundle palette
+        // or mixed_filaments. Snapshotting batch match would make Ctrl+Z revert
+        // painting while leaving the expanded CMYG palette in place → silent
+        // wrong colors. Re-enable only after UndoRedo covers preset_bundle.
         // For recommended mode, apply CMYG to the first 4 physical slots.
-        // < 4 filaments: expand to 4.  >= 4 filaments: keep all, only update
-        // the first 4 — don't delete extra physical filaments.
+        // < 4 filaments: expand to 4.  >= 4 filaments: keep every slot THROUGH
+        // this stage (virtual ids / add_batch compute over the full slot
+        // space).  The batch match is a project-wide re-plan of the filament
+        // system, so cleanup_unused_filaments_after_batch_match below removes
+        // whichever physical slots the match did not select
+        // (result.selected_physical_ids = {1..4} in recommended mode).
         std::vector<std::string> colors_vec;
         if (result.is_recommended_mode && result.recommended_physical_colors.size() >= 4) {
             const auto& cm = result.recommended_physical_colors;
@@ -2359,11 +2389,124 @@ Sidebar::Sidebar(Plater *parent)
             colors_vec = co ? co->values : std::vector<std::string>{};
         }
 
-        auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
+        BatchMatchResult model_result = result; // mutable copy — used for in-place edits + apply/cleanup
+
+        // In-place recipe update for EXISTING custom mixed filaments: overwrite
+        // the row's recipe with the new-palette match (mapping.recipe is already
+        // the best new-palette approximation of that model color), keeping
+        // stable_id / virtual id / painting.  This avoids creating a duplicate
+        // new mixed for colors the user already has and — because the virtual id
+        // and painting are untouched — sidesteps the cascade/erase that would
+        // otherwise lose painting when a component physical is dropped.  Rows
+        // are matched by IDENTITY (dialog-time source id -> stable_id -> current
+        // row), NOT by display color: recommended mode refreshes display colors
+        // before this block runs.  Auto rows never match (their vids resolve to
+        // rows with custom == false; auto_generate owns them).
+        {
+            const size_t cur_num_physical = colors_vec.size();
+            bool any_in_place = false;
+            for (auto& mapping : model_result.mappings) {
+                if (mapping.is_pure_recipe || mapping.in_place_edited) continue;
+                const MixedColorMatchRecipeResult& r = mapping.recipe;
+                // Only write recipes add_batch would accept: valid, in-range,
+                // distinct components.  Anything else falls through to the
+                // add_batch path, which clamps and validates on its own.
+                if (!r.valid) continue;
+                if (r.component_a < 1 || r.component_a > cur_num_physical
+                    || r.component_b < 1 || r.component_b > cur_num_physical
+                    || r.component_a == r.component_b) continue;
+                // Resolve the dialog-time source id to an existing row identity.
+                uint64_t sid = 0;
+                for (unsigned int src : mapping.source_extruder_ids) {
+                    auto it = dialog_vid_to_sid.find(src);
+                    if (it != dialog_vid_to_sid.end() && it->second != 0) {
+                        sid = it->second;
+                        break;
+                    }
+                }
+                if (sid == 0) continue; // no existing mixed row behind this color
+                // Locate that row in the CURRENT mixed list; record its vid.
+                MixedFilament* target     = nullptr;
+                unsigned int   target_vid = 0;
+                unsigned int   vid        = (unsigned int)cur_num_physical + 1;
+                for (MixedFilament& mf : mgr.mixed_filaments()) {
+                    if (!mf.enabled || mf.deleted) continue;
+                    if (mf.stable_id == sid) { target = &mf; target_vid = vid; break; }
+                    ++vid;
+                }
+                // Only custom rows can be rewritten in place.  Auto rows are
+                // owned by auto_generate; in this project auto mixed filaments
+                // are off by default and not painted, so they never reach here.
+                // If auto painting is ever enabled, revisit the R3 invariant
+                // documented in cleanup_unused_filaments_after_batch_match.
+                if (target == nullptr || !target->custom) continue;
+                target->component_a                = r.component_a;
+                target->component_b                = r.component_b;
+                target->mix_b_percent              = r.mix_b_percent;
+                target->gradient_component_ids     = r.gradient_component_ids;
+                target->gradient_component_weights = r.gradient_component_weights;
+                target->distribution_mode          = r.gradient_component_ids.empty()
+                    ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
+                target->gradient_enabled           = !r.gradient_component_ids.empty();
+                target->manual_pattern.clear();   // MATCH recipes carry no manual pattern
+                target->ratio_a = 1;              // MATCH recipes are 1:1 (equal-ratio blend)
+                target->ratio_b = 1;
+                target->ui_mode = 2;              // MATCH
+                // Keep the mapping in the list, flagged: batch_entries and the
+                // assigned-id fixup skip it, apply no-ops on it (source ==
+                // target after translation below), and extract_batch_kept_sets
+                // keeps the row via target_filament_id — so the edited row is
+                // not deleted by the cleanup, regardless of whether it is painted.
+                mapping.in_place_edited    = true;
+                mapping.target_filament_id = target_vid;
+                any_in_place = true;
+            }
+            // Refresh swatches so they reflect the new recipes even when the
+            // batch below ends up empty (add_batch skips refresh in that case).
+            if (any_in_place)
+                mgr.refresh_display_colors(colors_vec);
+        }
+
+        // Translate mixed-slot source ids from the dialog epoch to the CURRENT
+        // epoch.  Growing the physical count (recommended mode, < 4 filaments)
+        // shifts every mixed virtual id, and on_filaments_change has already
+        // applied that shift to the painted facets (it consumes the remap built
+        // by set_num_filaments).  apply_batch_match_to_model keys its facet
+        // remap on source_extruder_ids, so a stale dialog-time mixed id would
+        // miss the moved facets and strand the painting on the old recipe row.
+        // Physical-slot ids are identity in this flow (nothing is deleted
+        // before apply); ids whose row no longer exists are dropped.
+        {
+            const unsigned int cur_num_physical = (unsigned int)colors_vec.size();
+            for (auto& mapping : model_result.mappings) {
+                std::vector<unsigned int> translated;
+                translated.reserve(mapping.source_extruder_ids.size());
+                for (unsigned int src : mapping.source_extruder_ids) {
+                    if (src <= (unsigned int)dialog_num_physical) {
+                        translated.push_back(src); // physical slot: identity
+                        continue;
+                    }
+                    auto it = dialog_vid_to_sid.find(src);
+                    if (it == dialog_vid_to_sid.end() || it->second == 0) continue;
+                    unsigned int cur_vid = 0;
+                    unsigned int vid     = cur_num_physical + 1;
+                    for (const MixedFilament& mf : mgr.mixed_filaments()) {
+                        if (!mf.enabled || mf.deleted) continue;
+                        if (mf.stable_id == it->second) { cur_vid = vid; break; }
+                        ++vid;
+                    }
+                    if (cur_vid != 0) translated.push_back(cur_vid);
+                }
+                mapping.source_extruder_ids = std::move(translated);
+            }
+        }
+
         std::vector<MixedFilamentBatchEntry> batch_entries;
-        batch_entries.reserve(result.mappings.size());
-        for (const auto& mapping : result.mappings) {
-            if (mapping.is_pure_recipe) continue;
+        batch_entries.reserve(model_result.mappings.size());
+        for (const auto& mapping : model_result.mappings) {
+            // Skip condition MUST stay identical to the assigned-id fixup below —
+            // `k` aligns mappings to assigned_ids by construction order.
+            if (mapping.is_pure_recipe || mapping.in_place_edited) continue;
             MixedFilamentBatchEntry entry;
             entry.component_a     = mapping.recipe.component_a;
             entry.component_b     = mapping.recipe.component_b;
@@ -2376,37 +2519,49 @@ Sidebar::Sidebar(Plater *parent)
             entry.display_color = mapping.matched_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
             batch_entries.push_back(std::move(entry));
         }
-        mgr.add_batch_custom_filaments(batch_entries, colors_vec);
+        std::vector<unsigned int> assigned_ids;
+        mgr.add_batch_custom_filaments(batch_entries, colors_vec, &assigned_ids);
 
-        // For recommended mode: the dialog computed target_filament_id for mixed
-        // recipes assuming exactly 4 physical filaments (CMYG palette). When the
-        // project has >4 physical filaments and we preserve slots 5+, virtual
-        // filament IDs must start after ALL physical slots, not after slot 4.
-        // Recompute here using the actual post-add total_filaments count.
-        BatchMatchResult model_result = result; // mutable copy
-        if (result.is_recommended_mode && colors_vec.size() > 4) {
-            const size_t num_phys = colors_vec.size();
-            const size_t batch_count = batch_entries.size();
-            // batch entries were appended last → occupy the last N virtual slots
-            size_t next_vid = mgr.total_filaments(num_phys) - batch_count + 1;
+        // Replace dialog-computed target ids with the actual virtual ids assigned by
+        // add_batch_custom_filaments.  The dialog's estimate is stale by confirm time:
+        // recommended mode can grow num_physical (shifting every mixed virtual id), and
+        // the in-place block above reuses existing rows instead of allocating new ones.
+        {
+            size_t k = 0;
+            size_t dropped = 0;
             for (auto& mapping : model_result.mappings) {
-                if (!mapping.is_pure_recipe)
-                    mapping.target_filament_id = (unsigned int)(next_vid++);
+                // MUST mirror the batch_entries skip condition above (k-alignment).
+                if (mapping.is_pure_recipe || mapping.in_place_edited) continue;
+                const unsigned int vid = (k < assigned_ids.size()) ? assigned_ids[k] : 0u;
+                ++k;
+                if (vid != 0u) {
+                    mapping.target_filament_id = vid;
+                } else {
+                    // Dropped recipe (cap reached or invalid components): exclude it
+                    // from cleanup (target 0 is filtered out by extract_batch_kept_sets)
+                    // and leave its painted regions on their original filament.
+                    mapping.target_filament_id = 0;
+                    mapping.source_extruder_ids.clear();
+                    ++dropped;
+                }
             }
+            if (dropped > 0)
+                BOOST_LOG_TRIVIAL(warning)
+                    << "Batch match: " << dropped << " recipe(s) dropped (cap "
+                    << "or invalid components); regions left on original filament.";
         }
         // Apply matched recipes to model painting data
-        apply_batch_match_to_model(model_result, const_cast<Print&>(wxGetApp().plater()->fff_print()));
+        apply_batch_match_to_model(model_result, wxGetApp().plater()->fff_print());
 
-        if (ConfigOptionString* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
-            opt->value = mgr.serialize_custom_entries();
+        // Remove physical/mixed filaments left unreferenced by the match.
+        cleanup_unused_filaments_after_batch_match(model_result);
+
+        // cleanup already serializes; only panel refresh needed.
         update_mixed_filament_panel(false);
-        // Refresh physical filament panel (combo boxes, color swatches)
         update_ui_from_settings();
         update_dynamic_filament_list();
-        // Force-refresh all physical filament combo boxes so their color
-        // swatches reflect the updated filament_colour config.  This is
-        // necessary when the filament count didn't change (Sidebar::on_filaments_change
-        // takes the early-return path and skips combo rebuild in that case).
+        // Force-refresh combo swatches in case filament count stayed the same
+        // (Sidebar::on_filaments_change early-returns in that case).
         std::vector<PlaterPresetComboBox*>& fcombos = combos_filament();
         for (size_t i = 0; i < fcombos.size(); ++i) {
             if (fcombos[i]) fcombos[i]->update();
@@ -7768,7 +7923,8 @@ void Sidebar::change_filament(size_t from_id, size_t to_id)
     }
 }
 
-void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id)
+void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
+                                     bool skip_update, bool skip_serialize)
 {
     // Merge a mixed filament into another filament (physical or mixed)
     // This marks the source as deleted and remaps all objects using it
@@ -7822,9 +7978,11 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id)
     mfs[source_mixed_idx].deleted = true;
     mfs[source_mixed_idx].enabled = false;
     
-    // Persist changes
-    if (auto* opt = pb.project_config.option<ConfigOptionString>("mixed_filament_definitions"))
-        opt->value = pb.mixed_filaments.serialize_custom_entries();
+    // Persist changes (skip when called from batch cleanup)
+    if (!skip_serialize) {
+        if (auto* opt = pb.project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+            opt->value = pb.mixed_filaments.serialize_custom_entries();
+    }
     
     // Save mixed snapshot
     std::vector<unsigned char> is_mixed_snapshot;
@@ -7839,11 +7997,15 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id)
     
     // Update UI
     update_color_mix_panel();
-    m_scrolled_sizer->Layout();
-    wxGetApp().plater()->update();
+    if (!skip_update) {
+        m_scrolled_sizer->Layout();
+        wxGetApp().plater()->update();
+    }
 }
 
-void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
+void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
+                               bool skip_dependency_check,
+                               bool skip_update)
 {
     if (p->combos_filament.size() <= 1) return;
     wxBusyCursor busy;
@@ -7865,7 +8027,7 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
     // Check for mixed filaments that depend on the source physical filament (before deletion)
     // Skip this dialog when called from change_filament() (merge path), since change_filament()
     // already showed its own confirmation dialog for the same dependent mixed filaments.
-    if (!is_mixed && replace_filament_id < 0) {
+    if (!is_mixed && replace_filament_id < 0 && !skip_dependency_check) {
         auto& pb = *wxGetApp().preset_bundle;
         const size_t num_physical = pb.filament_presets.size();
         unsigned int filament_1based = (unsigned int)(filament_id + 1);
@@ -7966,7 +8128,8 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
         // Update UI
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
-        wxGetApp().plater()->update();
+        if (!skip_update)
+            wxGetApp().plater()->update();
         return;
     }
     // Case 1: If target mixed depends on source physical, delete the physical filament
@@ -8002,6 +8165,148 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id)
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
 
+    if (!skip_update)
+        wxGetApp().plater()->update();
+}
+
+// Helper to extract kept-physical and kept-mixed id sets from a batch match result
+// so compute_redundant_filaments can decide which filaments are redundant.
+static void extract_batch_kept_sets(const BatchMatchResult &result,
+                                    size_t                  num_physical,
+                                    std::vector<unsigned int> &kept_physical,
+                                    std::vector<unsigned int> &kept_mixed)
+{
+    kept_physical.clear();
+    kept_mixed.clear();
+    kept_physical.reserve(result.selected_physical_ids.size());
+    for (unsigned int id : result.selected_physical_ids) {
+        if (id >= 1 && id <= num_physical)
+            kept_physical.push_back(id);
+    }
+    kept_mixed.reserve(result.mappings.size());
+    for (const auto &m : result.mappings) {
+        if (!m.is_pure_recipe && m.target_filament_id > num_physical)
+            kept_mixed.push_back(m.target_filament_id);
+    }
+}
+
+void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result)
+{
+    PresetBundle *pb = wxGetApp().preset_bundle;
+    if (pb == nullptr || pb->filament_presets.empty()) return;
+
+    const size_t num_physical = pb->filament_presets.size();
+    std::vector<unsigned int> kept_physical, kept_mixed;
+    extract_batch_kept_sets(match_result, num_physical, kept_physical, kept_mixed);
+
+    // R3 guard: a mixed row whose virtual id is still referenced by the model's
+    // painted triangles must NEVER be flagged redundant. load_model_colors gives
+    // mixed slots an empty source_extruder_ids, so apply_batch_match_to_model
+    // leaves their references untouched, and kept_mixed (above) only carries the
+    // newly-created batch targets. Without this scan, a pre-existing painted
+    // mixed row would be deleted and its former virtual id re-aliased to the
+    // next survivor → silent wrong color. ModelVolume::get_extruders() reads
+    // mmu_segmentation facets, so it sees the virtual ids actually painted on
+    // the geometry (not just the config-level extruder_id).
+    for (const ModelObject *mo : wxGetApp().model().objects) {
+        for (const ModelVolume *mv : mo->volumes) {
+            if (mv->type() != ModelVolumeType::MODEL_PART) continue;
+            for (int eid : mv->get_extruders()) {
+                if (eid > static_cast<int>(num_physical))
+                    kept_mixed.push_back(static_cast<unsigned int>(eid));
+            }
+        }
+    }
+
+    RedundantFilamentSet red = compute_redundant_filaments(
+        num_physical, kept_physical, kept_mixed,
+        pb->mixed_filaments.mixed_filaments());
+
+    if (red.redundant_physical.empty() && red.redundant_mixed.empty()) {
+        // No deletions needed, but add_batch_custom_filaments only calls
+        // refresh_display_colors — persist the new mixed definitions here.
+        if (auto *opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+            opt->value = pb->mixed_filaments.serialize_custom_entries();
+        return;
+    }
+
+    // Capture the stable_id of each redundant mixed row BEFORE any deletion.
+    // Virtual ids and indices are valid now, but each delete_filament below
+    // rebuilds m_mixed (remove_physical_filament erases cascade rows and
+    // renumbers survivors), so cached *indices* would go stale and mark the
+    // wrong rows (or run past the new vector end).  stable_id survives that
+    // rebuild — it is the identity key build_filament_id_remap relies on —
+    // so we re-match by stable_id against the post-deletion m_mixed below.
+    auto &mfs = pb->mixed_filaments.mixed_filaments();
+    std::vector<uint64_t> redundant_mixed_stable_ids;
+    redundant_mixed_stable_ids.reserve(red.redundant_mixed.size());
+    for (unsigned int redundant_id : red.redundant_mixed) {
+        int idx = pb->mixed_filaments.mixed_index_from_filament_id(redundant_id, num_physical);
+        if (idx >= 0 && static_cast<size_t>(idx) < mfs.size()) {
+            const uint64_t sid = mfs[idx].stable_id;
+            if (sid != 0) {
+                redundant_mixed_stable_ids.push_back(sid);
+            } else {
+                // Every live row is allocated a stable_id; 0 means a row
+                // bypassed allocation and cannot be tracked through deletion.
+                BOOST_LOG_TRIVIAL(warning)
+                    << "Batch match cleanup: redundant mixed row " << redundant_id
+                    << " has stable_id 0; it will not be removed.";
+            }
+        }
+    }
+
+    // Delete physical filaments FIRST.  This triggers on_filaments_delete →
+    // build_filament_id_remap while all mixed entries are still enabled, so
+    // the remap table covers the full pre-cleanup virtual-ID space and
+    // surviving mixed entries' model painting data is correctly remapped.
+    // Do NOT use merge_mixed_filament — on_filaments_delete would remap
+    // model triangles away from the correct ids already set by apply.
+    // Cascade rows (components reference a deleted physical) are erased here
+    // by remove_physical_filament, so they need no explicit marking below.
+    for (unsigned int redundant_id : red.redundant_physical)
+        delete_filament(redundant_id - 1, -1,
+                        /*skip_dependency_check=*/true,
+                        /*skip_update=*/true);
+
+    // Mark the redundant mixed rows that survived the physical deletions
+    // (the non-cascade ones).  Match by stable_id against the CURRENT m_mixed
+    // — `mfs` still refers to the same (now-rebuilt) vector object.
+    //
+    // DESIGN INVARIANT: every row that reaches here is guaranteed to carry NO
+    // painted model region, so deleting it cannot strand painting.  This holds
+    // under two rules the confirm flow enforces upstream:
+    //   (1) mixed-color sources are rewritten in place (in_place_edited): the
+    //       row keeps its virtual id, painting is untouched, and the row is
+    //       kept (not redundant) — it never reaches this loop;
+    //   (2) physical-color sources get a NEW mixed row + an apply() remap that
+    //       moves their painting onto it BEFORE cleanup runs, so by the time
+    //       the source physical is deleted it has no painting left to strand.
+    // The R3 guard above (get_extruders scan) is the safety net for the only
+    // gap: a painted row that no mapping's source matched.  It force-keeps such
+    // rows so they never become redundant.
+    //
+    // Removing the R3 guard, or enabling auto mixed rows (auto_generate) and
+    // painting them, would break this invariant → a deleted row's virtual id
+    // re-aliases to the next survivor → silent wrong colour (see test
+    // "resolve: deleted middle mixed's virtual id re-aliases to a survivor").
+    const std::unordered_set<uint64_t> to_mark(redundant_mixed_stable_ids.begin(),
+                                               redundant_mixed_stable_ids.end());
+    for (auto &mf : mfs) {
+        if (mf.stable_id != 0 && to_mark.count(mf.stable_id) > 0) {
+            mf.deleted = true;
+            mf.enabled = false;
+        }
+    }
+
+    // Final authoritative serialization of the post-cleanup state (it must
+    // include the `deleted` markings above).  Each delete_filament call above
+    // also serialized once inside update_multi_material_filament_presets — that
+    // per-iteration write is the carrier of the physical-deletion round-trip
+    // and is NOT skippable.
+    if (auto *opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+        opt->value = pb->mixed_filaments.serialize_custom_entries();
+    update_color_mix_panel();
     wxGetApp().plater()->update();
 }
 

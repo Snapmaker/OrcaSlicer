@@ -166,6 +166,11 @@ struct ColorMappingEntry
     double                        pure_delta_e     = std::numeric_limits<double>::infinity();
     std::vector<unsigned int>     merged_model_indices;
     std::vector<unsigned int>     source_extruder_ids; // which model extruders need this mapping
+    // Set when the confirm handler overwrites this recipe onto an EXISTING mixed
+    // row (matched by stable id) instead of creating a new one.  Such a mapping
+    // stays in the list so cleanup keeps its row (kept_mixed) and apply skips it,
+    // but add_batch_custom_filaments / assigned_ids skip it.
+    bool                          in_place_edited  = false;
 };
 
 /// Result of a full batch color-matching operation.

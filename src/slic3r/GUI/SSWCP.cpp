@@ -170,8 +170,11 @@ WCP_Logger::~WCP_Logger()
         m_work_thread.join();
 
     if (socket != nullptr && socket->is_open()) {
-        socket->close();
-        BOOST_LOG_TRIVIAL(error) << "error closing socket";
+        boost::system::error_code ec;
+        socket->close(ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(error) << "error closing socket: " << ec.message();
+        }
     }
     
     if (resolver)

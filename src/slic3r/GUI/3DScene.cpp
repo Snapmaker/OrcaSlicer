@@ -814,13 +814,13 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(warning) << "LOD: SMALL '" << name << "'";
                 m_modelSmall->set_color(render_color);
-                m_modelSmall->set_color(ColorRGBA::GREEN());
+                //m_modelSmall->set_color(ColorRGBA::GREEN());
                 m_modelSmall->render();
             } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && m_modelMiddle->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(warning) << "LOD: MID '" << name << "'";
                 m_modelMiddle->set_color(render_color);
-                m_modelMiddle->set_color(ColorRGBA::BLUE());
+                //m_modelMiddle->set_color(ColorRGBA::BLUE());
                 m_modelMiddle->render();
             } else {
                 if (lodRenderLogCounter % 180 == 0) {
@@ -830,7 +830,7 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                                               << " m=" << (m_modelMiddle ? (int)m_modelMiddle->is_initialized() : -1);
                 }
                 // model.set_color() already called in render loop line 1301
-                model.set_color(ColorRGBA::RED());
+                //model.set_color(ColorRGBA::RED());
                 if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
                     model.render();
                 else

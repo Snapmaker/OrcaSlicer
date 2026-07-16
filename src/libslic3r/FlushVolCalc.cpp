@@ -44,8 +44,8 @@ static SpecialColorType classify_color(unsigned char r, unsigned char g, unsigne
     if (V_pct < 15.f)
         return SpecialColorType::Black;
 
-    // Achromatic path (S <= 8)
-    if (S_pct <= 8.f) {
+    // Achromatic path (S <= 12, widened to capture low-saturation greys)
+    if (S_pct <= 12.f) {
         if (V_pct >= 85.f) {
             int dRG = std::abs((int)r - (int)g);
             int dGB = std::abs((int)g - (int)b);
@@ -125,12 +125,12 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
         if (dst_type == SpecialColorType::PearlWhite ||
             dst_type == SpecialColorType::ColdWhite ||
             dst_type == SpecialColorType::LightGray) {
-            k *= 1.5f;
+            k *= 1.9f;
         } else if (dst_type == SpecialColorType::MidGray ||
                    dst_type == SpecialColorType::DarkColor) {
             k *= 1.15f;
         } else {
-            k *= 1.05f;
+            k *= 1.3f;
         }
     }
     if (dst_type == SpecialColorType::Red) {
@@ -141,10 +141,15 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
     if (dst_type == SpecialColorType::PearlWhite) {
         if (src_type == SpecialColorType::Red ||
             src_type == SpecialColorType::DarkGray ||
-            src_type == SpecialColorType::Black) {
-            k *= 1.4f;
+            src_type == SpecialColorType::Black ||
+            src_type == SpecialColorType::DarkColor) {
+            k *= 1.5f;
         } else if (src_type == SpecialColorType::ColdWhite ||
                    src_type == SpecialColorType::LightGray) {
+            k *= 1.2f;
+        }
+        else
+        {
             k *= 1.1f;
         }
     }
@@ -156,12 +161,10 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
     if (dst_type == SpecialColorType::ColdWhite) {
         if (src_type == SpecialColorType::Red ||
             src_type == SpecialColorType::DarkGray ||
-            src_type == SpecialColorType::Black) {
+            src_type == SpecialColorType::Black ||
+            src_type == SpecialColorType::DarkColor) {
             k *= 1.3f;
         }
-    }
-    if (src_type == SpecialColorType::ColdWhite) {
-        k *= 0.9f;
     }
 
     // ---- Gray tiered correction ----

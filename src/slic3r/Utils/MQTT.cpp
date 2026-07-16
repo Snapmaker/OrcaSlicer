@@ -56,11 +56,10 @@ MqttClient::MqttClient(const std::string& server_address,
                             << ", ca_content: " << ca_content << ", cert_content: " << cert_content << ", username: " << username
                             << ", password: " << password;
     
-    {
-    
-        boost::filesystem::path temp_dir = boost::filesystem::temp_directory_path();    
-        boost::filesystem::path ca_path = temp_dir / ("ca_" + client_id + std::to_string(int64_t(this)) + ".pem");
+    try {
+        boost::filesystem::path temp_dir = boost::filesystem::temp_directory_path();
 
+        boost::filesystem::path ca_path = temp_dir / ("ca_" + client_id + std::to_string(int64_t(this)) + ".pem");
         if (!ca_content.empty()) {
             boost::filesystem::ofstream ca_file(ca_path);
             ca_file << ca_content;
@@ -113,6 +112,10 @@ MqttClient::MqttClient(const std::string& server_address,
         temp_ca_path_ = ca_path;
         temp_cert_path_ = cert_path;
         temp_key_path_ = key_path;
+    } catch (const std::exception& e) {
+        cleanup_temp_files();
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT SSL initialization failed: " << e.what();
+        throw;
     }
 }
 

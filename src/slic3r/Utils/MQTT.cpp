@@ -66,10 +66,10 @@ MqttClient::MqttClient(const std::string& server_address,
             ca_file << ca_content;
             ca_file.close();
             if (!ca_file) {
-                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] save CA fail " << ca_path;
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] failed to save CA certificate: " << ca_path;
                 throw std::runtime_error("Failed to write CA certificate temporary file");
             }
-            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] CA has save to: " << ca_path;
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] CA certificate saved to: " << ca_path;
         }
         
         boost::filesystem::path cert_path = temp_dir / ("cert_" + client_id + std::to_string(int64_t(this)) + ".pem");
@@ -78,10 +78,10 @@ MqttClient::MqttClient(const std::string& server_address,
             cert_file << cert_content;
             cert_file.close();
             if (!cert_file) {
-                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] save CA fail: " << cert_path;
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] failed to save client certificate: " << cert_path;
                 throw std::runtime_error("Failed to write client certificate temporary file");
             }
-            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] CA has save to: " << cert_path;
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] client certificate saved to: " << cert_path;
         }
         
         boost::filesystem::path key_path = temp_dir / ("key_" + client_id + std::to_string(int64_t(this)) + ".pem");
@@ -90,10 +90,10 @@ MqttClient::MqttClient(const std::string& server_address,
             key_file << key_content;
             key_file.close();
             if (!key_file) {
-                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] save private CA fail: " << key_path;
+                BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] failed to save private key: " << key_path;
                 throw std::runtime_error("Failed to write private key temporary file");
             }
-            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] private CA has save to: " << key_path;
+            BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] private key saved to: " << key_path;
         }
         
         mqtt::ssl_options ssl_opts;                
@@ -509,7 +509,7 @@ MqttClient::~MqttClient()
         }
         
         if (timeout_count >= max_timeout) {
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] wait for timeout check";
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] timeout waiting for reconnect checks, forcing destruction";
         }
                 
         if (client_ && client_->is_connected()) {
@@ -528,7 +528,7 @@ MqttClient::~MqttClient()
              
         client_.reset();             
         cleanup_temp_files();        
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT clinet has set free";
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client resources freed";
     }
 }
 

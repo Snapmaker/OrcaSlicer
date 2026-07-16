@@ -171,7 +171,7 @@ WCP_Logger::~WCP_Logger()
 
     if (socket != nullptr && socket->is_open()) {
         socket->close();
-        BOOST_LOG_TRIVIAL(error) <<"socket init error";
+        BOOST_LOG_TRIVIAL(error) << "error closing socket";
     }
     
     if (resolver)
@@ -213,7 +213,7 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
             // get images info
             std::getline(ifs, line);
             if (line.find("; thumbnail begin") != std::string::npos) {
-                // analysis with ,height and data size
+                // parse width, height and data size
                 // format:"; thumbnail begin 48x48 1144"
                 sscanf(line.c_str(), "; thumbnail begin %dx%d %d", &width, &height, &data_size);
 
@@ -234,7 +234,7 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
                 ++thumbnail_id;
             }
 
-            // read the eof and exit
+            // read to end of block marker
             while (std::getline(ifs, line)) {
                 if (line.find("; THUMBNAIL_BLOCK_END") != std::string::npos) {
                     break;
@@ -420,7 +420,7 @@ json get_or_create_zip_json(const std::string& name1,   // origin file "1.gcode"
     if (read_existing_zip(zip_path, zip_stream)) {
         std::cout << "Reusing existing ZIP file: " << zip_path << std::endl;
     } else {
-        // 2.not exist and creat targe file
+        // 2. not exist, creating target file
         std::cout << "Creating new ZIP file: " << zip_path << std::endl;
         zip_stream = create_zip_with_miniz(name1, name2);
 
@@ -1710,8 +1710,8 @@ void SSWCP_MachineFind_Instance::sw_GetMachineFindSupportInfo()
 void SSWCP_MachineFind_Instance::sw_WakeupFind()
 {
     {
-        // 1) Wide Are Service Broowsing _services._dns-sd._udp.local will be working for 8s
-        //   this query make the AP/changed machine build 224.0.0.251:5353 multicast forwarding ,make the machine to issue a notification
+        // 1) Wide Area Service Browsing: _services._dns-sd._udp.local will work for ~8s
+        //    this query causes the AP/switch to build 224.0.0.251:5353 multicast forwarding, prompting the device to issue a notification
         {
             Bonjour::TxtKeys warmup_txt_keys = {};
             auto warmup = Bonjour("services._dns-sd")

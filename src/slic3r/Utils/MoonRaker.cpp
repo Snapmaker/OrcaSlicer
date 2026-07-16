@@ -85,19 +85,19 @@ std::string get_host_from_url(const std::string& url_in)
                     curl_free(host);
                 }
             } else {
-                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] get port from URL fail: " << url;
-                wcp_loger.add_log("get port from URL fail: " + url, false, "", "Moonraker_Mqtt", "error");
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to get host from URL: " << url;
+                wcp_loger.add_log("failed to get host from URL: " + url, false, "", "Moonraker_Mqtt", "error");
             }
                 
         } else {
-            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis URL fail: " << url;
-            wcp_loger.add_log("analyze URL fail: " + url, false, "", "Moonraker_Mqtt", "error");
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to parse URL: " << url;
+            wcp_loger.add_log("failed to parse URL: " + url, false, "", "Moonraker_Mqtt", "error");
         }
             
         curl_url_cleanup(hurl);
     } else {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analyze curl_url fail with:";
-        wcp_loger.add_log("analyze Curlurl fail", false, "", "Moonraker_Mqtt", "error");
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to allocate curl_url handle";
+        wcp_loger.add_log("failed to allocate curl_url handle", false, "", "Moonraker_Mqtt", "error");
     }
               
     return out;
@@ -195,17 +195,17 @@ std::string escape_string(const std::string& unescaped)
         char* decoded = curl_easy_escape(curl, unescaped.c_str(), unescaped.size());
         if (decoded) {
             ret_val = std::string(decoded);
-            BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] encode URL success";
-            wcp_loger.add_log("encode URL success: ", false, "", "Moonraker_Mqtt", "info");
+            BOOST_LOG_TRIVIAL(debug) << "[Moonraker_Mqtt] URL encoded successfully";
+            wcp_loger.add_log("URL encoded successfully", false, "", "Moonraker_Mqtt", "info");
             curl_free(decoded);
         } else {
-            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] encode URL fail";
-            wcp_loger.add_log("encode URL fail", false, "", "Moonraker_Mqtt", "error");
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] URL encoding failed";
+            wcp_loger.add_log("URL encoding failed", false, "", "Moonraker_Mqtt", "error");
         }
         curl_easy_cleanup(curl);
     } else {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] init CURL fail";
-        wcp_loger.add_log("init CURL fail", false, "", "Moonraker_Mqtt", "error");
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] CURL initialization failed";
+        wcp_loger.add_log("CURL initialization failed", false, "", "Moonraker_Mqtt", "error");
     }
     return ret_val;
 }

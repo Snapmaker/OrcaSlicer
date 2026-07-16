@@ -20910,12 +20910,13 @@ int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
 
 bool Plater::sync_filament_temp_mixing_notification()
 {
-    const int curr_plate_index = get_partplate_list().get_curr_plate_index();
     PartPlate* curr_plate = get_partplate_list().get_curr_plate();
     if (curr_plate == nullptr) {
         BOOST_LOG_TRIVIAL(warning) << "[Plater] sync_filament_temp_mixing_notification: curr_plate is null";
         return true;
     }
+
+    const int curr_plate_index = get_partplate_list().get_curr_plate_index();
     const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
     bool slicing_allowed = true;
 
@@ -20939,7 +20940,7 @@ bool Plater::sync_filament_temp_mixing_notification()
         break;
     case FilamentTempMixingState::BlockedError: {
         StringObjectException err;
-        err.type   = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
+        err.type   = STRING_EXCEPT_FILAMENTS_MIXING_TEMP;
         err.string = filament_temp_mixing_error_text();
         get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
         get_notification_manager()->push_validate_error_notification(err);

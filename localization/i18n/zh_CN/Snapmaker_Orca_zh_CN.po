@@ -12298,12 +12298,6 @@ msgstr "稳定锥体顶角"
 msgid "Angle at the apex of the cone that is used to stabilize the wipe tower. Larger angle means wider base."
 msgstr "塔锥体顶角的角度，用于稳定擦拭塔。角度越大，底座越宽。"
 
-msgid "Maximum wipe tower print speed of out wall"
-msgstr "擦拭塔外墙最大打印速度"
-
-msgid "Maximum wipe tower print speed of out wall."
-msgstr "擦拭塔外墙最大打印速度"
-
 msgid "Wall type"
 msgstr "墙体类型"
 
@@ -15555,3 +15549,36 @@ msgstr "手动选择当前列表中的耗材进行混色匹配。"
 
 msgid "Official Full Spectrum filaments are not configured. Configured filaments will be used instead. Once the official filaments are added, the previously selected filaments can be replaced in the filament list without affecting the color mixing match result."
 msgstr "未配置官方 Full Spectrum 全光谱耗材，将自动使用已配置的耗材。完成官方耗材配置后，可在耗材列表中进行替换，不影响混色匹配结果。"
+
+msgid "Adhesiveness Category"
+msgstr "粘接性类别"
+
+msgid "Filament category"
+msgstr "材料类别"
+
+msgid "Prime volume"
+msgstr "清理量"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "接触层预挤出距离"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "擦拭塔接触层（不同材料交界处）的预挤出距离。"
+
+msgid "Interface layer pre-extrusion length"
+msgstr "接触层预挤出长度"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "擦拭塔接触层（不同材料交界处）的预挤出长度。"
+
+msgid "Interface layer print temperature"
+msgstr "接触层打印温度"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "料塔接触层（不同材料交界处）的打印温度。如果设置为-1，使用最大推荐喷嘴打印温度。"
+
+msgid "Max speed"
+msgstr "最大速度"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "擦料塔上除了预冲刷外的最大打印速度。"

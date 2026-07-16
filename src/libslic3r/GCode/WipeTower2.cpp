@@ -3038,12 +3038,12 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer, const WipeTower::
 void WipeTower2::toolchange_wipe_new_test(WipeTowerWriter2& writer, 
     const WipeTower::box_coordinates& cleaning_box, float wipe_length, bool solid_toolchange)
 {
-    writer.set_extrusion_flow(m_extrusion_flow * (is_first_layer() ? 1.18f : 1.f)).append("; CP TOOLCHANGE WIPE\n");
+    writer.set_extrusion_flow(m_extrusion_flow * (is_first_layer() ? 1.18f : m_extra_flow)).append("; CP TOOLCHANGE WIPE\n");
     const float& xl = cleaning_box.ld.x();
     const float& xr = cleaning_box.rd.x();
 
-    if (!m_nozzle_change_result.gcode.empty())
-        writer.change_analyzer_line_width(m_perimeter_width);
+    float line_width = m_perimeter_width * m_extra_flow;
+    writer.change_analyzer_line_width(line_width);
 
     float retract_length = m_filpar[m_current_tool].retract_length;
     float retract_speed = m_filpar[m_current_tool].retract_speed * 60;
@@ -3052,10 +3052,7 @@ void WipeTower2::toolchange_wipe_new_test(WipeTowerWriter2& writer,
     bool should_line_ironing = true;
 
     float x_to_wipe = wipe_length;
-    float dy = get_block_gap_width(m_current_tool ,false);
-    if (is_first_layer() || solid_toolchange) {
-        dy = dy / m_extra_spacing_wipe;
-    }
+    float dy = (is_first_layer() ? m_extra_flow : m_extra_spacing_wipe) * m_perimeter_width;
     x_to_wipe = solid_toolchange ? std::numeric_limits<float>::max() : x_to_wipe;
 
     float target_speed = is_first_layer() || (m_num_tool_changes <= 1 && m_no_sparse_layers) ?
@@ -4227,8 +4224,18 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
 
         int wall_idx = get_wall_filament_for_this_layer();
 
-        /*for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes)
-            local_z_layer_result.emplace_back(tool_change_new(toolchange));*/
+        for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes) {
+            bool solid_nozzlechange = false;
+            bool solid_toolchange = false;
+            const auto* block = get_block_by_category(m_filpar[toolchange.new_tool].category, false);
+            if (block)
+                solid_toolchange = block->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
+
+            const auto* block2 = get_block_by_category(m_filpar[toolchange.old_tool].category, false);
+            if (block2)
+                solid_nozzlechange = block2->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
+            layer_result.emplace_back(tool_change_new(toolchange.new_tool, solid_toolchange, solid_nozzlechange));
+        }
 
         if (wall_idx == -1) {
             bool need_insert_solid_infill = false;
@@ -4255,7 +4262,8 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
             if (i == 0 && (layer.tool_changes[i].old_tool == wall_idx)) {
                 finish_layer_tcr = finish_layer_new(true, false, false);
             }
-            bool solid_nozzlechange = false, solid_toolchange = false;
+            bool solid_nozzlechange = false;
+            bool solid_toolchange = false;
             const auto* block = get_block_by_category(m_filpar[layer.tool_changes[i].new_tool].category, false);
             if (block)
                 solid_toolchange = block->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
@@ -4263,7 +4271,6 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
             const auto* block2 = get_block_by_category(m_filpar[layer.tool_changes[i].old_tool].category, false);
             if (block2)
                 solid_nozzlechange = block2->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
-            //layer_result.emplace_back(tool_change_new(layer.tool_changes[i]));
             layer_result.emplace_back(tool_change_new(layer.tool_changes[i].new_tool, solid_toolchange, solid_nozzlechange));
 
             if (i == 0 && (layer.tool_changes[i].old_tool == wall_idx)) {
@@ -4306,8 +4313,7 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                 if (finish_layer_filament == -1) {
                     finish_layer_filament = wall_idx;
                 }
-                // Cancel the block of the last layer
-                //if (!is_valid_last_layer(finish_layer_filament, m_cur_layer_id, layer.z)) continue;
+
                 WipeTower::ToolChangeResult finish_block_tcr;
                 if (block_solid) {
                     finish_block_tcr = finish_block_solid(block, finish_layer_filament, layer.extruder_fill, block.layers_type[m_cur_layer_id]);
@@ -4763,7 +4769,7 @@ float WipeTower2::get_block_gap_width(int tool, bool is_ramming)
         float dy = line_width * m_filpar[tool].ramming_step_multiplicator * m_extra_spacing_ramming;
         return dy;
     }
-    return m_extra_spacing_wipe * m_perimeter_width * m_extra_flow;
+    return m_extra_spacing_wipe * m_perimeter_width;
 }
 
 void WipeTower2::generate_wipe_tower_blocks(bool add_solid_flag)

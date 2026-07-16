@@ -3724,22 +3724,20 @@ void WipeTower2::plan_tower_new()
     generate_wipe_tower_blocks(true);
 
     // special for first layer
-    for (auto& layer : m_plan) {
-        if (!layer.tool_changes.empty()) {
-            for (auto& tc : layer.tool_changes) {
-                float first_ramming_width = get_block_gap_width(tc.old_tool, true) / m_extra_spacing_ramming;
-                tc.ramming_depth /= m_extra_spacing_ramming; // 100% fill
-                float line_len = m_wipe_tower_width - 2 * m_perimeter_width;
-                float wipe_depth = (tc.required_depth - tc.ramming_depth);
-                float wipe_line_count = std::ceil(wipe_depth / (m_perimeter_width * m_extra_flow));
-                int nozzle_change_line_count = tc.ramming_depth / first_ramming_width;
+    if (!m_plan.empty()) {
+        auto& info = m_plan[0];
+        for (auto& tc : info.tool_changes) {
+            float first_ramming_width = get_block_gap_width(tc.old_tool, true) / m_extra_spacing_ramming;
+            tc.ramming_depth /= m_extra_spacing_ramming; // 100% fill
+            float line_len = m_wipe_tower_width - 2 * m_perimeter_width;
+            float wipe_depth = (tc.required_depth - tc.ramming_depth);
+            float wipe_line_count = std::ceil(wipe_depth / (m_perimeter_width * m_extra_flow));
+            int nozzle_change_line_count = tc.ramming_depth / first_ramming_width;
 
-                tc.required_depth = wipe_depth + tc.ramming_depth;
-                tc.wipe_length = wipe_line_count * line_len;
-                tc.wipe_volume = length_to_volume(tc.wipe_length, m_perimeter_width, layer.height);
-                tc.ramming_length = nozzle_change_line_count * line_len;
-            }
-            break;
+            tc.required_depth = wipe_depth + tc.ramming_depth;
+            tc.wipe_length = wipe_line_count * line_len;
+            tc.wipe_volume = length_to_volume(tc.wipe_length, m_perimeter_width, info.height);
+            tc.ramming_length = nozzle_change_line_count * line_len;
         }
     }
 
@@ -4224,19 +4222,6 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
 
         int wall_idx = get_wall_filament_for_this_layer();
 
-        for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes) {
-            bool solid_nozzlechange = false;
-            bool solid_toolchange = false;
-            const auto* block = get_block_by_category(m_filpar[toolchange.new_tool].category, false);
-            if (block)
-                solid_toolchange = block->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
-
-            const auto* block2 = get_block_by_category(m_filpar[toolchange.old_tool].category, false);
-            if (block2)
-                solid_nozzlechange = block2->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
-            layer_result.emplace_back(tool_change_new(toolchange.new_tool, solid_toolchange, solid_nozzlechange));
-        }
-
         if (wall_idx == -1) {
             bool need_insert_solid_infill = false;
             for (const WipeTowerBlock& block : m_wipe_tower_blocks) {
@@ -4255,6 +4240,19 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                     block.finish_depth[this->m_cur_layer_id] = block.start_depth;
                 });
             }
+        }
+
+        for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes) {
+            bool solid_nozzlechange = false;
+            bool solid_toolchange = false;
+            const auto* block = get_block_by_category(m_filpar[toolchange.new_tool].category, false);
+            if (block)
+                solid_toolchange = block->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
+
+            const auto* block2 = get_block_by_category(m_filpar[toolchange.old_tool].category, false);
+            if (block2)
+                solid_nozzlechange = block2->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
+            layer_result.emplace_back(tool_change_new(toolchange.new_tool, solid_toolchange, solid_nozzlechange));
         }
 
         int insert_finish_layer_idx = -1;

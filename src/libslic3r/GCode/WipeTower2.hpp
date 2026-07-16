@@ -137,7 +137,7 @@ public:
 	WipeTower::ToolChangeResult finish_layer();
 
     WipeTower::ToolChangeResult finish_layer_new(bool extrude_perimeter = true, 
-        bool extrude_fill = false, bool extrude_fill_wall = false);
+        bool extrude_fill = true, bool extrude_fill_wall = true);
 
 	// Is the current layer finished?
 	bool 			 layer_finished() const {

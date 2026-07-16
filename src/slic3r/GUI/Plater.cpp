@@ -244,58 +244,49 @@ static bool model_object_is_on_plate(PartPlate* plate, size_t obj_idx, const Mod
 
 static void collect_filament_slots_from_config(
     const DynamicPrintConfig& config,
-    int num_filaments,
-    std::set<int>& used_slots)
+    int num_filaments, std::set<int>& used_slots_0_based)
 {
-    static const std::vector<const char*> keys_1based = {
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament"
-    };
-    for (const char* key : keys_1based)
-    {
-        const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
-        if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-            used_slots.insert(option->value - 1);
-    }
-
-    static const std::vector<const char*> keys_0based = {
+    // Support/feature filaments
+    static const std::vector<const char*> feature_keys = {
         "support_filament",
         "support_interface_filament",
+        "wall_filament",
+        "sparse_infill_filament",
+        "solid_infill_filament",
         "wipe_tower_filament"
     };
-    for (const char* key : keys_0based)
+    for (const char* key : feature_keys)
     {
         const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
         if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-            used_slots.insert(option->value - 1);
+            used_slots_0_based.insert(option->value - 1);
     }
 
+    // Primary filament (extruder)
     const ConfigOptionInt* extruder_option = config.option<ConfigOptionInt>("extruder");
     if (extruder_option != nullptr && extruder_option->value >= 1 && extruder_option->value <= num_filaments)
-        used_slots.insert(extruder_option->value - 1);
+        used_slots_0_based.insert(extruder_option->value - 1);
 }
 
 static void collect_filament_slots_from_model_config(
     const ModelConfigObject& config,
-    int num_filaments,
-    std::set<int>& used_slots)
+    int num_filaments, std::set<int>& used_slots_0_based)
 {
+    // Primary filament (extruder)
     if (config.has("extruder"))
     {
         const int extruder_id = config.extruder();
         if (extruder_id >= 1 && extruder_id <= num_filaments)
-            used_slots.insert(extruder_id - 1);
+            used_slots_0_based.insert(extruder_id - 1);
     }
 
-    // Per-object feature-specific keys (wall_filament, etc.) may be
-    // overridden independently of the object's primary extruder.
+    // Support/feature filaments
     static const std::vector<const char*> feature_keys = {
+        "support_filament",
+        "support_interface_filament",
         "wall_filament",
         "sparse_infill_filament",
         "solid_infill_filament",
-        "support_filament",
-        "support_interface_filament",
         "wipe_tower_filament"
     };
     for (const char* key : feature_keys)
@@ -304,7 +295,7 @@ static void collect_filament_slots_from_model_config(
         {
             const int val = config.opt_int(key);
             if (val >= 1 && val <= num_filaments)
-                used_slots.insert(val - 1);
+                used_slots_0_based.insert(val - 1);
         }
     }
 }
@@ -20749,139 +20740,125 @@ void Plater::config_change_notification(const DynamicPrintConfig &config, const 
 
 bool Plater::check_filament_temp_mixing(int plate_index)
 {
-    const int plate_count = p->partplate_list.get_plate_count();
-    if (plate_index < 0 || plate_index >= plate_count)
-        return true;
-
-    const DynamicPrintConfig& full_cfg = wxGetApp().preset_bundle->full_config();
+    // Boundary checks
+    PartPlate* plate = nullptr;
+    const DynamicPrintConfig&  full_cfg             = wxGetApp().preset_bundle->full_config();
     const ConfigOptionStrings* filament_type_option = full_cfg.option<ConfigOptionStrings>("filament_type");
-    if (filament_type_option == nullptr || filament_type_option->values.empty())
-        return true;
-
-    const int num_filaments = static_cast<int>(filament_type_option->values.size());
-    std::set<int> used_slots;
-
-    PartPlate* plate = p->partplate_list.get_plate(plate_index);
-    if (plate == nullptr)
-        return true;
-
-    bool has_object_on_plate = false;
-    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
     {
-        const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
-        if (model_object_is_on_plate(plate, obj_idx, model_object))
-        {
-            has_object_on_plate = true;
-            break;
-        }
-    }
-    if (!has_object_on_plate)
-        return true;
+        if (filament_type_option == nullptr || filament_type_option->values.empty())
+            return true;
 
-    // Also collect from current plate's config for any plate-level overrides
-    collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots);
+        const int plate_count = p->partplate_list.get_plate_count();
+        if (plate_index < 0 || plate_index >= plate_count)
+            return true;
 
-    // Collect from ModelVolume painting extruders for objects on the
-    // current plate. Also track whether any object relies on the global
-    // default extruder (extruder=0) so we can resolve it at the end.
-    bool uses_default_extruder = false;
-    for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
-    {
-        const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
-        if (!model_object_is_on_plate(plate, obj_idx, model_object))
-            continue;
-        collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots);
-        if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
-            uses_default_extruder = true;
-        for (const ModelVolume* model_volume : model_object->volumes)
-        {
-            collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots);
-            for (int extruder_id : model_volume->get_extruders())
-            {
-                if (extruder_id >= 1 && extruder_id <= num_filaments)
-                    used_slots.insert(extruder_id - 1);
+        plate = p->partplate_list.get_plate(plate_index);
+        if (plate == nullptr)
+            return true;
+
+        bool has_object_on_plate = false;
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+            const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+            if (model_object_is_on_plate(plate, obj_idx, model_object)) {
+                has_object_on_plate = true;
+                break;
             }
         }
+        if (!has_object_on_plate)
+            return true;
     }
 
-    // Collect from the Plater working config. The approach balances
-    // sensitivity against false positives:
-    // - Global features (wipe tower, support) always apply → always collected.
-    // - Feature-specific keys (wall_filament, infill) depend on the global
-    //   process defaults. They are only collected when at least one object
-    //   on the plate uses the default extruder (e=0), which means those
-    //   defaults WILL affect the actual slicing output.
+    // Collect filament slots actually used on this plate
+    std::set<int> used_slots_0_based;
     {
-        // Always collect: features that cannot be overridden per-object.
-        static const std::vector<const char*> always_collect = {
-            "wipe_tower_filament",
-            "support_filament",
-            "support_interface_filament"
-        };
-        for (const char* key : always_collect)
-        {
-            const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
-            if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                used_slots.insert(option->value - 1);
+        // Plate config
+        const int num_filaments = static_cast<int>(filament_type_option->values.size());
+        collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
+
+        // ModelObject config
+        bool uses_default_extruder = false;
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+            const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+            if (!model_object_is_on_plate(plate, obj_idx, model_object))
+                continue;
+            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+
+            if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
+                uses_default_extruder = true;
+
+            // ModelVolume config
+            for (const ModelVolume* model_volume : model_object->volumes) {
+                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
+                for (int extruder_id : model_volume->get_extruders()) {
+                    if (extruder_id >= 1 && extruder_id <= num_filaments)
+                        used_slots_0_based.insert(extruder_id - 1);
+                }
+            }
         }
 
-        // If any object uses e=0, the global process defaults for
-        // wall / infill extruders apply and must be collected.
-        if (uses_default_extruder)
+        // Collect from the Plater working config. The approach balances
+        // sensitivity against false positives:
+        // - Global features (wipe tower, support) always apply → always collected.
+        // - Feature-specific keys (wall_filament, infill) depend on the global
+        //   process defaults. They are only collected when at least one object
+        //   on the plate uses the default extruder (e=0), which means those
+        //   defaults WILL affect the actual slicing output.
         {
-            static const std::vector<const char*> default_keys = {
-                "wall_filament",
-                "sparse_infill_filament",
-                "solid_infill_filament"
-            };
-            for (const char* key : default_keys)
-            {
+            // Always collect: features that cannot be overridden per-object.
+            static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
+            for (const char* key : always_collect) {
                 const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
                 if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                    used_slots.insert(option->value - 1);
+                    used_slots_0_based.insert(option->value - 1);
+            }
+
+            // If any object uses e=0, the global process defaults for
+            // wall / infill extruders apply and must be collected.
+            if (uses_default_extruder) {
+                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+                for (const char* key : default_keys) {
+                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
+                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                        used_slots_0_based.insert(option->value - 1);
+                }
             }
         }
-    }
 
-    // Resolve the global default extruder if any object on this plate
-    // uses extruder=0. p->config does not include the "extruder" key
-    // (it is not in the initializer list at priv constructor), so we
-    // must read it from full_config() instead.
-    if (uses_default_extruder)
-    {
-        const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
-        if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
-            used_slots.insert(extruder_opt->value - 1);
+        // Resolve the global default extruder if any object on this plate
+        // uses extruder=0. p->config does not include the "extruder" key
+        // (it is not in the initializer list at priv constructor), so we
+        // must read it from full_config() instead.
+        if (uses_default_extruder) {
+            const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
+            if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
+                used_slots_0_based.insert(extruder_opt->value - 1);
+        }
     }
-
-    if (used_slots.empty())
+    if (used_slots_0_based.empty())
         return true;
 
     // Read filament_is_high_temperature directly from each filament preset's
     // own config rather than through full_config(). full_config() builds a
     // merged snapshot that may lag behind when called from Sidebar hooks
     // (the edited preset config hasn't been committed yet).
-    PresetBundle* bundle = wxGetApp().preset_bundle;
     bool has_high = false, has_low = false;
-
-    for (int slot : used_slots)
     {
-        if (slot < static_cast<int>(bundle->filament_presets.size()))
-        {
-            const Preset* preset = bundle->filaments.find_preset(
-                bundle->filament_presets[slot], true);
-            if (preset != nullptr)
-            {
-                const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
-                if (is_high)
-                    has_high = true;
-                else
-                    has_low = true;
+        PresetBundle* bundle = wxGetApp().preset_bundle;
+        for (int slot : used_slots_0_based) {
+            if (slot < static_cast<int>(bundle->filament_presets.size())) {
+                const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
+                if (preset != nullptr) {
+                    const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
+                    if (is_high)
+                        has_high = true;
+                    else
+                        has_low = true;
+                }
             }
         }
     }
-    const bool compatible = !(has_high && has_low);
 
+    const bool compatible = !(has_high && has_low);
     return compatible;
 }
 

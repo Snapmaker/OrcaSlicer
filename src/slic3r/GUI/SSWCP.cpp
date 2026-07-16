@@ -77,7 +77,7 @@ bool WCP_Logger::run()
         BOOST_LOG_TRIVIAL(error) << "socket connect failed: " << ec.message() << std::endl;
         return false;
     } else {        
-        BOOST_LOG_TRIVIAL(debug) << "Connect success!" << std::endl;
+        BOOST_LOG_TRIVIAL(debug) << "Connected successfully!" << std::endl;
     }
 
     m_work_thread = std::thread(&WCP_Logger::worker, this);
@@ -1452,7 +1452,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
         } 
         else
         {
-            BOOST_LOG_TRIVIAL(warning) << "no this cmd for:" << cmd;
+            BOOST_LOG_TRIVIAL(warning) << "unknown command: " << cmd;
         }
         send_to_js();
         finish_job();

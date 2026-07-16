@@ -22,13 +22,13 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
     , pending_reconnect_checks{0}  
     , ever_connected_(false)  
 {
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] init mqtt connect server_address: " << server_address << ", client_id: " << client_id;
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] initializing MQTT connection, server_address: " << server_address << ", client_id: " << client_id;
 
     // Configure connection options    
     connOpts_.set_clean_session(false);
     connOpts_.set_keep_alive_interval(30);
     connOpts_.set_connect_timeout(10);
-    //only connect successful and enbale auto reconnect
+    // auto-reconnect enabled only after first successful connection
     connOpts_.set_automatic_reconnect(std::chrono::seconds(0), std::chrono::seconds(0));
     client_->set_callback(*this);
 
@@ -52,7 +52,7 @@ MqttClient::MqttClient(const std::string& server_address,
                       bool clean_session)
     : MqttClient(server_address, client_id, username, password, clean_session)
 {
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] init mqtt connect server_address: " << server_address << ", client_id: " << client_id
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] initializing MQTT SSL connection, server_address: " << server_address << ", client_id: " << client_id
                             << ", ca_content: " << ca_content << ", cert_content: " << cert_content << ", username: " << username
                             << ", password: " << password;
     
@@ -134,8 +134,8 @@ bool MqttClient::Connect(std::string& msg)
                 << "\n - server address: " << server_address_
                 << "\n - client id: " << client_id_
                 << "\n - CA length: " << (ssl_opts.get_trust_store().empty() ? 0 : ssl_opts.get_trust_store().length())
-                << "\n - client CA length: " << (ssl_opts.get_key_store().empty() ? 0 : ssl_opts.get_key_store().length())
-                << "\n - private key: " << (ssl_opts.get_private_key().empty() ? 0 : ssl_opts.get_private_key().length());
+                << "\n - client cert length: " << (ssl_opts.get_key_store().empty() ? 0 : ssl_opts.get_key_store().length())
+                << "\n - private key length: " << (ssl_opts.get_private_key().empty() ? 0 : ssl_opts.get_private_key().length());
         }
 
         const char* context = "connection";
@@ -460,7 +460,7 @@ void MqttClient::connected(const std::string& cause)
     ever_connected_.store(true, std::memory_order_release);
         
     connOpts_.set_automatic_reconnect(std::chrono::seconds(2), std::chrono::seconds(30));
-    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] auto connect successfully";        
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] auto-reconnect enabled after successful connection";
 }
 
 void MqttClient::resubscribe_topics() {
@@ -525,8 +525,10 @@ MqttClient::~MqttClient()
         message_callback_ = nullptr;
         message_callback1_           = nullptr;
         connection_failure_callback_ = nullptr;
-             
-        client_.reset();             
+
+        if (client_)
+            client_.reset();             
+
         cleanup_temp_files();        
         BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client resources freed";
     }

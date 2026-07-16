@@ -4031,6 +4031,53 @@ void PrintConfigDef::init_fff_params()
     def->readonly = false;
     def->set_default_value(new ConfigOptionFloat { 0.0 });
 
+    // Snapmaker: flow-variant support -------------------------------------------------------------
+    // TODO：Revise the copy and add translations
+    def = this->add("filament_volume_type", coStrings);
+    def->label = L("Filament volume type");
+    def->tooltip = L("Flow type of each filament (one entry per filament, e.g. standard / high_flow). "
+                     "The GUI writes its filament-to-flow-type mapping here; flow-variant array options "
+                     "are read at the index the filament's flow type resolves to in the corresponding "
+                     "*_flow_support list.");
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
+
+    def = this->add("filament_flow_support", coStrings);
+    def->label = L("Filament flow support");
+    def->tooltip = L("Flow variants this filament preset provides values for. Multi-valued filament "
+                     "options are ordered accordingly, the first value belongs to the standard mode.");
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
+
+    def = this->add("process_flow_support", coStrings);
+    def->label = L("Process flow support");
+    def->tooltip = L("Flow variants this process preset provides values for. Multi-valued process "
+                     "options are ordered accordingly, the first value belongs to the standard mode.");
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
+
+    def = this->add("printer_flow_support", coStrings);
+    def->label = L("Printer flow support");
+    def->tooltip = L("Flow variants this printer preset provides values for. Multi-valued printer "
+                     "options are ordered accordingly, the first value belongs to the standard mode.");
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
+
+    def = this->add("filament_flow_step_size", coInts);
+    def->label = L("Filament flow step size");
+    def->tooltip = L("Segment length (number of declared flow variants) of each filament inside the "
+                     "interleaved filament arrays of a composed config. Filament i owns the segment "
+                     "starting at the sum of the preceding step sizes. Generated when the full config "
+                     "is composed, not part of any preset.");
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionInts { 1 });
+    // end Snapmaker: flow-variant support -------------------------------------------------------------
+
     def = this->add("cooling_tube_retraction", coFloat);
     def->label = L("Cooling tube position");
     def->tooltip = L("Distance of the center-point of the cooling tube from the extruder tip.");
@@ -7130,7 +7177,26 @@ void PrintConfigDef::init_sla_params()
     def->set_default_value(new ConfigOptionEnum<SLAMaterialSpeed>(slamsFast));
 }
 
-// Snapmaker: flow-variant support -----------------------------------------------------------------
+// ==== Snapmaker: flow-variant support ============================================================
+
+const ConfigOptionStrings* strings_option(const ConfigBase& config, const char* key)
+{
+    const ConfigOption* opt = config.option(key);
+    if (opt == nullptr || opt->type() != coStrings)
+        return nullptr;
+
+    return static_cast<const ConfigOptionStrings*>(opt);
+}
+
+const ConfigOptionInts* ints_option(const ConfigBase& config, const char* key)
+{
+    const ConfigOption* opt = config.option(key);
+    if (opt == nullptr || opt->type() != coInts)
+        return nullptr;
+
+    return static_cast<const ConfigOptionInts*>(opt);
+}
+
 size_t flow_variant_index(const std::vector<std::string> &flow_support, const std::string &mode)
 {
     if (mode.empty())
@@ -7154,22 +7220,53 @@ const char* flow_support_key(ConfigFlowDomain domain)
 
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
-    const ConfigOption *modes_opt = config.option("filament_volume_type");
-    if (modes_opt == nullptr || modes_opt->type() != coStrings)
-        return 0;
+    const ConfigOptionStrings* volume_types = strings_option(config, "filament_volume_type");
+    const ConfigOptionStrings* flow_support = strings_option(config, flow_support_key(domain));
 
-    const auto &modes = static_cast<const ConfigOptionStrings*>(modes_opt)->values;
-    if (modes.empty())
-        return 0;
+    switch (domain) {
+    case ConfigFlowDomain::Process:
+    case ConfigFlowDomain::Printer: {
+        if (volume_types == nullptr || volume_types->values.empty() || flow_support == nullptr)
+            return 0;
 
-    const std::string &mode = filament_id < modes.size() ? modes[filament_id] : modes.front();
+        const std::string& flow_type = volume_types->get_at(filament_id);
+        return flow_variant_index(flow_support->values, flow_type);
+    }
+    case ConfigFlowDomain::Filament: {
+        const ConfigOptionInts* step_sizes = ints_option(config, "filament_flow_step_size");
+        if (step_sizes == nullptr || step_sizes->values.empty())
+            return filament_id;
 
-    const ConfigOption *support_opt = config.option(flow_support_key(domain));
-    if (support_opt == nullptr || support_opt->type() != coStrings)
-        return 0;
+        auto step_size_of = [step_sizes](size_t filament_idx) -> size_t {
+            if (filament_idx >= step_sizes->values.size())
+                return 1;
+            return size_t(std::max(1, step_sizes->values[filament_idx]));
+        };
 
-    return flow_variant_index(static_cast<const ConfigOptionStrings*>(support_opt)->values, mode);
+        size_t segment_start = 0;
+        for (size_t i = 0; i < filament_id; ++i)
+            segment_start += step_size_of(i);
+
+        if (volume_types == nullptr || volume_types->values.empty() || flow_support == nullptr)
+            return segment_start;
+
+        const std::string& flow_type    = volume_types->get_at(filament_id);
+        const size_t       segment_size = step_size_of(filament_id);
+        const auto&        declarations = flow_support->values;
+        for (size_t pos = 0; pos < segment_size && segment_start + pos < declarations.size(); ++pos) {
+            if (declarations[segment_start + pos] == flow_type)
+                return segment_start + pos;
+        }
+
+        // The flow type is not declared by this filament -> its standard (first) value.
+        return segment_start;
+    }
+    } // switch
+
+    return 0;
 }
+
+// ==== end Snapmaker: flow-variant support ========================================================
 
 void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &value)
 {

@@ -1308,6 +1308,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionStrings,             filament_flow_support))
     ((ConfigOptionStrings,             process_flow_support))
     ((ConfigOptionStrings,             printer_flow_support))
+    ((ConfigOptionInts,                filament_flow_step_size))
 )
 
 // This object is mapped to Perl as Slic3r::Config::Print.

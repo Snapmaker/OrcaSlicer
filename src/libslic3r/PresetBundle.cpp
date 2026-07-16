@@ -2490,15 +2490,6 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
     // BBS
     size_t  num_filaments = this->filament_presets.size();
 
-    const ConfigOptionStrings* filament_volume_types = this->project_config.option<ConfigOptionStrings>("filament_volume_type");
-    auto filament_flow_mode = [filament_volume_types](size_t filament_idx) -> const std::string& {
-        static const std::string standard_mode(FLOW_MODE_STANDARD);
-        if (filament_volume_types == nullptr || filament_volume_types->values.empty())
-            return standard_mode;
-
-        return filament_volume_types->get_at(filament_idx);
-    };
-
     auto* extruder_diameter = dynamic_cast<const ConfigOptionFloats*>(out.option("nozzle_diameter"));
     // Collect the "compatible_printers_condition" and "inherits" values over all presets (print, filaments, printers) into a single vector.
     std::vector<std::string> compatible_printers_condition;
@@ -2529,14 +2520,17 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
     if (num_filaments <= 1) {
         out.apply(this->filaments.get_edited_preset().config);
 
-        // Snapmaker: collapse the flow-variant dimension of filament vector options to the variant
-        // selected by its filament_volume_type entry. Values are ordered by the preset's filament_flow_support
-        // declaration; get_at() falls back to the first (standard) value for shorter arrays.
+        // Snapmaker: align the flow-variant segment of every filament vector option. The composed
+        // config keeps ALL declared variants (ordered by the preset's filament_flow_support);
+        // get_config_idx() resolves the actual index at read time. Padding with resize() duplicates
+        // the first (standard) value for variants the preset provides no value for, and truncates
+        // surplus legacy values of presets without a flow_support declaration.
         {
             const DynamicPrintConfig &filament_cfg = this->filaments.get_edited_preset().config;
-            size_t filament_variant_idx = 0;
-            if (const auto *flow_support = filament_cfg.option<ConfigOptionStrings>("filament_flow_support"))
-                filament_variant_idx = flow_variant_index(flow_support->values, filament_flow_mode(0));
+            const auto *flow_support = filament_cfg.option<ConfigOptionStrings>("filament_flow_support");
+            int flow_step_size = 1;
+            if (flow_support != nullptr && !flow_support->values.empty())
+                flow_step_size = int(flow_support->values.size());
 
             for (const t_config_option_key &key : this->filaments.default_preset().config.keys()) {
                 if (key == "compatible_prints" || key == "compatible_printers")
@@ -2547,15 +2541,10 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                     continue;
 
                 auto *opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
-                if (opt_vec_dst->size() <= 1 && filament_variant_idx == 0)
-                    continue;
-
-                const ConfigOption *opt_src = filament_cfg.option(key);
-                if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0)
-                    opt_vec_dst->set_at(opt_src, 0, filament_variant_idx);
-
-                opt_vec_dst->resize(1);
+                if (opt_vec_dst->size() != size_t(flow_step_size))
+                    opt_vec_dst->resize(size_t(flow_step_size));
             }
+            out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = { flow_step_size };
         }
 
         compatible_printers_condition.emplace_back(this->filaments.get_edited_preset().compatible_printers_condition());
@@ -2641,11 +2630,17 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
             different_settings.emplace_back(different_filament_settings);
         }
 
-        // Snapmaker: per-filament index into flow-variant arrays, resolved from each filament's own flow type.
-        std::vector<size_t> filament_variant_idxs(num_filaments, 0);
-        for (size_t i = 0; i < num_filaments; ++i)
-            if (const auto *flow_support = filament_configs[i]->option<ConfigOptionStrings>("filament_flow_support"))
-                filament_variant_idxs[i] = flow_variant_index(flow_support->values, filament_flow_mode(i));
+        // Snapmaker: flow variant: "filament_flow_step_size" init
+        std::vector<int> flow_step_sizes(num_filaments, 1);
+        for (size_t i = 0; i < num_filaments; ++i) {
+            const auto *flow_support = filament_configs[i]->option<ConfigOptionStrings>("filament_flow_support");
+            if (flow_support != nullptr && !flow_support->values.empty())
+                flow_step_sizes[i] = int(flow_support->values.size());
+        }
+
+        size_t flow_total_size = 0;
+        for (int step_size : flow_step_sizes)
+            flow_total_size += size_t(step_size);
 
         // loop through options and apply them to the resulting config.
         for (const t_config_option_key &key : this->filaments.default_preset().config.keys()) {
@@ -2659,22 +2654,23 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 if (opt_src != nullptr)
                     opt_dst->set(opt_src);
             } else {
-                // BBS
                 ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
-                {
-                    std::vector<const ConfigOption*> filament_opts(num_filaments, nullptr);
-                    // Setting a vector value from all filament_configs.
-                    for (size_t i = 0; i < filament_opts.size(); ++i)
-                        filament_opts[i] = filament_configs[i]->option(key);
-                    opt_vec_dst->set(filament_opts);
-                    // Snapmaker: set() stored each preset's first (standard) value; for filaments
-                    // running a non-standard flow variant re-pick the value of that variant.
-                    for (size_t i = 0; i < filament_opts.size(); ++i)
-                        if (filament_variant_idxs[i] > 0 && filament_opts[i] != nullptr && !filament_opts[i]->is_scalar())
-                            opt_vec_dst->set_at(filament_opts[i], i, filament_variant_idxs[i]);
+                // Snapmaker: flow variant
+                opt_vec_dst->resize(flow_total_size);
+                size_t segment_start = 0;
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    const ConfigOption *opt_src = filament_configs[i]->option(key);
+                    if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0) {
+                        for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
+                            // set_at() reads the source through get_at(): variants the preset
+                            // provides no value for fall back to its first (standard) value.
+                            opt_vec_dst->set_at(opt_src, segment_start + k, k);
+                    }
+                    segment_start += size_t(flow_step_sizes[i]);
                 }
             }
         }
+        out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = flow_step_sizes;
     }
 
     //BBS: add logic for settings check between different system presets

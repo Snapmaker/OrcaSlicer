@@ -679,7 +679,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
                opt_key == "filament_volume_type"
             || opt_key == "filament_flow_support"
             || opt_key == "process_flow_support"
-            || opt_key == "printer_flow_support") {
+            || opt_key == "printer_flow_support"
+            || opt_key == "filament_flow_step_size") {
             // Snapmaker: switching a filament's flow variant changes the values read out of
             // flow-variant arrays without the arrays themselves
             // changing, so everything has to be recalculated. Do NOT move these keys into steps_gcode.

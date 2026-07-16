@@ -2601,8 +2601,8 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
     }
     m_volumes.volumes = std::move(glvolumes_new);
 
-    // Determine if LOD rendering optimization should be enabled
-    bool enableLod = GUI::wxGetApp().app_config->get_bool("enable_lod");
+    // LOD rendering optimization is always enabled
+    bool enableLod = true;
 
     // Disable LOD if free memory is less than 5GB
     if (enableLod && CpuMemory::CurFreeMemoryLessThanSpecifySizeGb(LOD_FREE_MEMORY_SIZE)) 

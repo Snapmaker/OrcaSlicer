@@ -185,10 +185,6 @@ void AppConfig::set_defaults()
     if (get("use_perspective_camera").empty())
         set_bool("use_perspective_camera", true);
 
-    // LOD (Level of Detail) rendering optimization - enabled by default
-    if (get("enable_lod").empty())
-        set_bool("enable_lod", true);
-
     if (get("auto_perspective").empty())
         set_bool("auto_perspective", false);
 

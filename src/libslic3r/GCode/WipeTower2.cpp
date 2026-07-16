@@ -2738,11 +2738,11 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     if (m_is_mk4mmu3)
         writer.switch_filament_monitoring(true);
 
-    //Vec2f current_pos = writer.pos_rotated();
-    //writer
-    //    .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
-    //    .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
-    //        Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
+    Vec2f current_pos = writer.pos_rotated();
+    writer
+        .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
+        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
+            Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
 
     writer.append("[deretraction_from_wipe_tower_generator]");
 
@@ -4144,7 +4144,6 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
         return;
 
     m_wipe_tower_height = m_plan.back().z;
-    m_use_gap_wall = false; // TODO: 先忽略缺口逻辑，后续重新适配
     plan_tower_new();
 
     m_layer_info = m_plan.begin();

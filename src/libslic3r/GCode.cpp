@@ -730,13 +730,6 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         ramming_end   = transform_wt_pt(tcr.nozzle_change_result.end_pos);
     }
 
-    // For Snapmaker Artision — next_wipe_x/y point to the wipe (not ramming) start
-    gcodegen.m_next_wipe_x = 0;
-    gcodegen.m_next_wipe_y = 0;
-    auto transformed_pos   = Eigen::Rotation2Df(wipe_tower_rotation) * tcr.start_pos + wipe_tower_offset;
-    gcodegen.m_next_wipe_x = transformed_pos(0);
-    gcodegen.m_next_wipe_y = transformed_pos(1);
-
     std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
 
     gcode += gcodegen.writer().unlift(); // Make sure there is no z-hop (in most cases, there isn't).
@@ -1162,9 +1155,6 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         const Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
         const Vec2f start_pos = transform_wt_pt(local_path.front());
         const Vec2f start_machine = start_pos + plate_origin_2d;
-
-        gcodegen.m_next_wipe_x = start_pos.x();
-        gcodegen.m_next_wipe_y = start_pos.y();
 
         gcode += gcodegen.writer().unlift();
 
@@ -8632,10 +8622,6 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         snprintf(key_value, sizeof(key_value), "flush_length_%d", flush_idx + 1);
         dyn_config.set_key_value(key_value, new ConfigOptionFloat(0.f));
     }
-
-    // For Snapmaker Artisian
-    dyn_config.set_key_value("next_wipe_x", new ConfigOptionFloat(m_next_wipe_x));
-    dyn_config.set_key_value("next_wipe_y", new ConfigOptionFloat(m_next_wipe_y));
 
     // Process the custom change_filament_gcode.
     const std::string& change_filament_gcode = m_config.change_filament_gcode.value;

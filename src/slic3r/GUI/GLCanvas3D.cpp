@@ -2612,7 +2612,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
 
 #ifdef __APPLE__
     // Disable LOD on macOS 15 due to known rendering compatibility issues
-    if (Slic3r::is_mac_version_15()) {
+    if (Slic3r::IsMacVersion15()) {
         enableLod = false;
     }
 #endif

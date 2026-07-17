@@ -143,14 +143,14 @@ static float get_special_k(unsigned char src_r, unsigned char src_g, unsigned ch
             src_type == SpecialColorType::DarkGray ||
             src_type == SpecialColorType::Black ||
             src_type == SpecialColorType::DarkColor) {
-            k *= 1.5f;
+            k *= 1.8f;
         } else if (src_type == SpecialColorType::ColdWhite ||
                    src_type == SpecialColorType::LightGray) {
-            k *= 1.2f;
+            k *= 1.4f;
         }
         else
         {
-            k *= 1.1f;
+            k *= 1.3f;
         }
     }
     if (src_type == SpecialColorType::PearlWhite) {

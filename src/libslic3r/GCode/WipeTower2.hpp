@@ -68,6 +68,11 @@ public:
 	std::vector<std::pair<float, float>> get_z_and_depth_pairs() const;
     std::vector<std::vector<WipeTower::box_coordinates>> get_local_z_reserve_boxes() const;
     float get_brim_width() const { return m_wipe_tower_brim_width_real; }
+    BoundingBoxf get_bbx() const {
+        if (m_outer_wall.empty()) return BoundingBoxf({Vec2d(0,0)});
+        BoundingBox  box = get_extents(m_outer_wall.begin()->second);
+        return BoundingBoxf(unscale(box.min), unscale(box.max));
+    }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
 
     bool get_floating_area(float& start_pos_y, float& end_pos_y) const;

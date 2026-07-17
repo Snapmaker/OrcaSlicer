@@ -81,11 +81,15 @@ public:
         const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes,
         const std::vector<std::vector<WipeTower::ToolChangeResult>> &local_z_tool_changes,
         const std::vector<std::vector<WipeTower::box_coordinates>>  &local_z_reserve_boxes,
-        const WipeTower::ToolChangeResult                           &final_purge) :
+        const WipeTower::ToolChangeResult                           &final_purge,
+        const float                                                  wipe_tower_depth,
+        const BoundingBoxf                                           &wipe_tower_bbx) :
         m_left(/*float(print_config.wipe_tower_x.value)*/ 0.f),
         m_right(float(/*print_config.wipe_tower_x.value +*/ print_config.prime_tower_width.value)),
         m_wipe_tower_pos(float(print_config.wipe_tower_x.get_at(plate_idx)), float(print_config.wipe_tower_y.get_at(plate_idx))),
         m_wipe_tower_rotation(float(print_config.wipe_tower_rotation_angle)),
+        m_wipe_tower_depth(wipe_tower_depth),
+        m_wipe_tower_bbx(wipe_tower_bbx),
         m_extruder_offsets(print_config.extruder_offset.values),
         m_priming(priming),
         m_tool_changes(tool_changes),
@@ -127,6 +131,8 @@ private:
     WipeTowerIntegration& operator=(const WipeTowerIntegration&);
     std::string append_tcr(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
     std::string append_tcr2(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
+    Polyline   detour_around_wipe_tower(const Point &start_pos, const Point &target_pos,
+                                                const BoundingBox &avoid_bbx) const;
 
     // Postprocesses gcode: rotates and moves G1 extrusions and returns result
     std::string post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const;
@@ -140,6 +146,8 @@ private:
     const float                                                  m_right;
     const Vec2f                                                  m_wipe_tower_pos;
     const float                                                  m_wipe_tower_rotation;
+    const float                                                  m_wipe_tower_depth;
+    const BoundingBoxf                                            m_wipe_tower_bbx;
     const std::vector<Vec2d>                                     m_extruder_offsets;
 
     // Reference to cached values at the Printer class.

@@ -718,6 +718,7 @@ struct WipeTowerData
     std::vector<std::vector<WipeTower::box_coordinates>>  local_z_reserve_boxes;
     float                                                 brim_width;
     float                                                 height;
+    BoundingBoxf                                           bbx;
 
     void clear() {
         priming.reset(nullptr);

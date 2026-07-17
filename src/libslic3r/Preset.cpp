@@ -192,6 +192,32 @@ static const std::unordered_map<std::string, std::string> pre_family_model_map {
     { "SL1",        "SL1" },
 }};
 
+// Snapmaker: flow-variant support ------------------------------------------------------------------
+static const char* preset_flow_support_key(Preset::Type type)
+{
+    switch (type) {
+    case Preset::TYPE_FILAMENT:
+        return flow_support_key(ConfigFlowDomain::Filament);
+    case Preset::TYPE_PRINT:
+        return flow_support_key(ConfigFlowDomain::Process);
+    case Preset::TYPE_PRINTER:
+        return flow_support_key(ConfigFlowDomain::Printer);
+    default:
+        return nullptr;
+    }
+}
+
+static void keep_flow_support_in_differential_save(const Preset &preset, std::vector<std::string> &dirty_options)
+{
+    const char *support_key = preset_flow_support_key(preset.type);
+    if (support_key == nullptr)
+        return;
+
+    const auto *flow_support = preset.config.option<ConfigOptionStrings>(support_key);
+    if (flow_support != nullptr && flow_support->values.size() > 1)
+        dirty_options.emplace_back(support_key);
+}
+
 VendorProfile VendorProfile::from_ini(const ptree &tree, const boost::filesystem::path &path, bool load_all)
 {
     static const std::string printer_model_key = "printer_model:";
@@ -609,6 +635,9 @@ void Preset::save(DynamicPrintConfig* parent_config)
                 option_differs_from_default(config, opt_key, opt_src))
                 dirty_options.emplace_back(opt_key);
         }
+
+        keep_flow_support_in_differential_save(*this, dirty_options);
+
         std::sort(dirty_options.begin(), dirty_options.end());
         dirty_options.erase(std::unique(dirty_options.begin(), dirty_options.end()), dirty_options.end());
 
@@ -1408,6 +1437,9 @@ Preset* PresetCollection::get_preset_differed_for_save(Preset& preset)
                 option_differs_from_default(preset.config, opt_key, opt_src))
                 dirty_options.emplace_back(opt_key);
         }
+
+        keep_flow_support_in_differential_save(preset, dirty_options);
+
         std::sort(dirty_options.begin(), dirty_options.end());
         dirty_options.erase(std::unique(dirty_options.begin(), dirty_options.end()), dirty_options.end());
 
@@ -1462,6 +1494,9 @@ int PresetCollection::get_differed_values_to_update(Preset& preset, std::map<std
                 option_differs_from_default(preset.config, opt_key, opt_src))
                 dirty_options.emplace_back(opt_key);
         }
+
+        keep_flow_support_in_differential_save(preset, dirty_options);
+
         std::sort(dirty_options.begin(), dirty_options.end());
         dirty_options.erase(std::unique(dirty_options.begin(), dirty_options.end()), dirty_options.end());
 

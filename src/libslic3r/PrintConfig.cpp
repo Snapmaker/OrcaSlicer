@@ -4020,7 +4020,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Adaptive"));
     def->enum_labels.push_back(L("Fixed"));
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionEnum<ExtruderLayerHeightMode>(elhmConsistent));
+    def->set_default_value(new ConfigOptionEnum<ExtruderLayerHeightMode>(elhmFixed));
 
     def = this->add("extruder_layer_height_tolerance", coPercent);
     def->label = L("Thick layer tolerance");
@@ -4034,7 +4034,7 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = 100;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionPercent(10));
+    def->set_default_value(new ConfigOptionPercent(80));
 
     def = this->add("slow_down_min_speed", coFloats);
     def->label = L("Min print speed");

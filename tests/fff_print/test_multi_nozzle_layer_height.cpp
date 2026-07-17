@@ -92,6 +92,10 @@ static DynamicPrintConfig two_extruder_config(double second_extruder_layer_heigh
     // The default G-code flavor rejects relative extruder addressing without a G92 E0 layer-change
     // reset; this suite does not exercise the G-code writer, keep validation quiet.
     config.set_key_value("use_relative_e_distances", new ConfigOptionBool(false));
+    // The scenarios build on consistent-mode expectations with a tight drift tolerance; the
+    // shipping defaults are fixed mode with a generous tolerance.
+    config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmConsistent;
+    config.set_key_value("extruder_layer_height_tolerance", new ConfigOptionPercent(10));
     return config;
 }
 
@@ -225,7 +229,7 @@ SCENARIO("Per-extruder layer height combines region layers", "[MultiNozzleLayerH
 
 SCENARIO("Fixed mode always prints the extruder layer height", "[MultiNozzleLayerHeight]") {
     // A 10 mm tall pyramid on the coarse extruder: its outline drifts by 0.2 mm per edge on every
-    // 0.2 mm layer, far past the default thick layer tolerance (10 % of the 0.6 mm nozzle), so
+    // 0.2 mm layer, far past the suite's 10 % thick layer tolerance (of the 0.6 mm nozzle), so
     // consistent mode falls back to the object layer height everywhere.
     GIVEN("A pyramid part whose outline drifts past the thick layer tolerance on every layer") {
         DynamicPrintConfig config = two_extruder_config(0.4);

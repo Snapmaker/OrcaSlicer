@@ -763,13 +763,31 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             gcode += gcodegen.retract(false, false, lift_type);
         }
 
-        gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, travel_target + plate_origin_2d), erMixed,
-                                    "Travel to a Wipe Tower");
+        Point target_obj = wipe_tower_point_to_object_point(gcodegen, travel_target + plate_origin_2d);
+
+        if (should_travel_to_tower && gcodegen.config().wipe_tower_wall_gap.value) {
+            BoundingBox tower_bbx;
+            {
+                BoundingBox bbox = scaled(m_wipe_tower_bbx);
+                Polygon     pp   = bbox.polygon();
+                for (auto &p : pp.points) {
+                    Vec2f pt = transform_wt_pt(unscale(p).cast<float>());
+                    p = wipe_tower_point_to_object_point(gcodegen, pt + plate_origin_2d);
+                }
+                tower_bbx = BoundingBox(pp.points);
+            }
+
+            Polyline detour = detour_around_wipe_tower(gcodegen.last_pos(), target_obj, tower_bbx);
+            for (size_t i = 0; i < detour.points.size(); ++i) {
+                gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+                gcode += gcodegen.travel_to(detour.points[i], erMixed,
+                    i == detour.points.size() - 1 ? "Travel to a Wipe Tower" : "Wipe tower detour");
+            }
+        } else {
+            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+            gcode += gcodegen.travel_to(target_obj, erMixed, "Travel to a Wipe Tower");
+        }
         gcode += gcodegen.unretract();
-    } else {
-        // When this is multiextruder printer without any ramming, we can just change
-        // the tool without travelling to the tower.
     }
 
     if (will_go_down) {
@@ -860,6 +878,117 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     // Let the planner know we are traveling between objects.
     gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
     return gcode;
+}
+
+// Compute a detour path around the wipe tower bounding box.
+// Returns a polyline whose last point is target_pos, with intermediate
+// waypoints that route around the tower rectangle to avoid crossing
+// through the tower body.
+Polyline WipeTowerIntegration::detour_around_wipe_tower(
+    const Point &start_pos, const Point &target_pos,
+    const BoundingBox &avoid_bbx_in) const
+{
+    Polyline result;
+
+    // The caller has already built the bbox in object coordinates from
+    // the actual outer wall geometry (includes brim/rib/fillet).
+    // Apply a small safety margin (2 mm, matching BambuStudio).
+    BoundingBox avoid_bbx = avoid_bbx_in;
+    avoid_bbx.offset(scaled(2.0));
+
+    // Debug: log bbox and travel line
+    BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: bbox_min=("
+        << unscale(avoid_bbx.min).x() << "," << unscale(avoid_bbx.min).y() << ") max=("
+        << unscale(avoid_bbx.max).x() << "," << unscale(avoid_bbx.max).y()
+        << ") start=(" << unscale(start_pos).x() << "," << unscale(start_pos).y()
+        << ") target=(" << unscale(target_pos).x() << "," << unscale(target_pos).y() << ")";
+
+    if (start_pos == target_pos) {
+        BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: start==target, no detour";
+        result.points.push_back(target_pos);
+        return result;
+    }
+
+    // Ray-line intersection helper.
+    auto ray_line_isect = [](const Vec2d &ro, const Vec2d &rd,
+                              const Vec2d &a, const Vec2d &b) -> std::pair<bool, Vec2d> {
+        const Vec2d sd = b - a;
+        double denom = cross2(rd, sd);
+        if (std::fabs(denom) < 1e-9) return {false, Vec2d(0,0)};
+        Vec2d delta = ro - a;
+        double t = cross2(sd, delta) / denom;
+        double u = cross2(rd, delta) / denom;
+        if (t >= 0.0 && u >= 0.0 && u <= 1.0)
+            return {true, ro + t * rd};
+        return {false, Vec2d(0,0)};
+    };
+
+    Vec2d bbox_ctr = unscale(avoid_bbx.center()).cast<double>();
+    Vec2d target_u = unscale(target_pos).cast<double>();
+    Vec2d start_u  = unscale(start_pos).cast<double>();
+
+    // Ray direction: from target toward the nearest bbox edge horizontally.
+    Vec2d v(1.0, 0.0);
+    if (target_u.x() < bbox_ctr.x()) v = Vec2d(-1.0, 0.0);
+
+    // First intersection: ray from target along v with the bbox edges.
+    Points bbox_pts = avoid_bbx.polygon().points;
+    int    idx1 = -1;
+    Vec2d  pt1;
+    for (size_t i = 0; i < bbox_pts.size(); ++i) {
+        auto [ok, isect] = ray_line_isect(target_u, v,
+            unscale(bbox_pts[i]).cast<double>(),
+            unscale(bbox_pts[(i + 1) % bbox_pts.size()]).cast<double>());
+        if (ok) { idx1 = int(i); pt1 = isect; break; }
+    }
+    if (idx1 < 0) {
+        BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: no ray intersection, v=("
+            << v.x() << "," << v.y() << "), no detour";
+        result.points.push_back(target_pos); return result;
+    }
+
+    // Second intersection: line from start to pt1 with the remaining bbox edges.
+    int   idx2 = -1;
+    Vec2d pt2;
+    for (size_t i = 0; i < bbox_pts.size(); ++i) {
+        if (int(i) == idx1) continue;
+        Vec2d a = unscale(bbox_pts[i]).cast<double>();
+        Vec2d b = unscale(bbox_pts[(i + 1) % bbox_pts.size()]).cast<double>();
+        Vec2d isect;
+        if (line_alg::intersection(Linef(start_u, pt1), Linef(a, b), &isect)) {
+            idx2 = int(i); pt2 = isect; break;
+        }
+    }
+
+    if (idx2 < 0) {
+        result.points.push_back(Point(scaled(pt1)));
+    } else {
+        // Walk the shorter perimeter path between the two intersection points.
+        auto walk = [&](bool fwd) {
+            std::vector<Point> p; p.push_back(Point(scaled(pt2)));
+            int i = idx2;
+            int n = int(bbox_pts.size());
+            while (i != idx1) {
+                i = fwd ? (i + 1) % n : (i - 1 + n) % n;
+                p.push_back(bbox_pts[i]);
+            }
+            p.push_back(Point(scaled(pt1)));
+            return p;
+        };
+        auto pf = walk(true), pr = walk(false);
+        double lf = 0, lr = 0;
+        for (size_t i = 1; i < pf.size(); ++i) lf += (unscale(pf[i]) - unscale(pf[i-1])).norm();
+        for (size_t i = 1; i < pr.size(); ++i) lr += (unscale(pr[i]) - unscale(pr[i-1])).norm();
+        for (const auto &p : (lf <= lr ? pf : pr)) result.points.push_back(p);
+    }
+
+    result.points.push_back(target_pos);
+
+    BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: "
+        << result.points.size() << " waypoints, detour="
+        << (result.points.size() > 1 ? "yes" : "no (direct)");
+
+    return result;
 }
 
 // This function postprocesses gcode_original, rotates and moves all G1 extrusions and returns resulting gcode
@@ -2972,7 +3101,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                                                             *print.wipe_tower_data().priming.get(), print.wipe_tower_data().tool_changes,
                                                             print.wipe_tower_data().local_z_tool_changes,
                                                             print.wipe_tower_data().local_z_reserve_boxes,
-                                                            *print.wipe_tower_data().final_purge.get()));
+                                                            *print.wipe_tower_data().final_purge.get(),
+                                                            print.wipe_tower_data().depth,
+                                                            print.wipe_tower_data().bbx));
                 // BBS
                 file.write(m_writer.travel_to_z(initial_layer_print_height + m_config.z_offset.value, "Move to the first layer height"));
 

@@ -1412,6 +1412,11 @@ void PrintObject::detect_surfaces_type()
                         ExPolygons upper_slices = interface_shells ?
                             diff_ex(layerm_slices_surfaces, upper_layer->m_regions[region_id]->slices.surfaces, ApplySafetyOffset::Yes) :
                             diff_ex(layerm_slices_surfaces, upper_layer->lslices, ApplySafetyOffset::Yes);
+                        // ORCA: per-extruder layer height: geometry combined away above extrudes as
+                        // part of a group further up; the step faces it exposes here are real top
+                        // surfaces even though lslices still carry the uncombined shape.
+                        if (const ExPolygons &exposed = upper_layer->m_regions[region_id]->combined_away_exposed(); ! exposed.empty())
+                            upper_slices = union_ex(upper_slices, intersection_ex(layerm_slices_surfaces, exposed));
                         surfaces_append(top, opening_ex(upper_slices, offset), stTop);
                     } else {
                         // if no upper layer, all surfaces of this one are solid
@@ -1434,12 +1439,18 @@ void PrintObject::detect_surfaces_type()
                             surface_type_bottom_other);
 #else
                         // Any surface lying on the void is a true bottom bridge (an overhang)
-                        surfaces_append(
-                            bottom,
-                            opening_ex(
-                                diff_ex(layerm_slices_surfaces, lower_layer->lslices, ApplySafetyOffset::Yes),
-                                offset),
-                            surface_type_bottom_other);
+                        ExPolygons unsupported = diff_ex(layerm_slices_surfaces, lower_layer->lslices, ApplySafetyOffset::Yes);
+                        // ORCA: per-extruder layer height: geometry combined away below extrudes as
+                        // part of a group whose top lies underneath this layer; anything over its
+                        // leftover band hangs over the step it exposes. A combined group itself
+                        // reaches down to the layer below the whole group; its bridges hang over
+                        // that layer, not over the combined-away one right below.
+                        if (const ExPolygons &exposed = lower_layer->m_regions[region_id]->combined_away_exposed(); ! exposed.empty())
+                            unsupported = union_ex(unsupported, intersection_ex(layerm_slices_surfaces, exposed));
+                        if (const unsigned short count = layerm->combined_layer_count(); count > 1 && idx_layer >= size_t(count))
+                            unsupported = union_ex(unsupported,
+                                diff_ex(layerm_slices_surfaces, m_layers[idx_layer - count]->lslices, ApplySafetyOffset::Yes));
+                        surfaces_append(bottom, opening_ex(unsupported, offset), surface_type_bottom_other);
                         // if user requested internal shells, we need to identify surfaces
                         // lying on other slices not belonging to this region
                         if (interface_shells) {

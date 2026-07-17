@@ -199,6 +199,7 @@ enum EnsureVerticalShellThickness {
 enum ExtruderLayerHeightMode {
     elhmConsistent,
     elhmAdaptive,
+    elhmFixed,
 };
 
 // ORCA: split wall layer heights - which wall class gets its wall-only layer height adjusted

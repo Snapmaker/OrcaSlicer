@@ -95,13 +95,15 @@ static DynamicPrintConfig two_extruder_config(double second_extruder_layer_heigh
     return config;
 }
 
-// One object made of two 20x20 mm cube parts side by side; the second part prints with filament 2.
-// The parts are 20 * z_scale mm tall (10 mm by default).
-static void init_two_part_print(Print &print, Model &model, const DynamicPrintConfig &config, float z_scale = 0.5f)
+// One object made of two 20x20 mm parts side by side; the second part prints with filament 2.
+// The parts are z-scaled by z_scale (cubes are 10 mm tall by default).
+static void init_two_part_print(Print &print, Model &model, const DynamicPrintConfig &config, float z_scale = 0.5f,
+                                TestMesh coarse_shape = TestMesh::cube_20x20x20)
 {
     TriangleMesh fine_mesh = mesh(TestMesh::cube_20x20x20);
     fine_mesh.scale(Vec3f(1.f, 1.f, z_scale));
-    TriangleMesh coarse_mesh = fine_mesh;
+    TriangleMesh coarse_mesh = mesh(coarse_shape);
+    coarse_mesh.scale(Vec3f(1.f, 1.f, z_scale));
     coarse_mesh.translate(30.f, 0.f, 0.f);
 
     ModelObject *object = model.add_object();
@@ -217,6 +219,113 @@ SCENARIO("Per-extruder layer height combines region layers", "[MultiNozzleLayerH
             }
             CHECK(missing == 0);
             CHECK(bad_heights == 0);
+        }
+    }
+}
+
+SCENARIO("Fixed mode always prints the extruder layer height", "[MultiNozzleLayerHeight]") {
+    // A 10 mm tall pyramid on the coarse extruder: its outline drifts by 0.2 mm per edge on every
+    // 0.2 mm layer, far past the default thick layer tolerance (10 % of the 0.6 mm nozzle), so
+    // consistent mode falls back to the object layer height everywhere.
+    GIVEN("A pyramid part whose outline drifts past the thick layer tolerance on every layer") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        // Count coarse extrusion heights well below the apex, where slices stay large enough to print.
+        auto coarse_height_counts = [](Print &print, size_t &at_pitch, size_t &at_base, size_t &odd_layers) {
+            print.process();
+            const PrintObject &object = *print.objects().front();
+            int fine_region, coarse_region;
+            find_regions(object, fine_region, coarse_region);
+            REQUIRE(coarse_region >= 0);
+            at_pitch = at_base = odd_layers = 0;
+            for (size_t idx = 1; idx <= 40; ++ idx) {
+                const std::vector<float> heights = region_path_heights(object.get_layer(int(idx))->get_region(coarse_region));
+                if (idx % 2 == 1 && ! heights.empty())
+                    ++ odd_layers;
+                for (float height : heights) {
+                    if (std::abs(height - 0.4) < 1e-3)
+                        ++ at_pitch;
+                    else if (std::abs(height - 0.2) < 1e-3)
+                        ++ at_base;
+                }
+            }
+        };
+        WHEN("thick layer regions are Consistent") {
+            Print print;
+            Model model;
+            init_two_part_print(print, model, config, 0.25f, TestMesh::pyramid);
+            THEN("the drift keeps the coarse part at the object layer height") {
+                REQUIRE(print.validate().string.empty());
+                size_t at_pitch, at_base, odd_layers;
+                coarse_height_counts(print, at_pitch, at_base, odd_layers);
+                CHECK(at_pitch == 0);
+                CHECK(at_base > 0);
+                CHECK(odd_layers == 20);
+            }
+        }
+        WHEN("thick layer regions are Fixed") {
+            config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmFixed;
+            Print print;
+            Model model;
+            init_two_part_print(print, model, config, 0.25f, TestMesh::pyramid);
+            THEN("every coarse extrusion above the first layer keeps the extruder layer height") {
+                REQUIRE(print.validate().string.empty());
+                size_t at_pitch, at_base, odd_layers;
+                coarse_height_counts(print, at_pitch, at_base, odd_layers);
+                CHECK(at_pitch > 0);
+                CHECK(at_base == 0);
+                CHECK(odd_layers == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("Fixed mode keeps top surfaces on combined steps", "[MultiNozzleLayerHeight]") {
+    // A shoulder that ends mid-run: the wide cube's exposed ring is combined away with its layer
+    // (the run prints only the common shape), so it must reappear as a top surface on the printed
+    // layer below it - otherwise the step carries bare sparse infill (the benchy cabin roof case).
+    GIVEN("A wide cube ending mid-run with a narrower cube on top") {
+        auto top_area = [](ExtruderLayerHeightMode mode) {
+            DynamicPrintConfig config = two_extruder_config(0.4);
+            config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = mode;
+            Print print;
+            Model model;
+            TriangleMesh base = mesh(TestMesh::cube_20x20x20);
+            base.scale(Vec3f(1.f, 1.f, 0.25f));                  // 5 mm tall: the shoulder ends mid-run
+            TriangleMesh boss = mesh(TestMesh::cube_20x20x20);
+            boss.scale(Vec3f(0.5f, 0.5f, 0.1f));                 // 10 x 10 x 2 mm on top
+            boss.translate(5.f, 5.f, 5.f);
+            ModelObject *object = model.add_object();
+            object->name = "stepped_cube";
+            object->add_volume(std::move(base));
+            object->add_volume(std::move(boss));
+            object->config.set("extruder", 2);
+            object->add_instance();
+            // This fork's arrangement engine rejects positions outside the (unset) plate even for
+            // an InfiniteBed; place the object at a fixed bed spot like init_two_part_print().
+            for (ModelObject *mo : model.objects) {
+                mo->center_around_origin();
+                mo->translate(120., 120., 0.);
+                mo->ensure_on_bed();
+            }
+            print.apply(model, config);
+            print.set_status_silent();
+            REQUIRE(print.validate().string.empty());
+            print.process();
+            const PrintObject &po = *print.objects().front();
+            double area = 0.;
+            for (size_t idx = 0; idx < po.layer_count(); ++ idx)
+                for (int r = 0; r < po.get_layer(int(idx))->region_count(); ++ r)
+                    for (const Surface &surface : po.get_layer(int(idx))->get_region(r)->fill_surfaces.surfaces)
+                        if (surface.surface_type == stTop)
+                            area += unscale<double>(unscale<double>(surface.expolygon.area()));
+            return area;
+        };
+        THEN("the combined print keeps most of the per-layer top surface area") {
+            const double per_layer = top_area(elhmConsistent);
+            const double combined  = top_area(elhmFixed);
+            CAPTURE(per_layer, combined);
+            REQUIRE(per_layer > 100.);
+            REQUIRE(combined > 0.7 * per_layer);
         }
     }
 }

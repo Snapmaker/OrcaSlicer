@@ -925,8 +925,11 @@ void PrintObject::apply_extruder_layer_heights()
         return;
 
     // Adaptive mode commits runs cut short by shape drift at intermediate heights instead of
-    // falling back to the object layer height.
+    // falling back to the object layer height. Fixed mode has no drift concept at all: runs grow
+    // to the full pitch wherever the region exists with a common shape, ignoring the tolerance
+    // and overhangs, so the extruder never drops to finer layers (boundaries become steps).
     const bool adaptive = m_config.extruder_layer_height_mode.value == elhmAdaptive;
+    const bool fixed    = m_config.extruder_layer_height_mode.value == elhmFixed;
     // The filament index is the extruder index on classic multi-tool printers (same mapping as
     // extruder_preferred_layer_height() and Print::validate()).
     const PrintConfig &print_config = m_print->config();
@@ -997,14 +1000,22 @@ void PrintObject::apply_extruder_layer_heights()
                 if (next_merged.empty())
                     // Laterally displaced (a painted-boundary step): this column ends, the next anchors above.
                     break;
-                Polygons next_unioned = unioned;
-                polygons_append(next_unioned, to_polygons(expolys));
-                if (! opening(diff(union_(next_unioned), offset(next_merged, tolerance)), 0.5f * tolerance).empty()) {
-                    shape_drifted = true;
-                    break;
+                if (fixed) {
+                    // Even fixed mode ends a column where the shape displaces so far sideways that
+                    // the surviving intersection cannot carry a bead of the region's nozzle anymore:
+                    // committing such a sliver would erase the layers' real geometry, not step it.
+                    if (opening_ex(next_merged, 0.25f * float(scale_(nozzle_diameter))).empty())
+                        break;
+                } else {
+                    Polygons next_unioned = unioned;
+                    polygons_append(next_unioned, to_polygons(expolys));
+                    if (! opening(diff(union_(next_unioned), offset(next_merged, tolerance)), 0.5f * tolerance).empty()) {
+                        shape_drifted = true;
+                        break;
+                    }
+                    unioned = std::move(next_unioned);
                 }
                 merged  = std::move(next_merged);
-                unioned = std::move(next_unioned);
                 top_idx = next;
             }
             // Full runs and clean caps commit as grown; a run cut short by shape drift falls back to
@@ -1062,9 +1073,9 @@ void PrintObject::apply_extruder_layer_heights()
                 }
             }
             // The run must rest on the object below, else the finer per-layer bridge / overhang path
-            // is needed. Skipped when min_run > 1: no finer path exists then, overhangs are detected
-            // against the layer below the whole run instead.
-            if (min_run <= 1)
+            // is needed. Skipped when min_run > 1 or in fixed mode: no finer path is allowed then,
+            // overhangs are detected against the layer below the whole run instead.
+            if (min_run <= 1 && ! fixed)
                 if (const Layer *below = m_layers[idx]->lower_layer; below != nullptr &&
                     ! opening_ex(diff_ex(merged, below->lslices, ApplySafetyOffset::Yes), 0.5f * tolerance).empty()) {
                     ++ idx;
@@ -1092,8 +1103,13 @@ void PrintObject::apply_extruder_layer_heights()
             top_layerm->slices.set(std::move(merged), stInternal);
             top_layerm->m_combined_layer_count = (unsigned short)(commit_top - idx + 1);
             top_layerm->m_combined_height      = combined_height;
+            const ExPolygons committed = to_expolygons(top_layerm->slices.surfaces);
             for (size_t i = idx; i < commit_top; ++ i) {
                 LayerRegion *combined_away = m_layers[i]->regions()[region_id];
+                // The run prints only its common shape; this layer's own geometry outside it is
+                // approximated by the run's step. Surface detection classifies the step faces it
+                // exposes via this remainder (lslices still carry the uncombined shape).
+                combined_away->m_combined_away_exposed = diff_ex(to_expolygons(combined_away->slices.surfaces), committed);
                 combined_away->slices.clear();
                 // 0 marks "extrudes at the run top above", as opposed to genuinely absent geometry.
                 combined_away->m_combined_layer_count = 0;
@@ -1135,9 +1151,10 @@ void PrintObject::apply_extruder_layer_heights()
                     valid = ! merged.empty() && std::abs(m_layers[i]->height - m_layers[bottom]->height) <= EPSILON;
                 }
                 if (valid)
-                    valid = opening(diff(union_(unioned), offset(merged, tolerance)), 0.5f * tolerance).empty();
+                    valid = fixed ? ! opening_ex(merged, 0.25f * float(scale_(nozzle_diameter))).empty()
+                                  : opening(diff(union_(unioned), offset(merged, tolerance)), 0.5f * tolerance).empty();
                 // The coarse walls must rest on the object below the whole run, like the fine walk.
-                if (valid)
+                if (valid && ! fixed)
                     if (const Layer *below = m_layers[bottom]->lower_layer; below != nullptr &&
                         ! opening_ex(diff_ex(merged, below->lslices, ApplySafetyOffset::Yes), 0.5f * tolerance).empty())
                         valid = false;

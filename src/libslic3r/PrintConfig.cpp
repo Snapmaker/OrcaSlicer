@@ -298,6 +298,7 @@ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(EnsureVerticalShellThickness)
 static t_config_enum_values s_keys_map_ExtruderLayerHeightMode{
     { "consistent", int(ExtruderLayerHeightMode::elhmConsistent) },
     { "adaptive",   int(ExtruderLayerHeightMode::elhmAdaptive) },
+    { "fixed",      int(ExtruderLayerHeightMode::elhmFixed) },
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ExtruderLayerHeightMode)
 
@@ -4006,12 +4007,18 @@ void PrintConfigDef::init_fff_params()
                      "gives the most uniform walls.\n"
                      "Adaptive: runs may also be combined at intermediate multiples of the object layer "
                      "height, so more of the part prints with thicker layers, at the price of bands of "
-                     "varying layer heights on curved part boundaries.");
+                     "varying layer heights on curved part boundaries.\n"
+                     "Fixed: parts always print at the extruder layer height, even where the shape changes "
+                     "across the combined layers or overhangs; curved boundaries turn into steps and detail "
+                     "finer than the thick layers is lost. Only geometry too short for a whole thick layer "
+                     "(part tops and the first layer) prints thinner.");
     def->enum_keys_map = &ConfigOptionEnum<ExtruderLayerHeightMode>::get_enum_values();
     def->enum_values.push_back("consistent");
     def->enum_values.push_back("adaptive");
+    def->enum_values.push_back("fixed");
     def->enum_labels.push_back(L("Consistent"));
     def->enum_labels.push_back(L("Adaptive"));
+    def->enum_labels.push_back(L("Fixed"));
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<ExtruderLayerHeightMode>(elhmConsistent));
 

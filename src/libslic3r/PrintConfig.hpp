@@ -374,6 +374,13 @@ const char* flow_support_key(ConfigFlowDomain domain);
 
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id = 0);
 
+template<typename VectorOption>
+inline auto get_value_at(const ConfigBase &config, const VectorOption &opt, ConfigFlowDomain domain, unsigned int filament_id = 0)
+    -> decltype(opt.get_at(0))
+{
+    return opt.get_at(get_config_idx(config, domain, filament_id));
+}
+
 // end Snapmaker: flow variant------------------------------------------------------------------------
 
 enum class GCodeThumbnailsFormat {

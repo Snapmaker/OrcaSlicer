@@ -42,6 +42,12 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
     m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterWebView::OnScriptMessage, this, m_browser->GetId());
 
+    // CreateWebView() already started loading m_last_url; watch it and retry
+    // automatically until the page actually loads (see OnLoadRetryTimer).
+    m_load_retry_timer.Bind(wxEVT_TIMER, &PrinterWebView::OnLoadRetryTimer, this);
+    m_load_in_flight = true;
+    m_load_retry_timer.Start(RETRY_INTERVAL_MS);
+
     SetSizer(topsizer);
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
@@ -59,6 +65,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 PrinterWebView::~PrinterWebView()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Start";
+    m_load_retry_timer.Stop();
     SetEvtHandlerEnabled(false);
     SSWCP::on_webview_delete(m_browser);
 
@@ -77,6 +84,10 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     m_last_url = url;
     m_retry_count = 0;
     m_load_succeeded = false;
+    m_load_in_flight = true;
+    m_in_flight_ticks = 0;
+    if (!m_load_retry_timer.IsRunning())
+        m_load_retry_timer.Start(RETRY_INTERVAL_MS);
     
     if (url.find("path=2") != std::string::npos) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
@@ -101,6 +112,10 @@ void PrinterWebView::reload_if_failed()
         return;
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": device page was not loaded, reloading " << m_last_url;
     m_retry_count = 0;
+    m_load_in_flight = true;
+    m_in_flight_ticks = 0;
+    if (!m_load_retry_timer.IsRunning())
+        m_load_retry_timer.Start(RETRY_INTERVAL_MS);
     m_browser->LoadURL(m_last_url);
 }
 
@@ -189,25 +204,40 @@ void PrinterWebView::OnError(wxWebViewEvent &evt)
         break;
       }
     BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":PrinterWebView error loading page %1% %2% %3% %4%") %evt.GetURL() %evt.GetTarget() %e %evt.GetString();
-    m_load_succeeded = false;
 
-    // Retry transient failures of the locally-served device page. During startup
-    // the embedded HTTP server / webview network stack may not be ready when the
-    // first load fires; WKWebView then reports a 60s connection timeout and the
-    // page would stay blank for the rest of the session. Only retry localhost
-    // URLs (our own server) — never remote ones.
-    const bool is_connection_error = (evt.GetInt() == wxWEBVIEW_NAV_ERR_CONNECTION || evt.GetInt() == wxWEBVIEW_NAV_ERR_OTHER);
-    const bool is_local_url        = m_last_url.StartsWith("http://127.0.0.1:") || m_last_url.StartsWith("http://localhost:");
-    if (is_connection_error && is_local_url && m_retry_count < MAX_LOAD_RETRIES) {
-        ++m_retry_count;
-        const int attempt = m_retry_count;
-        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": retrying local device page load (%1%/%2%)") % attempt % MAX_LOAD_RETRIES;
-        wxString retry_url = m_last_url;
-        CallAfter([this, retry_url, attempt]() {
-            if (m_browser && m_retry_count == attempt)
-                m_browser->LoadURL(retry_url);
-        });
+    // USER_CANCELLED (-999) means a load we issued ourselves cancelled a load
+    // that was still in flight — not a real failure. Keep the in-flight state
+    // of the new load and let it run.
+    if (evt.GetInt() == wxWEBVIEW_NAV_ERR_USER_CANCELLED)
+        return;
+    m_load_succeeded = false;
+    m_load_in_flight = false; // the retry timer will re-issue the load
+}
+
+void PrinterWebView::OnLoadRetryTimer(wxTimerEvent&)
+{
+    if (m_load_succeeded || m_browser == nullptr) {
+        m_load_retry_timer.Stop();
+        return;
     }
+    if (m_last_url.empty())
+        return;
+    if (m_load_in_flight && m_in_flight_ticks < MAX_IN_FLIGHT_TICKS) {
+        // A load is in flight; give it up to ~15s before treating it as hung.
+        // (The startup-hang failure mode never completes nor errors quickly.)
+        ++m_in_flight_ticks;
+        return;
+    }
+    if (m_retry_count >= MAX_LOAD_RETRIES) {
+        m_load_retry_timer.Stop();
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": giving up after " << MAX_LOAD_RETRIES << " attempts for " << m_last_url;
+        return;
+    }
+    ++m_retry_count;
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": reloading device page (attempt %1%/%2%) %3%") % m_retry_count % MAX_LOAD_RETRIES % m_last_url;
+    m_load_in_flight  = true;
+    m_in_flight_ticks = 0;
+    m_browser->LoadURL(m_last_url);
 }
 
 void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
@@ -216,6 +246,8 @@ void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
         return;
     m_retry_count = 0;
     m_load_succeeded = true;
+    m_load_in_flight = false;
+    m_load_retry_timer.Stop();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": PrinterWebView loaded ok: " << evt.GetURL();
     SendAPIKey();
 }

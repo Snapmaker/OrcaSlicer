@@ -6407,8 +6407,12 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
-    initSentry();
-    auto soft_start_time = get_time_timestamp();    
+    // Dev escape hatch: crashpad's Mach exception handling is suspected of
+    // interfering with WKWebView child processes on some macOS versions.
+    // SM_NO_SENTRY=1 skips sentry/crashpad init without a rebuild.
+    if (getenv("SM_NO_SENTRY") == nullptr)
+        initSentry();
+    auto soft_start_time = get_time_timestamp();
     auto res = CLI().run(argc, argv);
     auto soft_end_time = get_time_timestamp();    
 

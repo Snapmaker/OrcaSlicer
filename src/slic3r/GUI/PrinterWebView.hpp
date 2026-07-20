@@ -54,6 +54,7 @@ public:
 
 private:
     void SendAPIKey();
+    void OnLoadRetryTimer(wxTimerEvent& evt);
 
     wxWebView* m_browser;
     long m_zoomFactor;
@@ -62,12 +63,19 @@ private:
     // Retry state for transient localhost load failures. The device page is
     // served by the app's embedded HTTP server; if that server (or the
     // webview's network stack) isn't ready when the first load fires during
-    // startup, WKWebView reports a connection timeout after 60s and the page
-    // stays blank forever. OnError retries a few times with a delay.
+    // startup, WKWebView hangs and reports a connection timeout after 60s,
+    // leaving the page blank forever. A timer re-issues the load every few
+    // seconds until the page loads (or we give up), so the tab heals itself
+    // without the user having to revisit it.
     wxString m_last_url;
-    int      m_retry_count = 0;
-    bool     m_load_succeeded = false;
-    static constexpr int MAX_LOAD_RETRIES = 4;
+    int      m_retry_count     = 0;
+    bool     m_load_succeeded  = false;
+    bool     m_load_in_flight  = false;
+    int      m_in_flight_ticks = 0; // timer ticks the current load has been in flight
+    wxTimer  m_load_retry_timer;
+    static constexpr int RETRY_INTERVAL_MS   = 5000;
+    static constexpr int MAX_LOAD_RETRIES    = 24; // ~2 minutes of retries, then give up
+    static constexpr int MAX_IN_FLIGHT_TICKS = 3;  // a load in flight >15s counts as hung
 
     // DECLARE_EVENT_TABLE()
 };

@@ -201,11 +201,8 @@ class session : public std::enable_shared_from_this<session>
     boost::asio::ip::tcp::socket socket;
 
     boost::asio::streambuf buff;
-    http_headers headers;
 
-    void read_first_line();
-    void read_next_line();
-    void read_body();
+    void read_request();
 
 public:
     session(HttpServer::IOServer& server, boost::asio::ip::tcp::socket socket) : server(server), socket(std::move(socket)) {}

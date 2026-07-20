@@ -93,7 +93,7 @@ std::string url_get_param(const std::string& url, const std::string& key)
     return result;
 }
 
-void session::start() { read_first_line(); }
+void session::start() { read_request(); }
 
 void session::stop()
 {
@@ -102,92 +102,43 @@ void session::stop()
     socket.close(ignored_ec);
 }
 
-void session::read_first_line()
+void session::read_request()
 {
     auto self(shared_from_this());
-
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
-        if (!e) {
-            std::string  line, ignore;
-            std::istream stream{&buff};
-            std::getline(stream, line, '\r');
-            std::getline(stream, ignore, '\n');
-            headers.on_read_request_line(line);
-            read_next_line();
-        } else if (e != boost::asio::error::operation_aborted) {
-            server.stop(self);
+    auto req = std::make_shared<boost::beast::http::request<boost::beast::http::string_body>>();
+    // Use beast's proper HTTP parser: the previous hand-rolled line parser
+    // (async_read_until with a '\r' delimiter) deadlocked whenever a "\r\n"
+    // straddled a read boundary — the stray '\n' poisoned the empty-line
+    // check, so header parsing never terminated and the request hung forever.
+    boost::beast::http::async_read(socket, buff, *req, [this, self, req](const boost::beast::error_code& e, std::size_t) {
+        if (e) {
+            if (e != boost::asio::error::operation_aborted)
+                server.stop(self);
+            return;
         }
-    });
-}
 
-void session::read_body()
-{
-    auto self(shared_from_this());
+        if (req->method() == boost::beast::http::verb::options) {
+            // CORS preflight: canned 200 response.
+            std::stringstream ssOut;
+            ssOut << "HTTP/1.1 200 OK\r\n";
+            ssOut << "Access-Control-Allow-Origin: *\r\n";
+            ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+            ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+            ssOut << "Content-Length: 0\r\n";
+            ssOut << "\r\n";
+            auto str = std::make_shared<std::string>(ssOut.str());
+            async_write(socket, boost::asio::buffer(*str),
+                        [this, self, str](const boost::beast::error_code&, std::size_t) { server.stop(self); });
+            return;
+        }
 
-    int                                nbuffer = 1000;
-    std::shared_ptr<std::vector<char>> bufptr  = std::make_shared<std::vector<char>>(nbuffer);
-    async_read(socket, boost::asio::buffer(*bufptr, nbuffer),
-               [this, self](const boost::beast::error_code& e, std::size_t s) { server.stop(self); });
-}
-
-void session::read_next_line()
-{
-    auto self(shared_from_this());
-
-    if (headers.method == "OPTIONS") {
-        // 构造OPTIONS响应（允许跨域）
+        const std::string url_str = Http::url_decode(std::string(req->target()));
+        const auto        resp    = server.server.m_request_handler(url_str);
         std::stringstream ssOut;
-        ssOut << "HTTP/1.1 200 OK\r\n";
-        ssOut << "Access-Control-Allow-Origin: *\r\n";                            // 允许所有源
-        ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";          // 允许的方法
-        ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"; // 允许的请求头
-        ssOut << "Content-Length: 0\r\n";                                         // 无响应体
-        ssOut << "\r\n";                                                          // 头和主体之间的空行（必须）
-
-        // 异步发送响应
-        async_write(socket, boost::asio::buffer(ssOut.str()), [this, self](const boost::beast::error_code& e, std::size_t s) {
-            std::cout << "OPTIONS预检请求已处理" << std::endl;
-            server.stop(self); // 关闭连接
-        });
-        return; // 提前返回，避免后续逻辑
-    }
-
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
-        if (!e) {
-            std::string  line, ignore;
-            std::istream stream{&buff};
-            std::getline(stream, line, '\r');
-            std::getline(stream, ignore, '\n');
-            headers.on_read_header(line);
-
-            if (line.length() == 0) {
-                if (headers.content_length() == 0) {
-                    std::cout << "Request received: " << headers.method << " " << headers.get_url();
-                    if (headers.method == "OPTIONS") {
-                        // Ignore http OPTIONS
-                        server.stop(self);
-                        return;
-                    }
-
-                    const std::string url_str = Http::url_decode(headers.get_url());
-                    const auto        resp    = server.server.m_request_handler(url_str);
-                    std::stringstream ssOut;
-                    resp->write_response(ssOut);
-                    std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
-                    async_write(socket, boost::asio::buffer(str->c_str(), str->length()),
-                                [this, self, str](const boost::beast::error_code& e, std::size_t s) {
-                                    std::cout << "done" << std::endl;
-                                    server.stop(self);
-                                });
-                } else {
-                    read_body();
-                }
-            } else {
-                read_next_line();
-            }
-        } else if (e != boost::asio::error::operation_aborted) {
-            server.stop(self);
-        }
+        resp->write_response(ssOut);
+        auto str = std::make_shared<std::string>(ssOut.str());
+        async_write(socket, boost::asio::buffer(*str),
+                    [this, self, str](const boost::beast::error_code&, std::size_t) { server.stop(self); });
     });
 }
 

@@ -677,6 +677,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             // These steps have no influence on the G-code whatsoever. Just ignore them.
         } else if (
                opt_key == "filament_volume_type"
+            || opt_key == "nozzle_volume_type"
             || opt_key == "filament_flow_support"
             || opt_key == "process_flow_support"
             || opt_key == "printer_flow_support"

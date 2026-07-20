@@ -4055,6 +4055,22 @@ void PrintConfigDef::init_fff_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionEnumsGeneric { fvtStandard });
 
+    // One entry per extruder (listed in extruder_option_keys(), so it is resized together with
+    // nozzle_diameter by set_num_extruders()). Shares the standard/high_flow value domain of
+    // FilamentVolumeType; unrelated to the device-side NozzleVolumeType (nvtNormal/nvtBigTraffic).
+    def = this->add("nozzle_volume_type", coEnums);
+    def->label = L("Nozzle volume type");
+    def->tooltip = L("Flow type of the nozzle installed on each extruder "
+                     "(one entry per extruder, e.g. standard / high_flow).");
+    def->enum_keys_map = &ConfigOptionEnum<FilamentVolumeType>::get_enum_values();
+    def->enum_values.push_back(FLOW_MODE_STANDARD);
+    def->enum_values.push_back(FLOW_MODE_HIGH_FLOW);
+    def->enum_labels.push_back(L("Standard"));
+    def->enum_labels.push_back(L("High flow"));
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionEnumsGeneric { fvtStandard });
+
     def = this->add("filament_flow_support", coStrings);
     def->label = L("Filament flow support");
     def->tooltip = L("Flow variants this filament preset provides values for. Multi-valued filament "
@@ -6489,7 +6505,9 @@ void PrintConfigDef::init_extruder_option_keys()
         "retraction_length", "z_hop", "z_hop_types", "z_hop_when_prime", "travel_slope", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "extruder_colour",
-        "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"
+        "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut",
+        // Snapmaker: flow-variant
+        "nozzle_volume_type"
     };
 
     m_extruder_retract_keys = {

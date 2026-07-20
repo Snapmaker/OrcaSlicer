@@ -1325,6 +1325,7 @@ PRINT_CONFIG_CLASS_DEFINE(
 
     // Snapmaker: flow-variant
     ((ConfigOptionEnumsGeneric,        filament_volume_type))
+    ((ConfigOptionEnumsGeneric,        nozzle_volume_type))
     ((ConfigOptionStrings,             filament_flow_support))
     ((ConfigOptionStrings,             process_flow_support))
     ((ConfigOptionStrings,             printer_flow_support))

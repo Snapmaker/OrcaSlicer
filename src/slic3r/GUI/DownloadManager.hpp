@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <deque>
 #include "../Utils/Http.hpp"
 #include "SSWCP.hpp"
 #include <boost/filesystem/path.hpp>
@@ -57,24 +58,40 @@ struct DownloadTask {
     DownloadTaskState state;
     int percent;
     std::string error_message;
-    
+
+    int encrypt_type;
+    std::string sn;
+    std::string decrypt_path;
+
     bool auto_finish_job;
     bool use_original_event_id;
-    
+
     // Constructor for WCP downloads
-    DownloadTask(size_t id, const std::string& url, const std::string& name, 
+    DownloadTask(size_t id, const std::string& url, const std::string& name,
                  const std::string& path, std::shared_ptr<SSWCP_Instance> instance,
-                 bool use_original_event = false)
+                 bool use_original_event = false, int enc_type = 1,
+                 const std::string& sn_param = "")
         : task_id(id), file_url(url), file_name(name), dest_path(path)
         , wcp_instance(instance), state(DownloadTaskState::Pending), percent(0)
+        , encrypt_type(enc_type), sn(sn_param)
         , auto_finish_job(false), use_original_event_id(use_original_event)
     {}
     
     // Constructor for internal downloads
-    DownloadTask(size_t id, const std::string& url, const std::string& name, 
+    DownloadTask(size_t id, const std::string& url, const std::string& name,
                  const std::string& path, DownloadCallbacks cb)
         : task_id(id), file_url(url), file_name(name), dest_path(path)
         , callbacks(std::move(cb)), state(DownloadTaskState::Pending), percent(0)
+        , encrypt_type(0), auto_finish_job(false), use_original_event_id(false)
+    {}
+
+    // Constructor for internal downloads with encryption support
+    DownloadTask(size_t id, const std::string& url, const std::string& name,
+                 const std::string& path, DownloadCallbacks cb,
+                 int enc_type, const std::string& sn_param)
+        : task_id(id), file_url(url), file_name(name), dest_path(path)
+        , callbacks(std::move(cb)), state(DownloadTaskState::Pending), percent(0)
+        , encrypt_type(enc_type), sn(sn_param)
         , auto_finish_job(false), use_original_event_id(false)
     {}
     
@@ -95,10 +112,17 @@ public:
     // ============================================================================
     // WCP Download Interface (for Web-to-PC communication)
     // ============================================================================
-    size_t start_wcp_download(const std::string& file_url, 
+    size_t start_wcp_download(const std::string& file_url,
                               const std::string& file_name,
                               std::shared_ptr<SSWCP_Instance> wcp_instance,
                               bool use_original_event_id = false);
+
+    size_t start_wcp_download(const std::string& file_url,
+                              const std::string& file_name,
+                              std::shared_ptr<SSWCP_Instance> wcp_instance,
+                              bool use_original_event_id,
+                              int encrypt_type,
+                              const std::string& sn);
     
     // ============================================================================
     // Internal Download Interface (for PC internal use)
@@ -111,7 +135,14 @@ public:
     size_t start_internal_download(const std::string& file_url,
                                     const std::string& file_name,
                                     DownloadCallbacks callbacks);
-    
+
+    size_t start_internal_download(const std::string& file_url,
+                                    const std::string& file_name,
+                                    const std::string& dest_path,
+                                    DownloadCallbacks callbacks,
+                                    int encrypt_type,
+                                    const std::string& sn);
+
     // ============================================================================
     // Common Interface (works for both WCP and internal downloads)
     // ============================================================================
@@ -146,6 +177,14 @@ private:
     // Track last progress update for throttling
     std::unordered_map<size_t, int> m_last_percent;
     std::unordered_map<size_t, std::chrono::steady_clock::time_point> m_last_update;
+
+    // Download queue
+    std::deque<size_t> m_pending_queue;
+    int m_max_concurrent_downloads = 1;
+    std::atomic<int> m_active_downloads{0};
+
+    // Process next pending task in queue
+    void process_queue();
     
     // ============================================================================
     // Internal Implementation

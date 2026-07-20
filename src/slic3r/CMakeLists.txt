@@ -543,6 +543,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/DownloadManager.hpp
     GUI/GenericDownloadDialog.cpp
     GUI/GenericDownloadDialog.hpp
+    GUI/Timelapse/TimelapseDownloadDialog.cpp
+    GUI/Timelapse/TimelapseDownloadDialog.hpp
+    GUI/Timelapse/TimelapseProgressPopup.cpp
+    GUI/Timelapse/TimelapseProgressPopup.hpp
     GUI/WebPresetDialog.hpp
     GUI/WebPresetDialog.cpp
     GUI/WebSMUserLoginDialog.cpp
@@ -578,6 +582,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ESP3D.hpp
     Utils/FileHelp.cpp
     Utils/FileHelp.hpp
+    Utils/FileDecrypt.cpp
+    Utils/FileDecrypt.hpp
     Utils/FixModelByWin10.cpp
     Utils/FixModelByWin10.hpp
     Utils/FlashAir.cpp

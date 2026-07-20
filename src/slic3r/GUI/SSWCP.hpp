@@ -30,9 +30,11 @@ using tcp = asio::ip::tcp;
 #define UPLOAD_CAMERA_TIMELAPSE "sw_UploadCameraTimelapse"
 #define DELETE_CAMERA_TIMELAPSE "sw_DeleteCameraTimelapse"
 #define GET_DEVICEDATA_STORAGESPACE "sw_GetDeviceDataStorageSpace"
-#define DOWNLOAD_FILE "sw_DownloadFile"
 #define DOWNLOAD_FILE_AND_OPEN "sw_DownLoadFileAndOpen"
 #define CANCEL_DOWNLOAD "sw_CancelDownload"
+#define SUBSCRIBE_DOWNLOAD_STATE "sw_SubscribeDownloadState"
+#define DOWN_LOAD_FILE "sw_DownLoadFile"
+#define DELETE_FILES "sw_DeleteFiles"
 #define FILE_VIEW "sw_FileView"
 
 namespace Slic3r { namespace GUI {
@@ -550,15 +552,22 @@ private:
 
     void sw_SubUserUpdatePrivacy();
 
-    void sw_DownloadFile();
-
     void sw_DownloadFileAndOpen();
 
     void sw_DownloadFileEx();
 
+    void sw_DownLoadFile();
+
     void sw_CancelDownload();
 
     void sw_FileView();
+    void sw_DeleteFiles();
+    void sw_SubscribeDownloadState();
+
+public:
+    struct SubscribeDownloadContext;
+    std::shared_ptr<SubscribeDownloadContext> m_subscribe_dl_ctx;
+    static std::unordered_map<std::string, std::weak_ptr<SubscribeDownloadContext>> m_subscribe_dl_map;
 };
 
 // Instance class for homepage business
@@ -682,6 +691,9 @@ private:
     std::unordered_map<std::string, std::string> m_ip_type_map;
 
 };
+
+std::string base64_encode(const char* data, size_t len);
+std::string make_wcp_download_url(const std::string& file_path);
 
 }};
 

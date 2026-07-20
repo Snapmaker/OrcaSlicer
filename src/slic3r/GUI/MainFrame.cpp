@@ -1107,6 +1107,8 @@ void MainFrame::init_tabpanel() {
         } else if (sel == tpMonitor) {
             // Entering device page (PrinterWebView)
             if (m_printer_view) {
+                // If the page's initial load failed (e.g. during startup), heal it now.
+                m_printer_view->reload_if_failed();
                 wxWebView* printer_webview = m_printer_view->get_browser();
                 wxGetApp().page_state_notify_webview(printer_webview, "active");
             }

@@ -30,6 +30,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/web/flutter_web/index.html?path=2");
     auto     real_url = wxGetApp().get_international_url(url);
+    m_last_url        = real_url;
       // Create the webview
     m_browser = WebView::CreateWebView(this, real_url);
     if (m_browser == nullptr) {
@@ -73,6 +74,9 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
         return;
     m_apikey = apikey;
     m_apikey_sent = false;
+    m_last_url = url;
+    m_retry_count = 0;
+    m_load_succeeded = false;
     
     if (url.find("path=2") != std::string::npos) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
@@ -89,6 +93,15 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
 void PrinterWebView::reload()
 {
     m_browser->Reload();
+}
+
+void PrinterWebView::reload_if_failed()
+{
+    if (m_load_succeeded || m_browser == nullptr || m_last_url.empty())
+        return;
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": device page was not loaded, reloading " << m_last_url;
+    m_retry_count = 0;
+    m_browser->LoadURL(m_last_url);
 }
 
 bool PrinterWebView::isSnapmakerPage()
@@ -176,12 +189,34 @@ void PrinterWebView::OnError(wxWebViewEvent &evt)
         break;
       }
     BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":PrinterWebView error loading page %1% %2% %3% %4%") %evt.GetURL() %evt.GetTarget() %e %evt.GetString();
+    m_load_succeeded = false;
+
+    // Retry transient failures of the locally-served device page. During startup
+    // the embedded HTTP server / webview network stack may not be ready when the
+    // first load fires; WKWebView then reports a 60s connection timeout and the
+    // page would stay blank for the rest of the session. Only retry localhost
+    // URLs (our own server) — never remote ones.
+    const bool is_connection_error = (evt.GetInt() == wxWEBVIEW_NAV_ERR_CONNECTION || evt.GetInt() == wxWEBVIEW_NAV_ERR_OTHER);
+    const bool is_local_url        = m_last_url.StartsWith("http://127.0.0.1:") || m_last_url.StartsWith("http://localhost:");
+    if (is_connection_error && is_local_url && m_retry_count < MAX_LOAD_RETRIES) {
+        ++m_retry_count;
+        const int attempt = m_retry_count;
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": retrying local device page load (%1%/%2%)") % attempt % MAX_LOAD_RETRIES;
+        wxString retry_url = m_last_url;
+        CallAfter([this, retry_url, attempt]() {
+            if (m_browser && m_retry_count == attempt)
+                m_browser->LoadURL(retry_url);
+        });
+    }
 }
 
 void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
 {
     if (evt.GetURL().IsEmpty())
         return;
+    m_retry_count = 0;
+    m_load_succeeded = true;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": PrinterWebView loaded ok: " << evt.GetURL();
     SendAPIKey();
 }
 

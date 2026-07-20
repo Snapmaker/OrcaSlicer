@@ -47,6 +47,10 @@ public:
     bool isSnapmakerPage();
     void sendMessage(const std::string& msg);
     wxWebView* get_browser() const { return m_browser; }
+    // Re-issue the last page load if the page never loaded successfully. Called
+    // when the user enters the Device tab so a page whose initial load failed
+    // (e.g. during startup) heals itself instead of staying blank all session.
+    void reload_if_failed();
 
 private:
     void SendAPIKey();
@@ -55,6 +59,15 @@ private:
     long m_zoomFactor;
     wxString m_apikey;
     bool m_apikey_sent;
+    // Retry state for transient localhost load failures. The device page is
+    // served by the app's embedded HTTP server; if that server (or the
+    // webview's network stack) isn't ready when the first load fires during
+    // startup, WKWebView reports a connection timeout after 60s and the page
+    // stays blank forever. OnError retries a few times with a delay.
+    wxString m_last_url;
+    int      m_retry_count = 0;
+    bool     m_load_succeeded = false;
+    static constexpr int MAX_LOAD_RETRIES = 4;
 
     // DECLARE_EVENT_TABLE()
 };

@@ -480,6 +480,13 @@ static const t_config_enum_values s_keys_map_WipeTowerWallType{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WipeTowerWallType)
 
+// Snapmaker: flow-variant
+static const t_config_enum_values s_keys_map_FilamentVolumeType = {
+    { FLOW_MODE_STANDARD,   fvtStandard },
+    { FLOW_MODE_HIGH_FLOW,  fvtHighFlow },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(FilamentVolumeType)
+
 static void assign_printer_technology_to_unknown(t_optiondef_map &options, PrinterTechnology printer_technology)
 {
     for (std::pair<const t_config_option_key, ConfigOptionDef> &kvp : options)
@@ -4033,15 +4040,20 @@ void PrintConfigDef::init_fff_params()
 
     // Snapmaker: flow-variant support -------------------------------------------------------------
     // TODO：Revise the copy and add translations
-    def = this->add("filament_volume_type", coStrings);
+    def = this->add("filament_volume_type", coEnums);
     def->label = L("Filament volume type");
     def->tooltip = L("Flow type of each filament (one entry per filament, e.g. standard / high_flow). "
                      "The GUI writes its filament-to-flow-type mapping here; flow-variant array options "
                      "are read at the index the filament's flow type resolves to in the corresponding "
                      "*_flow_support list.");
+    def->enum_keys_map = &ConfigOptionEnum<FilamentVolumeType>::get_enum_values();
+    def->enum_values.push_back(FLOW_MODE_STANDARD);
+    def->enum_values.push_back(FLOW_MODE_HIGH_FLOW);
+    def->enum_labels.push_back(L("Standard"));
+    def->enum_labels.push_back(L("High flow"));
     def->mode = comDevelop;
     def->cli = ConfigOptionDef::nocli;
-    def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
+    def->set_default_value(new ConfigOptionEnumsGeneric { fvtStandard });
 
     def = this->add("filament_flow_support", coStrings);
     def->label = L("Filament flow support");
@@ -7197,6 +7209,30 @@ const ConfigOptionInts* ints_option(const ConfigBase& config, const char* key)
     return static_cast<const ConfigOptionInts*>(opt);
 }
 
+const ConfigOptionEnumsGeneric* enums_option(const ConfigBase& config, const char* key)
+{
+    const ConfigOption* opt = config.option(key);
+    if (opt == nullptr || opt->type() != coEnums)
+        return nullptr;
+
+    return static_cast<const ConfigOptionEnumsGeneric*>(opt);
+}
+
+const char* to_string(FilamentVolumeType type)
+{
+    const t_config_enum_names &names = ConfigOptionEnum<FilamentVolumeType>::get_enum_names();
+    if (int(type) < 0 || int(type) >= int(names.size()))
+        return FLOW_MODE_STANDARD;
+    return names[int(type)].c_str();
+}
+
+FilamentVolumeType filament_volume_type_from_string(const std::string &str)
+{
+    FilamentVolumeType type = fvtStandard;
+    ConfigOptionEnum<FilamentVolumeType>::from_string(str, type);
+    return type;
+}
+
 size_t flow_variant_index(const std::vector<std::string> &flow_support, const std::string &mode)
 {
     if (mode.empty())
@@ -7220,8 +7256,8 @@ const char* flow_support_key(ConfigFlowDomain domain)
 
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
-    const ConfigOptionStrings* volume_types = strings_option(config, "filament_volume_type");
-    const ConfigOptionStrings* flow_support = strings_option(config, flow_support_key(domain));
+    const ConfigOptionEnumsGeneric* volume_types = enums_option(config, "filament_volume_type");
+    const ConfigOptionStrings*      flow_support = strings_option(config, flow_support_key(domain));
 
     switch (domain) {
     case ConfigFlowDomain::Process:
@@ -7229,7 +7265,7 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
         if (volume_types == nullptr || volume_types->values.empty() || flow_support == nullptr)
             return 0;
 
-        const std::string& flow_type = volume_types->get_at(filament_id);
+        const std::string flow_type = to_string(FilamentVolumeType(volume_types->get_at(filament_id)));
         return flow_variant_index(flow_support->values, flow_type);
     }
     case ConfigFlowDomain::Filament: {
@@ -7250,9 +7286,9 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
         if (volume_types == nullptr || volume_types->values.empty() || flow_support == nullptr)
             return segment_start;
 
-        const std::string& flow_type    = volume_types->get_at(filament_id);
-        const size_t       segment_size = step_size_of(filament_id);
-        const auto&        declarations = flow_support->values;
+        const std::string flow_type    = to_string(FilamentVolumeType(volume_types->get_at(filament_id)));
+        const size_t      segment_size = step_size_of(filament_id);
+        const auto&       declarations = flow_support->values;
         for (size_t pos = 0; pos < segment_size && segment_start + pos < declarations.size(); ++pos) {
             if (declarations[segment_start + pos] == flow_type)
                 return segment_start + pos;

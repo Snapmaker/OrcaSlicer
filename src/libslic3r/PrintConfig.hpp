@@ -368,6 +368,17 @@ enum class ConfigFlowDomain {
 constexpr const char* FLOW_MODE_STANDARD  = "standard";
 constexpr const char* FLOW_MODE_HIGH_FLOW = "high_flow";
 
+enum FilamentVolumeType {
+    fvtStandard = 0,
+    fvtHighFlow = 1,
+};
+
+// Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
+const char* to_string(FilamentVolumeType type);
+
+// Unknown names resolve to fvtStandard.
+FilamentVolumeType filament_volume_type_from_string(const std::string &str);
+
 size_t flow_variant_index(const std::vector<std::string> &flow_support, const std::string &mode);
 
 const char* flow_support_key(ConfigFlowDomain domain);
@@ -513,6 +524,8 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PrintHostType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(AuthorizationType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WipeTowerWallType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PerimeterGeneratorType)
+// Snapmaker: flow-variant
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FilamentVolumeType)
 
 #undef CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS
 
@@ -1311,7 +1324,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                has_scarf_joint_seam))
 
     // Snapmaker: flow-variant
-    ((ConfigOptionStrings,             filament_volume_type))
+    ((ConfigOptionEnumsGeneric,        filament_volume_type))
     ((ConfigOptionStrings,             filament_flow_support))
     ((ConfigOptionStrings,             process_flow_support))
     ((ConfigOptionStrings,             printer_flow_support))

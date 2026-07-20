@@ -171,11 +171,24 @@ void EraseIntOptionAt(DynamicPrintConfig &config, const std::string &key, size_t
         option->values.erase(option->values.begin() + index);
 }
 
+void EraseEnumsOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+{
+    ConfigOptionEnumsGeneric *option = config.option<ConfigOptionEnumsGeneric>(key, true);
+    if (option != nullptr && option->values.size() > index)
+        option->values.erase(option->values.begin() + index);
+}
+
 void EraseFilamentColorFields(DynamicPrintConfig &config, size_t index)
 {
     EraseStringOptionAt(config, "filament_multi_colors", index);
     EraseIntOptionAt(config, "filament_colour_mode", index);
     EnsureFilamentColorFieldsAligned(config);
+}
+
+void EnsureFilamentVolumeTypesAligned(DynamicPrintConfig &config, size_t num_filaments)
+{
+    auto *volume_types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
+    volume_types->values.resize(std::max<size_t>(num_filaments, 1), fvtStandard);
 }
 
 } // namespace
@@ -282,6 +295,7 @@ PresetBundle::PresetBundle()
 
     this->project_config.apply_only(FullPrintConfig::defaults(), s_project_options);
     EnsureFilamentColorFieldsAligned(this->project_config);
+    EnsureFilamentVolumeTypesAligned(this->project_config, this->filament_presets.size());
 }
 
 PresetBundle::PresetBundle(const PresetBundle &rhs)
@@ -1856,6 +1870,7 @@ void PresetBundle::update_selections(AppConfig &config)
     std::vector<FilamentColor> filamentColors = LoadFilamentColors(config, initial_printer_profile_name,
                                                                     filament_presets.size());
     ApplyFilamentColors(project_config, filamentColors);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
         boost::algorithm::split(matrix, config.get_printer_setting(initial_printer_profile_name, "flush_volumes_matrix"), boost::algorithm::is_any_of("|"));
@@ -1988,6 +2003,7 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     std::vector<FilamentColor> filamentColors = LoadFilamentColors(config, initial_printer_profile_name,
                                                                     filament_presets.size());
     ApplyFilamentColors(project_config, filamentColors);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
         boost::algorithm::split(matrix, config.get_printer_setting(initial_printer_profile_name, "flush_volumes_matrix"), boost::algorithm::is_any_of("|"));
@@ -2147,6 +2163,8 @@ void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
     }
 
     EraseFilamentColorFields(project_config, to_del_filament_id);
+    EraseEnumsOptionAt(project_config, "filament_volume_type", to_del_filament_id);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     update_multi_material_filament_presets(to_del_filament_id, old_filament_count);
 }
 
@@ -2161,6 +2179,7 @@ void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> ne
     filament_color->resize(n);
     ams_multi_color_filment.resize(n);
     EnsureFilamentColorFieldsAligned(project_config);
+    EnsureFilamentVolumeTypesAligned(project_config, n);
     // BBS set new filament color to new_color
     if (old_filament_count < n) {
         if (!new_colors.empty()) {
@@ -2175,16 +2194,25 @@ void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> ne
     update_multi_material_filament_presets(size_t(-1), size_t(old_filament_count));
 }
 
-std::vector<std::string> PresetBundle::get_filament_volume_types() const
+std::vector<FilamentVolumeType> PresetBundle::get_filament_volume_types() const
 {
-    const auto *types = this->project_config.option<ConfigOptionStrings>("filament_volume_type");
-    return types != nullptr ? types->values : std::vector<std::string>{ FLOW_MODE_STANDARD };
+    const auto *types = this->project_config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+    if (types == nullptr)
+        return { fvtStandard };
+    std::vector<FilamentVolumeType> result;
+    result.reserve(types->values.size());
+    for (int value : types->values)
+        result.push_back(FilamentVolumeType(value));
+    return result;
 }
 
-void PresetBundle::set_filament_volume_types(const std::vector<std::string> &types)
+void PresetBundle::set_filament_volume_types(const std::vector<FilamentVolumeType> &types)
 {
-    auto *opt = this->project_config.option<ConfigOptionStrings>("filament_volume_type", true);
-    opt->values = types.empty() ? std::vector<std::string>{ FLOW_MODE_STANDARD } : types;
+    auto *opt = this->project_config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
+    if (types.empty())
+        opt->values = { fvtStandard };
+    else
+        opt->values.assign(types.begin(), types.end());
 }
 
 void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
@@ -2200,6 +2228,7 @@ void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
     filament_color->resize(n);
     ams_multi_color_filment.resize(n);
     EnsureFilamentColorFieldsAligned(project_config);
+    EnsureFilamentVolumeTypesAligned(project_config, n);
 
     //BBS set new filament color to new_color
     if (old_filament_count < n) {
@@ -2274,6 +2303,7 @@ unsigned int PresetBundle::sync_ams_list(unsigned int &unknowns)
     filament_color->resize(filament_presets.size());
     filament_color->values = filament_colors;
     EnsureFilamentColorFieldsAligned(project_config);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     update_multi_material_filament_presets();
     return filament_presets.size();
 }
@@ -3038,6 +3068,7 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
         // 4) Load the project config values (the per extruder wipe matrix etc).
         this->project_config.apply_only(config, s_project_options);
         EnsureFilamentColorFieldsAligned(this->project_config);
+        EnsureFilamentVolumeTypesAligned(this->project_config, this->filament_presets.size());
 
         break;
     }

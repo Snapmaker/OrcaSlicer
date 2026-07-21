@@ -586,6 +586,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Flashforge.hpp
     Utils/FontConfigHelp.cpp
     Utils/FontConfigHelp.hpp
+    Utils/Frustum.cpp
+    Utils/Frustum.hpp
     Utils/HexFile.cpp
     Utils/HexFile.hpp
     Utils/Http.cpp

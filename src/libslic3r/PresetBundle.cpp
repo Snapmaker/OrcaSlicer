@@ -206,6 +206,8 @@ static std::vector<std::string> s_project_options {
     "curr_bed_type",
     // Snapmaker: flow variants
     "filament_volume_type",
+    "nozzle_volume_type",
+    "filament_grouping_mode",
     "flush_multiplier",
     // Mixed filament / local-Z settings
     "mixed_filament_gradient_mode",

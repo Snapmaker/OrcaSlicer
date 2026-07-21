@@ -373,6 +373,9 @@ enum FilamentVolumeType {
     fvtHighFlow = 1,
 };
 
+constexpr const char* FILAMENT_GROUPING_STANDARD = "standard";
+constexpr const char* FILAMENT_GROUPING_CUSTOM   = "custom";
+
 // Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
 const char* to_string(FilamentVolumeType type);
 
@@ -1326,6 +1329,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Snapmaker: flow-variant
     ((ConfigOptionEnumsGeneric,        filament_volume_type))
     ((ConfigOptionEnumsGeneric,        nozzle_volume_type))
+    ((ConfigOptionString,              filament_grouping_mode))
     ((ConfigOptionStrings,             filament_flow_support))
     ((ConfigOptionStrings,             process_flow_support))
     ((ConfigOptionStrings,             printer_flow_support))

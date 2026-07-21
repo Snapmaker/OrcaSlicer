@@ -111,8 +111,14 @@ set(SLIC3R_GUI_SOURCES
     GUI/Field.hpp
     GUI/FilamentColorUtils.cpp
     GUI/FilamentColorUtils.hpp
+    GUI/FilamentGroupDialog.cpp
+    GUI/FilamentGroupDialog.hpp
     GUI/FileArchiveDialog.cpp
     GUI/FileArchiveDialog.hpp
+    GUI/FlowTypeHelper.cpp
+    GUI/FlowTypeHelper.hpp
+    GUI/HighFlowCompat.cpp
+    GUI/HighFlowCompat.hpp
     GUI/filamentsync/FilamentColorMapBox.cpp
     GUI/filamentsync/FilamentColorMapBox.hpp
     GUI/filamentsync/FilamentColorMapBoxGroup.cpp
@@ -422,6 +428,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SingleChoiceDialog.hpp
     GUI/SliceInfoPanel.cpp
     GUI/SliceInfoPanel.hpp
+    GUI/SliceModePopup.cpp
+    GUI/SliceModePopup.hpp
     GUI/SlicingProgressNotification.cpp
     GUI/SlicingProgressNotification.hpp
     GUI/StatusPanel.cpp

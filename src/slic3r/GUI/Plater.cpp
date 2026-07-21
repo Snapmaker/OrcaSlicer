@@ -101,6 +101,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "FlowTypeHelper.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Utils.hpp"
 #include "GUI_Factories.hpp"
@@ -1017,6 +1018,7 @@ struct Sidebar::priv
     // nozzle notebook  and related controls
     CustomNotebook*                  m_nozzle_notebook{nullptr};
     std::vector<ComboBox*>       m_nozzle_diameter_lists;
+    std::vector<ComboBox*>       m_nozzle_flow_lists;
     std::vector<ScalableButton*> m_nozzle_edit_btns;
 
     ObjectList          *m_object_list{ nullptr };
@@ -8316,6 +8318,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     p->m_nozzle_notebook->DeleteAllPages();
     p->m_nozzle_diameter_lists.clear();
     p->m_nozzle_edit_btns.clear();
+    p->m_nozzle_flow_lists.clear();
 
     // Recreate pages for new nozzle count
     // Create tabs for each nozzle
@@ -8408,7 +8411,14 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             }
 
             wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-            // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
+            // Tab::select_preset does NOT rebuild the nozzle notebook (only load_current_presets and
+            // the device-sync paths do), so rebuild it explicitly. Deferred with CallAfter because a
+            // synchronous rebuild would destroy this combo while its event is still being processed.
+            wxTheApp->CallAfter([]() {
+                if (wxGetApp().plater() != nullptr)
+                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+            });
+            // Do not event.Skip(): the sidebar-level handler would treat this combo as the bed-type combo.
         });
         
         auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
@@ -8422,7 +8432,32 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         diameter_sizer->AddSpacer(10);
         diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
-        // 删除Flow相关控件
+        // Snapmaker: per-nozzle flow type (standard / high flow), requirement 7.1
+        wxStaticText* flow_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Flow"));
+        flow_label->SetForegroundColour(is_dark ? wxColor(194, 194, 194) : wxColor(0, 0, 0));
+        flow_label->SetFont(Label::Body_14);
+
+        ComboBox* flow_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
+                                            nullptr, wxCB_READONLY);
+        const bool supports_high_flow = GUI::FlowType::printer_supports_high_flow();
+        flow_combo->AppendString(_L("Standard"));
+        if (supports_high_flow)
+            flow_combo->AppendString(_L("High Flow"));
+        else
+            flow_combo->Enable(false);
+        const std::vector<std::string> nozzle_flows = GUI::FlowType::nozzle_volume_types();
+        flow_combo->SetSelection(i < nozzle_flows.size() && nozzle_flows[i] == FLOW_MODE_HIGH_FLOW ? 1 : 0);
+        flow_combo->Bind(wxEVT_COMBOBOX, [flow_combo, i](wxCommandEvent&) {
+            GUI::FlowType::set_nozzle_volume_type(i, flow_combo->GetSelection() == 1 ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
+            // Do not event.Skip(): the sidebar-level wxEVT_COMBOBOX handler would treat this
+            // combo as the bed-type combo (same reason as the diameter combo above).
+        });
+        p->m_nozzle_flow_lists.push_back(flow_combo);
+
+        diameter_sizer->AddSpacer(10);
+        diameter_sizer->Add(flow_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
+        diameter_sizer->AddSpacer(10);
+        diameter_sizer->Add(flow_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
         tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
 

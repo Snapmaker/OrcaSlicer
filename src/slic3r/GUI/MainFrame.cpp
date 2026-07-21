@@ -56,6 +56,9 @@
 #include <ctime>
 
 #include "GUI_App.hpp"
+#include "FilamentGroupDialog.hpp"
+#include "FlowTypeHelper.hpp"
+#include "SliceModePopup.hpp"
 #include "UnsavedChangesDialog.hpp"
 #include "MsgDialog.hpp"
 #include "Notebook.hpp"
@@ -1645,6 +1648,18 @@ wxBoxSizer* MainFrame::create_side_tools()
     sizer->Add(m_print_option_btn, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(2));
     sizer->Add(m_print_btn       , 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(19));
 
+    // Snapmaker requirement 7.1: hover popup on the slice button for choosing the
+    // standard / custom filament grouping mode. Shown whenever the printer preset
+    // supports high flow (independent of the per-nozzle flow combos).
+    m_slice_mode_popup = new SliceModePopup(this);
+    auto try_show_slice_mode_popup = [this](wxMouseEvent &e) {
+        e.Skip();
+        if (m_slice_enable && GUI::FlowType::printer_supports_high_flow())
+            m_slice_mode_popup->ShowFor({m_slice_btn, m_slice_option_btn}, m_slice_btn);
+    };
+    m_slice_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
+    m_slice_option_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
+
     sizer->Layout();
 
     // m_publish_btn->Bind(wxEVT_BUTTON, [this](auto& e) {
@@ -1664,6 +1679,16 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
+            if (m_slice_mode_popup)
+                m_slice_mode_popup->HidePopup();
+            // Snapmaker requirement 7.1: in custom grouping mode confirm the
+            // filament-to-flow-type mapping before slicing (both "Slice plate"
+            // and "Slice all" go through this button).
+            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::printer_supports_high_flow()) {
+                GUI::FilamentGroupDialog dlg(this);
+                if (dlg.ShowModal() != wxID_OK)
+                    return;
+            }
             //this->m_plater->select_view_3D("Preview");
             m_plater->exit_gizmo();
             m_plater->update(true, true);
@@ -1712,6 +1737,8 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_option_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
+            if (m_slice_mode_popup)
+                m_slice_mode_popup->HidePopup();
             SidePopup* p = new SidePopup(this);
             SideButton* slice_all_btn = new SideButton(p, _L("Slice all"), "");
             slice_all_btn->SetCornerRadius(0);

@@ -15349,3 +15349,43 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+# Snapmaker requirement 7.1: high-flow filament grouping UI
+
+msgid "High Flow"
+msgstr "高流量"
+
+msgid "Standard Mode"
+msgstr "标准模式"
+
+msgid "Custom Mode"
+msgstr "自定义模式"
+
+msgid "Prioritize print quality"
+msgstr "优先保证打印质量"
+
+msgid "Manually assign filaments to nozzles"
+msgstr "手动分配耗材给喷嘴"
+
+msgid "Custom Filament Grouping"
+msgstr "自定义耗材分组"
+
+msgid "We will slice based on the current assignment:"
+msgstr "我们将基于当前分配方案切片："
+
+msgid "Standard Nozzle"
+msgstr "标准喷嘴"
+
+msgid "High Flow Nozzle"
+msgstr "高流量喷嘴"
+
+msgid "Tip: You can drag filaments to assign them to different nozzles"
+msgstr "提示：您可以拖动耗材将其分配到不同的喷嘴"
+
+msgid "It is not recommended to print %1% with the %2%mm high flow nozzle"
+msgstr "不推荐使用%2%mm 高流量喷嘴打印材料：%1%"
+
+msgid "CF or GF based materials"
+msgstr "CF或GF类材料"
+
+msgid "Swap the two groups"
+msgstr "交换两组耗材"

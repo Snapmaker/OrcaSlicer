@@ -4095,6 +4095,15 @@ void PrintConfigDef::init_fff_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
 
+    def = this->add("filament_grouping_mode", coString);
+    def->label = L("Filament grouping mode");
+    def->tooltip = L("Slicing mode chosen from the slice-button hover popup: standard keeps every "
+                     "filament on standard flow; custom uses the mapping from the custom filament "
+                     "grouping dialog.");
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionString(FILAMENT_GROUPING_STANDARD));
+
     def = this->add("filament_flow_step_size", coInts);
     def->label = L("Filament flow step size");
     def->tooltip = L("Segment length (number of declared flow variants) of each filament inside the "

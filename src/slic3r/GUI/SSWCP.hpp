@@ -34,8 +34,8 @@ using tcp = asio::ip::tcp;
 #define CANCEL_DOWNLOAD "sw_CancelDownload"
 #define SUBSCRIBE_DOWNLOAD_STATE "sw_SubscribeDownloadState"
 #define DOWN_LOAD_FILE "sw_DownLoadFile"
-#define DELETE_FILES "sw_DeleteFiles"
 #define FILE_VIEW "sw_FileView"
+#define GET_FILES_FROM_DIR "sw_GetFilesFromDir"
 
 namespace Slic3r { namespace GUI {
 
@@ -561,8 +561,8 @@ private:
     void sw_CancelDownload();
 
     void sw_FileView();
-    void sw_DeleteFiles();
     void sw_SubscribeDownloadState();
+    void sw_GetFilesFromDir();
 
 public:
     struct SubscribeDownloadContext;

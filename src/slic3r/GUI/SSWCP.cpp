@@ -5,7 +5,7 @@
 #include "MainFrame.hpp"
 #include "DownloadManager.hpp"
 #include "Timelapse/TimelapseDownloadDialog.hpp"
-#include "Timelapse/TimelapseProgressPopup.hpp"
+#include "Timelapse/TimelapseDownloadPopup.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "libslic3r/Model.hpp"
@@ -4581,8 +4581,8 @@ void SSWCP_UserLogin_Instance::process()
         sw_CancelDownload();
     } else if (m_cmd == FILE_VIEW) {
         sw_FileView();
-    } else if (m_cmd == DELETE_FILES) {
-        sw_DeleteFiles();
+    } else if (m_cmd == GET_FILES_FROM_DIR) {
+        sw_GetFilesFromDir();
     }
     else {
         handle_general_fail();
@@ -4767,6 +4767,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         int         encrypt_type;
         std::string sn;
         size_t      file_size;
+        // std::string task_id;  // TODO: not needed for now
+        std::string date_index;
     };
     std::vector<FileEntry> files;
     size_t total_file_size = 0;
@@ -4785,6 +4787,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         entry.encrypt_type = item.value("encrypt_type", 0);
         entry.sn           = item.value("sn", "");
         entry.file_size    = item.value("file_size", size_t(0));
+        // entry.task_id      = item.value("task_id", "");
+        entry.date_index   = item.value("date_index", "");
 
         if (entry.file_url.empty() || entry.file_name.empty()) {
             handle_general_fail(-1, "Each file entry must have file_name and file_url");
@@ -4798,6 +4802,23 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
 
         total_file_size += entry.file_size;
         files.push_back(std::move(entry));
+    }
+
+    // LAN/cloud auto-detect: force encrypt_type=0 for LAN mode
+    {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+        if (host) {
+            DeviceInfo info;
+            std::string sn = host->get_sn();
+            if (!sn.empty() && wxGetApp().app_config->get_device_info(sn, info)) {
+                if (info.link_mode == "lan") {
+                    for (auto& f : files) {
+                        f.encrypt_type = 0;
+                    }
+                }
+            }
+        }
     }
 
     // Phase B: Respond immediately, defer finish_job until downloads complete
@@ -4848,26 +4869,39 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             return;
         }
 
-        // Create progress popup
-        auto* popup = new TimelapseProgressPopup(wxGetApp().mainframe, "");
-        wxString init_text = wxString::Format(_L("Preparing to download %d file(s)..."), total_count);
-        popup->set_status(init_text);
+        // Create multi-task download popup
+        auto* popup = new TimelapseDownloadPopup(wxGetApp().mainframe);
+
+        std::vector<TimelapseDownloadPopup::TaskInfo> task_infos;
+        for (const auto& f : files)
+        {
+            TimelapseDownloadPopup::TaskInfo info;
+            info.file_name    = f.file_name;
+            info.file_url     = f.file_url;
+            info.encrypt_type = f.encrypt_type;
+            info.sn           = f.sn;
+            info.file_size    = f.file_size;
+            info.date_index   = f.date_index;
+            task_infos.push_back(info);
+        }
+        popup->add_tasks(task_infos);
         popup->Show();
 
         // Queue state (shared_ptr for safe capture across callbacks)
         struct QueueContext {
-            std::vector<FileEntry>  files;
-            std::string             save_path;
-            TimelapseProgressPopup* popup;
-            int                     total_count;
-            int                     current_index;
-            int                     completed_count;
-            int                     failed_count;
-            size_t                  current_task_id;
-            bool                    cancelled;
-            std::function<void()>   start_next;
+            std::vector<FileEntry>    files;
+            std::string               save_path;
+            TimelapseDownloadPopup*   popup;
+            int                       total_count;
+            int                       current_index;
+            int                       completed_count;
+            int                       failed_count;
+            size_t                    current_task_id;
+            bool                      cancelled;
+            std::set<int>             skipped_indices;
+            std::function<void()>     start_next;
             std::weak_ptr<SSWCP_UserLogin_Instance> wcp_self;
-            std::vector<json>       completed_files;
+            std::vector<json>         completed_files;
         };
         auto ctx = std::make_shared<QueueContext>();
         ctx->files           = files;
@@ -4881,17 +4915,74 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         ctx->cancelled       = false;
         ctx->wcp_self        = wcp_self;
 
+        // Set per-task cancel callbacks for independent cancel
+        for (int i = 0; i < total_count; i++) {
+            popup->set_task_cancel_callback(i, [ctx, i]() {
+                if (!ctx->popup || ctx->popup->IsBeingDeleted()) { return; }
+                const auto& cur = ctx->files[i];
+                bool is_active = (i == ctx->current_index);
+                wxString msg;
+                if (is_active) {
+                    msg = wxString::Format(
+                        _L("Confirm to cancel downloading '%s'? The downloaded portion will be deleted."),
+                        wxString::FromUTF8(cur.file_name.c_str()));
+                } else {
+                    msg = wxString::Format(
+                        _L("Confirm to skip '%s'?"),
+                        wxString::FromUTF8(cur.file_name.c_str()));
+                }
+                wxMessageDialog confirm_dlg(nullptr, msg, _L("Confirm Cancel"),
+                                    wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+                if (confirm_dlg.ShowModal() == wxID_YES) {
+                    ctx->skipped_indices.insert(i);
+                    if (is_active && ctx->current_task_id != 0) {
+                        DownloadManager::getInstance().cancel_download(ctx->current_task_id);
+                        // DownloadManager suppresses on_error for canceled tasks,
+                        // so we must manually advance the queue.
+                        wxGetApp().CallAfter([ctx, i]() {
+                            ctx->current_task_id = 0;
+                            if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                                ctx->popup->mark_task_cancelled(i);
+                            }
+                            ctx->current_index++;
+                            if (ctx->start_next) { ctx->start_next(); }
+                        });
+                    } else {
+                        wxGetApp().CallAfter([ctx, i]() {
+                            if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                                ctx->popup->mark_task_cancelled(i);
+                            }
+                        });
+                    }
+                }
+            });
+        }
 
-        // Define the download-starter function (stored in ctx to break cycle on completion)
+        // Define the download-starter (recursive, one file at a time)
         ctx->start_next = [ctx]() {
-            if (ctx->cancelled) return;
+            if (ctx->cancelled)
+            {
+                ctx->start_next = nullptr;
+                return;
+            }
+
+            // Skip cancelled/skipped tasks
+            while (ctx->current_index < ctx->total_count &&
+                   ctx->skipped_indices.count(ctx->current_index)) {
+                ctx->current_index++;
+            }
 
             // All files processed
             if (ctx->current_index >= ctx->total_count) {
                 wxGetApp().CallAfter([ctx]() {
                     if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                        ctx->popup->mark_queue_complete(ctx->completed_count, ctx->failed_count,
-                                                          ctx->save_path);
+                        std::string latest_file;
+                        if (!ctx->completed_files.empty()) {
+                            latest_file = ctx->completed_files.back().value("location", "");
+                        }
+                        ctx->popup->mark_all_complete(
+                            ctx->completed_count, ctx->failed_count,
+                            ctx->save_path, latest_file);
                     }
                     if (auto wcp = ctx->wcp_self.lock()) {
                         json result;
@@ -4906,131 +4997,119 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                         wcp->finish_job();
                     }
                 });
-                ctx->start_next = nullptr; // break circular ref
+                ctx->start_next = nullptr;
                 return;
             }
 
             const auto& info = ctx->files[ctx->current_index];
-            int index = ctx->current_index + 1; // 1-based for display
+            int cur_idx = ctx->current_index;
 
-            wxGetApp().CallAfter([ctx, info, index]() {
-                if (!ctx->popup || ctx->popup->IsBeingDeleted()) return;
-                ctx->popup->reset_for_next_file(index, ctx->total_count, info.file_name);
+            // Update task row: show downloading state
+            wxGetApp().CallAfter([ctx, cur_idx]() {
+                if (!ctx->popup || ctx->popup->IsBeingDeleted())
+                {
+                    return;
+                }
+                ctx->popup->set_task_status(cur_idx,
+                    wxString::FromUTF8(_L("Downloading...").ToUTF8().data()));
             });
 
             DownloadCallbacks callbacks;
 
-            callbacks.on_progress = [ctx, index](size_t, int percent, size_t downloaded, size_t total) {
-                wxGetApp().CallAfter([ctx, index, percent, downloaded, total]() {
-                    if (!ctx->popup || ctx->popup->IsBeingDeleted()) return;
-                    ctx->popup->set_progress(percent);
-
-                    const auto& cur = ctx->files[ctx->current_index];
-                    wxString status_text;
-                    auto fmt_size = [](size_t bytes) -> wxString {
-                        if (bytes >= 1024 * 1024)
-                            return wxString::Format("%.1f MB", bytes / (1024.0 * 1024.0));
-                        return wxString::Format("%.0f KB", bytes / 1024.0);
-                    };
-                    if (total > 0) {
-                        status_text = wxString::Format(
-                            _L("File %d/%d: %s -- %s / %s (%d%%)"),
-                            index, ctx->total_count,
-                            wxString::FromUTF8(cur.file_name.c_str()),
-                            fmt_size(downloaded), fmt_size(total), percent);
-                    } else {
-                        status_text = wxString::Format(
-                            _L("File %d/%d: %s -- %s..."),
-                            index, ctx->total_count,
-                            wxString::FromUTF8(cur.file_name.c_str()),
-                            fmt_size(downloaded));
-                    }
-                    ctx->popup->set_status(status_text);
-                });
+            callbacks.on_progress = [ctx](size_t, int percent,
+                                           size_t downloaded, size_t total) {
+                if (!ctx->popup || ctx->popup->IsBeingDeleted())
+                {
+                    return;
+                }
+                BOOST_LOG_TRIVIAL(debug) << "DownloadFile: progress idx=" << ctx->current_index
+                    << " percent=" << percent << " dl=" << downloaded << " total=" << total;
+                ctx->popup->set_task_progress(ctx->current_index, percent,
+                                               downloaded, total);
             };
 
             callbacks.on_complete = [ctx](size_t, const std::string& file_path) {
-                wxGetApp().CallAfter([ctx, file_path]() {
-                    // Record completed file info for Flutter callback
-                    const auto& cur = ctx->files[ctx->current_index];
-                    json entry;
-                    entry["sn"]        = cur.sn;
-                    entry["file_name"] = cur.file_name;
-                    entry["location"]  = file_path;
-                    entry["file_type"] = "mp4";
-                    ctx->completed_files.push_back(entry);
+                const auto& cur = ctx->files[ctx->current_index];
+                json entry;
+                entry["sn"]         = cur.sn;
+                entry["file_name"]  = cur.file_name;
+                entry["location"]   = file_path;
+                entry["file_type"]  = "mp4";
+                entry["date_index"] = cur.date_index;
+                ctx->completed_files.push_back(entry);
 
-                    ctx->completed_count++;
-                    ctx->current_index++;
-                    ctx->current_task_id = 0;
-                    if (ctx->start_next) ctx->start_next();
-                });
+                if (ctx->popup && !ctx->popup->IsBeingDeleted())
+                {
+                    ctx->popup->mark_task_complete(ctx->current_index, file_path);
+                }
+
+                ctx->completed_count++;
+                ctx->current_index++;
+                ctx->current_task_id = 0;
+                if (ctx->start_next)
+                {
+                    ctx->start_next();
+                }
             };
 
             callbacks.on_error = [ctx](size_t, const std::string& error) {
+                // User cancelled: treat differently from actual errors
+                if (ctx->skipped_indices.count(ctx->current_index)) {
+                    if (ctx->popup && !ctx->popup->IsBeingDeleted())
+                    {
+                        ctx->popup->mark_task_cancelled(ctx->current_index);
+                    }
+                    ctx->current_index++;
+                    ctx->current_task_id = 0;
+                    if (ctx->start_next)
+                    {
+                        ctx->start_next();
+                    }
+                    return;
+                }
+
                 BOOST_LOG_TRIVIAL(error)
                     << "DownloadFile: Download failed for '"
                     << ctx->files[ctx->current_index].file_name
                     << "'. Error: " << error;
 
-                wxGetApp().CallAfter([ctx, error]() {
-                    if (!ctx->popup || ctx->popup->IsBeingDeleted()) return;
+                if (ctx->popup && !ctx->popup->IsBeingDeleted())
+                {
+                    ctx->popup->mark_task_error(ctx->current_index, error);
+                }
 
-                    const auto& cur = ctx->files[ctx->current_index];
-                    wxString reason = error.empty()
-                        ? _L("Network error or server unreachable")
-                        : wxString::FromUTF8(error.c_str());
-                    wxString msg = wxString::Format(_L("%s download failed: %s"),
-                                                   wxString::FromUTF8(cur.file_name.c_str()),
-                                                   reason);
-
-                    ctx->popup->show_error_with_retry(
-                        msg.ToUTF8().data(),
-                        [ctx]() {
-                            wxGetApp().CallAfter([ctx]() {
-                                if (!ctx->popup || ctx->popup->IsBeingDeleted()) return;
-                                ctx->current_task_id = 0;
-                                ctx->popup->set_cancel_callback([ctx]() {
-                                    ctx->cancelled = true;
-                                    if (ctx->current_task_id != 0) {
-                                        DownloadManager::getInstance().cancel_download(ctx->current_task_id);
-                                    }
-                                    if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                                        ctx->popup->Close();
-                                    }
-                                });
-                                if (ctx->start_next) ctx->start_next();
-                            });
-                        },
-                        [ctx]() {
-                            ctx->failed_count++;
-                            ctx->current_index++;
-                            ctx->current_task_id = 0;
-                            if (ctx->current_index < ctx->total_count) {
-                                if (ctx->start_next) ctx->start_next();
-                            } else {
-                                ctx->cancelled = true;
-                                if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                                    ctx->popup->Close();
-                                }
-                                wxGetApp().CallAfter([ctx]() {
-                                    if (auto wcp = ctx->wcp_self.lock()) {
-                                        json result;
-                                        result["completed_count"] = ctx->completed_count;
-                                        result["failed_count"]    = ctx->failed_count;
-                                        result["cancelled"]       = ctx->cancelled;
-                                        result["files"]           = ctx->completed_files;
-                                        wcp->m_res_data = result;
-                                        wcp->m_status    = 0;
-                                        wcp->m_msg       = ctx->cancelled ? "download_cancelled" : "download_complete";
-                                        wcp->send_to_js();
-                                        wcp->finish_job();
-                                    }
-                                });
-                            }
-                        }
-                    );
-                });
+                ctx->failed_count++;
+                ctx->current_index++;
+                ctx->current_task_id = 0;
+                if (ctx->current_index < ctx->total_count)
+                {
+                    if (ctx->start_next)
+                    {
+                        ctx->start_next();
+                    }
+                }
+                else
+                {
+                    // All files processed with errors — notify via mark_all_complete
+                    if (ctx->popup && !ctx->popup->IsBeingDeleted())
+                    {
+                        ctx->popup->mark_all_complete(
+                            ctx->completed_count, ctx->failed_count,
+                            ctx->save_path, "");
+                    }
+                    if (auto wcp = ctx->wcp_self.lock()) {
+                        json result;
+                        result["completed_count"] = ctx->completed_count;
+                        result["failed_count"]    = ctx->failed_count;
+                        result["cancelled"]       = false;
+                        result["files"]           = ctx->completed_files;
+                        wcp->m_res_data = result;
+                        wcp->m_status    = 0;
+                        wcp->m_msg       = "download_complete";
+                        wcp->send_to_js();
+                        wcp->finish_job();
+                    }
+                }
             };
 
             ctx->current_task_id = DownloadManager::getInstance().start_internal_download(
@@ -5038,71 +5117,30 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 std::move(callbacks), info.encrypt_type, info.sn);
         };
 
-        // Set close callback: skip current file and continue queue, or stop if last
+        // Set close callback (X button): cancel and finish
         popup->set_close_callback([ctx]() {
             if (ctx->current_task_id != 0) {
                 DownloadManager::getInstance().cancel_download(ctx->current_task_id);
                 ctx->current_task_id = 0;
             }
-            if (ctx->current_index + 1 < ctx->total_count) {
-                // More files remain: skip this one and continue
-                ctx->failed_count++;
-                ctx->current_index++;
-                if (ctx->start_next) ctx->start_next();
-            } else {
-                // Last file: stop queue, close, and notify Flutter
-                ctx->cancelled = true;
-                wxGetApp().CallAfter([ctx]() {
-                    if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                        ctx->popup->Close();
-                    }
-                    if (auto wcp = ctx->wcp_self.lock()) {
-                        json result;
-                        result["completed_count"] = ctx->completed_count;
-                        result["failed_count"]    = ctx->failed_count;
-                        result["cancelled"]       = ctx->cancelled;
-                        result["files"]           = ctx->completed_files;
-                        wcp->m_res_data = result;
-                        wcp->m_status    = 0;
-                        wcp->m_msg       = ctx->cancelled ? "download_cancelled" : "download_complete";
-                        wcp->send_to_js();
-                        wcp->finish_job();
-                    }
-                });
-            }
-        });
-
-        // Set cancel button callback: confirmation before cancelling entire queue
-        popup->set_cancel_callback([ctx]() {
-            const auto& cur = ctx->files[ctx->current_index];
-            wxString msg = wxString::Format(
-                _L("Confirm to cancel downloading '%s'? The downloaded portion will be deleted."),
-                wxString::FromUTF8(cur.file_name.c_str()));
-            wxMessageDialog dlg(ctx->popup, msg, _L("Confirm Cancel"),
-                                wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
-            if (dlg.ShowModal() == wxID_YES) {
-                ctx->cancelled = true;
-                if (ctx->current_task_id != 0) {
-                    DownloadManager::getInstance().cancel_download(ctx->current_task_id);
+            ctx->cancelled = true;
+            wxGetApp().CallAfter([ctx]() {
+                if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                    ctx->popup->Close();
                 }
-                wxGetApp().CallAfter([ctx]() {
-                    if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                        ctx->popup->Close();
-                    }
-                    if (auto wcp = ctx->wcp_self.lock()) {
-                        json result;
-                        result["completed_count"] = ctx->completed_count;
-                        result["failed_count"]    = ctx->failed_count;
-                        result["cancelled"]       = ctx->cancelled;
-                        result["files"]           = ctx->completed_files;
-                        wcp->m_res_data = result;
-                        wcp->m_status    = 0;
-                        wcp->m_msg       = ctx->cancelled ? "download_cancelled" : "download_complete";
-                        wcp->send_to_js();
-                        wcp->finish_job();
-                    }
-                });
-            }
+                if (auto wcp = ctx->wcp_self.lock()) {
+                    json result;
+                    result["completed_count"] = ctx->completed_count;
+                    result["failed_count"]    = ctx->failed_count;
+                    result["cancelled"]       = ctx->cancelled;
+                    result["files"]           = ctx->completed_files;
+                    wcp->m_res_data = result;
+                    wcp->m_status    = 0;
+                    wcp->m_msg       = "download_cancelled";
+                    wcp->send_to_js();
+                    wcp->finish_job();
+                }
+            });
         });
 
         // Start the first download
@@ -5117,6 +5155,8 @@ struct SSWCP_UserLogin_Instance::SubscribeDownloadContext {
         int         encrypt_type = 0;
         std::string sn;
         size_t      file_size = 0;
+        // std::string task_id;  // TODO: not needed for now
+        std::string date_index;
     };
     std::vector<FileEntry>  files;
     std::string             save_path;
@@ -5126,6 +5166,7 @@ struct SSWCP_UserLogin_Instance::SubscribeDownloadContext {
     int                     failed_count     = 0;
     size_t                  current_task_id  = 0;
     std::atomic<bool>       cancelled{false};
+    std::atomic<bool>       finished{false};
     std::function<void()>   start_next;
     std::weak_ptr<SSWCP_UserLogin_Instance> wcp_self;
     std::vector<json>       completed_files;
@@ -5171,6 +5212,8 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
         entry.encrypt_type = item.value("encrypt_type", 0);
         entry.sn           = item.value("sn", "");
         entry.file_size    = item.value("file_size", size_t(0));
+        // entry.task_id      = item.value("task_id", "");
+        entry.date_index   = item.value("date_index", "");
 
         if (entry.file_url.empty() || entry.file_name.empty()) {
             handle_general_fail(-1, "Each file entry must have file_name and file_url");
@@ -5184,6 +5227,23 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
 
         total_file_size += entry.file_size;
         files.push_back(std::move(entry));
+    }
+
+    // LAN/cloud auto-detect: force encrypt_type=0 for LAN mode
+    {
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+        if (host) {
+            DeviceInfo info;
+            std::string sn = host->get_sn();
+            if (!sn.empty() && wxGetApp().app_config->get_device_info(sn, info)) {
+                if (info.link_mode == "lan") {
+                    for (auto& f : files) {
+                        f.encrypt_type = 0;
+                    }
+                }
+            }
+        }
     }
 
     std::string save_path;
@@ -5217,17 +5277,18 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
     m_subscribe_dl_map[m_event_id] = ctx;
 
     wxGetApp().CallAfter([ctx, wcp_self]() {
-        if (ctx->cancelled.load()) return;
+        if (ctx->cancelled.load())
+        {
+            return;
+        }
 
         auto wcp = wcp_self.lock();
-        if (!wcp) return;
-
-        size_t required = ctx->total_count > 0
-            ? (100ULL * 1024 * 1024)  // safe default for headless download
-            : (100ULL * 1024 * 1024);
-        if (required < 100ULL * 1024 * 1024) {
-            required = 100ULL * 1024 * 1024;
+        if (!wcp)
+        {
+            return;
         }
+
+        size_t required = 100ULL * 1024 * 1024;
         boost::system::error_code ec;
         boost::filesystem::space_info si = boost::filesystem::space(ctx->save_path, ec);
         if (!ec && si.available < required) {
@@ -5235,33 +5296,45 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
             err["error"]        = "insufficient_disk_space";
             err["required_mb"]  = required / (1024.0 * 1024.0);
             err["available_mb"] = si.available / (1024.0 * 1024.0);
-            wcp->m_res_data = err;
-            wcp->m_status    = -1;
-            wcp->m_msg       = "insufficient_disk_space";
-            wcp->send_to_js();
-            wcp->m_subscribe_dl_ctx.reset();
-            SSWCP_UserLogin_Instance::m_subscribe_dl_map.erase(wcp->m_event_id);
-            wcp->finish_job();
+            bool expected = false;
+            if (ctx->finished.compare_exchange_strong(expected, true))
+            {
+                wcp->m_res_data = err;
+                wcp->m_status    = -1;
+                wcp->m_msg       = "insufficient_disk_space";
+                wcp->send_to_js();
+                wcp->m_subscribe_dl_ctx.reset();
+                SSWCP_UserLogin_Instance::m_subscribe_dl_map.erase(wcp->m_event_id);
+                wcp->finish_job();
+            }
             return;
         }
 
         ctx->start_next = [ctx]() {
-            if (ctx->cancelled.load()) return;
+            if (ctx->cancelled.load())
+            {
+                ctx->start_next = nullptr;
+                return;
+            }
 
             if (ctx->current_index >= ctx->total_count) {
-                if (auto wcp = ctx->wcp_self.lock()) {
-                    json result;
-                    result["completed_count"] = ctx->completed_count;
-                    result["failed_count"]    = ctx->failed_count;
-                    result["cancelled"]       = ctx->cancelled.load();
-                    result["files"]           = ctx->completed_files;
-                    wcp->m_res_data = result;
-                    wcp->m_status    = 0;
-                    wcp->m_msg       = ctx->cancelled.load() ? "download_cancelled" : "download_complete";
-                    wcp->send_to_js();
-                    wcp->m_subscribe_dl_ctx.reset();
-                    SSWCP_UserLogin_Instance::m_subscribe_dl_map.erase(wcp->m_event_id);
-                    wcp->finish_job();
+                bool expected = false;
+                if (ctx->finished.compare_exchange_strong(expected, true))
+                {
+                    if (auto wcp = ctx->wcp_self.lock()) {
+                        json result;
+                        result["completed_count"] = ctx->completed_count;
+                        result["failed_count"]    = ctx->failed_count;
+                        result["cancelled"]       = ctx->cancelled.load();
+                        result["files"]           = ctx->completed_files;
+                        wcp->m_res_data = result;
+                        wcp->m_status    = 0;
+                        wcp->m_msg       = ctx->cancelled.load() ? "download_cancelled" : "download_complete";
+                        wcp->send_to_js();
+                        wcp->m_subscribe_dl_ctx.reset();
+                        SSWCP_UserLogin_Instance::m_subscribe_dl_map.erase(wcp->m_event_id);
+                        wcp->finish_job();
+                    }
                 }
                 ctx->start_next = nullptr;
                 return;
@@ -5275,7 +5348,10 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
                 auto now = std::chrono::steady_clock::now();
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now - ctx->last_progress_sent);
-                if (elapsed.count() < 500 && percent < 100) return;
+                if (elapsed.count() < 500 && percent < 100)
+                {
+                    return;
+                }
                 ctx->last_progress_sent = now;
 
                 wxGetApp().CallAfter([ctx, percent, downloaded, total]() {
@@ -5300,10 +5376,12 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
                 wxGetApp().CallAfter([ctx, file_path]() {
                     const auto& cur = ctx->files[ctx->current_index];
                     json entry;
-                    entry["sn"]        = cur.sn;
-                    entry["file_name"] = cur.file_name;
-                    entry["location"]  = file_path;
-                    entry["file_type"] = "mp4";
+                    entry["sn"]         = cur.sn;
+                    entry["file_name"]  = cur.file_name;
+                    entry["location"]   = file_path;
+                    entry["file_type"]  = "mp4";
+                    // entry["task_id"]    = cur.task_id;
+                    entry["date_index"] = cur.date_index;
                     ctx->completed_files.push_back(entry);
 
                     if (auto wcp = ctx->wcp_self.lock()) {
@@ -5313,6 +5391,8 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
                         data["file_name"]  = cur.file_name;
                         data["location"]   = file_path;
                         data["sn"]         = cur.sn;
+                        // data["task_id"]    = cur.task_id;
+                        data["date_index"] = cur.date_index;
                         wcp->m_res_data = data;
                         wcp->m_status    = 0;
                         wcp->m_msg       = "file_done";
@@ -5322,7 +5402,10 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
                     ctx->completed_count++;
                     ctx->current_index++;
                     ctx->current_task_id = 0;
-                    if (ctx->start_next) ctx->start_next();
+                    if (ctx->start_next)
+                    {
+                        ctx->start_next();
+                    }
                 });
             };
 
@@ -5340,6 +5423,8 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
                         data["event"]      = "file_error";
                         data["file_index"] = ctx->current_index;
                         data["file_name"]  = cur.file_name;
+                        // data["task_id"]    = cur.task_id;
+                        data["date_index"] = cur.date_index;
                         data["error"]      = error;
                         wcp->m_res_data = data;
                         wcp->m_status    = 0;
@@ -5351,22 +5436,30 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
                     ctx->current_index++;
                     ctx->current_task_id = 0;
 
-                    if (ctx->current_index < ctx->total_count) {
-                        if (ctx->start_next) ctx->start_next();
+                    if (ctx->current_index < ctx->total_count)
+                    {
+                        if (ctx->start_next)
+                        {
+                            ctx->start_next();
+                        }
                     } else {
-                        if (auto wcp = ctx->wcp_self.lock()) {
-                            json result;
-                            result["completed_count"] = ctx->completed_count;
-                            result["failed_count"]    = ctx->failed_count;
-                            result["cancelled"]       = ctx->cancelled.load();
-                            result["files"]           = ctx->completed_files;
-                            wcp->m_res_data = result;
-                            wcp->m_status    = 0;
-                            wcp->m_msg       = "download_complete";
-                            wcp->send_to_js();
-                            wcp->m_subscribe_dl_ctx.reset();
-                    SSWCP_UserLogin_Instance::m_subscribe_dl_map.erase(wcp->m_event_id);
-                            wcp->finish_job();
+                        bool expected = false;
+                        if (ctx->finished.compare_exchange_strong(expected, true))
+                        {
+                            if (auto wcp = ctx->wcp_self.lock()) {
+                                json result;
+                                result["completed_count"] = ctx->completed_count;
+                                result["failed_count"]    = ctx->failed_count;
+                                result["cancelled"]       = ctx->cancelled.load();
+                                result["files"]           = ctx->completed_files;
+                                wcp->m_res_data = result;
+                                wcp->m_status    = 0;
+                                wcp->m_msg       = "download_complete";
+                                wcp->send_to_js();
+                                wcp->m_subscribe_dl_ctx.reset();
+                                SSWCP_UserLogin_Instance::m_subscribe_dl_map.erase(wcp->m_event_id);
+                                wcp->finish_job();
+                            }
                         }
                         ctx->start_next = nullptr;
                     }
@@ -5399,18 +5492,22 @@ void SSWCP_UserLogin_Instance::sw_CancelDownload() {
                     if (ctx->current_task_id != 0) {
                         DownloadManager::getInstance().cancel_download(ctx->current_task_id);
                     }
-                    if (auto wcp = ctx->wcp_self.lock()) {
-                        json result;
-                        result["completed_count"] = ctx->completed_count;
-                        result["failed_count"]    = ctx->failed_count;
-                        result["cancelled"]       = true;
-                        result["files"]           = ctx->completed_files;
-                        wcp->m_res_data = result;
-                        wcp->m_status    = 0;
-                        wcp->m_msg       = "download_cancelled";
-                        wcp->send_to_js();
-                        wcp->m_subscribe_dl_ctx.reset();
-                        wcp->finish_job();
+                    bool expected = false;
+                    if (ctx->finished.compare_exchange_strong(expected, true))
+                    {
+                        if (auto wcp = ctx->wcp_self.lock()) {
+                            json result;
+                            result["completed_count"] = ctx->completed_count;
+                            result["failed_count"]    = ctx->failed_count;
+                            result["cancelled"]       = true;
+                            result["files"]           = ctx->completed_files;
+                            wcp->m_res_data = result;
+                            wcp->m_status    = 0;
+                            wcp->m_msg       = "download_cancelled";
+                            wcp->send_to_js();
+                            wcp->m_subscribe_dl_ctx.reset();
+                            wcp->finish_job();
+                        }
                     }
                 }
                 m_subscribe_dl_map.erase(it);
@@ -5498,54 +5595,58 @@ void SSWCP_UserLogin_Instance::sw_FileView() {
     }
 }
 
-void SSWCP_UserLogin_Instance::sw_DeleteFiles() {
-    try {
-        json file_list_json = m_param_data.value("file_list", json::array());
-        if (!file_list_json.is_array() || file_list_json.empty()) {
-            handle_general_fail(-1, "file_list is empty or invalid");
-            return;
-        }
-
-        json result;
-        result["total"] = file_list_json.size();
-        int success_count = 0;
-        json failed_list = json::array();
-
-        for (const auto& item : file_list_json) {
-            if (!item.is_string()) {
-                json fail_entry;
-                fail_entry["file_path"] = item;
-                fail_entry["error"] = "invalid path type";
-                failed_list.push_back(fail_entry);
-                continue;
-            }
-
-            std::string file_path = item.get<std::string>();
-            boost::system::error_code ec;
-            boost::filesystem::remove(file_path, ec);
-
-            if (ec) {
-                json fail_entry;
-                fail_entry["file_path"] = file_path;
-                fail_entry["error"] = ec.message();
-                failed_list.push_back(fail_entry);
-            } else {
-                success_count++;
+void SSWCP_UserLogin_Instance::sw_GetFilesFromDir()
+{
+    std::string dir_path;
+    if (m_param_data.contains("dir_path") && m_param_data["dir_path"].is_string()) {
+        dir_path = m_param_data["dir_path"].get<std::string>();
+    } else {
+        dir_path = wxGetApp().app_config->get("download_path");
+        if (m_param_data.contains("sn") && m_param_data["sn"].is_string()) {
+            std::string sn = m_param_data["sn"].get<std::string>();
+            if (!sn.empty()) {
+                boost::filesystem::path p(dir_path);
+                p = p / sn;
+                dir_path = p.string();
             }
         }
-
-        result["success_count"] = success_count;
-        result["failed_count"] = failed_list.size();
-        result["failed_list"] = failed_list;
-
-        m_res_data = result;
-        m_status = 0;
-        m_msg = "success";
-        send_to_js();
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail(-1, e.what());
     }
+    if (dir_path.empty()) {
+        handle_general_fail(-1, "dir_path is empty and no default download path configured");
+        return;
+    }
+
+    boost::system::error_code ec;
+    if (!boost::filesystem::exists(dir_path, ec) || !boost::filesystem::is_directory(dir_path, ec)) {
+        handle_general_fail(-1, "dir_path does not exist or is not a directory");
+        return;
+    }
+
+    json result;
+    result["dir_path"] = dir_path;
+    json files_arr = json::array();
+
+    boost::filesystem::directory_iterator end_iter;
+    for (boost::filesystem::directory_iterator it(dir_path, ec); it != end_iter; ++it) {
+        if (ec) { ec.clear(); continue; }
+        if (!boost::filesystem::is_regular_file(it->status())) { continue; }
+
+        const std::string file_name = it->path().filename().string();
+        json file_info;
+        file_info["file_name"] = file_name;
+        file_info["file_path"] = it->path().string();
+        file_info["file_size"] = boost::filesystem::file_size(it->path(), ec);
+        if (ec) { file_info["file_size"] = 0; ec.clear(); }
+        files_arr.push_back(file_info);
+    }
+
+    result["files"] = files_arr;
+
+    m_res_data = result;
+    m_status = 0;
+    m_msg = "success";
+    send_to_js();
+    finish_job();
 }
 
 void SSWCP_UserLogin_Instance::sw_SubUserUpdatePrivacy()
@@ -7057,7 +7158,7 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
 
 std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
                                                            UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
-                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, DELETE_FILES, SUBSCRIBE_DOWNLOAD_STATE};
+                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"

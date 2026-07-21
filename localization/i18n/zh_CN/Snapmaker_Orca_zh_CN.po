@@ -15349,3 +15349,12 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+
+msgid "Fit camera to scene or selected object."
+msgstr "使相机适配场景或选定对象"
+
+msgid "Fit Camera"
+msgstr "相机适配"
+
+msgid "Camera view - Fit to scene or selection"
+msgstr "摄像机视角 - 适应场景或选择区域"

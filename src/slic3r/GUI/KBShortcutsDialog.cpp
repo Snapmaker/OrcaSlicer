@@ -242,6 +242,7 @@ void KBShortcutsDialog::fill_shortcuts()
             {ctrl + "4", L("Camera view - Behind")},
             {ctrl + "5", L("Camera Angle - Left side")},
             {ctrl + "6", L("Camera Angle - Right side")},
+            {"Z", into_u8(_L("Camera view - Fit to scene or selection"))},
 
             {ctrl + "A", L("Select all objects")},
             {ctrl + "D", L("Delete all")},

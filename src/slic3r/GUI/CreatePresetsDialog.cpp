@@ -10,6 +10,7 @@
 #include <wx/tooltip.h>
 #include <boost/nowide/cstdio.hpp>
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Utils.hpp"
 #include "I18N.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
@@ -2089,7 +2090,7 @@ bool CreatePrinterPresetDialog::load_system_and_user_presets_with_curr_model(Pre
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " is load template: "<< just_template;
     std::string selected_vendor_id;
-    std::string preset_path;
+    boost::filesystem::path preset_dir;
     if (m_printer_preset) {
         delete m_printer_preset;
         m_printer_preset = nullptr;
@@ -2119,13 +2120,13 @@ bool CreatePrinterPresetDialog::load_system_and_user_presets_with_curr_model(Pre
     } else {
         selected_vendor_id = m_printer_preset_vendor_selected.id;
 
-        if (boost::filesystem::exists(boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR / selected_vendor_id)) {
-            preset_path = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).string();
+        if (boost::filesystem::exists(Slic3r::data_dir_path() / PRESET_SYSTEM_DIR / selected_vendor_id)) {
+            preset_dir = Slic3r::data_dir_path() / PRESET_SYSTEM_DIR;
         } else if (boost::filesystem::exists(boost::filesystem::path(Slic3r::resources_dir()) / "profiles" / selected_vendor_id)) {
-            preset_path = (boost::filesystem::path(Slic3r::resources_dir()) / "profiles").string();
+            preset_dir = boost::filesystem::path(Slic3r::resources_dir()) / "profiles";
         }
 
-        if (preset_path.empty()) {
+        if (preset_dir.empty()) {
             BOOST_LOG_TRIVIAL(info) << "Preset path was not found";
             MessageDialog dlg(this, _L("Preset path was not found, please reselect vendor."), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Info"),
                               wxYES_NO | wxYES_DEFAULT | wxCENTRE);
@@ -2134,7 +2135,7 @@ bool CreatePrinterPresetDialog::load_system_and_user_presets_with_curr_model(Pre
         }
 
         try {
-            temp_preset_bundle.load_vendor_configs_from_json(preset_path, selected_vendor_id, PresetBundle::LoadConfigBundleAttribute::LoadSystem,
+            temp_preset_bundle.load_vendor_configs_from_json(preset_dir, selected_vendor_id, PresetBundle::LoadConfigBundleAttribute::LoadSystem,
                                                              ForwardCompatibilitySubstitutionRule::EnableSilent);
         } catch (...) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "load vendor fonfigs form json failed";
@@ -2185,11 +2186,11 @@ bool CreatePrinterPresetDialog::load_system_and_user_presets_with_curr_model(Pre
         temp_preset_bundle.update_compatible(PresetSelectCompatibleType::Always);
     } else {
         selected_vendor_id = PRESET_TEMPLATE_DIR;
-        preset_path.clear();
+        preset_dir.clear();
         if (boost::filesystem::exists(boost::filesystem::path(Slic3r::resources_dir()) / PRESET_PROFILES_TEMOLATE_DIR / selected_vendor_id)) {
-            preset_path = (boost::filesystem::path(Slic3r::resources_dir()) / PRESET_PROFILES_TEMOLATE_DIR).string();
+            preset_dir = boost::filesystem::path(Slic3r::resources_dir()) / PRESET_PROFILES_TEMOLATE_DIR;
         }
-        if (preset_path.empty()) {
+        if (preset_dir.empty()) {
             BOOST_LOG_TRIVIAL(info) << "Preset path was not found";
             MessageDialog dlg(this, _L("Preset path was not found, please reselect vendor."), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Info"),
                               wxYES_NO | wxYES_DEFAULT | wxCENTRE);
@@ -2197,7 +2198,7 @@ bool CreatePrinterPresetDialog::load_system_and_user_presets_with_curr_model(Pre
             return false;
         }
         try {
-            temp_preset_bundle.load_vendor_configs_from_json(preset_path, selected_vendor_id, PresetBundle::LoadConfigBundleAttribute::LoadSystem,
+            temp_preset_bundle.load_vendor_configs_from_json(preset_dir, selected_vendor_id, PresetBundle::LoadConfigBundleAttribute::LoadSystem,
                                                              ForwardCompatibilitySubstitutionRule::EnableSilent);
         } catch (...) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "load template vendor configs form json failed";
@@ -3362,7 +3363,7 @@ ExportConfigsDialog::~ExportConfigsDialog()
     }
 
     // Delete the Temp folder
-    boost::filesystem::path temp_folder(data_dir() + "/" + PRESET_USER_DIR + "/" + "Temp");
+    const boost::filesystem::path temp_folder = Slic3r::data_dir_path() / PRESET_USER_DIR / "Temp";
     if (boost::filesystem::exists(temp_folder)) boost::filesystem::remove_all(temp_folder);
 }
 
@@ -3417,7 +3418,7 @@ bool ExportConfigsDialog::earse_preset_fields_for_safe(Preset *preset)
 { 
     if (preset->type != Preset::Type::TYPE_PRINTER) return true;
     
-    boost::filesystem::path file_path(data_dir() + "/" + PRESET_USER_DIR + "/" + "Temp" + "/" + (preset->name + ".json"));
+    boost::filesystem::path file_path = Slic3r::data_dir_path() / PRESET_USER_DIR / "Temp" / (preset->name + ".json");
     preset->file = file_path.make_preferred().string();
 
     DynamicPrintConfig &config = preset->config;
@@ -4091,11 +4092,11 @@ wxBoxSizer *ExportConfigsDialog::create_select_printer(wxWindow *parent)
 void ExportConfigsDialog::data_init()
 {
     // Delete the Temp folder
-    boost::filesystem::path folder(data_dir() + "/" + PRESET_USER_DIR + "/" + "Temp");
+    const boost::filesystem::path folder = Slic3r::data_dir_path() / PRESET_USER_DIR / "Temp";
     if (boost::filesystem::exists(folder)) boost::filesystem::remove_all(folder);
 
     boost::system::error_code ec;
-    boost::filesystem::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
+    const boost::filesystem::path user_folder = Slic3r::data_dir_path() / PRESET_USER_DIR;
     bool                      temp_folder_exist = true;
     if (!boost::filesystem::exists(user_folder)) {
         if (!boost::filesystem::create_directories(user_folder, ec)) {

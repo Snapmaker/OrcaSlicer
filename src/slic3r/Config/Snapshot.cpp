@@ -436,7 +436,7 @@ const Snapshot&	SnapshotDB::take_snapshot(const AppConfig &app_config, Snapshot:
         PresetBundle bundle;
         //BBS: change directoties by design
         //bundle.load_configbundle((data_dir / PRESET_SYSTEM_DIR / (cfg.name + ".ini")).string(), PresetBundle::LoadConfigBundleAttribute::LoadVendorOnly, ForwardCompatibilitySubstitutionRule::EnableSilent);
-        bundle.load_vendor_configs_from_json((data_dir/PRESET_SYSTEM_DIR).string(), cfg.name, PresetBundle::LoadConfigBundleAttribute::LoadVendorOnly, ForwardCompatibilitySubstitutionRule::EnableSilent);
+        bundle.load_vendor_configs_from_json((data_dir/PRESET_SYSTEM_DIR), cfg.name, PresetBundle::LoadConfigBundleAttribute::LoadVendorOnly, ForwardCompatibilitySubstitutionRule::EnableSilent);
         for (const auto &vp : bundle.vendors)
             if (vp.second.id == cfg.name)
                 cfg.version.config_version = vp.second.config_version;

@@ -44,6 +44,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/convert.hpp>
+#include <boost/filesystem/fstream.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/beast/core/detail/base64.hpp>
@@ -2188,8 +2189,8 @@ void GUI_App::init_app_config()
             #ifndef __linux__
                 std::string data_dir = wxStandardPaths::Get().GetUserDataDir().ToUTF8().data();
                 //BBS create folder if not exists
-                data_dir_path = boost::filesystem::path(data_dir);
                 set_data_dir(data_dir);
+                data_dir_path = Slic3r::data_dir_path();
             #else
                 // Since version 2.3, config dir on Linux is in ${XDG_CONFIG_HOME}.
                 // https://github.com/prusa3d/PrusaSlicer/issues/2911
@@ -2280,12 +2281,17 @@ void GUI_App::copy_web_resources() {
 
         try {
             boost::property_tree::ptree source_config, target_config;
-            boost::property_tree::read_json(source_version_file.string(), source_config);
-            boost::property_tree::read_json(target_version_file.string(), target_config);
-            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
-            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
+            // Use path-aware stream open on Windows to avoid ANSI codepage path corruption.
+            boost::filesystem::ifstream source_ifs(source_version_file);
+            boost::filesystem::ifstream target_ifs(target_version_file);
+            boost::property_tree::read_json(source_ifs, source_config);
+            boost::property_tree::read_json(target_ifs, target_config);
+            const std::string source_version_str = source_config.get<std::string>("version", "0");
+            const std::string target_version_str = target_config.get<std::string>("version", "0");
+            const Semver      source_ver         = Semver::parse(source_version_str).get_value_or(Semver::zero());
+            const Semver      target_ver         = Semver::parse(target_version_str).get_value_or(Semver::zero());
 
-            if (source_build_number_str > target_build_number_str) {
+            if (target_ver < source_ver) {
                 copy_bundled_flutter_web(true);
                 profiler.mark("copy flutter_web (version upgrade)");
             } else {

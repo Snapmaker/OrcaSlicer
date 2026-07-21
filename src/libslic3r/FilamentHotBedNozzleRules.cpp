@@ -8,6 +8,8 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/convert.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <algorithm>
@@ -21,17 +23,30 @@ namespace pt = boost::property_tree;
 namespace {
 
 // Prefer user data dir (installed system profile) so rules can be patched without reinstalling the app.
+// Windows: data_dir/resources_dir are UTF-8; return UTF-8 path for boost::nowide streams, build fs::path via widen for lookups.
 static std::string filament_hot_bed_nozzles_json_path()
 {
     namespace fs = boost::filesystem;
-    const fs::path user_path = (fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR / PresetBundle::SM_BUNDLE / "filament" /
-                                "filament_hot_bed_nozzles.json")
-                                 .make_preferred();
-    if (fs::exists(user_path))
-        return user_path.string();
-    return (fs::path(Slic3r::resources_dir()) / "profiles" / PresetBundle::SM_BUNDLE / "filament" / "filament_hot_bed_nozzles.json")
-        .make_preferred()
-        .string();
+#ifdef _WIN32
+    const fs::path user = (fs::path(boost::nowide::widen(Slic3r::data_dir())) / PRESET_SYSTEM_DIR / PresetBundle::SM_BUNDLE / "filament" /
+                           "filament_hot_bed_nozzles.json")
+                              .make_preferred();
+
+    if (fs::exists(user))
+        return boost::nowide::narrow(user.wstring());
+    const fs::path res = (fs::path(boost::nowide::widen(Slic3r::resources_dir())) / "profiles" / PresetBundle::SM_BUNDLE / "filament" /
+                          "filament_hot_bed_nozzles.json")
+                             .make_preferred();
+
+    return boost::nowide::narrow(res.wstring());
+#else
+    const fs::path user = (fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR / PresetBundle::SM_BUNDLE / "filament" / "filament_hot_bed_nozzles.json").make_preferred();
+
+    if (fs::exists(user))
+        return user.string();
+
+    return (fs::path(Slic3r::resources_dir()) / "profiles" / PresetBundle::SM_BUNDLE / "filament" / "filament_hot_bed_nozzles.json").make_preferred().string();
+#endif
 }
 
 std::string to_upper_ascii(std::string s)
@@ -354,14 +369,24 @@ void FilamentHotBedNozzleRules::load()
     m_loaded = false;
 
     const std::string file_path = filament_hot_bed_nozzles_json_path();
-    if (!boost::filesystem::exists(file_path)) {
+#ifdef _WIN32
+    if (!boost::filesystem::exists(boost::filesystem::path(boost::nowide::widen(file_path))))
+#else
+    if (!boost::filesystem::exists(boost::filesystem::path(file_path)))
+#endif
+    {
         BOOST_LOG_TRIVIAL(warning) << "filament_hot_bed_nozzles.json not found: " << file_path;
         return;
     }
 
     try {
         pt::ptree root;
-        pt::read_json(file_path, root);
+        boost::nowide::ifstream ifs(file_path, std::ios::binary);
+        if (!ifs) {
+            BOOST_LOG_TRIVIAL(warning) << "filament_hot_bed_nozzles.json could not be opened: " << file_path;
+            return;
+        }
+        pt::read_json(ifs, root);
 
         for (const auto& kv : root) {
             const std::string rule_key = boost::trim_copy(kv.first);

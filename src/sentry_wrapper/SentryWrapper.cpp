@@ -117,6 +117,31 @@ void initSentryEx()
         wchar_t exeDir[MAX_PATH_EXTENDED];
         DWORD pathLen = ::GetModuleFileNameW(nullptr, exeDir, MAX_PATH_EXTENDED);
         
+
+        auto wstringTostring = [](const std::wstring& wTmpStr) -> std::string {
+            if (wTmpStr.empty())
+                return std::string();
+
+            int len = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            if (len <= 0) {
+                std::cout << "WideCharToMultiByte failed, error: " << GetLastError();
+                return std::string();
+            }
+
+            // len includes the null terminator, so buffer must be at least len bytes.
+            std::string desStr(static_cast<size_t>(len), '\0');
+            int result = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, desStr.data(), len, nullptr, nullptr);
+            if (result != len) {
+                std::cout << "WideCharToMultiByte conversion failed, error: " << GetLastError();
+                return std::string();
+            }
+
+            // Keep std::string content without trailing null terminator.
+            desStr.resize(static_cast<size_t>(len - 1));
+
+            return desStr;
+        };
+
         // GetModuleFileNameW returns 0 on error, or the number of characters written (excluding null terminator)
         // If return value equals buffer size, the path was truncated
         if (pathLen == 0) {
@@ -153,58 +178,21 @@ void initSentryEx()
             std::wstring desDir   = wsDmpDir + L"crashpad_handler.exe";
             wsDmpDir += L"dump";
 
-            auto wstringTostring = [](const std::wstring& wTmpStr) -> std::string {
-                if (wTmpStr.empty())
-                    return std::string();
-                    
-                int len = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                if (len <= 0) {
-                    std::cout<< "WideCharToMultiByte failed, error: " << GetLastError();
-                    return std::string();
-                }
-
-                // Allocate buffer with size len (includes null terminator)
-                std::string desStr;
-                desStr.resize(len - 1); // Reserve space excluding null terminator
-                int result = WideCharToMultiByte(CP_UTF8, 0, wTmpStr.c_str(), -1, &desStr[0], len, nullptr, nullptr);
-                if (result == 0 || result != len) {
-                    std::cout<< "WideCharToMultiByte conversion failed, error: " << GetLastError();
-                    return std::string();
-                }
-                
-                // Remove null terminator if present (safely check before accessing)
-                if (!desStr.empty() && desStr.back() == '\0')
-                    desStr.pop_back();
-
-                return desStr;
-            };
-
             handlerDir = wstringTostring(desDir);
         }
 
         // Get LocalAppData folder path
         PWSTR   pszPath = nullptr;
-        char*   path    = nullptr;
-        size_t  pathLength = 0;
         HRESULT hr      = SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &pszPath);
 
         if (SUCCEEDED(hr) && pszPath != nullptr) {
-            // Calculate required buffer size first
             size_t wcsLen = wcslen(pszPath);
-            if (wcsLen > 0 && wcsLen < SIZE_MAX / 3) { // Check for overflow
-                // Allocate buffer with extra space for safety
-                size_t requiredSize = wcsLen * 3 + 1; // UTF-8 can be up to 3 bytes per wchar
-                path = new (std::nothrow) char[requiredSize]();
-                
-                if (path != nullptr) {
-                    errno_t err = wcstombs_s(&pathLength, path, requiredSize, pszPath, _TRUNCATE);
-                    if (err != 0) {
-                        std::cout<< "wcstombs_s failed, error: " << err;
-                        delete[] path;
-                        path = nullptr;
-                    }
+            if (wcsLen > 0 && wcsLen < SIZE_MAX / 3) {
+                std::string localAppDataPath = wstringTostring(pszPath);
+                if (!localAppDataPath.empty()) {
+                    dataBaseDir = localAppDataPath + "\\Snapmaker_Orca\\";
                 } else {
-                    std::cout<< "Failed to allocate memory for path conversion";
+                    std::cout << "Failed to convert FOLDERID_LocalAppData path to UTF-8";
                 }
             } else if (wcsLen == 0) {
                 std::cout<< "SHGetKnownFolderPath returned empty path";
@@ -223,17 +211,11 @@ void initSentryEx()
             }
         }
 
-        if (path != nullptr) {
-            std::string filePath = path;
-            std::string appName  = "\\" + std::string("Snapmaker_Orca\\");
-            dataBaseDir          = filePath + appName;
-            delete[] path;
-            path = nullptr;
-        } else {
+        if (dataBaseDir.empty()) {
             // Fallback: use temp directory
-            char tempPath[MAX_PATH];
-            if (GetTempPathA(MAX_PATH, tempPath) != 0) {
-                dataBaseDir = std::string(tempPath) + "Snapmaker_Orca\\";
+            WCHAR tempPath[MAX_PATH];
+            if (GetTempPathW(MAX_PATH, tempPath) != 0) {
+                dataBaseDir = wstringTostring(tempPath) + "Snapmaker_Orca\\";
                 std::cout<< "Using temp directory as fallback for Sentry data: " << dataBaseDir;
             } else {
                 dataBaseDir = "";

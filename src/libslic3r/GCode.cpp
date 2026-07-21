@@ -763,30 +763,9 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             gcode += gcodegen.retract(false, false, lift_type);
         }
 
-        Point target_obj = wipe_tower_point_to_object_point(gcodegen, travel_target + plate_origin_2d);
-
-        if (should_travel_to_tower && gcodegen.config().wipe_tower_wall_gap.value) {
-            BoundingBox tower_bbx;
-            {
-                BoundingBox bbox = scaled(m_wipe_tower_bbx);
-                Polygon     pp   = bbox.polygon();
-                for (auto &p : pp.points) {
-                    Vec2f pt = transform_wt_pt(unscale(p).cast<float>());
-                    p = wipe_tower_point_to_object_point(gcodegen, pt + plate_origin_2d);
-                }
-                tower_bbx = BoundingBox(pp.points);
-            }
-
-            Polyline detour = detour_around_wipe_tower(gcodegen.last_pos(), target_obj, tower_bbx);
-            for (size_t i = 0; i < detour.points.size(); ++i) {
-                gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-                gcode += gcodegen.travel_to(detour.points[i], erMixed,
-                    i == detour.points.size() - 1 ? "Travel to a Wipe Tower" : "Wipe tower detour");
-            }
-        } else {
-            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-            gcode += gcodegen.travel_to(target_obj, erMixed, "Travel to a Wipe Tower");
-        }
+        gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, travel_target + plate_origin_2d), erMixed,
+                                    "Travel to a Wipe Tower");
         gcode += gcodegen.unretract();
     }
 
@@ -823,10 +802,60 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 
     std::string toolchange_gcode_str;
     std::string deretraction_str;
+
+    // Build wipe tower bounding box in object coordinates, shared by
+    // departure and return detours (mirrors approach detour lines 769-778).
+    bool has_detour_bbox = false;
+    BoundingBox tower_bbx;
+    if (gcodegen.config().wipe_tower_wall_gap.value
+        && !tcr.priming && needs_toolchange) {
+        BoundingBox bbox = scaled(m_wipe_tower_bbx);
+        Polygon     pp   = bbox.polygon();
+        for (auto &p : pp.points) {
+            Vec2f pt = transform_wt_pt(unscale(p).cast<float>());
+            p = wipe_tower_point_to_object_point(gcodegen, pt + plate_origin_2d);
+        }
+        tower_bbx       = BoundingBox(pp.points);
+        has_detour_bbox = true;
+
+        // Departure detour: route from the wipe tower to a safe position
+        // outside the tower bbox so the firmware tool-change movement
+        // does not cross through the tower.
+        // Safe-X: bbox edge + 3 mm, aligned with Bambu Studio
+        // get_wipe_avoid_pos_x (GCode.cpp:420, offset=3.0).
+        float safe_x;
+        {
+            double left  = unscale(tower_bbx.min).x() - 3.0;
+            double right = unscale(tower_bbx.max).x() + 3.0;
+            if (right > 100.0 && right < 250.0)
+                safe_x = right;
+            else if (left > 100.0 && left < 250.0)
+                safe_x = left;
+            else
+                safe_x = 110.0;
+        }
+        Point tower_obj = wipe_tower_point_to_object_point(
+            gcodegen, start_pos + plate_origin_2d);
+        Point safe_obj = wipe_tower_point_to_object_point(
+            gcodegen, Vec2f(safe_x, start_pos.y()) + plate_origin_2d);
+
+        Polyline dep_detour = detour_around_wipe_tower(
+            tower_obj, safe_obj, tower_bbx);
+        for (size_t i = 0; i < dep_detour.points.size(); ++i) {
+            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+            toolchange_gcode_str += gcodegen.travel_to(
+                dep_detour.points[i], erMixed,
+                i == dep_detour.points.size() - 1
+                    ? "Depart wipe tower"
+                    : "Wipe tower departure detour");
+        }
+        gcodegen.set_last_pos(safe_obj);
+    }
+
     if (tcr.priming || (new_extruder_id >= 0 && needs_toolchange)) {
         if (is_ramming)
-            gcodegen.m_wipe.reset_path();                                           // We don't want wiping on the ramming lines.
-        toolchange_gcode_str = gcodegen.set_extruder(new_extruder_id, tcr.print_z); // TODO: toolchange_z vs print_z
+            gcodegen.m_wipe.reset_path();
+        toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, tcr.print_z);
         if (gcodegen.config().enable_prime_tower) {
             deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
             Vec3d position{gcodegen.writer().get_position()};
@@ -834,6 +863,25 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             gcodegen.writer().set_position(position);
             deretraction_str += gcodegen.unretract();
         }
+    }
+
+    // Return detour: route back from the safe position to the wipe tower,
+    // avoiding the tower body.  Mirrors Bambu Studio GCode.cpp:1133.
+    if (has_detour_bbox) {
+        Point start_obj  = gcodegen.last_pos();
+        Point target_obj = wipe_tower_point_to_object_point(
+            gcodegen, start_pos + plate_origin_2d);
+
+        Polyline detour = detour_around_wipe_tower(start_obj, target_obj, tower_bbx);
+        for (size_t i = 0; i < detour.points.size(); ++i) {
+            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+            toolchange_gcode_str += gcodegen.travel_to(
+                detour.points[i], erMixed,
+                i == detour.points.size() - 1
+                    ? "Return to wipe tower"
+                    : "Wipe tower return detour");
+        }
+        gcodegen.set_last_pos(target_obj);
     }
 
     // Insert the toolchange and deretraction gcode into the generated gcode.
@@ -849,7 +897,6 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         tcr_escaped_gcode = gcodegen.placeholder_parser_process("tcr_rotated_gcode", tcr_rotated_gcode, new_extruder_id, &config);
     unescape_string_cstyle(tcr_escaped_gcode, tcr_gcode);
     gcode += tcr_gcode;
-    check_add_eol(toolchange_gcode_str);
 
     // SoftFever: set new PA for new filament
     if (new_extruder_id != -1 && gcodegen.config().enable_pressure_advance.get_at(new_extruder_id)) {

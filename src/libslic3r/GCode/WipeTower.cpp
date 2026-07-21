@@ -701,7 +701,7 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
     float nozzle_diameter = float(config.nozzle_diameter.get_at(idx));
     m_filpar[idx].nozzle_diameter = nozzle_diameter; // to be used in future with (non-single) multiextruder MM
 
-    float max_vol_speed = float(config.filament_max_volumetric_speed.get_at(idx));
+    float max_vol_speed = float(get_value_at(config, config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, idx));
     if (max_vol_speed!= 0.f)
         m_filpar[idx].max_e_speed = (max_vol_speed / filament_area());
 

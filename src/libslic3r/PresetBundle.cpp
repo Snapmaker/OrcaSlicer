@@ -2562,10 +2562,7 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
             if (flow_support != nullptr && !flow_support->values.empty())
                 flow_step_size = int(flow_support->values.size());
 
-            for (const t_config_option_key &key : this->filaments.default_preset().config.keys()) {
-                if (key == "compatible_prints" || key == "compatible_printers")
-                    continue;
-
+            for (const char *key : { "filament_max_volumetric_speed", "filament_flow_support" }) {
                 ConfigOption *opt_dst = out.option(key, false);
                 if (opt_dst == nullptr || opt_dst->is_scalar())
                     continue;
@@ -2683,20 +2680,25 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 const ConfigOption *opt_src = filament_configs.front()->option(key);
                 if (opt_src != nullptr)
                     opt_dst->set(opt_src);
-            } else {
+            } else if (key == "filament_max_volumetric_speed" || key == "filament_flow_support") {
                 ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
-                // Snapmaker: flow variant
                 opt_vec_dst->resize(flow_total_size);
                 size_t segment_start = 0;
                 for (size_t i = 0; i < num_filaments; ++i) {
                     const ConfigOption *opt_src = filament_configs[i]->option(key);
                     if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0) {
                         for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
-                            // set_at() reads the source through get_at(): variants the preset
-                            // provides no value for fall back to its first (standard) value.
                             opt_vec_dst->set_at(opt_src, segment_start + k, k);
                     }
                     segment_start += size_t(flow_step_sizes[i]);
+                }
+            } else {
+                ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
+                opt_vec_dst->resize(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    const ConfigOption *opt_src = filament_configs[i]->option(key);
+                    if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0)
+                        opt_vec_dst->set_at(opt_src, i, 0);
                 }
             }
         }
@@ -2871,6 +2873,26 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     size_t num_filaments = config.option<ConfigOptionStrings>("filament_colour")->size();
 #endif
 
+    // Snapmaker: flow variant. Newer 3MF files store flow-aware filament options as concatenated
+    // per-filament segments. Keep the segment table before splitting the full config back into presets.
+    // Legacy files do not contain the table and retain the original one-value-per-filament layout.
+    std::vector<int> filament_flow_step_sizes(num_filaments, 1);
+    bool has_filament_flow_segments = false;
+    if (const auto *stored_step_sizes = config.option<ConfigOptionInts>("filament_flow_step_size");
+        stored_step_sizes != nullptr && stored_step_sizes->values.size() == num_filaments) {
+        has_filament_flow_segments = true;
+        for (size_t i = 0; i < num_filaments; ++i)
+            filament_flow_step_sizes[i] = std::max(1, stored_step_sizes->values[i]);
+    }
+
+    std::vector<size_t> filament_flow_segment_starts(num_filaments, 0);
+    for (size_t i = 1; i < num_filaments; ++i)
+        filament_flow_segment_starts[i] = filament_flow_segment_starts[i - 1] + size_t(filament_flow_step_sizes[i - 1]);
+
+    // filament_flow_step_size describes the composed config only. It must not be copied into an
+    // individual filament preset; full_fff_config() will regenerate it after presets are restored.
+    config.erase("filament_flow_step_size");
+
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": , name_or_path %1%, is_external %2%, num_filaments %3%") % name_or_path % is_external % num_filaments;
     // Make a copy of the "compatible_machine_expression_group" and "inherits_group" vectors, which
@@ -3016,8 +3038,19 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
                         configs[i].option(key, false)->set(other_opt);
                 }
                 else if (key != "compatible_printers" && key != "compatible_prints") {
-                    for (size_t i = 0; i < configs.size(); ++i)
-                        static_cast<ConfigOptionVectorBase*>(configs[i].option(key, false))->set_at(other_opt, 0, i);
+                    const bool is_flow_variant_option = has_filament_flow_segments &&
+                        (key == "filament_max_volumetric_speed" || key == "filament_flow_support");
+                    for (size_t i = 0; i < configs.size(); ++i) {
+                        auto *dst = static_cast<ConfigOptionVectorBase*>(configs[i].option(key, false));
+                        if (is_flow_variant_option) {
+                            const size_t step_size = size_t(filament_flow_step_sizes[i]);
+                            dst->resize(step_size);
+                            for (size_t variant_idx = 0; variant_idx < step_size; ++variant_idx)
+                                dst->set_at(other_opt, variant_idx, filament_flow_segment_starts[i] + variant_idx);
+                        } else {
+                            dst->set_at(other_opt, 0, i);
+                        }
+                    }
                 }
             }
             // Load the configs into this->filaments and make them active.

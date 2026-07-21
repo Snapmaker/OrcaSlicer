@@ -542,11 +542,11 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
             float purge_length  = purge_volume / filament_area;
 
             int old_filament_e_feedrate = gcode_writer.extruder() != nullptr ?
-                                              (int) (60.0 * full_config.filament_max_volumetric_speed.get_at(previous_extruder_id) /
+                                              (int) (60.0 * get_value_at(full_config, full_config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, previous_extruder_id) /
                                                      filament_area) :
                                               200;
             old_filament_e_feedrate     = old_filament_e_feedrate == 0 ? 100 : old_filament_e_feedrate;
-            int new_filament_e_feedrate = (int) (60.0 * full_config.filament_max_volumetric_speed.get_at(new_extruder_id) / filament_area);
+            int new_filament_e_feedrate = (int) (60.0 * get_value_at(full_config, full_config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, new_extruder_id) / filament_area);
             new_filament_e_feedrate     = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
 
             config.set_key_value("max_layer_z", new ConfigOptionFloat(gcodegen.m_max_layer_z));
@@ -2677,8 +2677,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
 
         // calculate the volumetric speed of outer wall. Ignore per-object setting and multi-filament, and just use the default setting
         {
-            float filament_max_volumetric_speed = m_config.option<ConfigOptionFloats>("filament_max_volumetric_speed")
-                                                      ->get_at(initial_non_support_extruder_id);
+            float filament_max_volumetric_speed = get_value_at(m_config, m_config.filament_max_volumetric_speed,
+                                                                  ConfigFlowDomain::Filament, initial_non_support_extruder_id);
             const double nozzle_diameter       = m_config.nozzle_diameter.get_at(initial_non_support_extruder_id);
             float        outer_wall_line_width = print.default_region_config().get_abs_value("outer_wall_line_width", nozzle_diameter);
             if (outer_wall_line_width == 0.0) {
@@ -7438,9 +7438,11 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             throw Slic3r::InvalidArgument("Invalid speed");
         }
     }
+    const double filament_max_volumetric_speed = get_value_at(m_config, m_config.filament_max_volumetric_speed,
+                                                                ConfigFlowDomain::Filament, m_writer.extruder()->id());
     // BBS: if not set the speed, then use the filament_max_volumetric_speed directly
     if (speed == 0)
-        speed = EXTRUDER_CONFIG(filament_max_volumetric_speed) / _mm3_per_mm;
+        speed = filament_max_volumetric_speed / _mm3_per_mm;
     if (this->on_first_layer()) {
         // BBS: for solid infill of initial layer, speed can be higher as long as
         // wall lines have be attached
@@ -7472,9 +7474,9 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     //         m_config.max_volumetric_speed.value / _mm3_per_mm
     //     );
     // }
-    if (EXTRUDER_CONFIG(filament_max_volumetric_speed) > 0) {
+    if (filament_max_volumetric_speed > 0) {
         // cap speed with max_volumetric_speed anyway (even if user is not using autospeed)
-        speed = std::min(speed, EXTRUDER_CONFIG(filament_max_volumetric_speed) / _mm3_per_mm);
+        speed = std::min(speed, filament_max_volumetric_speed / _mm3_per_mm);
     }
     // ORCA: resonance‑avoidance on short external perimeters
     {
@@ -7486,8 +7488,8 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             }
 
             // re‑apply volumetric cap
-            if (EXTRUDER_CONFIG(filament_max_volumetric_speed) > 0) {
-                speed = std::min(speed, EXTRUDER_CONFIG(filament_max_volumetric_speed) / _mm3_per_mm);
+            if (filament_max_volumetric_speed > 0) {
+                speed = std::min(speed, filament_max_volumetric_speed / _mm3_per_mm);
             }
 
             // if still in avoidance mode and under “max”, clamp to “min”
@@ -7507,10 +7509,10 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         bool   is_external = is_external_perimeter(path.role());
         double ref_speed   = is_external ? m_config.get_abs_value("outer_wall_speed") : m_config.get_abs_value("inner_wall_speed");
         if (ref_speed == 0)
-            ref_speed = EXTRUDER_CONFIG(filament_max_volumetric_speed) / _mm3_per_mm;
+            ref_speed = filament_max_volumetric_speed / _mm3_per_mm;
 
-        if (EXTRUDER_CONFIG(filament_max_volumetric_speed) > 0) {
-            ref_speed = std::min(ref_speed, EXTRUDER_CONFIG(filament_max_volumetric_speed) / _mm3_per_mm);
+        if (filament_max_volumetric_speed > 0) {
+            ref_speed = std::min(ref_speed, filament_max_volumetric_speed / _mm3_per_mm);
         }
         if (sloped) {
             ref_speed = std::min(ref_speed, m_config.scarf_joint_speed.get_abs_value(ref_speed));
@@ -8523,7 +8525,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         wipe_volume = flush_matrix[previous_extruder_id * number_of_extruders + extruder_id];
         wipe_volume *= m_config.flush_multiplier;
 
-        old_filament_e_feedrate = (int) (60.0 * m_config.filament_max_volumetric_speed.get_at(previous_extruder_id) / filament_area);
+        old_filament_e_feedrate = (int) (60.0 * get_value_at(m_config, m_config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, previous_extruder_id) / filament_area);
         old_filament_e_feedrate = old_filament_e_feedrate == 0 ? 100 : old_filament_e_feedrate;
         // BBS: must clean m_start_gcode_filament
         m_start_gcode_filament = -1;
@@ -8535,7 +8537,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         old_filament_e_feedrate       = 200;
     }
     float wipe_length             = wipe_volume / filament_area;
-    int   new_filament_e_feedrate = (int) (60.0 * m_config.filament_max_volumetric_speed.get_at(extruder_id) / filament_area);
+    int   new_filament_e_feedrate = (int) (60.0 * get_value_at(m_config, m_config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, extruder_id) / filament_area);
     new_filament_e_feedrate       = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
 
     DynamicConfig dyn_config;

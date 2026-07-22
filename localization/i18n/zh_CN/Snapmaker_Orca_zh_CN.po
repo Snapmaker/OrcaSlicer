@@ -15349,3 +15349,51 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+
+msgid "Color Mixing Match"
+msgstr "混色匹配"
+
+msgid "No model detected. Import a multi-color model to continue."
+msgstr "未检测到模型，请先导入多色模型。"
+
+msgid "Filament Setup"
+msgstr "耗材配置"
+
+msgid "Filament Setup (CMYW)"
+msgstr "耗材配置（CMYW）"
+
+msgid "Original"
+msgstr "原模型"
+
+msgid "Matched"
+msgstr "匹配结果"
+
+msgid "Stop Matching"
+msgstr "停止匹配"
+
+msgid "Good"
+msgstr "优"
+
+msgid "Fair"
+msgstr "中"
+
+msgid "Poor"
+msgstr "差"
+
+msgid "Color Difference: %s (ΔE=%.1f)"
+msgstr "色差：%s（ΔE=%.1f）"
+
+msgid "Color Mapping"
+msgstr "颜色映射"
+
+msgid "Start Matching"
+msgstr "开始匹配"
+
+msgid "Rematch"
+msgstr "重新匹配"
+
+msgid "Automatically uses official CMYW filaments for color mixing. The mix ratio for each color is limited to X%–Y%."
+msgstr "自动选择官方 CMYW 耗材进行混色匹配。单色混色比例范围：X%–Y%。"
+
+msgid "Manually select filaments from the current list for color mixing."
+msgstr "手动选择当前列表中的耗材进行混色匹配。"

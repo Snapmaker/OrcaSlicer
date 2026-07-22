@@ -2321,10 +2321,17 @@ Sidebar::Sidebar(Plater *parent)
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
+        // No loaded model → batch match has nothing to map. Surface as an info dialog
+        // (not an error — these are "please do X first" hints, not failures) BEFORE
+        // opening the dialog.
+        if (p->plater->model().objects.empty()) {
+            show_info(this, _L("No model detected. Import a multi-color model to continue."));
+            return;
+        }
         ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
         if (colors.size() < 2) {
-            show_error(this, _L("Please add at least 2 filaments to use batch color matching."));
+            show_info(this, _L("Please add at least 2 filaments to use batch color matching."));
             return;
         }
         MixedFilamentBatchDialog dlg(this);

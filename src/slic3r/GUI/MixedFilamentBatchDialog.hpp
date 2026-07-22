@@ -47,7 +47,9 @@ private:
     void build_footer();            // Cancel + Confirm + progress bar (pinned to bottom)
 
     void on_method_changed(wxCommandEvent&);
+    void update_method_combo_tooltip(); // refresh combo tooltip to describe the active mode
     void on_manual_selection_changed();
+    void update_manual_swatch(int row); // refresh the numbered swatch color to match the combo selection
     void update_add_remove_buttons(); // mirrors MixedFilamentDialog: hide add at max, remove at min
 
     // Preview lifecycle
@@ -72,6 +74,9 @@ private:
 
     void display_warning(const wxString& msg);
     void set_error(const wxString& msg);
+    // Manual-mode ratio guard: if a single physical filament is picked by more than
+    // kManualDominantRatioPct of the rows, warn that the mix is lopsided.
+    void check_manual_filament_ratio();
 
     void set_match_buttons_state(bool matching);
     void update_recommended_card();
@@ -101,11 +106,13 @@ private:
     wxBoxSizer*   m_root         = nullptr;
 
     // Top row
+    wxPanel*  m_mode_row_panel  = nullptr; // white-bg host for the mode/match-mode row
     ComboBox* m_method_combo    = nullptr;
     Button*   m_btn_start_match = nullptr;
     Button*   m_btn_cancel_match = nullptr;
     Button*   m_btn_rematch     = nullptr;
     Button*   m_btn_confirm     = nullptr;
+    Button*   m_btn_stop_match  = nullptr; // "Stop Matching" — inline beside the progress bar, shown only while matching
 
     // Preview card (single card holds both previews + plate/view controls).
     // m_preview_orig_panel / m_preview_match_panel are RoundedPreviewPanel instances but
@@ -125,6 +132,11 @@ private:
     // Bucket count is derived from the enum, not a magic 8, so adding a viewpoint fails
     // the static_assert below instead of silently going out of bounds.
     static constexpr size_t kNumThumbnailViews = static_cast<size_t>(ThumbnailView::Rear) + 1;
+    // Manual-mode dominance threshold: when one physical filament accounts for more than
+    // this fraction of the selected rows, the mix is lopsided and we warn the user.
+    // 0.7 = 70%. Kept as a named constant (not a literal) so the threshold is grep-able
+    // and adjustable in one place.
+    static constexpr double kManualDominantRatioPct = 0.7;
     std::array<std::vector<wxBitmap>, kNumThumbnailViews> m_thumb_cache_by_view;
     std::array<std::vector<wxBitmap>, kNumThumbnailViews> m_match_cache_by_view;
     std::vector<ColorRGBA> m_match_colors;
@@ -179,6 +191,7 @@ private:
     wxStaticBitmap* m_recommended_swatches[4] = {nullptr};
     wxStaticText*   m_recommended_labels[4]   = {nullptr};
     ComboBox*       m_filament_combo[4]       = {nullptr};
+    wxStaticBitmap* m_filament_swatch[4]      = {nullptr}; // numbered color swatch, left of combo
     wxWindow*       m_manual_row_panels[4]    = {nullptr};
     int             m_manual_filament_count   = 0; // computed in ctor based on physical filaments
     // Add/remove buttons (mirrors MixedFilamentDialog: hidden at min/max count)

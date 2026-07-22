@@ -15,6 +15,7 @@
 #include "BitmapCache.hpp"
 
 #include <unordered_map>
+#include <algorithm>
 
 #include <wx/scrolwin.h>
 #include <wx/dcbuffer.h>
@@ -220,11 +221,14 @@ private:
 // ---------------------------------------------------------------------------
 
 MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
-    : DPIDialog(parent, wxID_ANY, _L("Mixed Color Match"),
+    : DPIDialog(parent, wxID_ANY, _L("Color Mixing Match"),
                 wxDefaultPosition, wxDefaultSize,
                 wxCAPTION | wxCLOSE_BOX)
 {
-    SetSize(FromDIP(540), FromDIP(680));
+    // Initial client size (mirrors the original SetSize(540,680) intent but pins the CLIENT
+    // area so OS borders don't eat into the 500px design width). build_ui re-asserts this
+    // after the sizer is attached.
+    SetClientSize(FromDIP(500), FromDIP(700));
     SetMinClientSize(wxSize(FromDIP(500), FromDIP(560)));
     CentreOnScreen();
 
@@ -240,8 +244,19 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         m_manual_filament_count = n > 4 ? 4 : (n >= 2 ? static_cast<int>(n) : 2);
     }
     if (wxGetApp().plater()) {
-        m_tray_count = wxGetApp().plater()->get_partplate_list().get_plate_count();
+        auto& plates = wxGetApp().plater()->get_partplate_list();
+        m_tray_count = plates.get_plate_count();
         if (m_tray_count < 1) m_tray_count = 1;
+        // Default the dialog to the plate the user currently has selected in the plater
+        // (multi-plate UX: opening the dialog should reflect the plate the user is looking
+        // at, not always plate 1). get_curr_plate_index() is 0-based; m_tray_index is
+        // 1-based, so add 1. Clamp to the valid [1, m_tray_count] range defensively —
+        // m_current_plate could be -1 (no selection) or out of range in edge cases.
+        const int curr = plates.get_curr_plate_index();
+        if (curr >= 0 && curr < m_tray_count)
+            m_tray_index = curr + 1;
+        else
+            m_tray_index = 1;
     }
     load_model_colors();
     build_ui();
@@ -276,7 +291,7 @@ MixedFilamentBatchDialog::~MixedFilamentBatchDialog()
 
 void MixedFilamentBatchDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
 {
-    SetSize(FromDIP(540), FromDIP(680));
+    SetClientSize(FromDIP(500), FromDIP(700));
     Layout();
     Refresh();
 }
@@ -639,7 +654,7 @@ void MixedFilamentBatchDialog::update_recommended_card()
     const auto& colors = m_result.recommended_physical_colors;
     if (colors.size() < 4) return;
 
-    // Color name lookup — maps from hex in CMYG palette back to a
+    // Color name lookup — maps from hex in CMYW palette back to a
     // human-readable label.  Covers the 4 canonical colors.
     static const std::unordered_map<std::string, wxString> kColorName = {
         {"#08ABFB", _L("Blue")},
@@ -701,7 +716,7 @@ void MixedFilamentBatchDialog::build_ui()
     build_mapping_card(*scroll_sizer);
     m_scrolled_content->SetSizer(scroll_sizer);
     // Width floor must match the dialog width or cards overflow horizontally (MultiMachineManagerPage).
-    m_scrolled_content->SetMinSize(wxSize(FromDIP(540), FromDIP(80)));
+    m_scrolled_content->SetMinSize(wxSize(FromDIP(500), FromDIP(80)));
     m_root->Add(m_scrolled_content, 1, wxEXPAND);
 
     // Footer (Cancel/Confirm) above progress: Figma spec has the match-progress bar pinned
@@ -711,10 +726,25 @@ void MixedFilamentBatchDialog::build_ui()
     build_footer();
 
     SetSizer(m_root);
+    // Set the client area explicitly. Original code used SetSize(540, 680) which includes
+    // OS title bar + borders on wxMSW (~17px), so SetSize(500) yields a ~483px client area
+    // and the 460px cards sit at uneven ~11px margins instead of the intended 20px.
+    // SetClientSize(500) makes the client area exactly 500 → cards get (500-460)/2 = 20px.
+    // Layout() then stretches the sizer to fill the 500×700 client area. (We do NOT use
+    // SetMin/MaxClientSize==value to lock: m_scrolled_content's SetMinSize height floor of
+    // 80px makes the sizer's computed best size much smaller than 700, so Fit() collapses
+    // the window; SetClientSize forces the size directly, bypassing that computation.)
+    SetClientSize(FromDIP(500), FromDIP(700));
     Layout();
-    SetSize(FromDIP(540), FromDIP(680));
 
     update_add_remove_buttons();
+    // Initialize plate-nav arrow enabled state. Without this the arrows inherit
+    // ScalableButton's default (Enabled=true) and stay clickable even when there's
+    // nowhere to navigate — most visible when there's a single plate (both arrows
+    // should be disabled) but also wrong for multi-plate (prev stays enabled at plate 1).
+    // update_nav_arrow_state is otherwise only called from combo/nav callbacks, so the
+    // initial state was never set.
+    update_nav_arrow_state();
 }
 
 void MixedFilamentBatchDialog::build_banners()
@@ -733,13 +763,16 @@ void MixedFilamentBatchDialog::build_banners()
     m_error_panel->SetSizer(es);
     m_root->Add(m_error_panel, 0, wxEXPAND);
 
-    // Warning banner
-    m_warning_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+    // Warning banner — mirrors MixedFilamentDialog's banner 1:1 (same bg, icon, margins,
+    // tab-traversal flag) so the two dialogs read as the same family.
+    m_warning_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                   wxBORDER_NONE | wxTAB_TRAVERSAL);
     m_warning_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFF3EB")));
     m_warning_panel->Hide();
     auto* ws = new wxBoxSizer(wxHORIZONTAL);
     ScalableBitmap wbmp(m_warning_panel, "icon_warning_triangle", 14);
-    ws->Add(new wxStaticBitmap(m_warning_panel, wxID_ANY, wbmp.bmp()), 0, wxALL, FromDIP(8));
+    ws->Add(new wxStaticBitmap(m_warning_panel, wxID_ANY, wbmp.bmp()), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+    ws->AddSpacer(FromDIP(4));
     m_warning_text = new Label(m_warning_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
     m_warning_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF842D")));
     m_warning_text->SetMaxSize(wxSize(FromDIP(480), -1));
@@ -750,31 +783,46 @@ void MixedFilamentBatchDialog::build_banners()
 
 void MixedFilamentBatchDialog::build_mode_row()
 {
+    // Host panel for the mode row so the strip renders on a solid white background
+    // instead of the dialog's #F8F7F7 (matches the filament-config cards' bg).
+    m_mode_row_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+    m_mode_row_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
     auto* row = new wxBoxSizer(wxHORIZONTAL);
     {
-        auto* lbl = new wxStaticText(this, wxID_ANY, _L("Match Mode"));
+        auto* lbl = new wxStaticText(m_mode_row_panel, wxID_ANY, _L("Match Mode"));
         lbl->SetFont(Label::Body_14);
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
-        row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, FromDIP(8));
+        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        // Figma Container: row px=20; label→combo gap=8. Put the 20px row padding on the
+        // sizer (wxLEFT|wxRIGHT) so it applies once to the whole row, and the 8px label→combo
+        // gap on the label's right side only — avoids the old double-counted left padding.
+        row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     }
-    m_method_combo = new ComboBox(this, wxID_ANY, wxEmptyString,
+    m_method_combo = new ComboBox(m_mode_row_panel, wxID_ANY, wxEmptyString,
                                    wxDefaultPosition, wxSize(FromDIP(149), FromDIP(30)),
                                    0, nullptr, wxCB_READONLY);
-    m_method_combo->Append(_L("Auto Match"));
-    m_method_combo->Append(_L("Manual Select"));
+    // Figma: combo text = 14px (same as the "Match Mode" label).
+    m_method_combo->SetFont(Label::Body_14);
+    m_method_combo->Append(_L("Auto"));
+    m_method_combo->Append(_L("Manual"));
     m_method_combo->SetSelection(0);
     m_method_combo->Bind(wxEVT_COMBOBOX, &MixedFilamentBatchDialog::on_method_changed, this);
+    // Seed the tooltip for the default (Auto) mode — on_method_changed keeps it in sync
+    // on every subsequent switch.
+    update_method_combo_tooltip();
     row->Add(m_method_combo, 0, wxALIGN_CENTER_VERTICAL);
 
     row->AddStretchSpacer();
 
     // Segmented Start / Re-match tabs (80x28). Active tab is teal (#009688), inactive gray
     // (#d9d9d9); set_match_buttons_state drives which is enabled based on match progress.
-    auto make_tab = [this](Button*& slot, const wxString& label) {
-        auto* btn = new Button(this, label);
+    auto make_tab = [this, panel = m_mode_row_panel](Button*& slot, const wxString& label) {
+        auto* btn = new Button(panel, label);
         btn->SetMinSize(wxSize(FromDIP(80), FromDIP(28)));
         btn->SetCornerRadius(FromDIP(4));
         btn->SetBorderWidth(0);
+        // Figma: tab label = 12px (Body_12).
+        btn->SetFont(Label::Body_12);
         btn->SetBackgroundColor(StateColor(
             std::pair(wxColour("#D9D9D9"), static_cast<int>(StateColor::Disabled)),
             std::pair(wxColour("#009688"), static_cast<int>(StateColor::Normal))));
@@ -784,13 +832,34 @@ void MixedFilamentBatchDialog::build_mode_row()
         slot = btn;
         return btn;
     };
+    // Figma: two tabs separated by gap=8 (provided by Start tab's wxRIGHT), with NO margin
+    // after the last tab — the 20px right padding lives on the row sizer (wxRIGHT below).
     row->Add(make_tab(m_btn_start_match, _L("Start Matching")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
-    row->Add(make_tab(m_btn_rematch, _L("Re-match")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    row->Add(make_tab(m_btn_rematch, _L("Rematch")), 0, wxALIGN_CENTER_VERTICAL);
 
     m_btn_start_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { start_batch_match(); });
     m_btn_rematch->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { start_batch_match(); });
 
-    m_root->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, FromDIP(10));
+    // Wrap the horizontal row with 10px vertical padding inside the white panel so the
+    // strip has breathing room above/below the controls (panel height = 10 + content + 10),
+    // matching how the footer panel pads its own contents.
+    auto* outer = new wxBoxSizer(wxVERTICAL);
+    // Top hairline divider (#F0F0F0, theme-aware) — same technique as the footer's top_line,
+    // so the strip reads as a separate section sitting flush under the title bar.
+    {
+        auto* top_line = new wxPanel(m_mode_row_panel, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
+        top_line->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
+        outer->Add(top_line, 0, wxEXPAND);
+    }
+    outer->AddSpacer(FromDIP(10));
+    // Figma Container: px=20. Applied here on the row so left/right edges are symmetric and
+    // the label/combo/tabs sit at the same horizontal insets as the cards' contents.
+    outer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
+    outer->AddSpacer(FromDIP(10));
+    m_mode_row_panel->SetSizer(outer);
+    // Full-width like the footer panel (no left/right margin) so the white strip spans the
+    // dialog content area edge-to-edge. No top margin — strip sits flush under the title bar.
+    m_root->Add(m_mode_row_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(10));
 }
 
 void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
@@ -802,8 +871,8 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
     card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // All four cards share the same fixed width + centered alignment so their edges line up
     // with consistent margins — mirrors MixedFilamentDialog's fixed-width (325) cards.
-    card->SetMinSize(wxSize(FromDIP(459), -1));
-    card->SetMaxSize(wxSize(FromDIP(459), -1));
+    card->SetMinSize(wxSize(FromDIP(460), -1));
+    card->SetMaxSize(wxSize(FromDIP(460), -1));
     card->Hide();
     m_manual_card = card;
     auto* s = new wxBoxSizer(wxVERTICAL);
@@ -811,9 +880,10 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
     // Title row + add/remove (same pattern as MixedFilamentDialog)
     {
         auto* title_row = new wxBoxSizer(wxHORIZONTAL);
-        auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Config"));
+        auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup"));
         lbl->SetFont(Label::Body_14);
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         title_row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
         title_row->AddStretchSpacer();
@@ -845,17 +915,18 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
             }
         });
         title_row->Add(m_btn_add_filament, 0, wxALIGN_CENTER_VERTICAL);
-        s->Add(title_row, 0, wxEXPAND | wxALL, FromDIP(16));
+        s->Add(title_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     }
 
-    // Divider
-    {
-        auto* divider = new wxPanel(card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-        divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
-        s->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
-    }
+    // No divider between title and grid — Figma spec relies on whitespace alone.
+    // (The previous 1px #F3F4F6 wxPanel divider rendered as a stray dark line on wxMSW
+    // because wxPanel doesn't reliably honour SetBackgroundColour inside a StaticBox;
+    // see §137 of the wxWidgets pitfalls checklist.)
+    s->AddSpacer(FromDIP(10)); // title-to-grid gap per Figma spec
 
-    // 2-column grid of filament selectors (ComboBox rows with color icons)
+    // 2-column grid of filament selectors — mirrors Plater's physical-filament rows:
+    // a 20x20 numbered color swatch (Figma node 27614:63036) + a preset-name combo. The
+    // swatch number is fixed (row index 1..4); its color follows the combo selection.
     PresetBundle* pb = wxGetApp().preset_bundle;
     const std::vector<std::string>& fps = pb ? pb->filament_presets : std::vector<std::string>();
     auto* grid = new wxFlexGridSizer(2, FromDIP(12), FromDIP(12));
@@ -867,12 +938,21 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         // row doesn't show the dialog's #F8F7F7 through (same as MixedFilamentDialog rows).
         panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
-        auto* filament_lbl = new wxStaticText(panel, wxID_ANY, wxString::Format(_L("Filament %d"), i + 1),
-                                               wxDefaultPosition, wxSize(FromDIP(40), -1));
-        filament_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-        r->Add(filament_lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+
+        // Numbered color swatch (20x20) — get_extruder_color_icon renders the color fill
+        // with the white centered number, same API Plater uses for clr_picker.
+        const int sel0 = (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
+                             ? m_filament_selections[i]
+                             : 0;
+        const std::string& swatch_color = !m_physical_colors.empty() ? m_physical_colors[sel0] : std::string("#808080");
+        wxBitmap* icon = get_extruder_color_icon(swatch_color, std::to_string(i + 1), FromDIP(20), FromDIP(20));
+        auto* swatch = new wxStaticBitmap(panel, wxID_ANY, icon ? *icon : wxNullBitmap);
+        swatch->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        m_filament_swatch[i] = swatch;
+        r->Add(swatch, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+
         auto* cb = new ComboBox(panel, wxID_ANY, wxEmptyString,
-                                 wxDefaultPosition, wxSize(-1, FromDIP(30)),
+                                 wxDefaultPosition, wxSize(-1, FromDIP(24)),
                                  0, nullptr, wxCB_READONLY);
         for (size_t j = 0; j < m_physical_colors.size(); ++j) {
             wxString name;
@@ -881,14 +961,13 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
                 if (preset) name = from_u8(preset->label(false));
             }
             if (name.empty()) name = wxString::Format("F%zu", j + 1);
-            wxBitmap* icon = get_extruder_color_icon(m_physical_colors[j], std::to_string(j + 1), FromDIP(20), FromDIP(20));
-            cb->Append(name, icon ? icon->ConvertToImage() : wxNullImage);
+            cb->Append(name);
         }
-        if (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
-            cb->SetSelection(m_filament_selections[i]);
-        else if (!m_physical_colors.empty())
-            cb->SetSelection(0);
-        cb->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { on_manual_selection_changed(); });
+        cb->SetSelection(sel0);
+        cb->Bind(wxEVT_COMBOBOX, [this, i](wxCommandEvent&) {
+            update_manual_swatch(i);
+            on_manual_selection_changed();
+        });
         r->Add(cb, 1, wxALIGN_CENTER_VERTICAL);
         m_filament_combo[i] = cb;
         panel->SetSizer(r);
@@ -899,7 +978,7 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
     s->Add(grid, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     card->SetSizer(s);
     // Horizontal margin only; the card-to-card vertical gap is added at the build_ui call site.
-    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(16));
+    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(20));
 }
 
 void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
@@ -910,31 +989,30 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     card->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // Same fixed width + centering as the manual card (see build_manual_card).
-    card->SetMinSize(wxSize(FromDIP(459), -1));
-    card->SetMaxSize(wxSize(FromDIP(459), -1));
+    card->SetMinSize(wxSize(FromDIP(460), -1));
+    card->SetMaxSize(wxSize(FromDIP(460), -1));
     card->Hide();
     m_recommended_card = card;
     auto* s = new wxBoxSizer(wxVERTICAL);
 
     // Title
     {
-        auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Config"));
+        auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup (CMYW)"));
         lbl->SetFont(Label::Body_14);
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-        s->Add(lbl, 0, wxALL, FromDIP(16));
+        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        s->Add(lbl, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     }
-    // Divider
-    {
-        auto* divider = new wxPanel(card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-        divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
-        s->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
-    }
+    // No divider between title and grid — matches build_manual_card (Figma spec relies on
+    // whitespace alone; the old 1px wxPanel divider showed as a stray dark line on wxMSW,
+    // see §137).
+    s->AddSpacer(FromDIP(10)); // title-to-grid gap per Figma spec
 
-    // 2x2 grid: numbered CMYG swatch (20x20) + bordered name field. Initially populated
-    // with the canonical CMYG order; update_recommended_card() refreshes swatches/names
+    // 2x2 grid: numbered CMYW swatch (20x20) + bordered name field. Initially populated
+    // with the canonical CMYW order; update_recommended_card() refreshes swatches/names
     // after a match reflects the palette order chosen by recommend_best_filament_combo.
-    static const std::vector<std::pair<std::string, wxString>> CMYG_ENTRIES = {
+    static const std::vector<std::pair<std::string, wxString>> CMYW_ENTRIES = {
         {"#08ABFB", _L("Blue")},
         {"#D93B90", _L("Magenta")},
         {"#F9ED3D", _L("Yellow")},
@@ -949,7 +1027,7 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
         panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
         // Numbered color swatch (stored for later update)
-        wxBitmap* icon = get_extruder_color_icon(CMYG_ENTRIES[i].first, std::to_string(i + 1), FromDIP(20), FromDIP(20));
+        wxBitmap* icon = get_extruder_color_icon(CMYW_ENTRIES[i].first, std::to_string(i + 1), FromDIP(20), FromDIP(20));
         if (icon) {
             auto* sw = new wxStaticBitmap(panel, wxID_ANY, *icon);
             m_recommended_swatches[i] = sw;
@@ -964,7 +1042,7 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
         field->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
         field->SetMinSize(wxSize(-1, FromDIP(24)));
         auto* fs = new wxBoxSizer(wxHORIZONTAL);
-        auto* name = new wxStaticText(field, wxID_ANY, CMYG_ENTRIES[i].second);
+        auto* name = new wxStaticText(field, wxID_ANY, CMYW_ENTRIES[i].second);
         name->SetFont(Label::Body_13);
         name->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         name->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -978,7 +1056,7 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     s->Add(grid, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     card->SetSizer(s);
     // Horizontal margin only; the card-to-card vertical gap is added at the build_ui call site.
-    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(16));
+    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(20));
 }
 
 void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
@@ -989,8 +1067,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     m_preview_card->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     m_preview_card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // Same fixed width + centering as the filament-config cards.
-    m_preview_card->SetMinSize(wxSize(FromDIP(459), -1));
-    m_preview_card->SetMaxSize(wxSize(FromDIP(459), -1));
+    m_preview_card->SetMinSize(wxSize(FromDIP(460), -1));
+    m_preview_card->SetMaxSize(wxSize(FromDIP(460), -1));
     auto* s = new wxBoxSizer(wxVERTICAL);
 
     // Dual previews: Original (fixed 180x180) + After Match (fixed 227x227), both rounded.
@@ -999,12 +1077,12 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     // for why this replaces the earlier StaticBox + child wxStaticBitmap approach.
     {
         auto* prow = new wxBoxSizer(wxHORIZONTAL);
-        m_preview_orig_panel = new RoundedPreviewPanel(m_preview_card, 180, 8, _L("Original Model"));
+        m_preview_orig_panel = new RoundedPreviewPanel(m_preview_card, 180, 8, _L("Original"));
         // Top-align so the smaller (180h) original lines up with the 227h match panel at the
         // top; the 47px difference shows as empty space below the original.
         prow->Add(m_preview_orig_panel, 0, wxALIGN_TOP | wxRIGHT, FromDIP(12));
 
-        m_preview_match_panel = new RoundedPreviewPanel(m_preview_card, 227, 8, _L("After Match"));
+        m_preview_match_panel = new RoundedPreviewPanel(m_preview_card, 227, 8, _L("Matched"));
         prow->Add(m_preview_match_panel, 0, wxALIGN_TOP);
         s->Add(prow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     }
@@ -1026,6 +1104,9 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
         auto* plate_lbl = new wxStaticText(m_preview_card, wxID_ANY, _L("Plate"));
         plate_lbl->SetFont(Label::Body_12);
         plate_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#4A4A4A")));
+        // wxStaticText doesn't inherit the card's white bg — set it explicitly so the label
+        // doesn't show the dialog's #F8F7F7 through (same as the other card labels above).
+        plate_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         crow->Add(plate_lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
 
         m_tray_combo = new ComboBox(m_preview_card, wxID_ANY, wxEmptyString,
@@ -1033,7 +1114,11 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
                                      0, nullptr, wxCB_READONLY);
         for (int i = 1; i <= m_tray_count; ++i)
             m_tray_combo->Append(wxString::Format("%02d", i));
-        m_tray_combo->SetSelection(0);
+        // Reflect the plate the user has selected in the plater (set in the ctor from
+        // get_curr_plate_index). Falls back to 0 when m_tray_index is out of range
+        // (defensive — ctor clamps it, but guard anyway).
+        m_tray_combo->SetSelection(m_tray_index >= 1 && m_tray_index <= m_tray_count
+                                       ? m_tray_index - 1 : 0);
         m_tray_combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) {
             m_tray_index = m_tray_combo->GetSelection() + 1;
             update_nav_arrow_state();
@@ -1048,6 +1133,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
         auto* view_lbl = new wxStaticText(m_preview_card, wxID_ANY, _L("View"));
         view_lbl->SetFont(Label::Body_12);
         view_lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#4A4A4A")));
+        // Same as plate_lbl above — explicit white bg so the label matches the card.
+        view_lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         crow->Add(view_lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
 
         m_view_combo = new ComboBox(m_preview_card, wxID_ANY, wxEmptyString,
@@ -1070,7 +1157,7 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     }
 
     m_preview_card->SetSizer(s);
-    parent.Add(m_preview_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(16));
+    parent.Add(m_preview_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(20));
 }
 
 void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
@@ -1081,8 +1168,8 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
     m_mapping_card->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     m_mapping_card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // Same fixed width + centering as the filament-config cards.
-    m_mapping_card->SetMinSize(wxSize(FromDIP(459), -1));
-    m_mapping_card->SetMaxSize(wxSize(FromDIP(459), -1));
+    m_mapping_card->SetMinSize(wxSize(FromDIP(460), -1));
+    m_mapping_card->SetMaxSize(wxSize(FromDIP(460), -1));
     auto* cs = new wxBoxSizer(wxVERTICAL);
 
     // Title row: label + info icon
@@ -1091,27 +1178,24 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
         auto* lbl = new wxStaticText(m_mapping_card, wxID_ANY, _L("Color Mapping"));
         lbl->SetFont(Label::Body_14);
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
+        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         tr->Add(lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
         m_mapping_info_icon = new ScalableButton(m_mapping_card, wxID_ANY, "info");
         m_mapping_info_icon->SetToolTip(_L("Hover a row to see its color difference."));
         tr->Add(m_mapping_info_icon, 0, wxALIGN_CENTER_VERTICAL);
-        cs->Add(tr, 0, wxALL, FromDIP(16));
+        cs->Add(tr, 0, wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
     }
-    // Divider
-    {
-        auto* divider = new wxPanel(m_mapping_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
-        divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
-        cs->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
-    }
+    // 10px gap between the title row and the legend grid (no divider — see commit history).
+    cs->AddSpacer(FromDIP(10));
     // Grid host (populated by update_mapping_legend). Fixed-col wxGridSizer is Mac-safe;
     // wxWrapSizer miscomputes its height on macOS (same rationale as MixedFilamentDialog).
     m_legend_panel = new wxPanel(m_mapping_card, wxID_ANY);
     m_legend_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
     m_legend_sizer = new wxGridSizer(LEGEND_GRID_COLS, FromDIP(10), FromDIP(10));
     m_legend_panel->SetSizer(m_legend_sizer);
-    cs->Add(m_legend_panel, 0, wxEXPAND | wxALL, FromDIP(16));
+    cs->Add(m_legend_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     m_mapping_card->SetSizer(cs);
-    parent.Add(m_mapping_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+    parent.Add(m_mapping_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(20));
 }
 
 void MixedFilamentBatchDialog::build_footer()
@@ -1134,11 +1218,27 @@ void MixedFilamentBatchDialog::build_footer()
     // the footer's VERTICAL sizer so the white footer bg extends under it and the whole
     // footer grows/shrinks as a unit when the progress row is shown/hidden.
     auto* progress_row = new wxBoxSizer(wxHORIZONTAL);
-    m_progress_bar = new wxGauge(btn_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(8)),
+    // Progress bar — native wxGauge, 6px tall per Figma (node 27624:65433). Width grows to
+    // fill the row (proportion=1); the "Stop Matching" button beside it takes its natural width.
+    m_progress_bar = new wxGauge(btn_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(6)),
                                   wxGA_HORIZONTAL | wxGA_SMOOTH);
     m_progress_bar->SetValue(0);
     m_progress_bar->Hide();
     progress_row->Add(m_progress_bar, 1, wxALIGN_CENTER_VERTICAL);
+    // "Stop Matching" — inline button to the right of the progress bar. Terminates the
+    // in-flight match without closing the dialog (cancel_batch_match only sets the flag;
+    // the worker drains and handle_batch_match_result restores idle state). Figma spec:
+    // bg #F8F7F7, text #242424, 4px corner radius, thin border.
+    m_btn_stop_match = new Button(btn_panel, _L("Stop Matching"));
+    m_btn_stop_match->SetMinSize(wxSize(FromDIP(96), FromDIP(28)));
+    m_btn_stop_match->SetCornerRadius(FromDIP(4));
+    m_btn_stop_match->SetBorderWidth(FromDIP(1));
+    m_btn_stop_match->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#E5E5E5")));
+    m_btn_stop_match->SetBackgroundColorNormal(StateColor::darkModeColorFor(wxColour("#F8F7F7")));
+    m_btn_stop_match->SetTextColorNormal(StateColor::darkModeColorFor(wxColour("#242424")));
+    m_btn_stop_match->Hide();
+    m_btn_stop_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { cancel_batch_match(); });
+    progress_row->Add(m_btn_stop_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
     panel_sizer->Add(progress_row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
     panel_sizer->AddSpacer(FromDIP(12));
 
@@ -1253,9 +1353,14 @@ void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
     if (matching) {
         m_progress_bar->Show();
         m_progress_bar->SetValue(0);
+        if (m_btn_stop_match) m_btn_stop_match->Show();
     } else {
         m_progress_bar->Hide();
+        if (m_btn_stop_match) m_btn_stop_match->Hide();
     }
+    // Footer height changes with the progress row visibility — re-layout so Cancel/Confirm
+    // stay pinned to the bottom edge and there's no stale gap or clipping.
+    Layout();
 }
 
 void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
@@ -1280,21 +1385,90 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
     }
     update_mapping_legend();
     set_match_buttons_state(false);
+    // Refresh the combo's tooltip to describe the now-active mode (hover hint).
+    update_method_combo_tooltip();
     Layout();
+}
+
+void MixedFilamentBatchDialog::update_method_combo_tooltip()
+{
+    if (!m_method_combo) return;
+    // Mode-specific hover hint on the Match Mode combo. Each mode gets a one-line
+    // description of what it does, so hovering the combo explains the choice without
+    // adding a permanent subtitle row to the UI.
+    m_method_combo->SetToolTip(m_matching_method == MANUAL
+        ? _L("Manually select filaments from the current list for color mixing.")
+        : _L("Automatically uses official CMYW filaments for color mixing. "
+             "The mix ratio for each color is limited to X%\u2013Y%."));
 }
 
 void MixedFilamentBatchDialog::on_manual_selection_changed()
 {
     // Preserve the previous match result; only Start/Re-match clears it.
     set_match_buttons_state(false);
+    // Manual mode only: re-evaluate the dominance warning whenever a combo flips.
+    check_manual_filament_ratio();
+}
+
+void MixedFilamentBatchDialog::check_manual_filament_ratio()
+{
+    // Tally how many rows currently point at each physical filament slot. If the most-picked
+    // slot accounts for more than kManualDominantRatioPct of the visible rows, the mix is
+    // lopsided — surface the advisory warning (Confirm stays enabled; this is not a hard
+    // error). Hidden rows (beyond m_manual_filament_count) are skipped so the ratio reflects
+    // only the filaments actually in play.
+    //
+    // Mirrors MixedFilamentDialog::get_ratio_warning_msg: same threshold semantics, same
+    // "Filament %d ratio is too high" message shape, just computed from combo selections
+    // (no gradient/tri-slider here — manual mode has no continuous weights, only which
+    // physical slot each row picks).
+    if (m_warning_panel) m_warning_panel->Hide();
+
+    std::unordered_map<int, int> picks; // combo-selection -> row count
+    int total = 0;
+    for (int i = 0; i < m_manual_filament_count && i < 4; ++i) {
+        if (!m_filament_combo[i]) continue;
+        const int sel = m_filament_combo[i]->GetSelection();
+        if (sel < 0) continue;
+        ++picks[sel];
+        ++total;
+    }
+    if (total < 2) return; // need at least 2 rows for "ratio" to be meaningful
+
+    int max_count = 0;
+    int max_sel   = -1;
+    for (const auto& kv : picks) {
+        if (kv.second > max_count) {
+            max_count = kv.second;
+            max_sel   = kv.first;
+        }
+    }
+    const double ratio = double(max_count) / double(total);
+    if (max_sel < 0 || ratio <= kManualDominantRatioPct) return;
+
+    display_warning(wxString::Format(_L("Filament %d ratio is too high. Mix may be affected."), max_sel + 1));
+}
+
+void MixedFilamentBatchDialog::update_manual_swatch(int row)
+{
+    // Refresh the numbered swatch's color to match the combo's current selection. The
+    // number stays fixed (row index 1..4); only the fill color tracks the picked physical
+    // filament — mirrors Plater's clr_picker, which keeps its extruder index as the label.
+    if (row < 0 || row >= 4) return;
+    if (!m_filament_swatch[row] || !m_filament_combo[row]) return;
+    const int sel = m_filament_combo[row]->GetSelection();
+    if (sel < 0 || sel >= static_cast<int>(m_physical_colors.size())) return;
+    wxBitmap* icon = get_extruder_color_icon(m_physical_colors[sel], std::to_string(row + 1),
+                                              FromDIP(20), FromDIP(20));
+    if (icon) m_filament_swatch[row]->SetBitmap(*icon);
 }
 
 void MixedFilamentBatchDialog::update_add_remove_buttons()
 {
-    // Mirror MixedFilamentDialog: hide the remove button at the minimum (2)
-    // and the add button at the maximum (4) instead of leaving them visible.
-    if (m_btn_remove_filament) m_btn_remove_filament->Show(m_manual_filament_count > 2);
-    if (m_btn_add_filament)    m_btn_add_filament->Show(m_manual_filament_count < 4);
+    // Keep both buttons always visible and gray them out at their limits (remove at min=2,
+    // add at max=4) instead of hiding them — makes the available action discoverable.
+    if (m_btn_remove_filament) m_btn_remove_filament->Enable(m_manual_filament_count > 2);
+    if (m_btn_add_filament)    m_btn_add_filament->Enable(m_manual_filament_count < 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,7 +1479,7 @@ void MixedFilamentBatchDialog::start_batch_match()
 {
     if (m_match_running) return;
     if (m_model_colors.empty()) {
-        set_error(_L("No model colors found. Please load a multi-color model."));
+        set_error(_L("No model detected. Import a multi-color model to continue."));
         return;
     }
     m_match_running = true;
@@ -1354,14 +1528,14 @@ void MixedFilamentBatchDialog::launch_background_match()
     const auto all_physical      = m_physical_colors;
 
     const auto matching_method = m_matching_method;
-    // Fixed CMYG palette for recommended mode.
-    static const std::vector<std::string> CMYG_COLORS = {
+    // Fixed CMYW palette for recommended mode.
+    static const std::vector<std::string> CMYW_COLORS = {
         "#08ABFB",  // blue
         "#D93B90",  // magenta
         "#F9ED3D",  // yellow
         "#9199A4",  // gray
     };
-    const std::vector<std::string> preset_colors = CMYG_COLORS;
+    const std::vector<std::string> preset_colors = CMYW_COLORS;
     // Use enabled_count() (skips deleted/disabled) to match the virtual ID
     // numbering scheme used by mixed_index_from_filament_id() and
     // add_batch_custom_filaments(), both of which count only enabled entries.
@@ -1422,7 +1596,7 @@ void MixedFilamentBatchDialog::launch_background_match()
                 existing_ids.push_back(static_cast<unsigned int>(i + 1));
             }
         }
-        // Recommended mode: only use the recommended CMYG physical colors as the
+        // Recommended mode: only use the recommended CMYW physical colors as the
         // Pass-1 reuse palette. Existing mixed filaments are NOT included because
         // (a) their display_colors reference the old physical palette that is about
         // to be replaced, and (b) a passthrough recipe targeting a virtual filament
@@ -1591,14 +1765,19 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     m_match_completed = false;
     m_result = result;
     m_match_completed = true;
-    set_match_buttons_state(false);  // after m_match_completed=true so confirm enables
     update_mapping_legend();
     rebuild_match_thumb_cache();
     if (result.is_recommended_mode)
         update_recommended_card();
     refresh_previews();
+    // Defer the button-state flip until AFTER refresh_previews() has rendered and
+    // pushed the After-Match bitmap, so Confirm/Re-match light up in lockstep with
+    // the preview — not a frame earlier. m_match_completed stays true throughout so
+    // rebuild_match_thumb_cache / refresh_previews see the new result (their internal
+    // gate still depends on it; only the user-facing buttons wait).
+    set_match_buttons_state(false);  // after m_match_completed=true so confirm enables
     BOOST_LOG_TRIVIAL(info) << "Batch match: " << result.mappings.size()
-                            << " mappings, avg ΔE=" << result.avg_delta_e;
+                            << " mappings, avg DeltaE=" << result.avg_delta_e;
     Layout();
 }
 
@@ -1612,36 +1791,53 @@ void MixedFilamentBatchDialog::update_mapping_legend()
     // pixel regions are released before repaint — same pattern as rebuild_legend.
     m_legend_sizer->Clear(true);
 
-    if (m_result.mappings.empty()) {
-        m_legend_sizer->Add(new Label(m_legend_panel,
-            _L("No color mappings yet. Click \"Start Match\" to begin.")), 0, wxALL, FromDIP(4));
-    } else {
+    if (!m_result.mappings.empty()) {
         for (const auto& mapping : m_result.mappings) {
             // Bordered item box (white bg, #dbdbdb border) holding
             // [source swatch 20] -> [arrow icon] -> [target swatch 28 with filament number].
             // Per-item ΔE is hover-only (native tooltip) to keep the row clean.
+            // Figma (node 27590:61488 light / 27646:130023 dark): square corners (no radius),
+            // 4px internal padding, justify-between layout (source left, target right, arrow
+            // centered in the remaining space), plain ams_arrow (no circle frame).
             auto* item = new StaticBox(m_legend_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-            item->SetCornerRadius(FromDIP(4));
+            item->SetCornerRadius(FromDIP(0));
             item->SetBorderWidth(FromDIP(1));
             item->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#DBDBDB")));
             item->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
             auto* s = new wxBoxSizer(wxHORIZONTAL);
 
-            // Source swatch (20x20)
+            // Source swatch (20x20, square corners)
             ColorBlockParams src;
             src.mode = ColorBlockParams::Solid;
             src.solid_color = mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128);
             src.width  = FromDIP(20);
             src.height = FromDIP(20);
             auto* src_bmp = new wxStaticBitmap(item, wxID_ANY, *get_color_block_bitmap_cached(src));
-            s->Add(src_bmp, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+            s->Add(src_bmp, 0, wxALIGN_CENTER_VERTICAL);
 
-            // Arrow icon (Figma uses a thin right-pointing arrow between the swatches)
-            ScalableBitmap arrow_bmp(item, "filament_picker_right_arrow", 16);
+            // Stretch: source pinned left, target pinned right, arrow centered between them
+            // (Figma's justify-between with the arrow as the middle flex item).
+            s->AddStretchSpacer(1);
+
+            // Arrow icon — plain right arrow (line + chevron, no circle frame), matching
+            // Figma's stroke-only arrow between the swatches. Two theme variants:
+            //   mixed_filament_mapping_right_arrow.svg       (#333333, light mode)
+            //   mixed_filament_mapping_right_arrow_dark.svg  (#939495, dark mode)
+            // Selected at build time via wxGetApp().dark_mode() — same pattern as
+            // AmsMappingPopup's mode_string switch. NOTE: legend rows are rebuilt on every
+            // match, so a theme switch while the dialog is open won't recolor existing rows
+            // until the next refresh_previews/match cycle.
+            const bool is_dark = wxGetApp().dark_mode();
+            const std::string arrow_name = is_dark
+                ? "mixed_filament_mapping_right_arrow_dark"
+                : "mixed_filament_mapping_right_arrow";
+            ScalableBitmap arrow_bmp(item, arrow_name, 16);
             auto* arrow = new wxStaticBitmap(item, wxID_ANY, arrow_bmp.bmp());
-            s->Add(arrow, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+            s->Add(arrow, 0, wxALIGN_CENTER_VERTICAL);
 
-            // Target swatch with filament number (28x28)
+            s->AddStretchSpacer(1);
+
+            // Target swatch with filament number (28x28, square corners)
             ColorBlockParams badge;
             badge.mode = ColorBlockParams::Solid;
             badge.solid_color = mapping.matched_color.IsOk() ? mapping.matched_color : wxColour(128, 128, 128);
@@ -1651,15 +1847,22 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             auto* tgt_bmp = new wxStaticBitmap(item, wxID_ANY, *get_color_block_bitmap_cached(badge));
             s->Add(tgt_bmp, 0, wxALIGN_CENTER_VERTICAL);
 
-            item->SetSizer(s);
+            // 4px internal padding (Figma p-[4px]): wrap the content sizer in an outer sizer
+            // that adds the padding, since wxWindow::SetSizer has no border param.
+            auto* outer = new wxBoxSizer(wxHORIZONTAL);
+            outer->Add(s, 1, wxEXPAND | wxALL, FromDIP(4));
+            item->SetSizer(outer);
             // ΔE revealed on hover. wx tooltips are per-window (they do NOT inherit from the
             // parent), and the swatches/arrow are independent child windows — so we must set
             // the same tip on every child too, otherwise hovering a swatch shows nothing and
             // only the gaps between children trigger the row's tip.
-            const wxString grade = (mapping.delta_e <= 1.0) ? _L("Excellent")
-                                  : (mapping.delta_e <= 3.0) ? _L("Good")
+            const wxString grade = (mapping.delta_e <= 1.0) ? _L("Good")
+                                  : (mapping.delta_e <= 3.0) ? _L("Fair")
                                   : _L("Poor");
-            const wxString tip = wxString::Format(_L("Color diff: %s    ΔE = %.1f"), grade, mapping.delta_e);
+            // Per copy spec: "色差：{等级}（ΔE={X}）" / "Color Difference: {Level} (ΔE={X})".
+            // The ΔE glyph needs a font with Greek coverage; wx's default UI font on all
+            // supported platforms (Win10+, macOS, mainstream Linux) has it.
+            const wxString tip = wxString::Format(_L("Color Difference: %s (\u0394E=%.1f)"), grade, mapping.delta_e);
             item->SetToolTip(tip);
             src_bmp->SetToolTip(tip);
             arrow->SetToolTip(tip);

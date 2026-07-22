@@ -171,6 +171,7 @@ void TimelapseProgressPopup::Close()
 void TimelapseProgressPopup::reset_for_next_file(int current_index, int total_count,
                                                   const std::string& file_name)
 {
+    m_completed = false;
     m_status_bar->set_progress(0);
     m_status_bar->show_progress(true);
     wxString status_text = wxString::Format(_L("File %d/%d: %s -- Downloading..."),
@@ -181,7 +182,8 @@ void TimelapseProgressPopup::reset_for_next_file(int current_index, int total_co
 }
 
 void TimelapseProgressPopup::mark_queue_complete(int completed_count, int failed_count,
-                                                   const std::string& save_path)
+                                                   const std::string& save_path,
+                                                   const std::string& latest_file)
 {
     m_completed = true;
     m_status_bar->set_progress(100);
@@ -197,9 +199,9 @@ void TimelapseProgressPopup::mark_queue_complete(int completed_count, int failed
 
     if (!save_path.empty()) {
         m_status_bar->change_button_label(_L("Open Folder"));
-        std::string sp = save_path;
-        m_status_bar->set_cancel_callback_fina([this, sp]() {
-            desktop_open_any_folderEx(sp);
+        std::string target = latest_file.empty() ? save_path : latest_file;
+        m_status_bar->set_cancel_callback_fina([this, target]() {
+            desktop_open_any_folderEx(target);
             Close();
         });
     } else {

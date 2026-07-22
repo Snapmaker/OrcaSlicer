@@ -33,7 +33,8 @@ public:
     void reset_for_next_file(int current_index, int total_count,
                              const std::string& file_name);
     void mark_queue_complete(int completed_count, int failed_count,
-                             const std::string& save_path = "");
+                             const std::string& save_path = "",
+                             const std::string& latest_file = "");
     void show_error_with_retry(const std::string& error,
                                std::function<void()> retry_cb,
                                std::function<void()> skip_cb);

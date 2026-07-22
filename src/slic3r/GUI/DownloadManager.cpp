@@ -435,6 +435,7 @@ bool DownloadManager::cancel_download(size_t task_id) {
             m_tasks.erase(task_id);
             m_last_percent.erase(task_id);
             m_last_update.erase(task_id);
+            m_active_downloads--;
             if (!partial_path.empty()) {
                 boost::system::error_code ec;
                 boost::filesystem::remove(partial_path, ec);
@@ -456,6 +457,8 @@ bool DownloadManager::cancel_download(size_t task_id) {
     if (wcp_to_destroy) {
         wcp_to_destroy->finish_job();
     }
+
+    process_queue();
 
     return true;
 }

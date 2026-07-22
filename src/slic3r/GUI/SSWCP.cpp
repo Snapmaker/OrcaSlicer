@@ -4933,27 +4933,27 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 }
                 wxMessageDialog confirm_dlg(nullptr, msg, _L("Confirm Cancel"),
                                     wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
-                if (confirm_dlg.ShowModal() == wxID_YES) {
-                    ctx->skipped_indices.insert(i);
-                    if (is_active && ctx->current_task_id != 0) {
-                        DownloadManager::getInstance().cancel_download(ctx->current_task_id);
-                        // DownloadManager suppresses on_error for canceled tasks,
-                        // so we must manually advance the queue.
-                        wxGetApp().CallAfter([ctx, i]() {
-                            ctx->current_task_id = 0;
-                            if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                                ctx->popup->mark_task_cancelled(i);
-                            }
-                            ctx->current_index++;
-                            if (ctx->start_next) { ctx->start_next(); }
-                        });
-                    } else {
-                        wxGetApp().CallAfter([ctx, i]() {
-                            if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                                ctx->popup->mark_task_cancelled(i);
-                            }
-                        });
-                    }
+                if (confirm_dlg.ShowModal() != wxID_YES) { return; }
+
+                ctx->skipped_indices.insert(i);
+                if (is_active && ctx->current_task_id != 0) {
+                    size_t task_id = ctx->current_task_id;
+                    // Defer cancel_download to avoid re-entrancy with HTTP callbacks
+                    wxGetApp().CallAfter([ctx, i, task_id]() {
+                        DownloadManager::getInstance().cancel_download(task_id);
+                        ctx->current_task_id = 0;
+                        if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                            ctx->popup->mark_task_cancelled(i);
+                        }
+                        ctx->current_index++;
+                        if (ctx->start_next) { ctx->start_next(); }
+                    });
+                } else {
+                    wxGetApp().CallAfter([ctx, i]() {
+                        if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                            ctx->popup->mark_task_cancelled(i);
+                        }
+                    });
                 }
             });
         }

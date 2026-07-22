@@ -1227,6 +1227,8 @@ void GCodeViewer::reset()
     //m_shells.volumes.clear();
     m_layers.reset();
     m_layers_z_range = { 0, 0 };
+    m_non_support_layer_count = 0;
+    m_preview_to_non_support_layer.clear();
     m_roles = std::vector<ExtrusionRole>();
     m_print_statistics.reset();
     m_custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
@@ -3051,6 +3053,33 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
         for (const auto& layer : gcode_result.spiral_vase_layers) {
             m_layers.append(layer.first, { layer.second.first, layer.second.second });
         }
+    }
+
+    // build mapping: preview Z index -> non-support layer number (1-based), -1 for support-only Z
+    {
+        const auto& zs = m_layers.get_zs();
+        m_preview_to_non_support_layer.assign(zs.size(), -1);
+        for (const auto& mv : gcode_result.moves) {
+            if (mv.type == EMoveType::Extrude) {
+                if (mv.extrusion_role != erSupportMaterial &&
+                    mv.extrusion_role != erSupportMaterialInterface &&
+                    mv.extrusion_role != erSupportTransition) {
+                    double z = static_cast<double>(mv.position.z());
+                    auto it = std::lower_bound(zs.begin(), zs.end(), z - EPSILON);
+                    if (it != zs.end() && std::abs(*it - z) < EPSILON) {
+                        size_t zi = static_cast<size_t>(it - zs.begin());
+                        m_preview_to_non_support_layer[zi] = 1; // placeholder, numbered below
+                    }
+                }
+            }
+        }
+        int count = 0;
+        for (size_t zi = 0; zi < zs.size(); ++zi) {
+            if (m_preview_to_non_support_layer[zi] != -1) {
+                m_preview_to_non_support_layer[zi] = ++count;
+            }
+        }
+        m_non_support_layer_count = static_cast<size_t>(count);
     }
 
     // set layers z range

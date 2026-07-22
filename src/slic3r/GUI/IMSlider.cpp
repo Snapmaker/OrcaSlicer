@@ -1585,7 +1585,17 @@ std::string IMSlider::get_label(int tick, LabelType label_type)
             char   buffer[64];
             size_t layer_number;
             layer_number = m_draw_mode == dmSequentialFffPrint ? (m_values.empty() ? value : value + 1) : m_is_wipe_tower ? get_layer_number(value, label_type) + 1 : (m_values.empty() ? value : value + 1);
-            ::sprintf(buffer, "%5s\n%5s", std::to_string(layer_number).c_str(), layer_height);
+            // if mapping exists, use non-support layer number for display (support-only Zs show "--")
+            if (!m_preview_to_non_support_layer.empty() && value >= 0 &&
+                static_cast<size_t>(value) < m_preview_to_non_support_layer.size()) {
+                int mapped = m_preview_to_non_support_layer[static_cast<size_t>(value)];
+                if (mapped > 0)
+                    ::sprintf(buffer, "%5s\n%5s", std::to_string(mapped).c_str(), layer_height);
+                else
+                    ::sprintf(buffer, "%5s\n%5s", "--", layer_height);
+            } else {
+                ::sprintf(buffer, "%5s\n%5s", std::to_string(layer_number).c_str(), layer_height);
+            }
             return std::string(buffer);
         }
     }

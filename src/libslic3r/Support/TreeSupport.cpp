@@ -1321,10 +1321,7 @@ void TreeSupport::generate_toolpaths()
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
     coordf_t nozzle_diameter = m_print_config->nozzle_diameter.get_at(object_config.support_filament - 1);
     coordf_t layer_height = object_config.layer_height.value;
-    // Snapmaker uses 0 for "auto" externally, while the
-    // tree-support algorithm uses -1 for automatic wall count.
-    const int configured_wall_count = object_config.tree_support_wall_count.value;
-    const int wall_count = (configured_wall_count == 0) ? -1 : configured_wall_count;
+    const int wall_count = object_config.tree_support_wall_count.value;
 
     // Check if set to zero, use default if so.
     if (support_extrusion_width <= 0.0)
@@ -1437,7 +1434,7 @@ void TreeSupport::generate_toolpaths()
         filler_raft->angle = PI / 2;
         filler_raft->spacing = support_flow.spacing();
         for (auto& poly : first_non_raft_base)
-            make_perimeter_and_infill(ts_layer->support_fills.entities, poly, std::min(size_t(1), size_t(std::max(0, wall_count))), support_flow, erSupportMaterial, filler_raft, interface_density, false);
+            make_perimeter_and_infill(ts_layer->support_fills.entities, poly, std::min(1, wall_count), support_flow, erSupportMaterial, filler_raft, interface_density, false);
     }
 
     if (m_object->support_layer_count() <= m_raft_layers)
@@ -1478,7 +1475,7 @@ void TreeSupport::generate_toolpaths()
                         // interface
                         if (layer_id == 0) {
                             Flow flow = m_raft_layers == 0 ? m_object->print()->brim_flow() : support_flow;
-                            make_perimeter_and_inner_brim(ts_layer->support_fills.entities, poly, size_t(std::max(0, wall_count)), flow,
+                            make_perimeter_and_inner_brim(ts_layer->support_fills.entities, poly, wall_count, flow,
                                                           area_group.type == SupportLayer::RoofType ? erSupportMaterialInterface : erSupportMaterial);
                             polys = std::move(offset_ex(poly, -flow.scaled_spacing()));
                         } else if (area_group.type == SupportLayer::Roof1stLayer) {
@@ -1552,7 +1549,7 @@ void TreeSupport::generate_toolpaths()
                             }
                             else {
                                 SupportParameters support_params = m_support_params;
-                                if (area_group.need_extra_wall && object_config.tree_support_wall_count.value <= 0)
+                                if (area_group.need_extra_wall && object_config.tree_support_wall_count.value == -1)
                                     support_params.tree_branch_diameter_double_wall_area_scaled = 0.1;
                                 tree_supports_generate_paths(ts_layer->support_fills.entities, loops, flow, support_params);
                             }

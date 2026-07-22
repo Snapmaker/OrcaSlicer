@@ -12130,8 +12130,11 @@ msgstr "分支直径的角度，随着分支向底部逐渐变厚。如果角度
 msgid "Support wall loops"
 msgstr "支撑外墙层数"
 
-msgid "This setting specifies the count of support walls in the range of [0,2]. 0 means auto."
-msgstr "此设置指定[0,2]范围内的支撑墙层数。0表示自动。"
+msgid "This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+"and 0 means allowing infill-only mode where support is thick enough."
+msgstr ""
+"此设置用于指定支撑外墙层数，取值范围为 [-1, 2]。-1 表示自动，0 表示在支撑足够厚时仅生成填充、"
+"不生成外墙。"
 
 msgid "Tree support with infill"
 msgstr "树状支撑生成填充"

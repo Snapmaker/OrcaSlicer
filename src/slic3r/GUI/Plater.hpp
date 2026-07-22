@@ -4,6 +4,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
@@ -237,6 +238,17 @@ public:
     {
         Compatible,
         AllowedWarning,
+        BlockedError
+    };
+
+    /// \brief Cold plate (CSP) per-plate compatibility state.
+    enum class ColdPlateCompatState
+    {
+        /// \brief All used filaments compatible and no TPU in use.
+        Compatible,
+        /// \brief All used filaments compatible but TPU in use; non-blocking warning.
+        SeriousWarning,
+        /// \brief At least one used filament has zero cold-plate bed temperature; blocks slicing.
         BlockedError
     };
 
@@ -543,6 +555,26 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    /// @brief Collect (slot_0_based, filament_type) pairs for used filaments on the plate
+    ///        that are incompatible with the Cool Steel Plate (either cold-plate bed
+    ///        temperature is zero).
+    /// @param[in] plate_index 0-based plate index; must be in [0, plate_count).
+    /// @return Empty vector if curr_bed_type != btCSP, plate is empty, or all filaments are compatible.
+    std::vector<std::pair<int, std::string>> get_cold_plate_unsupported_filaments(int plate_index);
+    /// @brief Check whether the current plate uses TPU filament under the CSP bed type.
+    /// @param[in] plate_index 0-based plate index.
+    /// @return True if any used filament on the plate is TPU and curr_bed_type is btCSP.
+    bool plate_uses_tpu(int plate_index);
+    /// @brief Overall per-plate cold-plate compatibility state.
+    /// @param[in] plate_index 0-based plate index.
+    /// @return Compatibility state; BlockedError wins over SeriousWarning.
+    ColdPlateCompatState get_cold_plate_compat_state(int plate_index);
+    /// @brief Returns true if the plate is blocked from slicing by cold-plate incompatibility.
+    /// @param[in] plate_index 0-based plate index.
+    bool is_plate_blocked_by_cold_plate(int plate_index);
+    /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
+    /// @return True if slicing is allowed on current plate after sync.
+    bool sync_cold_plate_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
     /// Check and guard filament temp mixing before slicing all plates.

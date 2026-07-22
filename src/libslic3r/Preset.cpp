@@ -944,7 +944,7 @@ static std::vector<std::string> s_Preset_filament_options {
     "cool_plate_temp_initial_layer", "textured_cool_plate_temp_initial_layer", "eng_plate_temp_initial_layer",
     "hot_plate_temp_initial_layer", "textured_plate_temp_initial_layer", "supertack_plate_temp_initial_layer", "supertack_plate_temp",
     "graphic_effect_plate_temp", "graphic_effect_plate_temp_initial_layer",
-    "cold_pressed_steel_plate_temp", "cold_pressed_steel_plate_temp_initial_layer",
+    "cool_steel_plate_temp", "cool_steel_plate_temp_initial_layer",
     // "bed_type",
     //BBS:temperature_vitrification
     "temperature_vitrification", "filament_is_high_temperature", "reduce_fan_stop_start_freq", "dont_slow_down_outer_wall",

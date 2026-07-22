@@ -15141,19 +15141,19 @@ msgid "Printer not connected. Please go to the home page or the device page to c
 msgstr "未连接打印机，请前往首页或设备页连接打印机。"
 
 msgid "Smooth PEI Plate"
-msgstr "光面 PEI 热床"
+msgstr "光面PEI热床"
 
 msgid "Graphic Effect Plate"
 msgstr "特效纹理热床"
 
-msgid "Cold Pressed Steel Plate"
-msgstr "冷打板"
+msgid "Cool Steel Plate"
+msgstr "低温冷打钢板"
 
 msgid "Note: Filament may not adhere well to the smooth PEI plate on the first layer. Apply glue before printing."
-msgstr "提示：当前耗材在光面 PEI 热床上首层附着力可能不足，建议打印前涂抹胶水。"
+msgstr "提示：当前耗材在光面PEI热床上首层附着力可能不足，建议打印前涂抹胶水。"
 
 msgid "Note: Filament may stick too strongly to the smooth PEI plate. Apply glue to protect the plate and ease part removal."
-msgstr "提示：当前耗材在光面 PEI 热床上存在过粘风险，建议打印前涂抹胶水，以保护热床表面并便于取件。"
+msgstr "提示：当前耗材在光面PEI热床上存在过粘风险，建议打印前涂抹胶水，以保护热床表面并便于取件。"
 
 msgid "Note: Low adhesion to the graphic effect plate may cause failure. Use a different filament instead."
 msgstr "提示：当前耗材与特效纹理热床的粘附力较低，打印失败风险较高，建议更换其他耗材。"
@@ -15164,14 +15164,14 @@ msgstr "提示：不推荐使用 %s mm %s热端打印 %s。"
 msgid "Bed temperature when the Graphic Effect Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Plate."
 msgstr "安装特效纹理热床时的热床温度。0值表示这个耗材丝不支持特效纹理热床"
 
-msgid "Bed temperature when the Cold Pressed Steel Plate is installed. A value of 0 means the filament does not support printing on the Cold Pressed Steel Plate."
-msgstr "安装冷打板时的热床温度。0值表示这个耗材丝不支持冷打板"
+msgid "Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate."
+msgstr "安装低温冷打钢板时的热床温度。0值表示这个耗材丝不支持低温冷打钢板"
 
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cold Pressed Steel Plate."
-msgstr "除首层外其他层的热床温度。0值表示这个耗材丝不支持冷打板"
+msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Steel Plate."
+msgstr "除首层外其他层的热床温度。0值表示这个耗材丝不支持低温冷打钢板"
 
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cold Pressed Steel Plate."
-msgstr "首层热床温度。0值表示这个耗材丝不支持冷打板"
+msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Steel Plate."
+msgstr "首层热床温度。0值表示这个耗材丝不支持低温冷打钢板"
 
 #~ msgid "Improve shell precision by adjusting outer wall spacing. This also improves layer consistency."
 #~ msgstr "优化外墙刀路以提高外墙精度。这个优化同时减少层纹"
@@ -15343,6 +15343,12 @@ msgstr "检测到高温材料与低温材料同时使用。混合打印可能导
 
 msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
 msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+
+msgid "Heatbed %1%: The Cool Steel Plate is not recommended for printing with %2% (%3%) filament. If you still want to print, please set the corresponding bed temperature of the filament to a non-zero value."
+msgstr "热床%1%：低温冷打钢板不建议被用于打印%2%(%3%)材料。如果您依然想打印，请设置耗材对应的热床温度为非零值。"
+
+msgid "Heatbed %1%: TPU printing on a cool steel plate can be hard to remove. Use a textured PEI plate or heat the bed."
+msgstr "热床%1%：低温冷打钢板打印TPU易脱模困难，请使用纹理PEI热床或开启热床。"
 
 msgid "This material combination may cause risks. Do you want to continue?"
 msgstr "此材料组合可能存在风险，是否继续？"

@@ -5971,7 +5971,7 @@ void GLCanvas3D::RenderFitCameraButton(float left, float top, float buttonSize)
 
     if (ImGui::IsItemHovered())
     {
-        imgui.tooltip(_L("Fit camera to scene or selected object."), ImGui::GetFontSize() * 20.0f);
+        imgui.tooltip(_L("Fit in all view"), ImGui::GetFontSize() * 20.0f);
     }
 
     ImGui::PopStyleVar(2);

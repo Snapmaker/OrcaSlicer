@@ -6395,10 +6395,9 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
 // Handle incoming web messages
 void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
     try {        
-         // remove this check maybe has some questions
-         //if (!webview) { todo flutter debug funciton and the webview is nullptr
-         //    return;
-         //}
+         if (!webview) {
+             return;
+         }
         WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
 
         json j_message = json::parse(message);

@@ -16778,11 +16778,11 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
     printer_config->set_key_value("resonance_avoidance", new ConfigOptionBool{false});
 
     //Orca: find acceleration to use in the test
-    auto accel = print_config.option<ConfigOptionFloat>("outer_wall_acceleration")->value; // get the outer wall acceleration
+    auto accel = print_config.option<ConfigOptionFloats>("outer_wall_acceleration")->values.front(); // get the outer wall acceleration
     if (accel == 0) // if outer wall accel isnt defined, fall back to inner wall accel
-        accel = print_config.option<ConfigOptionFloat>("inner_wall_acceleration")->value;
+        accel = print_config.option<ConfigOptionFloats>("inner_wall_acceleration")->values.front();
     if (accel == 0) // if inner wall accel is not defined fall back to default accel
-        accel = print_config.option<ConfigOptionFloat>("default_acceleration")->value;
+        accel = print_config.option<ConfigOptionFloats>("default_acceleration")->values.front();
     // Orca: Set all accelerations except first layer, as the first layer accel doesnt affect the PA test since accel
     // is set to the travel accel before printing the pattern.
     if (accels.empty()) {
@@ -16794,7 +16794,7 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
         // set max acceleration in case of batch mode to get correct test pattern size
         accel = *std::max_element(accels.begin(), accels.end());
     }
-    print_config.set_key_value( "outer_wall_acceleration", new ConfigOptionFloat(accel));
+    print_config.set_key_value( "outer_wall_acceleration", new ConfigOptionFloats { accel });
     print_config.set_key_value( "print_sequence", new ConfigOptionEnum(PrintSequence::ByLayer));
     
     //Orca: find jerk value to use in the test
@@ -16847,7 +16847,7 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
             wxGetApp().preset_bundle->full_config(),
             print_config.get_abs_value("line_width", nozzle_diameter),
             print_config.get_abs_value("layer_height"), 0);
-        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(speed));
+        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { speed });
 
         speeds.assign({speed});
         const auto msg{_L("INFO:") + "\n" +
@@ -16856,7 +16856,7 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
     } else if (speeds.size() == 1) {
         // If we have single value provided, set speed using global configuration.
         // per-object config is not set in this case
-        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(speeds.front()));
+        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { speeds.front() });
     }
 
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
@@ -16931,9 +16931,9 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
 
         auto &obj_config = obj->config;
         if (speeds.size() > 1)
-            obj_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(tspd));
+            obj_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { tspd });
         if (accels.size() > 1)
-            obj_config.set_key_value("outer_wall_acceleration", new ConfigOptionFloat(tacc));
+            obj_config.set_key_value("outer_wall_acceleration", new ConfigOptionFloats { tacc });
 
         auto cur_plate = get_partplate_list().get_plate(plate_idx);
         if (!cur_plate) {
@@ -17036,8 +17036,8 @@ void Plater::_calib_pa_tower(const Calib_Params& params) {
     auto wall_speed = CalibPressureAdvance::find_optimal_PA_speed(
         full_config, full_config.get_abs_value("line_width", nozzle_diameter),
         full_config.get_abs_value("layer_height"), 0);
-    obj_cfg.set_key_value("outer_wall_speed", new ConfigOptionFloat(wall_speed));
-    obj_cfg.set_key_value("inner_wall_speed", new ConfigOptionFloat(wall_speed));
+    obj_cfg.set_key_value("outer_wall_speed", new ConfigOptionFloats { wall_speed });
+    obj_cfg.set_key_value("inner_wall_speed", new ConfigOptionFloats { wall_speed });
     obj_cfg.set_key_value("seam_position", new ConfigOptionEnum<SeamPosition>(spRear));
     obj_cfg.set_key_value("wall_loops", new ConfigOptionInt(2));
     obj_cfg.set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -17127,8 +17127,9 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
                            (infill_flow.mm3_per_mm() * (cur_flowrate + (pass == 2 ? 0.035 : 0.05)) / cur_flowrate);
     else
         max_infill_speed = filament_max_volumetric_speed / (infill_flow.mm3_per_mm() * (pass == 1 ? 1.2 : 1));
-    double internal_solid_speed = std::floor(std::min(print_config->opt_float("internal_solid_infill_speed"), max_infill_speed));
-    double top_surface_speed = std::floor(std::min(print_config->opt_float("top_surface_speed"), max_infill_speed));
+
+    double internal_solid_speed = std::floor(std::min(print_config->opt_float("internal_solid_infill_speed", 0), max_infill_speed));
+    double top_surface_speed = std::floor(std::min(print_config->opt_float("top_surface_speed", 0), max_infill_speed));
 
     // adjust parameters
     for (auto _obj : objects) {
@@ -17155,8 +17156,8 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
         _obj->config.set_key_value("solid_infill_direction", new ConfigOptionFloat(135));
         _obj->config.set_key_value("align_infill_direction_to_model", new ConfigOptionBool(true));
         _obj->config.set_key_value("ironing_type", new ConfigOptionEnum<IroningType>(IroningType::NoIroning));
-        _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloat(internal_solid_speed));
-        _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloat(top_surface_speed));
+        _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloats { internal_solid_speed });
+        _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloats { top_surface_speed });
         _obj->config.set_key_value("seam_slope_type", new ConfigOptionEnum<SeamScarfType>(SeamScarfType::None));
         _obj->config.set_key_value("gap_fill_target", new ConfigOptionEnum<GapFillTarget>(GapFillTarget::gftNowhere));
         print_config->set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloat(0));
@@ -17488,9 +17489,9 @@ void Plater::calib_input_shaping_freq(const Calib_Params& params)
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
     print_config->set_key_value("spiral_mode_smooth", new ConfigOptionBool(false));
     print_config->set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloat(200));
-    print_config->set_key_value("default_acceleration", new ConfigOptionFloat(2000));
-    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloat(2000));
+    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
+    print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
+    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.25));
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
@@ -17536,9 +17537,9 @@ void Plater::calib_input_shaping_damp(const Calib_Params& params)
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
     print_config->set_key_value("spiral_mode_smooth", new ConfigOptionBool(false));
     print_config->set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloat(200));
-    print_config->set_key_value("default_acceleration", new ConfigOptionFloat(2000));
-    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloat(2000));
+    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
+    print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
+    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.25));
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
@@ -17585,9 +17586,9 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
     print_config->set_key_value("spiral_mode_smooth", new ConfigOptionBool(false));
     print_config->set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloat(200));
-    print_config->set_key_value("default_acceleration", new ConfigOptionFloat(2000));
-    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloat(2000));
+    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
+    print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
+    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.0));
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));

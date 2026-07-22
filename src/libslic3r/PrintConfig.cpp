@@ -1266,7 +1266,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool{ true });
 
-    def = this->add("overhang_1_4_speed", coFloatOrPercent);
+    def = this->add("overhang_1_4_speed", coFloatsOrPercents);
     def->label = "(10%, 25%)";
     def->category = L("Speed");
     def->full_label = "(10%, 25%)";
@@ -1276,9 +1276,9 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "outer_wall_speed";
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
-    def = this->add("overhang_2_4_speed", coFloatOrPercent);
+    def = this->add("overhang_2_4_speed", coFloatsOrPercents);
     def->label = "[25%, 50%)";
     def->category = L("Speed");
     def->full_label = "[25%, 50%)";
@@ -1288,9 +1288,9 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "outer_wall_speed";
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
-    def = this->add("overhang_3_4_speed", coFloatOrPercent);
+    def = this->add("overhang_3_4_speed", coFloatsOrPercents);
     def->label = "[50%, 75%)";
     def->category = L("Speed");
     def->full_label = "[50%, 75%)";
@@ -1300,9 +1300,9 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "outer_wall_speed";
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
-    def = this->add("overhang_4_4_speed", coFloatOrPercent);
+    def = this->add("overhang_4_4_speed", coFloatsOrPercents);
     def->label = "[75%, 100%)";
     def->category = L("Speed");
     def->full_label = "[75%, 100%)";
@@ -1312,7 +1312,7 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "outer_wall_speed";
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
     def = this->add("bridge_speed", coFloat);
     def->label = L("External");
@@ -1493,13 +1493,13 @@ void PrintConfigDef::init_fff_params()
                      "This can improve the cooling quality for needle and small details.");
     def->set_default_value(new ConfigOptionBools { true });
 
-    def = this->add("default_acceleration", coFloat);
+    def = this->add("default_acceleration", coFloats);
     def->label = L("Normal printing");
     def->tooltip = L("The default acceleration of both normal printing and travel except initial layer.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(500.0));
+    def->set_default_value(new ConfigOptionFloats { 500.0 });
 
     def = this->add("default_filament_profile", coStrings);
     def->label = L("Default filament profile");
@@ -1739,7 +1739,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
 
-    def = this->add("outer_wall_speed", coFloat);
+    def = this->add("outer_wall_speed", coFloats);
     def->label = L("Outer wall");
     def->category = L("Speed");
     def->tooltip = L("Speed of outer wall which is outermost and visible. "
@@ -1747,7 +1747,7 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(60));
+    def->set_default_value(new ConfigOptionFloats { 60. });
 
     def = this->add("small_perimeter_speed", coFloatOrPercent);
     def->label = L("Small perimeters");
@@ -2646,21 +2646,21 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(20, false));
 
-    def = this->add("outer_wall_acceleration", coFloat);
+    def = this->add("outer_wall_acceleration", coFloats);
     def->label = L("Outer wall");
     def->tooltip = L("Acceleration of outer walls.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(10000));
+    def->set_default_value(new ConfigOptionFloats { 10000. });
 
-    def = this->add("inner_wall_acceleration", coFloat);
+    def = this->add("inner_wall_acceleration", coFloats);
     def->label = L("Inner wall");
     def->tooltip = L("Acceleration of inner walls.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(10000));
+    def->set_default_value(new ConfigOptionFloats { 10000. });
 
     def = this->add("travel_acceleration", coFloat);
     def->label = L("Travel");
@@ -2678,13 +2678,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(500));
 
-    def = this->add("outer_wall_acceleration", coFloat);
+    def = this->add("outer_wall_acceleration", coFloats);
     def->label = L("Outer wall");
     def->tooltip = L("Acceleration of outer wall. Using a lower value can improve quality.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(500));
+    def->set_default_value(new ConfigOptionFloats { 500. });
 
     def = this->add("bridge_acceleration", coFloatOrPercent);
     def->label = L("Bridge");
@@ -3048,14 +3048,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
     
-    def = this->add("gap_infill_speed", coFloat);
+    def = this->add("gap_infill_speed", coFloats);
     def->label = L("Gap infill");
     def->category = L("Speed");
     def->tooltip = L("Speed of gap infill. Gap usually has irregular line width and should be printed more slowly.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(30));
+    def->set_default_value(new ConfigOptionFloats { 30. });
 
     // BBS
     def          = this->add("precise_z_height", coBool);
@@ -3454,14 +3454,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercent(25));
 
-    def = this->add("sparse_infill_speed", coFloat);
+    def = this->add("sparse_infill_speed", coFloats);
     def->label = L("Sparse infill");
     def->category = L("Speed");
     def->tooltip = L("Speed of internal sparse infill.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(100));
+    def->set_default_value(new ConfigOptionFloats { 100. });
 
     def = this->add("inherits", coString);
     def->label = L("Inherits profile");
@@ -4244,7 +4244,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
 
-    def = this->add("inner_wall_speed", coFloat);
+    def = this->add("inner_wall_speed", coFloats);
     def->label = L("Inner wall");
     def->category = L("Speed");
     def->tooltip = L("Speed of inner wall.");
@@ -4252,7 +4252,7 @@ void PrintConfigDef::init_fff_params()
     def->aliases = { "perimeter_feed_rate" };
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(60));
+    def->set_default_value(new ConfigOptionFloats { 60. });
 
     def = this->add("wall_loops", coInt);
     def->label = L("Wall loops");
@@ -5041,14 +5041,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
 
-    def = this->add("internal_solid_infill_speed", coFloat);
+    def = this->add("internal_solid_infill_speed", coFloats);
     def->label = L("Internal solid infill");
     def->category = L("Speed");
     def->tooltip = L("Speed of internal solid infill, not the top and bottom surface.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(100));
+    def->set_default_value(new ConfigOptionFloats { 100. });
 
     def = this->add("spiral_mode", coBool);
     def->label = L("Spiral vase");
@@ -5911,14 +5911,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
 
-    def = this->add("top_surface_speed", coFloat);
+    def = this->add("top_surface_speed", coFloats);
     def->label = L("Top surface");
     def->category = L("Speed");
     def->tooltip = L("Speed of top surface infill which is solid.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(100));
+    def->set_default_value(new ConfigOptionFloats { 100. });
 
     def = this->add("top_shell_layers", coInt);
     def->label = L("Top shell layers");
@@ -5966,13 +5966,13 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionPercent(100));
 
 
-    def = this->add("travel_speed", coFloat);
+    def = this->add("travel_speed", coFloats);
     def->label = L("Travel");
     def->tooltip = L("Speed of travel which is faster and without extrusion.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(120));
+    def->set_default_value(new ConfigOptionFloats { 120. });
 
     def = this->add("travel_speed_z", coFloat);
     //def->label = L("Z travel");

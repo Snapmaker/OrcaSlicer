@@ -2687,7 +2687,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             }
             Flow  outer_wall_flow       = Flow(outer_wall_line_width, m_config.layer_height,
                                                m_config.nozzle_diameter.get_at(initial_non_support_extruder_id));
-            float outer_wall_speed      = print.default_region_config().outer_wall_speed.value;
+            float outer_wall_speed      = get_value_at(m_config, print.default_region_config().outer_wall_speed,
+                                                       ConfigFlowDomain::Process, initial_non_support_extruder_id);
             outer_wall_volumetric_speed = outer_wall_speed * outer_wall_flow.mm3_per_mm();
             if (outer_wall_volumetric_speed > filament_max_volumetric_speed)
                 outer_wall_volumetric_speed = filament_max_volumetric_speed;
@@ -2818,10 +2819,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // SoftFever: calib
     if (print.calib_params().mode == CalibMode::Calib_PA_Line) {
         std::string gcode;
-        if ((print.default_object_config().outer_wall_acceleration.value > 0 &&
-             print.default_object_config().outer_wall_acceleration.value > 0)) {
+        double outer_accel = this->process_flow_value(m_config.outer_wall_acceleration);
+        if (outer_accel > 0) {
             gcode += m_writer.set_print_acceleration(
-                (unsigned int) floor(print.default_object_config().outer_wall_acceleration.value + 0.5));
+                (unsigned int) floor(outer_accel + 0.5));
         }
 
         if (print.default_object_config().outer_wall_jerk.value > 0) {
@@ -4841,12 +4842,12 @@ LayerResult GCode::process_layer(const Print& print,
     }
     case CalibMode::Calib_VFA_Tower: {
         auto _speed = print.calib_params().start + std::floor(print_z / 5.0) * print.calib_params().step;
-        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(std::round(_speed)));
+        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { std::round(_speed) });
         break;
     }
     case CalibMode::Calib_Vol_speed_Tower: {
         auto _speed = print.calib_params().start + print_z * print.calib_params().step;
-        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(std::round(_speed)));
+        m_calib_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { std::round(_speed) });
         break;
     }
     case CalibMode::Calib_Retraction_tower: {
@@ -4903,7 +4904,7 @@ LayerResult GCode::process_layer(const Print& print,
     // BBS
     if (first_layer) {
         // Orca: we don't need to optimize the Klipper as only set once
-        if (m_config.default_acceleration.value > 0 && m_config.initial_layer_acceleration.value > 0) {
+        if (this->process_flow_value(m_config.default_acceleration) > 0 && m_config.initial_layer_acceleration.value > 0) {
             gcode += m_writer.set_print_acceleration((unsigned int) floor(m_config.initial_layer_acceleration.value + 0.5));
         }
 
@@ -4934,8 +4935,8 @@ LayerResult GCode::process_layer(const Print& print,
         }
         // Reset acceleration at sencond layer
         // Orca: only set once, don't need to call set_accel_and_jerk
-        if (m_config.default_acceleration.value > 0 && m_config.initial_layer_acceleration.value > 0) {
-            gcode += m_writer.set_print_acceleration((unsigned int) floor(m_config.default_acceleration.value + 0.5));
+        if (this->process_flow_value(m_config.default_acceleration) > 0 && m_config.initial_layer_acceleration.value > 0) {
+            gcode += m_writer.set_print_acceleration((unsigned int) floor(this->process_flow_value(m_config.default_acceleration) + 0.5));
         }
 
         if (m_config.default_jerk.value > 0 && m_config.initial_layer_jerk.value > 0) {
@@ -6794,9 +6795,9 @@ std::string GCode::extrude_loop(
     double small_peri_speed = -1;
     if (speed == -1 && loop.length() <= SMALL_PERIMETER_LENGTH(m_config.small_perimeter_threshold.value)) {
         if (m_config.small_perimeter_speed == 0)
-            small_peri_speed = m_config.outer_wall_speed * 0.5;
+            small_peri_speed = this->process_flow_value(m_config.outer_wall_speed) * 0.5;
         else
-            small_peri_speed = m_config.small_perimeter_speed.get_abs_value(m_config.outer_wall_speed);
+            small_peri_speed = m_config.small_perimeter_speed.get_abs_value(this->process_flow_value(m_config.outer_wall_speed));
     }
 
     // extrude along the path
@@ -7331,7 +7332,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     unsigned int acceleration_i = 0;
     double       jerk           = 0;
     // adjust acceleration
-    if (m_config.default_acceleration.value > 0) {
+    if (this->process_flow_value(m_config.default_acceleration) > 0) {
         double acceleration;
         if (this->on_first_layer() && m_config.initial_layer_acceleration.value > 0) {
             acceleration = m_config.initial_layer_acceleration.value;
@@ -7339,20 +7340,20 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         } else if (this->object_layer_over_raft() && m_config.first_layer_acceleration_over_raft.value > 0) {
             acceleration = m_config.first_layer_acceleration_over_raft.value;
 #endif
-        } else if (m_config.get_abs_value("bridge_acceleration") > 0 && is_bridge(path.role())) {
-            acceleration = m_config.get_abs_value("bridge_acceleration");
-        } else if (m_config.get_abs_value("sparse_infill_acceleration") > 0 && (path.role() == erInternalInfill)) {
-            acceleration = m_config.get_abs_value("sparse_infill_acceleration");
-        } else if (m_config.get_abs_value("internal_solid_infill_acceleration") > 0 && (path.role() == erSolidInfill)) {
-            acceleration = m_config.get_abs_value("internal_solid_infill_acceleration");
-        } else if (m_config.outer_wall_acceleration.value > 0 && is_external_perimeter(path.role())) {
-            acceleration = m_config.outer_wall_acceleration.value;
-        } else if (m_config.inner_wall_acceleration.value > 0 && is_internal_perimeter(path.role())) {
-            acceleration = m_config.inner_wall_acceleration.value;
+        } else if (m_config.get_abs_value("bridge_acceleration", this->process_flow_value(m_config.outer_wall_acceleration)) > 0 && is_bridge(path.role())) {
+            acceleration = m_config.get_abs_value("bridge_acceleration", this->process_flow_value(m_config.outer_wall_acceleration));
+        } else if (m_config.get_abs_value("sparse_infill_acceleration", this->process_flow_value(m_config.default_acceleration)) > 0 && (path.role() == erInternalInfill)) {
+            acceleration = m_config.get_abs_value("sparse_infill_acceleration", this->process_flow_value(m_config.default_acceleration));
+        } else if (m_config.get_abs_value("internal_solid_infill_acceleration", this->process_flow_value(m_config.default_acceleration)) > 0 && (path.role() == erSolidInfill)) {
+            acceleration = m_config.get_abs_value("internal_solid_infill_acceleration", this->process_flow_value(m_config.default_acceleration));
+        } else if (this->process_flow_value(m_config.outer_wall_acceleration) > 0 && is_external_perimeter(path.role())) {
+            acceleration = this->process_flow_value(m_config.outer_wall_acceleration);
+        } else if (this->process_flow_value(m_config.inner_wall_acceleration) > 0 && is_internal_perimeter(path.role())) {
+            acceleration = this->process_flow_value(m_config.inner_wall_acceleration);
         } else if (m_config.top_surface_acceleration.value > 0 && is_top_surface(path.role())) {
             acceleration = m_config.top_surface_acceleration.value;
         } else {
-            acceleration = m_config.default_acceleration.value;
+            acceleration = this->process_flow_value(m_config.default_acceleration);
         }
         acceleration_i = (unsigned int) floor(acceleration + 0.5);
     }
@@ -7405,31 +7406,31 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     // set speed
     if (speed == -1) {
         if (path.role() == erPerimeter) {
-            speed = m_config.get_abs_value("inner_wall_speed");
+            speed = this->process_flow_value(m_config.inner_wall_speed);
             if (sloped) {
-                speed = std::min(speed, m_config.scarf_joint_speed.get_abs_value(m_config.get_abs_value("inner_wall_speed")));
+                speed = std::min(speed, m_config.scarf_joint_speed.get_abs_value(this->process_flow_value(m_config.inner_wall_speed)));
             }
         } else if (path.role() == erExternalPerimeter) {
-            speed = m_config.get_abs_value("outer_wall_speed");
+            speed = this->process_flow_value(m_config.outer_wall_speed);
             if (sloped) {
-                speed = std::min(speed, m_config.scarf_joint_speed.get_abs_value(m_config.get_abs_value("outer_wall_speed")));
+                speed = std::min(speed, m_config.scarf_joint_speed.get_abs_value(this->process_flow_value(m_config.outer_wall_speed)));
             }
         } else if (path.role() == erInternalBridgeInfill) {
             speed = m_config.get_abs_value("internal_bridge_speed");
         } else if (path.role() == erOverhangPerimeter || path.role() == erSupportTransition || path.role() == erBridgeInfill) {
             speed = m_config.get_abs_value("bridge_speed");
         } else if (path.role() == erInternalInfill) {
-            speed = m_config.get_abs_value("sparse_infill_speed");
+            speed = this->process_flow_value(m_config.sparse_infill_speed);
         } else if (path.role() == erSolidInfill) {
-            speed = m_config.get_abs_value("internal_solid_infill_speed");
+            speed = this->process_flow_value(m_config.internal_solid_infill_speed);
         } else if (path.role() == erTopSolidInfill) {
-            speed = m_config.get_abs_value("top_surface_speed");
+            speed = this->process_flow_value(m_config.top_surface_speed);
         } else if (path.role() == erIroning) {
             speed = m_config.get_abs_value("ironing_speed");
         } else if (path.role() == erBottomSurface) {
             speed = m_config.get_abs_value("initial_layer_infill_speed");
         } else if (path.role() == erGapFill) {
-            speed = m_config.get_abs_value("gap_infill_speed");
+            speed = this->process_flow_value(m_config.gap_infill_speed);
         } else if (path.role() == erSupportMaterial || path.role() == erSupportMaterialInterface) {
             const double support_speed           = m_config.support_speed.value;
             const double support_interface_speed = m_config.get_abs_value("support_interface_speed");
@@ -7507,7 +7508,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
 
     if (m_config.enable_overhang_speed && !this->on_first_layer() && (is_bridge(path.role()) || is_perimeter(path.role()))) {
         bool   is_external = is_external_perimeter(path.role());
-        double ref_speed   = is_external ? m_config.get_abs_value("outer_wall_speed") : m_config.get_abs_value("inner_wall_speed");
+        double ref_speed   = is_external ? this->process_flow_value(m_config.outer_wall_speed) : this->process_flow_value(m_config.inner_wall_speed);
         if (ref_speed == 0)
             ref_speed = filament_max_volumetric_speed / _mm3_per_mm;
 
@@ -7518,26 +7519,36 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             ref_speed = std::min(ref_speed, m_config.scarf_joint_speed.get_abs_value(ref_speed));
         }
 
+        // Snapmaker: flow variant -- overhang speed keys are vector options;
+        auto oh1_fop = this->process_flow_value(m_config.overhang_1_4_speed);
+        auto oh2_fop = this->process_flow_value(m_config.overhang_2_4_speed);
+        auto oh3_fop = this->process_flow_value(m_config.overhang_3_4_speed);
+        auto oh4_fop = this->process_flow_value(m_config.overhang_4_4_speed);
+        double oh1_abs = oh1_fop.percent ? (oh1_fop.value * 0.01 * ref_speed) : oh1_fop.value;
+        double oh2_abs = oh2_fop.percent ? (oh2_fop.value * 0.01 * ref_speed) : oh2_fop.value;
+        double oh3_abs = oh3_fop.percent ? (oh3_fop.value * 0.01 * ref_speed) : oh3_fop.value;
+        double oh4_abs = oh4_fop.percent ? (oh4_fop.value * 0.01 * ref_speed) : oh4_fop.value;
+
         ConfigOptionPercents overhang_overlap_levels({90, 75, 50, 25, 13, 0});
 
         if (m_config.slowdown_for_curled_perimeters) {
             ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
                 {FloatOrPercent{100, true},
-                 (m_config.get_abs_value("overhang_1_4_speed", ref_speed) < 0.5) ?
+                 (oh1_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_1_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_2_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh1_abs * 100 / ref_speed, true},
+                 (oh2_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_2_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_3_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh2_abs * 100 / ref_speed, true},
+                 (oh3_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_3_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh3_abs * 100 / ref_speed, true},
+                 (oh4_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_4_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh4_abs * 100 / ref_speed, true},
+                 (oh4_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_4_4_speed", ref_speed) * 100 / ref_speed, true}});
+                     FloatOrPercent{oh4_abs * 100 / ref_speed, true}});
 
             new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
                                                                                   ref_speed, speed,
@@ -7545,18 +7556,18 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         } else {
             ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
                 {FloatOrPercent{100, true},
-                 (m_config.get_abs_value("overhang_1_4_speed", ref_speed) < 0.5) ?
+                 (oh1_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_1_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_2_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh1_abs * 100 / ref_speed, true},
+                 (oh2_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_2_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_3_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh2_abs * 100 / ref_speed, true},
+                 (oh3_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_3_4_speed", ref_speed) * 100 / ref_speed, true},
-                 (m_config.get_abs_value("overhang_4_4_speed", ref_speed) < 0.5) ?
+                     FloatOrPercent{oh3_abs * 100 / ref_speed, true},
+                 (oh4_abs < 0.5) ?
                      FloatOrPercent{100, true} :
-                     FloatOrPercent{m_config.get_abs_value("overhang_4_4_speed", ref_speed) * 100 / ref_speed, true},
+                     FloatOrPercent{oh4_abs * 100 / ref_speed, true},
                  FloatOrPercent{m_config.get_abs_value("bridge_speed") * 100 / ref_speed, true}});
 
             new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
@@ -8106,14 +8117,14 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double       jerk_to_set         = 0.0;
     unsigned int acceleration_to_set = 0;
     if (this->on_first_layer()) {
-        if (m_config.default_acceleration.value > 0 && m_config.initial_layer_acceleration.value > 0) {
+        if (this->process_flow_value(m_config.default_acceleration) > 0 && m_config.initial_layer_acceleration.value > 0) {
             acceleration_to_set = (unsigned int) floor(m_config.initial_layer_acceleration.value + 0.5);
         }
         if (m_config.default_jerk.value > 0 && m_config.initial_layer_jerk.value > 0) {
             jerk_to_set = m_config.initial_layer_jerk.value;
         }
     } else {
-        if (m_config.default_acceleration.value > 0 && m_config.travel_acceleration.value > 0) {
+        if (this->process_flow_value(m_config.default_acceleration) > 0 && m_config.travel_acceleration.value > 0) {
             acceleration_to_set = (unsigned int) floor(m_config.travel_acceleration.value + 0.5);
         }
         if (m_config.default_jerk.value > 0 && m_config.travel_jerk.value > 0) {

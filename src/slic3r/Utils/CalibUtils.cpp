@@ -526,8 +526,9 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
     Flow   infill_flow                   = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
     double filament_max_volumetric_speed = filament_config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
     double max_infill_speed              = filament_max_volumetric_speed / (infill_flow.mm3_per_mm() * (pass == 1 ? 1.2 : 1));
-    double internal_solid_speed          = std::floor(std::min(print_config.opt_float("internal_solid_infill_speed"), max_infill_speed));
-    double top_surface_speed             = std::floor(std::min(print_config.opt_float("top_surface_speed"), max_infill_speed));
+
+    double internal_solid_speed          = std::floor(std::min(print_config.opt_float("internal_solid_infill_speed", 0), max_infill_speed));
+    double top_surface_speed             = std::floor(std::min(print_config.opt_float("top_surface_speed", 0), max_infill_speed));
 
     // adjust parameters
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
@@ -548,8 +549,8 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
         _obj->config.set_key_value("top_solid_infill_flow_ratio", new ConfigOptionFloat(1.0f));
         _obj->config.set_key_value("infill_direction", new ConfigOptionFloat(45));
         _obj->config.set_key_value("ironing_type", new ConfigOptionEnum<IroningType>(IroningType::NoIroning));
-        _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloat(internal_solid_speed));
-        _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloat(top_surface_speed));
+        _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloats { internal_solid_speed });
+        _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloats { top_surface_speed });
 
         // extract flowrate from name, filename format: flowrate_xxx
         std::string obj_name = _obj->name;
@@ -612,9 +613,9 @@ void CalibUtils::calib_pa_pattern(const CalibInfo &calib_info, Model& model)
     }
 
     print_config.set_key_value("outer_wall_speed",
-        new ConfigOptionFloat(CalibPressureAdvance::find_optimal_PA_speed(
+        new ConfigOptionFloats { double(CalibPressureAdvance::find_optimal_PA_speed(
             full_config, print_config.get_abs_value("line_width"),
-            print_config.get_abs_value("layer_height"), 0)));
+            print_config.get_abs_value("layer_height"), 0)) });
     
     for (const auto& opt : SuggestedConfigCalibPAPattern().nozzle_ratio_pairs) {
         print_config.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));

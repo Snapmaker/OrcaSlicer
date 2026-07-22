@@ -304,8 +304,8 @@ public:
 
 protected:
     double speed_first_layer() const { return m_config.option<ConfigOptionFloat>("initial_layer_speed")->value; };
-    double speed_perimeter() const { return m_config.option<ConfigOptionFloat>("outer_wall_speed")->value; };
-    double accel_perimeter() const { return m_config.option<ConfigOptionFloat>("outer_wall_acceleration")->value; }
+    double speed_perimeter() const { return get_value_at(m_config, *m_config.option<ConfigOptionFloats>("outer_wall_speed"), ConfigFlowDomain::Process); }
+    double accel_perimeter() const { return get_value_at(m_config, *m_config.option<ConfigOptionFloats>("outer_wall_acceleration"), ConfigFlowDomain::Process); }
     double line_width_first_layer() const
     {
         // TODO: FIXME: find out current filament/extruder?

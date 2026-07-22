@@ -684,7 +684,7 @@ void PrintObject::estimate_curled_extrusions()
             // Estimate curling of support material and add it to the malformaition lines of each layer
             float support_flow_width = support_material_flow(this, this->config().layer_height).width();
             SupportSpotsGenerator::Params params{this->print()->m_config.filament_type.values,
-                                                 float(this->print()->default_object_config().inner_wall_acceleration.getFloat()),
+                                                 float(this->print()->default_object_config().inner_wall_acceleration.values.front()),
                                                  this->config().raft_layers.getInt(), this->config().brim_type.value,
                                                  float(this->config().brim_width.getFloat())};
             SupportSpotsGenerator::estimate_malformations(this->layers(), params);
@@ -930,11 +930,11 @@ bool PrintObject::invalidate_state_by_config_options(
             // Return true if gap-fill speed has changed from zero value to non-zero or from non-zero value to zero.
             auto is_gap_fill_changed_state_due_to_speed = [&opt_key, &old_config, &new_config]() -> bool {
                 if (opt_key == "gap_infill_speed") {
-                    const auto *old_gap_fill_speed = old_config.option<ConfigOptionFloat>(opt_key);
-                    const auto *new_gap_fill_speed = new_config.option<ConfigOptionFloat>(opt_key);
+                    const auto *old_gap_fill_speed = old_config.option<ConfigOptionFloats>(opt_key);
+                    const auto *new_gap_fill_speed = new_config.option<ConfigOptionFloats>(opt_key);
                     assert(old_gap_fill_speed && new_gap_fill_speed);
-                    return (old_gap_fill_speed->value > 0.f && new_gap_fill_speed->value == 0.f) ||
-                           (old_gap_fill_speed->value == 0.f && new_gap_fill_speed->value > 0.f);
+                    return (old_gap_fill_speed->values.size() != new_gap_fill_speed->values.size()) ||
+                           (old_gap_fill_speed->values != new_gap_fill_speed->values);
                 }
                 return false;
             };

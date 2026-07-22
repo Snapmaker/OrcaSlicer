@@ -617,7 +617,7 @@ WipeTower::WipeTower(const PrintConfig& config, int plate_idx, Vec3d plate_origi
     m_bridging(10.f),
     m_no_sparse_layers(config.wipe_tower_no_sparse_layers),
     m_gcode_flavor(config.gcode_flavor),
-    m_travel_speed(config.travel_speed),
+    m_travel_speed(float(get_value_at(config, config.travel_speed, ConfigFlowDomain::Process, initial_tool))),
     m_current_tool(initial_tool),
     //wipe_volumes(flush_matrix)
     m_wipe_volume(prime_volume),

@@ -2025,7 +2025,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             
             // check acceleration
             const auto max_accel = m_config.machine_max_acceleration_extruding.values[0];
-            if (warning_key.empty() && m_default_object_config.default_acceleration > 0 && max_accel > 0) {
+            if (warning_key.empty() && m_default_object_config.default_acceleration.values.front() > 0 && max_accel > 0) {
                const bool support_travel_acc = (m_config.gcode_flavor == gcfRepetier || m_config.gcode_flavor == gcfMarlinFirmware ||
                                                 m_config.gcode_flavor == gcfRepRapFirmware);
 

@@ -629,7 +629,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : { "top_surface_line_width", "top_surface_speed" })
         toggle_field(el, has_top_shell);
 
-    bool have_default_acceleration = config->opt_float("default_acceleration") > 0;
+    bool have_default_acceleration = config->opt_float("default_acceleration", 0) > 0;
 
     for (auto el : {"outer_wall_acceleration", "inner_wall_acceleration", "initial_layer_acceleration",
         "top_surface_acceleration", "travel_acceleration", "bridge_acceleration", "sparse_infill_acceleration", "internal_solid_infill_acceleration"})

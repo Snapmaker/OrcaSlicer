@@ -107,7 +107,7 @@ std::string PresetHints::maximum_volumetric_flow_description(const PresetBundle 
     double sparse_infill_speed                     = print_config.opt_float("sparse_infill_speed");
     double small_perimeter_speed            = print_config.get_abs_value("small_perimeter_speed", inner_wall_speed);
     double internal_solid_infill_speed               = print_config.opt_float("internal_solid_infill_speed");
-    double top_surface_speed           = print_config.opt_float("top_surface_speed");
+    double top_surface_speed           = print_config.opt_float("top_surface_speed", 0);
     // Maximum print speed when auto-speed is enabled by setting any of the above speed values to zero.
     double max_print_speed                  = print_config.opt_float("max_print_speed");
     // Maximum volumetric speed allowed for the print profile.

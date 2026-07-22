@@ -6443,6 +6443,46 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
     }
 }
 
+// Handle incoming web messages for Flutter debug (no webview required)
+void SSWCP::handle_webmsg_for_debug(std::string message) {
+    {
+        WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
+
+        json j_message = json::parse(message);
+
+        if (j_message.empty() || !j_message.count("header") || !j_message.count("payload") || !j_message["payload"].count("cmd")) {
+            return;
+        }
+
+        json header = j_message["header"];
+        json payload = j_message["payload"];
+
+        std::string cmd = "";
+        std::string event_id = "";
+        json params;
+
+        if (payload.count("cmd")) {
+            cmd = payload["cmd"].get<std::string>();
+        }
+        if (payload.count("params")) {
+            params = payload["params"];
+        }
+
+        if (payload.count("event_id") && !payload["event_id"].is_null()) {
+            event_id = payload["event_id"].get<std::string>();
+        }
+        std::shared_ptr<SSWCP_Instance> instance = create_sswcp_instance(cmd, header, params, event_id, nullptr);
+        if (instance) {
+            if (event_id != "") {
+                m_instance_list.add_infinite(instance.get(), instance);
+            } else {
+                m_instance_list.add(instance.get(), instance, DEFAULT_INSTANCE_TIMEOUT);
+            }
+            instance->process();
+        }
+    }
+}
+
 // Delete instance from list
 void SSWCP::delete_target(SSWCP_Instance* target) {
     wxGetApp().CallAfter([target]() {
@@ -6734,13 +6774,9 @@ void SSWCP::enable_debug_mode(bool enable, unsigned short port)
         m_debug_server->set_message_callback([](const std::string& message) {
             BOOST_LOG_TRIVIAL(debug) << "Received message from Flutter Web via WebSocket";
 
-            // Handle the message using existing logic (pass nullptr for webview in debug mode)
+            // Handle the message using existing logic (no webview in debug/Flutter path)
             wxGetApp().CallAfter([message]() {
-                try {
-                    SSWCP::handle_web_message(message, nullptr);
-                } catch (std::exception& e) {
-                    BOOST_LOG_TRIVIAL(error) << "Error handling WebSocket message: " << e.what();
-                }
+                SSWCP::handle_webmsg_for_debug(message);
             });
         });
 

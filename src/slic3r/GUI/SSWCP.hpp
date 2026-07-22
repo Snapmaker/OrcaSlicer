@@ -600,6 +600,9 @@ public:
     // Handle incoming web messages
     static void handle_web_message(std::string message, wxWebView* webview);
 
+    // Handle incoming web messages for Flutter debug (no webview required)
+    static void handle_webmsg_for_debug(std::string message);
+
     // Create new SSWCP instance
     static std::shared_ptr<SSWCP_Instance> create_sswcp_instance(
         std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview);

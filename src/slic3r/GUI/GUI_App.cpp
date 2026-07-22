@@ -2270,7 +2270,11 @@ bool GUI_App::check_older_app_config(Semver current_version, bool backup)
 void GUI_App::copy_web_resources() {
     StartupProfiler profiler("GUI_App::copy_web_resources");
 
+#ifdef WIN32
+    auto data_web_path = boost::filesystem::path(boost::nowide::widen(data_dir())) / "web";
+#else
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
+#endif
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
         copy_bundled_flutter_web(false);
         profiler.mark("copy flutter_web (missing target)");
@@ -2301,7 +2305,11 @@ void GUI_App::copy_web_resources() {
 bool GUI_App::copy_bundled_flutter_web(bool upgrade)
 {
     auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+#ifdef WIN32
+    auto target_path = boost::filesystem::path(boost::nowide::widen(data_dir())) / "web" / "flutter_web";
+#else
     auto target_path = boost::filesystem::path(data_dir()) / "web" / "flutter_web";
+#endif
     if (copy_directory_recursively(source_path, target_path))
         return true;
 

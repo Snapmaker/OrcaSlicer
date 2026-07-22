@@ -8,9 +8,24 @@
 
 namespace Slic3r {
 
-extern const int g_min_flush_volume_from_support;
-extern const int g_flush_volume_to_support;
-extern const int g_max_flush_volume;
+// Per-flow flushing thresholds.
+// StandardFlow and HighFlow have independent values for all four fields.
+// Source: user-specified values (2026-07-20).
+struct FlushThresholds {
+    int min_flush_volume;              // normal material flush lower bound (clamp floor)
+    int max_flush_volume;              // normal material flush upper bound (clamp ceiling)
+    int flush_volume_to_support;       // normal → support: fixed flush volume
+    int min_flush_volume_from_support; // support → normal: minimum flush volume
+};
+
+extern const FlushThresholds g_standard_flush_thresholds;
+extern const FlushThresholds g_highflow_flush_thresholds;
+
+inline const FlushThresholds& get_flush_thresholds(int flush_dataset)
+{
+    return (flush_dataset == static_cast<int>(FlushDataset::HighFlow))
+        ? g_highflow_flush_thresholds : g_standard_flush_thresholds;
+}
 
 // Parameter set for the HSV color-distance flush formula.
 // Supports independent calibration per flow type (StandardFlow / HighFlow).

@@ -9,10 +9,9 @@
 
 namespace Slic3r {
 
-const int g_min_flush_volume_from_support = 420.f;
-const int g_flush_volume_to_support = 230;
-
-const int g_max_flush_volume = 350;
+// Per-flow flushing thresholds — user-specified (2026-07-20).
+const FlushThresholds g_standard_flush_thresholds = {40, 350, 50, 100};
+const FlushThresholds g_highflow_flush_thresholds   = {80, 700, 120, 250};
 
 // ---- Special color type classification for flush correction ----
 
@@ -340,10 +339,9 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     float k = get_special_k(src_r, src_g, src_b, dst_r, dst_g, dst_b);
     int   final_volume = (int) ((float) flush_volume * k);
 
-   //flush_volume += (float) m_min_flush_vol;
-    return std::min((int) final_volume, m_max_flush_vol);
-
-    /*return std::clamp(final_volume, m_min_flush_vol, m_max_flush_vol);*/
+    // Per-flow clamping with flow-specific thresholds — user-specified (2026-07-20).
+    const auto& thresholds = get_flush_thresholds(m_flush_dataset);
+    return std::clamp(final_volume, thresholds.min_flush_volume, thresholds.max_flush_volume);
 }
 
 }

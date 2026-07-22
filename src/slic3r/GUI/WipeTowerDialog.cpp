@@ -383,7 +383,7 @@ void WipingPanel::create_panels(wxWindow* parent, const int num) {
 WipingPanel::WipingPanel(wxWindow* parent, const std::vector<float>& matrix, const std::vector<float>& extruders, const std::vector<std::string>& extruder_colours, Button* calc_button,
     const std::vector<int>& extra_flush_volume, float flush_multiplier)
 : wxPanel(parent,wxID_ANY, wxDefaultPosition, wxDefaultSize/*,wxBORDER_RAISED*/)
-,m_matrix(matrix), m_min_flush_volume(extra_flush_volume), m_max_flush_volume(Slic3r::g_max_flush_volume)
+,m_matrix(matrix), m_min_flush_volume(extra_flush_volume), m_max_flush_volume(Slic3r::g_standard_flush_thresholds.max_flush_volume)
 {
     m_number_of_extruders = (int)(sqrt(matrix.size())+0.001);
 
@@ -719,6 +719,8 @@ void WipingPanel::calc_flushing_volumes()
         if (!flush_ds_opt->values.empty())
             flush_dataset = flush_ds_opt->values[0];
     }
+    const auto& flush_thr = Slic3r::get_flush_thresholds(flush_dataset);
+    m_max_flush_volume = flush_thr.max_flush_volume;
     std::vector<std::vector<wxColour>> multi_colors;
 
     // Support for multi-color filament
@@ -748,7 +750,7 @@ void WipingPanel::calc_flushing_volumes()
             else {
                 int flushing_volume = 0;
                 if (is_to_support) {
-                    flushing_volume = Slic3r::g_flush_volume_to_support;
+                    flushing_volume = flush_thr.flush_volume_to_support;
                 }
                 else {
                     for (int i = 0; i < multi_colors[from_idx].size(); ++i) {
@@ -761,7 +763,7 @@ void WipingPanel::calc_flushing_volumes()
                     }
 
                     if (is_from_support) {
-                        flushing_volume = std::max(Slic3r::g_min_flush_volume_from_support, flushing_volume);
+                        flushing_volume = std::max(flush_thr.min_flush_volume_from_support, flushing_volume);
                     }
                 }
 

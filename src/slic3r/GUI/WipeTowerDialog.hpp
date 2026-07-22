@@ -93,7 +93,7 @@ private:
     std::vector<wxButton *> icon_list2;
 
     const std::vector<int> m_min_flush_volume;
-    const int m_max_flush_volume;
+    int m_max_flush_volume;
 
     wxTextCtrl* m_flush_multiplier_ebox = nullptr;
     wxStaticText* m_min_flush_label = nullptr;

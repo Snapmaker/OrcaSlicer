@@ -2059,7 +2059,13 @@ Sidebar::Sidebar(Plater *parent)
 
             const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
             const auto& full_config = wxGetApp().preset_bundle->full_config();
-            const auto& extra_flush_volumes = get_min_flush_volumes(full_config);
+            int flush_dataset = static_cast<int>(FlushDataset::StandardFlow);
+            if (auto* flush_ds_opt = full_config.option<ConfigOptionIntsNullable>("nozzle_flush_dataset")) {
+                if (!flush_ds_opt->values.empty())
+                    flush_dataset = flush_ds_opt->values[0];
+            }
+            const auto& flush_thr = Slic3r::get_flush_thresholds(flush_dataset);
+            std::vector<int> extra_flush_volumes(extruder_colours.size(), flush_thr.min_flush_volume);
             WipingDialog dlg(parent, cast<float>(init_matrix), cast<float>(init_extruders), extruder_colours, extra_flush_volumes, flush_multiplier);
             if (dlg.ShowModal() == wxID_OK) {
                 std::vector<float> matrix = dlg.get_matrix();
@@ -8243,7 +8249,8 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
     ConfigOptionFloat* flush_multi_opt = project_config.option<ConfigOptionFloat>("flush_multiplier");
     float flush_multiplier = flush_multi_opt ? flush_multi_opt->getFloat() : 1.f;
     std::vector<double> matrix = init_matrix;
-    int m_max_flush_volume = Slic3r::g_max_flush_volume;
+    const auto& flush_thr = Slic3r::get_flush_thresholds(nozzle_flush_dataset);
+    int m_max_flush_volume = flush_thr.max_flush_volume;
     unsigned int m_number_of_extruders = (int)(sqrt(init_matrix.size()) + 0.001);
 
     const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
@@ -8277,7 +8284,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
                 bool is_from_support = is_support_filament(from_idx);
                 bool is_to_support = is_support_filament(modify_id);
                 if (is_to_support) {
-                    flushing_volume = Slic3r::g_flush_volume_to_support;
+                    flushing_volume = flush_thr.flush_volume_to_support;
                 }
                 else {
                     for (int j = 0; j < multi_colours[from_idx].size(); ++j) {
@@ -8289,7 +8296,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
                         }
                     }
                     if (is_from_support)
-                        flushing_volume = std::max(flushing_volume, Slic3r::g_min_flush_volume_from_support);
+                        flushing_volume = std::max(flushing_volume, flush_thr.min_flush_volume_from_support);
                 }
                 matrix[m_number_of_extruders * from_idx + modify_id] = flushing_volume;
             }
@@ -8302,7 +8309,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
                 bool is_to_support = is_support_filament(to_idx);
                 int flushing_volume = 0;
                 if (is_to_support) {
-                    flushing_volume = Slic3r::g_flush_volume_to_support;
+                    flushing_volume = flush_thr.flush_volume_to_support;
                 }
                 else {
                     for (int j = 0; j < multi_colours[modify_id].size(); ++j) {
@@ -8314,7 +8321,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
                         }
                     }
                     if (is_from_support)
-                        flushing_volume = std::max(flushing_volume, Slic3r::g_min_flush_volume_from_support);
+                        flushing_volume = std::max(flushing_volume, flush_thr.min_flush_volume_from_support);
 
                     matrix[m_number_of_extruders * modify_id + to_idx] = flushing_volume;
                 }

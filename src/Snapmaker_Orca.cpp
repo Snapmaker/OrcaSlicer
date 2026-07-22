@@ -2866,6 +2866,8 @@ int CLI::run(int argc, char **argv)
                 BOOST_LOG_TRIVIAL(info) << boost::format("filament_is_support: %1%") % filament_is_support->serialize();
                 BOOST_LOG_TRIVIAL(info) << boost::format("flush_volumes_matrix before computing: %1%") % m_print_config.option<ConfigOptionFloats>("flush_volumes_matrix")->serialize();
             }
+            const auto& flush_thr = Slic3r::get_flush_thresholds(
+                nozzle_flush_dataset.empty() ? static_cast<int>(FlushDataset::StandardFlow) : nozzle_flush_dataset[0]);
             for (int from_idx = 0; from_idx < project_filament_count; from_idx++) {
                 const std::string& from_color = project_filament_colors[from_idx];
                 unsigned char from_rgb[4] = {};
@@ -2879,7 +2881,7 @@ int CLI::run(int argc, char **argv)
                     else {
                         int flushing_volume = 0;
                         if (is_to_support) {
-                            flushing_volume = Slic3r::g_flush_volume_to_support;
+                            flushing_volume = flush_thr.flush_volume_to_support;
                         }
                         else {
                             const std::string& to_color = project_filament_colors[to_idx];
@@ -2889,11 +2891,11 @@ int CLI::run(int argc, char **argv)
                             //BOOST_LOG_TRIVIAL(info) << boost::format("src_rgba {%1%,%2%,%3%,%4%} dst_rgba {%5%,%6%,%7%,%8%}")%(unsigned int)(from_rgb[0]) %(unsigned int)(from_rgb[1]) %(unsigned int)(from_rgb[2]) %(unsigned int)(from_rgb[3])
                             //       %(unsigned int)(to_rgb[0]) %(unsigned int)(to_rgb[1]) %(unsigned int)(to_rgb[2]) %(unsigned int)(to_rgb[3]);
 
-                            Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], Slic3r::g_max_flush_volume, 1.0f, nozzle_flush_dataset[from_idx]);
+                            Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], flush_thr.max_flush_volume, 1.0f, nozzle_flush_dataset[from_idx]);
 
                             flushing_volume = calculator.calc_flush_vol(from_rgb[3], from_rgb[0], from_rgb[1], from_rgb[2], to_rgb[3], to_rgb[0], to_rgb[1], to_rgb[2]);
                             if (is_from_support) {
-                                flushing_volume = std::max(Slic3r::g_min_flush_volume_from_support, flushing_volume);
+                                flushing_volume = std::max(flush_thr.min_flush_volume_from_support, flushing_volume);
                             }
                         }
 

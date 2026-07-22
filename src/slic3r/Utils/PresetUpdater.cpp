@@ -101,7 +101,12 @@ void copy_file_fix(const fs::path &source, const fs::path &target)
 	BOOST_LOG_TRIVIAL(debug) << format("PresetUpdater: Copying %1% -> %2%", source, target);
 	std::string error_message;
 	//CopyFileResult cfr = Slic3r::GUI::copy_file_gui(source.string(), target.string(), error_message, false);
+#ifdef WIN32
+	CopyFileResult cfr = copy_file(boost::nowide::narrow(source.wstring()),
+	                               boost::nowide::narrow(target.wstring()), error_message, false);
+#else
 	CopyFileResult cfr = copy_file(source.string(), target.string(), error_message, false);
+#endif
 	if (cfr != CopyFileResult::SUCCESS) {
 		BOOST_LOG_TRIVIAL(error) << "Copying failed(" << cfr << "): " << error_message;
 		throw Slic3r::CriticalException(GUI::format(
@@ -317,9 +322,15 @@ struct PresetUpdater::priv
 
 //BBS: change directories by design
 PresetUpdater::priv::priv()
+#ifdef WIN32
+	: cache_path(fs::path(boost::nowide::widen(Slic3r::data_dir())) / "ota")
+	, rsrc_path(fs::path(resources_dir()) / "profiles")
+	, vendor_path(fs::path(boost::nowide::widen(Slic3r::data_dir())) / PRESET_SYSTEM_DIR)
+#else
 	: cache_path(fs::path(Slic3r::data_dir()) / "ota")
 	, rsrc_path(fs::path(resources_dir()) / "profiles")
 	, vendor_path(fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR)
+#endif
 	, cancel(false)
 {
 	//BBS: refine preset updater logic

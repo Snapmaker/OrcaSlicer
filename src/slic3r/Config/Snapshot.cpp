@@ -272,8 +272,8 @@ bool Snapshot::equal_to_active(const AppConfig &app_config) const
     }
 
     // 2) Check, whether this snapshot references the same set of ini files as the current state.
-    boost::filesystem::path data_dir     = boost::filesystem::path(Slic3r::data_dir());
-    boost::filesystem::path snapshot_dir = boost::filesystem::path(Slic3r::data_dir()) / SLIC3R_SNAPSHOTS_DIR / this->id;
+    boost::filesystem::path data_dir     = Slic3r::data_dir_path();
+    boost::filesystem::path snapshot_dir = Slic3r::data_dir_path() / SLIC3R_SNAPSHOTS_DIR / this->id;
     for (const char *subdir : snapshot_subdirs) {
         boost::filesystem::path path1 = data_dir / subdir;
         boost::filesystem::path path2 = snapshot_dir / subdir;
@@ -397,7 +397,7 @@ static void delete_existing_ini_files(const boost::filesystem::path &path)
 
 const Snapshot&	SnapshotDB::take_snapshot(const AppConfig &app_config, Snapshot::Reason reason, const std::string &comment)
 {
-	boost::filesystem::path data_dir        = boost::filesystem::path(Slic3r::data_dir());
+	boost::filesystem::path data_dir        = Slic3r::data_dir_path();
 	boost::filesystem::path snapshot_db_dir = SnapshotDB::create_db_dir();
 
 	// 1) Prepare the snapshot structure.
@@ -480,7 +480,7 @@ const Snapshot& SnapshotDB::restore_snapshot(const std::string &id, AppConfig &a
 
 void SnapshotDB::restore_snapshot(const Snapshot &snapshot, AppConfig &app_config)
 {
-	boost::filesystem::path data_dir        = boost::filesystem::path(Slic3r::data_dir());
+	boost::filesystem::path data_dir        = Slic3r::data_dir_path();
 	boost::filesystem::path snapshot_db_dir = SnapshotDB::create_db_dir();
     boost::filesystem::path snapshot_dir 	= snapshot_db_dir / snapshot.id;
     // Remove existing ini files and restore the ini files from the snapshot.
@@ -543,7 +543,7 @@ SnapshotDB::const_iterator SnapshotDB::snapshot(const std::string &id) const
 
 boost::filesystem::path SnapshotDB::create_db_dir()
 {
-    boost::filesystem::path data_dir 	  = boost::filesystem::path(Slic3r::data_dir());
+    boost::filesystem::path data_dir 	  = Slic3r::data_dir_path();
     boost::filesystem::path snapshots_dir = data_dir / SLIC3R_SNAPSHOTS_DIR;
     for (const boost::filesystem::path &path : { data_dir, snapshots_dir }) {
 		boost::filesystem::path subdir = path;

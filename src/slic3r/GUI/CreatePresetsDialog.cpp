@@ -8,6 +8,7 @@
 #include <openssl/evp.h>
 #include <wx/dcgraph.h>
 #include <wx/tooltip.h>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Utils.hpp"
@@ -3419,7 +3420,11 @@ bool ExportConfigsDialog::earse_preset_fields_for_safe(Preset *preset)
     if (preset->type != Preset::Type::TYPE_PRINTER) return true;
     
     boost::filesystem::path file_path = Slic3r::data_dir_path() / PRESET_USER_DIR / "Temp" / (preset->name + ".json");
+#ifdef WIN32
+    preset->file = boost::nowide::narrow(file_path.make_preferred().wstring());
+#else
     preset->file = file_path.make_preferred().string();
+#endif
 
     DynamicPrintConfig &config = preset->config;
     config.erase("print_host");

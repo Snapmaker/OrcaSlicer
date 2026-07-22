@@ -599,7 +599,25 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
                 } else
                     return;
                 input_files.push_back((boost::filesystem::path(Slic3r::resources_dir()) / "handy_models" / file_name));
-                plater()->load_files(input_files, LoadStrategy::LoadModel);
+                Plater* currentPlater = plater();
+                if (currentPlater == nullptr)
+                {
+                    return;
+                }
+
+                const std::vector<size_t> loadedObjectIndexes = currentPlater->load_files(input_files, LoadStrategy::LoadModel);
+                Model& model = currentPlater->model();
+                ModelObjectPtrs loadedObjects;
+                loadedObjects.reserve(loadedObjectIndexes.size());
+                for (std::vector<size_t>::const_reverse_iterator objectIndex = loadedObjectIndexes.rbegin();
+                     objectIndex != loadedObjectIndexes.rend(); ++objectIndex)
+                {
+                    if (*objectIndex < model.objects.size())
+                    {
+                        loadedObjects.push_back(model.objects[*objectIndex]);
+                    }
+                }
+                model.InitializeAssemblyPositions(loadedObjects);
 
                 // Suggest to change settings for stringhell
                 // This serves as mini tutorial for new users

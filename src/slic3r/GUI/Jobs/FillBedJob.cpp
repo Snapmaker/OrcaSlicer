@@ -178,6 +178,7 @@ void FillBedJob::prepare()
             ModelObject* newObj = m_plater->model().add_object(*mo);
             newObj->name = mo->name +" "+ std::to_string(p.itemid);
             for (ModelInstance *newInst : newObj->instances) { newInst->apply_arrange_result(p.translation.cast<double>(), p.rotation); }
+            m_plater->model().InitializeAssemblyPositions({newObj});
             //m_plater->sidebar().obj_list()->paste_objects_into_list({m_plater->model().objects.size()-1});
         };
         m_selected.emplace_back(ap);

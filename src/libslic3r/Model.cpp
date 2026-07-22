@@ -504,6 +504,85 @@ ModelObject* Model::add_object(const ModelObject &other)
     return new_object;
 }
 
+bool Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
+{
+    constexpr double ASSEMBLY_OBJECT_GAP = 10.0;
+
+    if (modelObjects.empty())
+    {
+        return false;
+    }
+
+    ModelObjectPtrs validatedObjects;
+    validatedObjects.reserve(modelObjects.size());
+    for (ModelObject* modelObject : modelObjects)
+    {
+        if (modelObject == nullptr || modelObject->instances.empty() ||
+            std::find(objects.begin(), objects.end(), modelObject) == objects.end() ||
+            std::find(validatedObjects.begin(), validatedObjects.end(), modelObject) != validatedObjects.end())
+        {
+            return false;
+        }
+
+        const BoundingBoxf3 rawBox = modelObject->raw_mesh_bounding_box();
+        if (!rawBox.defined)
+        {
+            return false;
+        }
+
+        for (const ModelInstance* instance : modelObject->instances)
+        {
+            if (instance == nullptr)
+            {
+                return false;
+            }
+        }
+
+        validatedObjects.push_back(modelObject);
+    }
+
+    BoundingBoxf3 sceneBox = CalculateAssemblyBoundingBox(validatedObjects);
+    for (ModelObject* modelObject : validatedObjects)
+    {
+        const BoundingBoxf3 rawBox = modelObject->raw_mesh_bounding_box();
+        std::vector<BoundingBoxf3> instanceBoxes;
+        instanceBoxes.reserve(modelObject->instances.size());
+
+        double objectWidth = 0.0;
+        for (ModelInstance* instance : modelObject->instances)
+        {
+            if (!instance->is_assemble_initialized())
+            {
+                instance->set_assemble_transformation(instance->get_transformation());
+            }
+
+            const BoundingBoxf3 instanceBox =
+                rawBox.transformed(instance->get_assemble_transformation().get_matrix_no_offset());
+            instanceBoxes.push_back(instanceBox);
+            objectWidth = std::max(objectWidth, instanceBox.size().x());
+        }
+
+        const double objectCenterX = sceneBox.defined ? sceneBox.max.x() + ASSEMBLY_OBJECT_GAP + objectWidth * 0.5 : 0.0;
+        const double firstInstanceCenterY = sceneBox.defined ? sceneBox.center().y() : 0.0;
+        double previousInstanceMaxY = 0.0;
+
+        for (size_t instanceIndex = 0; instanceIndex < modelObject->instances.size(); ++instanceIndex)
+        {
+            const BoundingBoxf3& instanceBox = instanceBoxes[instanceIndex];
+            const double instanceCenterY = instanceIndex == 0 ? firstInstanceCenterY :
+                                           previousInstanceMaxY + ASSEMBLY_OBJECT_GAP + instanceBox.size().y() * 0.5;
+            const Vec3d assemblyOffset(objectCenterX - instanceBox.center().x(),
+                                       instanceCenterY - instanceBox.center().y(), -instanceBox.min.z());
+            modelObject->instances[instanceIndex]->set_assemble_offset(assemblyOffset);
+            previousInstanceMaxY = instanceCenterY + instanceBox.size().y() * 0.5;
+        }
+
+        sceneBox.merge(modelObject->CalculateAssemblyBoundingBox());
+    }
+
+    return true;
+}
+
 void Model::delete_object(size_t idx)
 {
     ModelObjectPtrs::iterator i = this->objects.begin() + idx;
@@ -661,6 +740,23 @@ BoundingBoxf3 Model::bounding_box_exact() const
     for (ModelObject *o : this->objects)
         bb.merge(o->bounding_box_exact());
     return bb;
+}
+
+BoundingBoxf3 Model::CalculateAssemblyBoundingBox(const ModelObjectPtrs& excludedObjects) const
+{
+    BoundingBoxf3 assemblyBox;
+    for (const ModelObject* modelObject : objects)
+    {
+        if (modelObject == nullptr ||
+            std::find(excludedObjects.begin(), excludedObjects.end(), modelObject) != excludedObjects.end())
+        {
+            continue;
+        }
+
+        assemblyBox.merge(modelObject->CalculateAssemblyBoundingBox());
+    }
+
+    return assemblyBox;
 }
 
 double Model::max_z() const
@@ -1438,6 +1534,26 @@ const BoundingBoxf3& ModelObject::bounding_box_exact() const
             m_bounding_box_exact.merge(this->instance_bounding_box(i));
     }
     return m_bounding_box_exact;
+}
+
+BoundingBoxf3 ModelObject::CalculateAssemblyBoundingBox() const
+{
+    BoundingBoxf3 assemblyBox;
+    const BoundingBoxf3 rawBox = raw_mesh_bounding_box();
+    if (!rawBox.defined)
+    {
+        return assemblyBox;
+    }
+
+    for (const ModelInstance* instance : instances)
+    {
+        if (instance != nullptr)
+        {
+            assemblyBox.merge(rawBox.transformed(instance->get_assemble_transformation().get_matrix()));
+        }
+    }
+
+    return assemblyBox;
 }
 
 double ModelObject::min_z() const

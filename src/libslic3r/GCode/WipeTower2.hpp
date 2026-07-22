@@ -356,14 +356,6 @@ private:
 		return layer_height * ( m_perimeter_width - layer_height * (1.f-float(M_PI)/4.f)) / filament_area();
 	}
 
-    float nozzle_change_extrusion_flow(float line_widht, float layer_height = -1.f) const // negative layer_height - return current m_extrusion_flow
-    {
-        if (layer_height < 0)
-            return m_extrusion_flow;
-        return layer_height * (line_widht - layer_height * (1.f - float(M_PI) / 4.f)) / filament_area();
-    }
-
-
     // Calculates depth for all layers and propagates them downwards
     void plan_tower();
     void plan_tower_new();
@@ -419,6 +411,8 @@ private:
     std::vector<float> m_used_filament_length;
 	std::vector<std::pair<float, std::vector<float>>> m_used_filament_length_until_layer;
 
+    int get_wall_filament_for_layer(const WipeTowerInfo& layer);
+
     // Return index of first toolchange that switches to non-soluble extruder
     // ot -1 if there is no such toolchange.
     int first_toolchange_to_nonsoluble(
@@ -426,9 +420,8 @@ private:
     bool layer_has_soluble_toolchange(const WipeTowerInfo &layer) const;
     float cumulative_toolchange_depth_before(const WipeTowerInfo::ToolChange *tool_change) const;
     WipeTower::ToolChangeResult emit_planned_tool_change(const WipeTowerInfo::ToolChange *tool_change);
-    WipeTower::ToolChangeResult tool_change_new(const WipeTowerInfo::ToolChange& tool_change);
-
-    WipeTower::ToolChangeResult tool_change_new(size_t new_tool, bool solid_change = false, bool solid_nozzlechange = false);
+    WipeTower::ToolChangeResult tool_change_new(const WipeTowerInfo::ToolChange& tool_change, 
+        bool solid_change = false, bool solid_nozzlechange = false);
 
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
@@ -440,8 +433,8 @@ private:
     void toolchange_unload_new(WipeTowerWriter2& writer, size_t old_filament_id, size_t new_filament_id,
         int old_temperature, int new_temperature);
 
-    WipeTower::NozzleChangeResult ramming(int old_filament_id, int new_filament_id, 
-        bool solid_infill = false, bool extruder_change = true); // extruder_chang means nozzle_change
+    WipeTower::NozzleChangeResult ramming(const WipeTowerInfo::ToolChange& tool_change,
+        bool solid_infill = false, bool extruder_change = true);
 
     void toolchange_Change(WipeTowerWriter2 &writer, const size_t new_tool, 
         const std::string& new_material);
@@ -473,9 +466,6 @@ private:
     void get_wall_skip_points(const WipeTowerInfo& layer, int layer_id);
     // Retrieve pre-computed gap points for a specific layer. Returns empty if layer_id out of bounds.
     std::vector<Vec2f> get_wall_skip_points(size_t layer_id);
-    // Predict nozzle X after toolchange_Unload ramming, matching its xl/xr and do_ramming logic.
-    // old_tool: extruder index of the filament being unloaded
-    float predict_ramming_end_x(int old_tool, float layer_height) const;
 
     Polygon generate_support_cone_wall(
         WipeTowerWriter2& writer, 

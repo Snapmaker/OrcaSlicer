@@ -1,6 +1,6 @@
 {
     "type": "process",
-    "name": "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
+    "name": "0.20mm Standard @Snapmaker U1 (0.4 nozzle)",
     "inherits": "fdm_process_U1_0.20",
     "from": "system",
     "setting_id": "GP004",
@@ -35,5 +35,10 @@
     "wipe_speed": "50",
     "wipe_tower_extra_rib_length": "8",
     "wipe_tower_wall_type": "rib",
-    "gap_fill_target": "topbottom"
+    "gap_fill_target": "topbottom",
+    "inner_wall_speed": ["300", "600"],
+    "outer_wall_speed": ["200", "500"],
+    "internal_solid_infill_speed": ["250", "600"],
+    "sparse_infill_speed": ["270", "600"],
+    "process_flow_support": ["standard", "high_flow"]
 }

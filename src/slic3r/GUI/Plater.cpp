@@ -21050,15 +21050,14 @@ bool Plater::sync_filament_temp_mixing_notification()
     return slicing_allowed;
 }
 
-std::vector<std::pair<int, std::string>>
-Plater::get_cold_plate_unsupported_filaments(int plate_index)
+Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_index)
 {
-    std::vector<std::pair<int, std::string>> result;
+    ColdPlateCompatResult result;
 
     // Boundary check
     const int plate_count = p->partplate_list.get_plate_count();
     if (plate_index < 0 || plate_index >= plate_count) {
-        BOOST_LOG_TRIVIAL(warning) << "[Plater] get_cold_plate_unsupported_filaments: invalid plate_index=" << plate_index;
+        BOOST_LOG_TRIVIAL(warning) << "[Plater] get_cold_plate_compat_state: invalid plate_index=" << plate_index;
         return result;
     }
 
@@ -21088,15 +21087,15 @@ Plater::get_cold_plate_unsupported_filaments(int plate_index)
     if (!has_object_on_plate)
         return result;
 
-    // Collect used slots (shared with filament_temp_mixing for parity)
+    // Collect used slots once (shared with filament_temp_mixing for parity).
     std::set<int> used_slots_0_based;
     const int num_filaments = static_cast<int>(filament_type_option->values.size());
     collect_used_filament_slots_on_plate(plate, num_filaments, this->config(), full_cfg, used_slots_0_based);
     if (used_slots_0_based.empty())
         return result;
 
-    // For each used slot, read its preset's cold-plate bed temperatures and
-    // judge compatibility: both must be non-zero.
+    // Single pass over used slots: classify each preset into unsupported /
+    // TPU. State is derived at the end: BlockedError wins over SeriousWarning.
     PresetBundle* bundle = wxGetApp().preset_bundle;
     for (int slot : used_slots_0_based) {
         if (slot < 0 || slot >= static_cast<int>(bundle->filament_presets.size()))
@@ -21104,72 +21103,32 @@ Plater::get_cold_plate_unsupported_filaments(int plate_index)
         const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
         if (preset == nullptr)
             continue;
+
+        const ConfigOptionStrings* ftype = preset->config.option<ConfigOptionStrings>("filament_type");
+        const std::string type_str = (ftype != nullptr && !ftype->values.empty())
+            ? ftype->values[0]
+            : std::string("?");
+        if (type_str == "TPU")
+            result.uses_tpu = true;
 
         const int t_other = preset->config.opt_int("cool_steel_plate_temp", 0);
         const int t_first = preset->config.opt_int("cool_steel_plate_temp_initial_layer", 0);
-        if (t_first <= 0 || t_other <= 0) {
-            const ConfigOptionStrings* ftype = preset->config.option<ConfigOptionStrings>("filament_type");
-            const std::string type_str = (ftype != nullptr && !ftype->values.empty())
-                ? ftype->values[0]
-                : std::string("?");
-            result.emplace_back(slot, std::move(type_str));
-        }
+        if (t_first <= 0 || t_other <= 0)
+            result.unsupported.emplace_back(slot, type_str);
     }
+
+    if (!result.unsupported.empty())
+        result.state = ColdPlateCompatState::BlockedError;
+    else if (result.uses_tpu)
+        result.state = ColdPlateCompatState::SeriousWarning;
+    else
+        result.state = ColdPlateCompatState::Compatible;
     return result;
-}
-
-bool Plater::plate_uses_tpu(int plate_index)
-{
-    // Boundary check
-    const int plate_count = p->partplate_list.get_plate_count();
-    if (plate_index < 0 || plate_index >= plate_count)
-        return false;
-
-    // Early exit: only relevant under CSP bed type
-    BedType curr_bed = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-    if (curr_bed != btCSP)
-        return false;
-
-    const DynamicPrintConfig& full_cfg = wxGetApp().preset_bundle->full_config();
-    const ConfigOptionStrings* filament_type_option = full_cfg.option<ConfigOptionStrings>("filament_type");
-    if (filament_type_option == nullptr || filament_type_option->values.empty())
-        return false;
-
-    PartPlate* plate = p->partplate_list.get_plate(plate_index);
-    if (plate == nullptr)
-        return false;
-
-    std::set<int> used_slots_0_based;
-    const int num_filaments = static_cast<int>(filament_type_option->values.size());
-    collect_used_filament_slots_on_plate(plate, num_filaments, this->config(), full_cfg, used_slots_0_based);
-
-    PresetBundle* bundle = wxGetApp().preset_bundle;
-    for (int slot : used_slots_0_based) {
-        if (slot < 0 || slot >= static_cast<int>(bundle->filament_presets.size()))
-            continue;
-        const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
-        if (preset == nullptr)
-            continue;
-        const ConfigOptionStrings* ftype = preset->config.option<ConfigOptionStrings>("filament_type");
-        if (ftype != nullptr && !ftype->values.empty() && ftype->values[0] == "TPU")
-            return true;
-    }
-    return false;
-}
-
-Plater::ColdPlateCompatState Plater::get_cold_plate_compat_state(int plate_index)
-{
-    const std::vector<std::pair<int, std::string>> unsupported = get_cold_plate_unsupported_filaments(plate_index);
-    if (!unsupported.empty())
-        return ColdPlateCompatState::BlockedError;
-    if (plate_uses_tpu(plate_index))
-        return ColdPlateCompatState::SeriousWarning;
-    return ColdPlateCompatState::Compatible;
 }
 
 bool Plater::is_plate_blocked_by_cold_plate(int plate_index)
 {
-    return get_cold_plate_compat_state(plate_index) == ColdPlateCompatState::BlockedError;
+    return get_cold_plate_compat_state(plate_index).state == ColdPlateCompatState::BlockedError;
 }
 
 bool Plater::sync_cold_plate_notification()
@@ -21180,9 +21139,10 @@ bool Plater::sync_cold_plate_notification()
         return true;
     }
 
-    const int                  curr_plate_index = get_partplate_list().get_curr_plate_index();
-    const ColdPlateCompatState state            = get_cold_plate_compat_state(curr_plate_index);
-    bool                       slicing_allowed  = true;
+    const int                   curr_plate_index = get_partplate_list().get_curr_plate_index();
+    const ColdPlateCompatResult compat          = get_cold_plate_compat_state(curr_plate_index);
+    const ColdPlateCompatState  state           = compat.state;
+    bool                        slicing_allowed = true;
 
     // Always close the previously-pushed notification first. close_validate_error_notification
     // and close_slicing_serious_warning_notification use exact-text matching, so we MUST pass
@@ -21204,21 +21164,19 @@ bool Plater::sync_cold_plate_notification()
         break;
     case ColdPlateCompatState::SeriousWarning: {
         // TPU is compatible but warrants a non-blocking serious warning.
-        const int    bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
-        const std::string text = cold_plate_serious_warning_text(bed_idx);
+        const int         bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
+        const std::string text    = cold_plate_serious_warning_text(bed_idx);
         get_notification_manager()->push_slicing_serious_warning_notification(text, std::vector<ModelObject const*>());
         p->cold_plate_last_serious_warning_text = text;
         slicing_allowed = true;
         break;
     }
     case ColdPlateCompatState::BlockedError: {
-        // Merge all unsupported filaments into a single error notification.
-        const int    bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
-        const std::vector<std::pair<int, std::string>> unsupported =
-            get_cold_plate_unsupported_filaments(curr_plate_index);
+        // Merge all unsupported filaments (already collected in compat) into a single error notification.
+        const int         bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
         StringObjectException err;
         err.type   = STRING_EXCEPT_COLD_PLATE_INCOMPATIBLE;
-        err.string = cold_plate_error_text(bed_idx, unsupported);
+        err.string = cold_plate_error_text(bed_idx, compat.unsupported);
         get_notification_manager()->push_validate_error_notification(err);
         p->cold_plate_last_error_text = err.string;
         slicing_allowed = false;

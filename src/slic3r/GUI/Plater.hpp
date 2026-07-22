@@ -252,6 +252,16 @@ public:
         BlockedError
     };
 
+    /// \brief Aggregate per-plate cold-plate compatibility result, computed in one pass.
+    /// \details Combines state with the data that produced it (unsupported filament list,
+    ///          TPU flag) so callers can render notifications without re-querying.
+    struct ColdPlateCompatResult
+    {
+        ColdPlateCompatState                      state = ColdPlateCompatState::Compatible;
+        std::vector<std::pair<int, std::string>> unsupported;  // (slot_0_based, filament_type)
+        bool                                      uses_tpu = false;
+    };
+
     Plater(wxWindow *parent, MainFrame *main_frame);
     Plater(Plater &&) = delete;
     Plater(const Plater &) = delete;
@@ -555,20 +565,12 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
-    /// @brief Collect (slot_0_based, filament_type) pairs for used filaments on the plate
-    ///        that are incompatible with the Cool Steel Plate (either cold-plate bed
-    ///        temperature is zero).
-    /// @param[in] plate_index 0-based plate index; must be in [0, plate_count).
-    /// @return Empty vector if curr_bed_type != btCSP, plate is empty, or all filaments are compatible.
-    std::vector<std::pair<int, std::string>> get_cold_plate_unsupported_filaments(int plate_index);
-    /// @brief Check whether the current plate uses TPU filament under the CSP bed type.
+    /// @brief Compute the per-plate cold-plate compatibility state in a single pass.
+    /// @details Collects used filament slots once and walks them once, producing
+    ///          {state, unsupported filaments, TPU flag} in one traversal.
     /// @param[in] plate_index 0-based plate index.
-    /// @return True if any used filament on the plate is TPU and curr_bed_type is btCSP.
-    bool plate_uses_tpu(int plate_index);
-    /// @brief Overall per-plate cold-plate compatibility state.
-    /// @param[in] plate_index 0-based plate index.
-    /// @return Compatibility state; BlockedError wins over SeriousWarning.
-    ColdPlateCompatState get_cold_plate_compat_state(int plate_index);
+    /// @return Result struct; state is Compatible when curr_bed_type != btCSP or plate is empty.
+    ColdPlateCompatResult get_cold_plate_compat_state(int plate_index);
     /// @brief Returns true if the plate is blocked from slicing by cold-plate incompatibility.
     /// @param[in] plate_index 0-based plate index.
     bool is_plate_blocked_by_cold_plate(int plate_index);

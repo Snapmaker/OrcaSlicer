@@ -7281,6 +7281,38 @@ const char* flow_support_key(ConfigFlowDomain domain)
     }
 }
 
+const std::vector<std::string>& filament_flow_variant_options()
+{
+    static const std::vector<std::string> options {
+        "filament_flow_ratio",
+        "enable_pressure_advance",
+        "pressure_advance",
+        "nozzle_temperature_initial_layer",
+        "nozzle_temperature",
+        "filament_max_volumetric_speed",
+        "fan_min_speed",
+        "fan_max_speed",
+        "additional_cooling_fan_speed",
+        "filament_retraction_length",
+        "filament_retraction_speed",
+        "filament_deretraction_speed",
+        "filament_z_hop_types",
+        "filament_wipe_distance",
+        "filament_retract_length_toolchange",
+        "filament_multitool_ramming",
+        "filament_multitool_ramming_volume",
+        "filament_multitool_ramming_flow",
+        "filament_minimal_purge_on_wipe_tower",
+    };
+    return options;
+}
+
+bool is_filament_flow_variant_option(const std::string &key)
+{
+    const auto &options = filament_flow_variant_options();
+    return std::find(options.begin(), options.end(), key) != options.end();
+}
+
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
     const ConfigOptionEnumsGeneric* volume_types = enums_option(config, "filament_volume_type");
@@ -7292,7 +7324,10 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
         if (volume_types == nullptr || volume_types->values.empty() || flow_support == nullptr)
             return 0;
 
-        const std::string flow_type = to_string(FilamentVolumeType(volume_types->get_at(filament_id)));
+        const FilamentVolumeType volume_type = filament_id < volume_types->values.size()
+            ? FilamentVolumeType(volume_types->values[filament_id])
+            : fvtStandard;
+        const std::string flow_type = to_string(volume_type);
         return flow_variant_index(flow_support->values, flow_type);
     }
     case ConfigFlowDomain::Filament: {
@@ -7313,7 +7348,10 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
         if (volume_types == nullptr || volume_types->values.empty() || flow_support == nullptr)
             return segment_start;
 
-        const std::string flow_type    = to_string(FilamentVolumeType(volume_types->get_at(filament_id)));
+        const FilamentVolumeType volume_type = filament_id < volume_types->values.size()
+            ? FilamentVolumeType(volume_types->values[filament_id])
+            : fvtStandard;
+        const std::string flow_type    = to_string(volume_type);
         const size_t      segment_size = step_size_of(filament_id);
         const auto&       declarations = flow_support->values;
         for (size_t pos = 0; pos < segment_size && segment_start + pos < declarations.size(); ++pos) {
@@ -7815,9 +7853,10 @@ void DynamicPrintConfig::set_num_filaments(unsigned int num_filaments)
 {
     const auto& defaults = FullPrintConfig::defaults();
     for (const std::string& key : print_config_def.filament_option_keys()) {
-        if (key == "default_filament_profile")
-            // Don't resize this field, as it is presented to the user at the "Dependencies" page of the Printer profile and we don't want to present
-            // empty fields there, if not defined by the system profile.
+        if (key == "default_filament_profile" || key == "filament_flow_support" ||
+            key == "filament_flow_step_size" || is_filament_flow_variant_option(key))
+            // Flow-variant options use declaration-driven segmented storage and are
+            // normalized separately by Preset::normalize().
             continue;
         auto* opt = this->option(key, false);
         assert(opt != nullptr);

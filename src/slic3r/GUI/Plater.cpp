@@ -92,6 +92,8 @@
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 
@@ -17120,7 +17122,10 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
 
     auto cur_flowrate = filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
     Flow infill_flow = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    double filament_max_volumetric_speed = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
+    const auto *max_volumetric_speed_opt = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const FilamentVolumeType volume_type = get_nozzle_volume_type(wxGetApp().preset_bundle->printers.get_edited_preset().config, 0);
+    double filament_max_volumetric_speed = get_preset_value_at(*filament_config, *max_volumetric_speed_opt,
+                                                               ConfigFlowDomain::Filament, volume_type);
     double max_infill_speed;
     if (linear)
         max_infill_speed = filament_max_volumetric_speed /
@@ -17326,7 +17331,11 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     if (max_lh->values[0] < layer_height)
         max_lh->values[0] = { layer_height };
 
-    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats { 200 });
+    size_t max_speed_variants = 1;
+    if (const auto *flow_support = filament_config->option<ConfigOptionStrings>("filament_flow_support");
+        flow_support != nullptr && !flow_support->values.empty())
+        max_speed_variants = flow_support->values.size();
+    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 200.));
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     printer_config->set_key_value("resonance_avoidance", new ConfigOptionBool{false});
     obj_cfg.set_key_value("enable_overhang_speed", new ConfigOptionBool { false });
@@ -17571,7 +17580,11 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("slow_down_min_speed", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("slow_down_for_layer_cooling", new ConfigOptionBools{false});
-    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{200});
+    size_t max_speed_variants = 1;
+    if (const auto *flow_support = filament_config->option<ConfigOptionStrings>("filament_flow_support");
+        flow_support != nullptr && !flow_support->values.empty())
+        max_speed_variants = flow_support->values.size();
+    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 200.));
     filament_config->set_key_value("enable_pressure_advance", new ConfigOptionBools {true});
     filament_config->set_key_value("pressure_advance", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("adaptive_pressure_advance", new ConfigOptionBools{false});

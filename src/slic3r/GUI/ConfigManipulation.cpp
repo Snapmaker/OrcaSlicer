@@ -125,22 +125,42 @@ void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPri
 
 void ConfigManipulation::check_filament_max_volumetric_speed(DynamicPrintConfig *config)
 {
-    //if (is_msg_dlg_already_exist) return;
-    //float max_volumetric_speed = config->opt_float("filament_max_volumetric_speed");
+    auto *max_speeds = config->option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    if (max_speeds == nullptr || max_speeds->values.empty())
+        return;
 
-    float max_volumetric_speed = config->has("filament_max_volumetric_speed") ? config->opt_float("filament_max_volumetric_speed", (float) 0.5) : 0.5;
-    // BBS: limite the min max_volumetric_speed
-    if (max_volumetric_speed < 0.5) {
-        const wxString     msg_text = _(L("Too small max volumetric speed.\nReset to 0.5."));
-        MessageDialog      dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
+    size_t variant_count = max_speeds->values.size();
+    if (const auto *flow_support = config->option<ConfigOptionStrings>("filament_flow_support");
+        flow_support != nullptr && !flow_support->values.empty())
+        variant_count = std::max(variant_count, flow_support->values.size());
+
+    ConfigOptionFloats corrected = *max_speeds;
+    const double fallback = corrected.values.front();
+    corrected.resize(variant_count);
+    for (size_t idx = max_speeds->values.size(); idx < variant_count; ++idx)
+        corrected.values[idx] = fallback;
+    bool needs_correction = corrected.values.size() != max_speeds->values.size();
+    bool has_invalid_value = false;
+    for (size_t idx = 0; idx < variant_count; ++idx) {
+        if (corrected.get_at(idx) < 0.5) {
+            corrected.values[idx] = 0.5;
+            needs_correction = true;
+            has_invalid_value = true;
+        }
+    }
+
+    if (needs_correction) {
         DynamicPrintConfig new_conf = *config;
-        is_msg_dlg_already_exist    = true;
-        dialog.ShowModal();
-        new_conf.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({0.5}));
+        if (has_invalid_value) {
+            const wxString msg_text = _(L("Too small max volumetric speed.\nReset to 0.5."));
+            MessageDialog  dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
+            is_msg_dlg_already_exist = true;
+            dialog.ShowModal();
+        }
+        new_conf.set_key_value("filament_max_volumetric_speed", corrected.clone());
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
-
 }
 
 void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)

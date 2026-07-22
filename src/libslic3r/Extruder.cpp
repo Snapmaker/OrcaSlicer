@@ -153,7 +153,7 @@ double Extruder::filament_cost() const
 
 double Extruder::filament_flow_ratio() const
 {
-    return m_config->filament_flow_ratio.get_at(m_id);
+    return get_value_at(*m_config, m_config->filament_flow_ratio, ConfigFlowDomain::Filament, m_id);
 }
 
 // Return a "retract_before_wipe" percentage as a factor clamped to <0, 1>

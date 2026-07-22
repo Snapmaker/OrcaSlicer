@@ -3,6 +3,7 @@
 #include "Tab.hpp"
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
@@ -4038,7 +4039,12 @@ void TabFilament::toggle_options()
     }
     if (m_active_page->title() == L("Filament"))
     {
-        bool pa = m_config->opt_bool("enable_pressure_advance", 0);
+        const FilamentVolumeType volume_type = get_nozzle_volume_type(cfg, 0);
+        bool pa = get_preset_value_at(
+            *m_config,
+            *m_config->option<ConfigOptionBools>("enable_pressure_advance"),
+            ConfigFlowDomain::Filament,
+            volume_type);
         toggle_option("pressure_advance", pa);
 
         // BBS: 控制床温选项的显示
@@ -4134,7 +4140,11 @@ void TabFilament::toggle_options()
                         "filament_cooling_initial_speed", "filament_cooling_final_speed"})
             toggle_option(el, !is_BBL_printer);
 
-        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", 0);
+        bool multitool_ramming = get_preset_value_at(
+            *m_config,
+            *m_config->option<ConfigOptionBools>("filament_multitool_ramming"),
+            ConfigFlowDomain::Filament,
+            get_nozzle_volume_type(cfg, 0));
         toggle_option("filament_multitool_ramming_volume", multitool_ramming);
         toggle_option("filament_multitool_ramming_flow", multitool_ramming);
     }

@@ -678,8 +678,8 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) : (idx != size_t(config.wipe_tower_filament - 1));
     // BBS
     m_filpar[idx].is_support = config.filament_is_support.get_at(idx);
-    m_filpar[idx].nozzle_temperature = config.nozzle_temperature.get_at(idx);
-    m_filpar[idx].nozzle_temperature_initial_layer = config.nozzle_temperature_initial_layer.get_at(idx);
+    m_filpar[idx].nozzle_temperature = get_value_at(config, config.nozzle_temperature, ConfigFlowDomain::Filament, idx);
+    m_filpar[idx].nozzle_temperature_initial_layer = get_value_at(config, config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, idx);
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
     // Otherwise, the defaults will be used to turn off the SE stuff.

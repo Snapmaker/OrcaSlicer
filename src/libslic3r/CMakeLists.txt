@@ -342,6 +342,8 @@ set(lisbslic3r_sources
     PresetBundle.hpp
     Preset.cpp
     Preset.hpp
+    PresetFlowVariant.cpp
+    PresetFlowVariant.hpp
     PrincipalComponents2D.cpp
     PrincipalComponents2D.hpp
     PrintApply.cpp

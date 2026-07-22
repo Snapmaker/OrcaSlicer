@@ -2564,7 +2564,7 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
             if (flow_support != nullptr && !flow_support->values.empty())
                 flow_step_size = int(flow_support->values.size());
 
-            for (const char *key : { "filament_max_volumetric_speed", "filament_flow_support" }) {
+            for (const std::string &key : filament_flow_variant_options()) {
                 ConfigOption *opt_dst = out.option(key, false);
                 if (opt_dst == nullptr || opt_dst->is_scalar())
                     continue;
@@ -2572,6 +2572,12 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 auto *opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
                 if (opt_vec_dst->size() != size_t(flow_step_size))
                     opt_vec_dst->resize(size_t(flow_step_size));
+            }
+            if (ConfigOption *flow_support_dst = out.option("filament_flow_support", false);
+                flow_support_dst != nullptr && !flow_support_dst->is_scalar()) {
+                auto *flow_support_vec = static_cast<ConfigOptionVectorBase*>(flow_support_dst);
+                if (flow_support_vec->size() != size_t(flow_step_size))
+                    flow_support_vec->resize(size_t(flow_step_size));
             }
             out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = { flow_step_size };
         }
@@ -2682,15 +2688,19 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 const ConfigOption *opt_src = filament_configs.front()->option(key);
                 if (opt_src != nullptr)
                     opt_dst->set(opt_src);
-            } else if (key == "filament_max_volumetric_speed" || key == "filament_flow_support") {
+            } else if (is_filament_flow_variant_option(key) || key == "filament_flow_support") {
                 ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
                 opt_vec_dst->resize(flow_total_size);
                 size_t segment_start = 0;
                 for (size_t i = 0; i < num_filaments; ++i) {
                     const ConfigOption *opt_src = filament_configs[i]->option(key);
-                    if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0) {
-                        for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
-                            opt_vec_dst->set_at(opt_src, segment_start + k, k);
+                    if (opt_src != nullptr && !opt_src->is_scalar()) {
+                        const auto *opt_vec_src = static_cast<const ConfigOptionVectorBase *>(opt_src);
+                        const size_t source_size = opt_vec_src->size();
+                        if (source_size > 0) {
+                            for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
+                                opt_vec_dst->set_at(opt_src, segment_start + k, k < source_size ? k : 0);
+                        }
                     }
                     segment_start += size_t(flow_step_sizes[i]);
                 }
@@ -3040,11 +3050,13 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
                         configs[i].option(key, false)->set(other_opt);
                 }
                 else if (key != "compatible_printers" && key != "compatible_prints") {
-                    const bool is_flow_variant_option = has_filament_flow_segments &&
-                        (key == "filament_max_volumetric_speed" || key == "filament_flow_support");
+                    const bool uses_flow_variant_segment = has_filament_flow_segments &&
+                        (is_filament_flow_variant_option(key) || key == "filament_flow_support") &&
+                        static_cast<const ConfigOptionVectorBase*>(other_opt)->size() ==
+                            filament_flow_segment_starts.back() + size_t(filament_flow_step_sizes.back());
                     for (size_t i = 0; i < configs.size(); ++i) {
                         auto *dst = static_cast<ConfigOptionVectorBase*>(configs[i].option(key, false));
-                        if (is_flow_variant_option) {
+                        if (uses_flow_variant_segment) {
                             const size_t step_size = size_t(filament_flow_step_sizes[i]);
                             dst->resize(step_size);
                             for (size_t variant_idx = 0; variant_idx < step_size; ++variant_idx)

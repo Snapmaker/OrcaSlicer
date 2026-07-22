@@ -386,6 +386,10 @@ size_t flow_variant_index(const std::vector<std::string> &flow_support, const st
 
 const char* flow_support_key(ConfigFlowDomain domain);
 
+// Filament options whose vector values are stored per declared flow variant.
+const std::vector<std::string>& filament_flow_variant_options();
+bool is_filament_flow_variant_option(const std::string &key);
+
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id = 0);
 
 template<typename VectorOption>

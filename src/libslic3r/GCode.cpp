@@ -294,9 +294,9 @@ int OozePrevention::_get_temp(const GCode& gcodegen) const
     // First layer temperature should be used when on the first layer (obviously) and when
     // "other layers" is set to zero (which means it should not be used).
     return (gcodegen.layer() == nullptr || gcodegen.layer()->id() == 0 ||
-            gcodegen.config().nozzle_temperature.get_at(gcodegen.writer().extruder()->id()) == 0) ?
-               gcodegen.config().nozzle_temperature_initial_layer.get_at(gcodegen.writer().extruder()->id()) :
-               gcodegen.config().nozzle_temperature.get_at(gcodegen.writer().extruder()->id());
+            get_value_at(gcodegen.config(), gcodegen.config().nozzle_temperature, ConfigFlowDomain::Filament, gcodegen.writer().extruder()->id()) == 0) ?
+               get_value_at(gcodegen.config(), gcodegen.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, gcodegen.writer().extruder()->id()) :
+               get_value_at(gcodegen.config(), gcodegen.config().nozzle_temperature, ConfigFlowDomain::Filament, gcodegen.writer().extruder()->id());
 }
 
 // Orca:
@@ -530,11 +530,11 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
             float new_retract_length_toolchange = full_config.retract_length_toolchange.get_at(new_extruder_id);
             int   old_filament_temp             = gcode_writer.extruder() != nullptr ?
                                                       (gcodegen.on_first_layer() ?
-                                                           full_config.nozzle_temperature_initial_layer.get_at(previous_extruder_id) :
-                                                           full_config.nozzle_temperature.get_at(previous_extruder_id)) :
+                                                           get_value_at(full_config, full_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, previous_extruder_id) :
+                                                           get_value_at(full_config, full_config.nozzle_temperature, ConfigFlowDomain::Filament, previous_extruder_id)) :
                                                       210;
-            int   new_filament_temp = gcodegen.on_first_layer() ? full_config.nozzle_temperature_initial_layer.get_at(new_extruder_id) :
-                                                                  full_config.nozzle_temperature.get_at(new_extruder_id);
+            int   new_filament_temp = gcodegen.on_first_layer() ? get_value_at(full_config, full_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, new_extruder_id) :
+                                                                  get_value_at(full_config, full_config.nozzle_temperature, ConfigFlowDomain::Filament, new_extruder_id);
             Vec3d nozzle_pos        = gcode_writer.get_position();
 
             float purge_volume  = tcr.purge_volume < EPSILON ? 0 : std::max(tcr.purge_volume, g_min_purge_volume);
@@ -662,11 +662,11 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     check_add_eol(toolchange_gcode_str);
 
     // SoftFever: set new PA for new filament
-    if (gcodegen.config().enable_pressure_advance.get_at(new_extruder_id)) {
-        gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+    if (get_value_at(gcodegen.config(), gcodegen.config().enable_pressure_advance, ConfigFlowDomain::Filament, new_extruder_id)) {
+        gcode += gcodegen.writer().set_pressure_advance(get_value_at(gcodegen.config(), gcodegen.config().pressure_advance, ConfigFlowDomain::Filament, new_extruder_id));
         // Orca: Adaptive PA
         // Reset Adaptive PA processor last PA value
-        gcodegen.m_pa_processor->resetPreviousPA(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+        gcodegen.m_pa_processor->resetPreviousPA(get_value_at(gcodegen.config(), gcodegen.config().pressure_advance, ConfigFlowDomain::Filament, new_extruder_id));
     }
 
     // A phony move to the end position at the wipe tower.
@@ -740,7 +740,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     const bool will_go_down     = !is_approx(z, current_z);
     const bool is_ramming       = (gcodegen.config().single_extruder_multi_material) ||
                             (!gcodegen.config().single_extruder_multi_material &&
-                             gcodegen.config().filament_multitool_ramming.get_at(tcr.initial_tool));
+                             get_value_at(gcodegen.config(), gcodegen.config().filament_multitool_ramming, ConfigFlowDomain::Filament, tcr.initial_tool));
     const bool should_travel_to_tower = !tcr.priming && (tcr.force_travel     // wipe tower says so
                                                          || !needs_toolchange // this is just finishing the tower with no toolchange
                                                          || is_ramming);
@@ -804,11 +804,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     check_add_eol(toolchange_gcode_str);
 
     // SoftFever: set new PA for new filament
-    if (new_extruder_id != -1 && gcodegen.config().enable_pressure_advance.get_at(new_extruder_id)) {
-        gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+    if (new_extruder_id != -1 && get_value_at(gcodegen.config(), gcodegen.config().enable_pressure_advance, ConfigFlowDomain::Filament, new_extruder_id)) {
+        gcode += gcodegen.writer().set_pressure_advance(get_value_at(gcodegen.config(), gcodegen.config().pressure_advance, ConfigFlowDomain::Filament, new_extruder_id));
         // Orca: Adaptive PA
         // Reset Adaptive PA processor last PA value
-        gcodegen.m_pa_processor->resetPreviousPA(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+        gcodegen.m_pa_processor->resetPreviousPA(get_value_at(gcodegen.config(), gcodegen.config().pressure_advance, ConfigFlowDomain::Filament, new_extruder_id));
     }
 
     // A phony move to the end position at the wipe tower.
@@ -2303,7 +2303,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             // SoftFever: write compatiple image
             int first_layer_bed_temperature = get_bed_temperature(0, true, print.config().curr_bed_type);
             file.write_format("; first_layer_bed_temperature = %d\n", first_layer_bed_temperature);
-            file.write_format("; first_layer_temperature = %d\n", print.config().nozzle_temperature_initial_layer.get_at(0));
+            file.write_format("; first_layer_temperature = %d\n", get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, 0));
             file.write("; CONFIG_BLOCK_END\n\n");
         } else if (thumbnail_cb != nullptr) {
             // generate the thumbnails
@@ -3087,7 +3087,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         int first_layer_bed_temperature = get_bed_temperature(0, true, print.config().curr_bed_type);
         file.write_format("; first_layer_bed_temperature = %d\n", first_layer_bed_temperature);
         file.write_format("; bed_shape = %s\n", print.full_print_config().opt_serialize("printable_area").c_str());
-        file.write_format("; first_layer_temperature = %d\n", print.config().nozzle_temperature_initial_layer.get_at(0));
+        file.write_format("; first_layer_temperature = %d\n", get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, 0));
         file.write_format("; first_layer_height = %.3f\n", print.config().initial_layer_print_height.value);
 
         // SF TODO
@@ -3565,7 +3565,7 @@ void GCode::_print_first_layer_extruder_temperatures(
     bool include_g10   = print.config().gcode_flavor == gcfRepRapFirmware;
     if (custom_gcode_sets_temperature(gcode, 104, 109, include_g10, temp_by_gcode)) {
         // Set the extruder temperature at m_writer, but throw away the generated G-code as it will be written with the custom G-code.
-        int temp = print.config().nozzle_temperature_initial_layer.get_at(first_printing_extruder_id);
+        int temp = get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, first_printing_extruder_id);
         if (temp_by_gcode >= 0 && temp_by_gcode < 1000)
             temp = temp_by_gcode;
         m_writer.set_temperature(temp, wait, first_printing_extruder_id);
@@ -3573,7 +3573,7 @@ void GCode::_print_first_layer_extruder_temperatures(
         // Custom G-code does not set the extruder temperature. Do it now.
         if (print.config().single_extruder_multi_material.value) {
             // Set temperature of the first printing extruder only.
-            int temp = print.config().nozzle_temperature_initial_layer.get_at(first_printing_extruder_id);
+            int temp = get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, first_printing_extruder_id);
             if (temp > 0)
                 file.write(m_writer.set_temperature(temp, wait, first_printing_extruder_id));
         } else {
@@ -3583,7 +3583,7 @@ void GCode::_print_first_layer_extruder_temperatures(
             int  target_tool = -1;
             for (unsigned int tool_id : print.extruders()) {
                 is_active = true;
-                int temp  = print.config().nozzle_temperature_initial_layer.get_at(tool_id);
+                int temp  = get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, tool_id);
                 if (print.config().ooze_prevention.value && tool_id != first_printing_extruder_id) {
                     is_active = false;
                     if (print.config().idle_temperature.get_at(tool_id) == 0)
@@ -4950,8 +4950,8 @@ LayerResult GCode::process_layer(const Print& print,
                 extruder.id() != m_writer.extruder()->id())
                 // In single extruder multi material mode, set the temperature for the current extruder only.
                 continue;
-            int temperature = print.config().nozzle_temperature.get_at(extruder.id());
-            if (temperature > 0 && temperature != print.config().nozzle_temperature_initial_layer.get_at(extruder.id()))
+            int temperature = get_value_at(print.config(), print.config().nozzle_temperature, ConfigFlowDomain::Filament, extruder.id());
+            if (temperature > 0 && temperature != get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, extruder.id()))
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
@@ -7386,7 +7386,11 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     }
 
     // calculate effective extrusion length per distance unit (e_per_mm)
-    double filament_flow_ratio = m_config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+    double filament_flow_ratio = get_value_at(
+        m_config,
+        m_config.filament_flow_ratio,
+        ConfigFlowDomain::Filament,
+        m_writer.extruder()->id());
     // We set _mm3_per_mm to effectove flow = Geometric volume * print flow ratio * filament flow ratio * role-based-flow-ratios
     auto _mm3_per_mm = path.mm3_per_mm * this->config().print_flow_ratio;
     _mm3_per_mm *= filament_flow_ratio;
@@ -7587,7 +7591,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                        m_curr_print->calib_mode() == CalibMode::Calib_PA_Pattern || m_curr_print->calib_mode() == CalibMode::Calib_PA_Tower;
     bool evaluate_adaptive_pa = false;
     bool role_change          = (m_last_extrusion_role != path.role());
-    if (!is_pa_calib && EXTRUDER_CONFIG(adaptive_pressure_advance) && EXTRUDER_CONFIG(enable_pressure_advance)) {
+    if (!is_pa_calib && EXTRUDER_CONFIG(adaptive_pressure_advance) && get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, m_writer.extruder()->id())) {
         evaluate_adaptive_pa = true;
         // If we have already emmited a PA change because the m_multi_flow_segment_path_pa_set is set
         // skip re-issuing the PA change tag.
@@ -7759,7 +7763,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             // or a flow change, so emit the flag to evaluate PA for the upcomming extrusion
             // Emit tag before new speed is set so the post processor reads the next speed immediately and uses it.
             // Dont emit tag if it has just already been emitted from a role change above
-            if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && EXTRUDER_CONFIG(enable_pressure_advance) &&
+            if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, m_writer.extruder()->id()) &&
                 EXTRUDER_CONFIG(adaptive_pressure_advance_overhangs) && !evaluate_adaptive_pa) {
                 if (writer().get_current_speed() >
                     F) { // Ramping down speed - use overhang logic where the minimum speed is used between current and upcoming extrusion
@@ -7958,7 +7962,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                 // ORCA: Adaptive PA code segment when adjusting PA within the same feature
                 // There is a speed change or flow change so emit the flag to evaluate PA for the upcomming extrusion
                 // Emit tag before new speed is set so the post processor reads the next speed immediately and uses it.
-                if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && EXTRUDER_CONFIG(enable_pressure_advance) &&
+                if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, m_writer.extruder()->id()) &&
                     EXTRUDER_CONFIG(adaptive_pressure_advance_overhangs)) {
                     if (last_set_speed > new_speed) { // Ramping down speed - use overhang logic where the minimum speed is used between
                                                       // current and upcoming extrusion
@@ -8457,11 +8461,11 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             gcode += this->placeholder_parser_process("filament_start_gcode", filament_start_gcode, extruder_id, &config);
             check_add_eol(gcode);
         }
-        if (m_config.enable_pressure_advance.get_at(extruder_id)) {
-            gcode += m_writer.set_pressure_advance(m_config.pressure_advance.get_at(extruder_id));
+        if (get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, extruder_id)) {
+            gcode += m_writer.set_pressure_advance(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
             // Orca: Adaptive PA
             // Reset Adaptive PA processor last PA value
-            m_pa_processor->resetPreviousPA(m_config.pressure_advance.get_at(extruder_id));
+            m_pa_processor->resetPreviousPA(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
         }
 
         gcode += m_writer.toolchange(extruder_id);
@@ -8505,11 +8509,11 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     // BBS
     float new_retract_length            = m_config.retraction_length.get_at(extruder_id);
     float new_retract_length_toolchange = m_config.retract_length_toolchange.get_at(extruder_id);
-    int   new_filament_temp             = this->on_first_layer() ? m_config.nozzle_temperature_initial_layer.get_at(extruder_id) :
-                                                                   m_config.nozzle_temperature.get_at(extruder_id);
+    int   new_filament_temp             = this->on_first_layer() ? get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, extruder_id) :
+                                                                   get_value_at(m_config, m_config.nozzle_temperature, ConfigFlowDomain::Filament, extruder_id);
     // BBS: if print_z == 0 use first layer temperature
     if (abs(print_z) < EPSILON)
-        new_filament_temp = m_config.nozzle_temperature_initial_layer.get_at(extruder_id);
+        new_filament_temp = get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, extruder_id);
 
     Vec3d nozzle_pos = m_writer.get_position();
     float old_retract_length, old_retract_length_toolchange, wipe_volume;
@@ -8529,8 +8533,8 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         previous_extruder_id          = m_writer.extruder() != nullptr ? m_writer.extruder()->id() : m_start_gcode_filament;
         old_retract_length            = m_config.retraction_length.get_at(previous_extruder_id);
         old_retract_length_toolchange = m_config.retract_length_toolchange.get_at(previous_extruder_id);
-        old_filament_temp             = this->on_first_layer() ? m_config.nozzle_temperature_initial_layer.get_at(previous_extruder_id) :
-                                                                 m_config.nozzle_temperature.get_at(previous_extruder_id);
+        old_filament_temp             = this->on_first_layer() ? get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, previous_extruder_id) :
+                                                                 get_value_at(m_config, m_config.nozzle_temperature, ConfigFlowDomain::Filament, previous_extruder_id);
         // Orca: always calculate wipe volume and hence provide correct flush_length, so that MMU devices with cutter and purge bin (e.g.
         // ERCF_v2 with a filament cutter or Filametrix can take advantage of it)
         wipe_volume = flush_matrix[previous_extruder_id * number_of_extruders + extruder_id];
@@ -8646,8 +8650,8 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
 
     // Set the temperature if the wipe tower didn't (not needed for non-single extruder MM)
     if (m_config.single_extruder_multi_material && !m_config.enable_prime_tower) {
-        int temp = (m_layer_index <= 0 ? m_config.nozzle_temperature_initial_layer.get_at(extruder_id) :
-                                         m_config.nozzle_temperature.get_at(extruder_id));
+        int temp = (m_layer_index <= 0 ? get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, extruder_id) :
+                                         get_value_at(m_config, m_config.nozzle_temperature, ConfigFlowDomain::Filament, extruder_id));
 
         gcode += m_writer.set_temperature(temp, false);
     }
@@ -8672,8 +8676,8 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     if (m_ooze_prevention.enable)
         gcode += m_ooze_prevention.post_toolchange(*this);
 
-    if (m_config.enable_pressure_advance.get_at(extruder_id)) {
-        gcode += m_writer.set_pressure_advance(m_config.pressure_advance.get_at(extruder_id));
+    if (get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, extruder_id)) {
+        gcode += m_writer.set_pressure_advance(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
     }
     // Orca: tool changer or IDEX's firmware may change Z position, so we set it to unknown/undefined
     m_last_pos_defined = false;

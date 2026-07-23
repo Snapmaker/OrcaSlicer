@@ -4,18 +4,298 @@
 #include <wx/display.h>
 #include <wx/panel.h>
 #include <wx/toplevel.h>
+#include <wx/gdicmn.h>
+#include <wx/statbmp.h>
 
-#include "slic3r/GUI/BBLStatusBarSend.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI.hpp"
-#include "slic3r/GUI/Widgets/Button.hpp"
+#include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/Widgets/Label.hpp"
-#include "slic3r/GUI/Widgets/StateColor.hpp"
 
 namespace Slic3r {
 namespace GUI {
 
+// ===========================================================================
+// Design color palette (from Figma)
+// ===========================================================================
+namespace {
+constexpr wxUint32 COL_TITLE_TEXT    = 0x242424;
+constexpr wxUint32 COL_FILE_NAME     = 0x333333;
+constexpr wxUint32 COL_STATUS_TEXT   = 0x8F8F8F;
+constexpr wxUint32 COL_PROGRESS_FILL = 0x009988;
+constexpr wxUint32 COL_PROGRESS_TRACK= 0xD9D9D9;
+constexpr wxUint32 COL_DIVIDER       = 0xD9D9D9;
+
+inline wxColour make_color(wxUint32 rgb) {
+    return wxColour((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+}
+} // namespace
+
+// ===========================================================================
+// Progress bar — track + proportional fill.
+// ===========================================================================
+namespace {
+class ProgressBar : public wxPanel
+{
+public:
+    ProgressBar(wxWindow* parent, int width, int height)
+        : wxPanel(parent, wxID_ANY), m_percent(0), m_visible(true)
+    {
+        SetBackgroundColour(make_color(COL_PROGRESS_TRACK));
+        SetMinSize(wxSize(width, height));
+        SetMaxSize(wxSize(width, height));
+        Bind(wxEVT_PAINT, &ProgressBar::on_paint, this);
+    }
+
+    void set_percent(int p) {
+        if (p < 0) {
+            p = 0;
+        }
+        if (p > 100) {
+            p = 100;
+        }
+        if (m_percent != p) {
+            m_percent = p;
+            Refresh();
+        }
+    }
+
+    void set_visible(bool v) {
+        // Only controls painting — widget stays in sizer to preserve layout slot.
+        if (m_visible != v) {
+            m_visible = v;
+            Refresh();
+        }
+    }
+
+private:
+    void on_paint(wxPaintEvent&) {
+        wxPaintDC dc(this);
+        wxRect r = GetClientSize();
+        dc.SetBrush(make_color(COL_PROGRESS_TRACK));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRectangle(r);
+        if (!m_visible || m_percent <= 0) {
+            return;
+        }
+        int fill_w = (r.width * m_percent) / 100;
+        if (fill_w < 1) {
+            return;
+        }
+        dc.SetBrush(make_color(COL_PROGRESS_FILL));
+        dc.DrawRectangle(wxRect(0, 0, fill_w, r.height));
+    }
+
+    int  m_percent;
+    bool m_visible;
+};
+} // namespace
+
+// ===========================================================================
+// TimelapseTaskRow implementation
+// ===========================================================================
+TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
+    : wxPanel(parent, wxID_ANY)
+    , m_state(State::Pending)
+    , m_percent(0)
+    , m_cancel_enabled(true)
+    , m_status_text(_L("Waiting..."))
+{
+    SetBackgroundColour(*wxWHITE);
+    SetMinSize(wxSize(FromDIP(ROW_WIDTH), FromDIP(ROW_HEIGHT)));
+    SetMaxSize(wxSize(FromDIP(ROW_WIDTH), FromDIP(ROW_HEIGHT)));
+
+    auto* root_sizer = new wxBoxSizer(wxHORIZONTAL);
+
+    // Left column: name + progress + status_row
+    auto* left_sizer = new wxBoxSizer(wxVERTICAL);
+
+    m_name_label = new Label(this, file_name, wxST_ELLIPSIZE_MIDDLE);
+    m_name_label->SetFont(::Label::Body_13);
+    m_name_label->SetForegroundColour(make_color(COL_FILE_NAME));
+    m_name_label->SetMinSize(wxSize(FromDIP(PROGRESS_WIDTH), -1));
+    m_name_label->SetMaxSize(wxSize(FromDIP(PROGRESS_WIDTH), -1));
+    left_sizer->Add(m_name_label, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
+
+    m_progress_track = new ProgressBar(this, FromDIP(PROGRESS_WIDTH), FromDIP(PROGRESS_HEIGHT));
+    left_sizer->Add(m_progress_track, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
+
+    // Status row: [icon] [text]
+    m_status_sizer = new wxBoxSizer(wxHORIZONTAL);
+    m_status_icon = new wxStaticBitmap(this, wxID_ANY, wxNullBitmap);
+    m_status_icon->SetMinSize(wxSize(FromDIP(STATUS_ICON_SIZE), FromDIP(STATUS_ICON_SIZE)));
+    m_status_icon->SetMaxSize(wxSize(FromDIP(STATUS_ICON_SIZE), FromDIP(STATUS_ICON_SIZE)));
+    m_status_icon->Hide();
+    m_status_sizer->Add(m_status_icon, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
+
+    m_status_label = new Label(this, m_status_text);
+    m_status_label->SetFont(::Label::Body_13);
+    m_status_label->SetForegroundColour(make_color(COL_STATUS_TEXT));
+    m_status_sizer->Add(m_status_label, 1, wxALIGN_CENTER_VERTICAL);
+
+    left_sizer->Add(m_status_sizer, 0, wxEXPAND);
+
+    root_sizer->Add(left_sizer, 1, wxALIGN_CENTER_VERTICAL);
+
+    root_sizer->AddSpacer(FromDIP(23));
+
+    // Cancel button — SVG bitmap button.
+    // timelapse_cancel_active (orange) when enabled, timelapse_cancel_disabled (gray) when finished.
+    wxBitmap cancel_bmp = create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE);
+    m_cancel_btn = new wxStaticBitmap(this, wxID_ANY, cancel_bmp);
+    m_cancel_btn->SetMinSize(wxSize(FromDIP(CANCEL_SIZE), FromDIP(CANCEL_SIZE)));
+    m_cancel_btn->SetMaxSize(wxSize(FromDIP(CANCEL_SIZE), FromDIP(CANCEL_SIZE)));
+    m_cancel_btn->SetCursor(wxCURSOR_HAND);
+    m_cancel_btn->Bind(wxEVT_LEFT_DOWN, &TimelapseTaskRow::on_cancel_down, this);
+    root_sizer->Add(m_cancel_btn, 0, wxALIGN_CENTER_VERTICAL);
+
+    // Outer padding (Figma: 8px 20px 8px 14px — top right bottom left)
+    wxBoxSizer* outer = new wxBoxSizer(wxHORIZONTAL);
+    outer->AddSpacer(FromDIP(14));
+    outer->Add(root_sizer, 1, wxEXPAND);
+    outer->AddSpacer(FromDIP(20));
+
+    SetSizer(outer);
+    Layout();
+
+    set_state(State::Pending);
+}
+
+TimelapseTaskRow::~TimelapseTaskRow() = default;
+
+void TimelapseTaskRow::set_state(State s)
+{
+    if (m_state == s) {
+        return;
+    }
+    m_state = s;
+
+    // Status icon SVG
+    const char* icon_name = nullptr;
+    switch (s) {
+        case State::Completed: icon_name = "timelapse_success"; break;
+        case State::Failed:    icon_name = "timelapse_error";   break;
+        default:               icon_name = nullptr;              break;
+    }
+    if (icon_name) {
+        m_status_icon->SetBitmap(create_scaled_bitmap(icon_name, this, STATUS_ICON_SIZE));
+        m_status_icon->Show();
+    } else {
+        m_status_icon->Hide();
+    }
+
+    if (auto* p = dynamic_cast<ProgressBar*>(m_progress_track)) {
+        p->set_visible(s == State::Downloading);
+    }
+
+    switch (s) {
+        case State::Pending:
+            m_status_text = _L("Waiting...");
+            m_percent = 0;
+            m_cancel_enabled = true;
+            m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE));
+            m_cancel_btn->SetCursor(wxCURSOR_HAND);
+            break;
+        case State::Downloading:
+            if (m_status_text.empty() || m_status_text == _L("Waiting...")) {
+                m_status_text = wxString::Format("%d%% %s", m_percent, _L("Downloading"));
+            }
+            m_cancel_enabled = true;
+            m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE));
+            m_cancel_btn->SetCursor(wxCURSOR_HAND);
+            break;
+        case State::Completed:
+            m_status_text = _L("Download completed");
+            m_percent = 100;
+            disable_cancel();
+            break;
+        case State::Failed:
+            disable_cancel();
+            break;
+        case State::Cancelled:
+            m_status_text = _L("Cancelled");
+            disable_cancel();
+            break;
+    }
+
+    if (auto* p = dynamic_cast<ProgressBar*>(m_progress_track)) {
+        p->set_percent(m_percent);
+    }
+
+    m_status_label->SetLabel(m_status_text);
+    Layout();
+    Refresh();
+}
+
+void TimelapseTaskRow::set_progress(int percent)
+{
+    if (percent < 0) {
+        percent = 0;
+    }
+    if (percent > 100) {
+        percent = 100;
+    }
+    m_percent = percent;
+    if (auto* p = dynamic_cast<ProgressBar*>(m_progress_track)) {
+        p->set_percent(percent);
+    }
+    m_status_text = wxString::Format("%d%% %s", percent, _L("Downloading"));
+    m_status_label->SetLabel(m_status_text);
+    m_status_label->Refresh();
+}
+
+void TimelapseTaskRow::set_status_text(const wxString& text)
+{
+    m_status_text = text;
+    m_status_label->SetLabel(text);
+    m_status_label->Refresh();
+}
+
+void TimelapseTaskRow::set_cancel_callback(std::function<void()> cb)
+{
+    m_cancel_cb = std::move(cb);
+}
+
+void TimelapseTaskRow::set_dismiss_callback(std::function<void()> cb)
+{
+    m_dismiss_cb = std::move(cb);
+}
+
+void TimelapseTaskRow::disable_cancel()
+{
+    m_cancel_enabled = false;
+    m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_disabled", this, CANCEL_SIZE));
+    m_cancel_btn->SetCursor(wxCURSOR_HAND);
+}
+
+void TimelapseTaskRow::on_cancel_down(wxMouseEvent&)
+{
+    if (m_cancel_enabled) {
+        // Active download — trigger cancel (no confirmation)
+        disable_cancel();
+        if (m_cancel_cb) {
+            wxGetApp().CallAfter([this]() {
+                if (m_cancel_cb) {
+                    m_cancel_cb();
+                }
+            });
+        }
+    } else {
+        // Finished state — dismiss row from list (UI only)
+        if (m_dismiss_cb) {
+            wxGetApp().CallAfter([this]() {
+                if (m_dismiss_cb) {
+                    m_dismiss_cb();
+                }
+            });
+        }
+    }
+}
+
+// ===========================================================================
+// TimelapseDownloadPopup implementation
+// ===========================================================================
 TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     : DPIDialog(parent, wxID_ANY, wxEmptyString, wxDefaultPosition,
                 wxDefaultSize,
@@ -31,64 +311,57 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
 {
     SetBackgroundColour(*wxWHITE);
 
-    // Title bar
+    // ---- Title bar (375×40) ----
     m_title_bar = new wxPanel(this, wxID_ANY);
-    m_title_bar->SetBackgroundColour(wxColour(250, 250, 250));
+    m_title_bar->SetBackgroundColour(*wxWHITE);
     m_title_bar->SetMinSize(wxSize(FromDIP(DIALOG_WIDTH), FromDIP(TITLE_BAR_HEIGHT)));
     m_title_bar->SetMaxSize(wxSize(FromDIP(DIALOG_WIDTH), FromDIP(TITLE_BAR_HEIGHT)));
 
     wxBoxSizer* title_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-    m_title_label = new Label(m_title_bar, _L("Download Task List"));
+    m_title_label = new Label(m_title_bar, _L("Download List"));
     m_title_label->SetFont(::Label::Head_13);
-    title_sizer->Add(m_title_label, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+    m_title_label->SetForegroundColour(make_color(COL_TITLE_TEXT));
+    title_sizer->Add(m_title_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(14));
 
-    StateColor btn_bg(std::pair<wxColour, int>(wxColour(0x90, 0x90, 0x90), StateColor::Disabled),
-        std::pair<wxColour, int>(wxColour(206, 206, 206), StateColor::Pressed),
-        std::pair<wxColour, int>(wxColour(238, 238, 238), StateColor::Hovered),
-        std::pair<wxColour, int>(*wxWHITE, StateColor::Normal));
+    title_sizer->AddStretchSpacer(1);
 
-    StateColor btn_bd(std::pair<wxColour, int>(*wxWHITE, StateColor::Disabled),
-        std::pair<wxColour, int>(wxColour(38, 46, 48), StateColor::Enabled));
-
-    StateColor btn_txt(std::pair<wxColour, int>(wxColour(0x90, 0x90, 0x90), StateColor::Disabled),
-        std::pair<wxColour, int>(wxColour(38, 46, 48), StateColor::Normal));
-
-    m_collapse_btn = new Button(m_title_bar, "");
-    m_collapse_btn->SetSize(wxSize(FromDIP(22), FromDIP(22)));
-    m_collapse_btn->SetMinSize(wxSize(FromDIP(22), FromDIP(22)));
-    m_collapse_btn->SetMaxSize(wxSize(FromDIP(22), FromDIP(22)));
-    m_collapse_btn->SetBackgroundColor(btn_bg);
-    m_collapse_btn->SetBorderColor(btn_bd);
-    m_collapse_btn->SetTextColor(btn_txt);
-    m_collapse_btn->SetCornerRadius(FromDIP(11));
-    m_collapse_btn->SetFont(::Label::Body_13);
+    // Collapse button — SVG bitmap (down arrow when expanded, up arrow when collapsed)
+    wxBitmap collapse_bmp = create_scaled_bitmap("timelapse_collapse_down", m_title_bar, 16);
+    m_collapse_btn = new wxStaticBitmap(m_title_bar, wxID_ANY, collapse_bmp);
+    m_collapse_btn->SetMinSize(wxSize(FromDIP(16), FromDIP(16)));
+    m_collapse_btn->SetMaxSize(wxSize(FromDIP(16), FromDIP(16)));
     m_collapse_btn->SetCursor(wxCURSOR_HAND);
-    m_collapse_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        toggle_collapse();
-    });
-    title_sizer->Add(m_collapse_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    m_collapse_btn->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { toggle_collapse(); });
+    title_sizer->Add(m_collapse_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(22));
 
     m_title_bar->SetSizer(title_sizer);
 
-    // Task panel (scrolled window)
+    // ---- Task panel (scrolled window) ----
     m_task_panel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
     m_task_panel->SetBackgroundColour(*wxWHITE);
-    m_task_panel->SetScrollRate(FromDIP(SCROLL_RATE), FromDIP(SCROLL_RATE));
+    m_task_panel->SetScrollRate(0, FromDIP(SCROLL_RATE));
+    m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_NEVER);
     m_task_sizer = new wxBoxSizer(wxVERTICAL);
     m_task_panel->SetSizer(m_task_sizer);
 
+    // ---- Main layout ----
     wxBoxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
     main_sizer->Add(m_title_bar, 0, wxEXPAND);
-    main_sizer->Add(m_task_panel, 0, wxEXPAND | wxALL, FromDIP(4));
+    main_sizer->Add(m_task_panel, 0, wxEXPAND);
     SetSizer(main_sizer);
-    Layout();
+
+    SetMinSize(wxSize(FromDIP(DIALOG_WIDTH), FromDIP(DIALOG_HEIGHT)));
+    SetMaxSize(wxSize(FromDIP(DIALOG_WIDTH), FromDIP(DIALOG_HEIGHT)));
     Fit();
+    Layout();
 
     position_bottom_right();
 
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) {
-        if (m_close_callback) m_close_callback();
+        if (m_close_callback) {
+            m_close_callback();
+        }
     });
 
     m_position_timer = new wxTimer(this);
@@ -98,113 +371,79 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     wxGetApp().UpdateDlgDarkUI(this);
 }
 
-TimelapseDownloadPopup::~TimelapseDownloadPopup()
-{
-}
+TimelapseDownloadPopup::~TimelapseDownloadPopup() = default;
 
 void TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
 {
     m_task_count = static_cast<int>(tasks.size());
-
-    // Update title with task count
     m_title_label->SetLabel(
-        wxString::Format(_L("Download Task List (%d files)"), m_task_count));
+        wxString::Format(_L("Download List (%d)"), m_task_count));
 
-    for (size_t i = 0; i < tasks.size(); ++i)
-    {
-        const TaskInfo& info = tasks[i];
-
-        auto status_bar = std::make_shared<BBLStatusBarSend>(m_task_panel);
-        wxPanel* bar_panel = status_bar->get_panel();
-        bar_panel->SetMinSize(wxSize(FromDIP(420), FromDIP(55)));
-        bar_panel->SetMaxSize(wxSize(FromDIP(420), FromDIP(55)));
-
-        status_bar->set_range(100);
-        status_bar->set_progress(0);
-        status_bar->show_progress(true);
-        wxString init_status = wxString::FromUTF8(info.file_name.c_str())
-            + "  —  " + _L("Waiting...");
-        status_bar->set_status_text(init_status);
-
-        m_task_sizer->Add(bar_panel, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(2));
-
-        TaskRow row;
-        row.status_bar = status_bar;
-        row.file_name  = info.file_name;
-        row.state      = 0;
-        m_rows.push_back(std::move(row));
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        auto* row = new TimelapseTaskRow(m_task_panel,
+            wxString::FromUTF8(tasks[i].file_name.c_str()));
+        int idx = static_cast<int>(i);
+        row->set_dismiss_callback([this, idx]() { dismiss_row(idx); });
+        TaskRowInfo info;
+        info.row = row;
+        info.state = 0;
+        info.visible = true;
+        m_rows.push_back(std::move(info));
     }
 
+    reorder_rows();
     update_layout_size();
 }
 
 void TimelapseDownloadPopup::set_task_progress(int index, int percent,
                                                 size_t downloaded, size_t total)
 {
-    if (index < 0 || index >= static_cast<int>(m_rows.size())) return;
-    TaskRow& row = m_rows[index];
-    if (row.state == 2 || row.state == 3 || row.state == 4) return;
-    row.state = 1;
-    row.status_bar->set_progress(percent);
-
-    auto fmt_size = [](size_t bytes) -> wxString {
-        if (bytes >= 1024 * 1024)
-            return wxString::Format("%.1f MB", bytes / (1024.0 * 1024.0));
-        return wxString::Format("%.0f KB", bytes / 1024.0);
-    };
-    if (total > 0) {
-        row.status_bar->set_status_text(
-            wxString::Format("%s  —  %s / %s (%d%%)",
-                wxString::FromUTF8(row.file_name.c_str()),
-                fmt_size(downloaded), fmt_size(total), percent));
-    } else {
-        row.status_bar->set_status_text(
-            wxString::Format("%s  —  %s...",
-                wxString::FromUTF8(row.file_name.c_str()),
-                fmt_size(downloaded)));
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
     }
+    TaskRowInfo& info = m_rows[index];
+    if (info.state == 2 || info.state == 3 || info.state == 4) {
+        return;
+    }
+    if (info.state != 1) {
+        set_row_state(index, 1);
+    }
+    info.row->set_progress(percent);
 }
 
 void TimelapseDownloadPopup::set_task_status(int index, const wxString& text)
 {
-    if (index < 0 || index >= static_cast<int>(m_rows.size())) return;
-    wxString full = wxString::FromUTF8(m_rows[index].file_name.c_str()) + "  —  " + text;
-    m_rows[index].status_bar->set_status_text(full);
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    m_rows[index].row->set_status_text(text);
 }
 
 void TimelapseDownloadPopup::mark_task_complete(int index, const std::string&)
 {
-    if (index < 0 || index >= static_cast<int>(m_rows.size())) return;
-    TaskRow& row = m_rows[index];
-    row.state = 2;
-    row.status_bar->set_progress(100);
-    wxString msg = wxString::FromUTF8(row.file_name.c_str()) + "  —  " + _L("Download completed");
-    row.status_bar->set_status_text(msg);
-    row.status_bar->hide_cancel_button();
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    set_row_state(index, 2);
 }
 
 void TimelapseDownloadPopup::mark_task_error(int index, const std::string& error)
 {
-    if (index < 0 || index >= static_cast<int>(m_rows.size())) return;
-    TaskRow& row = m_rows[index];
-    row.state = 3;
-    wxString msg = error.empty()
-        ? _L("Network error or server unreachable")
-        : wxString::FromUTF8(error.c_str());
-    wxString full = wxString::FromUTF8(row.file_name.c_str()) + "  —  " + msg;
-    row.status_bar->set_status_text(full);
-    row.status_bar->show_error_info(full, -1, wxEmptyString, wxEmptyString);
-    row.status_bar->hide_cancel_button();
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    set_row_state(index, 3);
+    if (!error.empty()) {
+        m_rows[index].row->set_status_text(wxString::FromUTF8(error.c_str()));
+    }
 }
 
 void TimelapseDownloadPopup::mark_task_cancelled(int index)
 {
-    if (index < 0 || index >= static_cast<int>(m_rows.size())) return;
-    TaskRow& row = m_rows[index];
-    row.state = 4;
-    wxString msg = wxString::FromUTF8(row.file_name.c_str()) + "  —  " + _L("Cancelled");
-    row.status_bar->set_status_text(msg);
-    row.status_bar->hide_cancel_button();
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    set_row_state(index, 4);
 }
 
 void TimelapseDownloadPopup::mark_all_complete(int completed, int failed,
@@ -223,12 +462,14 @@ void TimelapseDownloadPopup::mark_all_complete(int completed, int failed,
 
 void TimelapseDownloadPopup::set_task_cancel_callback(int index, std::function<void()> cb)
 {
-    if (index < 0 || index >= static_cast<int>(m_rows.size())) return;
-    TaskRow& row = m_rows[index];
-    row.status_bar->set_cancel_callback_fina([this, cb = std::move(cb)]() mutable {
-        wxGetApp().CallAfter([cb = std::move(cb)]() {
-            cb();
-        });
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    m_rows[index].row->set_cancel_callback([this, cb = std::move(cb), index]() mutable {
+        if (index >= 0 && index < static_cast<int>(m_rows.size())) {
+            m_rows[index].row->disable_cancel();
+        }
+        wxGetApp().CallAfter([cb = std::move(cb)]() { cb(); });
     });
 }
 
@@ -237,18 +478,133 @@ void TimelapseDownloadPopup::set_close_callback(std::function<void()> cb)
     m_close_callback = std::move(cb);
 }
 
+void TimelapseDownloadPopup::set_row_state(int index, int new_state)
+{
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    TaskRowInfo& info = m_rows[index];
+    if (info.state == new_state) {
+        return;
+    }
+    info.state = new_state;
+
+    using S = TimelapseTaskRow::State;
+    S s;
+    switch (new_state) {
+        case 0: s = S::Pending; break;
+        case 1: s = S::Downloading; break;
+        case 2: s = S::Completed; break;
+        case 3: s = S::Failed; break;
+        case 4: s = S::Cancelled; break;
+        default: return;
+    }
+    info.row->set_state(s);
+
+    reorder_rows();
+}
+
+void TimelapseDownloadPopup::destroy_dividers()
+{
+    std::vector<wxWindow*> to_destroy;
+    for (wxWindow* child : m_task_panel->GetChildren()) {
+        if (dynamic_cast<TimelapseTaskRow*>(child) == nullptr) {
+            to_destroy.push_back(child);
+        }
+    }
+    for (wxWindow* child : to_destroy) {
+        child->Destroy();
+    }
+}
+
+void TimelapseDownloadPopup::dismiss_row(int index)
+{
+    if (index < 0 || index >= static_cast<int>(m_rows.size())) {
+        return;
+    }
+    TaskRowInfo& info = m_rows[index];
+    if (!info.visible) {
+        return;
+    }
+    info.visible = false;
+    info.row->Hide();
+    reorder_rows();
+    update_layout_size();
+
+    // Auto-close when no visible rows remain (user has dismissed everything).
+    int visible_count = 0;
+    for (const auto& r : m_rows) {
+        if (r.visible) {
+            ++visible_count;
+        }
+    }
+    if (visible_count == 0) {
+        wxGetApp().CallAfter([this]() {
+            if (!IsBeingDeleted()) {
+                Close();
+            }
+        });
+    }
+}
+
+void TimelapseDownloadPopup::reorder_rows()
+{
+    // Priority: downloading(1) > pending(0) > finished(2,3,4)
+    // Only include visible rows.
+    std::vector<int> order;
+    order.reserve(m_rows.size());
+    for (int p = 1; p >= 0; --p) {
+        for (size_t i = 0; i < m_rows.size(); ++i) {
+            if (!m_rows[i].visible) {
+                continue;
+            }
+            if (m_rows[i].state == p) {
+                order.push_back(static_cast<int>(i));
+            }
+        }
+    }
+    for (size_t i = 0; i < m_rows.size(); ++i) {
+        if (!m_rows[i].visible) {
+            continue;
+        }
+        if (m_rows[i].state >= 2) {
+            order.push_back(static_cast<int>(i));
+        }
+    }
+
+    destroy_dividers();
+    while (m_task_sizer->GetItemCount() > 0) {
+        m_task_sizer->Detach(0);
+    }
+    for (size_t i = 0; i < order.size(); ++i) {
+        m_task_sizer->Add(m_rows[order[i]].row, 0, wxEXPAND);
+        if (i + 1 < order.size()) {
+            auto* divider = new wxPanel(m_task_panel, wxID_ANY);
+            divider->SetBackgroundColour(make_color(COL_DIVIDER));
+            divider->SetMinSize(wxSize(FromDIP(345), FromDIP(1)));
+            divider->SetMaxSize(wxSize(FromDIP(345), FromDIP(1)));
+            m_task_sizer->Add(divider, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, FromDIP(14));
+        }
+    }
+    m_task_panel->Layout();
+    Layout();
+}
+
 void TimelapseDownloadPopup::position_bottom_right()
 {
     wxWindow* p = GetPopupParent();
-    if (p == nullptr) return;
+    if (p == nullptr) {
+        return;
+    }
     wxRect parentRect = p->GetScreenRect();
     wxSize mySize = GetSize();
     int x = parentRect.GetRight() - mySize.GetWidth() - FromDIP(24);
-    int y = parentRect.GetBottom() - mySize.GetHeight() - FromDIP(24);
+    int y = parentRect.GetBottom() - mySize.GetHeight() - FromDIP(BOTTOM_MARGIN);
     SetPosition(wxPoint(x, y));
 }
 
 void TimelapseDownloadPopup::on_dpi_changed(const wxRect&) { position_bottom_right(); }
+
 void TimelapseDownloadPopup::on_timer(wxTimerEvent&)
 {
     wxWindow* p = GetPopupParent();
@@ -259,13 +615,10 @@ void TimelapseDownloadPopup::on_timer(wxTimerEvent&)
             return;
         }
     }
-
-    // Hide when Orca app loses foreground focus to another application
     if (wxWindow::FindFocus() == nullptr) {
         if (IsShown()) { Hide(); }
         return;
     }
-
     if (!IsShown()) { Show(); }
     position_bottom_right();
 }
@@ -273,45 +626,77 @@ void TimelapseDownloadPopup::on_timer(wxTimerEvent&)
 void TimelapseDownloadPopup::toggle_collapse()
 {
     m_collapsed = !m_collapsed;
-    if (m_collapsed) {
-        m_task_panel->Hide();
-        m_collapse_btn->SetLabel(wxString::FromUTF8("\xE2\x96\xB6")); // ▶
-    } else {
-        m_task_panel->Show();
-        m_collapse_btn->SetLabel(wxString::FromUTF8("\xE2\x96\xBC")); // ▼
-    }
+    const char* icon = m_collapsed ? "timelapse_collapse_up" : "timelapse_collapse_down";
+    m_collapse_btn->SetBitmap(create_scaled_bitmap(icon, m_title_bar, 16));
     update_layout_size();
 }
 
 void TimelapseDownloadPopup::update_layout_size()
 {
-    int total_rows = static_cast<int>(m_rows.size());
-    int visible_rows = m_collapsed ? 0 : total_rows;
-    if (visible_rows > MAX_VISIBLE_ROWS) { visible_rows = MAX_VISIBLE_ROWS; }
-    if (visible_rows == 0 && !m_collapsed && total_rows == 0) { visible_rows = DEFAULT_VISIBLE; }
-
-    int panel_h = visible_rows > 0 ? visible_rows * FromDIP(TASK_ROW_HEIGHT) + FromDIP(8) : 0;
-
-    if (visible_rows > 0) {
-        m_task_panel->SetMinSize(wxSize(FromDIP(DIALOG_WIDTH) - FromDIP(12), panel_h));
-        m_task_panel->SetMaxSize(wxSize(FromDIP(DIALOG_WIDTH) - FromDIP(12), panel_h));
+    int total_rows = 0;
+    for (const auto& r : m_rows) {
+        if (r.visible) {
+            ++total_rows;
+        }
     }
 
-    if (total_rows > visible_rows && visible_rows > 0) {
-        int content_h = total_rows * FromDIP(TASK_ROW_HEIGHT) + FromDIP(8);
-        m_task_panel->SetVirtualSize(FromDIP(DIALOG_WIDTH) - FromDIP(12), content_h);
+    if (m_collapsed) {
+        m_task_panel->Hide();
+        wxSize target(FromDIP(DIALOG_WIDTH), FromDIP(TITLE_BAR_HEIGHT));
+        SetMinSize(target);
+        SetMaxSize(target);
+        SetSize(target);
+        Layout();
+        position_bottom_right();
+        return;
     }
+
+    m_task_panel->Show();
+
+    int rows_to_show = total_rows;
+    bool needs_scroll = false;
+    if (rows_to_show > MAX_VISIBLE_ROWS) {
+        rows_to_show = MAX_VISIBLE_ROWS;
+        needs_scroll = true;
+    }
+
+    // Panel height: each row contributes TASK_ROW_HEIGHT; dividers are 1px between rows.
+    int panel_h;
+    if (rows_to_show == 0) {
+        panel_h = FromDIP(CONTENT_HEIGHT);
+    } else {
+        int dividers = rows_to_show - 1;
+        panel_h = rows_to_show * FromDIP(TASK_ROW_HEIGHT) + dividers * FromDIP(1);
+    }
+
+    m_task_panel->SetMinSize(wxSize(FromDIP(DIALOG_WIDTH), panel_h));
+    m_task_panel->SetMaxSize(wxSize(FromDIP(DIALOG_WIDTH), panel_h));
+
+    if (needs_scroll) {
+        int total_dividers = total_rows - 1;
+        int virtual_h = total_rows * FromDIP(TASK_ROW_HEIGHT) + total_dividers * FromDIP(1);
+        m_task_panel->SetVirtualSize(FromDIP(DIALOG_WIDTH), virtual_h);
+        m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_DEFAULT);
+    } else {
+        m_task_panel->SetVirtualSize(FromDIP(DIALOG_WIDTH), panel_h);
+        m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_NEVER);
+    }
+
+    int dialog_h = FromDIP(TITLE_BAR_HEIGHT) + panel_h;
+    wxSize target(FromDIP(DIALOG_WIDTH), dialog_h);
+    SetMinSize(target);
+    SetMaxSize(target);
+    SetSize(target);
 
     Layout();
-    Fit();
-    SetMinSize(wxSize(FromDIP(DIALOG_WIDTH), -1));
-    SetMaxSize(wxSize(FromDIP(DIALOG_WIDTH), -1));
     position_bottom_right();
 }
 
 void TimelapseDownloadPopup::Close()
 {
-    if (m_position_timer != nullptr) m_position_timer->Stop();
+    if (m_position_timer != nullptr) {
+        m_position_timer->Stop();
+    }
     this->Hide();
     this->Destroy();
 }

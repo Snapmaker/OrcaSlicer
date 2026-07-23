@@ -77,14 +77,14 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
                                              const std::string& file_name,
                                              std::shared_ptr<SSWCP_Instance> wcp_instance,
                                              bool use_original_event_id) {
-    return start_wcp_download(file_url, file_name, wcp_instance, use_original_event_id, 1, "");
+    return start_wcp_download(file_url, file_name, wcp_instance, use_original_event_id, true, "");
 }
 
 size_t DownloadManager::start_wcp_download(const std::string& file_url,
                                              const std::string& file_name,
                                              std::shared_ptr<SSWCP_Instance> wcp_instance,
                                              bool use_original_event_id,
-                                             int encrypt_type,
+                                             bool need_decrypt,
                                              const std::string& sn) {
 
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
@@ -105,7 +105,7 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
                                                 dest_path,
                                                 wcp_instance,
                                                 use_original_event_id,
-                                                encrypt_type,
+                                                need_decrypt,
                                                 sn);
 
     m_tasks[task_id] = task;
@@ -185,7 +185,7 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
                                                  const std::string& file_name,
                                                  const std::string& dest_path,
                                                  DownloadCallbacks callbacks,
-                                                 int encrypt_type,
+                                                 bool need_decrypt,
                                                  const std::string& sn) {
 
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
@@ -202,7 +202,7 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
                                                 file_name,
                                                 unique_dest_path,
                                                 std::move(callbacks),
-                                                encrypt_type,
+                                                need_decrypt,
                                                 sn);
 
     m_tasks[task_id] = task;
@@ -330,7 +330,7 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
 
                         std::string final_path = task->dest_path;
 
-                        if (task->encrypt_type == 1 && !task->sn.empty()) {
+                        if (task->need_decrypt && !task->sn.empty()) {
                             const std::string enc_path = task->dest_path;
                             const std::string tmp_path = enc_path + ".tmp";
 

@@ -23,7 +23,6 @@ namespace GUI {
 
 TimelapseDownloadDialog::TimelapseDownloadDialog(const std::string& file_url,
                                                    const std::string& file_name,
-                                                   int encrypt_type,
                                                    const std::string& sn,
                                                    int file_count,
                                                    wxWindow* parent)
@@ -31,7 +30,6 @@ TimelapseDownloadDialog::TimelapseDownloadDialog(const std::string& file_url,
                 wxID_ANY, _L("Download"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
     , m_file_url(file_url)
     , m_file_name(file_name)
-    , m_encrypt_type(encrypt_type)
     , m_sn(sn)
     , m_file_count(file_count)
 {

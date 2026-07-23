@@ -3791,12 +3791,6 @@ void TabFilament::build()
         line.append_option(optgroup->get_option("graphic_effect_plate_temp"));
         optgroup->append_line(line);
 
-        line = {L("Cool Steel Plate"),
-                L("Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate.")};
-        line.append_option(optgroup->get_option("cool_steel_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("cool_steel_plate_temp"));
-        optgroup->append_line(line);
-
         optgroup->m_on_change = [this](t_config_option_key opt_key, boost::any value)
         {
             DynamicPrintConfig& filament_config = wxGetApp().preset_bundle->filaments.get_edited_preset().config;
@@ -4062,7 +4056,7 @@ void TabFilament::toggle_options()
                 : _L("Smooth PEI Plate / High Temp Plate");
         }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
-            // U1 default show 4 plates
+            // U1 default show 3 plates
             toggle_line("supertack_plate_temp_initial_layer", false);
             toggle_line("supertack_plate_temp", false);
             toggle_line("cool_plate_temp_initial_layer", false);
@@ -4077,10 +4071,8 @@ void TabFilament::toggle_options()
             toggle_line("textured_plate_temp", true);
             toggle_line("graphic_effect_plate_temp_initial_layer", true);
             toggle_line("graphic_effect_plate_temp", true);
-            toggle_line("cool_steel_plate_temp_initial_layer", true);
-            toggle_line("cool_steel_plate_temp", true);
         } else if (support_multi_bed_types) {
-            // u1 has 8 plates
+            // u1 has 7 plates
             toggle_line("supertack_plate_temp_initial_layer", true);
             toggle_line("cool_plate_temp", true);
             toggle_line("cool_plate_temp_initial_layer", true);
@@ -4095,8 +4087,6 @@ void TabFilament::toggle_options()
             toggle_line("textured_plate_temp", true);
             toggle_line("graphic_effect_plate_temp_initial_layer", is_snapmaker_u1);
             toggle_line("graphic_effect_plate_temp", is_snapmaker_u1);
-            toggle_line("cool_steel_plate_temp_initial_layer", is_snapmaker_u1);
-            toggle_line("cool_steel_plate_temp", is_snapmaker_u1);
         } else {
             BedType curr_bed_type = m_preset_bundle->printers.get_edited_preset().get_default_bed_type(m_preset_bundle);
             toggle_line("supertack_plate_temp_initial_layer", curr_bed_type == btSuperTack);
@@ -4113,8 +4103,6 @@ void TabFilament::toggle_options()
             toggle_line("textured_plate_temp", curr_bed_type == btPTE);
             toggle_line("graphic_effect_plate_temp_initial_layer", curr_bed_type == btGESP);
             toggle_line("graphic_effect_plate_temp", curr_bed_type == btGESP);
-            toggle_line("cool_steel_plate_temp_initial_layer", curr_bed_type == btCSP);
-            toggle_line("cool_steel_plate_temp", curr_bed_type == btCSP);
         }
 
 

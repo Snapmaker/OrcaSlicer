@@ -15227,6 +15227,12 @@ msgstr "删除最后一个混色"
 msgid "Enable \"Subdivide Mix Layer\" for mixing areas. Layer height will be subdivided for better color mixing results."
 msgstr "启用混色区域独立层高。启用后，使用混色区域的层高将被细分，以实现更好混色效果。"
 
+msgid "The current layer height is 0.1 mm or below. Enabling Subdivide Mixing Layers may cause the subdivided layer height to fall outside the printer's supported range. This could affect print quality."
+msgstr "当前层高为 0.1 mm 或更小。启用混色细分层高后，细分后的层高可能超出打印机支持范围，从而影响打印质量。"
+
+msgid "Subdivide Mixing Layers is enabled. At a layer height of 0.1 mm or below, the subdivided layer height may fall outside the printer's supported range. This could affect print quality."
+msgstr "当前已启用混色细分层高。当层高为 0.1 mm 或更小时，细分后的层高可能超出打印机支持范围，从而影响打印质量。"
+
 msgid "Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."
 msgstr "耗材%d与耗材%d无法混合，请选择相同类型耗材。"
 
@@ -15349,3 +15355,51 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+
+msgid "Color Mixing Match"
+msgstr "混色匹配"
+
+msgid "No model detected. Import a multi-color model to continue."
+msgstr "未检测到模型，请先导入多色模型。"
+
+msgid "Filament Setup"
+msgstr "耗材配置"
+
+msgid "Filament Setup (CMYW)"
+msgstr "耗材配置（CMYW）"
+
+msgid "Original"
+msgstr "原模型"
+
+msgid "Matched"
+msgstr "匹配结果"
+
+msgid "Stop Matching"
+msgstr "停止匹配"
+
+msgid "Good"
+msgstr "优"
+
+msgid "Fair"
+msgstr "中"
+
+msgid "Poor"
+msgstr "差"
+
+msgid "Color Difference: %s (ΔE=%.1f)"
+msgstr "色差：%s（ΔE=%.1f）"
+
+msgid "Color Mapping"
+msgstr "颜色映射"
+
+msgid "Start Matching"
+msgstr "开始匹配"
+
+msgid "Rematch"
+msgstr "重新匹配"
+
+msgid "Automatically uses official CMYW filaments for color mixing. The mix ratio for each color is limited to X%–Y%."
+msgstr "自动选择官方 CMYW 耗材进行混色匹配。单色混色比例范围：X%–Y%。"
+
+msgid "Manually select filaments from the current list for color mixing."
+msgstr "手动选择当前列表中的耗材进行混色匹配。"

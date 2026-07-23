@@ -175,6 +175,26 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
 //
 // Virtual filament IDs are numbered starting at (num_physical + 1).  For a
 // 4-extruder printer the first mixed filament has ID 5, the second 6, etc.
+// ---- Batch Match Mapping ----
+
+/// Lightweight wx-free entry for batch-inserting matched filaments.
+/// The GUI layer populates this from ColorMappingEntry, then passes
+/// to MixedFilamentManager::add_batch_custom_filaments().
+struct MixedFilamentBatchEntry
+{
+    unsigned int component_a     = 1;
+    unsigned int component_b     = 2;
+    int          mix_b_percent   = 50;
+    std::string  manual_pattern;
+    std::string  gradient_component_ids;
+    std::string  gradient_component_weights;
+    int          distribution_mode = int(MixedFilament::Simple);
+    bool         gradient_enabled  = false;
+    float        gradient_start    = MixedFilament::k_default_gradient_dominant;
+    float        gradient_end      = MixedFilament::k_default_gradient_minority;
+    std::string  display_color;   // pre-computed "#RRGGBB" hex
+};
+
 // ---------------------------------------------------------------------------
 class MixedFilamentManager
 {
@@ -199,6 +219,19 @@ public:
 
     // Add a custom mixed filament.
     void add_custom_filament(unsigned int component_a, unsigned int component_b, int mix_b_percent, const std::vector<std::string> &filament_colours);
+
+    // Batch-insert custom mixed filaments from a match-mapping operation.
+    // Each entry is fully specified except `stable_id`, which is allocated internally.
+    // Entries exceeding `MAXIMUM_FILAMENT_NUMBER` are silently dropped.
+    // All entries receive `ui_mode = 2` (MATCH), `custom = true`.
+    // Calls `refresh_display_colors()` exactly once after all inserts.
+    // If `out_assigned_ids` is non-null it is filled with one entry per input
+    // `entries[i]`: the 1-based virtual filament id actually created, or 0 when
+    // the entry was dropped (cap reached, or invalid components).
+    void add_batch_custom_filaments(
+        const std::vector<MixedFilamentBatchEntry>& entries,
+        const std::vector<std::string>&             filament_colours,
+        std::vector<unsigned int>*                  out_assigned_ids = nullptr);
 
     // Remove all custom rows, keep auto-generated ones.
     void clear_custom_entries();
@@ -367,6 +400,9 @@ public:
     // Return the display colours of all enabled mixed filaments (in order).
     std::vector<std::string> display_colors() const;
     void set_display_context(const MixedFilamentDisplayContext &context);
+    // Recompute every mixed filament's display_color from its recipe against the
+    // given physical colours (also refreshes the internal display context).
+    void refresh_display_colors(const std::vector<std::string> &filament_colours);
 
 private:
     // Convert a 1-based virtual ID to a 0-based index into m_mixed.
@@ -375,7 +411,6 @@ private:
         return static_cast<size_t>(filament_id - num_physical - 1);
     }
 
-    void refresh_display_colors(const std::vector<std::string> &filament_colours);
     uint64_t allocate_stable_id();
     uint64_t normalize_stable_id(uint64_t stable_id);
 
@@ -387,6 +422,53 @@ private:
     uint64_t                   m_next_stable_id      = 1;
     MixedFilamentDisplayContext m_display_context;
 };
+
+/// Result of computing which filaments are redundant after a batch colour match.
+struct RedundantFilamentSet
+{
+    /// 1-based physical filament IDs that are not in the kept set, sorted descending.
+    std::vector<unsigned int> redundant_physical;
+    /// 1-based virtual filament IDs that are not in the kept set or whose
+    /// physical components were deleted (cascade), sorted ascending (enumerated
+    /// order of the mixed-filament list).
+    std::vector<unsigned int> redundant_mixed;
+    /// Number of physical filaments after removing all redundants.
+    size_t new_num_physical = 1;
+    /// Redundant mixed rows deleted because a physical component was dropped
+    /// rather than because the row itself was not in the kept-mixed set.
+    size_t cascade_mixed_count = 0;
+};
+
+/// Compute which physical and mixed filaments are redundant after a batch colour
+/// match, given the sets the match decided to keep.
+///
+/// @param num_physical        Current number of physical filament presets.
+/// @param kept_physical_ids   1-based physical IDs the match selected.
+/// @param kept_mixed_ids      1-based virtual IDs of mixed filaments the match
+///                            just created (non-pure mapping targets).
+/// @param mixed_filaments     The current mixed-filament list (const ref).
+///
+/// @return  A RedundantFilamentSet.  redundant_mixed is in ascending
+///          (enumerated) order; redundant_physical is descending.
+///          The survivor floor guarantees at least one physical filament is
+///          kept (filament 1 when kept_physical_ids is empty).
+///
+/// KNOWN DIVERGENCE: cascade detection bounds literal pattern/gradient tokens
+/// by `num_physical` here, while remove_physical_filament bounds them by
+/// kMaxPhysicalFilaments (64) and uses an ==deleted criterion.  The two disagree
+/// only for a literal token > num_physical, which cannot exist in the live
+/// mixed list: the validation perimeter is enforced at EVERY write path —
+/// load_custom_entries AND add_batch_custom_filaments both call
+/// references_exceed_physical to reject such rows, and add_custom_filament /
+/// auto_generate never set a manual_pattern/gradient at all.  This is
+/// intentional and guarded by the [!shouldfail] test tagged "m1"; weakening
+/// the validation perimeter (removing the add_batch guard) makes that state
+/// reachable.
+RedundantFilamentSet compute_redundant_filaments(
+    size_t                            num_physical,
+    const std::vector<unsigned int>  &kept_physical_ids,
+    const std::vector<unsigned int>  &kept_mixed_ids,
+    const std::vector<MixedFilament> &mixed_filaments);
 
 // Returns true when the mixed filament represents a simple two-color gradient
 // that can be rendered as a vertical color ramp (no manual pattern, exactly 2 components).

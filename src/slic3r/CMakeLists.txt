@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+﻿cmake_minimum_required(VERSION 3.13)
 project(libslic3r_gui)
 
 include(PrecompiledHeader)
@@ -332,6 +332,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OAuthDialog.hpp
     GUI/MixedFilamentDialog.cpp
     GUI/MixedFilamentDialog.hpp
+    GUI/MixedFilamentBatchDialog.cpp
+    GUI/MixedFilamentBatchDialog.hpp
     GUI/MixedGradientSelector.hpp
     GUI/MixedGradientSelector.cpp
     GUI/MixedColorMatchPanel.cpp
@@ -440,6 +442,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/TaskManager.hpp
     GUI/TextLines.cpp
     GUI/TextLines.hpp
+    GUI/ThumbnailView.hpp
     GUI/TickCode.cpp
     GUI/TickCode.hpp
     GUI/UnsavedChangesDialog.cpp

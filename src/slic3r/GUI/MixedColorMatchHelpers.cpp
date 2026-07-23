@@ -8,12 +8,15 @@
 #include <algorithm>
 #include <atomic>
 #include <fstream>
+#include <set>
 #include <queue>
 #include <sstream>
 #include <mutex>
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
 
 namespace Slic3r { namespace GUI {
 wxColour parse_mixed_color(const std::string& value)
@@ -32,6 +35,9 @@ wxString normalize_color_match_hex(const wxString& value)
     normalized.MakeUpper();
     if (!normalized.empty() && normalized[0] != '#')
         normalized.Prepend("#");
+    // #RRGGBBAA → #RRGGBB (drop alpha; only RGB is used for matching)
+    if (normalized.length() == 9)
+        normalized = normalized.Mid(0, 7);
     return normalized;
 }
 
@@ -1275,6 +1281,421 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
         out << 'F' << sorted[i].first << ' ' << pcts[i] << '%';
     }
     return out.str();
+}
+
+// ---- Batch Match Mapping ----
+
+std::vector<ModelColorEntry> extract_model_colors(const Print& print)
+{
+    std::vector<ModelColorEntry> colors;
+    static constexpr int MAX_EXTRUDER_ID = int(MAXIMUM_EXTRUDER_NUMBER);
+
+    auto& filament_colours = print.config().filament_colour.values;
+
+    // Also read mixed-filament display colors for virtual ID lookup
+    auto* pb = wxGetApp().preset_bundle;
+    auto& mgr = pb ? pb->mixed_filaments : (MixedFilamentManager&)MixedFilamentManager();
+
+    for (const PrintObject* obj : print.objects()) {
+        if (!obj) continue;
+        const ModelObject* model_obj = obj->model_object();
+        if (!model_obj) continue;
+
+        for (const ModelVolume* vol : model_obj->volumes) {
+            if (!vol || vol->type() != ModelVolumeType::MODEL_PART) continue;
+
+            for (int eid : vol->get_extruders()) {
+                if (eid < 1 || eid > MAX_EXTRUDER_ID) continue;
+                size_t idx = size_t(eid - 1);
+
+                std::string color_hex;
+                if (idx < filament_colours.size()) {
+                    // Physical filament color
+                    color_hex = filament_colours[idx];
+                } else {
+                    // Virtual mixed filament — look up its display_color
+                    const MixedFilament* mf = mgr.mixed_filament_from_id(
+                        static_cast<unsigned int>(eid), filament_colours.size());
+                    if (mf && !mf->display_color.empty())
+                        color_hex = mf->display_color;
+                }
+                if (color_hex.empty()) continue;
+
+                wxColour c;
+                if (!try_parse_color_match_hex(color_hex, c)) {
+                    BOOST_LOG_TRIVIAL(warning)
+                        << "extract_model_colors: invalid color for extruder "
+                        << eid << " = '" << color_hex << "', skipping";
+                    continue;
+                }
+
+                // Deduplicate by hex value — accumulate extruder IDs for this color
+                auto it = std::find_if(colors.begin(), colors.end(),
+                    [&](const ModelColorEntry& e) { return e.hex_value == color_hex; });
+                if (it != colors.end()) {
+                    it->extruder_ids.push_back(static_cast<unsigned int>(eid));
+                    continue;
+                }
+
+                colors.push_back({
+                    static_cast<unsigned int>(colors.size() + 1),
+                    c,
+                    color_hex,
+                    {static_cast<unsigned int>(eid)}
+                });
+            }
+        }
+    }
+
+    if (colors.size() > 64) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "extract_model_colors: truncating " << colors.size() << " colors to 64";
+        colors.resize(64);
+    }
+
+    BOOST_LOG_TRIVIAL(info)
+        << "extract_model_colors: extracted " << colors.size() << " unique model colors";
+    return colors;
+}
+
+// ---- Batch Match Algorithm ----
+
+#if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
+std::vector<ColorMappingEntry> deduplicate_batch_mappings(
+    const std::vector<ColorMappingEntry>& raw_mappings,
+    double                                 merge_threshold)
+{
+    if (merge_threshold <= 0.0 || merge_threshold > 100.0) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "deduplicate_batch_mappings: invalid threshold " << merge_threshold
+            << ", returning unmodified";
+        return raw_mappings;
+    }
+    std::vector<ColorMappingEntry> result;
+
+    for (const auto& mapping : raw_mappings) {
+        bool merged = false;
+        for (auto& existing : result) {
+            if (color_delta_e00(existing.matched_color, mapping.matched_color) < merge_threshold) {
+                existing.merged_model_indices.push_back(mapping.model_color_index);
+                existing.source_extruder_ids.insert(
+                    existing.source_extruder_ids.end(),
+                    mapping.source_extruder_ids.begin(),
+                    mapping.source_extruder_ids.end());
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) {
+            result.push_back(mapping);
+        }
+    }
+    BOOST_LOG_TRIVIAL(debug)
+        << "deduplicate_batch_mappings: " << raw_mappings.size()
+        << " -> " << result.size() << " (threshold DeltaE<" << merge_threshold << ")";
+    return result;
+}
+#endif // 0
+
+void assign_batch_virtual_filament_ids(
+    BatchMatchResult& result,
+    size_t             num_physical,
+    size_t             existing_mixed_count)
+{
+    if (num_physical < 1) {
+        BOOST_LOG_TRIVIAL(error)
+            << "assign_batch_virtual_filament_ids: invalid num_physical=" << num_physical;
+        return;
+    }
+    unsigned int next_virtual_id = unsigned(num_physical + existing_mixed_count + 1);
+
+    for (auto& mapping : result.mappings) {
+        if (mapping.is_pure_recipe) {
+            if (mapping.recipe.component_a < 1 || mapping.recipe.component_a > num_physical) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "assign_batch_virtual_filament_ids: component_a="
+                    << mapping.recipe.component_a << " out of range [1," << num_physical
+                    << "], treating as mixed";
+                mapping.target_filament_id = next_virtual_id++;
+                continue;
+            }
+            mapping.target_filament_id = mapping.recipe.component_a;
+        } else {
+            mapping.target_filament_id = next_virtual_id++;
+        }
+    }
+}
+
+BatchMatchResult batch_match_model_colors(
+    const std::vector<ModelColorEntry>&          model_colors,
+    const std::vector<std::string>&             physical_colors,
+    int                                          min_component_percent,
+    std::shared_ptr<std::atomic<bool>>           cancel_token,
+    std::function<void(int,int)>                 progress_callback)
+{
+    BatchMatchResult result;
+    result.success = true;
+
+    if (min_component_percent < 0 || min_component_percent > 50) {
+        result.success = false;
+        result.error_message = "min_component_percent must be in [0, 50]";
+        return result;
+    }
+    if (model_colors.empty()) {
+        result.success = false;
+        result.error_message = "No model colors to match";
+        return result;
+    }
+    if (physical_colors.size() < 2) {
+        result.success = false;
+        result.error_message = "Need at least 2 physical filaments";
+        return result;
+    }
+
+    const int total = int(model_colors.size());
+    for (int i = 0; i < total; ++i) {
+        if (cancel_token && cancel_token->load()) {
+            result.success = false;
+            result.error_message = "Cancelled by user";
+            result.error_code = 2;
+            return result;
+        }
+
+        const auto& entry = model_colors[i];
+        MixedColorMatchRecipeResult recipe =
+            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent);
+
+        if (!recipe.valid) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "batch_match: no valid recipe for color " << entry.color_index
+                << " (" << entry.hex_value << ")";
+            continue;
+        }
+
+        ColorMappingEntry mapping;
+        mapping.model_color_index   = entry.color_index;
+        mapping.source_color         = entry.color;
+        mapping.recipe               = recipe;
+        mapping.delta_e              = recipe.delta_e;
+        mapping.matched_color        = recipe.preview_color;
+        mapping.is_pure_recipe       = (recipe.mix_b_percent == 0);
+        mapping.pure_delta_e         = recipe.delta_e;
+        mapping.merged_model_indices = {entry.color_index};
+        mapping.source_extruder_ids  = entry.extruder_ids;
+        result.mappings.push_back(mapping);
+
+        if (progress_callback)
+            progress_callback(i + 1, total);
+    }
+
+    if (result.mappings.empty()) {
+        result.success = false;
+        result.error_message = "No valid recipes found for any model color";
+        result.error_code = 1;
+        return result;
+    }
+
+    // Each model color always gets its own mapping entry — no deduplication.
+    // Merging by matched_color would lose distinct model-source colors whose
+    // recipes happen to produce similar output shades.
+
+    double sum_de = 0.0;
+    for (const auto& m : result.mappings)
+        sum_de += m.delta_e;
+    result.avg_delta_e = sum_de / double(result.mappings.size());
+
+    result.selected_physical_ids.clear();
+    for (size_t i = 1; i <= physical_colors.size(); ++i)
+        result.selected_physical_ids.push_back(static_cast<unsigned int>(i));
+
+    BOOST_LOG_TRIVIAL(info)
+        << "batch_match: " << total << " model colors -> "
+        << result.mappings.size() << " unique recipes, avg DeltaE=" << result.avg_delta_e;
+    return result;
+}
+
+void populate_mixed_filaments_from_mappings(
+    BatchMatchResult&                           result,
+    const MixedFilamentDisplayContext&          context)
+{
+    result.mixed_filaments.clear();
+
+    for (const auto& mapping : result.mappings) {
+        if (mapping.is_pure_recipe) continue;
+
+        MixedFilament mf;
+        mf.component_a    = mapping.recipe.component_a;
+        mf.component_b    = mapping.recipe.component_b;
+        mf.mix_b_percent  = mapping.recipe.mix_b_percent;
+        mf.manual_pattern = mapping.recipe.manual_pattern;
+        mf.stable_id      = 0; // filled by add_batch_custom_filaments
+        mf.ratio_a        = 1;
+        mf.ratio_b        = 1;
+        mf.distribution_mode = mapping.recipe.gradient_component_ids.empty()
+            ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
+        mf.gradient_component_ids     = mapping.recipe.gradient_component_ids;
+        mf.gradient_component_weights = mapping.recipe.gradient_component_weights;
+        mf.enabled        = true;
+        mf.deleted        = false;
+        mf.custom         = true;
+        mf.origin_auto    = false;
+        mf.ui_mode        = 2; // MATCH
+        mf.display_color  = mapping.matched_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+
+        result.mixed_filaments.push_back(std::move(mf));
+    }
+}
+
+std::vector<std::string> recommend_best_filament_combo(
+    const std::vector<ModelColorEntry>&  model_colors,
+    const std::vector<std::string>&      all_preset_colors,
+    int                                  min_component_percent,
+    std::shared_ptr<std::atomic<bool>>   cancel_token)
+{
+    if (model_colors.empty() || all_preset_colors.size() < 4)
+        return {};
+
+    // Step 1: Top-15 pre-filter by single-color ΔE
+    const size_t top_n = std::min<size_t>(15, all_preset_colors.size());
+    std::vector<std::pair<double, size_t>> ranked;
+    ranked.reserve(all_preset_colors.size());
+
+    // Average ΔE of each preset color against all model colors → quick filter
+    for (size_t fidx = 0; fidx < all_preset_colors.size(); ++fidx) {
+        wxColour fc;
+        if (!try_parse_color_match_hex(all_preset_colors[fidx], fc)) continue;
+        double sum_de = 0.0;
+        for (const auto& mc : model_colors)
+            sum_de += color_delta_e00(fc, mc.color);
+        ranked.emplace_back(sum_de / std::max(1.0, double(model_colors.size())), fidx);
+    }
+    std::sort(ranked.begin(), ranked.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+    ranked.resize(top_n);
+
+    // Step 2: Enumerate C(N,4) combos from top-15 candidates
+    struct ComboScore { size_t i0, i1, i2, i3; double score; };
+    std::vector<ComboScore> combos;
+    const size_t n = ranked.size();
+    for (size_t i0 = 0; i0 + 3 < n; ++i0) {
+        for (size_t i1 = i0 + 1; i1 + 2 < n; ++i1) {
+            for (size_t i2 = i1 + 1; i2 + 1 < n; ++i2) {
+                for (size_t i3 = i2 + 1; i3 < n; ++i3) {
+                    if (cancel_token && cancel_token->load()) return {};
+
+                    // Build 4-color palette from original indices
+                    std::vector<std::string> combo_colors = {
+                        all_preset_colors[ranked[i0].second],
+                        all_preset_colors[ranked[i1].second],
+                        all_preset_colors[ranked[i2].second],
+                        all_preset_colors[ranked[i3].second]
+                    };
+
+                    // Score: average batch match ΔE over model colors (single-threaded, small loop)
+                    double sum_de = 0.0;
+                    int matched = 0;
+                    for (const auto& mc : model_colors) {
+                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent);
+                        if (recipe.valid) {
+                            sum_de += recipe.delta_e;
+                            ++matched;
+                        }
+                    }
+                    if (matched == 0) continue;
+
+                    double avg_de = sum_de / double(matched);
+                    double score = 1.0 / (1.0 + avg_de); // lower ΔE → higher score
+                    combos.push_back({ranked[i0].second, ranked[i1].second,
+                                      ranked[i2].second, ranked[i3].second, score});
+                }
+            }
+        }
+    }
+
+    if (combos.empty()) return {};
+
+    // Step 3: Return best combo
+    std::sort(combos.begin(), combos.end(),
+        [](const auto& a, const auto& b) { return a.score > b.score; });
+
+    return {
+        all_preset_colors[combos[0].i0],
+        all_preset_colors[combos[0].i1],
+        all_preset_colors[combos[0].i2],
+        all_preset_colors[combos[0].i3]
+    };
+}
+
+void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
+{
+    if (!result.success || result.mappings.empty()) return;
+
+    // Direct mapping: each mapping entry carries the model extruder IDs that
+    // need remapping to the target_filament_id.  No color hex comparison needed.
+    std::unordered_map<int, unsigned int> extruder_remap;
+    for (const auto& mapping : result.mappings) {
+        for (unsigned int src_eid : mapping.source_extruder_ids) {
+            if (mapping.target_filament_id != src_eid)
+                extruder_remap[static_cast<int>(src_eid)] = mapping.target_filament_id;
+        }
+    }
+    if (extruder_remap.empty()) return;
+
+    // Compute total filaments: physical + all mixed (including newly created).
+    // Use project_config filament_colour — same source as Plater callback `colors`.
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    if (!pb) return;
+    ConfigOptionStrings* co = pb->project_config.option<ConfigOptionStrings>("filament_colour");
+    if (!co || co->values.empty()) return;
+    const size_t num_physical    = co->values.size();
+    const size_t total_filaments = pb->mixed_filaments.total_filaments(num_physical);
+
+    // Build EnforcerBlockerStateMap: identity by default, remap where needed
+    constexpr size_t MAX_EBT = static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
+    EnforcerBlockerStateMap state_map;
+    for (size_t i = 0; i <= MAX_EBT; ++i)
+        state_map[i] = static_cast<EnforcerBlockerType>(i);
+    for (const auto& [eid, target] : extruder_remap) {
+        if (eid <= static_cast<int>(MAX_EBT) && target <= static_cast<unsigned int>(MAX_EBT)) {
+            state_map[static_cast<size_t>(eid)] = static_cast<EnforcerBlockerType>(target);
+        } else if (target > static_cast<unsigned int>(MAX_EBT)) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "apply_batch_match: cannot remap extruder " << eid
+                << " -> " << target << " (target exceeds EnforcerBlockerType::ExtruderMax="
+                << MAX_EBT << "), triangle-level remap skipped for this entry";
+        }
+    }
+
+    // Apply remap at two levels independently:
+    //   1) MMU-painted: triangle-level extruder data via remap_extruder_ids
+    //   2) Config-level: volume/object config extruder assignment
+    for (ModelObject* mo : wxGetApp().model().objects) {
+        for (ModelVolume* mv : mo->volumes) {
+            if (mv->type() != ModelVolumeType::MODEL_PART) continue;
+
+            // Level 1: triangle-level MMU data
+            if (!mv->mmu_segmentation_facets.empty())
+                mv->remap_extruder_ids(total_filaments, state_map);
+
+            // Level 2: config-level extruder (always needed — even for
+            // painted volumes, get_extruders() includes extruder_id())
+            int old_eid = mv->extruder_id();
+            if (old_eid <= 0) continue;
+            auto it = extruder_remap.find(old_eid);
+            if (it == extruder_remap.end()) continue;
+
+            const unsigned int new_eid = it->second;
+            const ConfigOption* vol_opt = mv->config.option("extruder");
+            if (vol_opt && vol_opt->getInt() > 0)
+                mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
+            else
+                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
+        }
+    }
+
+    BOOST_LOG_TRIVIAL(info)
+        << "apply_batch_match: remapped " << extruder_remap.size()
+        << " extruder IDs across all volumes (total_filaments=" << total_filaments << ")";
 }
 
 }} // namespace Slic3r::GUI

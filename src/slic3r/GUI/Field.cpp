@@ -121,6 +121,7 @@ void Field::PostInitialize()
 	{
 	case coPercents:
 	case coFloats:
+    case coFloatsOrPercents:
 	case coStrings:
 	case coBools:
 	case coInts:
@@ -359,8 +360,10 @@ void Field::get_value_by_opt_type(wxString& str, const bool check_value/* = true
 		break; }
 	case coString:
 	case coStrings:
+    case coFloatsOrPercents:
     case coFloatOrPercent: {
-        if (m_opt.type == coFloatOrPercent && !str.IsEmpty() &&  str.Last() != '%')
+        const bool is_float_or_percent = m_opt.type == coFloatOrPercent || m_opt.type == coFloatsOrPercents;
+        if (is_float_or_percent && !str.IsEmpty() && str.Last() != '%')
         {
             double val = 0.;
             const char dec_sep = is_decimal_separator_point() ? '.' : ',';
@@ -701,6 +704,19 @@ void TextCtrl::BUILD() {
 	wxString text_value = wxString("");
 
 	switch (m_opt.type) {
+    case coFloatsOrPercents:
+    {
+        const auto *values = m_opt.get_default_value<ConfigOptionFloatsOrPercents>();
+        if (values != nullptr && !values->values.empty()) {
+            const size_t safe_idx = std::min(static_cast<size_t>(std::max(m_opt_idx, 0)), values->values.size() - 1);
+            const FloatOrPercent &value = values->values[safe_idx];
+            text_value = double_to_string(value.value);
+            if (value.percent)
+                text_value += "%";
+            m_last_meaningful_value = text_value;
+        }
+        break;
+    }
 	case coFloatOrPercent:
 	{
 		text_value = double_to_string(m_opt.default_value->getFloat());
@@ -858,6 +874,7 @@ bool TextCtrl::value_was_changed()
     }
     case coString:
     case coStrings:
+    case coFloatsOrPercents:
     case coFloatOrPercent:
         return boost::any_cast<std::string>(m_value) != boost::any_cast<std::string>(val);
     default:

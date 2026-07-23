@@ -6620,6 +6620,43 @@ void GCode::apply_print_config(const PrintConfig& print_config)
 #endif
 }
 
+static std::string serialize_gcode_config_option(const DynamicPrintConfig &config, const std::string &key)
+{
+    const ConfigOption *source = config.option(key);
+    if (source == nullptr || source->is_scalar() || !is_filament_flow_variant_option(key))
+        return config.opt_serialize(key);
+
+    const auto *volume_types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+    const auto *step_sizes   = config.option<ConfigOptionInts>("filament_flow_step_size");
+    size_t filament_count = 0;
+    if (volume_types != nullptr && !volume_types->values.empty())
+        filament_count = volume_types->values.size();
+    else if (step_sizes != nullptr)
+        filament_count = step_sizes->values.size();
+    if (filament_count == 0)
+        return config.opt_serialize(key);
+
+    const auto *source_vector = static_cast<const ConfigOptionVectorBase *>(source);
+    if (source_vector->empty())
+        return config.opt_serialize(key);
+
+    std::vector<size_t> selected_indices;
+    selected_indices.reserve(filament_count);
+    for (size_t filament_id = 0; filament_id < filament_count; ++filament_id) {
+        const size_t index = get_config_idx(config, ConfigFlowDomain::Filament, unsigned(filament_id));
+        if (index >= source_vector->size())
+            return config.opt_serialize(key);
+        selected_indices.emplace_back(index);
+    }
+
+    std::unique_ptr<ConfigOption> selected(source->clone());
+    auto *selected_vector = static_cast<ConfigOptionVectorBase *>(selected.get());
+    selected_vector->resize(filament_count);
+    for (size_t filament_id = 0; filament_id < filament_count; ++filament_id)
+        selected_vector->set_at(source, filament_id, selected_indices[filament_id]);
+    return selected->serialize();
+}
+
 void GCode::append_full_config(const Print& print, std::string& str)
 {
     const DynamicPrintConfig& cfg = print.full_print_config();
@@ -6638,7 +6675,7 @@ void GCode::append_full_config(const Print& print, std::string& str)
             if (key == "extruder_colour")
                 ss << "; " << key << " = " << cfg.opt_serialize("filament_colour") << "\n";
             else
-                ss << "; " << key << " = " << cfg.opt_serialize(key) << "\n";
+                ss << "; " << key << " = " << serialize_gcode_config_option(cfg, key) << "\n";
         }
     }
     str += ss.str();

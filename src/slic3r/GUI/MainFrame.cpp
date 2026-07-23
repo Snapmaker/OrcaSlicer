@@ -2442,11 +2442,7 @@ static void add_common_view_menu_items(wxMenu* view_menu, MainFrame* mainFrame, 
     append_menu_item(view_menu, wxID_ANY, _L("Right") + "\t" + ctrl + "6", _L("Right View"), [mainFrame](wxCommandEvent&) { mainFrame->select_view("right"); },
         "", nullptr, [can_change_view]() { return can_change_view(); }, mainFrame);
 
-#ifdef __APPLE__
-    const wxString fitCameraLabel = _L("Fit in all view");
-#else
     const wxString fitCameraLabel = _L("Fit in all view") + "\tZ";
-#endif
     append_menu_item(view_menu, wxID_ANY, fitCameraLabel, _L("Fit in all view"),
         [mainFrame](wxCommandEvent&) { mainFrame->ZoomCameraToFit(); },
         "", nullptr, [can_change_view]() { return can_change_view(); }, mainFrame);

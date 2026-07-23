@@ -240,6 +240,21 @@ public:
         BlockedError
     };
 
+    // Per-plate breakdown of used filaments that participate in a high/low
+    // temperature mixing conflict. Slot numbers are 1-based to match what the
+    // user sees in the UI. Vectors are sorted ascending and de-duplicated.
+    struct FilamentTempMixingDetail {
+        std::vector<int> high_temp_slots_1based;
+        std::vector<int> low_temp_slots_1based;
+    };
+
+    // One plate's mixing detail, paired with its 1-based plate number.
+    // Used to build the Slice All notification body.
+    struct PlateMixingInfo {
+        int                     plate_index_1based;
+        FilamentTempMixingDetail detail;
+    };
+
     Plater(wxWindow *parent, MainFrame *main_frame);
     Plater(Plater &&) = delete;
     Plater(const Plater &) = delete;
@@ -522,6 +537,10 @@ public:
     /// @param plate_index Plate index to check.
     /// @return True if compatible or plate index is invalid; false if high/low temperature materials are mixed.
     bool check_filament_temp_mixing(int plate_index);
+    /// @brief Same as above, plus fills `detail` with the 1-based used slots on the plate grouped by
+    ///        high/low temperature. `detail` is only meaningful when this overload returns false
+    ///        (i.e. a mixing conflict exists). On compatible / invalid plates, `detail` is cleared.
+    bool check_filament_temp_mixing(int plate_index, FilamentTempMixingDetail& detail);
     /// @brief Get high/low temperature material mixing state for the current plate.
     /// @return Current plate material mixing state.
     FilamentTempMixingState get_filament_temp_mixing_state();

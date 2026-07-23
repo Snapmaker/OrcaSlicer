@@ -15349,3 +15349,24 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+
+msgid "High temperature:"
+msgstr "高温耗材："
+
+msgid "Low temperature:"
+msgstr "低温耗材："
+
+msgid "The following plates contain mixed high and low temperature materials:"
+msgstr "以下盘存在高温与低温耗材混用："
+
+msgid "unknown"
+msgstr "未知"
+
+msgid "does not exist."
+msgstr "不存在。"
+
+msgid ""
+"To continue printing, enable \"Allow mixed printing of high and low "
+"temperature materials\" in Preferences."
+msgstr ""
+"如需继续打印，请在「偏好设置」中开启「允许高低温耗材混打」。"

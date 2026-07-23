@@ -740,6 +740,9 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         z = current_z;
 
     const bool needs_toolchange = gcodegen.writer().need_toolchange(new_extruder_id);
+    // True when a departure/return detour will be emitted (mirrors the detour block below).
+    const bool will_detour = gcodegen.config().wipe_tower_wall_gap.value
+                           && !tcr.priming && needs_toolchange;
     const bool will_go_down     = !is_approx(z, current_z);
     const bool is_ramming       = (gcodegen.config().single_extruder_multi_material) ||
                             (!gcodegen.config().single_extruder_multi_material &&
@@ -791,12 +794,15 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 
         // Travel from the ramming area to the wipe area if they are not contiguous.
         if ((ramming_end - start_pos).norm() > EPSILON) {
-            gcode += gcodegen.retract(false, false, gcodegen.to_lift_type(ZHopType::zhtSpiral));
+            // Detour case: retract full toolchange length now and skip the deretract,
+            // so set_extruder's toolchange retract becomes a no-op (differential state).
+            gcode += gcodegen.retract(will_detour, false, gcodegen.to_lift_type(ZHopType::zhtSpiral));
             gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
             gcode += gcodegen.travel_to(
                 wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d),
                 erMixed, "Travel from ramming to wipe area");
-            gcode += gcodegen.unretract();
+            if (!will_detour)
+                gcode += gcodegen.unretract();
         }
     }
 
@@ -807,8 +813,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     // departure and return detours (mirrors approach detour lines 769-778).
     bool has_detour_bbox = false;
     BoundingBox tower_bbx;
-    if (gcodegen.config().wipe_tower_wall_gap.value
-        && !tcr.priming && needs_toolchange) {
+    if (will_detour) {
         BoundingBox bbox = scaled(m_wipe_tower_bbx);
         Polygon     pp   = bbox.polygon();
         for (auto &p : pp.points) {

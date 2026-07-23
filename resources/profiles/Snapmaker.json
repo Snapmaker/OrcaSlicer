@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.02.55.02",
+  "version": "02.02.55.03",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -151,24 +151,12 @@
       "sub_path": "process/0.08mm Standard @Snapmaker U1 (0.4 nozzle).json"
     },
     {
-      "name": "0.12 Fine @Snapmaker U1 (0.4 nozzle)",
-      "sub_path": "process/0.12 Fine @Snapmaker U1 (0.4 nozzle).json"
-    },
-    {
       "name": "0.12mm Standard @Snapmaker U1 (0.4 nozzle)",
       "sub_path": "process/0.12mm Standard @Snapmaker U1 (0.4 nozzle).json"
     },
     {
       "name": "0.16mm Standard @Snapmaker U1 (0.4 nozzle)",
       "sub_path": "process/0.16mm Standard @Snapmaker U1 (0.4 nozzle).json"
-    },
-    {
-      "name": "0.16 Optimal @Snapmaker U1 (0.4 nozzle)",
-      "sub_path": "process/0.16 Optimal @Snapmaker U1 (0.4 nozzle).json"
-    },
-    {
-      "name": "0.20 Strength @Snapmaker U1 (0.4 nozzle)",
-      "sub_path": "process/0.20 Strength @Snapmaker U1 (0.4 nozzle).json"
     },
     {
       "name": "0.24mm Standard @Snapmaker U1 (0.4 nozzle)",

@@ -10853,11 +10853,22 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             NotificationManager *notify_manager = q->get_notification_manager();
                             std::string error_message = L("Invalid values found in the 3mf:");
                             error_message += "\n";
-                            for (std::map<std::string, std::string>::iterator it=validity.begin(); it!=validity.end(); ++it)
+                            bool any_entry = false;
+                            for (std::map<std::string, std::string>::iterator it=validity.begin(); it!=validity.end(); ++it) {
+                                // filament_flow_ratio == 0 is handled by the dedicated
+                                // flow_ratio_zero pre-slice banner (which also names the
+                                // specific offending filament slot). Skip it here to avoid
+                                // a redundant, less informative notification.
+                                if (it->first == "filament_flow_ratio")
+                                    continue;
                                 error_message += "-" + it->first + ": " + it->second + "\n";
-                            error_message += "\n";
-                            error_message += L("Please correct them in the param tabs");
-                            notify_manager->bbl_show_3mf_warn_notification(error_message);
+                                any_entry = true;
+                            }
+                            if (any_entry) {
+                                error_message += "\n";
+                                error_message += L("Please correct them in the param tabs");
+                                notify_manager->bbl_show_3mf_warn_notification(error_message);
+                            }
                         }
                     }
                     if (!config_substitutions.empty()) show_substitutions_info(config_substitutions.substitutions, filename.string());
@@ -12432,8 +12443,13 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             }
             // flow_ratio_zero sync MUST run after the blanket close_notification_of_type
             // (ValidateError) above — otherwise our banner gets closed immediately.
-            q->sync_flow_ratio_zero_notification();
-            if (filament_ok && invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
+            // Its return value gates UPDATE_BACKGROUND_PROCESS_INVALID so that
+            // restart_background_process() refuses to start the slice when the
+            // plate is blocked (Preview-tab switch / reslice path).
+            const bool flow_ratio_ok = q->sync_flow_ratio_zero_notification();
+            if (!flow_ratio_ok)
+                return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
+            if (filament_ok && flow_ratio_ok && invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
                 return_state |= UPDATE_BACKGROUND_PROCESS_RESTART;
 
             if (printer_technology == ptFFF) {

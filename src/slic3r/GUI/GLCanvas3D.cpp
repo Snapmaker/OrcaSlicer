@@ -7923,7 +7923,8 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
             }
             else {
                 if (!plate_list.get_plate(i)->can_slice() ||
-                    wxGetApp().plater()->is_plate_blocked_by_filament_temp_mixing(i))
+                    wxGetApp().plater()->is_plate_blocked_by_filament_temp_mixing(i) ||
+                    wxGetApp().plater()->is_plate_blocked_by_flow_ratio_zero(i))
                     m_sel_plate_toolbar.m_items[i]->slice_state = IMToolbarItem::SliceState::SLICE_FAILED;
                 else {
                     if (plate_list.get_plate(i)->get_slicing_percent() < 0.0f)

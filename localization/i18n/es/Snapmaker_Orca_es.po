@@ -15010,9 +15010,11 @@ msgid "Support wall loops"
 msgstr "Bucles de perímetro de apoyo"
 
 msgid ""
-"This setting specifies the count of support walls in the range of [0,2]. 0 "
-"means auto."
+"This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+"and 0 means allowing infill-only mode where support is thick enough."
 msgstr ""
+"Esta configuración especifica el número de paredes de soporte en el rango [-1,2]. "
+"-1 significa automático, 0 significa solo relleno cuando el soporte es suficientemente grueso."
 
 msgid "Tree support with infill"
 msgstr "Soporte de Árbol con relleno"

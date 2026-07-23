@@ -5397,6 +5397,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.5));
 
+    def = this->add("support_interface_min_area", coFloat);
+    def->gui_type = ConfigOptionDef::GUIType::f_enum_open;
+    def->label    = L("Minimum Support Contact Area");
+    def->category = L("Support");
+    def->tooltip  = L("Lower values generate more support contact surfaces.");
+    def->sidetext = "mm²";	// square milimeters, don't need translation
+    def->min      = 0;
+    def->enum_values.push_back("0");
+    def->enum_values.push_back("0.25");
+    def->enum_values.push_back("0.64");
+    def->enum_values.push_back("1");
+    def->enum_labels.push_back("0");
+    def->enum_labels.push_back("0.25");
+    def->enum_labels.push_back("0.64");
+    def->enum_labels.push_back("1");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.25));
+
     //BBS
     def = this->add("support_bottom_interface_spacing", coFloat);
     def->label = L("Bottom interface spacing");

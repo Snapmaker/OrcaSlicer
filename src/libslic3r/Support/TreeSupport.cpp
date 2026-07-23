@@ -629,6 +629,7 @@ TreeSupport::TreeSupport(PrintObject& object, const SlicingParameters &slicing_p
     // align with the centered object in current plate (may not be the 1st plate, so need to add the plate offset)
     m_machine_border.translate(Point(scale_(plate_offset(0)), scale_(plate_offset(1))) - m_object->instances().front().shift);
     top_z_distance                            = m_object_config->support_top_z_distance.value;
+    minimum_roof_area                         = scaled<double>(scaled<double>(m_object_config->support_interface_min_area.value));
     if (top_z_distance > EPSILON) top_z_distance = std::max(top_z_distance, float(m_slicing_params.min_layer_height));
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
     SVG svg(debug_out_path("machine_boarder.svg"), m_object->bounding_box());

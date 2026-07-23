@@ -504,13 +504,13 @@ ModelObject* Model::add_object(const ModelObject &other)
     return new_object;
 }
 
-bool Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
+void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
 {
     constexpr double ASSEMBLY_OBJECT_GAP = 10.0;
 
     if (modelObjects.empty())
     {
-        return false;
+        return;
     }
 
     ModelObjectPtrs validatedObjects;
@@ -521,21 +521,13 @@ bool Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
             std::find(objects.begin(), objects.end(), modelObject) == objects.end() ||
             std::find(validatedObjects.begin(), validatedObjects.end(), modelObject) != validatedObjects.end())
         {
-            return false;
+            continue;
         }
 
-        const BoundingBoxf3 rawBox = modelObject->raw_mesh_bounding_box();
+        const BoundingBoxf3& rawBox = modelObject->raw_mesh_bounding_box();
         if (!rawBox.defined)
         {
-            return false;
-        }
-
-        for (const ModelInstance* instance : modelObject->instances)
-        {
-            if (instance == nullptr)
-            {
-                return false;
-            }
+            continue;
         }
 
         validatedObjects.push_back(modelObject);
@@ -544,43 +536,70 @@ bool Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
     BoundingBoxf3 sceneBox = CalculateAssemblyBoundingBox(validatedObjects);
     for (ModelObject* modelObject : validatedObjects)
     {
-        const BoundingBoxf3 rawBox = modelObject->raw_mesh_bounding_box();
-        std::vector<BoundingBoxf3> instanceBoxes;
-        instanceBoxes.reserve(modelObject->instances.size());
+        const BoundingBoxf3& rawBox = modelObject->raw_mesh_bounding_box();
+        std::vector<BoundingBoxf3> instanceBoxes(modelObject->instances.size());
 
         double objectWidth = 0.0;
-        for (ModelInstance* instance : modelObject->instances)
+        bool hasValidInstance = false;
+        for (size_t instanceIndex = 0; instanceIndex < modelObject->instances.size(); ++instanceIndex)
         {
+            ModelInstance* instance = modelObject->instances[instanceIndex];
+            if (instance == nullptr)
+            {
+                continue;
+            }
+
             if (!instance->is_assemble_initialized())
             {
                 instance->set_assemble_transformation(instance->get_transformation());
             }
 
-            const BoundingBoxf3 instanceBox =
-                rawBox.transformed(instance->get_assemble_transformation().get_matrix_no_offset());
-            instanceBoxes.push_back(instanceBox);
+            BoundingBoxf3& instanceBox = instanceBoxes[instanceIndex];
+            instanceBox = rawBox.transformed(instance->get_assemble_transformation().get_matrix_no_offset());
+            if (!instanceBox.defined)
+            {
+                continue;
+            }
+
             objectWidth = std::max(objectWidth, instanceBox.size().x());
+            hasValidInstance = true;
+        }
+
+        if (!hasValidInstance)
+        {
+            continue;
         }
 
         const double objectCenterX = sceneBox.defined ? sceneBox.max.x() + ASSEMBLY_OBJECT_GAP + objectWidth * 0.5 : 0.0;
         const double firstInstanceCenterY = sceneBox.defined ? sceneBox.center().y() : 0.0;
         double previousInstanceMaxY = 0.0;
+        bool firstValidInstance = true;
 
         for (size_t instanceIndex = 0; instanceIndex < modelObject->instances.size(); ++instanceIndex)
         {
+            ModelInstance* instance = modelObject->instances[instanceIndex];
+            if (instance == nullptr)
+            {
+                continue;
+            }
+
             const BoundingBoxf3& instanceBox = instanceBoxes[instanceIndex];
-            const double instanceCenterY = instanceIndex == 0 ? firstInstanceCenterY :
+            if (!instanceBox.defined)
+            {
+                continue;
+            }
+
+            const double instanceCenterY = firstValidInstance ? firstInstanceCenterY :
                                            previousInstanceMaxY + ASSEMBLY_OBJECT_GAP + instanceBox.size().y() * 0.5;
             const Vec3d assemblyOffset(objectCenterX - instanceBox.center().x(),
                                        instanceCenterY - instanceBox.center().y(), -instanceBox.min.z());
-            modelObject->instances[instanceIndex]->set_assemble_offset(assemblyOffset);
+            instance->set_assemble_offset(assemblyOffset);
             previousInstanceMaxY = instanceCenterY + instanceBox.size().y() * 0.5;
+            firstValidInstance = false;
         }
 
         sceneBox.merge(modelObject->CalculateAssemblyBoundingBox());
     }
-
-    return true;
 }
 
 void Model::delete_object(size_t idx)

@@ -1628,9 +1628,9 @@ public:
     /**
      * @brief Initializes newly created objects as one assembly-view layout batch.
      * @param modelObjects Objects owned by this model, in their desired layout order.
-     * @return True when every assembly position was initialized.
+     *        Invalid objects and instances are skipped.
      */
-    bool InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects);
+    void InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects);
     void         delete_object(size_t idx);
     bool         delete_object(ObjectID id);
     bool         delete_object(ModelObject* object);

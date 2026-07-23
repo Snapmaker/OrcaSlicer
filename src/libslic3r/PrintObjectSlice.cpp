@@ -3304,6 +3304,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         total_mixed_state_layers += mixed_state_count;
         if (!mixed_masks.empty())
             mixed_masks = union_ex(mixed_masks);
+        if (layer_id == 0)
+            interval.has_mixed_paint = false;
         if (interval.has_mixed_paint)
             ++mixed_intervals;
 

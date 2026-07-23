@@ -576,23 +576,24 @@ bool PresetBundle::use_bbl_device_tab() {
 
 bool PresetBundle::backup_user_folder() const
 {
-    const std::string backup_folderpath = data_dir() + "/" + (boost::format("user_backup-v%1%") % Snapmaker_VERSION).str();
+    const boost::filesystem::path backup_folderpath =
+        Slic3r::data_dir_path() / (boost::format("user_backup-v%1%") % Snapmaker_VERSION).str();
 
     // Check if backup file already exists
-    if (boost::filesystem::exists(boost::filesystem::path(backup_folderpath)))
+    if (boost::filesystem::exists(backup_folderpath))
         return false;
 
     BOOST_LOG_TRIVIAL(info) << "Backing up user folder to: " << backup_folderpath;
     try {
         // Copy the user folder to the backup folder
-        boost::filesystem::copy(data_dir() + "/" + PRESET_USER_DIR, backup_folderpath, boost::filesystem::copy_options::recursive);
+        boost::filesystem::copy(Slic3r::data_dir_path() / PRESET_USER_DIR, backup_folderpath, boost::filesystem::copy_options::recursive);
         BOOST_LOG_TRIVIAL(info) << "User folder backup completed successfully";
         return true;
     } catch (const std::exception& ex) {
         BOOST_LOG_TRIVIAL(error) << "Exception during user folder backup: " << ex.what();
         // Try to clean up partially copied backup folder
-        if (boost::filesystem::exists(boost::filesystem::path(backup_folderpath)))
-            boost::filesystem::remove_all(boost::filesystem::path(backup_folderpath));
+        if (boost::filesystem::exists(backup_folderpath))
+            boost::filesystem::remove_all(backup_folderpath);
         return false;
     }
 }
@@ -728,9 +729,16 @@ std::string PresetBundle::get_texture_for_printer_model(std::string model_name)
 
     if (!texture_name.empty())
     {
-        out = Slic3r::data_dir() + "/vendor/" + vendor_name + "/" + texture_name;
-        if (!boost::filesystem::exists(boost::filesystem::path(out)))
-            out = Slic3r::resources_dir() + "/profiles/" + vendor_name + "/" + texture_name;
+        // vendor_name may be UTF-8; construct path safely via wide string on Windows.
+        const auto vendor_p = boost::filesystem::path(boost::nowide::widen(vendor_name));
+        auto user_path = (Slic3r::data_dir_path() / "vendor" / vendor_p / texture_name).make_preferred();
+        if (!boost::filesystem::exists(user_path))
+            user_path = (Slic3r::resources_dir_path() / "profiles" / vendor_p / texture_name).make_preferred();
+#ifdef WIN32
+        out = boost::nowide::narrow(user_path.wstring());
+#else
+        out = user_path.string();
+#endif
     }
 
     return out;
@@ -756,9 +764,15 @@ std::string PresetBundle::get_stl_model_for_printer_model(std::string model_name
 
     if (!stl_name.empty())
     {
-        out = Slic3r::data_dir() + "/vendor/" + vendor_name + "/" + stl_name;
-        if (!boost::filesystem::exists(boost::filesystem::path(out)))
-            out = Slic3r::resources_dir() + "/profiles/" + vendor_name + "/" + stl_name;
+        const auto vendor_p = boost::filesystem::path(boost::nowide::widen(vendor_name));
+        auto user_path = (Slic3r::data_dir_path() / "vendor" / vendor_p / stl_name).make_preferred();
+        if (!boost::filesystem::exists(user_path))
+            user_path = (Slic3r::resources_dir_path() / "profiles" / vendor_p / stl_name).make_preferred();
+#ifdef WIN32
+        out = boost::nowide::narrow(user_path.wstring());
+#else
+        out = user_path.string();
+#endif
     }
 
     return out;
@@ -783,13 +797,30 @@ std::string PresetBundle::get_hotend_model_for_printer_model(std::string model_n
 
     if (!hotend_stl.empty())
     {
-        out = Slic3r::data_dir() + "/vendor/" + vendor_name + "/" + hotend_stl;
-        if (!boost::filesystem::exists(boost::filesystem::path(out)))
-            out = Slic3r::resources_dir() + "/profiles/" + vendor_name + "/" + hotend_stl;
+        const auto vendor_p = boost::filesystem::path(boost::nowide::widen(vendor_name));
+        auto user_path = (Slic3r::data_dir_path() / "vendor" / vendor_p / hotend_stl).make_preferred();
+        if (!boost::filesystem::exists(user_path))
+            user_path = (Slic3r::resources_dir_path() / "profiles" / vendor_p / hotend_stl).make_preferred();
+#ifdef WIN32
+        out = boost::nowide::narrow(user_path.wstring());
+#else
+        out = user_path.string();
+#endif
     }
 
-    if (out.empty() ||!boost::filesystem::exists(boost::filesystem::path(out)))
-        out = Slic3r::resources_dir() + "/profiles/hotend.stl";
+    if (out.empty()
+#ifdef WIN32
+        || !boost::filesystem::exists(boost::filesystem::path(boost::nowide::widen(out)))
+#else
+        || !boost::filesystem::exists(boost::filesystem::path(out))
+#endif
+    ) {
+#ifdef WIN32
+        out = boost::nowide::narrow((Slic3r::resources_dir_path() / "profiles" / "hotend.stl").make_preferred().wstring());
+#else
+        out = (Slic3r::resources_dir_path() / "profiles" / "hotend.stl").make_preferred().string();
+#endif
+    }
 
     return out;
 }
@@ -800,12 +831,16 @@ PresetsConfigSubstitutions PresetBundle::load_user_presets(std::string user, For
     PresetsConfigSubstitutions substitutions;
     std::string errors_cummulative;
 
-    fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
+    fs::path user_folder = Slic3r::data_dir_path() / PRESET_USER_DIR;
     if (!fs::exists(user_folder)) fs::create_directory(user_folder);
 
-    std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/" + user;
-    fs::path    folder(user_folder / user);
+    fs::path folder = user_folder / user;
     if (!fs::exists(folder)) fs::create_directory(folder);
+
+    // dir_user_presets is passed to load_presets() which internally does
+    // boost::filesystem::path(string) — that ctor uses ACP on Windows.
+    // Use path::string() (ACP) for compatibility with the callee's expectation.
+    std::string dir_user_presets = folder.make_preferred().string();
 
     // BBS do not load sla_print
     // BBS: change directoties by design
@@ -934,7 +969,7 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
         if (boost::iends_with(file, ".orca_printer") || boost::iends_with(file, ".orca_filament") || boost::iends_with(file, ".zip")) {
             boost::system::error_code ec;
             // create user folder
-            fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
+            fs::path user_folder = Slic3r::data_dir_path() / PRESET_USER_DIR;
             if (!fs::exists(user_folder)) fs::create_directory(user_folder, ec);
             if (ec) BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " create directory failed: " << ec.message();
             // create default folder
@@ -1112,11 +1147,10 @@ void PresetBundle::save_user_presets(AppConfig& config, std::vector<std::string>
     if (!config.get("preset_folder").empty())
         user_sub_folder = config.get("preset_folder");
     //BBS: change directory by design
-    const std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/"+ user_sub_folder;
+    const boost::filesystem::path user_folder = Slic3r::data_dir_path() / PRESET_USER_DIR;
+    const std::string dir_user_presets = (user_folder / user_sub_folder).make_preferred().string();
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, save to %1%")%dir_user_presets;
-
-    fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
     if (!fs::exists(user_folder))
         fs::create_directory(user_folder);
 
@@ -1134,11 +1168,10 @@ void PresetBundle::save_user_presets(AppConfig& config, std::vector<std::string>
 void PresetBundle::update_user_presets_directory(const std::string preset_folder)
 {
     //BBS: change directory by design
-    const std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/"+ preset_folder;
+    const boost::filesystem::path user_folder = Slic3r::data_dir_path() / PRESET_USER_DIR;
+    const std::string dir_user_presets = (user_folder / preset_folder).make_preferred().string();
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, update directory to %1%")%dir_user_presets;
-
-    fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
     if (!fs::exists(user_folder))
         fs::create_directory(user_folder);
 
@@ -1154,14 +1187,14 @@ void PresetBundle::update_user_presets_directory(const std::string preset_folder
 
 void PresetBundle::remove_user_presets_directory(const std::string preset_folder)
 {
-    const std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/" + preset_folder;
+    const boost::filesystem::path folder = Slic3r::data_dir_path() / PRESET_USER_DIR / preset_folder;
+    const std::string dir_user_presets = folder.make_preferred().string();
 
     if (preset_folder.empty()) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": preset_folder is empty, no need to remove directory : %1%") % dir_user_presets;
         return;
     }
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, delete directory : %1%") % dir_user_presets;
-    fs::path folder(dir_user_presets);
     if (fs::exists(folder)) {
         fs::remove_all(folder);
     }

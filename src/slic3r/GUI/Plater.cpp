@@ -17183,18 +17183,38 @@ void Plater::calib_flowrate(bool is_linear, int pass) {
 
     if (is_linear) {
         if (pass == 1)
+#ifdef WIN32
             add_model(false,
                       boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "Orca-LinearFlow.3mf").wstring()));
+#else
+            add_model(false,
+                      (Slic3r::resources_dir_path() / "calib" / "filament_flow" / "Orca-LinearFlow.3mf").string());
+#endif
         else
+#ifdef WIN32
             add_model(false,
                       boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "Orca-LinearFlow_fine.3mf").wstring()));
+#else
+            add_model(false,
+                      (Slic3r::resources_dir_path() / "calib" / "filament_flow" / "Orca-LinearFlow_fine.3mf").string());
+#endif
     } else {
         if (pass == 1)
+#ifdef WIN32
             add_model(false,
                       boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "flowrate-test-pass1.3mf").wstring()));
+#else
+            add_model(false,
+                      (Slic3r::resources_dir_path() / "calib" / "filament_flow" / "flowrate-test-pass1.3mf").string());
+#endif
         else
+#ifdef WIN32
             add_model(false,
                       boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "flowrate-test-pass2.3mf").wstring()));
+#else
+            add_model(false,
+                      (Slic3r::resources_dir_path() / "calib" / "filament_flow" / "flowrate-test-pass2.3mf").string());
+#endif
     }
 
     adjust_settings_for_flowrate_calib(model().objects, is_linear, pass);

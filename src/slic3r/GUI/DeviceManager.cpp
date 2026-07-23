@@ -459,7 +459,11 @@ std::string MachineObject::get_printer_thumbnail_img_str()
     if (!img_str.empty()) {
         auto img_path = Slic3r::resources_dir_path() / "printers" / "image" / img_str;
         if (fs::exists(Slic3r::resources_dir_path() / "printers" / "image" / (img_str + ".svg"))) {
+#ifdef WIN32
             img_url = boost::nowide::narrow(img_path.wstring());
+#else
+            img_url = img_path.string();
+#endif
             return img_url;
         }
         else {

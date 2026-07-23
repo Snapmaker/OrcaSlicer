@@ -656,8 +656,13 @@ void MediaPlayCtrl::load()
         auto file_info = Slic3r::data_dir_path() / "video.info";
         BOOST_LOG_TRIVIAL(info) << "MediaPlayCtrl dump video to " << file_h264;
         // closed by BambuSource
+#ifdef WIN32
         FILE *dump_h264_file = boost::nowide::fopen(boost::nowide::narrow(file_h264.wstring()).c_str(), "wb");
         FILE *dump_info_file = boost::nowide::fopen(boost::nowide::narrow(file_info.wstring()).c_str(), "wb");
+#else
+        FILE *dump_h264_file = boost::nowide::fopen(file_h264.string().c_str(), "wb");
+        FILE *dump_info_file = boost::nowide::fopen(file_info.string().c_str(), "wb");
+#endif
         m_url                = m_url + "&dump_h264=" + boost::lexical_cast<std::string>(dump_h264_file);
         m_url                = m_url + "&dump_info=" + boost::lexical_cast<std::string>(dump_info_file);
     }
@@ -740,7 +745,11 @@ bool MediaPlayCtrl::start_stream_service(bool *need_install)
         boost::filesystem::ofstream file(file_url);
         file.close();
     }
+#ifdef WIN32
     wxString file_url2 = L"bambu:///camera/" + from_u8(boost::nowide::narrow(file_url.wstring()));
+#else
+    wxString file_url2 = L"bambu:///camera/" + from_u8(file_url.string());
+#endif
     file_url2.Replace("\\", "/");
     file_url2 = wxURI(file_url2).BuildURI();
     try {

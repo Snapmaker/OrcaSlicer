@@ -313,7 +313,8 @@ void set_data_dir(const std::string &dir)
             boost::filesystem::create_directories(p);
     }
 #else
-    g_data_dir = boost::filesystem::path(boost::nowide::widen(dir)).string();
+    // On non-Windows platforms, dir is already in the native encoding (UTF-8).
+    g_data_dir = dir;
     if (!g_data_dir.empty() && !boost::filesystem::exists(g_data_dir)) {
        boost::filesystem::create_directory(g_data_dir);
     }

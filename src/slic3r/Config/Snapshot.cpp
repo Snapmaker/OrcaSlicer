@@ -3,6 +3,7 @@
 #include <time.h>
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/ini_parser.hpp>
@@ -291,8 +292,14 @@ bool Snapshot::equal_to_active(const AppConfig &app_config) const
         if (files1 != files2)
             return false;
         for (const std::string &filename : files1) {
+#ifdef WIN32
+            // path::string() returns ACP on Windows; use nowide::narrow(wstring()) for UTF-8.
+            FILE *f1 = boost::nowide::fopen(boost::nowide::narrow((path1 / filename).wstring()).c_str(), "rb");
+            FILE *f2 = boost::nowide::fopen(boost::nowide::narrow((path2 / filename).wstring()).c_str(), "rb");
+#else
             FILE *f1 = boost::nowide::fopen((path1 / filename).string().c_str(), "rb");
             FILE *f2 = boost::nowide::fopen((path2 / filename).string().c_str(), "rb");
+#endif
             bool same = true;
             if (f1 && f2) {
                 char buf1[4096];

@@ -72,16 +72,18 @@ bool Bundle::load(fs::path source_path, bool ais_in_resources, bool ais_sm_bundl
     this->is_in_resources = ais_in_resources;
     this->is_sm_bundle = ais_sm_bundle;
 
+    // path::string() returns ACP on Windows; for non-ASCII-safe checks use
+    // boost::filesystem::path operations and boost::nowide::narrow for name extraction.
     std::string path_string = source_path.string();
     const boost::filesystem::path parent_path = source_path.parent_path();
     //BBS: add json logic for vendor bundles
-    std::string vendor_name = source_path.filename().string();
-    if (Slic3r::is_json_file(path_string)) {
-        // Remove the .json suffix.
-        vendor_name.erase(vendor_name.size() - 5);
-    }
-    else
+    if (!boost::iequals(source_path.extension().string(), ".json"))
         return false;
+#ifdef WIN32
+    std::string vendor_name = boost::nowide::narrow(source_path.stem().wstring());
+#else
+    std::string vendor_name = source_path.stem().string();
+#endif
 
     // Throw when parsing invalid configuration. Only valid configuration is supposed to be provided over the air.
     //BBS: add json logic for vendor bundles
@@ -143,8 +145,12 @@ BundleMap BundleMap::load()
     for (auto dir : { &vendor_dir, &rsrc_vendor_dir }) {
         for (const auto &dir_entry : boost::filesystem::directory_iterator(*dir)) {
             //BBS: add json logic for vendor bundle
-            if (Slic3r::is_json_file(dir_entry.path().string())) {
+            if (boost::iequals(dir_entry.path().extension().string(), ".json")) {
+#ifdef WIN32
+                std::string id = boost::nowide::narrow(dir_entry.path().stem().wstring());  // stem() = filename() without the trailing ".json" part
+#else
                 std::string id = dir_entry.path().stem().string();  // stem() = filename() without the trailing ".json" part
+#endif
 
                 // Don't load this bundle if we've already loaded it.
                 if (res.find(id) != res.end()) { continue; }
@@ -1860,7 +1866,12 @@ void ConfigWizard::priv::load_vendors()
         const auto printer_dir = Slic3r::data_dir_path() / PRESET_SYSTEM_DIR / PRESET_PRINTER_NAME;
         for (auto &dir_entry : boost::filesystem::directory_iterator(printer_dir))
             if (Slic3r::is_ini_file(dir_entry)) {
-                auto needle = legacy_preset_map.find(dir_entry.path().filename().string());
+                auto needle = legacy_preset_map.find(
+#ifdef WIN32
+                    boost::nowide::narrow(dir_entry.path().filename().wstring()));
+#else
+                    dir_entry.path().filename().string());
+#endif
                 if (needle == legacy_preset_map.end()) { continue; }
 
                 const auto &model = needle->second.first;

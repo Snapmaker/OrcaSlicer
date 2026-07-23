@@ -5957,10 +5957,10 @@ void GLCanvas3D::RenderFitCameraButton(float left, float top, float buttonSize)
     imgui.set_next_window_size(buttonSize, buttonSize, ImGuiCond_Always);
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    imgui.begin(_L("Fit camera"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground |
-                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove |
-                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoSavedSettings);
+    imgui.begin(std::string("FitCameraButtonWindow"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground |
+                                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove |
+                                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                                      ImGuiWindowFlags_NoSavedSettings);
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));

@@ -11196,12 +11196,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             {
                 ModelObjectPtrs loadedObjects;
                 loadedObjects.reserve(loaded_idxs.size());
-                for (std::vector<size_t>::const_reverse_iterator objectIndex = loaded_idxs.rbegin();
-                     objectIndex != loaded_idxs.rend(); ++objectIndex)
+                for (const size_t objectIndex : loaded_idxs)
                 {
-                    if (*objectIndex < q->model().objects.size())
+                    if (objectIndex < q->model().objects.size())
                     {
-                        loadedObjects.push_back(q->model().objects[*objectIndex]);
+                        loadedObjects.push_back(q->model().objects[objectIndex]);
                     }
                 }
                 q->model().InitializeAssemblyPositions(loadedObjects);
@@ -11245,12 +11244,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
         {
             ModelObjectPtrs loadedObjects;
             loadedObjects.reserve(loaded_idxs.size());
-            for (std::vector<size_t>::const_reverse_iterator objectIndex = loaded_idxs.rbegin();
-                 objectIndex != loaded_idxs.rend(); ++objectIndex)
+            for (const size_t objectIndex : loaded_idxs)
             {
-                if (*objectIndex < q->model().objects.size())
+                if (objectIndex < q->model().objects.size())
                 {
-                    loadedObjects.push_back(q->model().objects[*objectIndex]);
+                    loadedObjects.push_back(q->model().objects[objectIndex]);
                 }
             }
             q->model().InitializeAssemblyPositions(loadedObjects);

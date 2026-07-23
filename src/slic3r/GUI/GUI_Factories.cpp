@@ -609,12 +609,11 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
                 Model& model = currentPlater->model();
                 ModelObjectPtrs loadedObjects;
                 loadedObjects.reserve(loadedObjectIndexes.size());
-                for (std::vector<size_t>::const_reverse_iterator objectIndex = loadedObjectIndexes.rbegin();
-                     objectIndex != loadedObjectIndexes.rend(); ++objectIndex)
+                for (const size_t objectIndex : loadedObjectIndexes)
                 {
-                    if (*objectIndex < model.objects.size())
+                    if (objectIndex < model.objects.size())
                     {
-                        loadedObjects.push_back(model.objects[*objectIndex]);
+                        loadedObjects.push_back(model.objects[objectIndex]);
                     }
                 }
                 model.InitializeAssemblyPositions(loadedObjects);

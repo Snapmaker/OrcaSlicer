@@ -598,7 +598,11 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
                     is_stringhell = true;
                 } else
                     return;
-                input_files.push_back((boost::filesystem::path(Slic3r::resources_dir()) / "handy_models" / file_name));
+#ifdef WIN32
+                input_files.push_back(boost::nowide::narrow((Slic3r::resources_dir_path() / "handy_models" / file_name).make_preferred().wstring()));
+#else
+                input_files.push_back((Slic3r::resources_dir_path() / "handy_models" / file_name).string());
+#endif
                 plater()->load_files(input_files, LoadStrategy::LoadModel);
 
                 // Suggest to change settings for stringhell

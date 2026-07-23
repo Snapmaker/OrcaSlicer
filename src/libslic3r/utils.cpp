@@ -224,12 +224,29 @@ static std::string g_resources_dir;
 
 void set_resources_dir(const std::string &dir)
 {
+#ifdef WIN32
+    // `dir` is UTF-8 from wx/path conversion. Store as-is; do not round-trip
+    // through path(wstring).string() which uses the process narrow code page.
     g_resources_dir = dir;
+#else
+    g_resources_dir = dir;
+#endif
 }
 
 const std::string& resources_dir()
 {
     return g_resources_dir;
+}
+
+boost::filesystem::path resources_dir_path()
+{
+#ifdef WIN32
+    if (g_resources_dir.empty())
+        return {};
+    return boost::filesystem::path(boost::nowide::widen(g_resources_dir));
+#else
+    return boost::filesystem::path(g_resources_dir);
+#endif
 }
 
 //BBS: add temporary dir

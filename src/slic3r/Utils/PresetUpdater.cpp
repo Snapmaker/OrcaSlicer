@@ -331,7 +331,7 @@ PresetUpdater::priv::priv()
 	, vendor_path(fs::path(boost::nowide::widen(Slic3r::data_dir())) / PRESET_SYSTEM_DIR)
 #else
 	: cache_path(fs::path(Slic3r::data_dir()) / "ota")
-	, rsrc_path(fs::path(resources_dir()) / "profiles")
+	, rsrc_path(Slic3r::resources_dir_path() / "profiles")
 	, vendor_path(fs::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR)
 #endif
 	, cancel(false)
@@ -726,9 +726,17 @@ void PresetUpdater::priv::sync_resources(std::string http_url, std::map<std::str
 
             // save the description to disk
             if (changelog_file.empty())
+#ifdef _WIN32
+                changelog_file = boost::nowide::narrow((cache_path / "changelog.json").wstring());
+#else
                 changelog_file = (cache_path / "changelog.json").string();
+#endif
             else
+#ifdef _WIN32
+                changelog_file = boost::nowide::narrow((cache_path / changelog_file).wstring());
+#else
                 changelog_file = (cache_path / changelog_file).string();
+#endif
 
             {
                 json j;
@@ -1015,7 +1023,11 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
             auto reservedData2        = dataObj.value("reserved_2", "");
 
             auto        localProfilesjson    = cache_path / "flutter_web/version.json";
-            std::string json_path            = data_dir() + "/web/flutter_web/version.json";
+#ifdef _WIN32
+            std::string json_path            = boost::nowide::narrow((Slic3r::data_dir_path() / "web/flutter_web/version.json").wstring());
+#else
+            std::string json_path            = (Slic3r::data_dir_path() / "web/flutter_web/version.json").string();
+#endif
             // Use a unique filename per version to avoid deleting a zip that may still be in use (Windows file locks / concurrent UI import).
             std::string fileName             = (cache_profile_path / ("flutter_web_" + fileVersion + ".zip")).string();
             Semver      currentPresetVersion = get_version_from_json(json_path);
@@ -1147,7 +1159,11 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 currentPresetVersion =
                     GUI::wxGetApp().preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE);
             else
-                currentPresetVersion = get_version_from_json(data_dir() + "/system/Snapmaker.json");
+#ifdef _WIN32
+                currentPresetVersion = get_version_from_json(boost::nowide::narrow((Slic3r::data_dir_path() / "system/Snapmaker.json").wstring()));
+#else
+                currentPresetVersion = get_version_from_json((Slic3r::data_dir_path() / "system/Snapmaker.json").string());
+#endif
 
             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
@@ -1697,7 +1713,11 @@ Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
     version.config_version = resc_version;
     std::string change_log;
     if (update) {
+#ifdef _WIN32
+        std::string changelog_file = boost::nowide::narrow((resc_folder / "printer.json").wstring());
+#else
         std::string changelog_file = (resc_folder / "printer.json").string();
+#endif
         try {
             boost::nowide::ifstream ifs(changelog_file);
             json                    j;
@@ -2390,7 +2410,8 @@ void PresetUpdater::import_system_profile()
             if (dir_entry.path().extension() == ".json") {
                 {                  
                     boost::property_tree::ptree config;
-                    boost::property_tree::read_json(dir_entry.path().string(), config);
+                    boost::filesystem::ifstream ifs(dir_entry.path());
+                    boost::property_tree::read_json(ifs, config);
                     std::string version_str = config.get<std::string>("version", "0");
                     std::string vendor      = dir_entry.path().stem().string();
 

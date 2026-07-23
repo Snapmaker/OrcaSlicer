@@ -38,7 +38,11 @@ DownPluginFrame::DownPluginFrame(GUI_App *pGUI) : wxDialog((wxWindow *) (pGUI->m
 
     // set the frame icon
     wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
-    wxString TargetUrl    = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/6/index.html").make_preferred().string());
+#ifdef WIN32
+    wxString TargetUrl    = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/6/index.html").make_preferred().wstring()));
+#else
+    wxString TargetUrl    = from_u8((Slic3r::resources_dir_path() / "web/guide/6/index.html").make_preferred().string());
+#endif
 
     TargetUrl = "file://" + TargetUrl;
 

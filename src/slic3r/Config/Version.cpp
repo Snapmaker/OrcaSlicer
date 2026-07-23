@@ -196,7 +196,7 @@ size_t Index::load(const boost::filesystem::path &path)
 	m_vendor = path.stem().string();
 	m_path = path;
 
-    boost::nowide::ifstream ifs(path.string());
+    boost::filesystem::ifstream ifs(path);
     std::string line;
     size_t idx_line = 0;
     Version ver;
@@ -306,7 +306,7 @@ Index::const_iterator Index::recommended() const
 
 std::vector<Index> Index::load_db()
 {
-    boost::filesystem::path cache_dir = boost::filesystem::path(Slic3r::data_dir()) / "ota";
+    boost::filesystem::path cache_dir = Slic3r::data_dir_path() / "ota";
 
     std::vector<Index> index_db;
     std::string errors_cummulative;

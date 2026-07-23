@@ -107,7 +107,7 @@ int HMSQuery::load_from_local(std::string& version_info, std::string hms_type, j
         return -1;
     }
     std::string filename = get_hms_file(hms_type, HMSQuery::hms_language_code());
-    auto hms_folder = (boost::filesystem::path(data_dir()) / "hms");
+    auto hms_folder = Slic3r::data_dir_path() / "hms";
     if (!fs::exists(hms_folder))
         fs::create_directory(hms_folder);
 
@@ -140,7 +140,7 @@ int HMSQuery::save_to_local(std::string lang, std::string hms_type, json save_js
         return -1;
     }
     std::string filename = get_hms_file(hms_type,lang);
-    auto hms_folder = (boost::filesystem::path(data_dir()) / "hms");
+    auto hms_folder = Slic3r::data_dir_path() / "hms";
     if (!fs::exists(hms_folder))
         fs::create_directory(hms_folder);
     std::string dir_str = (hms_folder / filename).make_preferred().string();

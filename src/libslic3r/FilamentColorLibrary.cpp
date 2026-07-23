@@ -86,7 +86,7 @@ std::vector<std::string> NormalizeColorList(const std::vector<std::string>& colo
 boost::filesystem::path FilamentsColoursPath()
 {
     // Prefer the system copy, fall back to bundled resources for a fresh install.
-    boost::filesystem::path path = boost::filesystem::path(Slic3r::data_dir());
+    boost::filesystem::path path = Slic3r::data_dir_path();
     path /= "system";
     path /= "Snapmaker";
     path /= "filament";
@@ -94,7 +94,7 @@ boost::filesystem::path FilamentsColoursPath()
     if (boost::filesystem::exists(path))
         return path.make_preferred();
 
-    path = boost::filesystem::path(Slic3r::resources_dir());
+    path = Slic3r::resources_dir_path();
     path /= "profiles";
     path /= "Snapmaker";
     path /= "filament";
@@ -162,7 +162,7 @@ std::string NormalizeJsonColor(const std::string& color, bool& hasInvalidColor)
 
 bool LoadJsonFile(const boost::filesystem::path& path, nlohmann::json& out)
 {
-    boost::nowide::ifstream ifs(path.string());
+    boost::filesystem::ifstream ifs(path);
     if (!ifs.is_open())
     {
         BOOST_LOG_TRIVIAL(warning) << "Failed to open official filament color file: " << path.string();

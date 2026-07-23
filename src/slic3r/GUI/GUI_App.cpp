@@ -2198,7 +2198,7 @@ void GUI_App::init_app_config()
                 if (! wxGetEnv(wxS("XDG_CONFIG_HOME"), &dir) || dir.empty() )
                     dir = wxFileName::GetHomeDir() + wxS("/.config");
                 set_data_dir((dir + "/" + GetAppName()).ToUTF8().data());
-                data_dir_path = boost::filesystem::path(data_dir());
+                data_dir_path = Slic3r::data_dir_path();
             #endif
             if (!boost::filesystem::exists(data_dir_path)){
                 boost::filesystem::create_directory(data_dir_path);
@@ -2206,7 +2206,11 @@ void GUI_App::init_app_config()
         }
 
         // Change current dirtory of application
+#ifdef WIN32
+        [[maybe_unused]] auto unused_result = ::_wchdir((Slic3r::data_dir_path() / "log").make_preferred().wstring().c_str());
+#else
         [[maybe_unused]] auto unused_result = chdir(encode_path((Slic3r::data_dir() + "/log").c_str()).c_str());
+#endif
     } else {
         m_datadir_redefined = true;
     }
@@ -2271,12 +2275,12 @@ bool GUI_App::check_older_app_config(Semver current_version, bool backup)
 void GUI_App::copy_web_resources() {
     StartupProfiler profiler("GUI_App::copy_web_resources");
 
-    auto data_web_path = boost::filesystem::path(data_dir()) / "web";
+    auto data_web_path = Slic3r::data_dir_path() / "web";
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
         copy_bundled_flutter_web(false);
         profiler.mark("copy flutter_web (missing target)");
     } else {
-        auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
+        auto source_version_file = Slic3r::resources_dir_path() / "web" / "flutter_web" / "version.json";
         auto target_version_file = data_web_path / "flutter_web" / "version.json";
 
         try {
@@ -2306,8 +2310,8 @@ void GUI_App::copy_web_resources() {
 
 bool GUI_App::copy_bundled_flutter_web(bool upgrade)
 {
-    auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-    auto target_path = boost::filesystem::path(data_dir()) / "web" / "flutter_web";
+    auto source_path = Slic3r::resources_dir_path() / "web" / "flutter_web";
+    auto target_path = Slic3r::data_dir_path() / "web" / "flutter_web";
     if (copy_directory_recursively(source_path, target_path))
         return true;
 
@@ -2449,7 +2453,7 @@ std::string GUI_App::get_local_models_path()
         return local_path;
     }
 
-    auto models_folder = (boost::filesystem::path(data_dir()) / "models");
+    auto models_folder = (Slic3r::data_dir_path() / "models");
     local_path = models_folder.string();
 
     if (!fs::exists(models_folder)) {
@@ -2504,7 +2508,7 @@ int GUI_App::OnExit()
     // Orca: clean up encrypted bbl network log file if plugin is used
     // No point to keep them as they are encrypted and can't be used for debugging
     try {
-        auto              log_folder  = boost::filesystem::path(data_dir()) / "log";
+        auto              log_folder  = Slic3r::data_dir_path() / "log";
         const std::string filePattern = R"(debug_network_.*\.log\.enc)";
         std::regex        pattern(filePattern);
         if (boost::filesystem::exists(log_folder)) {
@@ -3323,7 +3327,7 @@ __retry:
 
         //BBS set cert dir
         if (m_agent)
-            m_agent->set_cert_file(resources_dir() + "/cert", "slicer_base64.cer");
+            m_agent->set_cert_file((Slic3r::resources_dir_path() / "cert").string(), "slicer_base64.cer");
 
         init_http_extra_header();
 
@@ -4576,7 +4580,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("file");
                     if (path.has_value()) {
-                        std::string Fullpath = resources_dir() + "/web/homepage/model/" + path.value();
+                        std::string Fullpath = (Slic3r::resources_dir_path() / "web" / "homepage" / "model" / path.value()).string();
 
                         this->request_open_project(Fullpath);
                     }

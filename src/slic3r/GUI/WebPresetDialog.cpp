@@ -222,38 +222,38 @@ void WebPresetDialog::load_url(wxString& url)
 //{
 //    m_page = startpage;
 //    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" enter, load=%1%, start_page=%2%") % load % int(startpage);
-//    // wxLogMessage("GUIDE: webpage_1  %s", (boost::filesystem::path(resources_dir()) /
+//    // wxLogMessage("GUIDE: webpage_1  %s", (Slic3r::resources_dir_path() /
 //    // "web\\guide\\1\\index.html").make_preferred().string().c_str() );
-//    wxString TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/1/index.html").make_preferred().string());
+//    wxString TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/1/index.html").make_preferred().string());
 //    // wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
 //
 //    if (startpage == BBL_WELCOME) {
 //        SetTitle(_L("Setup Wizard"));
-//        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/1/index.html").make_preferred().string());
+//        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/1/index.html").make_preferred().string());
 //    } else if (startpage == BBL_REGION) {
 //        SetTitle(_L("Setup Wizard"));
-//        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/11/index.html").make_preferred().string());
+//        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/11/index.html").make_preferred().string());
 //    } else if (startpage == BBL_MODELS) {
 //        SetTitle(_L("Setup Wizard"));
-//        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/21/index.html").make_preferred().string());
+//        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/21/index.html").make_preferred().string());
 //    } else if (startpage == BBL_FILAMENTS) {
 //        SetTitle(_L("Setup Wizard"));
 //
 //        int nSize = m_ProfileJson["model"].size();
 //
 //        if (nSize > 0)
-//            TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/22/index.html").make_preferred().string());
+//            TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/22/index.html").make_preferred().string());
 //        else
-//            TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/21/index.html").make_preferred().string());
+//            TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/21/index.html").make_preferred().string());
 //    } else if (startpage == BBL_FILAMENT_ONLY) {
 //        SetTitle("");
-//        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/23/index.html").make_preferred().string());
+//        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/23/index.html").make_preferred().string());
 //    } else if (startpage == BBL_MODELS_ONLY) {
 //        SetTitle("");
-//        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/24/index.html").make_preferred().string());
+//        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/24/index.html").make_preferred().string());
 //    } else {
 //        SetTitle(_L("Setup Wizard"));
-//        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/21/index.html").make_preferred().string());
+//        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/21/index.html").make_preferred().string());
 //    }
 //
 //    wxString strlang = wxGetApp().current_language_code_safe();
@@ -274,13 +274,13 @@ wxString WebPresetDialog::SetStartPage(GuidePage startpage, bool load)
 {
     m_page = startpage;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" enter, load=%1%, start_page=%2%") % load % int(startpage);
-    // wxLogMessage("GUIDE: webpage_1  %s", (boost::filesystem::path(resources_dir()) /
+    // wxLogMessage("GUIDE: webpage_1  %s", (Slic3r::resources_dir_path() /
     // "web\\guide\\1\\index.html").make_preferred().string().c_str() );
-    wxString TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/1/index.html").make_preferred().string());
+    wxString TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/1/index.html").make_preferred().string());
     // wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
 
-    TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/preset_bind/24/index.html").make_preferred().string());
-    // TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/24/index.html").make_preferred().string());
+    TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/preset_bind/24/index.html").make_preferred().string());
+    // TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/24/index.html").make_preferred().string());
 
     wxString strlang = wxGetApp().current_language_code_safe();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", strlang=%1%") % into_u8(strlang);
@@ -1187,7 +1187,7 @@ int WebPresetDialog::LoadProfile()
         m_ProfileJson["process"]  = json::array();
 
         vendor_dir      = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR).make_preferred();
-        rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
+        rsrc_vendor_dir = (Slic3r::resources_dir_path() / "profiles").make_preferred();
 
         // BBS: add BBL as default
         // BBS: add json logic for vendor bundle
@@ -1360,14 +1360,18 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, const boost::files
 
             // wxString strCoverPath = wxString::Format("%s\\%s\\%s_cover.png", strFolder, strVendor, std::string(s1.mb_str()));
             std::string             cover_file = s1 + "_cover.png";
-            boost::filesystem::path cover_path = boost::filesystem::absolute(boost::filesystem::path(resources_dir()) / "/profiles/" /
+            boost::filesystem::path cover_path = boost::filesystem::absolute(Slic3r::resources_dir_path() / "/profiles/" /
                                                                              strVendor / cover_file)
                                                      .make_preferred();
             if (!boost::filesystem::exists(cover_path)) {
-                cover_path = (boost::filesystem::absolute(boost::filesystem::path(resources_dir()) / "/web/image/printer/") / cover_file)
+                cover_path = (boost::filesystem::absolute(Slic3r::resources_dir_path() / "/web/image/printer/") / cover_file)
                                  .make_preferred();
             }
+#ifdef WIN32
+            OneModel["cover"] = boost::nowide::narrow(cover_path.wstring());
+#else
             OneModel["cover"] = cover_path.string();
+#endif
 
             OneModel["nozzle_selected"] = "";
 

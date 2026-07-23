@@ -1172,8 +1172,8 @@ public:
 
     template<typename T>
     static T get_value_from_config(std::string type_str, std::string item){
-        std::string config_file = Slic3r::resources_dir() + "/printers/" + type_str + ".json";
-        boost::nowide::ifstream json_file(config_file.c_str());
+        auto config_path = Slic3r::resources_dir_path() / "printers" / (type_str + ".json");
+        boost::filesystem::ifstream json_file(config_path);
         try {
             json jj;
             if (json_file.is_open()) {

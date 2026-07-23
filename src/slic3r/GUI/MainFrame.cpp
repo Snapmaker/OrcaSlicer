@@ -4001,7 +4001,7 @@ void MainFrame::show_sync_dialog()
 void MainFrame::export_logs()
 {
     // 1. Get log folder path
-    auto log_folder = boost::filesystem::path(data_dir()) / "log";
+    auto log_folder = Slic3r::data_dir_path() / "log";
 
     // 2. Check if log folder exists
     if (!boost::filesystem::exists(log_folder) || boost::filesystem::is_empty(log_folder)) {

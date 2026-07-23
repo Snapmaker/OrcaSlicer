@@ -100,6 +100,8 @@ std::string var(const std::string &file_name);
 void set_resources_dir(const std::string &path);
 // Return a full path to the resources directory.
 const std::string& resources_dir();
+// UTF-8 resources_dir() as a boost::filesystem::path (Windows: native wide path; use for all file I/O under resources_dir).
+boost::filesystem::path resources_dir_path();
 
 //BBS: add temp dir
 void set_temporary_dir(const std::string &path);

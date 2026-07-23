@@ -67,7 +67,7 @@ namespace {
 
 	void write_used_binary(const std::vector<std::string>& ids)
 	{
-		boost::nowide::ofstream file((boost::filesystem::path(data_dir()) / "user" / "hints.cereal").string(), std::ios::binary);
+		boost::filesystem::ofstream file(Slic3r::data_dir_path() / "user" / "hints.cereal", std::ios::binary);
 		cereal::BinaryOutputArchive archive(file);
 		HintsCerealData cd{ ids };
 		try
@@ -81,12 +81,12 @@ namespace {
 	}
 	void read_used_binary(std::vector<std::string>& ids)
 	{
-		boost::filesystem::path path(boost::filesystem::path(data_dir()) / "user" / "hints.cereal");
+		boost::filesystem::path path(Slic3r::data_dir_path() / "user" / "hints.cereal");
 		if (!boost::filesystem::exists(path)) {
 			BOOST_LOG_TRIVIAL(warning) << "Failed to load to hints.cereal. File does not exists. " << path.string();
 			return;
 		}
-		boost::nowide::ifstream file(path.string());
+		boost::filesystem::ifstream file(path);
 		cereal::BinaryInputArchive archive(file);
 		HintsCerealData cd;
 		try
@@ -311,7 +311,7 @@ void HintDatabase::reinit()
 }
 void HintDatabase::init()
 {
-	load_hints_from_file(std::move(boost::filesystem::path(resources_dir()) / "data" / "hints.ini"));
+	load_hints_from_file(std::move(Slic3r::resources_dir_path() / "data" / "hints.ini"));
 	m_initialized = true;
 	init_random_hint_id();
 }
@@ -324,7 +324,7 @@ void HintDatabase::load_hints_from_file(const boost::filesystem::path& path)
 {
 	namespace pt = boost::property_tree;
 	pt::ptree tree;
-	boost::nowide::ifstream ifs(path.string());
+	boost::filesystem::ifstream ifs(path);
 	try {
 		pt::read_ini(ifs, tree);
 	}

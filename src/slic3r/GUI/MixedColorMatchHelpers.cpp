@@ -12,6 +12,7 @@
 #include <sstream>
 #include <mutex>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/convert.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/Utils.hpp"
 
@@ -904,13 +905,17 @@ static void load_filament_compatibility()
 
     try {
         // Prefer user data dir (where PresetUpdater deploys updates), fall back to bundled resources
-        const boost::filesystem::path user_path = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR
+        const boost::filesystem::path user_path = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR
                                                     / PresetBundle::SM_BUNDLE / "filament"
                                                     / "filament_compatibility.json").make_preferred();
-        const boost::filesystem::path rsrc_path = (boost::filesystem::path(Slic3r::resources_dir()) / "profiles"
+        const boost::filesystem::path rsrc_path = (Slic3r::resources_dir_path() / "profiles"
                                                     / PresetBundle::SM_BUNDLE / "filament"
                                                     / "filament_compatibility.json").make_preferred();
+#ifdef WIN32
+        const std::string path = boost::nowide::narrow((boost::filesystem::exists(user_path) ? user_path : rsrc_path).wstring());
+#else
         const std::string path = (boost::filesystem::exists(user_path) ? user_path : rsrc_path).string();
+#endif
 
         std::ifstream ifs(path);
         if (!ifs.is_open()) {

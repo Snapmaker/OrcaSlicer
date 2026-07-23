@@ -15,6 +15,7 @@
 
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
@@ -1430,13 +1431,25 @@ void AppConfig::reset_selections()
 std::string AppConfig::config_path()
 {
 #ifdef USE_JSON_CONFIG
+#ifdef WIN32
     std::string path = (m_mode == EAppMode::Editor) ?
-        (boost::filesystem::path(Slic3r::data_dir()) / (SLIC3R_APP_KEY ".conf")).make_preferred().string() :
-        (boost::filesystem::path(Slic3r::data_dir()) / (GCODEVIEWER_APP_KEY ".conf")).make_preferred().string();
+        boost::nowide::narrow((Slic3r::data_dir_path() / (SLIC3R_APP_KEY ".conf")).make_preferred().wstring()) :
+        boost::nowide::narrow((Slic3r::data_dir_path() / (GCODEVIEWER_APP_KEY ".conf")).make_preferred().wstring());
 #else
     std::string path = (m_mode == EAppMode::Editor) ?
-        (boost::filesystem::path(Slic3r::data_dir()) / (SLIC3R_APP_KEY ".ini")).make_preferred().string() :
-        (boost::filesystem::path(Slic3r::data_dir()) / (GCODEVIEWER_APP_KEY ".ini")).make_preferred().string();
+        (Slic3r::data_dir_path() / (SLIC3R_APP_KEY ".conf")).make_preferred().string() :
+        (Slic3r::data_dir_path() / (GCODEVIEWER_APP_KEY ".conf")).make_preferred().string();
+#endif
+#else
+#ifdef WIN32
+    std::string path = (m_mode == EAppMode::Editor) ?
+        boost::nowide::narrow((Slic3r::data_dir_path() / (SLIC3R_APP_KEY ".ini")).make_preferred().wstring()) :
+        boost::nowide::narrow((Slic3r::data_dir_path() / (GCODEVIEWER_APP_KEY ".ini")).make_preferred().wstring());
+#else
+    std::string path = (m_mode == EAppMode::Editor) ?
+        (Slic3r::data_dir_path() / (SLIC3R_APP_KEY ".ini")).make_preferred().string() :
+        (Slic3r::data_dir_path() / (GCODEVIEWER_APP_KEY ".ini")).make_preferred().string();
+#endif
 #endif
 
     return path;

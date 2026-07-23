@@ -194,8 +194,10 @@ namespace instance_check_internal
 		//BOOST_LOG_TRIVIAL(debug) << "shuting down with lockfile: " << l_created_lockfile;
 		if (s_created_lockfile)
 		{
-			std::string path = data_dir() + "/cache/" + GUI::wxGetApp().get_instance_hash_string() + ".lock";
-			if( remove( path.c_str() ) != 0 )
+			boost::filesystem::path path = Slic3r::data_dir_path() / "cache" / (GUI::wxGetApp().get_instance_hash_string() + ".lock");
+			boost::system::error_code ec;
+			boost::filesystem::remove(path, ec);
+			if (ec)
 	   			BOOST_LOG_TRIVIAL(error) << "Failed to delete lockfile " << path;
 	  		//else
 	    	//	BOOST_LOG_TRIVIAL(error) << "success delete lockfile " << path;
@@ -346,11 +348,11 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance)
 	if (! cla.should_send.has_value())
 		cla.should_send = app_config_single_instance;
 #ifdef _WIN32
-	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", data_dir() + "\\cache\\");
+	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", (Slic3r::data_dir_path() / "cache").string() + "\\");
 	if (cla.should_send.value() && GUI::wxGetApp().single_instance_checker()->IsAnotherRunning()) {
 #else // mac & linx
 	// get_lock() creates the lockfile therefore *cla.should_send is checked after
-	if (instance_check_internal::get_lock(lock_name + ".lock", data_dir() + "/cache/") && *cla.should_send) {
+	if (instance_check_internal::get_lock(lock_name + ".lock", (Slic3r::data_dir_path() / "cache").string() + "/") && *cla.should_send) {
 #endif
 		instance_check_internal::send_message(cla.cl_string, lock_name);
 		BOOST_LOG_TRIVIAL(error) << "Instance check: Another instance found. This instance will terminate. Lock file of current running instance is located at " << data_dir() << 
@@ -529,7 +531,7 @@ void OtherInstanceMessageHandler::handle_message(const std::string& message)
 #ifdef __APPLE__
 void OtherInstanceMessageHandler::handle_message_other_closed() 
 {
-	instance_check_internal::get_lock(wxGetApp().get_instance_hash_string() + ".lock", data_dir() + "/cache/");
+	instance_check_internal::get_lock(wxGetApp().get_instance_hash_string() + ".lock", (Slic3r::data_dir_path() / "cache").string() + "/");
 }
 #endif //__APPLE__
 

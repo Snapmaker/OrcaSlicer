@@ -8646,7 +8646,7 @@ void Sidebar::update_printer_thumbnail()
     }
     png_name += "_cover.png";
 
-    boost::filesystem::path(resources_dir()) / "profile" / vendor / png_name;
+    Slic3r::resources_dir_path() / "profile" / vendor / png_name;
     std::string printer_type    = selected_preset.get_current_printer_type(preset_bundle);
 
     try {
@@ -17184,17 +17184,17 @@ void Plater::calib_flowrate(bool is_linear, int pass) {
     if (is_linear) {
         if (pass == 1)
             add_model(false,
-                      (boost::filesystem::path(Slic3r::resources_dir()) / "calib" / "filament_flow" / "Orca-LinearFlow.3mf").string());
+                      boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "Orca-LinearFlow.3mf").wstring()));
         else
             add_model(false,
-                      (boost::filesystem::path(Slic3r::resources_dir()) / "calib" / "filament_flow" / "Orca-LinearFlow_fine.3mf").string());
+                      boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "Orca-LinearFlow_fine.3mf").wstring()));
     } else {
         if (pass == 1)
             add_model(false,
-                      (boost::filesystem::path(Slic3r::resources_dir()) / "calib" / "filament_flow" / "flowrate-test-pass1.3mf").string());
+                      boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "flowrate-test-pass1.3mf").wstring()));
         else
             add_model(false,
-                      (boost::filesystem::path(Slic3r::resources_dir()) / "calib" / "filament_flow" / "flowrate-test-pass2.3mf").string());
+                      boost::nowide::narrow((Slic3r::resources_dir_path() / "calib" / "filament_flow" / "flowrate-test-pass2.3mf").wstring()));
     }
 
     adjust_settings_for_flowrate_calib(model().objects, is_linear, pass);

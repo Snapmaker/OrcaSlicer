@@ -457,8 +457,9 @@ std::string MachineObject::get_printer_thumbnail_img_str()
     std::string img_url;
 
     if (!img_str.empty()) {
-        img_url =  Slic3r::resources_dir() + "\\printers\\image\\" + img_str;
-        if (fs::exists(img_url + ".svg")) {
+        auto img_path = Slic3r::resources_dir_path() / "printers" / "image" / img_str;
+        if (fs::exists(Slic3r::resources_dir_path() / "printers" / "image" / (img_str + ".svg"))) {
+            img_url = boost::nowide::narrow(img_path.wstring());
             return img_url;
         }
         else {
@@ -6815,8 +6816,8 @@ std::vector<std::string> DeviceManager::get_resolution_supported(std::string typ
 {
     std::vector<std::string> resolution_supported;
 
-    std::string config_file = Slic3r::resources_dir() + "/printers/" + type_str + ".json";
-    boost::nowide::ifstream json_file(config_file.c_str());
+    auto config_path = Slic3r::resources_dir_path() / "printers" / (type_str + ".json");
+    boost::filesystem::ifstream json_file(config_path);
     try {
         json jj;
         if (json_file.is_open()) {
@@ -6837,8 +6838,8 @@ std::vector<std::string> DeviceManager::get_resolution_supported(std::string typ
 std::vector<std::string> DeviceManager::get_compatible_machine(std::string type_str)
 {
     std::vector<std::string> compatible_machine;
-    std::string config_file = Slic3r::resources_dir() + "/printers/" + type_str + ".json";
-    boost::nowide::ifstream json_file(config_file.c_str());
+    auto config_path = Slic3r::resources_dir_path() / "printers" / (type_str + ".json");
+    boost::filesystem::ifstream json_file(config_path);
     try {
         json jj;
         if (json_file.is_open()) {
@@ -6861,7 +6862,8 @@ boost::bimaps::bimap<std::string, std::string> DeviceManager::get_all_model_id_w
     boost::bimaps::bimap<std::string, std::string> models;
     std::vector<wxString> m_files;
 
-    wxDir dir(Slic3r::resources_dir() + "/printers/");
+    auto printers_dir = Slic3r::resources_dir_path() / "printers";
+    wxDir dir(printers_dir.wstring());
     if (!dir.IsOpened()) {
         return models;
     }
@@ -6876,8 +6878,8 @@ boost::bimaps::bimap<std::string, std::string> DeviceManager::get_all_model_id_w
     for (wxString file : m_files) {
         if (!file.Lower().ends_with(".json")) continue;
 
-        std::string config_file = Slic3r::resources_dir() + "/printers/" + file.ToStdString();
-        boost::nowide::ifstream json_file(config_file.c_str());
+        auto config_path = Slic3r::resources_dir_path() / "printers" / file.ToStdString();
+        boost::filesystem::ifstream json_file(config_path);
 
         try {
             json jj;
@@ -6906,8 +6908,8 @@ bool DeviceManager::load_filaments_blacklist_config()
 {
     filaments_blacklist = json::object();
 
-    std::string config_file = Slic3r::resources_dir() + "/printers/filaments_blacklist.json";
-    boost::nowide::ifstream json_file(config_file.c_str());
+    auto config_path = Slic3r::resources_dir_path() / "printers" / "filaments_blacklist.json";
+    boost::filesystem::ifstream json_file(config_path);
 
     try {
         if (json_file.is_open()) {
@@ -6915,11 +6917,11 @@ bool DeviceManager::load_filaments_blacklist_config()
             return true;
         }
         else {
-            BOOST_LOG_TRIVIAL(error) << "load filaments blacklist config failed, file = " << config_file;
+            BOOST_LOG_TRIVIAL(error) << "load filaments blacklist config failed, file = " << config_path;
         }
     }
     catch (...) {
-        BOOST_LOG_TRIVIAL(error) << "load filaments blacklist config failed, file = " << config_file;
+        BOOST_LOG_TRIVIAL(error) << "load filaments blacklist config failed, file = " << config_path;
         return false;
     }
     return true;
@@ -6993,8 +6995,8 @@ void DeviceManager::check_filaments_in_blacklist(std::string tag_vendor, std::st
 
 std::string DeviceManager::load_gcode(std::string type_str, std::string gcode_file)
 {
-    std::string gcode_full_path = Slic3r::resources_dir() + "/printers/" + gcode_file;
-    std::ifstream gcode(encode_path(gcode_full_path.c_str()).c_str());
+    auto gcode_path = Slic3r::resources_dir_path() / "printers" / gcode_file;
+    boost::filesystem::ifstream gcode(gcode_path);
     try {
         std::stringstream gcode_str;
         if (gcode.is_open()) {
@@ -7003,7 +7005,7 @@ std::string DeviceManager::load_gcode(std::string type_str, std::string gcode_fi
             return gcode_str.str();
         }
     } catch(...) {
-        BOOST_LOG_TRIVIAL(error) << "load gcode file failed, file = " << gcode_file << ", path = " << gcode_full_path;
+        BOOST_LOG_TRIVIAL(error) << "load gcode file failed, file = " << gcode_file << ", path = " << gcode_path;
     }
 
 

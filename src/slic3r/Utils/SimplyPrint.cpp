@@ -102,7 +102,11 @@ static bool should_open_in_external_browser()
 
 SimplyPrint::SimplyPrint(DynamicPrintConfig* config)
 {
-    cred_file = (boost::filesystem::path(data_dir()) / OAUTH_CREDENTIAL_PATH).make_preferred().string();
+#ifdef WIN32
+    cred_file = boost::nowide::narrow((Slic3r::data_dir_path() / OAUTH_CREDENTIAL_PATH).make_preferred().wstring());
+#else
+    cred_file = (Slic3r::data_dir_path() / OAUTH_CREDENTIAL_PATH).make_preferred().string();
+#endif
     load_oauth_credential();
 }
 

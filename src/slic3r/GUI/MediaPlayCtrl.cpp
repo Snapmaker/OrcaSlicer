@@ -461,14 +461,14 @@ void MediaPlayCtrl::TogglePlay()
 
 void MediaPlayCtrl::ToggleStream()
 {
-    std::string file_url = data_dir() + "/cameratools/url.txt";
+    auto file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
     if (m_streaming) {
-        boost::nowide::ofstream file(file_url);
+        boost::filesystem::ofstream file(file_url);
         file.close();
         m_streaming = false;
         return;
     } else if (!boost::filesystem::exists(file_url)) {
-        boost::nowide::ofstream file(file_url);
+        boost::filesystem::ofstream file(file_url);
         file.close();
     }
     std::string url;
@@ -526,8 +526,8 @@ void MediaPlayCtrl::ToggleStream()
         url += "&device=" + into_u8(m_machine);
         url += "&dev_ver=" + m_dev_ver;
         BOOST_LOG_TRIVIAL(info) << "MediaPlayCtrl::ToggleStream: " << hide_passwd(hide_id_middle_string(url, url.find(m_lan_ip), m_lan_ip.length()), {m_lan_passwd});
-        std::string             file_url = data_dir() + "/cameratools/url.txt";
-        boost::nowide::ofstream file(file_url);
+        auto                    file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
+        boost::filesystem::ofstream file(file_url);
         auto                    url2 = encode_path(url.c_str());
         file.write(url2.c_str(), url2.size());
         file.close();
@@ -555,8 +555,8 @@ void MediaPlayCtrl::ToggleStream()
                     .ShowModal();
                 return;
             }
-            std::string             file_url = data_dir() + "/cameratools/url.txt";
-            boost::nowide::ofstream file(file_url);
+            auto                    file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
+            boost::filesystem::ofstream file(file_url);
             auto                    url2 = encode_path(url.c_str());
             file.write(url2.c_str(), url2.size());
             file.close();
@@ -652,12 +652,12 @@ void MediaPlayCtrl::load()
     m_last_state = MEDIASTATE_LOADING;
     SetStatus(_L("Loading..."));
     if (wxGetApp().app_config->get("internal_developer_mode") == "true") {
-        std::string file_h264 = data_dir() + "/video.h264";
-        std::string file_info = data_dir() + "/video.info";
+        auto file_h264 = Slic3r::data_dir_path() / "video.h264";
+        auto file_info = Slic3r::data_dir_path() / "video.info";
         BOOST_LOG_TRIVIAL(info) << "MediaPlayCtrl dump video to " << file_h264;
         // closed by BambuSource
-        FILE *dump_h264_file = boost::nowide::fopen(file_h264.c_str(), "wb");
-        FILE *dump_info_file = boost::nowide::fopen(file_info.c_str(), "wb");
+        FILE *dump_h264_file = boost::nowide::fopen(boost::nowide::narrow(file_h264.wstring()).c_str(), "wb");
+        FILE *dump_info_file = boost::nowide::fopen(boost::nowide::narrow(file_info.wstring()).c_str(), "wb");
         m_url                = m_url + "&dump_h264=" + boost::lexical_cast<std::string>(dump_h264_file);
         m_url                = m_url + "&dump_info=" + boost::lexical_cast<std::string>(dump_info_file);
     }
@@ -721,12 +721,12 @@ void MediaPlayCtrl::media_proc()
 bool MediaPlayCtrl::start_stream_service(bool *need_install)
 {
 #ifdef __WIN32__
-    auto tools_dir = boost::nowide::widen(data_dir())  + L"\\cameratools\\";
+    auto tools_dir = (Slic3r::data_dir_path() / "cameratools").wstring() + L"\\";
     auto file_source = tools_dir + L"bambu_source.exe";
     auto file_ffmpeg = tools_dir + L"ffmpeg.exe";
     auto file_ff_cfg = tools_dir + L"ffmpeg.cfg";
 #else
-    auto tools_dir   = data_dir() + "/cameratools/";
+    auto tools_dir   = (Slic3r::data_dir_path() / "cameratools").string() + "/";
     auto file_source = tools_dir + "bambu_source";
     auto file_ffmpeg = tools_dir + "ffmpeg";
     auto file_ff_cfg = tools_dir + "ffmpeg.cfg";
@@ -735,12 +735,12 @@ bool MediaPlayCtrl::start_stream_service(bool *need_install)
         if (need_install) *need_install = true;
         return false;
     }
-    std::string file_url  = data_dir() + "/cameratools/url.txt";
+    auto file_url  = Slic3r::data_dir_path() / "cameratools" / "url.txt";
     if (!boost::filesystem::exists(file_url)) {
-        boost::nowide::ofstream file(file_url);
+        boost::filesystem::ofstream file(file_url);
         file.close();
     }
-    wxString file_url2 = L"bambu:///camera/" + from_u8(file_url);
+    wxString file_url2 = L"bambu:///camera/" + from_u8(boost::nowide::narrow(file_url.wstring()));
     file_url2.Replace("\\", "/");
     file_url2 = wxURI(file_url2).BuildURI();
     try {
@@ -750,9 +750,9 @@ bool MediaPlayCtrl::start_stream_service(bool *need_install)
         boost::algorithm::split(configss, configs, boost::algorithm::is_any_of("\r\n"));
         configss.erase(std::remove(configss.begin(), configss.end(), std::string()), configss.end());
         boost::process::pipe intermediate;
-        boost::filesystem::path start_dir(boost::filesystem::path(data_dir()) / "plugins");
+        boost::filesystem::path start_dir(Slic3r::data_dir_path() / "plugins");
 #ifdef __WXMSW__
-        auto plugins_dir = boost::nowide::widen(data_dir()) + L"\\plugins\\";
+        auto plugins_dir = (Slic3r::data_dir_path() / "plugins").wstring() + L"\\";
         for (auto dll : {L"BambuSource.dll", L"live555.dll"}) {
             auto file_dll  = tools_dir + dll;
             auto file_dll2 = plugins_dir + dll;
@@ -795,8 +795,8 @@ bool MediaPlayCtrl::get_stream_url(std::string *url)
     }
     CloseHandle(shm);
 #else
-    std::string file_url = data_dir() + "/cameratools/url.txt";
-    key_t key = ::ftok(file_url.c_str(), 1000);
+    auto file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
+    key_t key = ::ftok(file_url.string().c_str(), 1000);
     int shm = ::shmget(key, 1024, 0);
     if (shm == -1) return false;
     struct shmid_ds ds;

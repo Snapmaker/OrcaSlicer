@@ -15,6 +15,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/iostream.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <boost/filesystem/fstream.hpp>
 
 using namespace std;
 using json = nlohmann::json;
@@ -89,8 +90,8 @@ bool json_diff::load_compatible_settings(std::string const &type, std::string co
         printer_version = version2;
     }
     settings_base.clear();
-    std::string config_file = Slic3r::data_dir() + "/printers/" + printer_type + ".json";
-    boost::nowide::ifstream json_file(config_file.c_str());
+    boost::filesystem::path config_file = Slic3r::data_dir_path() / "printers" / (printer_type + ".json");
+    boost::filesystem::ifstream json_file(config_file);
     try {
         json versions;
         if (json_file.is_open()) {
@@ -104,10 +105,10 @@ bool json_diff::load_compatible_settings(std::string const &type, std::string co
                 diff2all_base_reset(full_message);
             return true;
         } else {
-            BOOST_LOG_TRIVIAL(error) << "load_compatible_settings failed, file = " << config_file;
+            BOOST_LOG_TRIVIAL(error) << "load_compatible_settings failed, file = " << config_file.string();
         }
     } catch (...) {
-        BOOST_LOG_TRIVIAL(error) << "load_compatible_settings failed, file = " << config_file;
+        BOOST_LOG_TRIVIAL(error) << "load_compatible_settings failed, file = " << config_file.string();
     }
     return false;
 }

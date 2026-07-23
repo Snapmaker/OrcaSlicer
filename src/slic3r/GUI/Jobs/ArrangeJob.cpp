@@ -502,7 +502,7 @@ void ArrangeJob::check_unprintable()
         if (it->poly.area() < 0.001 || it->height>params.printable_height)
         {
 #if SAVE_ARRANGE_POLY
-            SVG svg(data_dir() + "/SVG/arrange_unprintable_"+it->name+".svg", get_extents(it->poly));
+            SVG svg((data_dir_path() / "SVG" / ("arrange_unprintable_" + it->name + ".svg")).string(), get_extents(it->poly));
             if (svg.is_opened())
                 svg.draw_outline(it->poly);
 #endif

@@ -3351,12 +3351,11 @@ std::string concat(std::vector<wxString> data) {
 }
 
 boost::filesystem::path get_fontlist_cache_path(){
-    return boost::filesystem::path(data_dir()) / "cache" / "fonts.cereal";
+    return Slic3r::data_dir_path() / "cache" / "fonts.cereal";
 }
 
 bool store(const Facenames &facenames) {
-    std::string cache_path = get_fontlist_cache_path().string();
-    boost::nowide::ofstream file(cache_path, std::ios::binary);
+    boost::filesystem::ofstream file(get_fontlist_cache_path(), std::ios::binary);
     ::cereal::BinaryOutputArchive archive(file);
     std::vector<wxString> good;
     good.reserve(facenames.faces.size());
@@ -3369,7 +3368,7 @@ bool store(const Facenames &facenames) {
     try {
         archive(data);
     } catch (const std::exception &ex) {
-        BOOST_LOG_TRIVIAL(error) << "Failed to write fontlist cache - " << cache_path << ex.what();
+        BOOST_LOG_TRIVIAL(error) << "Failed to write fontlist cache - " << get_fontlist_cache_path() << ex.what();
         return false;
     }
     return true;
@@ -3382,7 +3381,7 @@ bool load(Facenames &facenames) {
         BOOST_LOG_TRIVIAL(warning) << "Fontlist cache - '" << path_str << "' does not exists.";
         return false;
     }
-    boost::nowide::ifstream file(path_str, std::ios::binary);
+    boost::filesystem::ifstream file(path, std::ios::binary);
     cereal::BinaryInputArchive archive(file);
     
     FacenamesSerializer data;

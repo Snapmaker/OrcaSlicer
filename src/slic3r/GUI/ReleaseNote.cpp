@@ -298,14 +298,18 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
         
     });
 
-	fs::path ph(data_dir());
+	fs::path ph(Slic3r::data_dir_path());
 	ph /= "resources/tooltip/releasenote.html";
 	if (!fs::exists(ph)) {
-		ph = fs::path(resources_dir()) / "tooltip/releasenote.html";
+		ph = Slic3r::resources_dir_path() / "tooltip/releasenote.html";
 	}
 	// Make absolute to get proper "C:/..." prefix for file:// URL
 	ph = fs::absolute(ph);
+#ifdef WIN32
+	auto url = boost::nowide::narrow(ph.wstring());
+#else
 	auto url = ph.string();
+#endif
 	std::replace(url.begin(), url.end(), '\\', '/');
 	url = "file:///" + url;
     m_vebview_release_note->LoadURL(from_u8(url));

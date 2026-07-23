@@ -121,7 +121,7 @@ BundleMap BundleMap::load()
 
     //BBS: change directories by design
     const auto vendor_dir = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR).make_preferred();
-    const auto rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
+    const auto rsrc_vendor_dir = (Slic3r::resources_dir_path() / "profiles").make_preferred();
 
     // SM_FEATURE
     auto sm_bundle_path = (vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");

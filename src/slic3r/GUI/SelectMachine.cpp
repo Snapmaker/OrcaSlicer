@@ -2947,9 +2947,8 @@ bool SelectMachineDialog::is_show_timelapse()
     PartPlate *plate      = m_plater->get_partplate_list().get_curr_plate();
     fs::path   gcode_path = plate->get_tmp_gcode_path();
 
-    std::string   line;
-    std::ifstream gcode_file;
-    gcode_file.open(gcode_path.string());
+    std::string              line;
+    boost::filesystem::ifstream gcode_file(gcode_path);
     if (gcode_file.fail()) {
     } else {
         bool is_version = false;

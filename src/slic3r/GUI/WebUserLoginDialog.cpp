@@ -390,7 +390,11 @@ void ZUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))
 
 bool  ZUserLogin::ShowErrorPage()
 {
-    wxString ErrortUrl = from_u8((boost::filesystem::path(resources_dir()) / "web\\login\\error.html").make_preferred().string());
+#ifdef WIN32
+    wxString ErrortUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web\\login\\error.html").make_preferred().wstring()));
+#else
+    wxString ErrortUrl = from_u8((Slic3r::resources_dir_path() / "web\\login\\error.html").make_preferred().string());
+#endif
     load_url(ErrortUrl);
 
     return true;

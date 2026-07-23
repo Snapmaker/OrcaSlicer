@@ -416,10 +416,18 @@ void SMUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))
 
 bool  SMUserLogin::ShowErrorPage()
 {
-    wxString ErrorUrl = from_u8((boost::filesystem::path(resources_dir()) / "web\\login\\error.html").make_preferred().string());
+#ifdef WIN32
+    wxString ErrorUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web\\login\\error.html").make_preferred().wstring()));
+#else
+    wxString ErrorUrl = from_u8((Slic3r::resources_dir_path() / "web\\login\\error.html").make_preferred().string());
+#endif
     wxString strlang   = wxGetApp().current_language_code_safe();
     if (strlang != "")
-        ErrorUrl = wxString::Format("file://%s/web/login/error.html?lang=%s", from_u8(resources_dir()), strlang);
+#ifdef WIN32
+        ErrorUrl = wxString::Format("file://%s/web/login/error.html?lang=%s", from_u8(boost::nowide::narrow(Slic3r::resources_dir_path().wstring())), strlang);
+#else
+        ErrorUrl = wxString::Format("file://%s/web/login/error.html?lang=%s", from_u8(Slic3r::resources_dir_path().string()), strlang);
+#endif
     load_url(ErrorUrl);
 
     return true;

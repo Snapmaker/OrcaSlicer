@@ -216,19 +216,19 @@ wxString GuideFrame::SetStartPage(GuidePage startpage, bool load)
 {
     m_page = startpage;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(" enter, load=%1%, start_page=%2%")%load%int(startpage);
-    //wxLogMessage("GUIDE: webpage_1  %s", (boost::filesystem::path(resources_dir()) / "web\\guide\\1\\index.html").make_preferred().string().c_str() );
-    wxString TargetUrl = from_u8( (boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=1").make_preferred().string() );
+    //wxLogMessage("GUIDE: webpage_1  %s", (Slic3r::resources_dir_path() / "web\\guide\\1\\index.html").make_preferred().string().c_str() );
+    wxString TargetUrl = from_u8( (Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().string() );
     //wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
 
     if (startpage == BBL_WELCOME){
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=1").make_preferred().string());
+        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().string());
     } else if (startpage == BBL_REGION) {
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=11").make_preferred().string());
+        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=11").make_preferred().string());
     } else if (startpage == BBL_MODELS) {
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=21").make_preferred().string());
+        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().string());
     } else if (startpage == BBL_FILAMENTS) {
         SetTitle(_L("Setup Wizard"));
 
@@ -239,19 +239,19 @@ wxString GuideFrame::SetStartPage(GuidePage startpage, bool load)
         }
 
         if (nSize>0)
-            TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=22").make_preferred().string());
+            TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=22").make_preferred().string());
         else
-            TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=21").make_preferred().string());
+            TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().string());
     } else if (startpage == BBL_FILAMENT_ONLY) {
         SetTitle("");
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=23").make_preferred().string());
+        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=23").make_preferred().string());
     } else if (startpage == BBL_MODELS_ONLY) {
         SetTitle("");
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=24").make_preferred().string());
+        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=24").make_preferred().string());
     }
     else {
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=21").make_preferred().string());
+        TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().string());
     }
 
     wxString strlang = wxGetApp().current_language_code_safe();
@@ -1029,7 +1029,7 @@ int GuideFrame::LoadProfileData()
         m_ProfileJson["process"]  = json::array();
 
         vendor_dir      = (Slic3r::data_dir_path() / PRESET_SYSTEM_DIR).make_preferred();
-        rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
+        rsrc_vendor_dir = (Slic3r::resources_dir_path() / "profiles").make_preferred();
 
         // Orca: add custom as default
         // Orca: add json logic for vendor bundle
@@ -1254,14 +1254,18 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, const boost::filesystem
 
             // wxString strCoverPath = wxString::Format("%s\\%s\\%s_cover.png", strFolder, strVendor, std::string(s1.mb_str()));
             std::string             cover_file = s1 + "_cover.png";
-            boost::filesystem::path cover_path = boost::filesystem::absolute(boost::filesystem::path(resources_dir()) / "/profiles/" / strVendor / cover_file).make_preferred();
+            boost::filesystem::path cover_path = boost::filesystem::absolute(Slic3r::resources_dir_path() / "/profiles/" / strVendor / cover_file).make_preferred();
             if (!boost::filesystem::exists(cover_path)) {
                 cover_path =
-                    (boost::filesystem::absolute(boost::filesystem::path(resources_dir()) / "/web/image/printer/") /
+                    (boost::filesystem::absolute(Slic3r::resources_dir_path() / "/web/image/printer/") /
                      cover_file)
                         .make_preferred();
             }
+#ifdef WIN32
+            OneModel["cover"]                  = boost::nowide::narrow(cover_path.wstring());
+#else
             OneModel["cover"]                  = cover_path.string();
+#endif
 
             OneModel["nozzle_selected"] = "";
 

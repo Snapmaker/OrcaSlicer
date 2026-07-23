@@ -1013,7 +1013,11 @@ void PresetUpdater::priv::sync_update_flutter_resource(bool isAuto_check)
             auto reservedData2        = dataObj.value("reserved_2", "");
 
             auto        localProfilesjson    = cache_path / "flutter_web/version.json";
-            std::string json_path            = data_dir() + "/web/flutter_web/version.json";
+#ifdef WIN32
+            std::string json_path            = boost::nowide::narrow((boost::filesystem::path(boost::nowide::widen(data_dir())) / "web" / "flutter_web" / "version.json").wstring());
+#else
+            std::string json_path            = (boost::filesystem::path(data_dir()) / "web" / "flutter_web" / "version.json").string();
+#endif
             // Use a unique filename per version to avoid deleting a zip that may still be in use (Windows file locks / concurrent UI import).
             std::string fileName             = (cache_profile_path / ("flutter_web_" + fileVersion + ".zip")).string();
             Semver      currentPresetVersion = get_version_from_json(json_path);
@@ -1145,7 +1149,11 @@ void PresetUpdater::priv::sync_config(bool isAuto_check)
                 currentPresetVersion =
                     GUI::wxGetApp().preset_bundle->get_vendor_profile_version(PresetBundle::SM_BUNDLE);
             else
-                currentPresetVersion = get_version_from_json(data_dir() + "/system/Snapmaker.json");
+#ifdef WIN32
+                currentPresetVersion = get_version_from_json(boost::nowide::narrow((boost::filesystem::path(boost::nowide::widen(data_dir())) / "system" / "Snapmaker.json").wstring()));
+#else
+                currentPresetVersion = get_version_from_json((boost::filesystem::path(data_dir()) / "system" / "Snapmaker.json").string());
+#endif
 
             std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
 
@@ -1243,7 +1251,11 @@ void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string languag
     try {
         std::string common_version = "00.00.00.00";
         std::string language_version = "00.00.00.00";
+#ifdef WIN32
+        fs::path cache_root = fs::path(boost::nowide::widen(data_dir())) / "resources/tooltip";
+#else
         fs::path cache_root = fs::path(data_dir()) / "resources/tooltip";
+#endif
         try {
             auto vf = cache_root / "common" / "version";
             if (fs::exists(vf)) Slic3r::load_string_file(vf, common_version);
@@ -1271,8 +1283,11 @@ void PresetUpdater::priv::sync_tooltip(std::string http_url, std::string languag
 // return true means there are plugins files
 bool PresetUpdater::priv::get_cached_plugins_version(std::string& cached_version, bool &force)
 {
-    std::string data_dir_str = data_dir();
-    boost::filesystem::path data_dir_path(data_dir_str);
+#ifdef WIN32
+    boost::filesystem::path data_dir_path(boost::nowide::widen(data_dir()));
+#else
+    boost::filesystem::path data_dir_path(data_dir());
+#endif
     auto cache_folder = data_dir_path / "ota";
     std::string network_library, player_library, live555_library;
     bool has_plugins = false;
@@ -1357,8 +1372,11 @@ void PresetUpdater::priv::sync_plugins(std::string http_url, std::string plugin_
         }
 
         if (need_delete_cache) {
-            std::string data_dir_str = data_dir();
-            boost::filesystem::path data_dir_path(data_dir_str);
+#if defined(_MSC_VER) || defined(_WIN32)
+            boost::filesystem::path data_dir_path(boost::nowide::widen(data_dir()));
+#else
+            boost::filesystem::path data_dir_path(data_dir());
+#endif
             auto cache_folder = data_dir_path / "ota";
 
 #if defined(_MSC_VER) || defined(_WIN32)
@@ -1471,8 +1489,11 @@ void PresetUpdater::priv::sync_printer_config(std::string http_url)
     std::string using_version = curr_version.substr(0, 6) + "00.00";
 
     std::string cached_version;
-    std::string data_dir_str = data_dir();
-    boost::filesystem::path data_dir_path(data_dir_str);
+#ifdef WIN32
+    boost::filesystem::path data_dir_path(boost::nowide::widen(data_dir()));
+#else
+    boost::filesystem::path data_dir_path(data_dir());
+#endif
     auto                    config_folder = data_dir_path / "printers";
     auto                    cache_folder = data_dir_path / "ota" / "printers";
 
@@ -1660,9 +1681,13 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
 
 Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
 {
-    std::string             data_dir_str = data_dir();
-    boost::filesystem::path data_dir_path(data_dir_str);
+#ifdef WIN32
+    boost::filesystem::path data_dir_path(boost::nowide::widen(data_dir()));
+    boost::filesystem::path resc_dir_path(boost::nowide::widen(resources_dir()));
+#else
+    boost::filesystem::path data_dir_path(data_dir());
     boost::filesystem::path resc_dir_path(resources_dir());
+#endif
     auto                    config_folder = data_dir_path / "printers";
     auto                    resc_folder   = (update ? cache_path : resc_dir_path) / "printers";
     std::string             curr_version;
@@ -2202,7 +2227,11 @@ void PresetUpdater::load_flutter_web(const std::string& resource_path, bool serv
         std::string ori_version_str      = "0";
         std::string ori_build_number_str = "0";
 
+#ifdef WIN32
+        auto ori_version_file = boost::filesystem::path(boost::nowide::widen(data_dir())) / "web" / "flutter_web" / "version.json";
+#else
         auto                        ori_version_file = boost::filesystem::path(data_dir()) / "web" / "flutter_web" / "version.json";
+#endif
         boost::property_tree::ptree ori_config;
         boost::property_tree::read_json(ori_version_file.string(), ori_config);
         ori_version_str      = ori_config.get<std::string>("version", "0");
@@ -2220,7 +2249,11 @@ void PresetUpdater::load_flutter_web(const std::string& resource_path, bool serv
 
             if (current_version < online_version) {
                 auto source_folder_path = flutter_root;
+#ifdef WIN32
+                auto target_folder_path = (boost::filesystem::path(boost::nowide::widen(data_dir())) / "web" / "flutter_web");
+#else
                 auto target_folder_path = (boost::filesystem::path(data_dir()) / "web" / "flutter_web");
+#endif
 
                 Version version;
                 version.config_version = online_version;

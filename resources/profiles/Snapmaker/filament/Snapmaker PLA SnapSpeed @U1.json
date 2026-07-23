@@ -26,9 +26,7 @@
     "adaptive_pressure_advance_overhangs": [
         "0"
     ],
-    "additional_cooling_fan_speed": [
-        "70"
-    ],
+    "additional_cooling_fan_speed": ["70", "70"],
     "chamber_temperature": [
         "0"
     ],
@@ -56,9 +54,7 @@
     "enable_overhang_bridge_fan": [
         "1"
     ],
-    "enable_pressure_advance": [
-        "0"
-    ],
+    "enable_pressure_advance": ["0", "1"],
     "eng_plate_temp": [
         "60"
     ],
@@ -68,12 +64,8 @@
     "fan_cooling_layer_time": [
         "100"
     ],
-    "fan_max_speed": [
-        "100"
-    ],
-    "fan_min_speed": [
-        "100"
-    ],
+    "fan_max_speed": ["100", "100"],
+    "fan_min_speed": ["100", "100"],
     "filament_cooling_final_speed": [
         "3.5"
     ],
@@ -98,9 +90,7 @@
     "filament_end_gcode": [
         "; filament end gcode \n"
     ],
-    "filament_flow_ratio": [
-        "0.966"
-    ],
+    "filament_flow_ratio": ["0.966", "0.966"],
     "filament_is_support": [
         "0"
     ],
@@ -113,21 +103,11 @@
     "filament_long_retractions_when_cut": [
         "nil"
     ],
-    "filament_max_volumetric_speed": [
-        "20"
-    ],
-    "filament_minimal_purge_on_wipe_tower": [
-        "15"
-    ],
-    "filament_multitool_ramming": [
-        "1"
-    ],
-    "filament_multitool_ramming_flow": [
-        "30"
-    ],
-    "filament_multitool_ramming_volume": [
-        "5"
-    ],
+    "filament_max_volumetric_speed": ["20", "40"],
+    "filament_minimal_purge_on_wipe_tower": ["15", "15"],
+    "filament_multitool_ramming": ["1", "1"],
+    "filament_multitool_ramming_flow": ["30", "40"],
+    "filament_multitool_ramming_volume": ["5", "5"],
     "filament_notes": [
         ""
     ],
@@ -155,9 +135,7 @@
     "filament_retraction_distances_when_cut": [
         "nil"
     ],
-    "filament_retraction_length": [
-        "1.2"
-    ],
+    "filament_retraction_length": ["1.2", "1.2"],
     "filament_retraction_minimum_travel": [
         "nil"
     ],
@@ -206,9 +184,7 @@
     "filament_z_hop": [
         "0.4"
     ],
-    "filament_z_hop_types": [
-        "Slope Lift"
-    ],
+    "filament_z_hop_types": ["Slope Lift", "Slope Lift"],
     "full_fan_speed_layer": [
         "0"
     ],
@@ -221,12 +197,8 @@
     "idle_temperature": [
         "0"
     ],
-    "nozzle_temperature": [
-        "220"
-    ],
-    "nozzle_temperature_initial_layer": [
-        "220"
-    ],
+    "nozzle_temperature": ["220", "220"],
+    "nozzle_temperature_initial_layer": ["220", "220"],
     "nozzle_temperature_range_high": [
         "240"
     ],
@@ -242,9 +214,7 @@
     "pellet_flow_coefficient": [
         "0.4157"
     ],
-    "pressure_advance": [
-        "0.02"
-    ],
+    "pressure_advance": ["0.02", "0.024"],
     "reduce_fan_stop_start_freq": [
         "1"
     ],
@@ -278,13 +248,12 @@
     "textured_plate_temp_initial_layer": [
         "65"
     ],
-    "filament_retract_length_toolchange": [
-        "5"
-    ],
+    "filament_retract_length_toolchange": ["5", "5"],
     "graphic_effect_plate_temp": [
         "65"
     ],
     "graphic_effect_plate_temp_initial_layer": [
         "65"
-    ]
+    ],
+    "filament_flow_support": ["standard", "high_flow"]
 }

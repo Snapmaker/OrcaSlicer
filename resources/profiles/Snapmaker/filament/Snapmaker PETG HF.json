@@ -8,9 +8,7 @@
     "fan_cooling_layer_time": [
         "20"
     ],
-    "fan_min_speed": [
-        "20"
-    ],
+    "fan_min_speed": ["20", "30"],
     "overhang_fan_speed": [
         "100"
     ],
@@ -23,27 +21,15 @@
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
     ],
-    "enable_pressure_advance": [
-        "0"
-    ],
+    "enable_pressure_advance": ["0", "1"],
     "filament_end_gcode": [
         ""
     ],
-    "filament_max_volumetric_speed": [
-        "20"
-    ],
-    "filament_minimal_purge_on_wipe_tower": [
-        "50"
-    ],
-    "filament_multitool_ramming": [
-        "1"
-    ],
-    "filament_multitool_ramming_flow": [
-        "20"
-    ],
-    "filament_multitool_ramming_volume": [
-        "5"
-    ],
+    "filament_max_volumetric_speed": ["20", "30"],
+    "filament_minimal_purge_on_wipe_tower": ["50", "50"],
+    "filament_multitool_ramming": ["1", "1"],
+    "filament_multitool_ramming_flow": ["20", "30"],
+    "filament_multitool_ramming_volume": ["5", "8"],
     "filament_start_gcode": [
         ""
     ],
@@ -53,33 +39,31 @@
     "hot_plate_temp_initial_layer": [
         "80"
     ],
-    "nozzle_temperature": [
-        "245"
-    ],
+    "nozzle_temperature": ["245", "245"],
     "nozzle_temperature_range_low": [
         "230"
     ],
-    "pressure_advance": [
-        "0.02"
-    ],
+    "pressure_advance": ["0.02", "0.035"],
     "filament_vendor": [
         "Snapmaker"
     ],
-    "filament_retract_length_toolchange": [
-        "5"
-    ],
+    "filament_retract_length_toolchange": ["5", "8"],
     "textured_plate_temp": [
         "80"
     ],
     "textured_plate_temp_initial_layer": [
         "80"
     ],
-    "additional_cooling_fan_speed": [
-        "10"
-    ],
-    "nozzle_temperature_initial_layer": [
-        "245"
-    ],
+    "additional_cooling_fan_speed": ["10", "0"],
+    "nozzle_temperature_initial_layer": ["245", "230"],
     "graphic_effect_plate_temp": ["80"],
-    "graphic_effect_plate_temp_initial_layer": ["80"]
+    "graphic_effect_plate_temp_initial_layer": ["80"],
+    "filament_flow_ratio": ["0.95", "0.955"],
+    "fan_max_speed": ["40", "60"],
+    "filament_retraction_length": ["nil", "0.8"],
+    "filament_retraction_speed": ["nil", "40"],
+    "filament_deretraction_speed": ["nil", "40"],
+    "filament_z_hop_types": ["nil", "Slope Lift"],
+    "filament_wipe_distance": ["nil", "1"],
+    "filament_flow_support": ["standard", "high_flow"]
 }

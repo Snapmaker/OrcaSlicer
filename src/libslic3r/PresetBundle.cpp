@@ -373,7 +373,15 @@ static void copy_dir(const boost::filesystem::path& from_dir, const boost::files
     for (auto& dir_entry : boost::filesystem::directory_iterator(from_dir)) {
         if (!boost::filesystem::is_directory(dir_entry.path())) {
             std::string em;
+#ifdef _WIN32
+            // path::string() returns ACP on Windows; copy_file expects UTF-8 (uses CP_UTF8 internally).
+            CopyFileResult cfr = copy_file(
+                boost::nowide::narrow(dir_entry.path().wstring()),
+                boost::nowide::narrow((to_dir / dir_entry.path().filename()).wstring()),
+                em, false);
+#else
             CopyFileResult cfr = copy_file(dir_entry.path().string(), (to_dir / dir_entry.path().filename()).string(), em, false);
+#endif
             if (cfr != SUCCESS) {
                 BOOST_LOG_TRIVIAL(error) << "Error when copying files from " << from_dir << " to " << to_dir << ": " << em;
             }

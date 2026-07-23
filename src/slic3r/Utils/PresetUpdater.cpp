@@ -400,7 +400,12 @@ bool PresetUpdater::priv::get_file(const std::string &url, const fs::path &targe
 bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::path &dest_path)
 {
     bool res = true;
+#ifdef _WIN32
+    // source_path.string() returns ACP on Windows; boost::nowide::fopen expects UTF-8.
+    std::string file_path = boost::nowide::narrow(source_path.wstring());
+#else
     std::string file_path = source_path.string();
+#endif
     fs::path parent_path = !dest_path.empty() ? dest_path : source_path.parent_path();
     mz_zip_archive archive;
     mz_zip_zero_struct(&archive);
@@ -443,13 +448,13 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
                 if (!parent_dir.empty() && !fs::exists(parent_dir))
                     fs::create_directories(parent_dir);
 
+#ifdef _WIN32
+                // Use wide API directly to avoid ACP round-trip through encode_path.
+                std::wstring dest_file_w = full_dest.wstring();
+                res = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, dest_file_w.c_str(), 0);
+#else
                 std::string dest_file_encoded = encode_path(full_dest.string().c_str());
                 res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_file_encoded.c_str(), 0);
-#ifdef _WIN32
-                if (!res) {
-                    std::wstring dest_file_w = boost::nowide::widen(full_dest.generic_string());
-                    res = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, dest_file_w.c_str(), 0);
-                }
 #endif
                 if (!res) {
                     mz_zip_error zip_err = mz_zip_get_last_error(&archive);
